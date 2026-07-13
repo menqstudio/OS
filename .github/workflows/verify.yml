@@ -17,3 +17,21 @@ jobs:
         run: python tools/bro_validate.py
       - name: Run policy tests
         run: python -m unittest discover -s tests -v
+      - name: Build canonical audit snapshot
+        if: always()
+        shell: bash
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude=bro-audit-snapshot.tgz \
+            --exclude='*/__pycache__' \
+            --exclude='*.pyc' \
+            -czf bro-audit-snapshot.tgz .
+      - name: Upload canonical audit snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bro-audit-snapshot
+          path: bro-audit-snapshot.tgz
+          retention-days: 1
+          if-no-files-found: error
