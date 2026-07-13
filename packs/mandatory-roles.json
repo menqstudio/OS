@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "roles": [
+    {
+      "role": "Automation & Flow Engineer",
+      "required_exactly_once_per_pack": true,
+      "append_after_pack_roles": true,
+      "purpose": "Own safe automation, orchestration, handoffs, queues, and flow design inside the pack without bypassing approvals or boundaries."
+    }
+  ]
+}
