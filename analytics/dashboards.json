@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "count": 4,
+  "dashboards": [
+    {"dashboard_id":"agent-health-command","owner_pack":"agent-intelligence-health","audience":["bro-000","Gev"],"metrics":["agent.task_success_rate","agent.failure_rate","agent.blocked_duration_seconds","agent.rework_rate","agent.verification_pass_rate","agent.policy_denial_count","agent.skill_receipt_staleness_seconds"],"refresh_seconds":60,"drilldowns":["agent_id","pack_id","task_id","time_window"],"status_values":["idle","running","blocked","waiting-approval","verification","failed","completed"]},
+    {"dashboard_id":"system-health-command","owner_pack":"system-observability-analytics","audience":["bro-000","Gev"],"metrics":["system.active_tasks","system.backlog_tasks","system.approval_queue","system.error_rate","system.bottleneck_count"],"refresh_seconds":60,"drilldowns":["component","pack_id","task_id","time_window"],"status_values":["healthy","degraded","critical","unknown"]},
+    {"dashboard_id":"portfolio-control-room","owner_pack":"control-room-portfolio-status","audience":["bro-000","Gev"],"metrics":["system.active_tasks","system.backlog_tasks","system.approval_queue","system.bottleneck_count"],"refresh_seconds":60,"drilldowns":["project","pack_id","owner","risk","deadline"],"status_values":["on-track","at-risk","blocked","waiting-approval","completed"]},
+    {"dashboard_id":"quality-and-verification","owner_pack":"dashboard-bi-engineering","audience":["bro-000","Gev"],"metrics":["agent.task_success_rate","agent.failure_rate","agent.rework_rate","agent.verification_pass_rate","agent.policy_denial_count"],"refresh_seconds":300,"drilldowns":["agent_id","pack_id","verifier_agent_id","task_id"],"status_values":["green","amber","red","unknown"]}
+  ]
+}
