@@ -21,12 +21,15 @@ jobs:
         if: always()
         shell: bash
         run: |
+          snapshot="${RUNNER_TEMP}/bro-audit-snapshot.tgz"
+          rm -f "$snapshot" "$GITHUB_WORKSPACE/bro-audit-snapshot.tgz"
           tar \
             --exclude=.git \
             --exclude=bro-audit-snapshot.tgz \
             --exclude='*/__pycache__' \
             --exclude='*.pyc' \
-            -czf bro-audit-snapshot.tgz .
+            -czf "$snapshot" .
+          mv "$snapshot" "$GITHUB_WORKSPACE/bro-audit-snapshot.tgz"
       - name: Upload canonical audit snapshot
         if: always()
         uses: actions/upload-artifact@v4
