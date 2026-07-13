@@ -10,6 +10,12 @@ import tempfile
 import time
 from dataclasses import dataclass
 
+from bro_contracts import (
+    ContractError,
+    load_contract_bundle_from_env,
+    load_release_grant_from_env,
+)
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / ".bro" / "policy.json"
 MANIFEST_PATH = ROOT / "config" / "canonical-read-manifest.json"
@@ -22,11 +28,13 @@ MUTATING_SHELL = re.compile(
 )
 PUSH = re.compile(r"(?i)\bgit\s+push\b|\bgh\s+pr\s+(create|merge|close)\b")
 
+
 @dataclass(frozen=True)
 class State:
     mode: str
     role: str
     session_id: str
+    agent_id: str = ""
 
 
 def load_json(path: pathlib.Path):
@@ -67,6 +75,7 @@ def current_state(payload: dict) -> State:
         mode=os.getenv("BRO_MODE", load_json(POLICY_PATH)["default_mode"]).strip().lower(),
         role=os.getenv("BRO_ROLE", "bro").strip().lower(),
         session_id=str(payload.get("session_id") or os.getenv("BRO_SESSION_ID") or "unknown"),
+        agent_id=os.getenv("BRO_AGENT_ID", "").strip().lower(),
     )
 
 
@@ -150,13 +159,28 @@ def is_push(tool_name: str, tool_input: dict) -> bool:
 def authorize_tool(state: State, tool_name: str, tool_input: dict) -> tuple[bool, str]:
     if state.mode not in {"review", "work", "release"}:
         return False, f"unknown BRO_MODE={state.mode!r}"
-    if state.mode == "review" and is_mutation(tool_name, tool_input):
+    mutation = is_mutation(tool_name, tool_input)
+    push = is_push(tool_name, tool_input)
+    if state.mode == "review" and mutation:
         return False, "review mode is technically read-only"
-    if is_push(tool_name, tool_input):
+    if mutation and state.role == "bro":
+        return False, "Bro remains free and may not perform repository mutation; delegate to a governed specialist"
+    if mutation and state.mode in {"work", "release"}:
+        try:
+            bundle = load_contract_bundle_from_env(ROOT)
+        except ContractError as exc:
+            return False, f"task/agent/skill gate RED: {exc}"
+        if state.agent_id and state.agent_id != bundle.agent["agent_id"].lower():
+            return False, "BRO_AGENT_ID does not match the bound agent profile"
+    if push:
         if state.mode != "release":
             return False, "push is denied outside release mode"
         if state.role != "push-executor":
             return False, "only the push-executor role may attempt push"
         if os.getenv("BRO_EXTERNAL_RELEASE_BOUNDARY") != "confirmed":
             return False, "external credential/permission boundary is not confirmed"
+        try:
+            load_release_grant_from_env(ROOT)
+        except ContractError as exc:
+            return False, f"release grant RED: {exc}"
     return True, "allowed"

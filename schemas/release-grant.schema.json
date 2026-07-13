@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/menqstudio/Bro/schemas/release-grant.schema.json",
+  "title": "Bro One-Time Release Grant",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "grant_id", "approved_by", "repository", "remote", "branch", "expected_head_sha", "expected_tree_identity", "allowed_action", "issued_at_epoch", "expires_at_epoch", "one_time", "consumed"],
+  "properties": {
+    "schema": {"const": 1},
+    "grant_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"},
+    "approved_by": {"const": "Gev"},
+    "repository": {"type": "string", "minLength": 3},
+    "remote": {"type": "string", "minLength": 1},
+    "branch": {"type": "string", "minLength": 1},
+    "expected_head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "expected_tree_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "allowed_action": {"const": "git-push"},
+    "issued_at_epoch": {"type": "integer", "minimum": 0},
+    "expires_at_epoch": {"type": "integer", "minimum": 1},
+    "one_time": {"const": true},
+    "consumed": {"const": false}
+  }
+}
