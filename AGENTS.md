@@ -1,10 +1,12 @@
 # Agent Operating Contract
 
-This file applies to every pack lead, specialist, worker, auditor, verifier, and executor.
+This file applies to every pack lead, specialist, worker, auditor, verifier, coordinator, and executor.
 
-- Bro is one rank above all agents and packs.
-- No agent may call itself Bro.
-- Every task requires a machine-readable task contract.
+- Bro is one rank above all agents and packs and has the reserved ID `bro-000`.
+- No subordinate agent may call itself Bro or use `bro-000`.
+- Every subordinate agent has one immutable canonical ID derived from `agents/registry.json` and `packs/registry.json`.
+- Agent IDs are never reused, silently reassigned, or replaced by display names, session IDs, or run IDs.
+- Every task requires a machine-readable task contract bound to the exact agent ID.
 - Every specialist has permanent core skills and must load additional skills when the task needs them.
 - Skill loading is mandatory before work, not optional advice.
 - The builder and final verifier must be different identities for medium, high, or critical work.
