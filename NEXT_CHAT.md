@@ -1,27 +1,59 @@
 # Next Chat Handoff
 
-Tell the next chat:
+## Mission
 
-> Open `menqstudio/Bro`, branch `bro-agent-os-v1`. Read the complete repository, run the canonical validation, inspect draft PR #1, and continue the clean Bro rebuild. Do not use BroPS. There is only one Bro (`bro-000`); every subordinate role has a permanent `agt-pNN-rNN` identity.
+Continue the clean Bro Agent OS build in `menqstudio/Bro` without touching BroPS. Work only on branch `bro-agent-os-v1` and draft PR `#1`. Do not merge.
 
-Current foundation scope:
+## Mandatory startup
 
-- clean repository and branch,
-- single-Bro hierarchy,
-- mandatory startup full-read receipt,
-- 30-minute automatic reread,
-- review/work/release modes,
-- 48-pack registry,
-- 239 deterministic subordinate agent IDs,
-- canonical 42-skill inventory,
-- strict task, skill-receipt, agent-profile, and release-grant schemas,
-- commit-for-workers / push-only-for-release-control rule,
-- validation workflow and policy tests.
+1. Read the complete repository to EOF.
+2. Read `CLAUDE.md`, `AGENTS.md`, `README.md`, `ROADMAP.md`, and every path in `config/canonical-read-manifest.json`.
+3. Read `config/sst-registry.json` before creating or changing any domain object.
+4. Confirm the branch HEAD equals the draft PR HEAD.
+5. Run:
 
-Next wave:
+```bash
+python tools/bro_validate.py
+python -m unittest discover -s tests -v
+```
 
-1. audit and import the 42 `SKILL.md` bodies without changing `skills/<skill>/SKILL.md`,
-2. create permanent agent profile files bound to the canonical IDs,
-3. map core skills to every registered agent,
-4. add mutation tests for every enforceable law,
-5. independently audit hook behavior on Windows Claude Code.
+6. Report the exact baseline before editing. Never claim GREEN from an older SHA.
+
+## Locked architecture
+
+- Gev is the owner.
+- There is exactly one Bro: `bro-000`.
+- Bro remains available and delegates long or specialist execution.
+- Every subordinate agent has an immutable `agt-pNN-rNN` ID.
+- Every pack must contain exactly one `Automation & Flow Engineer`.
+- UI gender metadata accepts only `M` or `F` and has no authority or routing effect.
+- Agents are dormant by default and spawn event-driven, scheduled, on-demand, or as condition watches.
+- Review is read-only; Work permits scoped commit but no push; Release is Push Executor only with exact owner-bound grant and external credential isolation.
+- Medium, high, and critical work requires an independent verifier.
+- Learning and skill evolution require sandboxing, benchmark evidence, independent review, controlled promotion, monitoring, and rollback.
+
+## SST law
+
+Every domain has one canonical Single Source of Truth registered in `config/sst-registry.json`. Documentation may explain an SST but must not duplicate changing inventory facts. An agent creating or changing a pack, agent, skill, test, law, schema, dashboard, learning rule, release rule, or startup file must update the corresponding SST and its validator/tests in the same scoped change.
+
+## Current verified facts
+
+- Draft PR remains open and unmerged.
+- The branch contains identity, task/skill/release contracts, analytics foundations, skill-evolution foundations, SST registries, and release boundaries.
+- Some older files still require consolidation and exact-head revalidation.
+- `ROADMAP.md` is the execution order and Definition of Done.
+
+## Immediate next task
+
+Execute **ROADMAP Phase 1** completely:
+
+1. consolidate Pack SST into `packs/registry.json`,
+2. preserve all existing agent IDs,
+3. append analytics, mandatory Flow roles, and Learning Intelligence cleanly,
+4. update Agent SST fingerprint/counts,
+5. remove competing registries only after equivalence proof,
+6. update runtime contract lookup to the consolidated SST,
+7. update tests and stale documentation,
+8. run validation and exact-head GitHub Actions.
+
+Do not start skill-body import until Phase 1–3 are GREEN.
