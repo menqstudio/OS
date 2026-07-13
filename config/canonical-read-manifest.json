@@ -1,19 +1,23 @@
 {
-  "schema": 1,
+  "schema": 2,
   "purpose": "Files injected/read at startup and every 30-minute checkpoint.",
   "paths": [
     "README.md",
     "CLAUDE.md",
     "AGENTS.md",
+    "ROADMAP.md",
+    "NEXT_CHAT.md",
+    "config/sst-registry.json",
     "laws/LAW_INDEX.md",
+    "laws/registry.json",
     "docs/ARCHITECTURE.md",
     "docs/OPERATING_MODES.md",
     "docs/DELEGATION_AND_SKILLS.md",
     "docs/GIT_RELEASE_CONTROL.md",
     "docs/SECURITY_MODEL.md",
+    "docs/ANALYTICS_CONTROL_PLANE.md",
     "agents/README.md",
     "packs/README.md",
-    "skills/README.md",
-    "NEXT_CHAT.md"
+    "skills/README.md"
   ]
 }
