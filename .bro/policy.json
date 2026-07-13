@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "project": "Bro",
+  "owner": "Gev",
+  "default_mode": "review",
+  "bro_identity_count": 1,
+  "reread_interval_seconds": 1800,
+  "receipt_max_age_seconds": 1800,
+  "review_mode": {
+    "allow_repository_reads": true,
+    "allow_analysis": true,
+    "allow_mutation": false,
+    "allow_commit": false,
+    "allow_push": false
+  },
+  "work_mode": {
+    "allow_mutation": true,
+    "require_task_contract": true,
+    "require_isolated_worktree": true,
+    "allow_commit": true,
+    "allow_push": false
+  },
+  "release_mode": {
+    "allowed_roles": [
+      "integration-lead",
+      "release-verifier",
+      "push-executor",
+      "rollback-coordinator"
+    ],
+    "push_role": "push-executor",
+    "external_credential_boundary_required": true
+  },
+  "forbidden_bro_aliases": [
+    "Main Bro",
+    "SuperBro",
+    "Project Bro",
+    "Integration Bro",
+    "Release Bro",
+    "Push Bro"
+  ]
+}
