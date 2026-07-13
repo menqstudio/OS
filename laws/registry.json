@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "canonical_text": "laws/LAW_INDEX.md",
+  "laws": [
+    {"id":"L0","name":"Owner and identity","enforcement":"runtime/bro_identity.py","test":"identity-registry"},
+    {"id":"L1","name":"Repository literacy","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
+    {"id":"L2","name":"Bro remains responsive","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
+    {"id":"L3","name":"Task contracts","enforcement":"runtime/bro_contracts.py","test":"contract-gates"},
+    {"id":"L4","name":"Skill loading","enforcement":"runtime/bro_contracts.py","test":"contract-gates"},
+    {"id":"L5","name":"Independent verification","enforcement":"runtime/bro_contracts.py","test":"contract-gates"},
+    {"id":"L6","name":"Operating modes","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
+    {"id":"L7","name":"Git authority","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
+    {"id":"L8","name":"Thirty-minute reread","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
+    {"id":"L9","name":"Fail closed","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
+    {"id":"L10","name":"Clean canonical repository","enforcement":"tools/bro_validate.py","test":"sst-governance"},
+    {"id":"L11","name":"Single source of truth","enforcement":"tools/bro_validate.py","test":"sst-governance"},
+    {"id":"L12","name":"Sandbox-first autonomy","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
+    {"id":"L13","name":"Learning promotion gates","enforcement":"runtime/bro_learning.py","test":"skill-evolution"},
+    {"id":"L14","name":"Recovery before GREEN","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"}
+  ]
+}
