@@ -11,4 +11,38 @@
     "allowed_modes": ["review", "work"],
     "risk_ceiling": "high"
   },
-  "verifier_role_rules":
+  "verifier_role_rules": {
+    "role_name_contains_any": ["Verifier", "Reviewer", "Auditor", "Evaluator", "Tester", "Quality Controller"],
+    "can_build": false,
+    "can_verify": true,
+    "can_release": false,
+    "allowed_modes": ["review", "work"],
+    "risk_ceiling": "critical"
+  },
+  "exact_overrides": [
+    {
+      "pack_id": "git-release-control",
+      "role": "Push Executor",
+      "can_build": false,
+      "can_verify": false,
+      "can_release": true,
+      "allowed_modes": ["release"],
+      "risk_ceiling": "critical"
+    },
+    {
+      "pack_id": "git-release-control",
+      "role": "Release Verifier",
+      "can_build": false,
+      "can_verify": true,
+      "can_release": false,
+      "allowed_modes": ["review", "work", "release"],
+      "risk_ceiling": "critical"
+    }
+  ],
+  "independence_minimum_by_risk": {
+    "low": "L1",
+    "medium": "L1",
+    "high": "L2",
+    "critical": "L3"
+  }
+}
