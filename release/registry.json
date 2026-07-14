@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "push_pack": "git-release-control",
+  "push_role": "Push Executor",
+  "required_bindings": ["repository","remote","branch","expected_head_sha","expected_tree_identity","owner_approval","independent_release_verification"],
+  "grant_schema": "schemas/release-grant.schema.json",
+  "one_time_grant_required": true,
+  "external_credential_boundary_required": true,
+  "rollback_evidence_required": true
+}

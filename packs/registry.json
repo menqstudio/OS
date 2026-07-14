@@ -1,0 +1,688 @@
+{
+  "schema": 2,
+  "pack_count": 52,
+  "packs": [
+    {
+      "id": "ai-agent-builders",
+      "lead": "Agent Architect",
+      "roles": [
+        "Agent Architect",
+        "Agent Builder",
+        "Tooling Engineer",
+        "Evaluation Engineer",
+        "Independent Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "automation-builders",
+      "lead": "Automation Lead",
+      "roles": [
+        "Automation Lead",
+        "Workflow Engineer",
+        "Integration Engineer",
+        "Bot Builder",
+        "Automation Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "llm-ml-engineering",
+      "lead": "ML Lead",
+      "roles": [
+        "ML Lead",
+        "LLM Engineer",
+        "LlmOps Engineer",
+        "Model Evaluator",
+        "Safety Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "software-architecture",
+      "lead": "Architecture Lead",
+      "roles": [
+        "Architecture Lead",
+        "Systems Architect",
+        "API Architect",
+        "Integration Architect",
+        "Architecture Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "frontend-crafters",
+      "lead": "Frontend Lead",
+      "roles": [
+        "Frontend Lead",
+        "UI Engineer",
+        "Accessibility Engineer",
+        "Performance Engineer",
+        "Frontend Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "backend-crafters",
+      "lead": "Backend Lead",
+      "roles": [
+        "Backend Lead",
+        "Service Engineer",
+        "API Engineer",
+        "Reliability Engineer",
+        "Backend Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "desktop-app-crafters",
+      "lead": "Desktop Lead",
+      "roles": [
+        "Desktop Lead",
+        "Tauri Engineer",
+        "Native Integration Engineer",
+        "Packaging Engineer",
+        "Desktop Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "mobile-app-crafters",
+      "lead": "Mobile Lead",
+      "roles": [
+        "Mobile Lead",
+        "Mobile Engineer",
+        "Platform Integration Engineer",
+        "Release Engineer",
+        "Mobile Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "integration-api",
+      "lead": "Integration Lead",
+      "roles": [
+        "Integration Lead",
+        "API Engineer",
+        "Connector Engineer",
+        "Contract Tester",
+        "Integration Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "database-storage",
+      "lead": "Data Storage Lead",
+      "roles": [
+        "Data Storage Lead",
+        "Database Engineer",
+        "Migration Engineer",
+        "Backup Engineer",
+        "Database Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "data-engineering",
+      "lead": "Data Engineering Lead",
+      "roles": [
+        "Data Engineering Lead",
+        "Pipeline Engineer",
+        "ETL Engineer",
+        "Data Quality Engineer",
+        "Pipeline Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "data-science-analytics",
+      "lead": "Analytics Lead",
+      "roles": [
+        "Analytics Lead",
+        "Data Scientist",
+        "BI Engineer",
+        "Experiment Analyst",
+        "Analytics Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "devops-platform",
+      "lead": "Platform Lead",
+      "roles": [
+        "Platform Lead",
+        "DevOps Engineer",
+        "CI Engineer",
+        "Environment Engineer",
+        "Platform Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "cloud-infrastructure",
+      "lead": "Cloud Lead",
+      "roles": [
+        "Cloud Lead",
+        "Infrastructure Engineer",
+        "IaC Engineer",
+        "Cost Engineer",
+        "Cloud Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "sre-reliability",
+      "lead": "SRE Lead",
+      "roles": [
+        "SRE Lead",
+        "Reliability Engineer",
+        "Observability Engineer",
+        "Capacity Engineer",
+        "SRE Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "testing-quality",
+      "lead": "QA Lead",
+      "roles": [
+        "QA Lead",
+        "Test Engineer",
+        "Automation Tester",
+        "Mutation Tester",
+        "Quality Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "code-audit",
+      "lead": "Audit Lead",
+      "roles": [
+        "Audit Lead",
+        "Code Auditor",
+        "Dependency Auditor",
+        "Maintainability Auditor",
+        "Evidence Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "architecture-audit",
+      "lead": "Architecture Audit Lead",
+      "roles": [
+        "Architecture Audit Lead",
+        "Boundary Auditor",
+        "Data Flow Auditor",
+        "Resilience Auditor",
+        "Evidence Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "security-audit",
+      "lead": "Security Audit Lead",
+      "roles": [
+        "Security Audit Lead",
+        "Application Security Auditor",
+        "Identity Auditor",
+        "Secrets Auditor",
+        "Evidence Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "zero-trust-verification",
+      "lead": "Zero Trust Lead",
+      "roles": [
+        "Zero Trust Lead",
+        "Policy Auditor",
+        "Mutation Engineer",
+        "Recovery Verifier",
+        "Independent Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "incident-recovery",
+      "lead": "Incident Lead",
+      "roles": [
+        "Incident Lead",
+        "Forensics Analyst",
+        "Recovery Engineer",
+        "Continuity Engineer",
+        "Recovery Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "git-release-control",
+      "lead": "Integration Lead",
+      "roles": [
+        "Integration Lead",
+        "Release Verifier",
+        "Push Executor",
+        "Rollback Coordinator"
+      ],
+      "independent_verifier_required": false,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "product-management",
+      "lead": "Product Lead",
+      "roles": [
+        "Product Lead",
+        "Discovery Analyst",
+        "Requirements Manager",
+        "Product Operations",
+        "Product Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "project-program-management",
+      "lead": "Program Lead",
+      "roles": [
+        "Program Lead",
+        "Project Manager",
+        "Risk Manager",
+        "Delivery Coordinator",
+        "Delivery Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "ui-ux-design",
+      "lead": "Design Lead",
+      "roles": [
+        "Design Lead",
+        "UX Researcher",
+        "UI Designer",
+        "Accessibility Designer",
+        "Design Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "design-systems",
+      "lead": "Design System Lead",
+      "roles": [
+        "Design System Lead",
+        "Token Architect",
+        "Component Designer",
+        "Documentation Designer",
+        "System Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "motion-interaction",
+      "lead": "Motion Lead",
+      "roles": [
+        "Motion Lead",
+        "Interaction Designer",
+        "Animation Engineer",
+        "Usability Reviewer",
+        "Motion Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "research-analysis",
+      "lead": "Research Lead",
+      "roles": [
+        "Research Lead",
+        "Researcher",
+        "Analyst",
+        "Source Verifier",
+        "Synthesis Reviewer"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "documentation-knowledge",
+      "lead": "Knowledge Lead",
+      "roles": [
+        "Knowledge Lead",
+        "Technical Writer",
+        "Information Architect",
+        "Documentation Engineer",
+        "Knowledge Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "language-localization",
+      "lead": "Language Lead",
+      "roles": [
+        "Language Lead",
+        "Translator",
+        "Localization Engineer",
+        "Terminology Reviewer",
+        "Language Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "sales-revenue",
+      "lead": "Sales Lead",
+      "roles": [
+        "Sales Lead",
+        "Account Executive",
+        "Sales Engineer",
+        "Revenue Operations",
+        "Sales Quality Reviewer"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "marketing-brand",
+      "lead": "Marketing Lead",
+      "roles": [
+        "Marketing Lead",
+        "Brand Strategist",
+        "Content Marketer",
+        "Campaign Analyst",
+        "Marketing Reviewer"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "growth-retention",
+      "lead": "Growth Lead",
+      "roles": [
+        "Growth Lead",
+        "Lifecycle Strategist",
+        "Retention Analyst",
+        "Experiment Manager",
+        "Growth Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "business-strategy",
+      "lead": "Strategy Lead",
+      "roles": [
+        "Strategy Lead",
+        "Business Analyst",
+        "Operations Strategist",
+        "Market Analyst",
+        "Strategy Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "finance-pricing",
+      "lead": "Finance Lead",
+      "roles": [
+        "Finance Lead",
+        "Financial Analyst",
+        "Pricing Strategist",
+        "Unit Economics Analyst",
+        "Finance Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "customer-support-cx",
+      "lead": "CX Lead",
+      "roles": [
+        "CX Lead",
+        "Support Specialist",
+        "Knowledge Specialist",
+        "Escalation Manager",
+        "CX Quality Reviewer"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "operations-process",
+      "lead": "Operations Lead",
+      "roles": [
+        "Operations Lead",
+        "Process Analyst",
+        "Automation Coordinator",
+        "Quality Controller",
+        "Operations Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "telecom-isp",
+      "lead": "Telecom Lead",
+      "roles": [
+        "Telecom Lead",
+        "Network Architect",
+        "ISP Operations Specialist",
+        "Service Assurance Analyst",
+        "Telecom Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "noc-network-ops",
+      "lead": "NOC Lead",
+      "roles": [
+        "NOC Lead",
+        "Network Engineer",
+        "Monitoring Specialist",
+        "Incident Coordinator",
+        "NOC Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "field-service-dispatch",
+      "lead": "Field Operations Lead",
+      "roles": [
+        "Field Operations Lead",
+        "Dispatcher",
+        "Field Technician Planner",
+        "SLA Analyst",
+        "Dispatch Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "supply-chain-inventory",
+      "lead": "Supply Chain Lead",
+      "roles": [
+        "Supply Chain Lead",
+        "Inventory Analyst",
+        "Procurement Planner",
+        "Warehouse Analyst",
+        "Supply Chain Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "hr-workforce-training",
+      "lead": "People Lead",
+      "roles": [
+        "People Lead",
+        "HR Specialist",
+        "Workforce Planner",
+        "Training Designer",
+        "People Operations Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "legal-compliance",
+      "lead": "Compliance Lead",
+      "roles": [
+        "Compliance Lead",
+        "Legal Analyst",
+        "Contract Reviewer",
+        "Regulatory Analyst",
+        "Compliance Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "procurement-partnerships",
+      "lead": "Partnership Lead",
+      "roles": [
+        "Partnership Lead",
+        "Procurement Specialist",
+        "Vendor Analyst",
+        "Channel Manager",
+        "Commercial Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "accounting-tax",
+      "lead": "Accounting Lead",
+      "roles": [
+        "Accounting Lead",
+        "Bookkeeper",
+        "Tax Analyst",
+        "Controls Reviewer",
+        "Accounting Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "education-mentoring",
+      "lead": "Learning Lead",
+      "roles": [
+        "Learning Lead",
+        "Teacher",
+        "Curriculum Designer",
+        "Mentor",
+        "Learning Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "executive-decision-support",
+      "lead": "Decision Lead",
+      "roles": [
+        "Decision Lead",
+        "Scenario Analyst",
+        "Risk Analyst",
+        "Briefing Specialist",
+        "Decision Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "red-team-offensive-security",
+      "lead": "Red Team Lead",
+      "roles": [
+        "Red Team Lead",
+        "Offensive Security Tester",
+        "Attack Surface Analyst",
+        "Exploit Validator",
+        "Safety Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "agent-intelligence-health",
+      "lead": "Agent Intelligence Lead",
+      "roles": [
+        "Agent Intelligence Lead",
+        "Agent Performance Analyst",
+        "Agent Health Analyst",
+        "Quality Trend Analyst",
+        "Agent Intelligence Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "dashboard-bi-engineering",
+      "lead": "Dashboard Engineering Lead",
+      "roles": [
+        "Dashboard Engineering Lead",
+        "BI Dashboard Engineer",
+        "Data Visualization Engineer",
+        "Metric Contract Engineer",
+        "Dashboard Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "system-observability-analytics",
+      "lead": "Observability Analytics Lead",
+      "roles": [
+        "Observability Analytics Lead",
+        "System Health Analyst",
+        "Reliability Data Analyst",
+        "Bottleneck Analyst",
+        "Observability Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    },
+    {
+      "id": "control-room-portfolio-status",
+      "lead": "Control Room Lead",
+      "roles": [
+        "Control Room Lead",
+        "Portfolio Status Analyst",
+        "Workload Capacity Analyst",
+        "Approval Queue Analyst",
+        "Control Room Verifier"
+      ],
+      "independent_verifier_required": true,
+      "cross_pack_allowed": true
+    }
+  ],
+  "mandatory_roles": [
+    {
+      "role": "Automation & Flow Engineer",
+      "required_exactly_once_per_pack": true,
+      "append_after_pack_roles": true
+    }
+  ]
+}

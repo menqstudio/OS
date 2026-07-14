@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/menqstudio/Bro/schemas/metric-contract.schema.json",
+  "title": "Bro Metric Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metric_id", "unit", "source", "freshness_seconds", "owner_pack", "thresholds", "drilldown_required", "evidence_link_required"],
+  "properties": {
+    "metric_id": {"type": "string", "pattern": "^[a-z0-9._-]+$"},
+    "unit": {"enum": ["count", "ratio", "seconds", "milliseconds", "bytes", "currency", "score"]},
+    "source": {"type": "string", "minLength": 1},
+    "freshness_seconds": {"type": "integer", "minimum": 1},
+    "owner_pack": {"type": "string"},
+    "thresholds": {"type": "object"},
+    "drilldown_required": {"const": true},
+    "evidence_link_required": {"const": true}
+  }
+}

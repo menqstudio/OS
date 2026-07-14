@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "purpose": "UI-only metadata; never used for routing, authority, permissions, skills, evaluation, verification, or identity.",
+  "allowed_gender_values": [
+    "M",
+    "F"
+  ],
+  "default_assignment": "M when pack_ordinal + role_ordinal is odd; otherwise F",
+  "overrides_allowed": true,
+  "override_values": [
+    "M",
+    "F"
+  ]
+}

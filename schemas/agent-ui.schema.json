@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/menqstudio/Bro/schemas/agent-ui.schema.json",
+  "title": "Bro Agent UI Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "agent_id", "gender"],
+  "properties": {
+    "schema": {"const": 1},
+    "agent_id": {"type": "string", "pattern": "^agt-p[0-9]{2,}-r[0-9]{2,}$"},
+    "gender": {"enum": ["M", "F"]}
+  }
+}

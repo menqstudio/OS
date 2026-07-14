@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "discovery_command": "python -m unittest discover -s tests -v",
+  "orphan_tests_forbidden": true,
+  "tests": [
+    {
+      "id": "identity-registry",
+      "path": "tests/test_bro_identity.py",
+      "covers": [
+        "agent-ids",
+        "pack-count",
+        "ui-gender-boundary"
+      ]
+    },
+    {
+      "id": "policy-boundaries",
+      "path": "tests/test_bro_policy.py",
+      "covers": [
+        "review-read-only",
+        "bro-delegation",
+        "push-authority"
+      ]
+    },
+    {
+      "id": "contract-gates",
+      "path": "tests/test_bro_contracts.py",
+      "covers": [
+        "task-contract",
+        "agent-profile",
+        "skill-receipt",
+        "release-grant"
+      ]
+    },
+    {
+      "id": "analytics-control-plane",
+      "path": "tests/test_bro_analytics.py",
+      "covers": [
+        "metrics",
+        "dashboards",
+        "status-contracts"
+      ]
+    },
+    {
+      "id": "skill-evolution",
+      "path": "tests/test_skill_evolution.py",
+      "covers": [
+        "independent-review",
+        "owner-approval",
+        "rollback"
+      ]
+    },
+    {
+      "id": "sst-governance",
+      "path": "tests/test_sst_registry.py",
+      "covers": [
+        "one-domain-one-source",
+        "existing-sst-paths",
+        "unique-domain-ownership"
+      ]
+    },
+    {
+      "id": "security-v2",
+      "path": "tests/test_security_v2.py",
+      "covers": [
+        "signed-mode-grants",
+        "shell-aware-git-parser",
+        "signed-one-time-release-grants",
+        "scope-enforcement",
+        "schema-execution"
+      ]
+    },
+    {
+      "id": "hook-subprocess",
+      "path": "tests/test_hooks_subprocess.py",
+      "covers": [
+        "stdin-payload",
+        "exit-code",
+        "review-read",
+        "unsigned-work-denial",
+        "git-global-option-push-denial"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "policy": "one-domain-one-canonical-source",
+  "generated_files_must_declare_source": true,
+  "duplicate_truth_is_error": true,
+  "domains": [
+    {"domain":"packs","sst":"packs/registry.json","validator":"tools/bro_validate.py"},
+    {"domain":"agents","sst":"agents/registry.json","validator":"runtime/bro_identity.py"},
+    {"domain":"skills","sst":"skills/index.json","validator":"runtime/bro_contracts.py"},
+    {"domain":"tests","sst":"tests/catalog.json","validator":"tools/bro_validate.py"},
+    {"domain":"laws","sst":"laws/registry.json","validator":"tools/bro_validate.py"},
+    {"domain":"schemas","sst":"schemas/registry.json","validator":"tools/bro_validate.py"},
+    {"domain":"analytics","sst":"analytics/registry.json","validator":"runtime/bro_analytics.py"},
+    {"domain":"learning","sst":"learning/registry.json","validator":"runtime/bro_learning.py"},
+    {"domain":"release","sst":"release/registry.json","validator":"runtime/bro_contracts.py"},
+    {"domain":"startup-context","sst":"config/canonical-read-manifest.json","validator":"runtime/bro_policy.py"}
+  ]
+}

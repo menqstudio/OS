@@ -1,0 +1,303 @@
+{
+  "schema": 2,
+  "structure": "skills/<skill>/SKILL.md",
+  "count": 42,
+  "skills": [
+    "accounting-bookkeeping-tax",
+    "ai-agent-engineering",
+    "ai-ml-engineering-llmops",
+    "analysis-primary",
+    "auditing",
+    "business-strategy-operations",
+    "communication-writing-negotiation",
+    "creativity-ideation-design-thinking",
+    "customer-support-cx-ops",
+    "cybersecurity-operations-soc",
+    "data-architecture-leadership",
+    "data-engineering-pipelines",
+    "data-science-analytics",
+    "databases-storage-engineering",
+    "devops-platform-sre",
+    "economics-market-design",
+    "field-service-dispatch-ops",
+    "finance-unit-economics",
+    "frontend-ux-product-design",
+    "hr-compensation-design",
+    "language-mastery",
+    "legal-compliance-contracts",
+    "marketing-brand",
+    "mobile-engineering",
+    "offensive-security-pentesting",
+    "operating-data-roles",
+    "partnership-channel-bd",
+    "people-org-leadership",
+    "pricing-packaging-strategy",
+    "procurement-vendor-negotiation",
+    "product-project-management",
+    "regulatory-telecom-licensing",
+    "research-knowledge-synthesis",
+    "sales-revenue-growth",
+    "security-privacy-engineering",
+    "software-systems-architecture",
+    "supply-chain-inventory",
+    "teaching-mentoring-knowledge-transfer",
+    "telecom-isp-network-ops",
+    "testing-quality-engineering",
+    "ui-page-structure-design",
+    "workforce-scheduling-wfm"
+  ],
+  "entries": [
+    {
+      "id": "accounting-bookkeeping-tax",
+      "path": "skills/accounting-bookkeeping-tax/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "c520f84fa1f4b55b5d2a1410aa67fef52f0b958618b75fc735598ccd9dd3f0cc"
+    },
+    {
+      "id": "ai-agent-engineering",
+      "path": "skills/ai-agent-engineering/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "707c9894ab0e3515c9656b0145486104c3f0e1831f090e2e39ca16b9602edc82"
+    },
+    {
+      "id": "ai-ml-engineering-llmops",
+      "path": "skills/ai-ml-engineering-llmops/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "e88a2e8688e5f6e9ac6a39523294c52834d54969aab4d83e25a030294aa00bd1"
+    },
+    {
+      "id": "analysis-primary",
+      "path": "skills/analysis-primary/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "f663327bcbbb78bd3720a51d3bdf55e0aaca5cb410b71516dd6341e6c76f2a30"
+    },
+    {
+      "id": "auditing",
+      "path": "skills/auditing/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "fbde74138fcdc1a32a7480bdbe7b6c40c1020909fd198cb9cedd1f25f4daf7ab"
+    },
+    {
+      "id": "business-strategy-operations",
+      "path": "skills/business-strategy-operations/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "c2a1a698636f9ed706e5e33bb5a6a37e41adee8f51bcabebf594b3106fe728b8"
+    },
+    {
+      "id": "communication-writing-negotiation",
+      "path": "skills/communication-writing-negotiation/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "3d9aeeffe1b17f48fba4ccba8ee358da27719e6087346983e3bd93a2538a163f"
+    },
+    {
+      "id": "creativity-ideation-design-thinking",
+      "path": "skills/creativity-ideation-design-thinking/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "174d16b7dd207db99f2265ed32bfc61cc605566f3338f1d2f65fc12ffa2a5d46"
+    },
+    {
+      "id": "customer-support-cx-ops",
+      "path": "skills/customer-support-cx-ops/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "b7461311fa9248b54462e2c06ed0c6f5d27653c45162eb9e542a5c4eca221d6a"
+    },
+    {
+      "id": "cybersecurity-operations-soc",
+      "path": "skills/cybersecurity-operations-soc/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "5ebb2a3ee3fe8c3f7e0189a8df98a99c672cea431688e733fba0d625a96c415e"
+    },
+    {
+      "id": "data-architecture-leadership",
+      "path": "skills/data-architecture-leadership/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "040e2933c4cd5ae8b54b701f9b286fa3595ff3bc13c6d56f83fab7579bf81d39"
+    },
+    {
+      "id": "data-engineering-pipelines",
+      "path": "skills/data-engineering-pipelines/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "4bb1279aaccea0066a036f08a437c6621fcd87394e4744401d8d6ace4ce088ce"
+    },
+    {
+      "id": "data-science-analytics",
+      "path": "skills/data-science-analytics/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "86b973ec9049324d74b035298c859074820007b553d2654cbf78b5cf54ebbc83"
+    },
+    {
+      "id": "databases-storage-engineering",
+      "path": "skills/databases-storage-engineering/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "e88a9f1ae6d961515acc88a7b493c6423f29c1fbf9eae9d1be9811d809eae2ab"
+    },
+    {
+      "id": "devops-platform-sre",
+      "path": "skills/devops-platform-sre/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "63fc9607a345ba7d2a4961ac45fe86755064488d8a33ea196146069011835751"
+    },
+    {
+      "id": "economics-market-design",
+      "path": "skills/economics-market-design/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "aa797308bfb4e4c5c3159f01cf7dddec271042340cc320866e662e4f27839f47"
+    },
+    {
+      "id": "field-service-dispatch-ops",
+      "path": "skills/field-service-dispatch-ops/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "9fd73f7295e21d88a60590a46794869bfe0c84242ed64e2e3b4dd6477bbcd394"
+    },
+    {
+      "id": "finance-unit-economics",
+      "path": "skills/finance-unit-economics/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "267bd20ca953c849bca8083ee8bd3fc715c9cddd044814547c8cad8cf87fb2cd"
+    },
+    {
+      "id": "frontend-ux-product-design",
+      "path": "skills/frontend-ux-product-design/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "00185319de5394e332d112246a4f9b45d74300edc9736b01dee33fd75a1e4aff"
+    },
+    {
+      "id": "hr-compensation-design",
+      "path": "skills/hr-compensation-design/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "d49bd12e8fdec15686f017086b0ccccbf2ce046500b2d161d9d50b990ef90d79"
+    },
+    {
+      "id": "language-mastery",
+      "path": "skills/language-mastery/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "f9e0edd5b7c239bf82adffbb67007f904311b461d67389e9987e4b21c5bc39b4"
+    },
+    {
+      "id": "legal-compliance-contracts",
+      "path": "skills/legal-compliance-contracts/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "877d08656bc6b7863f217b4724bbf159278067464b4d6d2f08e64ddca42f4a88"
+    },
+    {
+      "id": "marketing-brand",
+      "path": "skills/marketing-brand/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "38346f7c651669e31ddc8339c69c67579721e820bd6dca421337c0149afefb41"
+    },
+    {
+      "id": "mobile-engineering",
+      "path": "skills/mobile-engineering/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "86ae4352403fcf80d8e0184675ba9198a0e09266f1cccbc03e4eb747520d9d61"
+    },
+    {
+      "id": "offensive-security-pentesting",
+      "path": "skills/offensive-security-pentesting/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "2f2e43cd575c9250722e4f567774ecdddd0bc529075f1ce5ade2969947867bff"
+    },
+    {
+      "id": "operating-data-roles",
+      "path": "skills/operating-data-roles/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "0a12ecb6f054a0929bd93ded847a646a2ebf4c554e3a91b1be446083f47e1b61"
+    },
+    {
+      "id": "partnership-channel-bd",
+      "path": "skills/partnership-channel-bd/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "c6c77bdc43bac271c70b38e70dfb11bb14f0bf8bb80e229a69ed5b3218a66ec1"
+    },
+    {
+      "id": "people-org-leadership",
+      "path": "skills/people-org-leadership/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "7777494b20a6757ba998eb0e6e29c15ece852ecba7e7abeaa6dfe68f53bf72c1"
+    },
+    {
+      "id": "pricing-packaging-strategy",
+      "path": "skills/pricing-packaging-strategy/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "effe30c25d4e7eb6541325f78484bb45a1dcc3ca319798ec81d29541c25257ea"
+    },
+    {
+      "id": "procurement-vendor-negotiation",
+      "path": "skills/procurement-vendor-negotiation/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "7d158810045680184118989cf9ba1d77a74b20226cf89601aa1e9339045526d9"
+    },
+    {
+      "id": "product-project-management",
+      "path": "skills/product-project-management/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "a1c10070364e24c4a0b3a01bed21cd115e5cb041a343c6efd225e46c3a134a26"
+    },
+    {
+      "id": "regulatory-telecom-licensing",
+      "path": "skills/regulatory-telecom-licensing/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "4a5c832e81e73727a9b95995d7560fc9a904936c5209f679d6d8dd5e25ddbd0c"
+    },
+    {
+      "id": "research-knowledge-synthesis",
+      "path": "skills/research-knowledge-synthesis/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "27844be3269db8710a58f9c5caa99aa7e8af26997964ddcafc11e79891cffd92"
+    },
+    {
+      "id": "sales-revenue-growth",
+      "path": "skills/sales-revenue-growth/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "dc7139bb345dc95cd40fdeb10ad340c3c58756765bfab3b10ecd11280a36c271"
+    },
+    {
+      "id": "security-privacy-engineering",
+      "path": "skills/security-privacy-engineering/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "f7630d6ec37d9af9d7f8f86e7939c336d9ea3362138cce9eeac7a8dda7fb0ee8"
+    },
+    {
+      "id": "software-systems-architecture",
+      "path": "skills/software-systems-architecture/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "4d867590ff480d808faaaec29646d0bf9b46d71bb3c8d4ced417a2003327bd9a"
+    },
+    {
+      "id": "supply-chain-inventory",
+      "path": "skills/supply-chain-inventory/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "9d9fb6444fe4d3d03f0a8b1dc75f7017469c201daa558e78c234148b49d132be"
+    },
+    {
+      "id": "teaching-mentoring-knowledge-transfer",
+      "path": "skills/teaching-mentoring-knowledge-transfer/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "5df6295420d24103278c9969180059dbf32b13f20b1e19bedb223146ff80b1fe"
+    },
+    {
+      "id": "telecom-isp-network-ops",
+      "path": "skills/telecom-isp-network-ops/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "5de98666fd02abb09e677dd3158257e891b3bd8e59203c0ecdfcf74699b09d0b"
+    },
+    {
+      "id": "testing-quality-engineering",
+      "path": "skills/testing-quality-engineering/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "920682c53a8935df1f1d2d6dfe82e200d41531abc419952805f2678de100b542"
+    },
+    {
+      "id": "ui-page-structure-design",
+      "path": "skills/ui-page-structure-design/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "54b5ef5b05e87cfef63dfd6992c3cbf7611e1231b2488af715cdbd54838b7132"
+    },
+    {
+      "id": "workforce-scheduling-wfm",
+      "path": "skills/workforce-scheduling-wfm/SKILL.md",
+      "version": "1.0.0",
+      "sha256": "175dca452f9434d59759f9c086c57419f798347dda6aa078f999b927d1240521"
+    }
+  ]
+}
