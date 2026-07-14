@@ -1,35 +1,31 @@
-# Bro Execution Control Plane V2 Roadmap
+# Bro Roadmap — Post-Merge
 
 **Reviewed:** 2026-07-14  
 **Repository:** `menqstudio/Bro`  
-**Branch:** `bro-execution-control-plane-v2`  
-**Draft PR:** `#2`  
-**Base:** `a0f40d5aa3de96f05f2a9f90cdfd0f4e09fa7bca`
+**Canonical branch:** `main`  
+**Merged PR:** `#2`  
+**Merge commit:** `3250d4cc55edc2adf8e5247deab8060983de3b47`
 
-## Completed security phases
+## Completed foundation
 
-1. Tool capability registry, unified classification, unknown-action deny.
-2. Canonical agent identity, exact designated verifier authority, independence checks.
-3. Verified worktree, CWD, branch, HEAD, full current tree, and exclusive worktree-task binding.
-4. Signed one-time execution leases with atomic reservation and replay denial.
-5. Signed completion manifest, evidence chain, verifier receipt, and Stop gate.
-6. Evidence-bound Release Grant V3 with canonical Push Executor and settlement.
-7. Signed interruption journal, guarded CAS recovery state, quarantine, and honest irreversible outcomes.
+Bro Execution Control Plane V2 is merged to `main`.
 
-## Completed finalization gates
+1. Canonical capability registry and unknown-action denial.
+2. Canonical agent identity and exact designated verifier authority.
+3. Verified worktree, CWD, branch, HEAD, full current tree, and exclusive task binding.
+4. Signed one-time execution leases with replay denial and quarantine.
+5. Signed evidence, completion manifest, verifier receipt, and Stop gate.
+6. Release Grant V3 with owner binding and canonical Push Executor.
+7. Signed interruption recovery with guarded CAS and proof-backed settlement.
 
-- Documentation inventory and freshness validation: 59/59 active Markdown and `SKILL.md` files.
-- Independent audit fixed designated-verifier overgrant, duplicate live authorization, untracked-tree omission, non-exclusive lock naming, missing agent/session lock binding, unguarded recovery CAS, and release settlement state binding.
-- Audited code candidate `a8ab286a8f45e34214ec709f6f38e0843b06e791` passed Windows and Ubuntu CI run `29365674292`.
-- Independent artifact audit passed validator and 95/95 tests with no open P0/P1 findings.
-- PR title/body describe the actual implementation.
+Final evidence: Windows and Ubuntu GREEN, independent audit 95/95 tests GREEN, documentation inventory 59/59, and no open P0/P1 findings.
 
-## Remaining release gate
+## Next product phases
 
-- This documentation-only refresh must pass exact-head Windows and Ubuntu CI.
-- Gev must explicitly authorize merge against the exact final HEAD.
-- PR #2 remains draft/open/unmerged until that approval.
+1. **Orchestration runtime:** durable task queue, pack selection, cross-pack task forces, checkpoints, cancellation, retries, and budgets.
+2. **Control Room:** live task/agent status, evidence drill-down, recovery/quarantine views, approvals, and audit timeline.
+3. **Credential and evidence services:** isolate production credentials and deploy external append-only ledgers/evidence storage.
+4. **Operational rollout:** shadow mode, canary tasks, failure drills, monitoring, backup/restore, and operator runbooks.
+5. **Product UX:** command surface, project/task views, agent controls, notifications, and owner approval workflows.
 
-## After owner-approved merge
-
-Only after merge may work begin on orchestration UX, Control Room product surfaces, production credential deployment, external evidence-service hardening, and operational rollout.
+Each phase requires a dedicated branch, draft PR, exact-head CI, independent verification, current documentation, and Gev's explicit merge approval.

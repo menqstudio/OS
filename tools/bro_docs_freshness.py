@@ -4,10 +4,32 @@ import json
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+EXPECTED_REVIEWED_AT = "2026-07-14"
+EXPECTED_BRANCH = "main"
+EXPECTED_MERGED_PR = 2
+EXPECTED_MERGE_COMMIT = "3250d4cc55edc2adf8e5247deab8060983de3b47"
+EXPECTED_STATUS = "execution-control-plane-v2-merged-documentation-current"
 
 
 class DocsError(ValueError):
     pass
+
+
+def validate_manifest_metadata(data: dict) -> None:
+    expected = {
+        "schema": 1,
+        "reviewed_at": EXPECTED_REVIEWED_AT,
+        "branch": EXPECTED_BRANCH,
+        "merged_pr": EXPECTED_MERGED_PR,
+        "merge_commit": EXPECTED_MERGE_COMMIT,
+        "status": EXPECTED_STATUS,
+    }
+    for key, value in expected.items():
+        if data.get(key) != value:
+            raise DocsError(f"documentation manifest metadata stale: {key}")
+    for obsolete in ("pr", "base_sha"):
+        if obsolete in data:
+            raise DocsError(f"documentation manifest contains obsolete metadata: {obsolete}")
 
 
 def validate_docs(root: pathlib.Path = ROOT) -> int:
@@ -16,13 +38,10 @@ def validate_docs(root: pathlib.Path = ROOT) -> int:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise DocsError(f"documentation manifest unreadable: {exc}") from exc
-    if (
-        data.get("schema") != 1
-        or data.get("reviewed_at") != "2026-07-14"
-        or data.get("branch") != "bro-execution-control-plane-v2"
-        or data.get("pr") != 2
-    ):
-        raise DocsError("documentation manifest metadata stale")
+    if not isinstance(data, dict):
+        raise DocsError("documentation manifest must be an object")
+    validate_manifest_metadata(data)
+
     docs = data.get("documents")
     if not isinstance(docs, list) or not docs:
         raise DocsError("documentation manifest empty")
@@ -39,11 +58,26 @@ def validate_docs(root: pathlib.Path = ROOT) -> int:
     )
     if sorted(registered) != actual:
         raise DocsError("documentation inventory differs from manifest")
+
     stale = {
-        "NEXT_CHAT.md": ["bro-agent-os-v1", "draft PR `#1`"],
-        "ROADMAP.md": ["bro-agent-os-v1", "draft PR: `#1`"],
+        "NEXT_CHAT.md": [
+            "Continue only in `menqstudio/Bro` on branch `bro-execution-control-plane-v2`",
+            "draft PR `#2`",
+            "Wait for Gev's explicit merge approval",
+        ],
+        "ROADMAP.md": [
+            "**Branch:** `bro-execution-control-plane-v2`",
+            "**Draft PR:** `#2`",
+            "## Remaining release gate",
+        ],
         "docs/EXECUTION_CONTROL_PLANE_V2_SPEC.md": [
-            "Runtime behavior changed by this commit: None"
+            "owner-approved merge pending",
+            "PR #2 remains draft/open/unmerged",
+            "Runtime behavior changed by this commit: None",
+        ],
+        "README.md": [
+            "The PR remains draft/open/unmerged",
+            "remaining gate is Gev's explicit approval",
         ],
     }
     for rel, needles in stale.items():

@@ -6,59 +6,53 @@
 
 Bro is Gev's single highest-ranking AI conductor. There is exactly one Bro: `bro-000`.
 
-Bro converts requests into governed task contracts, selects the correct pack or cross-pack task force, remains available for new instructions, receives checkpoints, and reports only evidence-backed results.
+Bro converts a request into a governed task contract, selects the correct pack or cross-pack task force, remains available for new instructions, receives checkpoints, and reports only evidence-backed results.
 
 ## Core guarantees
 
 - **One Bro only.** No subordinate role may use the Bro identity.
-- **SST-first architecture.** Every domain has one canonical source registered in `config/sst-registry.json`.
+- **SST-first architecture.** Every domain has one canonical Single Source of Truth registered in `config/sst-registry.json`.
 - **Hard execution gates.** Missing, stale, malformed, conflicting, or unverifiable state fails closed.
-- **Canonical authorization.** Direct tools and shell actions use one capability classifier; unknown actions are denied.
-- **Exact designated verification.** Broad role-name matching is forbidden; medium, high, and critical work cannot self-approve.
-- **Verified repository state.** Mutation binds worktree, CWD, branch, HEAD, tracked and untracked non-ignored files, task, agent, session, and one exclusive worktree lock.
-- **One-time execution.** Signed execution leases reserve atomically, deny replay, and quarantine ambiguity.
-- **Evidence before completion.** Stop requires signed completion evidence and, when required, an independent verifier receipt.
-- **Owner-controlled release.** Only the canonical Push Executor may use Release Grant V3 for an exact push.
+- **Scoped autonomy.** Agents may build only inside governed task boundaries.
+- **Exact designated verification.** No broad role-name substring can grant verifier authority.
+- **Evidence over claims.** Completion and release require signed, current evidence.
+- **Protected release path.** Only the canonical Push Executor may transport an exact owner-approved candidate.
 - **Recovery before GREEN.** Interrupted or ambiguous mutation blocks completion and release until proof-backed recovery or honest quarantine.
 
-## Canonical sources
+## Current production baseline
 
-| Domain | Canonical SST |
-|---|---|
-| Packs | `packs/registry.json` |
-| Agents | `agents/registry.json` |
-| Agent authority | `agents/authority-policy.json` |
-| Skills | `skills/index.json` |
-| Tests | `tests/catalog.json` |
-| Laws | `laws/registry.json` |
-| Schemas | `schemas/registry.json` |
-| Analytics | `analytics/registry.json` |
-| Learning | `learning/registry.json` |
-| Release | `release/registry.json` |
-| Tool capabilities | `tools/registry.json` |
-| Documentation freshness | `config/documentation-manifest.json` |
-| Startup context | `config/canonical-read-manifest.json` |
+Bro Execution Control Plane V2 is merged into `main`.
+
+- merged PR: `#2`
+- approved candidate HEAD: `66788ee5876871d36038d9e19ce54f9fec864684`
+- main merge commit: `3250d4cc55edc2adf8e5247deab8060983de3b47`
+- final CI run: `29365910692`
+- Windows: GREEN
+- Ubuntu: GREEN
+- independent artifact audit: validator GREEN, 95/95 tests GREEN
+- documentation inventory: 59/59
+- open P0/P1 findings at merge: none
 
 ## Operating modes
 
 - **Review:** read and analyze only.
-- **Work:** scoped mutation in a verified task worktree under a signed one-time execution lease; push denied.
+- **Work:** scoped mutation in an isolated verified worktree under signed one-time authority; push denied.
 - **Release:** exact completion/verifier evidence, Release Grant V3, external credential boundary, canonical Push Executor only.
 
-## Validation
+## Start here
 
-```bash
-python tools/bro_validate.py
-python tools/bro_docs_freshness.py
-python -m unittest discover -s tests -v
-```
+1. Read `CLAUDE.md` and `AGENTS.md`.
+2. Load every path from `config/canonical-read-manifest.json`.
+3. Inspect `config/sst-registry.json` before changing any domain object.
+4. Run `python tools/bro_validate.py`.
+5. Run `python tools/bro_docs_freshness.py`.
+6. Run `python -m unittest discover -s tests -v`.
+7. Continue only when the exact repository state is GREEN.
 
-## Current build status — 2026-07-14
+## Next product phase
 
-Security phases 1–7 are implemented. The exact candidate `a8ab286a8f45e34214ec709f6f38e0843b06e791` passed Windows and Ubuntu CI run `29365674292`. Independent artifact audit passed foundation validation, **95/95 tests**, documentation inventory **59/59**, designated-verifier checks, full current-tree identity checks, recovery CAS contention checks, and Release V3 executor-state checks.
+The governance and execution-control foundation is merged. The next scoped phase is orchestration UX and Control Room product surfaces, followed by production credential deployment, external evidence-service hardening, and operational rollout. Each must use a new branch and PR from current `main`.
 
-The PR remains draft/open/unmerged. The remaining gate is Gev's explicit approval bound to the final exact candidate after this documentation-only refresh also passes exact-head CI.
+## Authority
 
-## Boundaries
-
-BroPS is out of scope. Production credential isolation, external evidence-service deployment, and operational rollout remain separate trust-boundary work.
+Gev is the owner. Bro plans, routes, delegates, and reports. Packs execute scoped work. Exact designated verifiers issue evidence-based verdicts. The Push Executor performs only the final transport step and never substitutes for owner approval or verification.
