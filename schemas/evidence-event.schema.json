@@ -7,4 +7,13 @@
   "required": ["schema","event_id","previous_event_hash","task_id","event_type","agent_id","payload_hash","issued_at_epoch","key_id"],
   "properties": {
     "schema": {"const": 1},
-    "event_id": {"type": "string", "
+    "event_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"},
+    "previous_event_hash": {"type": ["string","null"], "pattern": "^[0-9a-f]{64}$"},
+    "task_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"},
+    "event_type": {"type": "string", "minLength": 1},
+    "agent_id": {"type": "string", "pattern": "^agt-p[0-9]{2,}-r[0-9]{2,}$"},
+    "payload_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "issued_at_epoch": {"type": "integer", "minimum": 0},
+    "key_id": {"type": "string", "minLength": 1}
+  }
+}
