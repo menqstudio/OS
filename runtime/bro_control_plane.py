@@ -9,6 +9,7 @@ from bro_authorization import ActionClassification, classify_tool_action
 from bro_contracts import ContractError, validate_agent_profile, validate_task_contract
 from bro_execution_lease import LeaseError, finalize_execution_lease, load_execution_lease_from_env, quarantine_execution_lease, reserve_execution_lease
 from bro_policy import State, authorize_tool as authorize_legacy_tool
+from bro_recovery import RecoveryError, cancel_prepared, prepare_mutation, settle_mutation
 from bro_release_v3 import ReleaseV3Error, authorize_release_push
 from bro_repository_state import RepositoryStateError, verify_repository_binding
 from bro_security import SecurityError
@@ -54,8 +55,8 @@ def _enforce_identity_authority(state: State) -> dict:
 
 
 def _lease(state: State, task: dict, classification: ActionClassification):
-    capabilities = tuple(x for x in classification.capabilities if x not in {"READ_LOCAL", "READ_EXTERNAL", "UNKNOWN"})
-    return load_execution_lease_from_env(task=task, agent_id=state.agent_id, session_id=state.session_id, required_capabilities=capabilities)
+    caps = tuple(x for x in classification.capabilities if x not in {"READ_LOCAL", "READ_EXTERNAL", "UNKNOWN"})
+    return load_execution_lease_from_env(task=task, agent_id=state.agent_id, session_id=state.session_id, required_capabilities=caps)
 
 
 def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: str = "") -> tuple[bool, str]:
@@ -85,27 +86,36 @@ def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: 
     if not allowed:
         return False, reason
     if classification.mutating and state.role != "bro":
+        prepared = False
         try:
+            prepare_mutation(task=task, agent_id=state.agent_id, session_id=state.session_id, tool_use_id=tool_use_id, capabilities=classification.capabilities, targets=classification.targets, tool=classification.tool, action_name=classification.action)
+            prepared = True
             reserve_execution_lease(_lease(state, task, classification), tool_use_id)
-        except LeaseError as exc:
-            return False, f"execution lease gate RED: {exc}"
-    return True, f"allowed by capability kernel ({','.join(classification.capabilities)}); {reason}"
+        except (RecoveryError, LeaseError) as exc:
+            if prepared:
+                try:
+                    cancel_prepared(task["task_id"], tool_use_id)
+                except RecoveryError:
+                    return False, f"transaction gate RED: {exc}; prepared recovery journal could not be cancelled"
+            return False, f"transaction gate RED: {exc}"
+    return True, f"allowed by capability kernel ({','.join(classification.capabilities)}); recovery journal prepared; {reason}"
 
 
 def settle_execution_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: str, *, success: bool, error: str = "") -> tuple[bool, bool, str]:
     try:
         classification = classify_request(tool_name, tool_input)
     except SecurityError as exc:
-        return True, False, f"execution lease settlement RED: {exc}"
+        return True, False, f"execution settlement RED: {exc}"
     if classification.push or not classification.mutating or state.role == "bro":
-        return False, True, "not an execution-lease settlement"
+        return False, True, "not a governed mutation settlement"
     try:
         task = _enforce_identity_authority(state)
+        recovery_green, recovery_message = settle_mutation(task["task_id"], tool_use_id, success=success, error=error)
         lease = _lease(state, task, classification)
         if success:
             finalize_execution_lease(lease, tool_use_id)
-            return True, True, "execution lease consumed"
+            return True, recovery_green, f"execution lease consumed; {recovery_message}"
         quarantine_execution_lease(lease, tool_use_id, error or "mutation outcome ambiguous")
-        return True, False, "execution lease quarantined pending recovery"
-    except (AuthorityError, ContractError, LeaseError) as exc:
-        return True, False, f"execution lease settlement RED: {exc}"
+        return True, False, f"execution lease quarantined; {recovery_message}"
+    except (AuthorityError, ContractError, LeaseError, RecoveryError) as exc:
+        return True, False, f"execution/recovery settlement RED: {exc}"
