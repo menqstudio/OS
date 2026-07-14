@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bro.local/schemas/evidence-event.schema.json",
+  "title": "Bro Evidence Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema","event_id","previous_event_hash","task_id","event_type","agent_id","payload_hash","issued_at_epoch","key_id"],
+  "properties": {
+    "schema": {"const": 1},
+    "event_id": {"type": "string", "
