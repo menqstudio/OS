@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import subprocess
+from contextlib import contextmanager
 from typing import Any
 
 from bro_contracts import canonical_json_sha256
@@ -63,9 +64,33 @@ def snapshot(root: pathlib.Path = ROOT) -> dict[str, str]:
     return {"head": state.head_sha, "tree": state.tree_identity, "status_hash": _status_hash(root)}
 
 
-def _load_state(task_id: str) -> dict[str, Any] | None:
+def _load_state_unlocked(task_id: str) -> dict[str, Any] | None:
     path = _state_path(task_id)
     return _json(path) if path.exists() else None
+
+
+def _load_state(task_id: str) -> dict[str, Any] | None:
+    return _load_state_unlocked(task_id)
+
+
+@contextmanager
+def _state_guard(task_id: str):
+    lock = _state_path(task_id).with_suffix(".lock")
+    try:
+        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise RecoveryError("recovery state is busy or an interrupted transition requires reconciliation") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"task_id_sha256": hashlib.sha256(task_id.encode()).hexdigest()}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        yield
+    finally:
+        try:
+            lock.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def assert_recovery_clear(task_id: str) -> None:
@@ -76,15 +101,25 @@ def assert_recovery_clear(task_id: str) -> None:
 
 def _write_cas(task_id: str, expected_version: int, value: dict[str, Any]) -> None:
     path = _state_path(task_id)
-    current = _load_state(task_id)
-    actual = int(current.get("state_version", 0)) if current else 0
-    if actual != expected_version:
-        raise RecoveryError(f"stale recovery state version: expected {expected_version}, actual {actual}")
-    value = dict(value)
-    value["state_version"] = expected_version + 1
-    temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
-    os.replace(temp, path)
+    with _state_guard(task_id):
+        current = _load_state_unlocked(task_id)
+        actual = int(current.get("state_version", 0)) if current else 0
+        if actual != expected_version:
+            raise RecoveryError(f"stale recovery state version: expected {expected_version}, actual {actual}")
+        next_value = dict(value)
+        next_value["state_version"] = expected_version + 1
+        temp = path.with_suffix(f".{os.getpid()}.tmp")
+        try:
+            with temp.open("w", encoding="utf-8") as handle:
+                json.dump(next_value, handle, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, path)
+        finally:
+            try:
+                temp.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _signed_record() -> dict[str, Any]:
@@ -125,13 +160,14 @@ def prepare_mutation(*, task: dict[str, Any], agent_id: str, session_id: str, to
 
 
 def cancel_prepared(task_id: str, tool_use_id: str) -> None:
-    state = _load_state(task_id)
-    if not state or state.get("phase") != "PREPARED" or state.get("tool_use_id") != tool_use_id:
-        raise RecoveryError("matching prepared recovery record is missing")
-    try:
-        _state_path(task_id).unlink()
-    except OSError as exc:
-        raise RecoveryError("failed to cancel unexecuted recovery journal") from exc
+    with _state_guard(task_id):
+        state = _load_state_unlocked(task_id)
+        if not state or state.get("phase") != "PREPARED" or state.get("tool_use_id") != tool_use_id:
+            raise RecoveryError("matching prepared recovery record is missing")
+        try:
+            _state_path(task_id).unlink()
+        except OSError as exc:
+            raise RecoveryError("failed to cancel unexecuted recovery journal") from exc
 
 
 def settle_mutation(task_id: str, tool_use_id: str, *, success: bool, error: str = "") -> tuple[bool, str]:
