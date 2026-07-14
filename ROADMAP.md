@@ -10,22 +10,26 @@
 
 1. Tool capability registry, unified classification, unknown-action deny.
 2. Canonical agent identity, exact designated verifier authority, independence checks.
-3. Verified worktree, CWD, branch, HEAD, tree and active-task binding.
+3. Verified worktree, CWD, branch, HEAD, full current tree, and exclusive worktree-task binding.
 4. Signed one-time execution leases with atomic reservation and replay denial.
-5. Signed completion manifest, evidence chain, verifier receipt and Stop gate.
+5. Signed completion manifest, evidence chain, verifier receipt, and Stop gate.
 6. Evidence-bound Release Grant V3 with canonical Push Executor and settlement.
-7. Signed interruption journal, CAS recovery state, quarantine and honest irreversible outcomes.
+7. Signed interruption journal, guarded CAS recovery state, quarantine, and honest irreversible outcomes.
 
-All seven phases require exact-head Windows and Ubuntu CI GREEN. An older successful run is not evidence for a newer HEAD.
+## Completed finalization gates
 
-## Finalization gates
+- Documentation inventory and freshness validation: 59/59 active Markdown and `SKILL.md` files.
+- Independent audit fixed designated-verifier overgrant, duplicate live authorization, untracked-tree omission, non-exclusive lock naming, missing agent/session lock binding, unguarded recovery CAS, and release settlement state binding.
+- Audited code candidate `a8ab286a8f45e34214ec709f6f38e0843b06e791` passed Windows and Ubuntu CI run `29365674292`.
+- Independent artifact audit passed validator and 95/95 tests with no open P0/P1 findings.
+- PR title/body describe the actual implementation.
 
-- Full documentation inventory and freshness validator GREEN.
-- Independent exact-head audit finds no open P0/P1 issue.
-- PR title/body accurately describe the actual implementation.
-- Final exact-head CI GREEN after all audit and documentation fixes.
-- Gev explicitly authorizes merge.
+## Remaining release gate
 
-## After merge
+- This documentation-only refresh must pass exact-head Windows and Ubuntu CI.
+- Gev must explicitly authorize merge against the exact final HEAD.
+- PR #2 remains draft/open/unmerged until that approval.
 
-Only after all gates and owner approval may work begin on orchestration UX, Control Room product surfaces, production credential deployment, and external evidence-service hardening.
+## After owner-approved merge
+
+Only after merge may work begin on orchestration UX, Control Room product surfaces, production credential deployment, external evidence-service hardening, and operational rollout.
