@@ -18,6 +18,8 @@
     "docs/ANALYTICS_CONTROL_PLANE.md",
     "agents/README.md",
     "packs/README.md",
-    "skills/README.md"
+    "skills/README.md",
+    "docs/ORCHESTRATION_CONTROL_ROOM_V1_SPEC.md",
+    "orchestration/registry.json"
   ]
 }
