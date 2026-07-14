@@ -8,6 +8,7 @@ from bro_authority import AuthorityError, resolve_agent_authority, validate_veri
 from bro_authorization import ActionClassification, classify_tool_action
 from bro_contracts import ContractError, validate_agent_profile, validate_task_contract
 from bro_policy import State, authorize_tool as authorize_legacy_tool
+from bro_repository_state import RepositoryStateError, verify_repository_binding
 from bro_security import SecurityError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ def _load_bound_json(env_name: str) -> dict:
     return value
 
 
-def _enforce_identity_authority(state: State) -> None:
+def _enforce_identity_authority(state: State) -> dict:
     task = validate_task_contract(_load_bound_json("BRO_TASK_CONTRACT"), ROOT)
     profile = validate_agent_profile(_load_bound_json("BRO_AGENT_PROFILE"), ROOT)
 
@@ -65,6 +66,7 @@ def _enforce_identity_authority(state: State) -> None:
             risk=task["risk"],
             root=ROOT,
         )
+    return task
 
 
 def authorize_tool(
@@ -88,9 +90,12 @@ def authorize_tool(
 
     if classification.mutating and state.role != "bro":
         try:
-            _enforce_identity_authority(state)
+            task = _enforce_identity_authority(state)
+            verify_repository_binding(task, root=ROOT)
         except (AuthorityError, ContractError) as exc:
             return False, f"canonical identity/authority gate RED: {exc}"
+        except RepositoryStateError as exc:
+            return False, f"repository binding gate RED: {exc}"
 
     allowed, reason = authorize_legacy_tool(
         state,
