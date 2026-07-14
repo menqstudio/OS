@@ -6,57 +6,42 @@
     {
       "id": "identity-registry",
       "path": "tests/test_bro_identity.py",
-      "covers": [
-        "agent-ids",
-        "pack-count",
-        "ui-gender-boundary"
-      ]
+      "covers": ["agent-ids", "pack-count", "ui-gender-boundary"]
     },
     {
       "id": "policy-boundaries",
       "path": "tests/test_bro_policy.py",
+      "covers": ["review-read-only", "bro-delegation", "push-authority"]
+    },
+    {
+      "id": "authorization-kernel",
+      "path": "tests/test_authorization_kernel.py",
       "covers": [
-        "review-read-only",
-        "bro-delegation",
-        "push-authority"
+        "tool-capability-registry",
+        "unknown-tool-denial",
+        "normalized-action-classification",
+        "shell-git-capabilities"
       ]
     },
     {
       "id": "contract-gates",
       "path": "tests/test_bro_contracts.py",
-      "covers": [
-        "task-contract",
-        "agent-profile",
-        "skill-receipt",
-        "release-grant"
-      ]
+      "covers": ["task-contract", "agent-profile", "skill-receipt", "release-grant"]
     },
     {
       "id": "analytics-control-plane",
       "path": "tests/test_bro_analytics.py",
-      "covers": [
-        "metrics",
-        "dashboards",
-        "status-contracts"
-      ]
+      "covers": ["metrics", "dashboards", "status-contracts"]
     },
     {
       "id": "skill-evolution",
       "path": "tests/test_skill_evolution.py",
-      "covers": [
-        "independent-review",
-        "owner-approval",
-        "rollback"
-      ]
+      "covers": ["independent-review", "owner-approval", "rollback"]
     },
     {
       "id": "sst-governance",
       "path": "tests/test_sst_registry.py",
-      "covers": [
-        "one-domain-one-source",
-        "existing-sst-paths",
-        "unique-domain-ownership"
-      ]
+      "covers": ["one-domain-one-source", "existing-sst-paths", "unique-domain-ownership"]
     },
     {
       "id": "security-v2",
