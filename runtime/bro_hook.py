@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import sys
 
+from bro_control_plane import authorize_tool
 from bro_policy import (
-    authorize_tool,
     canonical_context,
     current_state,
     read_all,
