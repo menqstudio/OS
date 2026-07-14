@@ -9,6 +9,17 @@
       "covers": ["agent-ids", "pack-count", "ui-gender-boundary"]
     },
     {
+      "id": "authority-identity",
+      "path": "tests/test_authority_identity.py",
+      "covers": [
+        "canonical-builder-id",
+        "canonical-verifier-id",
+        "verifier-role-binding",
+        "verifier-authority",
+        "builder-verifier-separation"
+      ]
+    },
+    {
       "id": "policy-boundaries",
       "path": "tests/test_bro_policy.py",
       "covers": ["review-read-only", "bro-delegation", "push-authority"]
