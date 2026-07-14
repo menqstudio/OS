@@ -16,4 +16,132 @@
     "SPEND",
     "CHANGE_ACCESS",
     "DELETE",
-   
+    "DESTRUCTIVE",
+    "UNKNOWN"
+  ],
+  "tools": [
+    {
+      "name": "Read",
+      "resolver": "direct",
+      "actions": {
+        "read": {
+          "capabilities": ["READ_LOCAL"],
+          "requires_task": false,
+          "requires_scope": false,
+          "requires_work_grant": false
+        }
+      }
+    },
+    {
+      "name": "Glob",
+      "resolver": "direct",
+      "actions": {
+        "search": {
+          "capabilities": ["READ_LOCAL"],
+          "requires_task": false,
+          "requires_scope": false,
+          "requires_work_grant": false
+        }
+      }
+    },
+    {
+      "name": "Grep",
+      "resolver": "direct",
+      "actions": {
+        "search": {
+          "capabilities": ["READ_LOCAL"],
+          "requires_task": false,
+          "requires_scope": false,
+          "requires_work_grant": false
+        }
+      }
+    },
+    {
+      "name": "WebSearch",
+      "resolver": "direct",
+      "actions": {
+        "search": {
+          "capabilities": ["READ_EXTERNAL", "USE_NETWORK"],
+          "requires_task": false,
+          "requires_scope": false,
+          "requires_work_grant": false
+        }
+      }
+    },
+    {
+      "name": "WebFetch",
+      "resolver": "direct",
+      "actions": {
+        "fetch": {
+          "capabilities": ["READ_EXTERNAL", "USE_NETWORK"],
+          "requires_task": false,
+          "requires_scope": false,
+          "requires_work_grant": false
+        }
+      }
+    },
+    {
+      "name": "Write",
+      "resolver": "direct",
+      "actions": {
+        "write": {
+          "capabilities": ["WRITE_REPOSITORY"],
+          "requires_task": true,
+          "requires_scope": true,
+          "requires_work_grant": true
+        }
+      }
+    },
+    {
+      "name": "Edit",
+      "resolver": "direct",
+      "actions": {
+        "edit": {
+          "capabilities": ["WRITE_REPOSITORY"],
+          "requires_task": true,
+          "requires_scope": true,
+          "requires_work_grant": true
+        }
+      }
+    },
+    {
+      "name": "MultiEdit",
+      "resolver": "direct",
+      "actions": {
+        "edit": {
+          "capabilities": ["WRITE_REPOSITORY"],
+          "requires_task": true,
+          "requires_scope": true,
+          "requires_work_grant": true
+        }
+      }
+    },
+    {
+      "name": "NotebookEdit",
+      "resolver": "direct",
+      "actions": {
+        "edit": {
+          "capabilities": ["WRITE_REPOSITORY"],
+          "requires_task": true,
+          "requires_scope": true,
+          "requires_work_grant": true
+        }
+      }
+    },
+    {
+      "name": "Bash",
+      "resolver": "shell",
+      "actions": {}
+    },
+    {
+      "name": "PowerShell",
+      "resolver": "shell",
+      "actions": {}
+    },
+    {
+      "name": "Shell",
+      "resolver": "shell",
+      "actions": {}
+    }
+  ]
+}
