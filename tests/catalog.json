@@ -18,6 +18,7 @@
     {"id":"skill-evolution","path":"tests/test_skill_evolution.py","covers":["independent-review","owner-approval","rollback"]},
     {"id":"sst-governance","path":"tests/test_sst_registry.py","covers":["one-domain-one-source","existing-sst-paths","unique-domain-ownership"]},
     {"id":"security-v2","path":"tests/test_security_v2.py","covers":["signed-mode-grants","shell-aware-git-parser","historical-v2-grants","scope-enforcement","schema-execution"]},
-    {"id":"hook-subprocess","path":"tests/test_hooks_subprocess.py","covers":["stdin-payload","exit-code","review-read","unsigned-work-denial","git-global-option-push-denial"]}
+    {"id":"hook-subprocess","path":"tests/test_hooks_subprocess.py","covers":["stdin-payload","exit-code","review-read","unsigned-work-denial","git-global-option-push-denial"]},
+    {"id":"orchestration-control-room","path":"tests/test_bro_orchestration.py","covers":["orchestration-sst","task-lifecycle","append-only-events","control-room-projection","governed-commands","terminal-state-immutability"]}
   ]
 }
