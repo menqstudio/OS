@@ -7,10 +7,12 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tools"))
 
 from bro_analytics import AnalyticsError, validate_analytics
 from bro_authority import AuthorityError, validate_authority_policy
 from bro_authorization import load_tool_registry
+from bro_docs_freshness import DocsError, validate_docs
 from bro_identity import IdentityError, validate_identity_registry
 from bro_learning import LearningError, validate_learning_registry
 from bro_security import SecurityError
@@ -38,14 +40,15 @@ def main() -> int:
     required = [
         "README.md", "CLAUDE.md", "AGENTS.md", "ROADMAP.md", "NEXT_CHAT.md",
         ".bro/policy.json", ".claude/settings.json", "config/canonical-read-manifest.json",
-        "config/sst-registry.json", "laws/LAW_INDEX.md", "laws/registry.json",
-        "packs/registry.json", "agents/README.md", "agents/registry.json",
-        "agents/authority-policy.json", "skills/index.json", "tests/catalog.json",
-        "schemas/registry.json", "schemas/execution-lease.schema.json",
-        "schemas/evidence-event.schema.json", "schemas/completion-manifest.schema.json",
-        "schemas/verifier-receipt.schema.json", "schemas/recovery-record.schema.json",
-        "schemas/release-grant.schema.json", "analytics/registry.json",
-        "learning/registry.json", "release/registry.json", "tools/registry.json",
+        "config/documentation-manifest.json", "config/sst-registry.json",
+        "laws/LAW_INDEX.md", "laws/registry.json", "packs/registry.json",
+        "agents/README.md", "agents/registry.json", "agents/authority-policy.json",
+        "skills/index.json", "tests/catalog.json", "schemas/registry.json",
+        "schemas/execution-lease.schema.json", "schemas/evidence-event.schema.json",
+        "schemas/completion-manifest.schema.json", "schemas/verifier-receipt.schema.json",
+        "schemas/recovery-record.schema.json", "schemas/release-grant.schema.json",
+        "analytics/registry.json", "learning/registry.json", "release/registry.json",
+        "tools/registry.json", "tools/bro_docs_freshness.py",
         "runtime/bro_policy.py", "runtime/bro_hook.py", "runtime/bro_contracts.py",
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
@@ -100,10 +103,11 @@ def main() -> int:
     try:
         identity = validate_identity_registry(ROOT)
         authority_count = validate_authority_policy(ROOT)
+        docs_count = validate_docs(ROOT)
         analytics = validate_analytics(ROOT)
         validate_learning_registry(ROOT)
         tool_registry = load_tool_registry(ROOT)
-    except (IdentityError, AuthorityError, AnalyticsError, LearningError, SecurityError) as exc:
+    except (IdentityError, AuthorityError, DocsError, AnalyticsError, LearningError, SecurityError) as exc:
         fail(str(exc))
 
     compile_targets = [
@@ -114,6 +118,7 @@ def main() -> int:
         "runtime/bro_control_plane.py", "runtime/bro_repository_state.py",
         "runtime/bro_execution_lease.py", "runtime/bro_completion.py",
         "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
+        "tools/bro_docs_freshness.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
@@ -124,8 +129,8 @@ def main() -> int:
         f"canonical={len(manifest.get('paths', []))}; sst_domains={len(domains)}; "
         f"packs={identity['pack_count']}; agents={identity['agent_count']}; "
         f"authorities={authority_count}; skills={skill_count}; schemas={len(schema_paths)}; "
-        f"metrics={analytics['metrics']}; dashboards={analytics['dashboards']}; "
-        f"tools={len(tool_registry['tools'])}"
+        f"documents={docs_count}; metrics={analytics['metrics']}; "
+        f"dashboards={analytics['dashboards']}; tools={len(tool_registry['tools'])}"
     )
     return 0
 
