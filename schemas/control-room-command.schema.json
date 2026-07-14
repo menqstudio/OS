@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/menqstudio/Bro/schemas/control-room-command.schema.json",
+  "title": "Bro Control Room Command",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "command_id", "task_id", "command", "requested_by_type", "requested_by",
+    "requested_at_epoch", "expires_at_epoch", "expected_task_state", "scope", "reason",
+    "evidence_refs"
+  ],
+  "properties": {
+    "schema": {"const": 1},
+    "command_id": {"$ref": "#/$defs/id"},
+    "task_id": {"$ref": "#/$defs/id"},
+    "command": {"enum": ["approve", "deny", "cancel", "retry", "reassign", "request-verification"]},
+    "requested_by_type": {"enum": ["owner", "bro"]},
+    "requested_by": {"type": "string", "minLength": 1},
+    "requested_at_epoch": {"type": "integer", "minimum": 0},
+    "expires_at_epoch": {"type": "integer", "minimum": 1},
+    "expected_task_state": {"type": "string", "minLength": 1},
+    "scope": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "reason": {"type": "string", "minLength": 1},
+    "evidence_refs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$"}
+  }
+}
