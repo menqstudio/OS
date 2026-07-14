@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "runtime"))
 
 from bro_completion import CompletionError, _no_pending_recovery
 from bro_contracts import canonical_json_sha256
-from bro_recovery import RecoveryError, _load_state, _write_cas, assert_recovery_clear, prepare_mutation, prove_recovery, settle_mutation
+from bro_recovery import RecoveryError, _load_state, _state_path, _write_cas, assert_recovery_clear, prepare_mutation, prove_recovery, settle_mutation
 
 TASK = {"task_id": "task-recovery-1"}
 ACTION = {"tool":"Write","action":"write","capabilities":["WRITE_REPOSITORY"],"targets":["runtime/x.py"]}
@@ -43,6 +43,13 @@ class RecoveryTests(unittest.TestCase):
         self.prepare()
         with self.assertRaises(RecoveryError):
             _write_cas(TASK["task_id"], 0, record())
+
+    def test_compare_and_swap_fails_closed_when_transition_lock_exists(self):
+        lock = _state_path(TASK["task_id"]).with_suffix(".lock")
+        lock.write_text("busy", encoding="utf-8")
+        with self.assertRaises(RecoveryError):
+            _write_cas(TASK["task_id"], 0, record())
+        self.assertFalse(_state_path(TASK["task_id"]).exists())
 
     def test_success_records_after_state(self):
         self.prepare()
