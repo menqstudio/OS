@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
 from bro_contracts import canonical_json_sha256
-from bro_release_v3 import ReleaseV3Error, validate_release_grant_v3
+from bro_release_v3 import ReleaseV3Error, _validate_executor_state, validate_release_grant_v3
 
 
 def task():
@@ -62,6 +62,17 @@ class ReleaseV3Tests(unittest.TestCase):
     def test_remote_mismatch_is_denied(self):
         value=grant(); value["remote"]="other/repo"
         with self.assertRaises(ReleaseV3Error): self.validate(value)
+
+    def test_release_settlement_requires_canonical_executor_state(self):
+        with patch("bro_release_v3.expected_agent_id", return_value="agt-p01-r01"):
+            _validate_executor_state("agt-p01-r01", "release", "push-executor")
+            for agent, mode, role in [
+                ("wrong", "release", "push-executor"),
+                ("agt-p01-r01", "work", "push-executor"),
+                ("agt-p01-r01", "release", "builder"),
+            ]:
+                with self.assertRaises(ReleaseV3Error):
+                    _validate_executor_state(agent, mode, role)
 
 
 if __name__ == "__main__":
