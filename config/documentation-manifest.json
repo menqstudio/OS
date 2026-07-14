@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "reviewed_at": "2026-07-14",
-  "branch": "bro-execution-control-plane-v2",
-  "pr": 2,
-  "base_sha": "a0f40d5aa3de96f05f2a9f90cdfd0f4e09fa7bca",
-  "status": "implementation-phases-1-through-7-green-pending-final-docs-and-independent-audit",
+  "branch": "main",
+  "merged_pr": 2,
+  "merge_commit": "3250d4cc55edc2adf8e5247deab8060983de3b47",
+  "status": "execution-control-plane-v2-merged-documentation-current",
   "documents": [
     {"path":"AGENTS.md","reviewed":true},
     {"path":"CLAUDE.md","reviewed":true},
