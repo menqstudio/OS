@@ -8,7 +8,7 @@ from bro_authority import AuthorityError, resolve_agent_authority, validate_veri
 from bro_authorization import ActionClassification, classify_tool_action
 from bro_contracts import ContractError, validate_agent_profile, validate_task_contract
 from bro_execution_lease import LeaseError, finalize_execution_lease, load_execution_lease_from_env, quarantine_execution_lease, reserve_execution_lease
-from bro_policy import State, authorize_tool as authorize_legacy_tool
+from bro_policy import State, authorize_classified_action
 from bro_recovery import RecoveryError, cancel_prepared, prepare_mutation, settle_mutation
 from bro_release_v3 import ReleaseV3Error, authorize_release_push
 from bro_repository_state import RepositoryStateError, verify_repository_binding
@@ -82,7 +82,7 @@ def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: 
             return False, f"canonical identity/authority gate RED: {exc}"
         except RepositoryStateError as exc:
             return False, f"repository binding gate RED: {exc}"
-    allowed, reason = authorize_legacy_tool(state, tool_name, tool_input, tool_use_id=tool_use_id)
+    allowed, reason = authorize_classified_action(state, classification, tool_input)
     if not allowed:
         return False, reason
     if classification.mutating and state.role != "bro":
