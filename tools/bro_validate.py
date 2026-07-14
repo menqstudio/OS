@@ -9,8 +9,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
 from bro_analytics import AnalyticsError, validate_analytics
+from bro_authorization import load_tool_registry
 from bro_identity import IdentityError, validate_identity_registry
 from bro_learning import LearningError, validate_learning_registry
+from bro_security import SecurityError
 
 
 def fail(message: str) -> None:
@@ -39,9 +41,11 @@ def main() -> int:
         "packs/registry.json", "agents/README.md", "agents/registry.json",
         "skills/index.json", "tests/catalog.json", "schemas/registry.json",
         "analytics/registry.json", "learning/registry.json", "release/registry.json",
+        "tools/registry.json",
         "runtime/bro_policy.py", "runtime/bro_hook.py", "runtime/bro_contracts.py",
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
+        "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -100,14 +104,17 @@ def main() -> int:
         identity = validate_identity_registry(ROOT)
         analytics = validate_analytics(ROOT)
         validate_learning_registry(ROOT)
-    except (IdentityError, AnalyticsError, LearningError) as exc:
+        tool_registry = load_tool_registry(ROOT)
+    except (IdentityError, AnalyticsError, LearningError, SecurityError) as exc:
         fail(str(exc))
 
-    for rel in [
+    compile_targets = [
         "runtime/bro_policy.py", "runtime/bro_hook.py", "runtime/bro_contracts.py",
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
-    ]:
+        "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
+    ]
+    for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
 
     skill_count = load_json("skills/index.json").get("count")
@@ -117,7 +124,7 @@ def main() -> int:
         f"sst_domains={len(domains)}; packs={identity['pack_count']}; "
         f"agents={identity['agent_count']}; skills={skill_count}; "
         f"schemas={len(schema_paths)}; metrics={analytics['metrics']}; "
-        f"dashboards={analytics['dashboards']}"
+        f"dashboards={analytics['dashboards']}; tools={len(tool_registry['tools'])}"
     )
     return 0
 
