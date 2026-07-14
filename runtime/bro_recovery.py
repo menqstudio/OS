@@ -5,7 +5,6 @@ import json
 import os
 import pathlib
 import subprocess
-import time
 from typing import Any
 
 from bro_contracts import canonical_json_sha256
@@ -48,8 +47,7 @@ def _store() -> pathlib.Path:
 
 
 def _state_path(task_id: str) -> pathlib.Path:
-    safe = hashlib.sha256(task_id.encode()).hexdigest()
-    return _store() / f"{safe}.state.json"
+    return _store() / f"{hashlib.sha256(task_id.encode()).hexdigest()}.state.json"
 
 
 def _status_hash(root: pathlib.Path = ROOT) -> str:
@@ -110,7 +108,7 @@ def validate_prepared_record(*, task: dict[str, Any], agent_id: str, session_id:
     for key, value in expected.items():
         if record.get(key) != value:
             raise RecoveryError(f"prepared recovery binding mismatch: {key}")
-    if record.get("after_head") is not None or record.get("after_tree") is not None or record.get("after_status_hash") is not None:
+    if any(record.get(key) is not None for key in ("after_head", "after_tree", "after_status_hash")):
         raise RecoveryError("prepared recovery record already contains after-state")
     return record
 
@@ -124,6 +122,16 @@ def prepare_mutation(*, task: dict[str, Any], agent_id: str, session_id: str, to
         raise RecoveryError("prepared recovery capability/target mismatch")
     _write_cas(task["task_id"], int(record["state_version"]), record)
     return record
+
+
+def cancel_prepared(task_id: str, tool_use_id: str) -> None:
+    state = _load_state(task_id)
+    if not state or state.get("phase") != "PREPARED" or state.get("tool_use_id") != tool_use_id:
+        raise RecoveryError("matching prepared recovery record is missing")
+    try:
+        _state_path(task_id).unlink()
+    except OSError as exc:
+        raise RecoveryError("failed to cancel unexecuted recovery journal") from exc
 
 
 def settle_mutation(task_id: str, tool_use_id: str, *, success: bool, error: str = "") -> tuple[bool, str]:
@@ -158,7 +166,7 @@ def prove_recovery(task_id: str, proof_hash: str) -> str:
     current = snapshot(ROOT)
     if (current["head"], current["tree"], current["status_hash"]) != (state["before_head"], state["before_tree"], state["before_status_hash"]):
         raise RecoveryError("original repository state has not been restored")
-    if not isinstance(proof_hash, str) or len(proof_hash) != 64:
+    if not isinstance(proof_hash, str) or len(proof_hash) != 64 or any(c not in "0123456789abcdef" for c in proof_hash):
         raise RecoveryError("recovery proof hash invalid")
     next_state = dict(state)
     next_state.update({"phase":"REWORK_REQUIRED","recovery_proof_hash":proof_hash})
