@@ -1,59 +1,33 @@
-# Next Chat Handoff
+# Bro V2 Owner-Approval Handoff — 2026-07-14
 
-## Mission
+Continue only in `menqstudio/Bro` on branch `bro-execution-control-plane-v2`, draft PR `#2`. Do not touch BroPS. Do not merge without Gev's explicit approval.
 
-Continue the clean Bro Agent OS build in `menqstudio/Bro` without touching BroPS. Work only on branch `bro-agent-os-v1` and draft PR `#1`. Do not merge.
+## Verified implementation
 
-## Mandatory startup
+- Security phases 1–7 implemented.
+- Canonical capability classifier and unknown-action deny.
+- Exact designated verifier authority; no broad substring grants.
+- Repository binding covers worktree, CWD, branch, HEAD, tracked and untracked non-ignored files, task, agent, session, and one exclusive worktree lock.
+- Signed one-time execution leases with replay and ambiguity denial.
+- Signed completion manifest, evidence chain, verifier receipt, and Stop gate.
+- Release Grant V3 with canonical Push Executor and settlement reconciliation.
+- Signed recovery journal with guarded CAS, proof-backed recovery, quarantine, and honest irreversible outcomes.
+- Documentation inventory is complete: 59/59 Markdown and `SKILL.md` files.
 
-1. Read the complete repository to EOF.
-2. Read `CLAUDE.md`, `AGENTS.md`, `README.md`, `ROADMAP.md`, and every path in `config/canonical-read-manifest.json`.
-3. Read `config/sst-registry.json` before creating or changing any domain object.
-4. Confirm the branch HEAD equals the draft PR HEAD.
-5. Run:
+## Last audited code candidate
 
-```bash
-python tools/bro_validate.py
-python -m unittest discover -s tests -v
-```
+- Candidate: `a8ab286a8f45e34214ec709f6f38e0843b06e791`
+- CI run: `29365674292`
+- Windows: GREEN
+- Ubuntu: GREEN
+- Independent artifact audit: validator GREEN, 95/95 tests GREEN, no open P0/P1 findings.
 
-6. Report the exact baseline before editing. Never claim GREEN from an older SHA.
+## Current mandatory action
 
-## Locked architecture
+1. Confirm the current PR HEAD after this documentation-only refresh.
+2. Require Windows and Ubuntu CI GREEN on that exact HEAD.
+3. Confirm documentation freshness and no code drift from audited candidate except documentation metadata.
+4. Keep PR #2 draft/open/unmerged.
+5. Wait for Gev's explicit merge approval bound to the exact final HEAD.
 
-- Gev is the owner.
-- There is exactly one Bro: `bro-000`.
-- Bro remains available and delegates long or specialist execution.
-- Every subordinate agent has an immutable `agt-pNN-rNN` ID.
-- Every pack must contain exactly one `Automation & Flow Engineer`.
-- UI gender metadata accepts only `M` or `F` and has no authority or routing effect.
-- Agents are dormant by default and spawn event-driven, scheduled, on-demand, or as condition watches.
-- Review is read-only; Work permits scoped commit but no push; Release is Push Executor only with exact owner-bound grant and external credential isolation.
-- Medium, high, and critical work requires an independent verifier.
-- Learning and skill evolution require sandboxing, benchmark evidence, independent review, controlled promotion, monitoring, and rollback.
-
-## SST law
-
-Every domain has one canonical Single Source of Truth registered in `config/sst-registry.json`. Documentation may explain an SST but must not duplicate changing inventory facts. An agent creating or changing a pack, agent, skill, test, law, schema, dashboard, learning rule, release rule, or startup file must update the corresponding SST and its validator/tests in the same scoped change.
-
-## Current verified facts
-
-- Draft PR remains open and unmerged.
-- The branch contains identity, task/skill/release contracts, analytics foundations, skill-evolution foundations, SST registries, and release boundaries.
-- Some older files still require consolidation and exact-head revalidation.
-- `ROADMAP.md` is the execution order and Definition of Done.
-
-## Immediate next task
-
-Execute **ROADMAP Phase 1** completely:
-
-1. consolidate Pack SST into `packs/registry.json`,
-2. preserve all existing agent IDs,
-3. append analytics, mandatory Flow roles, and Learning Intelligence cleanly,
-4. update Agent SST fingerprint/counts,
-5. remove competing registries only after equivalence proof,
-6. update runtime contract lookup to the consolidated SST,
-7. update tests and stale documentation,
-8. run validation and exact-head GitHub Actions.
-
-Do not start skill-body import until Phase 1–3 are GREEN.
+Never merge from an older SHA or infer owner approval from conversation context.

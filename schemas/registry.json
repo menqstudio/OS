@@ -1,45 +1,20 @@
 {
   "schema": 1,
   "schemas": [
-    {
-      "id": "agent-profile",
-      "path": "schemas/agent-profile.schema.json"
-    },
-    {
-      "id": "agent-status",
-      "path": "schemas/agent-status.schema.json"
-    },
-    {
-      "id": "agent-ui",
-      "path": "schemas/agent-ui.schema.json"
-    },
-    {
-      "id": "dashboard-manifest",
-      "path": "schemas/dashboard-manifest.schema.json"
-    },
-    {
-      "id": "metric-contract",
-      "path": "schemas/metric-contract.schema.json"
-    },
-    {
-      "id": "release-grant",
-      "path": "schemas/release-grant.schema.json"
-    },
-    {
-      "id": "skill-evolution-proposal",
-      "path": "schemas/skill-evolution-proposal.schema.json"
-    },
-    {
-      "id": "skill-receipt",
-      "path": "schemas/skill-receipt.schema.json"
-    },
-    {
-      "id": "task-contract",
-      "path": "schemas/task-contract.schema.json"
-    },
-    {
-      "id": "mode-grant",
-      "path": "schemas/mode-grant.schema.json"
-    }
+    {"id": "agent-profile", "path": "schemas/agent-profile.schema.json"},
+    {"id": "agent-status", "path": "schemas/agent-status.schema.json"},
+    {"id": "agent-ui", "path": "schemas/agent-ui.schema.json"},
+    {"id": "completion-manifest", "path": "schemas/completion-manifest.schema.json"},
+    {"id": "dashboard-manifest", "path": "schemas/dashboard-manifest.schema.json"},
+    {"id": "evidence-event", "path": "schemas/evidence-event.schema.json"},
+    {"id": "execution-lease", "path": "schemas/execution-lease.schema.json"},
+    {"id": "metric-contract", "path": "schemas/metric-contract.schema.json"},
+    {"id": "recovery-record", "path": "schemas/recovery-record.schema.json"},
+    {"id": "release-grant", "path": "schemas/release-grant.schema.json"},
+    {"id": "skill-evolution-proposal", "path": "schemas/skill-evolution-proposal.schema.json"},
+    {"id": "skill-receipt", "path": "schemas/skill-receipt.schema.json"},
+    {"id": "task-contract", "path": "schemas/task-contract.schema.json"},
+    {"id": "mode-grant", "path": "schemas/mode-grant.schema.json"},
+    {"id": "verifier-receipt", "path": "schemas/verifier-receipt.schema.json"}
   ]
 }

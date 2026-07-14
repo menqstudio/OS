@@ -3,17 +3,11 @@ from __future__ import annotations
 import json
 import os
 import pathlib
-import re
 import sys
 
+from bro_authorization import classify_tool_action
 from bro_identity import IdentityError, validate_agent_profile_identity
-
-MUTATING_TOOLS = {"Write", "Edit", "NotebookEdit", "MultiEdit"}
-MUTATING_SHELL = re.compile(
-    r"(?ix)(^|[;&|]\s*)(rm|del|erase|rmdir|remove-item|set-content|add-content|out-file|new-item|move-item|copy-item|"
-    r"git\s+(add|commit|push|merge|rebase|reset|checkout|switch|branch|tag|clean)|"
-    r"gh\s+(pr|issue|release|workflow|repo)\b|npm\s+install|pnpm\s+add|yarn\s+add|pip\s+install)\b"
-)
+from bro_security import SecurityError
 
 
 def _payload() -> dict:
@@ -25,16 +19,17 @@ def _payload() -> dict:
 
 
 def _deny(reason: str) -> None:
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
-
-
-def _is_mutation(tool_name: str, tool_input: dict) -> bool:
-    if tool_name in MUTATING_TOOLS:
-        return True
-    if tool_name in {"Bash", "PowerShell", "Shell"}:
-        command = str(tool_input.get("command") or tool_input.get("script") or "")
-        return bool(MUTATING_SHELL.search(command))
-    return False
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }
+            }
+        )
+    )
 
 
 def main() -> int:
@@ -42,8 +37,23 @@ def main() -> int:
     mode = os.getenv("BRO_MODE", "review").strip().lower()
     tool_name = str(data.get("tool_name") or "")
     tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
-    if mode not in {"work", "release"} or not _is_mutation(tool_name, tool_input):
+
+    try:
+        classification = classify_tool_action(tool_name, tool_input)
+    except SecurityError as exc:
+        _deny(f"agent identity gate RED: classifier failed: {exc}")
         return 0
+
+    if classification.unknown:
+        _deny(
+            f"agent identity gate RED: unknown tool/action "
+            f"{classification.tool}:{classification.action}"
+        )
+        return 0
+
+    if mode not in {"work", "release"} or not classification.mutating:
+        return 0
+
     profile_path = os.getenv("BRO_AGENT_PROFILE")
     if not profile_path:
         _deny("agent identity gate RED: missing BRO_AGENT_PROFILE")
@@ -54,6 +64,7 @@ def main() -> int:
     except (OSError, json.JSONDecodeError, IdentityError) as exc:
         _deny(f"agent identity gate RED: {exc}")
         return 0
+
     env_id = os.getenv("BRO_AGENT_ID", "").strip().lower()
     if not env_id:
         _deny("agent identity gate RED: missing BRO_AGENT_ID")
