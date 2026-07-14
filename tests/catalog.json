@@ -20,6 +20,17 @@
       ]
     },
     {
+      "id": "repository-state",
+      "path": "tests/test_repository_state.py",
+      "covers": [
+        "registered-worktree",
+        "cwd-worktree-binding",
+        "branch-head-tree-binding",
+        "main-mutation-denial",
+        "active-task-lock"
+      ]
+    },
+    {
       "id": "policy-boundaries",
       "path": "tests/test_bro_policy.py",
       "covers": ["review-read-only", "bro-delegation", "push-authority"]
