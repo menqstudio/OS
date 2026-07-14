@@ -43,7 +43,8 @@ def main() -> int:
         "agents/authority-policy.json", "skills/index.json", "tests/catalog.json",
         "schemas/registry.json", "schemas/execution-lease.schema.json",
         "schemas/evidence-event.schema.json", "schemas/completion-manifest.schema.json",
-        "schemas/verifier-receipt.schema.json", "analytics/registry.json",
+        "schemas/verifier-receipt.schema.json", "schemas/recovery-record.schema.json",
+        "schemas/release-grant.schema.json", "analytics/registry.json",
         "learning/registry.json", "release/registry.json", "tools/registry.json",
         "runtime/bro_policy.py", "runtime/bro_hook.py", "runtime/bro_contracts.py",
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
@@ -51,6 +52,7 @@ def main() -> int:
         "runtime/bro_authority.py", "runtime/bro_authorization.py",
         "runtime/bro_control_plane.py", "runtime/bro_repository_state.py",
         "runtime/bro_execution_lease.py", "runtime/bro_completion.py",
+        "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -61,8 +63,7 @@ def main() -> int:
         if not (ROOT / rel).is_file():
             fail(f"canonical path missing: {rel}")
 
-    sst = load_json("config/sst-registry.json")
-    domains = sst.get("domains")
+    domains = load_json("config/sst-registry.json").get("domains")
     if not isinstance(domains, list) or not domains:
         fail("SST registry has no domains")
     seen_domains: set[str] = set()
@@ -112,6 +113,7 @@ def main() -> int:
         "runtime/bro_authority.py", "runtime/bro_authorization.py",
         "runtime/bro_control_plane.py", "runtime/bro_repository_state.py",
         "runtime/bro_execution_lease.py", "runtime/bro_completion.py",
+        "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
