@@ -77,7 +77,7 @@ def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: 
     if classification.mutating and state.role != "bro":
         try:
             task = _enforce_identity_authority(state)
-            verify_repository_binding(task, root=ROOT)
+            verify_repository_binding(task, agent_id=state.agent_id, session_id=state.session_id, root=ROOT)
         except (AuthorityError, ContractError) as exc:
             return False, f"canonical identity/authority gate RED: {exc}"
         except RepositoryStateError as exc:
