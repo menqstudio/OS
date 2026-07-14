@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "source": "packs/registry.json",
+  "identity_source": "agents/registry.json",
+  "derivation": "authority is derived from canonical pack role and deterministic agent_id",
+  "risk_order": ["low", "medium", "high", "critical"],
+  "default": {
+    "can_build": true,
+    "can_verify": false,
+    "can_release": false,
+    "allowed_modes": ["review", "work"],
+    "risk_ceiling": "high"
+  },
+  "verifier_role_rules":
