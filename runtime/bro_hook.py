@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sys
 
-from bro_control_plane import authorize_tool
+from bro_control_plane import authorize_tool, settle_execution_tool
 from bro_policy import (
     canonical_context,
     current_state,
@@ -90,11 +90,7 @@ def main() -> int:
                 f"tree={receipt['tree_identity']}. "
             )
         tool_name = str(data.get("tool_name") or "")
-        tool_input = (
-            data.get("tool_input")
-            if isinstance(data.get("tool_input"), dict)
-            else {}
-        )
+        tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
         tool_use_id = str(data.get("tool_use_id") or "")
         allowed, why = authorize_tool(
             state, tool_name, tool_input, tool_use_id=tool_use_id
@@ -115,44 +111,70 @@ def main() -> int:
 
     if event in {"post-tool", "post-tool-failure"}:
         tool_name = str(data.get("tool_name") or "")
-        tool_input = (
-            data.get("tool_input")
-            if isinstance(data.get("tool_input"), dict)
-            else {}
-        )
+        tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
         tool_use_id = str(data.get("tool_use_id") or "")
         success = event == "post-tool"
-        handled, green, message = settle_release_tool(
+        error = str(data.get("error") or "")
+        hook_name = "PostToolUse" if success else "PostToolUseFailure"
+
+        lease_handled, lease_green, lease_message = settle_execution_tool(
             state,
             tool_name,
             tool_input,
             tool_use_id,
             success=success,
-            error=str(data.get("error") or ""),
+            error=error,
         )
-        if not handled:
+        if lease_handled and not lease_green:
+            if success:
+                emit({"decision": "block", "reason": lease_message})
+            else:
+                emit(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": hook_name,
+                            "additionalContext": lease_message,
+                        }
+                    }
+                )
             return 0
-        hook_name = "PostToolUse" if success else "PostToolUseFailure"
-        if green:
-            emit(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": hook_name,
-                        "additionalContext": message,
+
+        release_handled, release_green, release_message = settle_release_tool(
+            state,
+            tool_name,
+            tool_input,
+            tool_use_id,
+            success=success,
+            error=error,
+        )
+        messages = []
+        if lease_handled:
+            messages.append(lease_message)
+        if release_handled:
+            messages.append(release_message)
+        if not release_handled and not lease_handled:
+            return 0
+        if release_handled and not release_green:
+            if success:
+                emit({"decision": "block", "reason": release_message})
+            else:
+                emit(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": hook_name,
+                            "additionalContext": release_message,
+                        }
                     }
+                )
+            return 0
+        emit(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": hook_name,
+                    "additionalContext": "; ".join(messages),
                 }
-            )
-        elif success:
-            emit({"decision": "block", "reason": message})
-        else:
-            emit(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": hook_name,
-                        "additionalContext": message,
-                    }
-                }
-            )
+            }
+        )
         return 0
 
     if event == "stop":
