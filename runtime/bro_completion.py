@@ -9,6 +9,7 @@ from typing import Any
 
 from bro_authority import AuthorityError, validate_verifier_assignment
 from bro_contracts import canonical_json_sha256
+from bro_recovery import RecoveryError, _load_state
 from bro_repository_state import resolve_state
 from bro_security import SecurityError, verify_signed_document
 
@@ -61,16 +62,10 @@ def validate_evidence_chain(task_id: str, event_ids: list[str]) -> str:
     previous = None
     for event_id in event_ids:
         try:
-            payload = verify_signed_document(
-                _json(_external_dir("BRO_EVIDENCE_STORE") / f"{event_id}.json"),
-                "BRO_EVIDENCE_KEY",
-            )
+            payload = verify_signed_document(_json(_external_dir("BRO_EVIDENCE_STORE") / f"{event_id}.json"), "BRO_EVIDENCE_KEY")
         except SecurityError as exc:
             raise CompletionError(str(exc)) from exc
-        required = {
-            "schema", "event_id", "previous_event_hash", "task_id", "event_type",
-            "agent_id", "payload_hash", "issued_at_epoch", "key_id",
-        }
+        required = {"schema", "event_id", "previous_event_hash", "task_id", "event_type", "agent_id", "payload_hash", "issued_at_epoch", "key_id"}
         if set(payload) != required or payload.get("schema") != 1:
             raise CompletionError("invalid evidence event shape")
         if payload["event_id"] != event_id or payload["task_id"] != task_id:
@@ -87,35 +82,31 @@ def _no_pending_execution() -> None:
         raise CompletionError("pending or ambiguous execution lease exists")
 
 
+def _no_pending_recovery(task_id: str) -> None:
+    try:
+        state = _load_state(task_id)
+    except RecoveryError as exc:
+        raise CompletionError(str(exc)) from exc
+    if state and state.get("phase") != "MUTATION_RECORDED":
+        raise CompletionError(f"unresolved recovery state blocks completion: {state.get('phase')}")
+
+
 def _clean_repository(root: pathlib.Path) -> None:
     try:
-        dirty = subprocess.check_output(
-            ["git", "status", "--porcelain"], cwd=root, text=True, encoding="utf-8"
-        ).strip()
+        dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True, encoding="utf-8").strip()
     except (OSError, subprocess.CalledProcessError) as exc:
         raise CompletionError("cannot inspect repository cleanliness") from exc
     if dirty:
         raise CompletionError("repository is dirty")
 
 
-def validate_completion(
-    task: dict[str, Any], agent_id: str, root: pathlib.Path = ROOT
-) -> tuple[dict[str, Any], str]:
+def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path = ROOT) -> tuple[dict[str, Any], str]:
     manifest = _signed_env("BRO_COMPLETION_MANIFEST", "BRO_COMPLETION_KEY")
-    required = {
-        "schema", "task_id", "agent_id", "task_contract_sha256", "candidate_head",
-        "candidate_tree", "done_criteria", "tests", "evidence_event_ids",
-        "open_risks", "rollback_ready", "issued_at_epoch",
-    }
+    required = {"schema", "task_id", "agent_id", "task_contract_sha256", "candidate_head", "candidate_tree", "done_criteria", "tests", "evidence_event_ids", "open_risks", "rollback_ready", "issued_at_epoch"}
     if set(manifest) != required or manifest.get("schema") != 1:
         raise CompletionError("invalid completion manifest shape")
     task_hash = canonical_json_sha256(task)
-    expected = {
-        "task_id": task["task_id"],
-        "agent_id": agent_id,
-        "task_contract_sha256": task_hash,
-    }
-    for key, value in expected.items():
+    for key, value in {"task_id": task["task_id"], "agent_id": agent_id, "task_contract_sha256": task_hash}.items():
         if manifest.get(key) != value:
             raise CompletionError(f"completion manifest binding mismatch: {key}")
     state = resolve_state(root)
@@ -134,33 +125,17 @@ def validate_completion(
     validate_evidence_chain(task["task_id"], manifest["evidence_event_ids"])
     _clean_repository(root)
     _no_pending_execution()
+    _no_pending_recovery(task["task_id"])
     return manifest, task_hash
 
 
-def validate_verifier_receipt(
-    task: dict[str, Any], manifest: dict[str, Any], task_hash: str,
-    root: pathlib.Path = ROOT,
-) -> dict[str, Any]:
+def validate_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], task_hash: str, root: pathlib.Path = ROOT) -> dict[str, Any]:
     receipt = _signed_env("BRO_VERIFIER_RECEIPT", "BRO_VERIFIER_RECEIPT_KEY")
-    required = {
-        "schema", "receipt_id", "task_id", "builder_agent_id", "verifier_agent_id",
-        "verifier_role", "independence_level", "task_contract_sha256",
-        "completion_manifest_sha256", "candidate_head", "candidate_tree",
-        "evidence_event_ids", "verdict", "issued_at_epoch", "expires_at_epoch",
-    }
+    required = {"schema", "receipt_id", "task_id", "builder_agent_id", "verifier_agent_id", "verifier_role", "independence_level", "task_contract_sha256", "completion_manifest_sha256", "candidate_head", "candidate_tree", "evidence_event_ids", "verdict", "issued_at_epoch", "expires_at_epoch"}
     if set(receipt) != required or receipt.get("schema") != 1 or receipt.get("verdict") != "GREEN":
         raise CompletionError("invalid verifier receipt shape or verdict")
     verification = task["verification"]
-    expected = {
-        "task_id": task["task_id"],
-        "builder_agent_id": task["agent_id"],
-        "verifier_agent_id": verification["verifier_agent_id"],
-        "verifier_role": verification["verifier_role"],
-        "task_contract_sha256": task_hash,
-        "completion_manifest_sha256": canonical_json_sha256(manifest),
-        "candidate_head": manifest["candidate_head"],
-        "candidate_tree": manifest["candidate_tree"],
-    }
+    expected = {"task_id": task["task_id"], "builder_agent_id": task["agent_id"], "verifier_agent_id": verification["verifier_agent_id"], "verifier_role": verification["verifier_role"], "task_contract_sha256": task_hash, "completion_manifest_sha256": canonical_json_sha256(manifest), "candidate_head": manifest["candidate_head"], "candidate_tree": manifest["candidate_tree"]}
     for key, value in expected.items():
         if receipt.get(key) != value:
             raise CompletionError(f"verifier receipt binding mismatch: {key}")
@@ -168,13 +143,7 @@ def validate_verifier_receipt(
     if not isinstance(receipt["issued_at_epoch"], int) or not isinstance(receipt["expires_at_epoch"], int) or receipt["expires_at_epoch"] <= now:
         raise CompletionError("verifier receipt expired or invalid")
     try:
-        validate_verifier_assignment(
-            builder_agent_id=task["agent_id"],
-            verifier_agent_id=receipt["verifier_agent_id"],
-            verifier_role=receipt["verifier_role"],
-            risk=task["risk"],
-            root=root,
-        )
+        validate_verifier_assignment(builder_agent_id=task["agent_id"], verifier_agent_id=receipt["verifier_agent_id"], verifier_role=receipt["verifier_role"], risk=task["risk"], root=root)
     except AuthorityError as exc:
         raise CompletionError(str(exc)) from exc
     policy = _json(root / "agents" / "authority-policy.json")
@@ -186,9 +155,7 @@ def validate_verifier_receipt(
     return receipt
 
 
-def authorize_stop(
-    task: dict[str, Any], agent_id: str, root: pathlib.Path = ROOT
-) -> tuple[bool, str]:
+def authorize_stop(task: dict[str, Any], agent_id: str, root: pathlib.Path = ROOT) -> tuple[bool, str]:
     try:
         manifest, task_hash = validate_completion(task, agent_id, root)
         if task["verification"]["required"]:
