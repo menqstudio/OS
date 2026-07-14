@@ -9,6 +9,7 @@
     {"id":"execution-leases","path":"tests/test_execution_leases.py","covers":["signed-execution-lease","exact-binding","expiry-denial","capability-binding","atomic-reservation","replay-denial","ambiguity-quarantine"]},
     {"id":"completion-gate","path":"tests/test_completion_gate.py","covers":["signed-completion-manifest","evidence-chain","dirty-state-denial","pending-lease-denial","signed-verifier-receipt","independence-level","stop-gate"]},
     {"id":"release-v3","path":"tests/test_release_v3.py","covers":["evidence-bound-grant","owner-authority","head-tree-binding","remote-binding","v2-live-denial","expiry-denial"]},
+    {"id":"recovery","path":"tests/test_recovery.py","covers":["pre-mutation-journal","cas-state-version","interruption-blocking","reversible-recovery-proof","unknown-quarantine","irreversible-effect-honesty"]},
     {"id":"policy-boundaries","path":"tests/test_bro_policy.py","covers":["review-read-only","bro-delegation","push-authority"]},
     {"id":"authorization-kernel","path":"tests/test_authorization_kernel.py","covers":["tool-capability-registry","unknown-tool-denial","normalized-action-classification","shell-git-capabilities"]},
     {"id":"contract-gates","path":"tests/test_bro_contracts.py","covers":["task-contract","agent-profile","skill-receipt","release-grant"]},
