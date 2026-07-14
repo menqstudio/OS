@@ -48,6 +48,7 @@ def main() -> int:
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
         "runtime/bro_authority.py", "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
+        "runtime/bro_repository_state.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -116,6 +117,7 @@ def main() -> int:
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
         "runtime/bro_authority.py", "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
+        "runtime/bro_repository_state.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
