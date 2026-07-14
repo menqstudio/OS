@@ -1,4 +1,3 @@
-import json
 import os
 import pathlib
 import sys
@@ -9,6 +8,7 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
+from bro_completion import CompletionError, _no_pending_recovery
 from bro_contracts import canonical_json_sha256
 from bro_recovery import RecoveryError, _load_state, _write_cas, assert_recovery_clear, prepare_mutation, prove_recovery, settle_mutation
 
@@ -51,19 +51,24 @@ class RecoveryTests(unittest.TestCase):
             green, _ = settle_mutation(TASK["task_id"], "toolu_1", success=True)
         self.assertTrue(green)
         self.assertEqual(_load_state(TASK["task_id"])["phase"], "MUTATION_RECORDED")
+        _no_pending_recovery(TASK["task_id"])
 
-    def test_interruption_requires_recovery(self):
+    def test_interruption_requires_recovery_and_blocks_completion(self):
         self.prepare("REVERSIBLE")
         with patch("bro_recovery.snapshot", return_value=BEFORE):
             green, _ = settle_mutation(TASK["task_id"], "toolu_1", success=False, error="interrupted")
         self.assertFalse(green)
         self.assertEqual(_load_state(TASK["task_id"])["phase"], "RECOVERY_REQUIRED")
+        with self.assertRaises(CompletionError):
+            _no_pending_recovery(TASK["task_id"])
 
     def test_unknown_effect_is_quarantined(self):
         self.prepare("UNKNOWN")
         with patch("bro_recovery.snapshot", return_value=BEFORE):
             settle_mutation(TASK["task_id"], "toolu_1", success=False)
         self.assertEqual(_load_state(TASK["task_id"])["phase"], "QUARANTINED")
+        with self.assertRaises(CompletionError):
+            _no_pending_recovery(TASK["task_id"])
 
     def test_irreversible_effect_is_never_marked_restored(self):
         self.prepare("IRREVERSIBLE")
@@ -86,6 +91,8 @@ class RecoveryTests(unittest.TestCase):
             message=prove_recovery(TASK["task_id"], "1"*64)
         self.assertIn("rework", message)
         self.assertEqual(_load_state(TASK["task_id"])["phase"], "REWORK_REQUIRED")
+        with self.assertRaises(CompletionError):
+            _no_pending_recovery(TASK["task_id"])
 
 
 if __name__ == "__main__":
