@@ -1,6 +1,7 @@
 from __future__ import annotations
 import hashlib, json, os, pathlib, re, subprocess, tempfile, time
 from dataclasses import dataclass
+from urllib.parse import urlparse
 from bro_contracts import ContractError, load_contract_bundle_from_env, load_mode_grant_from_env, load_release_grant_v2_from_env
 from bro_security import READ_ONLY_GIT, SecurityError, analyze_command, enforce_scope
 
@@ -22,7 +23,6 @@ def receipt_dir():
 def receipt_path(s): return receipt_dir()/(re.sub(r'[^A-Za-z0-9_.-]','_',s or 'unknown')+'.json')
 def current_state(payload):
  requested=os.getenv('BRO_MODE',load_json(POLICY_PATH)['default_mode']).strip().lower()
- # Environment may request review only. Work/release require signed grants later.
  return State(requested,os.getenv('BRO_ROLE','bro').strip().lower(),str(payload.get('session_id') or os.getenv('BRO_SESSION_ID') or 'unknown'),os.getenv('BRO_AGENT_ID','').strip().lower())
 def read_all(session_id):
  files=tracked_files(); hashes={r:hashlib.sha256((ROOT/r).read_bytes()).hexdigest() for r in files}; canonical=load_json(MANIFEST_PATH)['paths']; missing=[p for p in canonical if p not in hashes]
@@ -51,9 +51,22 @@ def _direct_targets(tool_input):
    for x in v:
     if isinstance(x,str): vals.append(x)
     elif isinstance(x,dict):
-     for q in ('file_path','path'): 
+     for q in ('file_path','path'):
       if isinstance(x.get(q),str): vals.append(x[q])
  return vals
+def _normalize_repo(value):
+ value=str(value or '').strip().replace('\\','/')
+ if value.endswith('.git'): value=value[:-4]
+ if value.startswith('git@') and ':' in value: value=value.split('@',1)[1].replace(':','/',1)
+ elif '://' in value:
+  parsed=urlparse(value); value=(parsed.netloc+parsed.path).lstrip('/')
+ return value.lower()
+def _grant_bindings_ok(grant,bundle):
+ expected_repo=_normalize_repo(bundle.task['repository']['full_name'])
+ actual_repo=_normalize_repo(grant.get('repository'))
+ if actual_repo!=expected_repo:return False,'grant repository binding mismatch'
+ if str(grant.get('branch'))!=str(bundle.task['repository']['branch']):return False,'grant branch binding mismatch'
+ return True,'bound'
 def authorize_tool(state,tool_name,tool_input):
  if state.mode not in {'review','work','release'}: return False,f'unknown BRO_MODE={state.mode!r}'
  infos=[]
@@ -65,6 +78,7 @@ def authorize_tool(state,tool_name,tool_input):
  if state.mode=='review':
   for i in infos:
    if i.executable=='git' and (i.dangerous_config or i.subcommand not in READ_ONLY_GIT): return False,'review mode denies ambiguous or non-read-only git command'
+   if not i.recognized_read_only:return False,'review mode denies unrecognized shell execution'
   if mutation:return False,'review mode is technically read-only'
   return True,'allowed'
  if mutation and state.role=='bro': return False,'Bro remains free and may not perform repository mutation; delegate to a governed specialist'
@@ -74,6 +88,8 @@ def authorize_tool(state,tool_name,tool_input):
  try: grant=load_mode_grant_from_env(bundle,state.session_id,state.role,ROOT)
  except ContractError as e:return False,f'mode grant RED: {e}'
  if grant['mode']!=state.mode:return False,'mode grant does not authorize requested mode'
+ bound,reason=_grant_bindings_ok(grant,bundle)
+ if not bound:return False,reason
  if mutation:
   targets=_direct_targets(tool_input)
   for i in infos:
@@ -83,6 +99,11 @@ def authorize_tool(state,tool_name,tool_input):
  if push:
   if state.mode!='release' or state.role!='push-executor':return False,'push requires release mode and push-executor'
   if os.getenv('BRO_EXTERNAL_RELEASE_BOUNDARY')!='confirmed':return False,'external credential/permission boundary is not confirmed'
-  try: load_release_grant_v2_from_env(ROOT)
+  try: release=load_release_grant_v2_from_env(ROOT)
   except ContractError as e:return False,f'release grant RED: {e}'
+  bound,reason=_grant_bindings_ok(release,bundle)
+  if not bound:return False,reason
+  origin=_normalize_repo(git('config','--get','remote.origin.url'))
+  if _normalize_repo(release.get('remote'))!=origin:return False,'release grant remote binding mismatch'
+  return False,'direct push is disabled until an external post-success nonce finalizer is installed'
  return True,'allowed'
