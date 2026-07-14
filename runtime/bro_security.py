@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-import hashlib, hmac, json, os, pathlib, re, shlex, time
+import hashlib
+import hmac
+import json
+import os
+import pathlib
+import re
+import shlex
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -174,6 +181,18 @@ def analyze_command(command: str) -> list[CommandInfo]:
     return result
 
 
+def validate_exact_push(command: str, branch: str) -> None:
+    segments = split_shell(command)
+    if len(segments) != 1:
+        raise SecurityError("release push must be a single shell segment")
+    tokens = _tokens(segments[0])
+    normalized = [token.strip("\"'") for token in tokens]
+    if len(normalized) != 4 or _exe(normalized[0]) != "git" or normalized[1].lower() != "push":
+        raise SecurityError("release push must be exactly: git push origin HEAD:<branch>")
+    if normalized[2] != "origin" or normalized[3] != f"HEAD:{branch}":
+        raise SecurityError("release push remote/refspec binding mismatch")
+
+
 def normalize_target(root: pathlib.Path, raw: str) -> str:
     raw = raw.strip().strip("\"'")
     if not raw or raw in {".", "./"}:
@@ -206,7 +225,166 @@ def enforce_scope(root: pathlib.Path, targets: list[str], allowed: list[str], pr
             raise SecurityError(f"target outside task scope: {path}")
 
 
+def _nonce_paths(payload: dict[str, Any], ledger_dir: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+    nonce = str(payload.get("nonce", ""))
+    if not re.fullmatch(r"[A-Za-z0-9._-]{16,128}", nonce):
+        raise SecurityError("invalid nonce")
+    digest = hashlib.sha256(nonce.encode()).hexdigest()
+    return (
+        ledger_dir / f"{digest}.reserved",
+        ledger_dir / f"{digest}.used",
+        ledger_dir / f"{digest}.ambiguous",
+    )
+
+
+def _reservation_binding(tool_use_id: str, command: str) -> tuple[str, str]:
+    if not isinstance(tool_use_id, str) or not tool_use_id or len(tool_use_id) > 256:
+        raise SecurityError("invalid tool_use_id")
+    return (
+        hashlib.sha256(tool_use_id.encode()).hexdigest(),
+        hashlib.sha256(command.encode()).hexdigest(),
+    )
+
+
+def _read_reservation(
+    payload: dict[str, Any],
+    ledger_dir: pathlib.Path,
+    tool_use_id: str,
+    command: str,
+) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path, dict[str, Any]]:
+    reserved, used, ambiguous = _nonce_paths(payload, ledger_dir)
+    if used.exists():
+        raise SecurityError("grant nonce already consumed")
+    if ambiguous.exists():
+        raise SecurityError("grant nonce is quarantined for manual reconciliation")
+    try:
+        record = json.loads(reserved.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise SecurityError("grant nonce reservation is missing") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SecurityError("grant nonce reservation is unreadable") from exc
+    tool_hash, command_hash = _reservation_binding(tool_use_id, command)
+    if record.get("tool_use_id_sha256") != tool_hash or record.get("command_sha256") != command_hash:
+        raise SecurityError("grant nonce reservation binding mismatch")
+    return reserved, used, ambiguous, record
+
+
+def reserve_nonce(
+    payload: dict[str, Any],
+    ledger_dir: pathlib.Path,
+    tool_use_id: str,
+    command: str,
+) -> None:
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+    reserved, used, ambiguous = _nonce_paths(payload, ledger_dir)
+    if used.exists():
+        raise SecurityError("grant nonce already consumed")
+    if ambiguous.exists():
+        raise SecurityError("grant nonce is quarantined for manual reconciliation")
+    tool_hash, command_hash = _reservation_binding(tool_use_id, command)
+    record = {
+        "schema": 1,
+        "nonce_sha256": reserved.stem,
+        "tool_use_id_sha256": tool_hash,
+        "command_sha256": command_hash,
+        "expected_head_sha": payload.get("expected_head_sha"),
+        "branch": payload.get("branch"),
+        "reserved_at_epoch": int(time.time()),
+    }
+    try:
+        fd = os.open(reserved, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise SecurityError("grant nonce already reserved") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, sort_keys=True)
+    except Exception:
+        try:
+            reserved.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def finalize_nonce(
+    payload: dict[str, Any],
+    ledger_dir: pathlib.Path,
+    tool_use_id: str,
+    command: str,
+) -> None:
+    reserved, used, _ambiguous, record = _read_reservation(
+        payload, ledger_dir, tool_use_id, command
+    )
+    final = dict(record)
+    final["finalized_at_epoch"] = int(time.time())
+    try:
+        fd = os.open(used, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise SecurityError("grant nonce already consumed") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(final, handle, sort_keys=True)
+    except Exception:
+        try:
+            used.unlink()
+        except OSError:
+            pass
+        raise
+    try:
+        reserved.unlink()
+    except OSError as exc:
+        raise SecurityError("nonce finalized but reservation cleanup failed") from exc
+
+
+def release_nonce_reservation(
+    payload: dict[str, Any],
+    ledger_dir: pathlib.Path,
+    tool_use_id: str,
+    command: str,
+) -> None:
+    reserved, _used, _ambiguous, _record = _read_reservation(
+        payload, ledger_dir, tool_use_id, command
+    )
+    try:
+        reserved.unlink()
+    except OSError as exc:
+        raise SecurityError("failed to release nonce reservation") from exc
+
+
+def quarantine_nonce(
+    payload: dict[str, Any],
+    ledger_dir: pathlib.Path,
+    tool_use_id: str,
+    command: str,
+    reason: str,
+) -> None:
+    reserved, _used, ambiguous, record = _read_reservation(
+        payload, ledger_dir, tool_use_id, command
+    )
+    quarantined = dict(record)
+    quarantined["quarantined_at_epoch"] = int(time.time())
+    quarantined["reason"] = str(reason)[:1000]
+    try:
+        fd = os.open(ambiguous, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise SecurityError("grant nonce is already quarantined") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(quarantined, handle, sort_keys=True)
+    except Exception:
+        try:
+            ambiguous.unlink()
+        except OSError:
+            pass
+        raise
+    try:
+        reserved.unlink()
+    except OSError as exc:
+        raise SecurityError("nonce quarantined but reservation cleanup failed") from exc
+
+
 def consume_nonce(payload: dict[str, Any], ledger_dir: pathlib.Path) -> None:
+    """Legacy helper kept for compatibility; new release flow uses reserve/finalize."""
     ledger_dir.mkdir(parents=True, exist_ok=True)
     nonce = str(payload.get("nonce", ""))
     if not re.fullmatch(r"[A-Za-z0-9._-]{16,128}", nonce):
@@ -216,5 +394,5 @@ def consume_nonce(payload: dict[str, Any], ledger_dir: pathlib.Path) -> None:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError as exc:
         raise SecurityError("grant nonce already consumed") from exc
-    with os.fdopen(fd, "w") as handle:
-        json.dump({"nonce": nonce, "consumed_at_epoch": int(time.time())}, handle)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump({"nonce_sha256": path.stem, "consumed_at_epoch": int(time.time())}, handle)
