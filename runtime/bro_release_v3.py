@@ -134,6 +134,14 @@ def validate_release_grant_v3(
     return payload
 
 
+def _validate_executor_state(state_agent_id: str, state_mode: str, state_role: str) -> None:
+    if state_mode != "release" or state_role != "push-executor":
+        raise ReleaseV3Error("push requires release mode and push-executor")
+    canonical = expected_agent_id("git-release-control", "Push Executor", ROOT)
+    if state_agent_id != canonical:
+        raise ReleaseV3Error("BRO_AGENT_ID is not canonical Push Executor")
+
+
 def authorize_release_push(
     *,
     state_agent_id: str,
@@ -142,11 +150,7 @@ def authorize_release_push(
     command: str,
     tool_use_id: str,
 ) -> tuple[dict[str, Any], pathlib.Path]:
-    if state_mode != "release" or state_role != "push-executor":
-        raise ReleaseV3Error("push requires release mode and push-executor")
-    canonical = expected_agent_id("git-release-control", "Push Executor", ROOT)
-    if state_agent_id != canonical:
-        raise ReleaseV3Error("BRO_AGENT_ID is not canonical Push Executor")
+    _validate_executor_state(state_agent_id, state_mode, state_role)
     if os.getenv("BRO_EXTERNAL_RELEASE_BOUNDARY") != "confirmed":
         raise ReleaseV3Error("external credential/permission boundary is not confirmed")
     task = _task()
@@ -190,7 +194,9 @@ def settle_release_push(
     success: bool,
     error: str = "",
 ) -> tuple[bool, str]:
+    _validate_executor_state(state_agent_id, state_mode, state_role)
     task = _task()
+    validate_exact_push(command, str(task["repository"]["branch"]))
     manifest, task_hash = validate_completion(task, task["agent_id"], ROOT)
     receipt = validate_verifier_receipt(task, manifest, task_hash, ROOT)
     grant = validate_release_grant_v3(
