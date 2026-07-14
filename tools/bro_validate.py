@@ -9,6 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
 from bro_analytics import AnalyticsError, validate_analytics
+from bro_authority import AuthorityError, validate_authority_policy
 from bro_authorization import load_tool_registry
 from bro_identity import IdentityError, validate_identity_registry
 from bro_learning import LearningError, validate_learning_registry
@@ -39,13 +40,14 @@ def main() -> int:
         ".bro/policy.json", ".claude/settings.json", "config/canonical-read-manifest.json",
         "config/sst-registry.json", "laws/LAW_INDEX.md", "laws/registry.json",
         "packs/registry.json", "agents/README.md", "agents/registry.json",
+        "agents/authority-policy.json",
         "skills/index.json", "tests/catalog.json", "schemas/registry.json",
         "analytics/registry.json", "learning/registry.json", "release/registry.json",
         "tools/registry.json",
         "runtime/bro_policy.py", "runtime/bro_hook.py", "runtime/bro_contracts.py",
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
-        "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
+        "runtime/bro_authority.py", "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -102,17 +104,18 @@ def main() -> int:
 
     try:
         identity = validate_identity_registry(ROOT)
+        authority_count = validate_authority_policy(ROOT)
         analytics = validate_analytics(ROOT)
         validate_learning_registry(ROOT)
         tool_registry = load_tool_registry(ROOT)
-    except (IdentityError, AnalyticsError, LearningError, SecurityError) as exc:
+    except (IdentityError, AuthorityError, AnalyticsError, LearningError, SecurityError) as exc:
         fail(str(exc))
 
     compile_targets = [
         "runtime/bro_policy.py", "runtime/bro_hook.py", "runtime/bro_contracts.py",
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
-        "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
+        "runtime/bro_authority.py", "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
@@ -122,7 +125,7 @@ def main() -> int:
         "GREEN: foundation valid; "
         f"canonical={len(manifest.get('paths', []))}; "
         f"sst_domains={len(domains)}; packs={identity['pack_count']}; "
-        f"agents={identity['agent_count']}; skills={skill_count}; "
+        f"agents={identity['agent_count']}; authorities={authority_count}; skills={skill_count}; "
         f"schemas={len(schema_paths)}; metrics={analytics['metrics']}; "
         f"dashboards={analytics['dashboards']}; tools={len(tool_registry['tools'])}"
     )
