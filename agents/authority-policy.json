@@ -1,8 +1,8 @@
 {
-  "schema": 1,
+  "schema": 2,
   "source": "packs/registry.json",
   "identity_source": "agents/registry.json",
-  "derivation": "authority is derived from canonical pack role and deterministic agent_id",
+  "derivation": "default builder authority; designated verifier is the final declared role of each pack with independent_verifier_required=true; exact overrides govern release roles",
   "risk_order": ["low", "medium", "high", "critical"],
   "default": {
     "can_build": true,
@@ -11,8 +11,8 @@
     "allowed_modes": ["review", "work"],
     "risk_ceiling": "high"
   },
-  "verifier_role_rules": {
-    "role_name_contains_any": ["Verifier", "Reviewer", "Auditor", "Evaluator", "Tester", "Quality Controller"],
+  "designated_verifier": {
+    "strategy": "final-declared-role-for-independent-verifier-pack",
     "can_build": false,
     "can_verify": true,
     "can_release": false,
