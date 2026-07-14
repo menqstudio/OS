@@ -42,13 +42,14 @@ def main() -> int:
         "packs/registry.json", "agents/README.md", "agents/registry.json",
         "agents/authority-policy.json",
         "skills/index.json", "tests/catalog.json", "schemas/registry.json",
+        "schemas/execution-lease.schema.json",
         "analytics/registry.json", "learning/registry.json", "release/registry.json",
         "tools/registry.json",
         "runtime/bro_policy.py", "runtime/bro_hook.py", "runtime/bro_contracts.py",
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
         "runtime/bro_authority.py", "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
-        "runtime/bro_repository_state.py",
+        "runtime/bro_repository_state.py", "runtime/bro_execution_lease.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -117,7 +118,7 @@ def main() -> int:
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
         "runtime/bro_authority.py", "runtime/bro_authorization.py", "runtime/bro_control_plane.py",
-        "runtime/bro_repository_state.py",
+        "runtime/bro_repository_state.py", "runtime/bro_execution_lease.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
