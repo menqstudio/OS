@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bro.local/schemas/execution-lease.schema.json",
+  "title": "Bro Execution Lease",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "lease_id",
+    "nonce",
+    "task_id",
+    "agent_id",
+    "session_id",
+    "repository",
+    "branch",
+    "worktree",
+    "head_sha",
+    "tree_identity",
+    "allowed_capabilities",
+    "issued_at_epoch",
+    "expires_at_epoch",
+    "max_tool_calls"
+  ],
+  "properties": {
+    "schema": {"const":
