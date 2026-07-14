@@ -7,6 +7,13 @@ import pathlib
 from bro_authority import AuthorityError, resolve_agent_authority, validate_verifier_assignment
 from bro_authorization import ActionClassification, classify_tool_action
 from bro_contracts import ContractError, validate_agent_profile, validate_task_contract
+from bro_execution_lease import (
+    LeaseError,
+    finalize_execution_lease,
+    load_execution_lease_from_env,
+    quarantine_execution_lease,
+    reserve_execution_lease,
+)
 from bro_policy import State, authorize_tool as authorize_legacy_tool
 from bro_repository_state import RepositoryStateError, verify_repository_binding
 from bro_security import SecurityError
@@ -69,6 +76,27 @@ def _enforce_identity_authority(state: State) -> dict:
     return task
 
 
+def _required_lease_capabilities(classification: ActionClassification) -> tuple[str, ...]:
+    return tuple(
+        capability
+        for capability in classification.capabilities
+        if capability not in {"READ_LOCAL", "READ_EXTERNAL", "UNKNOWN"}
+    )
+
+
+def _load_lease_for_request(
+    state: State,
+    task: dict,
+    classification: ActionClassification,
+):
+    return load_execution_lease_from_env(
+        task=task,
+        agent_id=state.agent_id,
+        session_id=state.session_id,
+        required_capabilities=_required_lease_capabilities(classification),
+    )
+
+
 def authorize_tool(
     state: State,
     tool_name: str,
@@ -88,6 +116,7 @@ def authorize_tool(
             f"{classification.tool}:{classification.action}",
         )
 
+    task = None
     if classification.mutating and state.role != "bro":
         try:
             task = _enforce_identity_authority(state)
@@ -106,5 +135,49 @@ def authorize_tool(
     if not allowed:
         return False, reason
 
+    if classification.mutating and state.role != "bro":
+        try:
+            lease = _load_lease_for_request(state, task, classification)
+            reserve_execution_lease(lease, tool_use_id)
+        except LeaseError as exc:
+            return False, f"execution lease gate RED: {exc}"
+
     capabilities = ",".join(classification.capabilities)
     return True, f"allowed by capability kernel ({capabilities}); {reason}"
+
+
+def settle_execution_tool(
+    state: State,
+    tool_name: str,
+    tool_input: dict,
+    tool_use_id: str,
+    *,
+    success: bool,
+    error: str = "",
+) -> tuple[bool, bool, str]:
+    """Settle a mutation lease after tool completion.
+
+    Returns (handled, green, message). Failures are quarantined because their
+    external or filesystem effect may be ambiguous until recovery proves state.
+    """
+    try:
+        classification = classify_request(tool_name, tool_input)
+    except SecurityError as exc:
+        return True, False, f"execution lease settlement RED: {exc}"
+    if not classification.mutating or state.role == "bro":
+        return False, True, "not a leased mutation"
+
+    try:
+        task = _enforce_identity_authority(state)
+        lease = _load_lease_for_request(state, task, classification)
+        if success:
+            finalize_execution_lease(lease, tool_use_id)
+            return True, True, "execution lease consumed"
+        quarantine_execution_lease(
+            lease,
+            tool_use_id,
+            error or "mutation tool failed with potentially ambiguous effect",
+        )
+        return True, False, "execution lease quarantined pending recovery"
+    except (AuthorityError, ContractError, LeaseError) as exc:
+        return True, False, f"execution lease settlement RED: {exc}"
