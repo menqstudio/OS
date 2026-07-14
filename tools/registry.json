@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "policy": "unknown-tool-or-action-deny",
+  "source": "docs/EXECUTION_CONTROL_PLANE_V2_SPEC.md",
+  "capability_classes": [
+    "READ_LOCAL",
+    "READ_EXTERNAL",
+    "WRITE_REPOSITORY",
+    "WRITE_FILESYSTEM",
+    "WRITE_EXTERNAL",
+    "EXECUTE_CODE",
+    "USE_NETWORK",
+    "USE_CREDENTIAL",
+    "SEND_COMMUNICATION",
+    "PUBLISH",
+    "SPEND",
+    "CHANGE_ACCESS",
+    "DELETE",
+   
