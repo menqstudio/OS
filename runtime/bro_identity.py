@@ -13,11 +13,9 @@ def _load_json(path: pathlib.Path) -> dict[str, Any]:
     return value
 
 def _identity_source(root: pathlib.Path=ROOT):
-    base_registry=_load_json(root/"packs"/"registry.json")
-    extension=_load_json(root/"packs"/"analytics-registry.json")
-    mandatory=_load_json(root/"packs"/"mandatory-roles.json")
-    packs=list(base_registry.get("packs") or []) + list(extension.get("packs") or [])
-    mandatory_roles=mandatory.get("roles")
+    registry=_load_json(root/"packs"/"registry.json")
+    packs=list(registry.get("packs") or [])
+    mandatory_roles=registry.get("mandatory_roles")
     if not isinstance(mandatory_roles,list) or len(mandatory_roles)!=1:
         raise IdentityError("exactly one mandatory pack role policy is required")
     flow=mandatory_roles[0].get("role")
@@ -34,8 +32,8 @@ def _identity_source(root: pathlib.Path=ROOT):
         roles.append(flow)
         if len(roles)!=len(set(roles)): raise IdentityError(f"pack {pid} has duplicate roles")
         source.append({"pack_id":pid,"roles":roles})
-    if len(base_registry.get("packs") or [])!=48 or len(extension.get("packs") or [])!=4:
-        raise IdentityError("pack registry partition count changed")
+    if registry.get("pack_count")!=52 or len(packs)!=52:
+        raise IdentityError("canonical pack count changed")
     return source
 
 def identity_fingerprint(root: pathlib.Path=ROOT):
@@ -65,7 +63,7 @@ def validate_identity_registry(root:pathlib.Path=ROOT):
     if set(reg)!=required: raise IdentityError("agents/registry.json has unexpected or missing keys")
     if reg["schema"]!=2 or reg["bro_id"]!="bro-000": raise IdentityError("invalid Bro identity registry header")
     if reg["specialist_id_pattern"]!=r"^agt-p[0-9]{2,}-r[0-9]{2,}$": raise IdentityError("specialist ID pattern changed")
-    if reg["identity_source"]!="packs/registry.json + packs/analytics-registry.json + packs/mandatory-roles.json": raise IdentityError("identity source changed")
+    if reg["identity_source"]!="packs/registry.json": raise IdentityError("identity source changed")
     if reg["ordinals_are_one_based"] is not True or reg["ordinals_are_immutable"] is not True or reg["ids_are_never_reused"] is not True: raise IdentityError("identity immutability laws failed")
     source=_identity_source(root); ids=all_agent_identities(root)
     if reg["pack_count"]!=len(source) or reg["agent_count"]!=len(ids): raise IdentityError("identity counts mismatch")
