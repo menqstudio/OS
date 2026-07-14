@@ -1,1 +1,11 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"required":["payload","signature"],"properties":{"payload":{"type":"object","additionalProperties":false,"required":["schema","grant_id","nonce","approved_by","repository","remote","branch","expected_head_sha","expected_tree_identity","allowed_action","issued_at_epoch","expires_at_epoch"],"properties":{"schema":{"const":2},"grant_id":{"type":"string"},"nonce":{"type":"string","minLength":16},"approved_by":{"const":"Gev"},"repository":{"type":"string"},"remote":{"type":"string"},"branch":{"type":"string"},"expected_head_sha":{"type":"string","pattern":"^[0-9a-f]{40}$"},"expected_tree_identity":{"type":"string","pattern":"^[0-9a-f]{64}$"},"allowed_action":{"const":"git-push"},"issued_at_epoch":{"type":"integer"},"expires_at_epoch":{"type":"integer"}}},"signature":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bro.local/schemas/release-grant.schema.json",
+  "title": "Bro Release Grant V3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payload", "signature"],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
