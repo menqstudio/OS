@@ -7,14 +7,9 @@ import sys
 
 from bro_completion import authorize_stop
 from bro_contracts import ContractError, validate_task_contract
-from bro_control_plane import authorize_tool, settle_execution_tool
-from bro_policy import (
-    canonical_context,
-    current_state,
-    read_all,
-    receipt_fresh,
-    settle_release_tool,
-)
+from bro_control_plane import authorize_tool, classify_request, settle_execution_tool
+from bro_policy import canonical_context, current_state, read_all, receipt_fresh
+from bro_release_v3 import ReleaseV3Error, settle_release_push
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -51,14 +46,11 @@ def main() -> int:
     event = sys.argv[1] if len(sys.argv) > 1 else ""
     data = payload()
     state = current_state(data)
-
     if event in {"session-start", "subagent-start"}:
         receipt = read_all(state.session_id)
-        context = canonical_context()
-        hook_name = "SessionStart" if event == "session-start" else "SubagentStart"
-        emit({"hookSpecificOutput": {"hookEventName": hook_name, "additionalContext": context + "\nFULL_READ_RECEIPT GREEN " + f"files={receipt['tracked_files']} bytes={receipt['tracked_bytes']} tree={receipt['tree_identity']} mode={state.mode} role={state.role}"}})
+        hook = "SessionStart" if event == "session-start" else "SubagentStart"
+        emit({"hookSpecificOutput": {"hookEventName": hook, "additionalContext": canonical_context() + f"\nFULL_READ_RECEIPT GREEN files={receipt['tracked_files']} bytes={receipt['tracked_bytes']} tree={receipt['tree_identity']} mode={state.mode} role={state.role}"}})
         return 0
-
     if event == "prompt":
         fresh, reason = receipt_fresh(state.session_id)
         if not fresh:
@@ -66,55 +58,50 @@ def main() -> int:
             reason = f"refreshed tree={receipt['tree_identity']}"
         emit({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": f"BRO_MODE={state.mode}; BRO_ROLE={state.role}; literacy={reason}. Bro must remain responsive and delegate execution."}})
         return 0
-
     if event == "pre-tool":
-        fresh, _reason = receipt_fresh(state.session_id)
-        reread_note = ""
+        fresh, _ = receipt_fresh(state.session_id)
+        note = ""
         if not fresh:
             receipt = read_all(state.session_id)
-            reread_note = f"Automatic mandatory reread completed before this tool call: tree={receipt['tree_identity']}. "
-        tool_name = str(data.get("tool_name") or "")
+            note = f"Automatic mandatory reread completed before this tool call: tree={receipt['tree_identity']}. "
+        tool = str(data.get("tool_name") or "")
         tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
-        tool_use_id = str(data.get("tool_use_id") or "")
-        allowed, why = authorize_tool(state, tool_name, tool_input, tool_use_id=tool_use_id)
+        allowed, why = authorize_tool(state, tool, tool_input, tool_use_id=str(data.get("tool_use_id") or ""))
         if not allowed:
-            deny(reread_note + why)
-            return 0
-        if reread_note:
-            emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": reread_note}})
+            deny(note + why)
+        elif note:
+            emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": note}})
         return 0
-
     if event in {"post-tool", "post-tool-failure"}:
-        tool_name = str(data.get("tool_name") or "")
+        tool = str(data.get("tool_name") or "")
         tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
         tool_use_id = str(data.get("tool_use_id") or "")
         success = event == "post-tool"
         error = str(data.get("error") or "")
-        hook_name = "PostToolUse" if success else "PostToolUseFailure"
-        lease_handled, lease_green, lease_message = settle_execution_tool(state, tool_name, tool_input, tool_use_id, success=success, error=error)
-        if lease_handled and not lease_green:
-            if success:
-                emit({"decision": "block", "reason": lease_message})
+        hook = "PostToolUse" if success else "PostToolUseFailure"
+        try:
+            classification = classify_request(tool, tool_input)
+        except Exception:
+            classification = None
+        if classification is not None and classification.push:
+            command = str(tool_input.get("command") or tool_input.get("script") or "")
+            try:
+                green, message = settle_release_push(state_agent_id=state.agent_id, state_mode=state.mode, state_role=state.role, command=command, tool_use_id=tool_use_id, success=success, error=error)
+            except ReleaseV3Error as exc:
+                green, message = False, f"Release Grant V3 settlement RED: {exc}"
+            if not green and success:
+                emit({"decision": "block", "reason": message})
             else:
-                emit({"hookSpecificOutput": {"hookEventName": hook_name, "additionalContext": lease_message}})
+                emit({"hookSpecificOutput": {"hookEventName": hook, "additionalContext": message}})
             return 0
-        release_handled, release_green, release_message = settle_release_tool(state, tool_name, tool_input, tool_use_id, success=success, error=error)
-        messages = []
-        if lease_handled:
-            messages.append(lease_message)
-        if release_handled:
-            messages.append(release_message)
-        if not release_handled and not lease_handled:
+        handled, green, message = settle_execution_tool(state, tool, tool_input, tool_use_id, success=success, error=error)
+        if not handled:
             return 0
-        if release_handled and not release_green:
-            if success:
-                emit({"decision": "block", "reason": release_message})
-            else:
-                emit({"hookSpecificOutput": {"hookEventName": hook_name, "additionalContext": release_message}})
-            return 0
-        emit({"hookSpecificOutput": {"hookEventName": hook_name, "additionalContext": "; ".join(messages)}})
+        if not green and success:
+            emit({"decision": "block", "reason": message})
+        else:
+            emit({"hookSpecificOutput": {"hookEventName": hook, "additionalContext": message}})
         return 0
-
     if event == "stop":
         fresh, reason = receipt_fresh(state.session_id)
         if not fresh:
@@ -126,12 +113,8 @@ def main() -> int:
             emit({"decision": "block", "reason": f"completion gate RED: {exc}"})
             return 0
         allowed, why = authorize_stop(task, state.agent_id, ROOT)
-        if not allowed:
-            emit({"decision": "block", "reason": why})
-        else:
-            emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": why}})
+        emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": why}} if allowed else {"decision": "block", "reason": why})
         return 0
-
     return 0
 
 
