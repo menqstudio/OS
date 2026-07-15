@@ -1,14 +1,14 @@
 # Bro Orchestration Runtime V1 — Foundation Specification
 
-**Status:** implementation active in PR #6  
+**Status:** merged to `main`  
 **Reviewed:** 2026-07-15  
 **Repository:** `menqstudio/Bro`  
-**Baseline:** `main` at `b5d1a343a8777738d4113e3e28cf27527f04020a`  
-**Branch:** `orchestration-runtime-v1`
+**Approved candidate HEAD:** `65f95171853cecacbfdff98be8e15884c1029909`  
+**Merge commit:** `2395570bc9571e6c721373751a6dbfa2b6a8f75b`
 
 ## Purpose
 
-Implement the first durable runtime layer above the merged orchestration SST without changing lifecycle truth or weakening the Execution Control Plane V2 boundary.
+The first durable runtime layer above the canonical orchestration SST is merged without changing lifecycle truth or weakening the Execution Control Plane V2 boundary.
 
 ## Runtime state boundary
 
@@ -17,7 +17,7 @@ Runtime state is stored outside Git. Repository files remain policy, schema, val
 Each task contains:
 
 - one validated immutable task contract;
-- append-only hash-chained runtime records;
+- append-only SHA-256 chained runtime records;
 - lifecycle transitions validated against `orchestration/registry.json`;
 - queue, checkpoint, budget, cancellation, recovery, and integrity evidence.
 
@@ -64,23 +64,34 @@ Task records form a SHA-256 chain. Sequence gaps, identity mismatches, previous-
 
 Control Room projections are derived from validated transition records. Empty or unverifiable state is never GREEN.
 
-## Included implementation
+## Merged implementation
 
 - `runtime/bro_orchestration_runtime.py`
 - `runtime/bro_orchestration_runtime_v1.py`
 - `tests/test_orchestration_runtime.py`
 - `tests/test_orchestration_runtime_claims.py`
 
+## Verification evidence
+
+- exact candidate HEAD: `65f95171853cecacbfdff98be8e15884c1029909`
+- GitHub Actions run `29392001475`: Windows GREEN and Ubuntu GREEN
+- exact artifact digest: `sha256:2a8c9e0150a335f5be1a4b982f59162f28fb2ce957f8dbd8f13aaad5f2f27b8a`
+- independent real-worktree audit: foundation GREEN; documentation freshness GREEN
+- runtime targeted tests: 14/14 GREEN
+- full unique suite: 116/116 GREEN
+- documentation inventory at merge: 61/61
+- open P0/P1 findings at merge: none
+
+## Next phase
+
+The next scoped phase is **Control Room API V1**: governed read-only endpoints over validated runtime projections, evidence drill-down, task/agent/queue views, approval inbox, recovery/quarantine views, audit timeline, and command-intent validation.
+
 ## Out of scope
 
 - distributed database or network queue deployment;
-- Control Room API or visual UI;
+- Control Room visual UI;
 - production credentials;
-- external append-only evidence service;
+- external append-only evidence service deployment;
 - autonomous production release;
 - BroPS changes;
 - deployment or production rollout.
-
-## Merge gate
-
-The exact final HEAD requires Windows and Ubuntu GREEN, independent artifact audit, complete documentation inventory, no open P0/P1 findings, and Gev's explicit merge approval.
