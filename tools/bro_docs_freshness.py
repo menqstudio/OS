@@ -6,9 +6,9 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXPECTED_REVIEWED_AT = "2026-07-15"
 EXPECTED_BRANCH = "main"
-EXPECTED_MERGED_PR = 4
-EXPECTED_MERGE_COMMIT = "61bf9bc4a42b512926bf848b79a0cac063196993"
-EXPECTED_STATUS = "orchestration-control-room-v1-contracts-merged-runtime-phase2-next"
+EXPECTED_MERGED_PR = 6
+EXPECTED_MERGE_COMMIT = "2395570bc9571e6c721373751a6dbfa2b6a8f75b"
+EXPECTED_STATUS = "orchestration-runtime-v1-foundation-merged-control-room-api-v1-next"
 
 
 class DocsError(ValueError):
@@ -45,41 +45,39 @@ def validate_docs(root: pathlib.Path = ROOT) -> int:
     docs = data.get("documents")
     if not isinstance(docs, list) or not docs:
         raise DocsError("documentation manifest empty")
-    registered = [
-        item.get("path")
-        for item in docs
-        if isinstance(item, dict) and item.get("reviewed") is True
-    ]
+    registered = [item.get("path") for item in docs if isinstance(item, dict) and item.get("reviewed") is True]
     actual = sorted(
         str(path.relative_to(root)).replace("\\", "/")
         for path in root.rglob("*")
-        if path.is_file()
-        and (path.suffix.lower() in {".md", ".markdown"} or path.name == "SKILL.md")
+        if path.is_file() and (path.suffix.lower() in {".md", ".markdown"} or path.name == "SKILL.md")
     )
     if sorted(registered) != actual:
         raise DocsError("documentation inventory differs from manifest")
 
     stale = {
         "README.md": [
-            "merged PR: `#2`",
-            "main merge commit: `3250d4cc55edc2adf8e5247deab8060983de3b47`",
-            "orchestration UX and Control Room product surfaces",
+            "merged PR: `#4`",
+            "main merge commit: `61bf9bc4a42b512926bf848b79a0cac063196993`",
+            "The next scoped phase is **Orchestration Runtime V1**",
         ],
         "NEXT_CHAT.md": [
-            "PR `#2` is closed and merged",
-            "main merge commit: `3250d4cc55edc2adf8e5247deab8060983de3b47`",
-            "orchestration UX and Control Room surfaces",
+            "PR `#4` is closed and merged",
+            "main merge commit: `61bf9bc4a42b512926bf848b79a0cac063196993`",
+            "Start **Orchestration Runtime V1**",
         ],
         "ROADMAP.md": [
-            "**Merged PR:** `#2`",
-            "**Merge commit:** `3250d4cc55edc2adf8e5247deab8060983de3b47`",
-            "Bro Execution Control Plane V2 is merged to `main`.",
+            "**Merged PR:** `#4`",
+            "**Merge commit:** `61bf9bc4a42b512926bf848b79a0cac063196993`",
+            "1. **Orchestration Runtime V1:**",
+        ],
+        "docs/ORCHESTRATION_RUNTIME_V1_SPEC.md": [
+            "implementation active in PR #6",
+            "**Baseline:** `main` at `b5d1a343a8777738d4113e3e28cf27527f04020a`",
+            "**Branch:** `orchestration-runtime-v1`",
         ],
         "docs/ORCHESTRATION_CONTROL_ROOM_V1_SPEC.md": [
-            "independent audit in progress",
-            "IMPLEMENTED IN THIS PR",
-            "PR remains unmerged",
-            "**Baseline:** `main` at `bec6c77f622065ee302acf23d26d4c73329a400a`",
+            "Phase 2 is **Orchestration Runtime V1**",
+            "It does not include the durable runtime",
         ],
     }
     for rel, needles in stale.items():
