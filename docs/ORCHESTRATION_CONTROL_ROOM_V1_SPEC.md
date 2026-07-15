@@ -10,7 +10,7 @@
 
 Define the first owner-facing product layer above the merged Execution Control Plane V2 without weakening its security boundaries.
 
-Phase 0 specification and Phase 1 canonical orchestration contracts are complete and merged. This baseline includes the orchestration SST, event and command schemas, deterministic Control Room projection, validator wiring, negative tests, and canonical registry integration. Orchestration Runtime V1 foundation was subsequently merged in PR #6. Governed API endpoints, visual UI, production credentials, external evidence services, deployment, and production automation remain separate scopes.
+Phase 0 specification and Phase 1 canonical orchestration contracts are complete and merged. This baseline includes the orchestration SST, event and command schemas, deterministic Control Room projection, validator wiring, negative tests, and canonical registry integration. Orchestration Runtime V1 foundation was subsequently merged in PR #6, and the governed read-only Control Room API V1 was merged in PR #8. Visual UI, production credentials, external evidence services, deployment, and production automation remain separate scopes.
 
 ## 2. Locked actors
 
@@ -52,15 +52,10 @@ Control Room remains read-first. V1 command contracts cover approve, deny, cance
 
 Orchestration Runtime V1 foundation is merged in PR #6 at merge commit `2395570bc9571e6c721373751a6dbfa2b6a8f75b`. It implements durable task contracts, append-only hash-chained records, deterministic queue claims, cross-process serialization, expiring leases, checkpoints, budgets, cancellation, recovery, projections, and integrity checks.
 
-## 7. Next phase
+## 7. Subsequent API merge
 
-The next scoped phase is **Control Room API V1**:
+Control Room API V1 is merged in PR #8 at merge commit `f736bce585e0e911c36a73d0181c8eb4ef3aebef`. It exposes integrity-bound mission, task, queue, canonical agent, checkpoint, budget, approval, recovery/quarantine, and audit read models plus validation-only command intent.
 
-- governed read-only endpoints over validated runtime state;
-- mission overview and task-detail projections;
-- task, queue, agent, checkpoint, budget, recovery, quarantine, and audit views;
-- evidence source, freshness, and drill-down metadata;
-- approval inbox read model;
-- validated command intents without direct repository, credential, evidence-ledger, release, or production mutation.
+## 8. Next phase
 
-Visual UI, production credentials, external evidence-service deployment, distributed queue/database deployment, BroPS, deployment, and production rollout remain separate scopes.
+The next scoped phase is **Control Room visual surfaces V1**. It must consume the merged API without creating competing lifecycle, authorization, integrity, or mutation truth. Production credentials, external evidence-service deployment, distributed queue/database deployment, direct repository/release mutation, BroPS, deployment, and production rollout remain separate scopes.
