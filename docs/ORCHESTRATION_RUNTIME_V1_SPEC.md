@@ -84,12 +84,11 @@ Control Room projections are derived from validated transition records. Empty or
 
 ## Next phase
 
-The next scoped phase is **Control Room API V1**: governed read-only endpoints over validated runtime projections, evidence drill-down, task/agent/queue views, approval inbox, recovery/quarantine views, audit timeline, and command-intent validation.
+Control Room API V1 was subsequently merged in PR #8 at merge commit `f736bce585e0e911c36a73d0181c8eb4ef3aebef`. The next scoped phase is **Control Room visual surfaces V1**, consuming the merged API without redefining runtime or policy truth.
 
 ## Out of scope
 
 - distributed database or network queue deployment;
-- Control Room visual UI;
 - production credentials;
 - external append-only evidence service deployment;
 - autonomous production release;

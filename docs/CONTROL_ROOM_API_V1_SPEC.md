@@ -1,10 +1,10 @@
 # Bro Control Room API V1 — Foundation Specification
 
-**Status:** implementation active in draft PR #8  
+**Status:** merged to `main` in PR #8  
 **Reviewed:** 2026-07-15  
 **Repository:** `menqstudio/Bro`  
-**Baseline:** `main` at `6bb29bd61b171757a6aaef016fbd46e8b970ada9`  
-**Branch:** `control-room-api-v1`
+**Approved candidate HEAD:** `f2c457a675248eb805c02889509a40d8a5e1c520`  
+**Merge commit:** `f736bce585e0e911c36a73d0181c8eb4ef3aebef`
 
 ## Purpose
 
@@ -71,6 +71,18 @@ Validation returns `executed: false` and `mutation_authorized: false`. It cannot
 - BroPS changes;
 - deployment or production rollout.
 
-## Merge gate
+## Verification evidence
 
-The exact final candidate HEAD requires Windows and Ubuntu GREEN, independent exact-head artifact audit, complete documentation inventory, no open P0/P1 findings, and Gev's explicit merge approval bound to that exact HEAD.
+- exact candidate HEAD: `f2c457a675248eb805c02889509a40d8a5e1c520`
+- GitHub Actions run `29434543079`: Windows GREEN and Ubuntu GREEN
+- exact artifact digest: `sha256:3f5d944b6aceea4084b7a1836da3dff1e98e6562bbeedb4a9f9ad0edf1c00ae1`
+- independent exact-head real-worktree audit: foundation GREEN; documentation freshness GREEN
+- targeted Control Room API tests: 12/12 GREEN
+- full unique suite: 128/128 GREEN
+- documentation inventory at merge: 62/62
+- unresolved review threads: 0
+- open P0/P1 findings at merge: none
+
+## Next phase
+
+The next scoped phase is **Control Room visual surfaces V1**, implemented strictly as a consumer of the merged read-only API. The UI must not recreate lifecycle, authorization, integrity, or command-execution truth.

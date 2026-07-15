@@ -6,9 +6,9 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXPECTED_REVIEWED_AT = "2026-07-15"
 EXPECTED_BRANCH = "main"
-EXPECTED_MERGED_PR = 6
-EXPECTED_MERGE_COMMIT = "2395570bc9571e6c721373751a6dbfa2b6a8f75b"
-EXPECTED_STATUS = "orchestration-runtime-v1-foundation-merged-control-room-api-v1-next"
+EXPECTED_MERGED_PR = 8
+EXPECTED_MERGE_COMMIT = "f736bce585e0e911c36a73d0181c8eb4ef3aebef"
+EXPECTED_STATUS = "control-room-api-v1-merged-visual-surfaces-v1-next"
 
 
 class DocsError(ValueError):
@@ -78,6 +78,10 @@ def validate_docs(root: pathlib.Path = ROOT) -> int:
         "docs/ORCHESTRATION_CONTROL_ROOM_V1_SPEC.md": [
             "Phase 2 is **Orchestration Runtime V1**",
             "It does not include the durable runtime",
+        ],
+        "docs/CONTROL_ROOM_API_V1_SPEC.md": [
+            "implementation active in draft PR #8",
+            "**Baseline:** `main` at `6bb29bd61b171757a6aaef016fbd46e8b970ada9`",
         ],
     }
     for rel, needles in stale.items():

@@ -23,18 +23,18 @@ Bro converts a request into a governed task contract, selects the correct pack o
 
 ## Current merged baseline
 
-Execution Control Plane V2, Orchestration/Control Room V1 contracts, and Orchestration Runtime V1 foundation are merged into `main`.
+Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestration Runtime V1, and Control Room API V1 are merged into `main`.
 
-- merged PR: `#6`
-- approved candidate HEAD: `65f95171853cecacbfdff98be8e15884c1029909`
-- main merge commit: `2395570bc9571e6c721373751a6dbfa2b6a8f75b`
-- final CI run: `29392001475`
+- merged PR: `#8`
+- approved candidate HEAD: `f2c457a675248eb805c02889509a40d8a5e1c520`
+- main merge commit: `f736bce585e0e911c36a73d0181c8eb4ef3aebef`
+- final CI run: `29434543079`
 - Windows: GREEN
 - Ubuntu: GREEN
-- independent real-worktree audit: foundation GREEN; docs freshness GREEN
-- runtime targeted tests: 14/14 GREEN
-- full unique suite: 116/116 GREEN
-- documentation inventory: 61/61 at merge
+- independent exact-head real-worktree audit: foundation GREEN; docs freshness GREEN
+- Control Room API targeted tests: 12/12 GREEN
+- full unique suite: 128/128 GREEN
+- documentation inventory: 62/62 at merge
 - open P0/P1 findings at merge: none
 
 ## Operating modes
@@ -55,7 +55,7 @@ Execution Control Plane V2, Orchestration/Control Room V1 contracts, and Orchest
 
 ## Next product phase
 
-The next scoped phase is **Control Room API V1**: governed read endpoints over validated runtime projections, evidence drill-down, task/agent/queue status, approval inbox, recovery/quarantine views, audit timeline, and command-intent validation. Visual UI, production credentials, external evidence-service deployment, BroPS, deployment, and production rollout remain separate phases.
+The next scoped phase is **Control Room visual surfaces V1**: owner-facing mission overview, task detail, queue and agent workload views, approvals, recovery/quarantine, evidence drill-down, and audit timeline built strictly over the merged read-only API. Production credentials, external evidence-service deployment, direct repository or release mutation, BroPS, deployment, and production rollout remain separate phases.
 
 ## Authority
 
