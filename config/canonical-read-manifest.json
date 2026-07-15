@@ -19,6 +19,7 @@
     "agents/README.md",
     "packs/README.md",
     "skills/README.md",
+    "docs/CONTROL_ROOM_API_V1_SPEC.md",
     "docs/ORCHESTRATION_CONTROL_ROOM_V1_SPEC.md",
     "docs/ORCHESTRATION_RUNTIME_V1_SPEC.md",
     "orchestration/registry.json"
