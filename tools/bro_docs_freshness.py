@@ -6,9 +6,9 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXPECTED_REVIEWED_AT = "2026-07-15"
 EXPECTED_BRANCH = "main"
-EXPECTED_MERGED_PR = 3
-EXPECTED_MERGE_COMMIT = "bec6c77f622065ee302acf23d26d4c73329a400a"
-EXPECTED_STATUS = "execution-control-plane-v2-merged-orchestration-phase0-spec-active"
+EXPECTED_MERGED_PR = 4
+EXPECTED_MERGE_COMMIT = "61bf9bc4a42b512926bf848b79a0cac063196993"
+EXPECTED_STATUS = "orchestration-control-room-v1-contracts-merged-runtime-phase2-next"
 
 
 class DocsError(ValueError):
@@ -60,24 +60,26 @@ def validate_docs(root: pathlib.Path = ROOT) -> int:
         raise DocsError("documentation inventory differs from manifest")
 
     stale = {
+        "README.md": [
+            "merged PR: `#2`",
+            "main merge commit: `3250d4cc55edc2adf8e5247deab8060983de3b47`",
+            "orchestration UX and Control Room product surfaces",
+        ],
         "NEXT_CHAT.md": [
-            "Continue only in `menqstudio/Bro` on branch `bro-execution-control-plane-v2`",
-            "draft PR `#2`",
-            "Wait for Gev's explicit merge approval",
+            "PR `#2` is closed and merged",
+            "main merge commit: `3250d4cc55edc2adf8e5247deab8060983de3b47`",
+            "orchestration UX and Control Room surfaces",
         ],
         "ROADMAP.md": [
-            "**Branch:** `bro-execution-control-plane-v2`",
-            "**Draft PR:** `#2`",
-            "## Remaining release gate",
+            "**Merged PR:** `#2`",
+            "**Merge commit:** `3250d4cc55edc2adf8e5247deab8060983de3b47`",
+            "Bro Execution Control Plane V2 is merged to `main`.",
         ],
-        "docs/EXECUTION_CONTROL_PLANE_V2_SPEC.md": [
-            "owner-approved merge pending",
-            "PR #2 remains draft/open/unmerged",
-            "Runtime behavior changed by this commit: None",
-        ],
-        "README.md": [
-            "The PR remains draft/open/unmerged",
-            "remaining gate is Gev's explicit approval",
+        "docs/ORCHESTRATION_CONTROL_ROOM_V1_SPEC.md": [
+            "independent audit in progress",
+            "IMPLEMENTED IN THIS PR",
+            "PR remains unmerged",
+            "**Baseline:** `main` at `bec6c77f622065ee302acf23d26d4c73329a400a`",
         ],
     }
     for rel, needles in stale.items():
