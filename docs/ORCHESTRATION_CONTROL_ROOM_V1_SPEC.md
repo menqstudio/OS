@@ -1,16 +1,16 @@
 # Bro Orchestration and Control Room V1 — Scope Specification
 
-**Status:** Phase 1 canonical contracts implemented; independent audit in progress  
+**Status:** Phase 1 canonical contracts merged to `main`  
 **Reviewed:** 2026-07-15  
 **Repository:** `menqstudio/Bro`  
-**Baseline:** `main` at `bec6c77f622065ee302acf23d26d4c73329a400a`  
-**Branch:** `bro-orchestration-control-room-v1`
+**Approved candidate HEAD:** `3c31255056b0bcedf4733be81a4b5a335a1eacd6`  
+**Merge commit:** `61bf9bc4a42b512926bf848b79a0cac063196993`
 
 ## 1. Purpose
 
 Define the first owner-facing product layer above the merged Execution Control Plane V2 without weakening its security boundaries.
 
-This PR now covers the Phase 0 specification plus Phase 1 canonical orchestration contracts, schemas, deterministic Control Room projection, validator wiring, and negative tests. It does not implement the durable queue, production credentials, external evidence services, governed API endpoints, visual UI, or production automation.
+Phase 0 specification and Phase 1 canonical orchestration contracts are complete and merged. This baseline includes the orchestration SST, event and command schemas, deterministic Control Room projection, validator wiring, negative tests, and canonical registry integration. It does not include the durable runtime, production credentials, external evidence services, governed API endpoints, visual UI, deployment, or production automation.
 
 ## 2. Locked actors
 
@@ -20,160 +20,44 @@ This PR now covers the Phase 0 specification plus Phase 1 canonical orchestratio
 - Builders cannot self-verify medium, high, or critical work.
 - Only the canonical Push Executor may perform release transport under Release Grant V3.
 
-## 3. Proposed orchestration SST
+## 3. Canonical orchestration SST
 
-Use one canonical orchestration domain before durable runtime objects or UI endpoints are introduced.
-
-Proposed source:
+The canonical source is:
 
 ```text
 orchestration/registry.json
 ```
 
-The SST must own:
+It owns task lifecycle states and transitions, queue classes, routing policy, verifier separation, checkpoint and budget policies, governed commands, recovery/quarantine semantics, and Control Room surface contracts. No competing orchestration truth may be added to prose, analytics files, runtime code, or UI code.
 
-- task lifecycle states and valid transitions;
-- queue classes and priority rules;
-- pack-selection and cross-pack task-force rules;
-- checkpoint and heartbeat contracts;
-- cancellation, retry, timeout, and budget policies;
-- approval-request contracts;
-- recovery and quarantine presentation states;
-- event schemas used by Control Room read models.
+## 4. Merged lifecycle and boundaries
 
-No competing orchestration truth may be added to prose, analytics files, or UI code.
+The merged lifecycle is fail closed from `draft` through approval, queueing, routing, running, verification, recovery/quarantine, and terminal states. Every event binds task identity, sequence, previous/next state, actor identity, time, reason, evidence, correlation, and repository binding when code mutation is involved.
 
-## 4. Task lifecycle
+Unknown states, impossible transitions, broken event chains, stale commands, invalid actor identity, missing evidence, expired commands, and mutation events without repository binding are denied.
 
-The initial canonical lifecycle is:
+Control Room remains read-first. V1 command contracts cover approve, deny, cancel, retry, reassign, and request-verification; direct repository, credential, evidence-ledger, or release mutation from UI is forbidden.
 
-```text
-draft
--> awaiting-approval | queued
--> routing
--> running
--> blocked | waiting-approval | verification | recovery-required | quarantined
--> completed | failed | cancelled
-```
+## 5. Verification evidence
 
-Every transition must bind:
+- exact candidate HEAD: `3c31255056b0bcedf4733be81a4b5a335a1eacd6`
+- GitHub Actions run `29376410325`: Windows GREEN and Ubuntu GREEN
+- independent exact-head artifact audit in a temporary real Git worktree: foundation GREEN
+- unique full suite: 102/102 GREEN
+- targeted orchestration tests: 5/5 GREEN, included in the 102 total
+- documentation inventory: 60/60
+- open P0/P1 findings at merge: none
 
-- task ID;
-- previous and next state;
-- canonical actor ID;
-- timestamp;
-- reason code;
-- evidence references;
-- repository binding when code mutation is involved.
+## 6. Next phase
 
-Unknown or impossible transitions fail closed.
+Phase 2 is **Orchestration Runtime V1**:
 
-## 5. Routing and task forces
+- durable task and append-only event persistence;
+- deterministic queue ordering and claim/lease semantics;
+- canonical routing execution and cross-pack task-force binding;
+- evidence-backed checkpoints and heartbeats;
+- cooperative cancellation with fail-closed mutation handling;
+- retry, budget, timeout, escalation, and crash recovery;
+- integration with Execution Control Plane V2 leases, completion evidence, recovery, and release boundaries.
 
-Bro selects one specialist, one pack, or a cross-pack task force from canonical pack and skill registries.
-
-A routing decision must record:
-
-- requested capability;
-- selected pack and agents;
-- loaded skills;
-- risk level;
-- verifier requirement;
-- budget and deadline;
-- fallback or escalation path.
-
-Display names never replace canonical IDs.
-
-## 6. Checkpoints, cancellation, retries, and budgets
-
-Long-running work must emit evidence-backed checkpoints. A checkpoint includes progress state, completed criteria, open risks, next action, freshness time, and evidence links.
-
-Cancellation is cooperative first and fail-closed when a mutation or external effect may be in flight.
-
-Retries require a reason code and may not reuse consumed execution leases or release nonces.
-
-Budgets may constrain time, token usage, tool calls, retries, concurrency, and monetary cost. Exceeding a hard budget moves the task to `blocked` or `waiting-approval`.
-
-## 7. Control Room surfaces
-
-The owner-facing Control Room V1 contains:
-
-1. **Mission overview** — active, queued, blocked, approval, verification, recovery, quarantined, and completed tasks.
-2. **Task detail** — contract, routing, agents, skills, checkpoints, evidence, tests, approvals, recovery state, and audit timeline.
-3. **Agent and pack view** — canonical identity, current task, status freshness, workload, recent outcomes, and verification separation.
-4. **Approval inbox** — exact requested action, scope, risk, expiry, evidence, and approve/deny decision.
-5. **Recovery and quarantine view** — original state, observed effect, proof, allowed recovery actions, and unresolved ambiguity.
-6. **Audit timeline** — append-only owner-readable sequence of routing, execution, policy, evidence, verification, and release events.
-
-Every KPI and status must provide source, freshness, drill-down, and evidence links. Unknown status is never GREEN.
-
-## 8. Read/write boundary
-
-Control Room is read-first.
-
-Allowed V1 write intents are limited to governed commands such as approve, deny, cancel, retry, reassign within policy, and request verification. This PR validates command contracts only; command endpoints are not implemented yet. Every future endpoint must call canonical authorization and produce an append-only audit event.
-
-The UI must not directly mutate repository, credentials, evidence ledgers, or release state.
-
-## 9. Existing analytics compatibility
-
-Existing analytics SSTs remain canonical for metrics and dashboards:
-
-- `analytics/metrics.json`
-- `analytics/dashboards.json`
-- `analytics/registry.json`
-
-The orchestration SST owns task/event semantics. Analytics consumes those events and must not redefine lifecycle truth.
-
-## 10. Phase plan
-
-### Phase 0 — specification and SST proposal — COMPLETE
-
-- specification registered;
-- orchestration domain selected;
-- implementation boundaries defined.
-
-### Phase 1 — canonical orchestration contracts — IMPLEMENTED IN THIS PR
-
-- orchestration SST and bound schemas;
-- exact actor identity, event-chain, transition, evidence, time, budget, and command policies;
-- validator and negative tests;
-- deterministic read-only Control Room projection;
-- foundation validator wiring and schema validation.
-
-### Phase 2 — orchestration runtime
-
-- durable queue and routing;
-- checkpoints, cancellation, retry, budgets, and escalation;
-- integration with Execution Control Plane V2.
-
-### Phase 3 — Control Room API and surfaces
-
-- owner-facing read models and governed command endpoints;
-- mission, task, agent, approval, recovery, and audit views.
-
-### Phase 4 — shadow rollout
-
-- replay and simulation;
-- canary tasks;
-- failure and recovery drills;
-- monitoring and operator runbooks.
-
-## 11. Definition of Done for this Phase 1 PR
-
-- specification and orchestration SST are complete and registered;
-- event and command schemas are bound to the SST and validated for enum parity;
-- first-event sequence, transition graph, terminal immutability, evidence, actor identity, time, mutation repository binding, command scope, and TTL rules fail closed;
-- deterministic Control Room projection has source fingerprint and unknown/critical/degraded/healthy semantics;
-- foundation validation, schema validation, negative tests, and full tests are GREEN on Windows and Ubuntu;
-- durable queue, routing executor, command API, and visual UI remain out of scope;
-- PR remains unmerged until Gev explicitly approves the exact final HEAD.
-
-## 12. Out of scope
-
-- production credential deployment;
-- external append-only evidence service deployment;
-- autonomous production release;
-- BroPS changes;
-- final visual design implementation;
-- operational rollout beyond specification and contracts.
+Control Room APIs/UI, production credentials, external evidence services, BroPS, deployment, and production rollout remain separate scopes.
