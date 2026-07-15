@@ -19,12 +19,12 @@ class DocsFreshnessTests(unittest.TestCase):
         )
         validate_manifest_metadata(data)
 
-    def test_pre_merge_manifest_metadata_is_denied(self):
+    def test_pre_pr4_manifest_metadata_is_denied(self):
         data = json.loads(
             (ROOT / "config" / "documentation-manifest.json").read_text(encoding="utf-8")
         )
-        data["merged_pr"] = 2
-        data["merge_commit"] = "3250d4cc55edc2adf8e5247deab8060983de3b47"
+        data["merged_pr"] = 3
+        data["merge_commit"] = "bec6c77f622065ee302acf23d26d4c73329a400a"
         with self.assertRaises(DocsError):
             validate_manifest_metadata(data)
 

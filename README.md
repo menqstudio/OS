@@ -18,19 +18,21 @@ Bro converts a request into a governed task contract, selects the correct pack o
 - **Evidence over claims.** Completion and release require signed, current evidence.
 - **Protected release path.** Only the canonical Push Executor may transport an exact owner-approved candidate.
 - **Recovery before GREEN.** Interrupted or ambiguous mutation blocks completion and release until proof-backed recovery or honest quarantine.
+- **Canonical orchestration.** Task lifecycle, transitions, queue classes, routing policy, checkpoints, budgets, recovery, quarantine, and governed Control Room commands are owned by one orchestration SST.
 
 ## Current production baseline
 
-Bro Execution Control Plane V2 is merged into `main`.
+Execution Control Plane V2 and Orchestration/Control Room V1 canonical contracts are merged into `main`.
 
-- merged PR: `#2`
-- approved candidate HEAD: `66788ee5876871d36038d9e19ce54f9fec864684`
-- main merge commit: `3250d4cc55edc2adf8e5247deab8060983de3b47`
-- final CI run: `29365910692`
+- merged PR: `#4`
+- approved candidate HEAD: `3c31255056b0bcedf4733be81a4b5a335a1eacd6`
+- main merge commit: `61bf9bc4a42b512926bf848b79a0cac063196993`
+- final CI run: `29376410325`
 - Windows: GREEN
 - Ubuntu: GREEN
-- independent artifact audit: validator GREEN, 95/95 tests GREEN
-- documentation inventory: 59/59
+- independent artifact audit: foundation GREEN; 102/102 unique tests GREEN
+- targeted orchestration tests: 5/5 GREEN, included in the 102 total
+- documentation inventory: 60/60
 - open P0/P1 findings at merge: none
 
 ## Operating modes
@@ -51,7 +53,7 @@ Bro Execution Control Plane V2 is merged into `main`.
 
 ## Next product phase
 
-The governance and execution-control foundation is merged. The next scoped phase is orchestration UX and Control Room product surfaces, followed by production credential deployment, external evidence-service hardening, and operational rollout. Each must use a new branch and PR from current `main`.
+The next scoped phase is **Orchestration Runtime V1**: a durable task queue, deterministic claim/lease semantics, canonical routing execution, evidence-backed checkpoints, cancellation, retries, budgets, escalation, crash recovery, and integration with Execution Control Plane V2. Control Room APIs/UI, production credentials, external evidence services, BroPS, deployment, and production rollout remain separate phases.
 
 ## Authority
 
