@@ -18,21 +18,23 @@ Bro converts a request into a governed task contract, selects the correct pack o
 - **Evidence over claims.** Completion and release require signed, current evidence.
 - **Protected release path.** Only the canonical Push Executor may transport an exact owner-approved candidate.
 - **Recovery before GREEN.** Interrupted or ambiguous mutation blocks completion and release until proof-backed recovery or honest quarantine.
-- **Canonical orchestration.** Task lifecycle, transitions, queue classes, routing policy, checkpoints, budgets, recovery, quarantine, and governed Control Room commands are owned by one orchestration SST.
+- **Canonical orchestration.** Task lifecycle, queue classes, routing policy, checkpoints, budgets, cancellation, recovery, quarantine, and Control Room commands are owned by one orchestration SST.
+- **Durable runtime truth.** Task contracts and append-only SHA-256 chained runtime records live outside Git, with deterministic claims, expiring leases, evidence-backed checkpoints, budget gates, and fail-closed integrity checks.
 
-## Current production baseline
+## Current merged baseline
 
-Execution Control Plane V2 and Orchestration/Control Room V1 canonical contracts are merged into `main`.
+Execution Control Plane V2, Orchestration/Control Room V1 contracts, and Orchestration Runtime V1 foundation are merged into `main`.
 
-- merged PR: `#4`
-- approved candidate HEAD: `3c31255056b0bcedf4733be81a4b5a335a1eacd6`
-- main merge commit: `61bf9bc4a42b512926bf848b79a0cac063196993`
-- final CI run: `29376410325`
+- merged PR: `#6`
+- approved candidate HEAD: `65f95171853cecacbfdff98be8e15884c1029909`
+- main merge commit: `2395570bc9571e6c721373751a6dbfa2b6a8f75b`
+- final CI run: `29392001475`
 - Windows: GREEN
 - Ubuntu: GREEN
-- independent artifact audit: foundation GREEN; 102/102 unique tests GREEN
-- targeted orchestration tests: 5/5 GREEN, included in the 102 total
-- documentation inventory: 60/60
+- independent real-worktree audit: foundation GREEN; docs freshness GREEN
+- runtime targeted tests: 14/14 GREEN
+- full unique suite: 116/116 GREEN
+- documentation inventory: 61/61 at merge
 - open P0/P1 findings at merge: none
 
 ## Operating modes
@@ -53,7 +55,7 @@ Execution Control Plane V2 and Orchestration/Control Room V1 canonical contracts
 
 ## Next product phase
 
-The next scoped phase is **Orchestration Runtime V1**: a durable task queue, deterministic claim/lease semantics, canonical routing execution, evidence-backed checkpoints, cancellation, retries, budgets, escalation, crash recovery, and integration with Execution Control Plane V2. Control Room APIs/UI, production credentials, external evidence services, BroPS, deployment, and production rollout remain separate phases.
+The next scoped phase is **Control Room API V1**: governed read endpoints over validated runtime projections, evidence drill-down, task/agent/queue status, approval inbox, recovery/quarantine views, audit timeline, and command-intent validation. Visual UI, production credentials, external evidence-service deployment, BroPS, deployment, and production rollout remain separate phases.
 
 ## Authority
 

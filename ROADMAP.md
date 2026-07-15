@@ -3,20 +3,21 @@
 **Reviewed:** 2026-07-15  
 **Repository:** `menqstudio/Bro`  
 **Canonical branch:** `main`  
-**Merged PR:** `#4`  
-**Merge commit:** `61bf9bc4a42b512926bf848b79a0cac063196993`
+**Merged PR:** `#6`  
+**Merge commit:** `2395570bc9571e6c721373751a6dbfa2b6a8f75b`
 
 ## Completed foundation
 
 1. Execution Control Plane V2 is merged.
 2. Canonical orchestration and Control Room V1 contracts are merged.
-3. Task lifecycle, queue classes, routing policy, checkpoints, budgets, recovery, quarantine, schemas, deterministic projection, and governed command validation are canonical.
-4. Final evidence: Windows and Ubuntu GREEN, independent artifact audit GREEN, 102/102 unique tests GREEN, documentation inventory 60/60, and no open P0/P1 findings.
+3. Orchestration Runtime V1 foundation is merged.
+4. Runtime truth now includes validated immutable task contracts, append-only hash-chained records, deterministic queue claims, cross-process serialization, expiring leases, evidence-backed checkpoints, budget gates, owner retry, cooperative cancellation, proof-backed recovery, terminal immutability, Control Room projection, and integrity roots.
+5. Final PR #6 evidence: Windows and Ubuntu GREEN, independent real-worktree audit GREEN, runtime tests 14/14 GREEN, full unique suite 116/116 GREEN, documentation inventory 61/61, and no open P0/P1 findings.
 
 ## Next product phases
 
-1. **Orchestration Runtime V1:** durable task/event storage, deterministic queue claim/lease semantics, routing execution, checkpoints, cancellation, retries, budgets, escalation, crash recovery, and Execution Control Plane V2 integration.
-2. **Control Room API and surfaces:** live task/agent status, evidence drill-down, recovery/quarantine views, approvals, governed commands, and audit timeline.
+1. **Control Room API V1:** governed read endpoints for runtime projections, task/agent/queue status, evidence drill-down, approval inbox, recovery/quarantine views, audit timeline, and validated command intents.
+2. **Control Room visual surfaces:** owner-facing mission overview, task detail, agent/pack views, approvals, recovery, and audit timeline.
 3. **Credential and evidence services:** isolate production credentials and deploy external append-only ledgers/evidence storage.
 4. **Operational rollout:** shadow mode, canary tasks, failure drills, monitoring, backup/restore, and operator runbooks.
 5. **Product UX:** command surface, project/task views, agent controls, notifications, and owner approval workflows.
