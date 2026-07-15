@@ -15,6 +15,7 @@ from bro_authorization import load_tool_registry
 from bro_docs_freshness import DocsError, validate_docs
 from bro_identity import IdentityError, validate_identity_registry
 from bro_learning import LearningError, validate_learning_registry
+from bro_orchestration import OrchestrationError, validate_orchestration_registry
 from bro_security import SecurityError
 
 
@@ -56,6 +57,9 @@ def main() -> int:
         "runtime/bro_control_plane.py", "runtime/bro_repository_state.py",
         "runtime/bro_execution_lease.py", "runtime/bro_completion.py",
         "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
+        "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
+        "runtime/bro_orchestration_runtime_v1.py",
+        "tests/test_orchestration_runtime.py", "tests/test_orchestration_runtime_claims.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -106,8 +110,17 @@ def main() -> int:
         docs_count = validate_docs(ROOT)
         analytics = validate_analytics(ROOT)
         validate_learning_registry(ROOT)
+        orchestration = validate_orchestration_registry(ROOT)
         tool_registry = load_tool_registry(ROOT)
-    except (IdentityError, AuthorityError, DocsError, AnalyticsError, LearningError, SecurityError) as exc:
+    except (
+        IdentityError,
+        AuthorityError,
+        DocsError,
+        AnalyticsError,
+        LearningError,
+        OrchestrationError,
+        SecurityError,
+    ) as exc:
         fail(str(exc))
 
     compile_targets = [
@@ -118,7 +131,8 @@ def main() -> int:
         "runtime/bro_control_plane.py", "runtime/bro_repository_state.py",
         "runtime/bro_execution_lease.py", "runtime/bro_completion.py",
         "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
-        "tools/bro_docs_freshness.py",
+        "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
+        "runtime/bro_orchestration_runtime_v1.py", "tools/bro_docs_freshness.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
@@ -130,7 +144,8 @@ def main() -> int:
         f"packs={identity['pack_count']}; agents={identity['agent_count']}; "
         f"authorities={authority_count}; skills={skill_count}; schemas={len(schema_paths)}; "
         f"documents={docs_count}; metrics={analytics['metrics']}; "
-        f"dashboards={analytics['dashboards']}; tools={len(tool_registry['tools'])}"
+        f"dashboards={analytics['dashboards']}; orchestration_states={orchestration['states']}; "
+        f"control_room_surfaces={orchestration['surfaces']}; tools={len(tool_registry['tools'])}"
     )
     return 0
 
