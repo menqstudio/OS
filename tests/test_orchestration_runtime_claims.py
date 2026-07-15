@@ -9,7 +9,43 @@ sys.path.insert(0, str(ROOT / "runtime"))
 
 from bro_orchestration_runtime import OrchestrationRuntimeError
 from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1
-from test_orchestration_runtime import AGENT, task_contract
+
+AGENT = "agt-p01-r01"
+
+
+def task_contract(task_id: str) -> dict:
+    return {
+        "schema": 1,
+        "task_id": task_id,
+        "title": f"Task {task_id}",
+        "objective": "Exercise atomic orchestration claim leases",
+        "mode": "work",
+        "risk": "low",
+        "pack_id": "ai-agent-builders",
+        "agent_id": AGENT,
+        "assignee_role": "Agent Architect",
+        "scope": ["runtime"],
+        "prohibited_scope": ["release"],
+        "inputs": ["orchestration/registry.json"],
+        "core_skills": ["ai-agent-engineering"],
+        "additional_skills": [],
+        "reference_skills": [],
+        "done_criteria": ["Claim is serialized and evidence-backed"],
+        "verification": {
+            "required": False,
+            "verifier_agent_id": None,
+            "verifier_role": None,
+            "commands": [],
+        },
+        "rollback": {"strategy": "Discard isolated runtime state", "commands": []},
+        "repository": {
+            "full_name": "menqstudio/Bro",
+            "branch": "orchestration-runtime-v1",
+            "worktree": "C:/Bro/runtime-v1",
+            "base_commit": "b5d1a343a8777738d4113e3e28cf27527f04020a",
+            "tree_identity": "1" * 64,
+        },
+    }
 
 
 class ClaimLeaseTests(unittest.TestCase):
