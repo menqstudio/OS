@@ -19,6 +19,7 @@
     {"path":"docs/GIT_RELEASE_CONTROL.md","reviewed":true},
     {"path":"docs/OPERATING_MODES.md","reviewed":true},
     {"path":"docs/ORCHESTRATION_CONTROL_ROOM_V1_SPEC.md","reviewed":true},
+    {"path":"docs/ORCHESTRATION_RUNTIME_V1_SPEC.md","reviewed":true},
     {"path":"docs/REPOSITORY_LAYOUT.md","reviewed":true},
     {"path":"docs/SECURITY_MODEL.md","reviewed":true},
     {"path":"laws/LAW_INDEX.md","reviewed":true},
