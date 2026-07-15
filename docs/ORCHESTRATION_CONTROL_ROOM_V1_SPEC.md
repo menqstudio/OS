@@ -10,7 +10,7 @@
 
 Define the first owner-facing product layer above the merged Execution Control Plane V2 without weakening its security boundaries.
 
-Phase 0 specification and Phase 1 canonical orchestration contracts are complete and merged. This baseline includes the orchestration SST, event and command schemas, deterministic Control Room projection, validator wiring, negative tests, and canonical registry integration. It does not include the durable runtime, production credentials, external evidence services, governed API endpoints, visual UI, deployment, or production automation.
+Phase 0 specification and Phase 1 canonical orchestration contracts are complete and merged. This baseline includes the orchestration SST, event and command schemas, deterministic Control Room projection, validator wiring, negative tests, and canonical registry integration. Orchestration Runtime V1 foundation was subsequently merged in PR #6. Governed API endpoints, visual UI, production credentials, external evidence services, deployment, and production automation remain separate scopes.
 
 ## 2. Locked actors
 
@@ -48,16 +48,19 @@ Control Room remains read-first. V1 command contracts cover approve, deny, cance
 - documentation inventory: 60/60
 - open P0/P1 findings at merge: none
 
-## 6. Next phase
+## 6. Subsequent runtime merge
 
-Phase 2 is **Orchestration Runtime V1**:
+Orchestration Runtime V1 foundation is merged in PR #6 at merge commit `2395570bc9571e6c721373751a6dbfa2b6a8f75b`. It implements durable task contracts, append-only hash-chained records, deterministic queue claims, cross-process serialization, expiring leases, checkpoints, budgets, cancellation, recovery, projections, and integrity checks.
 
-- durable task and append-only event persistence;
-- deterministic queue ordering and claim/lease semantics;
-- canonical routing execution and cross-pack task-force binding;
-- evidence-backed checkpoints and heartbeats;
-- cooperative cancellation with fail-closed mutation handling;
-- retry, budget, timeout, escalation, and crash recovery;
-- integration with Execution Control Plane V2 leases, completion evidence, recovery, and release boundaries.
+## 7. Next phase
 
-Control Room APIs/UI, production credentials, external evidence services, BroPS, deployment, and production rollout remain separate scopes.
+The next scoped phase is **Control Room API V1**:
+
+- governed read-only endpoints over validated runtime state;
+- mission overview and task-detail projections;
+- task, queue, agent, checkpoint, budget, recovery, quarantine, and audit views;
+- evidence source, freshness, and drill-down metadata;
+- approval inbox read model;
+- validated command intents without direct repository, credential, evidence-ledger, release, or production mutation.
+
+Visual UI, production credentials, external evidence-service deployment, distributed queue/database deployment, BroPS, deployment, and production rollout remain separate scopes.
