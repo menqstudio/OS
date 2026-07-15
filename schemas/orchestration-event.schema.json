@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/menqstudio/Bro/schemas/orchestration-event.schema.json",
+  "title": "Bro Orchestration Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "event_id", "task_id", "sequence", "previous_state", "next_state",
+    "actor_type", "actor_id", "observed_at_epoch", "reason_code", "evidence_refs",
+    "repository_binding", "correlation_id"
+  ],
+  "properties": {
+    "schema": {"const": 1},
+    "event_id": {"$ref": "#/$defs/id"},
+    "task_id": {"$ref": "#/$defs/id"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "previous_state": {"type": ["string", "null"]},
+    "next_state": {"type": "string", "minLength": 1},
+    "actor_type": {"enum": ["owner", "bro", "agent", "system"]},
+    "actor_id": {"type": "string", "minLength": 1},
+    "observed_at_epoch": {"type": "integer", "minimum": 0},
+    "reason_code": {"type": "string", "minLength": 1},
+    "evidence_refs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "repository_binding": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["full_name", "branch", "head", "tree_identity"],
+          "properties": {
+            "full_name": {"type": "string", "minLength": 3},
+            "branch": {"type": "string", "minLength": 1},
+            "head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "tree_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      ]
+    },
+    "correlation_id": {"$ref": "#/$defs/id"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$"}
+  }
+}

@@ -11,7 +11,7 @@ from bro_docs_freshness import DocsError, validate_docs, validate_manifest_metad
 
 class DocsFreshnessTests(unittest.TestCase):
     def test_every_document_is_registered_and_reviewed(self):
-        self.assertGreaterEqual(validate_docs(ROOT), 59)
+        self.assertGreaterEqual(validate_docs(ROOT), 60)
 
     def test_post_merge_manifest_metadata_is_exact(self):
         data = json.loads(
@@ -23,8 +23,8 @@ class DocsFreshnessTests(unittest.TestCase):
         data = json.loads(
             (ROOT / "config" / "documentation-manifest.json").read_text(encoding="utf-8")
         )
-        data["branch"] = "bro-execution-control-plane-v2"
-        data["pr"] = 2
+        data["merged_pr"] = 2
+        data["merge_commit"] = "3250d4cc55edc2adf8e5247deab8060983de3b47"
         with self.assertRaises(DocsError):
             validate_manifest_metadata(data)
 
