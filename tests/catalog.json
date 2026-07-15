@@ -21,6 +21,7 @@
     {"id":"hook-subprocess","path":"tests/test_hooks_subprocess.py","covers":["stdin-payload","exit-code","review-read","unsigned-work-denial","git-global-option-push-denial"]},
     {"id":"orchestration-control-room","path":"tests/test_bro_orchestration.py","covers":["orchestration-sst","task-lifecycle","append-only-events","first-event-chain","canonical-actor-identity","repository-binding","schema-enum-parity","control-room-projection","governed-commands","command-scope-ttl","terminal-state-immutability"]},
     {"id":"orchestration-runtime","path":"tests/test_orchestration_runtime.py","covers":["durable-task-state","hash-chain","priority-queue","checkpoints","budgets","retry","cancellation","recovery","projection","tamper-denial"]},
-    {"id":"orchestration-runtime-claims","path":"tests/test_orchestration_runtime_claims.py","covers":["cross-process-claim-lock","single-claim","expiring-lease","lease-renewal","lease-release-evidence","expired-lease-recovery"]}
+    {"id":"orchestration-runtime-claims","path":"tests/test_orchestration_runtime_claims.py","covers":["cross-process-claim-lock","single-claim","expiring-lease","lease-renewal","lease-release-evidence","expired-lease-recovery"]},
+    {"id":"control-room-api-v1","path":"tests/test_control_room_api.py","covers":["mission-overview","task-detail","queue-state","agent-workload","checkpoint-freshness","budget-usage","approval-inbox","recovery-quarantine","audit-timeline","command-intent-validation","read-only-boundary","tamper-denial"]}
   ]
 }
