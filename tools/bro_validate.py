@@ -58,8 +58,9 @@ def main() -> int:
         "runtime/bro_execution_lease.py", "runtime/bro_completion.py",
         "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
         "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
-        "runtime/bro_orchestration_runtime_v1.py",
+        "runtime/bro_orchestration_runtime_v1.py", "runtime/bro_control_room_api.py",
         "tests/test_orchestration_runtime.py", "tests/test_orchestration_runtime_claims.py",
+        "tests/test_control_room_api.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -132,7 +133,8 @@ def main() -> int:
         "runtime/bro_execution_lease.py", "runtime/bro_completion.py",
         "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
         "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
-        "runtime/bro_orchestration_runtime_v1.py", "tools/bro_docs_freshness.py",
+        "runtime/bro_orchestration_runtime_v1.py", "runtime/bro_control_room_api.py",
+        "tools/bro_docs_freshness.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
