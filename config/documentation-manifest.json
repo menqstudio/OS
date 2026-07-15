@@ -2,9 +2,9 @@
   "schema": 1,
   "reviewed_at": "2026-07-15",
   "branch": "main",
-  "merged_pr": 3,
-  "merge_commit": "bec6c77f622065ee302acf23d26d4c73329a400a",
-  "status": "execution-control-plane-v2-merged-orchestration-phase0-spec-active",
+  "merged_pr": 4,
+  "merge_commit": "61bf9bc4a42b512926bf848b79a0cac063196993",
+  "status": "orchestration-control-room-v1-contracts-merged-runtime-phase2-next",
   "documents": [
     {"path":"AGENTS.md","reviewed":true},
     {"path":"CLAUDE.md","reviewed":true},
