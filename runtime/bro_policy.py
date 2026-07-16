@@ -71,11 +71,22 @@ def current_state(payload: dict) -> State:
 
 def read_all(session_id: str) -> dict:
     files = tracked_files()
-    hashes = {rel: hashlib.sha256((ROOT / rel).read_bytes()).hexdigest() for rel in files}
+    hashes = {}
+    unreadable = []
+    for rel in files:
+        try:
+            hashes[rel] = hashlib.sha256((ROOT / rel).read_bytes()).hexdigest()
+        except OSError:
+            # A tracked file deleted from the worktree must produce a receipt
+            # failure, not an unhandled traceback: the canonical check below is
+            # the intended gate and it cannot run if hashing crashes first.
+            unreadable.append(rel)
     canonical = load_json(MANIFEST_PATH)["paths"]
     missing = [path for path in canonical if path not in hashes]
     if missing:
         raise RuntimeError(f"canonical files are missing or untracked: {missing}")
+    if unreadable:
+        raise RuntimeError(f"tracked files are unreadable: {unreadable}")
     receipt = {
         "schema": 1,
         "session_id": session_id,
