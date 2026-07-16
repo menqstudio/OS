@@ -47,9 +47,13 @@ class HookSubprocessTests(unittest.TestCase):
         )
 
     def test_pre_tool_denies_without_workspace_binding(self):
+        # Session state stays configured so this isolates the workspace gate.
+        # Dropping it too would deny at the freeze gate, which cannot tell a
+        # clean session from a frozen one without it and so refuses as well.
         process_env = {k: v for k, v in os.environ.items()
                        if k != "BRO_WORKSPACE_BINDING"}
         process_env["BRO_MODE"] = "review"
+        process_env["BRO_SESSION_STATE_DIR"] = self.binding_env["BRO_SESSION_STATE_DIR"]
         result = subprocess.run(
             [sys.executable, str(ROOT / "runtime" / "bro_hook.py"), "pre-tool"],
             input=json.dumps({
@@ -63,6 +67,28 @@ class HookSubprocessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
         self.assertIn("workspace scope gate RED", result.stdout)
+
+    def test_pre_tool_denies_without_session_state_dir(self):
+        # Without a state directory the freeze gate cannot prove the session is
+        # not already frozen, so it must refuse rather than assume it is clean.
+        process_env = {k: v for k, v in os.environ.items()
+                       if k != "BRO_SESSION_STATE_DIR"}
+        process_env.update(self.binding_env)
+        del process_env["BRO_SESSION_STATE_DIR"]
+        process_env["BRO_MODE"] = "review"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "runtime" / "bro_hook.py"), "pre-tool"],
+            input=json.dumps({
+                "session_id": "hook-nostate",
+                "tool_name": "Read",
+                "tool_input": {"file_path": "README.md"},
+                "tool_use_id": "toolu_nostate",
+            }),
+            text=True, capture_output=True, cwd=ROOT, env=process_env,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+        self.assertIn("freeze state gate RED", result.stdout)
 
     def test_pre_tool_denies_read_outside_workspace(self):
         result = self.run_hook(
