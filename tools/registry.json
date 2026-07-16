@@ -5,6 +5,8 @@
   "capability_classes": [
     "READ_LOCAL",
     "READ_EXTERNAL",
+    "READ_EXTERNAL_PUBLIC",
+    "ORCHESTRATE",
     "WRITE_REPOSITORY",
     "WRITE_FILESYSTEM",
     "WRITE_EXTERNAL",
@@ -125,6 +127,54 @@
           "requires_task": true,
           "requires_scope": true,
           "requires_work_grant": true
+        }
+      }
+    },
+    {
+      "name": "Task",
+      "resolver": "direct",
+      "actions": {
+        "delegate": {
+          "capabilities": ["ORCHESTRATE"],
+          "requires_task": false,
+          "requires_scope": false,
+          "requires_work_grant": true
+        }
+      }
+    },
+    {
+      "name": "Agent",
+      "resolver": "direct",
+      "actions": {
+        "delegate": {
+          "capabilities": ["ORCHESTRATE"],
+          "requires_task": false,
+          "requires_scope": false,
+          "requires_work_grant": true
+        }
+      }
+    },
+    {
+      "name": "Skill",
+      "resolver": "direct",
+      "actions": {
+        "resolve": {
+          "capabilities": ["ORCHESTRATE"],
+          "requires_task": false,
+          "requires_scope": false,
+          "requires_work_grant": false
+        }
+      }
+    },
+    {
+      "name": "TodoWrite",
+      "resolver": "direct",
+      "actions": {
+        "track": {
+          "capabilities": ["ORCHESTRATE"],
+          "requires_task": false,
+          "requires_scope": false,
+          "requires_work_grant": false
         }
       }
     },

@@ -3,28 +3,312 @@
   "discovery_command": "python -m unittest discover -s tests -v",
   "orphan_tests_forbidden": true,
   "tests": [
-    {"id":"identity-registry","path":"tests/test_bro_identity.py","covers":["agent-ids","pack-count","ui-gender-boundary"]},
-    {"id":"authority-identity","path":"tests/test_authority_identity.py","covers":["canonical-builder-id","designated-verifier-role","verifier-role-binding","verifier-authority","builder-verifier-separation"]},
-    {"id":"repository-state","path":"tests/test_repository_state.py","covers":["registered-worktree","cwd-worktree-binding","branch-head-tree-binding","main-mutation-denial","active-task-lock"]},
-    {"id":"execution-leases","path":"tests/test_execution_leases.py","covers":["signed-execution-lease","exact-binding","expiry-denial","capability-binding","atomic-reservation","replay-denial","ambiguity-quarantine"]},
-    {"id":"completion-gate","path":"tests/test_completion_gate.py","covers":["signed-completion-manifest","evidence-chain","dirty-state-denial","pending-lease-denial","signed-verifier-receipt","independence-level","stop-gate"]},
-    {"id":"release-v3","path":"tests/test_release_v3.py","covers":["evidence-bound-grant","owner-authority","head-tree-binding","remote-binding","v2-live-denial","expiry-denial"]},
-    {"id":"recovery","path":"tests/test_recovery.py","covers":["pre-mutation-journal","cas-state-version","interruption-blocking","reversible-recovery-proof","unknown-quarantine","irreversible-effect-honesty"]},
-    {"id":"documentation-freshness","path":"tests/test_docs_freshness.py","covers":["complete-doc-inventory","review-date","branch-pr-metadata","stale-marker-denial"]},
-    {"id":"policy-boundaries","path":"tests/test_bro_policy.py","covers":["review-read-only","bro-delegation","push-authority","fail-closed-role-default","unauthenticated-mutation-denial","canonical-conductor-identity","role-name-is-not-identity"]},
-    {"id":"authorization-kernel","path":"tests/test_authorization_kernel.py","covers":["tool-capability-registry","unknown-tool-denial","normalized-action-classification","shell-git-capabilities"]},
-    {"id":"contract-gates","path":"tests/test_bro_contracts.py","covers":["task-contract","agent-profile","skill-receipt","release-grant"]},
-    {"id":"analytics-control-plane","path":"tests/test_bro_analytics.py","covers":["metrics","dashboards","status-contracts"]},
-    {"id":"skill-evolution","path":"tests/test_skill_evolution.py","covers":["independent-review","owner-approval","rollback"]},
-    {"id":"sst-governance","path":"tests/test_sst_registry.py","covers":["one-domain-one-source","existing-sst-paths","unique-domain-ownership"]},
-    {"id":"security-v2","path":"tests/test_security_v2.py","covers":["signed-mode-grants","shell-aware-git-parser","historical-v2-grants","scope-enforcement","schema-execution"]},
-    {"id":"hook-subprocess","path":"tests/test_hooks_subprocess.py","covers":["stdin-payload","exit-code","review-read","unsigned-work-denial","git-global-option-push-denial"]},
-    {"id":"orchestration-control-room","path":"tests/test_bro_orchestration.py","covers":["orchestration-sst","task-lifecycle","append-only-events","first-event-chain","canonical-actor-identity","repository-binding","schema-enum-parity","control-room-projection","governed-commands","command-scope-ttl","terminal-state-immutability"]},
-    {"id":"orchestration-runtime","path":"tests/test_orchestration_runtime.py","covers":["durable-task-state","hash-chain","priority-queue","checkpoints","budgets","retry","cancellation","recovery","projection","tamper-denial"]},
-    {"id":"orchestration-runtime-claims","path":"tests/test_orchestration_runtime_claims.py","covers":["cross-process-claim-lock","single-claim","expiring-lease","lease-renewal","lease-release-evidence","expired-lease-recovery"]},
-    {"id":"control-room-api-v1","path":"tests/test_control_room_api.py","covers":["mission-overview","task-detail","queue-state","agent-workload","checkpoint-freshness","budget-usage","approval-inbox","recovery-quarantine","audit-timeline","command-intent-validation","read-only-boundary","tamper-denial"]},
-    {"id":"workspace-scope","path":"tests/test_workspace_scope.py","covers":["external-workspace-binding","binding-outside-repository","inactive-binding-denial","missing-digest-denial","path-containment","parent-traversal-denial","absolute-escape-denial","symlink-escape-denial","alternate-data-stream-denial","device-path-denial","prohibited-path-denial","allowed-path-enforcement","remote-normalization","repository-binding"]},
-    {"id":"control-plane-digest","path":"tests/test_control_plane_digest.py","covers":["fail-closed-protected-roots","new-protected-file-default-protection","digest-determinism","content-change-detection","creation-deletion-rename-detection","unprotected-change-ignored","git-excluded-from-digest","symlink-digest-denial","unreadable-file-fail-closed","stale-digest-denial","repository-edit-cannot-refresh-binding","standard-task-protected-denial","security-exact-path-scope","pattern-scope-denial","owner-approval-required","verifier-independence-l4","canonical-manifest-covers-runtime"]},
-    {"id":"signature-authority","path":"tests/test_signature_authority.py","covers":["ed25519-detached-signature","operator-signed-key-registry","unsigned-registry-denial","tampered-registry-denial","injected-key-denial","registry-without-its-operator-denial","authority-artifact-binding","builder-signed-verifier-receipt-denial","builder-signs-own-completion-claim","unknown-key-denial","revoked-key-denial","expired-key-denial","not-yet-valid-key-denial","tampered-payload-denial","artifact-type-confusion-denial","production-keygen-refused","development-key-labelling"]}
+    {
+      "id": "identity-registry",
+      "path": "tests/test_bro_identity.py",
+      "covers": [
+        "agent-ids",
+        "pack-count",
+        "ui-gender-boundary"
+      ]
+    },
+    {
+      "id": "authority-identity",
+      "path": "tests/test_authority_identity.py",
+      "covers": [
+        "canonical-builder-id",
+        "designated-verifier-role",
+        "verifier-role-binding",
+        "verifier-authority",
+        "builder-verifier-separation"
+      ]
+    },
+    {
+      "id": "repository-state",
+      "path": "tests/test_repository_state.py",
+      "covers": [
+        "registered-worktree",
+        "cwd-worktree-binding",
+        "branch-head-tree-binding",
+        "main-mutation-denial",
+        "active-task-lock"
+      ]
+    },
+    {
+      "id": "execution-leases",
+      "path": "tests/test_execution_leases.py",
+      "covers": [
+        "signed-execution-lease",
+        "exact-binding",
+        "expiry-denial",
+        "capability-binding",
+        "atomic-reservation",
+        "replay-denial",
+        "ambiguity-quarantine"
+      ]
+    },
+    {
+      "id": "completion-gate",
+      "path": "tests/test_completion_gate.py",
+      "covers": [
+        "signed-completion-manifest",
+        "evidence-chain",
+        "dirty-state-denial",
+        "pending-lease-denial",
+        "signed-verifier-receipt",
+        "independence-level",
+        "stop-gate"
+      ]
+    },
+    {
+      "id": "release-v3",
+      "path": "tests/test_release_v3.py",
+      "covers": [
+        "evidence-bound-grant",
+        "owner-authority",
+        "head-tree-binding",
+        "remote-binding",
+        "v2-live-denial",
+        "expiry-denial"
+      ]
+    },
+    {
+      "id": "recovery",
+      "path": "tests/test_recovery.py",
+      "covers": [
+        "pre-mutation-journal",
+        "cas-state-version",
+        "interruption-blocking",
+        "reversible-recovery-proof",
+        "unknown-quarantine",
+        "irreversible-effect-honesty"
+      ]
+    },
+    {
+      "id": "documentation-freshness",
+      "path": "tests/test_docs_freshness.py",
+      "covers": [
+        "complete-doc-inventory",
+        "review-date",
+        "branch-pr-metadata",
+        "stale-marker-denial"
+      ]
+    },
+    {
+      "id": "policy-boundaries",
+      "path": "tests/test_bro_policy.py",
+      "covers": [
+        "review-read-only",
+        "bro-delegation",
+        "push-authority",
+        "fail-closed-role-default",
+        "unauthenticated-mutation-denial",
+        "canonical-conductor-identity",
+        "role-name-is-not-identity",
+        "conductor-only-delegation",
+        "review-denies-delegation",
+        "delegation-is-not-a-mutation-bypass"
+      ]
+    },
+    {
+      "id": "authorization-kernel",
+      "path": "tests/test_authorization_kernel.py",
+      "covers": [
+        "tool-capability-registry",
+        "unknown-tool-denial",
+        "normalized-action-classification",
+        "shell-git-capabilities",
+        "governed-delegation-actions",
+        "orchestrate-is-not-mutation"
+      ]
+    },
+    {
+      "id": "contract-gates",
+      "path": "tests/test_bro_contracts.py",
+      "covers": [
+        "task-contract",
+        "agent-profile",
+        "skill-receipt",
+        "release-grant"
+      ]
+    },
+    {
+      "id": "analytics-control-plane",
+      "path": "tests/test_bro_analytics.py",
+      "covers": [
+        "metrics",
+        "dashboards",
+        "status-contracts"
+      ]
+    },
+    {
+      "id": "skill-evolution",
+      "path": "tests/test_skill_evolution.py",
+      "covers": [
+        "independent-review",
+        "owner-approval",
+        "rollback"
+      ]
+    },
+    {
+      "id": "sst-governance",
+      "path": "tests/test_sst_registry.py",
+      "covers": [
+        "one-domain-one-source",
+        "existing-sst-paths",
+        "unique-domain-ownership"
+      ]
+    },
+    {
+      "id": "security-v2",
+      "path": "tests/test_security_v2.py",
+      "covers": [
+        "signed-mode-grants",
+        "shell-aware-git-parser",
+        "historical-v2-grants",
+        "scope-enforcement",
+        "schema-execution"
+      ]
+    },
+    {
+      "id": "hook-subprocess",
+      "path": "tests/test_hooks_subprocess.py",
+      "covers": [
+        "stdin-payload",
+        "exit-code",
+        "review-read",
+        "unsigned-work-denial",
+        "git-global-option-push-denial"
+      ]
+    },
+    {
+      "id": "orchestration-control-room",
+      "path": "tests/test_bro_orchestration.py",
+      "covers": [
+        "orchestration-sst",
+        "task-lifecycle",
+        "append-only-events",
+        "first-event-chain",
+        "canonical-actor-identity",
+        "repository-binding",
+        "schema-enum-parity",
+        "control-room-projection",
+        "governed-commands",
+        "command-scope-ttl",
+        "terminal-state-immutability"
+      ]
+    },
+    {
+      "id": "orchestration-runtime",
+      "path": "tests/test_orchestration_runtime.py",
+      "covers": [
+        "durable-task-state",
+        "hash-chain",
+        "priority-queue",
+        "checkpoints",
+        "budgets",
+        "retry",
+        "cancellation",
+        "recovery",
+        "projection",
+        "tamper-denial"
+      ]
+    },
+    {
+      "id": "orchestration-runtime-claims",
+      "path": "tests/test_orchestration_runtime_claims.py",
+      "covers": [
+        "cross-process-claim-lock",
+        "single-claim",
+        "expiring-lease",
+        "lease-renewal",
+        "lease-release-evidence",
+        "expired-lease-recovery"
+      ]
+    },
+    {
+      "id": "control-room-api-v1",
+      "path": "tests/test_control_room_api.py",
+      "covers": [
+        "mission-overview",
+        "task-detail",
+        "queue-state",
+        "agent-workload",
+        "checkpoint-freshness",
+        "budget-usage",
+        "approval-inbox",
+        "recovery-quarantine",
+        "audit-timeline",
+        "command-intent-validation",
+        "read-only-boundary",
+        "tamper-denial"
+      ]
+    },
+    {
+      "id": "workspace-scope",
+      "path": "tests/test_workspace_scope.py",
+      "covers": [
+        "external-workspace-binding",
+        "binding-outside-repository",
+        "inactive-binding-denial",
+        "missing-digest-denial",
+        "path-containment",
+        "parent-traversal-denial",
+        "absolute-escape-denial",
+        "symlink-escape-denial",
+        "alternate-data-stream-denial",
+        "device-path-denial",
+        "prohibited-path-denial",
+        "allowed-path-enforcement",
+        "remote-normalization",
+        "repository-binding"
+      ]
+    },
+    {
+      "id": "control-plane-digest",
+      "path": "tests/test_control_plane_digest.py",
+      "covers": [
+        "fail-closed-protected-roots",
+        "new-protected-file-default-protection",
+        "digest-determinism",
+        "content-change-detection",
+        "creation-deletion-rename-detection",
+        "unprotected-change-ignored",
+        "git-excluded-from-digest",
+        "symlink-digest-denial",
+        "unreadable-file-fail-closed",
+        "stale-digest-denial",
+        "repository-edit-cannot-refresh-binding",
+        "standard-task-protected-denial",
+        "security-exact-path-scope",
+        "pattern-scope-denial",
+        "owner-approval-required",
+        "verifier-independence-l4",
+        "canonical-manifest-covers-runtime"
+      ]
+    },
+    {
+      "id": "signature-authority",
+      "path": "tests/test_signature_authority.py",
+      "covers": [
+        "ed25519-detached-signature",
+        "operator-signed-key-registry",
+        "unsigned-registry-denial",
+        "tampered-registry-denial",
+        "injected-key-denial",
+        "registry-without-its-operator-denial",
+        "authority-artifact-binding",
+        "builder-signed-verifier-receipt-denial",
+        "builder-signs-own-completion-claim",
+        "unknown-key-denial",
+        "revoked-key-denial",
+        "expired-key-denial",
+        "not-yet-valid-key-denial",
+        "tampered-payload-denial",
+        "artifact-type-confusion-denial",
+        "production-keygen-refused",
+        "development-key-labelling"
+      ]
+    }
   ]
 }

@@ -184,7 +184,14 @@ def authorize_classified_action(
             return False, "review mode is technically read-only"
         if classification.unknown:
             return False, "review mode denies unknown action"
+        if classification.orchestration:
+            return False, "review mode produces findings only and may not delegate execution"
         return True, "allowed"
+    if classification.orchestration:
+        if not is_conductor(state):
+            return False, ("only the canonical conductor may delegate; "
+                           f"role={state.role!r} agent={state.agent_id!r}")
+        return True, "conductor delegation permitted; the supervisor issues the lease"
     if classification.push:
         return False, "release actions must use Release Grant V3 control path"
     if classification.mutating and state.role == CONDUCTOR_ROLE:
