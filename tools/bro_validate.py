@@ -50,6 +50,7 @@ def main() -> int:
         "schemas/recovery-record.schema.json", "schemas/release-grant.schema.json",
         "analytics/registry.json", "learning/registry.json", "release/registry.json",
         "tools/registry.json", "tools/bro_docs_freshness.py",
+        "tools/bro_bind_workspace.py",
         "runtime/bro_policy.py", "runtime/bro_hook.py", "runtime/bro_contracts.py",
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
@@ -138,7 +139,7 @@ def main() -> int:
         "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
         "runtime/bro_orchestration_runtime_v1.py", "runtime/bro_control_room_api.py",
         "runtime/bro_workspace.py", "runtime/bro_protected.py", "runtime/bro_freeze.py",
-        "tools/bro_docs_freshness.py",
+        "tools/bro_docs_freshness.py", "tools/bro_bind_workspace.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
