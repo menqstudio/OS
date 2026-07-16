@@ -11,7 +11,7 @@
     {"id":"release-v3","path":"tests/test_release_v3.py","covers":["evidence-bound-grant","owner-authority","head-tree-binding","remote-binding","v2-live-denial","expiry-denial"]},
     {"id":"recovery","path":"tests/test_recovery.py","covers":["pre-mutation-journal","cas-state-version","interruption-blocking","reversible-recovery-proof","unknown-quarantine","irreversible-effect-honesty"]},
     {"id":"documentation-freshness","path":"tests/test_docs_freshness.py","covers":["complete-doc-inventory","review-date","branch-pr-metadata","stale-marker-denial"]},
-    {"id":"policy-boundaries","path":"tests/test_bro_policy.py","covers":["review-read-only","bro-delegation","push-authority"]},
+    {"id":"policy-boundaries","path":"tests/test_bro_policy.py","covers":["review-read-only","bro-delegation","push-authority","fail-closed-role-default","unauthenticated-mutation-denial","canonical-conductor-identity","role-name-is-not-identity"]},
     {"id":"authorization-kernel","path":"tests/test_authorization_kernel.py","covers":["tool-capability-registry","unknown-tool-denial","normalized-action-classification","shell-git-capabilities"]},
     {"id":"contract-gates","path":"tests/test_bro_contracts.py","covers":["task-contract","agent-profile","skill-receipt","release-grant"]},
     {"id":"analytics-control-plane","path":"tests/test_bro_analytics.py","covers":["metrics","dashboards","status-contracts"]},
