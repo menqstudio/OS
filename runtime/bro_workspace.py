@@ -142,13 +142,51 @@ def load_workspace(root: pathlib.Path = ROOT) -> Workspace:
     )
 
 
+def git_config_path(root: pathlib.Path) -> pathlib.Path:
+    """Resolve the config path for a checkout, including a linked worktree.
+
+    In a worktree `.git` is a file holding `gitdir: <path>`, and the config lives
+    in the common dir shared with the main checkout. This matters because the
+    architecture requires builders to run in isolated worktrees, so assuming
+    `.git` is a directory would break the enforcement path in exactly the layout
+    the design mandates. Parsed rather than shelled out to, so the gate does not
+    depend on a git binary being present.
+    """
+    dot_git = root / ".git"
+    if dot_git.is_dir():
+        return dot_git / "config"
+    if not dot_git.is_file():
+        raise WorkspaceError(f"{root} is not a git checkout")
+    try:
+        text = dot_git.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise WorkspaceError(f"cannot read {dot_git}: {exc}") from exc
+    match = re.search(r"^gitdir:\s*(.+?)\s*$", text, re.MULTILINE)
+    if not match:
+        raise WorkspaceError(f"unparsable git link file: {dot_git}")
+    gitdir = pathlib.Path(match.group(1))
+    if not gitdir.is_absolute():
+        gitdir = _real(str(root / gitdir))
+    commondir = gitdir / "commondir"
+    if not commondir.is_file():
+        return gitdir / "config"
+    try:
+        common = commondir.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise WorkspaceError(f"cannot read {commondir}: {exc}") from exc
+    base = pathlib.Path(common)
+    if not base.is_absolute():
+        base = _real(str(gitdir / base))
+    return base / "config"
+
+
 def verify_repository_binding(workspace: Workspace) -> None:
-    """Enforcer-internal read of .git/config.
+    """Enforcer-internal read of the git config.
 
     `.git/config` is a prohibited *agent* target; prohibited_paths constrain
     tool inputs, not this module's own reads.
     """
-    config = workspace.root / ".git" / "config"
+    config = git_config_path(workspace.root)
     try:
         text = config.read_text(encoding="utf-8")
     except OSError as exc:

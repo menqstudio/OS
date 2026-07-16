@@ -15,6 +15,7 @@ from bro_workspace import (
     WorkspaceError,
     authorize_path,
     authorize_targets,
+    git_config_path,
     load_workspace,
     matches_pattern,
     normalize_remote,
@@ -174,6 +175,61 @@ class ScopeTests(WorkspaceFixture):
             self.skipTest("symlink creation not permitted")
         with self.assertRaises(WorkspaceError):
             authorize_path(self.workspace(), "escape/loot.txt")
+
+
+class GitConfigResolutionTests(WorkspaceFixture):
+    """The architecture requires builders to run in isolated worktrees, where
+    `.git` is a file rather than a directory. Resolving the config only for a
+    plain checkout would break the enforcement path in the exact layout the
+    design mandates."""
+
+    def test_plain_checkout_config(self):
+        self.assertEqual(git_config_path(self.workspace_root),
+                         self.workspace_root / ".git" / "config")
+
+    def make_worktree(self, *, commondir: bool) -> pathlib.Path:
+        main_git = self.tmp / "main" / ".git"
+        (main_git / "worktrees" / "wt").mkdir(parents=True)
+        (main_git / "config").write_text(
+            '[remote "origin"]\n\turl = git@github.com:menqstudio/Bro.git\n',
+            encoding="utf-8")
+        linked = self.tmp / "linked"
+        linked.mkdir()
+        gitdir = main_git / "worktrees" / "wt"
+        (linked / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+        if commondir:
+            (gitdir / "commondir").write_text("../..\n", encoding="utf-8")
+        else:
+            (gitdir / "config").write_text(
+                '[remote "origin"]\n\turl = git@github.com:menqstudio/Bro.git\n',
+                encoding="utf-8")
+        return linked
+
+    def test_worktree_resolves_through_commondir(self):
+        linked = self.make_worktree(commondir=True)
+        self.assertEqual(real(git_config_path(linked)),
+                         real(self.tmp / "main" / ".git" / "config"))
+
+    def test_worktree_without_commondir_uses_gitdir(self):
+        linked = self.make_worktree(commondir=False)
+        self.assertTrue(git_config_path(linked).is_file())
+
+    def test_worktree_remote_verifies(self):
+        linked = self.make_worktree(commondir=True)
+        verify_repository_binding(self.workspace(root=real(linked)))
+
+    def test_missing_git_denied(self):
+        bare = self.tmp / "nogit"
+        bare.mkdir()
+        with self.assertRaises(WorkspaceError):
+            git_config_path(bare)
+
+    def test_unparsable_git_link_denied(self):
+        broken = self.tmp / "broken"
+        broken.mkdir()
+        (broken / ".git").write_text("not a gitdir line\n", encoding="utf-8")
+        with self.assertRaises(WorkspaceError):
+            git_config_path(broken)
 
 
 class RepositoryBindingTests(WorkspaceFixture):

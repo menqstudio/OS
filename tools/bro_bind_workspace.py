@@ -17,13 +17,14 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
 
 from bro_protected import compute_control_plane_digest, load_protected_manifest
-from bro_workspace import WorkspaceError, normalize_remote
+from bro_workspace import WorkspaceError, git_config_path, normalize_remote
 
 DEFAULT_TTL_SECONDS = 8 * 60 * 60
 
@@ -38,13 +39,11 @@ DEFAULT_PROHIBITED = [
 
 
 def detect_remote(root: pathlib.Path) -> str:
-    config = root / ".git" / "config"
+    config = git_config_path(root)
     try:
         text = config.read_text(encoding="utf-8")
     except OSError as exc:
         raise WorkspaceError(f"cannot read {config}: {exc}") from exc
-    import re
-
     urls = re.findall(r"^\s*url\s*=\s*(.+?)\s*$", text, re.MULTILINE)
     if not urls:
         raise WorkspaceError("repository has no remote url")
