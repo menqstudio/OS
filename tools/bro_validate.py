@@ -59,8 +59,11 @@ def main() -> int:
         "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
         "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
         "runtime/bro_orchestration_runtime_v1.py", "runtime/bro_control_room_api.py",
+        "runtime/bro_workspace.py", "runtime/bro_protected.py", "runtime/bro_freeze.py",
+        "config/protected-control-plane.json",
         "tests/test_orchestration_runtime.py", "tests/test_orchestration_runtime_claims.py",
-        "tests/test_control_room_api.py",
+        "tests/test_control_room_api.py", "tests/test_workspace_scope.py",
+        "tests/test_control_plane_digest.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -134,6 +137,7 @@ def main() -> int:
         "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
         "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
         "runtime/bro_orchestration_runtime_v1.py", "runtime/bro_control_room_api.py",
+        "runtime/bro_workspace.py", "runtime/bro_protected.py", "runtime/bro_freeze.py",
         "tools/bro_docs_freshness.py",
     ]
     for rel in compile_targets:
@@ -141,7 +145,7 @@ def main() -> int:
 
     skill_count = load_json("skills/index.json").get("count")
     print(
-        "GREEN: foundation valid; "
+        "GREEN: static foundation validation passed; "
         f"canonical={len(manifest.get('paths', []))}; sst_domains={len(domains)}; "
         f"packs={identity['pack_count']}; agents={identity['agent_count']}; "
         f"authorities={authority_count}; skills={skill_count}; schemas={len(schema_paths)}; "

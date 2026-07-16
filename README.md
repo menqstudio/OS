@@ -35,7 +35,28 @@ Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestrati
 - Control Room API targeted tests: 12/12 GREEN
 - full unique suite: 128/128 GREEN
 - documentation inventory: 62/62 at merge
-- open P0/P1 findings at merge: none
+
+## Open findings
+
+An independent audit on 2026-07-16 found the merged baseline is not operable and
+not self-defending. These are open:
+
+- **No issuer.** The repository validates signed task contracts, completion
+  manifests, verifier receipts, evidence events and mode grants that nothing in
+  the repository can produce. There is no signer, no key generation, no CLI.
+  Every gate therefore fails closed on an artifact that cannot exist yet.
+- **Symmetric signatures.** `verify_signed_document` is HMAC, so the verifying
+  key is the signing key. The hook runs inside the agent's own process, so a
+  builder holds the key that mints its own GREEN verifier receipt. Verifier
+  independence is unenforceable until signatures are asymmetric.
+- **Unscoped local reads.** `READ_LOCAL` carries `requires_scope: false`, so any
+  path on the machine is readable, and `WebFetch` is classified as a read. Read
+  anything, send anywhere.
+- **Delegation is unregistered.** `Agent`, `Task` and `Skill` are absent from the
+  tool registry, so the conductor's only sanctioned action classifies as UNKNOWN
+  and denies.
+- **The conductor cannot finish a turn.** The Stop gate demands a specialist
+  completion manifest from an agent that by design never executes.
 
 ## Operating modes
 
@@ -53,9 +74,27 @@ Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestrati
 6. Run `python -m unittest discover -s tests -v`.
 7. Continue only when the exact repository state is GREEN.
 
-## Next product phase
+## Next phase
 
-The next scoped phase is **Control Room visual surfaces V1**: owner-facing mission overview, task detail, queue and agent workload views, approvals, recovery/quarantine, evidence drill-down, and audit timeline built strictly over the merged read-only API. Production credentials, external evidence-service deployment, direct repository or release mutation, BroPS, deployment, and production rollout remain separate phases.
+Containment, not surfaces. Control Room visual surfaces are deferred until Bro
+can actually run.
+
+- **Phase A — containment.** External walls first, because they are the only work
+  with no bootstrap dependency: a dedicated non-admin account for the agent, NTFS
+  ACLs limited to the registered workspace, a fine-grained credential scoped to
+  this repository alone, and a `main` ruleset with no bypass. In-repository:
+  workspace binding, path scope enforcement, and the protected control-plane
+  digest.
+- **Phase B — issuance.** Ed25519 authorities, an operator-signed public key
+  registry, an issuer CLI, and an external supervisor that owns leases. The
+  conductor never holds a lease; a builder runs as a separate process with the
+  lease injected only into it.
+- **Phase C — execution integrity.** Signed test receipts binding command,
+  working tree, environment and runner identity, so "I ran the tests" becomes
+  checkable rather than trusted.
+
+A trust root cannot be issued by the system it roots, so the first bootstrap
+authority is signed by Gev by hand, outside any agent process.
 
 ## Authority
 
