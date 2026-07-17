@@ -5,7 +5,7 @@ import os
 import pathlib
 import sys
 
-from bro_completion import authorize_stop
+from bro_completion import authorize_conductor_stop, authorize_stop
 from bro_contracts import ContractError, validate_task_contract
 from bro_control_plane import authorize_tool, classify_request, settle_execution_tool
 from bro_policy import canonical_context, current_state, read_all, receipt_fresh
@@ -110,7 +110,13 @@ def main() -> int:
         try:
             task = _task_from_env()
         except ContractError as exc:
-            emit({"decision": "block", "reason": f"completion gate RED: {exc}"})
+            # No contract bound: either the conductor, which owes no builder
+            # evidence because it never builds, or an executor missing its
+            # contract, which owes everything.
+            allowed, why = authorize_conductor_stop(state, ROOT)
+            emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": why}}
+                 if allowed else
+                 {"decision": "block", "reason": f"completion gate RED: {exc}; {why}"})
             return 0
         allowed, why = authorize_stop(task, state.agent_id, ROOT)
         emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": why}} if allowed else {"decision": "block", "reason": why})

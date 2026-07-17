@@ -163,3 +163,40 @@ def authorize_stop(task: dict[str, Any], agent_id: str, root: pathlib.Path = ROO
         return True, "completion and verification evidence GREEN"
     except CompletionError as exc:
         return False, f"completion gate RED: {exc}"
+
+
+def authorize_conductor_stop(state, root: pathlib.Path = ROOT) -> tuple[bool, str]:
+    """Let the conductor end a turn it did not execute.
+
+    Demanding a builder's completion manifest from the conductor is a category
+    error: Bro delegates and never builds, so the artifact can never exist and
+    the turn can never end. The gate was not strict, it was unsatisfiable.
+
+    This exemption is narrow by construction. It covers exactly one identity, it
+    only applies when no task contract is bound, and it refuses a frozen session.
+    Anything Bro claimed to complete lives under a task contract, and a bound
+    contract routes back to the full gate, so the exemption cannot be used to
+    escape evidence for work actually performed.
+
+    Deliberately not covered: whether delegations this turn resolved. That needs
+    the supervisor, which does not exist yet, so the honest position is that this
+    exemption asserts nothing about delegated work.
+    """
+    from bro_policy import is_conductor
+
+    if not is_conductor(state):
+        return False, ("conductor stop exemption requires the canonical conductor; "
+                       f"role={state.role!r} agent={state.agent_id!r}")
+    if os.getenv("BRO_TASK_CONTRACT"):
+        return False, ("conductor holds a task contract and is therefore an "
+                       "executor for this turn; the completion gate applies")
+    try:
+        from bro_freeze import FreezeError, load_freeze
+
+        if load_freeze(state.session_id) is not None:
+            return False, ("session authority is frozen after a protected mutation; "
+                           "it must terminate rather than finish")
+    except FreezeError as exc:
+        return False, f"freeze state gate RED: {exc}"
+    return True, ("conductor turn: no task contract bound, so no builder evidence "
+                  "is owed; startup receipt is current")

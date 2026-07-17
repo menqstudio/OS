@@ -57,7 +57,12 @@
         "pending-lease-denial",
         "signed-verifier-receipt",
         "independence-level",
-        "stop-gate"
+        "stop-gate",
+        "conductor-stop-exemption",
+        "exemption-requires-canonical-identity",
+        "bound-contract-owes-full-gate",
+        "frozen-session-must-terminate",
+        "specialist-stop-unchanged"
       ]
     },
     {
