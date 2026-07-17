@@ -50,6 +50,7 @@ def main() -> int:
         "schemas/recovery-record.schema.json", "schemas/release-grant.schema.json",
         "analytics/registry.json", "learning/registry.json", "release/registry.json",
         "tools/registry.json", "tools/bro_docs_freshness.py",
+        "tools/bro_bind_workspace.py",
         "runtime/bro_policy.py", "runtime/bro_hook.py", "runtime/bro_contracts.py",
         "runtime/bro_identity.py", "runtime/bro_identity_hook.py", "runtime/bro_analytics.py",
         "runtime/bro_learning.py", "runtime/bro_skill_evolution.py",
@@ -59,8 +60,13 @@ def main() -> int:
         "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
         "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
         "runtime/bro_orchestration_runtime_v1.py", "runtime/bro_control_room_api.py",
+        "runtime/bro_workspace.py", "runtime/bro_protected.py", "runtime/bro_freeze.py",
+        "runtime/bro_signature.py", "tools/broctl.py", "tools/bro_supervisor.py",
+        "config/protected-control-plane.json",
         "tests/test_orchestration_runtime.py", "tests/test_orchestration_runtime_claims.py",
-        "tests/test_control_room_api.py",
+        "tests/test_control_room_api.py", "tests/test_workspace_scope.py",
+        "tests/test_control_plane_digest.py", "tests/test_signature_authority.py",
+        "tests/test_supervisor.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -134,14 +140,17 @@ def main() -> int:
         "runtime/bro_release_v3.py", "runtime/bro_recovery.py",
         "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
         "runtime/bro_orchestration_runtime_v1.py", "runtime/bro_control_room_api.py",
-        "tools/bro_docs_freshness.py",
+        "runtime/bro_workspace.py", "runtime/bro_protected.py", "runtime/bro_freeze.py",
+        "runtime/bro_signature.py",
+        "tools/bro_docs_freshness.py", "tools/bro_bind_workspace.py", "tools/broctl.py",
+        "tools/bro_supervisor.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
 
     skill_count = load_json("skills/index.json").get("count")
     print(
-        "GREEN: foundation valid; "
+        "GREEN: static foundation validation passed; "
         f"canonical={len(manifest.get('paths', []))}; sst_domains={len(domains)}; "
         f"packs={identity['pack_count']}; agents={identity['agent_count']}; "
         f"authorities={authority_count}; skills={skill_count}; schemas={len(schema_paths)}; "

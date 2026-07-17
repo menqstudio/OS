@@ -39,6 +39,13 @@ DIRECT_ACTIONS = {
     "Edit": "edit",
     "MultiEdit": "edit",
     "NotebookEdit": "edit",
+    # Delegation is the conductor's only sanctioned action. Leaving it
+    # unregistered classified it UNKNOWN, which denies, so the contract required
+    # the one thing the control plane forbade.
+    "Task": "delegate",
+    "Agent": "delegate",
+    "Skill": "resolve",
+    "TodoWrite": "track",
 }
 
 
@@ -58,6 +65,13 @@ class ActionClassification:
     @property
     def unknown(self) -> bool:
         return "UNKNOWN" in self.capabilities
+
+    @property
+    def orchestration(self) -> bool:
+        """Delegation is not mutation: it spends no capability of its own, it asks
+        the supervisor to issue one. Keeping it out of MUTATING_CAPABILITIES is
+        what lets the conductor delegate while still being unable to write."""
+        return "ORCHESTRATE" in self.capabilities
 
 
 def load_tool_registry(root: pathlib.Path = ROOT) -> dict[str, Any]:

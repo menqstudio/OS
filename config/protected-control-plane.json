@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "purpose": "Fail-closed control-plane protection. protected_roots governs ACCESS: any matching path is denied to standard-builder tasks, and a new file under a protected root is protected from creation. digest_roots governs DIGEST MEMBERSHIP only and never weakens access. A security-maintenance task may touch only the exact paths named in its owner-issued authority artifact.",
+  "protected_roots": [
+    "runtime/**",
+    "config/**",
+    "schemas/**",
+    "tools/registry.json",
+    "tools/bro_validate.py",
+    "tools/bro_docs_freshness.py",
+    "agents/authority-policy.json",
+    "agents/registry.json",
+    "orchestration/registry.json",
+    "laws/**",
+    ".claude/**",
+    ".github/workflows/**",
+    ".git/**",
+    "**/.env",
+    "**/*secret*",
+    "**/*credential*",
+    "**/*private-key*"
+  ],
+  "digest_roots": [
+    "runtime/**",
+    "config/**",
+    "schemas/**",
+    "tools/registry.json",
+    "tools/bro_validate.py",
+    "tools/bro_docs_freshness.py",
+    "agents/authority-policy.json",
+    "agents/registry.json",
+    "orchestration/registry.json",
+    "laws/**",
+    ".claude/**",
+    ".github/workflows/**"
+  ],
+  "unprotected_exceptions": []
+}

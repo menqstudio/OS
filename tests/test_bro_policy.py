@@ -7,8 +7,18 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
+import os
+
 from bro_authorization import classify_tool_action
-from bro_policy import State, authorize_classified_action
+from bro_policy import (
+    CANONICAL_CONDUCTOR_ID,
+    CONDUCTOR_ROLE,
+    UNKNOWN_ROLE,
+    State,
+    authorize_classified_action,
+    current_state,
+    is_conductor,
+)
 
 
 def bundle(agent_id="agent-1"):
@@ -68,6 +78,99 @@ class PolicyTests(unittest.TestCase):
         ok, _ = authorize_classified_action(State("review", "bro", "s"), classification, {})
         self.assertTrue(ok)
         load_bundle.assert_not_called()
+
+
+class RoleDefaultTests(unittest.TestCase):
+    """A privileged default means forgetting to configure an identity grants one."""
+
+    def classified(self, tool, value):
+        return classify_tool_action(tool, value, ROOT)
+
+    def test_unset_role_is_unauthenticated(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(current_state({}).role, UNKNOWN_ROLE)
+
+    def test_blank_role_is_unauthenticated(self):
+        with patch.dict(os.environ, {"BRO_ROLE": "   "}):
+            self.assertEqual(current_state({}).role, UNKNOWN_ROLE)
+
+    def test_unset_role_cannot_mutate(self):
+        classification = self.classified("Write", {"file_path": "runtime/x.py"})
+        ok, reason = authorize_classified_action(
+            State("work", UNKNOWN_ROLE, "s"), classification, {})
+        self.assertFalse(ok)
+        self.assertIn("unauthenticated", reason)
+
+    def test_unset_role_does_not_inherit_conductor_exemption(self):
+        self.assertFalse(is_conductor(State("work", UNKNOWN_ROLE, "s", "")))
+
+    def test_conductor_needs_the_canonical_identity(self):
+        self.assertTrue(is_conductor(State("work", CONDUCTOR_ROLE, "s", CANONICAL_CONDUCTOR_ID)))
+
+    def test_role_name_alone_is_not_the_conductor(self):
+        """There is exactly one Bro; claiming the role name is not being it."""
+        self.assertFalse(is_conductor(State("work", CONDUCTOR_ROLE, "s", "agt-p01-r01")))
+        self.assertFalse(is_conductor(State("work", CONDUCTOR_ROLE, "s", "")))
+
+    def test_canonical_id_without_the_role_is_not_the_conductor(self):
+        self.assertFalse(is_conductor(State("work", "specialist", "s", CANONICAL_CONDUCTOR_ID)))
+
+
+class DelegationTests(unittest.TestCase):
+    """The contract requires Bro to delegate; leaving delegation unregistered made
+    it classify UNKNOWN, so the control plane forbade the one thing Bro must do."""
+
+    def classified(self, tool, value=None):
+        return classify_tool_action(tool, value or {}, ROOT)
+
+    def conductor(self, mode="work"):
+        return State(mode, CONDUCTOR_ROLE, "s", CANONICAL_CONDUCTOR_ID)
+
+    def test_delegation_is_registered(self):
+        for tool in ("Task", "Agent", "Skill", "TodoWrite"):
+            classification = self.classified(tool)
+            self.assertFalse(classification.unknown, tool)
+            self.assertTrue(classification.orchestration, tool)
+
+    def test_delegation_is_not_mutation(self):
+        self.assertFalse(self.classified("Task").mutating)
+
+    def test_conductor_may_delegate_in_work(self):
+        ok, reason = authorize_classified_action(self.conductor(), self.classified("Task"), {})
+        self.assertTrue(ok, reason)
+        self.assertIn("supervisor issues the lease", reason)
+
+    def test_review_denies_delegation(self):
+        ok, reason = authorize_classified_action(
+            self.conductor("review"), self.classified("Task"), {})
+        self.assertFalse(ok)
+        self.assertIn("findings only", reason)
+
+    def test_specialist_may_not_delegate(self):
+        ok, reason = authorize_classified_action(
+            State("work", "specialist", "s", "agt-p01-r01"), self.classified("Task"), {})
+        self.assertFalse(ok)
+        self.assertIn("only the canonical conductor", reason)
+
+    def test_unauthenticated_may_not_delegate(self):
+        ok, _ = authorize_classified_action(
+            State("work", UNKNOWN_ROLE, "s", ""), self.classified("Task"), {})
+        self.assertFalse(ok)
+
+    def test_role_name_alone_may_not_delegate(self):
+        ok, _ = authorize_classified_action(
+            State("work", CONDUCTOR_ROLE, "s", "agt-p01-r01"), self.classified("Task"), {})
+        self.assertFalse(ok)
+
+    def test_delegation_still_cannot_write(self):
+        """Delegating must not become a mutation bypass."""
+        ok, reason = authorize_classified_action(
+            self.conductor(), self.classified("Write", {"file_path": "runtime/x.py"}), {})
+        self.assertFalse(ok)
+        self.assertIn("delegate", reason)
+
+    def test_unknown_tool_still_denies(self):
+        self.assertTrue(self.classified("SomeInventedTool").unknown)
 
 
 if __name__ == "__main__":

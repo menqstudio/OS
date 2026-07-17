@@ -59,23 +59,51 @@ def receipt_path(session_id: str) -> pathlib.Path:
     return receipt_dir() / f"{safe}.json"
 
 
+CONDUCTOR_ROLE = "bro"
+CANONICAL_CONDUCTOR_ID = "bro-000"
+UNKNOWN_ROLE = "unknown"
+
+
 def current_state(payload: dict) -> State:
     requested = os.getenv("BRO_MODE", load_json(POLICY_PATH)["default_mode"]).strip().lower()
     return State(
         requested,
-        os.getenv("BRO_ROLE", "bro").strip().lower(),
+        # An unset role must not inherit the conductor's exemptions. Defaulting to
+        # a privileged identity means forgetting to configure one grants it.
+        os.getenv("BRO_ROLE", UNKNOWN_ROLE).strip().lower() or UNKNOWN_ROLE,
         str(payload.get("session_id") or os.getenv("BRO_SESSION_ID") or "unknown"),
         os.getenv("BRO_AGENT_ID", "").strip().lower(),
     )
 
 
+def is_conductor(state: State) -> bool:
+    """The conductor is one exact identity, not anyone claiming the role name.
+
+    There is exactly one Bro. Treating the role string alone as proof lets any
+    session assert it by setting an environment variable, so the canonical agent
+    id must agree.
+    """
+    return state.role == CONDUCTOR_ROLE and state.agent_id == CANONICAL_CONDUCTOR_ID
+
+
 def read_all(session_id: str) -> dict:
     files = tracked_files()
-    hashes = {rel: hashlib.sha256((ROOT / rel).read_bytes()).hexdigest() for rel in files}
+    hashes = {}
+    unreadable = []
+    for rel in files:
+        try:
+            hashes[rel] = hashlib.sha256((ROOT / rel).read_bytes()).hexdigest()
+        except OSError:
+            # A tracked file deleted from the worktree must produce a receipt
+            # failure, not an unhandled traceback: the canonical check below is
+            # the intended gate and it cannot run if hashing crashes first.
+            unreadable.append(rel)
     canonical = load_json(MANIFEST_PATH)["paths"]
     missing = [path for path in canonical if path not in hashes]
     if missing:
         raise RuntimeError(f"canonical files are missing or untracked: {missing}")
+    if unreadable:
+        raise RuntimeError(f"tracked files are unreadable: {unreadable}")
     receipt = {
         "schema": 1,
         "session_id": session_id,
@@ -156,11 +184,20 @@ def authorize_classified_action(
             return False, "review mode is technically read-only"
         if classification.unknown:
             return False, "review mode denies unknown action"
+        if classification.orchestration:
+            return False, "review mode produces findings only and may not delegate execution"
         return True, "allowed"
+    if classification.orchestration:
+        if not is_conductor(state):
+            return False, ("only the canonical conductor may delegate; "
+                           f"role={state.role!r} agent={state.agent_id!r}")
+        return True, "conductor delegation permitted; the supervisor issues the lease"
     if classification.push:
         return False, "release actions must use Release Grant V3 control path"
-    if classification.mutating and state.role == "bro":
+    if classification.mutating and state.role == CONDUCTOR_ROLE:
         return False, "Bro remains free and may not perform repository mutation; delegate to a governed specialist"
+    if classification.mutating and state.role == UNKNOWN_ROLE:
+        return False, "unauthenticated role may not mutate; BRO_ROLE is unset"
     try:
         bundle = load_contract_bundle_from_env(ROOT)
     except ContractError as exc:

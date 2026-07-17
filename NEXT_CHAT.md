@@ -30,19 +30,41 @@ Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestrati
 
 ## Next task
 
-Start **Control Room visual surfaces V1** on a new branch from current `main`.
+**Control Room visual surfaces V1 is deferred.** Building an owner-facing view of
+a system that cannot execute a task would report an empty room. See the open
+findings in `README.md` first.
 
-Narrow scope:
+Start **Phase A containment**. Order matters, and it is not the order intuition
+suggests: external walls come before the issuer, because they are the only work
+with no bootstrap dependency and the only work that protects the owner from the
+agent rather than the agent from itself.
 
-- owner-facing mission overview over `ControlRoomAPIV1`;
-- task detail with state, evidence source/freshness, checkpoints, budgets, and integrity root;
-- queue and canonical agent workload views;
-- approval inbox;
-- recovery and quarantine views;
-- append-only audit timeline;
-- explicit loading, empty, stale, unavailable, integrity-failure, and error states;
-- command-intent preparation and validation only, with no execution or mutation path;
-- accessibility, deterministic rendering, and tests bound to API contracts.
+Owner-only, and blocking nothing else:
+
+1. dedicated non-admin Windows account for the agent;
+2. NTFS ACL limited to the registered workspace, inheritance disabled;
+3. deny that account access to the owner profile, `.ssh`, and credential stores;
+4. fine-grained GitHub credential scoped to `menqstudio/Bro` alone, without
+   Administration, Secrets or Workflows;
+5. no general owner credential inside the agent account;
+6. `main` ruleset requiring a pull request, blocking force-push and deletion,
+   requiring `foundation (ubuntu-latest, 3.12)` and
+   `foundation (windows-latest, 3.12)`, with `bypass_actors: []`.
+
+In-repository, landed on `remediation/contained-autonomy-phase-a`:
+
+- `runtime/bro_workspace.py` — external workspace binding and path containment;
+- `runtime/bro_protected.py` — fail-closed protected roots and control-plane digest;
+- `runtime/bro_freeze.py` — settlement-only state after a protected mutation;
+- `config/protected-control-plane.json` — access roots and digest roots.
+
+Not yet wired into `runtime/bro_control_plane.py`: the modules are tested but
+inert. Wiring them requires a workspace binding to exist, so it fails closed for
+every caller including CI until one is issued. That wiring is itself the first
+security-maintenance task.
+
+Then Phase B: Ed25519 authorities, operator-signed key registry, issuer CLI,
+external supervisor. Then Phase C: signed execution receipts.
 
 Out of scope unless Gev explicitly expands it:
 
@@ -52,3 +74,10 @@ Out of scope unless Gev explicitly expands it:
 - direct repository, release, deployment, or production mutation;
 - BroPS changes;
 - deployment or production rollout.
+
+## Architecture Freeze v1
+
+The architecture is frozen. A new architectural idea must show it closes a
+concrete bug or audit finding, or it does not land. Ten rounds of design
+improvement with zero applied lines is the failure mode this freeze exists to
+stop.

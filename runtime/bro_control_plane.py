@@ -8,11 +8,15 @@ from bro_authority import AuthorityError, resolve_agent_authority, validate_veri
 from bro_authorization import ActionClassification, classify_tool_action
 from bro_contracts import ContractError, validate_agent_profile, validate_task_contract
 from bro_execution_lease import LeaseError, finalize_execution_lease, load_execution_lease_from_env, quarantine_execution_lease, reserve_execution_lease
+from bro_freeze import FreezeError, authorize_under_freeze, freeze_authority, load_freeze
 from bro_policy import State, authorize_classified_action
+from bro_protected import ProtectedScopeError, authorize_protected_scope, load_protected_manifest, verify_control_plane_digest
 from bro_recovery import RecoveryError, cancel_prepared, prepare_mutation, settle_mutation
 from bro_release_v3 import ReleaseV3Error, authorize_release_push
 from bro_repository_state import RepositoryStateError, verify_repository_binding
 from bro_security import SecurityError
+from bro_workspace import Workspace, WorkspaceError, authorize_targets, load_workspace
+from bro_workspace import verify_repository_binding as verify_workspace_remote
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -54,6 +58,29 @@ def _enforce_identity_authority(state: State) -> dict:
     return task
 
 
+def _shell_cwd(classification: ActionClassification, workspace: Workspace) -> pathlib.Path:
+    return workspace.root
+
+
+def _bind_workspace(classification: ActionClassification) -> Workspace:
+    """Every local action requires an active binding, a matching repository and an
+    unchanged control plane. A missing, malformed, inactive or stale binding
+    denies: scope that cannot be proven is not scope."""
+    workspace = load_workspace(ROOT)
+    verify_workspace_remote(workspace)
+    manifest = load_protected_manifest(ROOT)
+    verify_control_plane_digest(ROOT, manifest, workspace.control_plane_digest)
+    targets = classification.targets or (".",)
+    authorize_targets(workspace, targets, _shell_cwd(classification, workspace))
+    return workspace
+
+
+def _relative_targets(workspace: Workspace, classification: ActionClassification) -> list[str]:
+    resolved = authorize_targets(workspace, classification.targets or (),
+                                 _shell_cwd(classification, workspace))
+    return [path.relative_to(workspace.root).as_posix() for path in resolved]
+
+
 def _lease(state: State, task: dict, classification: ActionClassification):
     caps = tuple(x for x in classification.capabilities if x not in {"READ_LOCAL", "READ_EXTERNAL", "UNKNOWN"})
     return load_execution_lease_from_env(task=task, agent_id=state.agent_id, session_id=state.session_id, required_capabilities=caps)
@@ -66,6 +93,18 @@ def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: 
         return False, f"tool capability gate RED: {exc}"
     if classification.unknown:
         return False, f"tool capability gate RED: unknown tool/action {classification.tool}:{classification.action}"
+    try:
+        freeze = load_freeze(state.session_id)
+    except FreezeError as exc:
+        return False, f"freeze state gate RED: {exc}"
+    if freeze is not None:
+        # Checked before the digest: the protected mutation this session just made
+        # is exactly what invalidates its own binding, and settlement must survive it.
+        return authorize_under_freeze(freeze, classification)
+    try:
+        workspace = _bind_workspace(classification)
+    except (WorkspaceError, ProtectedScopeError) as exc:
+        return False, f"workspace scope gate RED: {exc}"
     if classification.push:
         command = str(tool_input.get("command") or tool_input.get("script") or "")
         try:
@@ -82,6 +121,13 @@ def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: 
             return False, f"canonical identity/authority gate RED: {exc}"
         except RepositoryStateError as exc:
             return False, f"repository binding gate RED: {exc}"
+        try:
+            authority = _load_bound_json("BRO_PROTECTED_AUTHORITY") if os.getenv(
+                "BRO_PROTECTED_AUTHORITY") else {"task_class": "standard-builder"}
+            authorize_protected_scope(load_protected_manifest(ROOT), authority,
+                                      _relative_targets(workspace, classification))
+        except (ContractError, ProtectedScopeError, WorkspaceError) as exc:
+            return False, f"protected control-plane gate RED: {exc}"
     allowed, reason = authorize_classified_action(state, classification, tool_input)
     if not allowed:
         return False, reason

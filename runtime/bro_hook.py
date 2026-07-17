@@ -5,7 +5,7 @@ import os
 import pathlib
 import sys
 
-from bro_completion import authorize_stop
+from bro_completion import authorize_conductor_stop, authorize_stop
 from bro_contracts import ContractError, validate_task_contract
 from bro_control_plane import authorize_tool, classify_request, settle_execution_tool
 from bro_policy import canonical_context, current_state, read_all, receipt_fresh
@@ -110,7 +110,13 @@ def main() -> int:
         try:
             task = _task_from_env()
         except ContractError as exc:
-            emit({"decision": "block", "reason": f"completion gate RED: {exc}"})
+            # No contract bound: either the conductor, which owes no builder
+            # evidence because it never builds, or an executor missing its
+            # contract, which owes everything.
+            allowed, why = authorize_conductor_stop(state, ROOT)
+            emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": why}}
+                 if allowed else
+                 {"decision": "block", "reason": f"completion gate RED: {exc}; {why}"})
             return 0
         allowed, why = authorize_stop(task, state.agent_id, ROOT)
         emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": why}} if allowed else {"decision": "block", "reason": why})
@@ -118,5 +124,30 @@ def main() -> int:
     return 0
 
 
+def fail_closed(event: str, exc: BaseException) -> int:
+    """An unexpected exception must still produce a decision.
+
+    A traceback exits non-zero and emits nothing, so the enforcement point simply
+    disappears and the caller is left with no verdict. Any failure the gates did
+    not anticipate is therefore converted into the same answer they would have
+    given: deny. Exit code stays 0 because the decision travels in the payload,
+    not the status.
+    """
+    reason = f"hook failed closed: {type(exc).__name__}: {exc}"
+    if event == "pre-tool":
+        deny(reason)
+    elif event in {"stop", "subagent-stop", "post-tool", "post-tool-failure"}:
+        emit({"decision": "block", "reason": reason})
+    else:
+        emit({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                     "additionalContext": reason}})
+    return 0
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    event_name = sys.argv[1] if len(sys.argv) > 1 else ""
+    try:
+        code = main()
+    except Exception as exc:  # noqa: BLE001 - a hook may never crash open
+        code = fail_closed(event_name, exc)
+    raise SystemExit(code)

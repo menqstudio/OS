@@ -1,12 +1,23 @@
+import json
+import os
 import pathlib
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
-from bro_completion import CompletionError, authorize_stop, validate_completion, validate_verifier_receipt
+from bro_completion import (
+    CompletionError,
+    authorize_conductor_stop,
+    authorize_stop,
+    validate_completion,
+    validate_verifier_receipt,
+)
+from bro_policy import CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE, UNKNOWN_ROLE, State
 from bro_repository_state import RepositoryState
 
 
@@ -92,6 +103,82 @@ class CompletionGateTests(unittest.TestCase):
             allowed, reason = authorize_stop(TASK, TASK["agent_id"], ROOT)
         self.assertTrue(allowed)
         self.assertIn("GREEN", reason)
+
+
+class ConductorStopTests(unittest.TestCase):
+    """Demanding a builder's completion manifest from the conductor is a category
+    error: Bro delegates and never builds, so the artifact can never exist. The
+    gate was not strict, it was unsatisfiable."""
+
+    def setUp(self):
+        self.state_dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-stop-"))
+        self.addCleanup(shutil.rmtree, self.state_dir, ignore_errors=True)
+        self.env = {"BRO_SESSION_STATE_DIR": str(self.state_dir)}
+        for key in ("BRO_TASK_CONTRACT",):
+            self.env.pop(key, None)
+
+    def conductor(self, session="s-1"):
+        return State("review", CONDUCTOR_ROLE, session, CANONICAL_CONDUCTOR_ID)
+
+    def authorize(self, state, **extra):
+        env = {k: v for k, v in os.environ.items() if k != "BRO_TASK_CONTRACT"}
+        env.update(self.env)
+        env.update(extra)
+        with patch.dict(os.environ, env, clear=True):
+            return authorize_conductor_stop(state, ROOT)
+
+    def test_conductor_without_a_contract_may_finish(self):
+        allowed, reason = self.authorize(self.conductor())
+        self.assertTrue(allowed, reason)
+        self.assertIn("no builder evidence is owed", reason)
+
+    def test_specialist_may_not_use_the_exemption(self):
+        allowed, reason = self.authorize(State("work", "specialist", "s-1", "agt-p01-r01"))
+        self.assertFalse(allowed)
+        self.assertIn("canonical conductor", reason)
+
+    def test_role_name_alone_may_not_use_the_exemption(self):
+        allowed, _ = self.authorize(State("review", CONDUCTOR_ROLE, "s-1", "agt-p01-r01"))
+        self.assertFalse(allowed)
+
+    def test_canonical_id_without_the_role_may_not_use_the_exemption(self):
+        allowed, _ = self.authorize(State("review", "specialist", "s-1", CANONICAL_CONDUCTOR_ID))
+        self.assertFalse(allowed)
+
+    def test_unauthenticated_may_not_use_the_exemption(self):
+        allowed, _ = self.authorize(State("review", UNKNOWN_ROLE, "s-1", ""))
+        self.assertFalse(allowed)
+
+    def test_conductor_holding_a_contract_owes_the_full_gate(self):
+        """A bound contract means Bro executed, and executed work owes evidence."""
+        contract = self.state_dir / "task.json"
+        contract.write_text(json.dumps(TASK), encoding="utf-8")
+        allowed, reason = self.authorize(self.conductor(), BRO_TASK_CONTRACT=str(contract))
+        self.assertFalse(allowed)
+        self.assertIn("executor for this turn", reason)
+
+    def test_frozen_session_must_terminate_not_finish(self):
+        from bro_freeze import freeze_authority
+
+        with patch.dict(os.environ, self.env):
+            freeze_authority("s-frozen", "task-sec-1", "0" * 64)
+        allowed, reason = self.authorize(self.conductor("s-frozen"))
+        self.assertFalse(allowed)
+        self.assertIn("frozen", reason)
+
+    def test_unreadable_freeze_marker_fails_closed(self):
+        (self.state_dir / "s-bad.freeze.json").write_text("{not json", encoding="utf-8")
+        allowed, reason = self.authorize(self.conductor("s-bad"))
+        self.assertFalse(allowed)
+        self.assertIn("freeze state gate RED", reason)
+
+    def test_specialist_stop_gate_is_unchanged(self):
+        """The exemption must not soften the path it does not cover."""
+        with patch("bro_completion._signed_env",
+                   side_effect=CompletionError("missing BRO_COMPLETION_MANIFEST")):
+            allowed, reason = authorize_stop(TASK, TASK["agent_id"], ROOT)
+        self.assertFalse(allowed)
+        self.assertIn("missing BRO_COMPLETION_MANIFEST", reason)
 
 
 if __name__ == "__main__":
