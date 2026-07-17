@@ -61,11 +61,12 @@ def main() -> int:
         "runtime/bro_orchestration.py", "runtime/bro_orchestration_runtime.py",
         "runtime/bro_orchestration_runtime_v1.py", "runtime/bro_control_room_api.py",
         "runtime/bro_workspace.py", "runtime/bro_protected.py", "runtime/bro_freeze.py",
-        "runtime/bro_signature.py", "tools/broctl.py",
+        "runtime/bro_signature.py", "tools/broctl.py", "tools/bro_supervisor.py",
         "config/protected-control-plane.json",
         "tests/test_orchestration_runtime.py", "tests/test_orchestration_runtime_claims.py",
         "tests/test_control_room_api.py", "tests/test_workspace_scope.py",
         "tests/test_control_plane_digest.py", "tests/test_signature_authority.py",
+        "tests/test_supervisor.py",
     ]
     for rel in required:
         if not (ROOT / rel).is_file():
@@ -142,6 +143,7 @@ def main() -> int:
         "runtime/bro_workspace.py", "runtime/bro_protected.py", "runtime/bro_freeze.py",
         "runtime/bro_signature.py",
         "tools/bro_docs_freshness.py", "tools/bro_bind_workspace.py", "tools/broctl.py",
+        "tools/bro_supervisor.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)

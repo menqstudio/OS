@@ -314,6 +314,28 @@
         "production-keygen-refused",
         "development-key-labelling"
       ]
+    },
+    {
+      "id": "supervisor",
+      "path": "tests/test_supervisor.py",
+      "covers": [
+        "external-lease-issuance",
+        "conductor-never-holds-the-lease",
+        "builder-receives-lease-in-its-own-environment",
+        "result-carries-no-lease-or-key",
+        "lease-removed-after-run",
+        "builder-does-not-inherit-supervisor-environment",
+        "isolated-worktree-per-task",
+        "owner-approval-for-security-tasks",
+        "scope-beyond-approval-denial",
+        "approval-task-binding",
+        "builder-signed-approval-denial",
+        "builder-cannot-issue-lease",
+        "lease-binds-control-plane-digest",
+        "tampered-lease-denial",
+        "expiry-terminates-builder",
+        "denied-task-never-spawns-builder"
+      ]
     }
   ]
 }
