@@ -336,6 +336,30 @@
         "expiry-terminates-builder",
         "denied-task-never-spawns-builder"
       ]
+    },
+    {
+      "id": "execution-receipts",
+      "path": "tests/test_execution_receipts.py",
+      "covers": [
+        "signed-execution-receipt",
+        "command-and-cwd-binding",
+        "candidate-head-tree-binding",
+        "transcript-hash-binding",
+        "runner-identity",
+        "platform-independent-transcript-digest",
+        "test-catalog-binding",
+        "dirty-worktree-refusal",
+        "runner-reads-head-from-git",
+        "builder-cannot-sign-receipt",
+        "verifier-cannot-sign-receipt",
+        "tampered-exit-code-denial",
+        "tampered-transcript-denial",
+        "missing-field-denial",
+        "smuggled-field-denial",
+        "future-receipt-denial",
+        "failing-run-recorded-honestly",
+        "required-command-set"
+      ]
     }
   ]
 }
