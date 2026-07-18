@@ -436,6 +436,16 @@
         "derived-proof-not-hand-written",
         "traceability-entrypoint"
       ]
+    },
+    {
+      "id": "env-health",
+      "path": "tests/test_env_health.py",
+      "covers": [
+        "version-constraint-parsing",
+        "dependency-resolution",
+        "required-dependency-fail-closed",
+        "optional-dependency-tolerated"
+      ]
     }
   ]
 }

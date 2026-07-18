@@ -70,6 +70,14 @@ def is_protected(manifest: ProtectedManifest, relative: str) -> bool:
 
 
 def is_digest_member(manifest: ProtectedManifest, relative: str) -> bool:
+    # Non-source build artifacts are never a source of truth. Excluding them keeps
+    # the control-plane digest deterministic with respect to bytecode compilation:
+    # otherwise a cold-cache checkout writes runtime/__pycache__/*.pyc after the
+    # binding digest is captured, flipping bound != current and spuriously RED-denying
+    # an otherwise-authorized action (a fail-closed-too-eager availability bug).
+    parts = relative.split("/")
+    if "__pycache__" in parts or relative.endswith((".pyc", ".pyo")):
+        return False
     if any(matches_pattern(relative, p) for p in manifest.unprotected_exceptions):
         return False
     return any(matches_pattern(relative, p) for p in manifest.digest_roots)
