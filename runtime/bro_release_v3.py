@@ -41,13 +41,18 @@ def _normalize_repo(value: object) -> str:
     return text.lower()
 
 
-def _signed(path_env: str, key_env: str) -> dict[str, Any]:
+def _signed(path_env: str, artifact_type: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
+    # Ed25519, not HMAC: the push gate runs in the executor's process, so a
+    # symmetric key would let that process forge its own owner release grant.
+    # verify_artifact checks it against the operator-signed trusted-key registry;
+    # a release grant is signed by the release authority alone.
+    from bro_signature import SignatureError, load_trusted_keys, verify_artifact
     raw = os.getenv(path_env)
     if not raw:
         raise ReleaseV3Error(f"missing {path_env}")
     try:
-        return verify_signed_document(load_json(pathlib.Path(raw)), key_env)
-    except (OSError, json.JSONDecodeError, SecurityError) as exc:
+        return verify_artifact(load_json(pathlib.Path(raw)), artifact_type, load_trusted_keys(root), now=now)
+    except (OSError, json.JSONDecodeError, SignatureError) as exc:
         raise ReleaseV3Error(str(exc)) from exc
 
 
@@ -103,7 +108,9 @@ def validate_release_grant_v3(
         "expected_head_sha", "expected_tree_identity", "allowed_action",
         "issued_at_epoch", "expires_at_epoch",
     }
-    if set(payload) != required or payload.get("schema") != 3:
+    # artifact_type/key_id are injected by the Ed25519 signer (broctl) and echoed
+    # back by verify_artifact; tolerate them without weakening the required set.
+    if set(payload) - {"artifact_type", "key_id"} != required or payload.get("schema") != 3:
         raise ReleaseV3Error("invalid Release Grant V3 shape")
     if payload.get("principal_id") != "owner-gev" or payload.get("allowed_action") != "git-push":
         raise ReleaseV3Error("release grant lacks exact owner/action authority")
@@ -157,7 +164,7 @@ def authorize_release_push(
     manifest, task_hash = validate_completion(task, task["agent_id"], ROOT)
     receipt = validate_verifier_receipt(task, manifest, task_hash, ROOT)
     grant = validate_release_grant_v3(
-        _signed("BRO_RELEASE_GRANT", "BRO_RELEASE_GRANT_KEY"),
+        _signed("BRO_RELEASE_GRANT", "release-grant"),
         task=task,
         manifest=manifest,
         receipt=receipt,
@@ -200,7 +207,7 @@ def settle_release_push(
     manifest, task_hash = validate_completion(task, task["agent_id"], ROOT)
     receipt = validate_verifier_receipt(task, manifest, task_hash, ROOT)
     grant = validate_release_grant_v3(
-        _signed("BRO_RELEASE_GRANT", "BRO_RELEASE_GRANT_KEY"),
+        _signed("BRO_RELEASE_GRANT", "release-grant"),
         task=task,
         manifest=manifest,
         receipt=receipt,

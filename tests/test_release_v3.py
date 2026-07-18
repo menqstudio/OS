@@ -1,5 +1,9 @@
+import json
+import os
 import pathlib
+import shutil
 import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -73,6 +77,76 @@ class ReleaseV3Tests(unittest.TestCase):
             ]:
                 with self.assertRaises(ReleaseV3Error):
                     _validate_executor_state(agent, mode, role)
+
+
+class ReleaseGrantEd25519Tests(unittest.TestCase):
+    """Owner Authorization Phase 1: the live Release Grant V3 is verified with
+    Ed25519 against the operator-signed registry, not HMAC. The push gate runs in
+    the executor's process, so only the offline release authority can sign a
+    grant; a wrong-authority or tampered grant is refused, the signed grant
+    conforms to the schema, and the nonce reserve/finalize ledger flow is
+    unchanged."""
+
+    NOW = 1000
+
+    def _fixture(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        from broctl import build_registry, generate_key, sign_payload
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-rel-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "config").mkdir(parents=True)
+        keys = {a: generate_key(a, f"dev-{a}", False)
+                for a in ("operator-root", "release", "issuer")}
+        (tmp / "config" / "trusted-keys.json").write_text(
+            json.dumps(build_registry(list(keys.values()), self.NOW, 100_000)), encoding="utf-8")
+        return tmp, keys, sign_payload
+
+    def _sign(self, sign_payload, key, payload):
+        body = {"artifact_type": "release-grant", "key_id": key["key_id"], **payload}
+        return sign_payload(key["private_key"], body)
+
+    def _signed_call(self, tmp, doc):
+        from bro_release_v3 import _signed
+        path = tmp / "grant.signed.json"
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        with patch.dict(os.environ, {"BRO_RELEASE_GRANT": str(path)}):
+            return _signed("BRO_RELEASE_GRANT", "release-grant", root=tmp, now=self.NOW)
+
+    def test_release_authority_signed_grant_loads(self):
+        tmp, keys, sign = self._fixture()
+        loaded = self._signed_call(tmp, self._sign(sign, keys["release"], grant(self.NOW)))
+        self.assertEqual(loaded["principal_id"], "owner-gev")
+
+    def test_wrong_authority_may_not_sign_release_grant(self):
+        tmp, keys, sign = self._fixture()
+        with self.assertRaises(ReleaseV3Error):
+            self._signed_call(tmp, self._sign(sign, keys["issuer"], grant(self.NOW)))
+
+    def test_tampered_release_grant_is_rejected(self):
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["release"], grant(self.NOW))
+        signed["payload"]["allowed_action"] = "merge"  # altered after signing
+        with self.assertRaises(ReleaseV3Error):
+            self._signed_call(tmp, signed)
+
+    def test_signed_grant_conforms_to_schema(self):
+        import jsonschema
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["release"], grant(self.NOW))
+        schema = json.loads((ROOT / "schemas" / "release-grant.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate(signed, schema)
+        self.assertEqual(len(signed["signature"]), 128)
+
+    def test_nonce_reserve_finalize_unchanged_on_signed_grant(self):
+        from bro_security import SecurityError, finalize_nonce, reserve_nonce
+        tmp, keys, sign = self._fixture()
+        payload = self._signed_call(tmp, self._sign(sign, keys["release"], grant(self.NOW)))
+        ledger = tmp / "ledger"
+        cmd = "git push origin HEAD:release-v3"
+        reserve_nonce(payload, ledger, "tool-1", cmd)
+        with self.assertRaises(SecurityError):          # replay of the reservation is denied
+            reserve_nonce(payload, ledger, "tool-1", cmd)
+        finalize_nonce(payload, ledger, "tool-1", cmd)  # the reserved nonce finalizes
 
 
 if __name__ == "__main__":
