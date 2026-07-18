@@ -4,11 +4,11 @@ import json
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-EXPECTED_REVIEWED_AT = "2026-07-18"
+EXPECTED_REVIEWED_AT = "2026-07-19"
 EXPECTED_BRANCH = "main"
-EXPECTED_MERGED_PR = 13
-EXPECTED_MERGE_COMMIT = "5a095750000f1838abac6fe3e794a9d11bed63d0"
-EXPECTED_STATUS = "live-enforcement-merged-17-laws-live-proven"
+EXPECTED_MERGED_PR = 27
+EXPECTED_MERGE_COMMIT = "b7c18f248243e63c6d281f74628125469874534d"
+EXPECTED_STATUS = "owner-auth-phase-1-complete"
 
 
 class DocsError(ValueError):

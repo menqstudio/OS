@@ -1,4 +1,4 @@
-# Bro Post-Merge Handoff — 2026-07-18
+# Bro Post-Merge Handoff — 2026-07-19
 
 Continue only in `menqstudio/Bro` from current `main`. Do not touch BroPS.
 
@@ -28,8 +28,8 @@ Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestrati
 
 **Control Room visual surfaces V1 remains deferred.** The current priority is a live, self-defending conductor.
 
-1. **Resolve the conductor bootstrap read deadlock (open P0).** In `work`/`release` mode `authorize_classified_action` in `runtime/bro_policy.py` requires a full task-contract bundle for every action, including read-only ones. There is no conductor read exemption, so the canonical conductor cannot read the repository to bootstrap or orchestrate while the enforcement wall is up. Add a conductor-only, read-only, workspace-bound bootstrap exemption — symmetric with the existing conductor delegation and stop exemptions — with a test that proves it cannot authorize mutation, orchestration, push, unknown actions, or path escape.
-2. **Owner Authorization Phase 1.** The owner-side flow that mints and Ed25519-signs governed specialist authorizations with `tools/broctl.py`.
+1. **Full execution-transaction E2E.** Drive `authorize_tool` to ALLOW a specialist mutation end-to-end against a real worktree, workspace binding, task lock, execution-lease and recovery ledgers — the integration layer beyond the Phase 1 bundle proof (`tests/test_owner_authorization_e2e.py`).
+2. **Retire the dead `release-grant-v2` loader** in `runtime/bro_contracts.py` (the live release path is Ed25519 Release Grant V3).
 
 Owner-only environment hardening (still valid, blocking nothing else):
 

@@ -45,9 +45,10 @@ The 2026-07-16 audit findings against the PR #8 baseline are resolved:
 - **Registered delegation.** `Agent`, `Task` and `Skill` classify as orchestration, so the conductor can delegate.
 - **Conductor completion.** The conductor may end a turn with no bound task contract; it owes no builder evidence because it never builds.
 
-One P0 remains open:
+Both prior open items are now closed:
 
-- **Conductor bootstrap read deadlock.** In `work`/`release` mode the tool gate requires a full task-contract bundle for *every* action, including read-only ones, with no conductor read exemption. The canonical conductor therefore cannot read the repository to bootstrap or orchestrate while the wall is up. The fix is a conductor-only, read-only, workspace-bound bootstrap exemption in `runtime/bro_policy.py`.
+- **Conductor bootstrap read deadlock — resolved (PR #15).** `runtime/bro_policy.py` grants the canonical conductor a read-only, allowlisted (`Read`/`Glob`/`Grep`), workspace-bound bootstrap exemption, so the enforcement wall stays up while Bro reads to orchestrate; it cannot authorize mutation, orchestration, push, unknown actions, or path escape.
+- **Owner Authorization Phase 1 — merged (PRs #17–#27).** Every in-process-verified authorization artifact (mode grant, execution lease, completion manifest, verifier receipt, Release Grant V3, recovery record) is Ed25519-verified against an operator-signed trusted-key registry, not HMAC, so a policed builder process cannot forge its own authority. The mode grant anchors the task/agent/skill hashes; `tools/bro_skill_receipt.py` and `tools/bro_authorize_specialist.py` produce a specialist bundle; a first green end-to-end test proves an owner-produced bundle loads and binds.
 
 ## Operating modes
 
@@ -67,8 +68,8 @@ One P0 remains open:
 
 ## Next phase
 
-- **Resolve the conductor bootstrap read deadlock** (the open P0 above): add the conductor-only, read-only, workspace-bound bootstrap path so the enforcement wall can stay up while the conductor reads to orchestrate.
-- **Owner Authorization Phase 1:** the owner-side flow that mints and Ed25519-signs governed specialist authorizations with `tools/broctl.py`.
+- **Full execution-transaction E2E:** drive `authorize_tool` to ALLOW a specialist mutation end-to-end against a real worktree, workspace binding, task lock, execution-lease and recovery ledgers — the integration layer beyond the Phase 1 bundle proof.
+- **Retire the legacy paths:** delete the dead `release-grant-v2` loader in `runtime/bro_contracts.py`.
 - **Operational rollout:** shadow mode, canary tasks, failure drills, monitoring, backup/restore, and operator runbooks.
 - **Control Room visual surfaces V1:** still deferred until routine task execution is exercised end-to-end.
 

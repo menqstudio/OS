@@ -1,10 +1,10 @@
 # Bro Roadmap — Post-Merge
 
-**Reviewed:** 2026-07-18  
+**Reviewed:** 2026-07-19  
 **Repository:** `menqstudio/Bro`  
 **Canonical branch:** `main`  
-**Merged PR:** `#13`  
-**Merge commit:** `5a095750000f1838abac6fe3e794a9d11bed63d0`
+**Merged PR:** `#27`  
+**Merge commit:** `b7c18f248243e63c6d281f74628125469874534d`
 
 ## Completed foundation
 
@@ -14,12 +14,14 @@
 4. Execution integrity is merged: signed execution receipts binding command, working tree, environment and runner identity.
 5. STOP Controller v2 and an append-only hash-chained audit ledger (L16), plus content secret confidentiality (L15), are merged.
 6. All 17 laws (L0–L16) are traceability-backed and `LIVE_PROVEN`.
-7. CI: foundation GREEN on ubuntu-latest and windows-latest (PR #13, 415 tests); inventories 52 packs / 42 skills / 62 documents.
+7. CI: foundation GREEN on ubuntu-latest and windows-latest; inventories 52 packs / 42 skills / 62 documents.
+8. Conductor bootstrap read deadlock resolved (PR #15): a conductor-only, read-only, allowlisted, workspace-bound exemption in `runtime/bro_policy.py`.
+9. Owner Authorization Phase 1 merged (PRs #17–#27): every in-process-verified authorization artifact (mode grant, execution lease, completion manifest, verifier receipt, Release Grant V3, recovery record) is Ed25519-verified against an operator-signed trusted-key registry, not HMAC; the mode grant anchors the task/agent/skill hashes; `tools/bro_skill_receipt.py` and `tools/bro_authorize_specialist.py` produce a specialist bundle; a first green end-to-end proof exists (`tests/test_owner_authorization_e2e.py`).
 
 ## Next phases
 
-1. **Conductor bootstrap read deadlock (open P0):** add a conductor-only, read-only, workspace-bound bootstrap exemption in `runtime/bro_policy.py` so the enforcement wall can stay up while the canonical conductor reads to bootstrap and orchestrate.
-2. **Owner Authorization Phase 1:** owner-side minting and Ed25519 signing of governed specialist authorizations via `tools/broctl.py`.
+1. **Full execution-transaction E2E:** drive `authorize_tool` to ALLOW a specialist mutation end-to-end against a real worktree, workspace binding, task lock, execution-lease and recovery ledgers — the integration layer beyond the Phase 1 bundle proof.
+2. **Retire the legacy paths:** delete the dead `release-grant-v2` loader in `runtime/bro_contracts.py`.
 3. **Operational rollout:** shadow mode, canary tasks, failure drills, monitoring, backup/restore, operator runbooks.
 4. **Control Room visual surfaces V1:** deferred until routine task execution is exercised end-to-end.
 
