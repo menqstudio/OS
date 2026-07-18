@@ -66,6 +66,8 @@ The prototype is the frontend app shell: left navigation, top bar, command palet
 - [product/CHAT_FLOWS.md](product/CHAT_FLOWS.md) — Direct Chat and Group Chat flows
 - [product/PROJECT_TASK_FLOWS.md](product/PROJECT_TASK_FLOWS.md) — project and task flows
 - [product/DECISION_APPROVAL_FLOWS.md](product/DECISION_APPROVAL_FLOWS.md) — decision, approval, and agent-run flows
+- [product/AGENT_FLOWS.md](product/AGENT_FLOWS.md) — agent profile, team, permission, and execution flows
+- [product/WORKSPACE_FLOWS.md](product/WORKSPACE_FLOWS.md) — remaining intelligence/operations/system workspace flows
 
 ## Language and themes
 

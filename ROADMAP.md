@@ -23,7 +23,7 @@ Exit condition: foundation reviewed and marked Locked.
 
 ## Phase 1 — UX architecture
 
-Status: In progress — desktop IA, chat/project/task/decision/approval flows, and canonical states delivered (see `product/`).
+Status: Delivered (2026-07-19) — every MVP capability has a defined user flow in `product/` (IA, chat, project/task, decision/approval, agent, remaining-workspace flows, and canonical states).
 
 - Full information architecture
 - User journeys
@@ -33,9 +33,11 @@ Status: In progress — desktop IA, chat/project/task/decision/approval flows, a
 - Task, decision, approval, and agent flows
 - Empty, loading, error, offline, and permission states
 
-Exit condition: every MVP capability has a defined user flow.
+Exit condition: every MVP capability has a defined user flow. ✓
 
 ## Phase 2 — Interactive product prototype
+
+Status: Frontend prototype running (React + TypeScript + Vite; app shell, all primary screens, mock data, HY/EN/RU, Dark/Light). Backend deferred to Phase 3.
 
 - Application shell
 - Home and Command

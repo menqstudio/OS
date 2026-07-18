@@ -7,6 +7,19 @@
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository.
 
+## 2026-07-19 — Phase 2 frontend prototype
+
+- Running React + TypeScript + Vite prototype: app shell, command palette, all primary screens with mock data, trilingual HY/EN/RU switching, Dark/Light themes, semantic design tokens. `npm run build` is GREEN.
+- Backend (Tauri/Rust/SQLite) deferred to Phase 3, marked as prototype rather than fake-working.
+
+## 2026-07-19 — Reconciled implementation line
+
+- Merged the `brops-v1-foundation-implementation` scaffold and deeper architecture docs (`docs/architecture/*`, `IMPLEMENTATION_EXECUTION_HANDOFF.md`, `MENQ_STUDIO_DESIGN_STANDARD_ADOPTION.md`) onto the canonicalized foundation without reintroducing the old flat docs.
+
+## 2026-07-19 — Phase 1 UX architecture delivered
+
+- Completed the Phase 1 UX flows (`product/`): information architecture, chat, project/task, decision/approval, agent, and remaining-workspace flows, plus canonical states. Roadmap Phase 1 exit condition met.
+
 ## 2026-07-19 — Foundation v1 Locked
 
 - Marked Foundation v1 (Roadmap Phase 0) **Locked** after review, canonicalization, and the Phase 1 UX-architecture layer (decision D-010).
