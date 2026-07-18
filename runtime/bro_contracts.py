@@ -395,7 +395,9 @@ def _signed_payload_from_env(env_name: str, key_env: str) -> dict[str, Any]:
 
 def validate_mode_grant(payload: dict[str, Any], *, session_id: str, agent_id: str, role: str, task_sha256: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
     required={"schema","grant_id","nonce","session_id","agent_id","role","mode","task_contract_sha256","repository","branch","head_sha","tree_identity","issued_at_epoch","expires_at_epoch"}
-    _require_exact_keys(payload, required)
+    # artifact_type/key_id are injected by the Ed25519 signer (broctl) and echoed
+    # back by verify_artifact; accept them without weakening the required set.
+    _require_exact_keys(payload, required, optional={"artifact_type", "key_id"})
     if payload["schema"] != 1 or payload["mode"] not in {"work","release"}: raise ContractError("invalid mode grant")
     instant=int(time.time()) if now is None else now
     if payload["issued_at_epoch"] > instant+60 or payload["expires_at_epoch"] <= instant: raise ContractError("mode grant expired or not yet valid")
@@ -406,7 +408,18 @@ def validate_mode_grant(payload: dict[str, Any], *, session_id: str, agent_id: s
 
 
 def load_mode_grant_from_env(bundle: ContractBundle, session_id: str, role: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
-    payload=_signed_payload_from_env("BRO_MODE_GRANT","BRO_MODE_GRANT_KEY")
+    # Ed25519, not HMAC: the enforcement hook runs in the builder's process, so a
+    # symmetric key would let the builder mint its own grant. verify_artifact
+    # checks the signature against the operator-signed trusted-key registry, so
+    # only the offline issuer key can authorize a mode.
+    from bro_signature import SignatureError, load_trusted_keys, verify_artifact
+    path = os.getenv("BRO_MODE_GRANT")
+    if not path:
+        raise ContractError("missing BRO_MODE_GRANT")
+    try:
+        payload = verify_artifact(load_json(pathlib.Path(path)), "mode-grant", load_trusted_keys(root), now=now)
+    except SignatureError as exc:
+        raise ContractError(str(exc)) from exc
     return validate_mode_grant(payload, session_id=session_id, agent_id=bundle.agent["agent_id"], role=role, task_sha256=bundle.task_sha256, root=root, now=now)
 
 
