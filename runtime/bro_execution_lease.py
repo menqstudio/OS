@@ -82,7 +82,9 @@ def validate_execution_lease(
         "repository", "branch", "worktree", "head_sha", "tree_identity",
         "allowed_capabilities", "issued_at_epoch", "expires_at_epoch", "max_tool_calls",
     }
-    if set(payload) != required:
+    # artifact_type/key_id are injected by the Ed25519 signer (broctl) and echoed
+    # back by verify_artifact; tolerate them without weakening the required set.
+    if set(payload) - {"artifact_type", "key_id"} != required:
         raise LeaseError("execution lease has unexpected or missing keys")
     if payload.get("schema") != 1:
         raise LeaseError("unsupported execution lease schema")
@@ -156,15 +158,21 @@ def load_execution_lease_from_env(
     session_id: str,
     required_capabilities: tuple[str, ...],
     now: int | None = None,
+    root: pathlib.Path = ROOT,
 ) -> ExecutionLease:
+    # Ed25519, not HMAC: the lease is consumed by the enforcement hook inside the
+    # builder's process, so a symmetric key would let the builder mint its own
+    # lease. verify_artifact checks it against the operator-signed trusted-key
+    # registry, so only the offline issuer key can grant execution capabilities.
+    from bro_signature import SignatureError, load_trusted_keys, verify_artifact
     raw = os.getenv("BRO_EXECUTION_LEASE")
     if not raw:
         raise LeaseError("missing BRO_EXECUTION_LEASE")
     try:
-        payload = verify_signed_document(
-            _load_json(pathlib.Path(raw)), "BRO_EXECUTION_LEASE_KEY"
+        payload = verify_artifact(
+            _load_json(pathlib.Path(raw)), "execution-lease", load_trusted_keys(root), now=now
         )
-    except SecurityError as exc:
+    except SignatureError as exc:
         raise LeaseError(str(exc)) from exc
     return validate_execution_lease(
         payload,

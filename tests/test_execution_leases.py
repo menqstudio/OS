@@ -1,15 +1,20 @@
+import json
 import os
 import pathlib
+import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tools"))
 
 from bro_execution_lease import (
     LeaseError,
     finalize_execution_lease,
+    load_execution_lease_from_env,
     quarantine_execution_lease,
     reserve_execution_lease,
     validate_execution_lease,
@@ -135,6 +140,59 @@ class ExecutionLeaseTests(unittest.TestCase):
             reserve_execution_lease(lease, "toolu_1")
             with self.assertRaises(LeaseError):
                 finalize_execution_lease(lease, "toolu_wrong")
+
+
+class ExecutionLeaseEd25519Tests(unittest.TestCase):
+    """Owner Authorization Phase 1: the execution lease is verified with Ed25519
+    against the operator-signed trusted-key registry, not HMAC. Only the offline
+    issuer key can grant execution capabilities; a builder holding the public
+    registry cannot mint a lease, and a wrong-authority or tampered lease is
+    refused."""
+
+    NOW = 1000
+
+    def _fixture(self):
+        from broctl import build_registry, generate_key, sign_payload
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-lease-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "config").mkdir(parents=True)
+        operator = generate_key("operator-root", "op", False)
+        issuer = generate_key("issuer", "iss", False)
+        (tmp / "config" / "trusted-keys.json").write_text(
+            json.dumps(build_registry([operator, issuer], self.NOW, 100_000)), encoding="utf-8")
+        wt = pathlib.Path(tempfile.mkdtemp(prefix="bro-wt-"))
+        self.addCleanup(shutil.rmtree, wt, ignore_errors=True)
+        return tmp, wt, operator, issuer, sign_payload
+
+    def _sign(self, sign_payload, key, lease_payload):
+        body = {"artifact_type": "execution-lease", "key_id": key["key_id"], **lease_payload}
+        return sign_payload(key["private_key"], body)
+
+    def _load(self, tmp, wt, signed):
+        path = tmp / "lease.signed.json"
+        path.write_text(json.dumps(signed), encoding="utf-8")
+        with patch.dict(os.environ, {"BRO_EXECUTION_LEASE": str(path)}):
+            return load_execution_lease_from_env(
+                task=task(str(wt)), agent_id="agt-p01-r01", session_id="session-1",
+                required_capabilities=("WRITE_REPOSITORY",), now=self.NOW, root=tmp)
+
+    def test_issuer_signed_lease_loads(self):
+        tmp, wt, _operator, issuer, sign = self._fixture()
+        lease = self._load(tmp, wt, self._sign(sign, issuer, payload(str(wt), self.NOW)))
+        self.assertEqual(lease.task_id, "task-lease-1")
+        self.assertIn("WRITE_REPOSITORY", lease.allowed_capabilities)
+
+    def test_operator_key_may_not_sign_a_lease(self):
+        tmp, wt, operator, _issuer, sign = self._fixture()
+        with self.assertRaises(LeaseError):
+            self._load(tmp, wt, self._sign(sign, operator, payload(str(wt), self.NOW)))
+
+    def test_tampered_lease_is_rejected(self):
+        tmp, wt, _operator, issuer, sign = self._fixture()
+        signed = self._sign(sign, issuer, payload(str(wt), self.NOW))
+        signed["payload"]["max_tool_calls"] = 999  # altered after signing
+        with self.assertRaises(LeaseError):
+            self._load(tmp, wt, signed)
 
 
 if __name__ == "__main__":
