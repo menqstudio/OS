@@ -470,6 +470,14 @@
         "stop-real-process-group",
         "unstopped-incident-recording"
       ]
+    },
+    {
+      "id": "live-hook-wiring",
+      "path": "tests/test_live_hook_deny.py",
+      "covers": [
+        "wired-interpreter-resolves",
+        "wired-command-live-deny"
+      ]
     }
   ]
 }
