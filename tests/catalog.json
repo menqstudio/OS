@@ -458,6 +458,18 @@
         "recursive-redaction",
         "recovery-redaction-wiring"
       ]
+    },
+    {
+      "id": "stop-and-audit",
+      "path": "tests/test_stop_and_audit.py",
+      "covers": [
+        "audit-chain-verify",
+        "audit-payload-redaction",
+        "audit-tamper-detection",
+        "audit-tail-truncation-detection",
+        "stop-real-process-group",
+        "unstopped-incident-recording"
+      ]
     }
   ]
 }

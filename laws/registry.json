@@ -307,6 +307,25 @@
       "owner": "owner-gev",
       "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "P2: new content secret-redaction control"}],
       "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L16",
+      "name": "Auditable stop and incident ledger",
+      "responsibility": "Bro-started supervised process groups can be stopped and any un-stopped process is recorded; approvals and incidents are written to an append-only, hash-chained, human-readable ledger beside the cryptographic markers.",
+      "policy_source": ["config/runtime-dependencies.json"],
+      "execution_surfaces": [
+        {"module": "bro_stop_controller", "symbol": "stop_all", "kind": "recovery", "path_role": "primary"},
+        {"module": "bro_audit_log", "symbol": "verify", "kind": "verifier", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_stop_and_audit.py", "case": "test_stops_a_real_process_group", "kind": "allow"},
+        {"file": "tests/test_stop_and_audit.py", "case": "test_tamper_is_detected", "kind": "deny"}
+      ],
+      "evidence": {"schema": "audit-ledger", "writer": "runtime/bro_audit_log.py", "verifier": "runtime/bro_audit_log.py", "retention": "retained", "integrity_level": "Hash-Chained", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "P2b/P3: STOP controller v2 + append-only audit ledger"}],
+      "runtime_prerequisites": ["python3"]
     }
   ]
 }
