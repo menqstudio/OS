@@ -1,3 +1,9 @@
+- **Purpose:** Enumerate every primary workspace, global surface, and required screen state in BroPS.
+- **Scope:** Canonical screen and surface inventory plus mandatory state coverage. Trilingual product surface (HY/EN/RU).
+- **Owner:** Gev.
+- **Related:** [NAVIGATION.md](NAVIGATION.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [../ARCHITECTURE.md](../ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md).
+- **Last updated:** 2026-07-19.
+
 # BroPS Screen Inventory / Էկրանների ամբողջական ցանկ
 
 Status: Draft canonical

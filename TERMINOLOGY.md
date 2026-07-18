@@ -1,5 +1,11 @@
 # BroPS Terminology / BroPS տերմինաբանություն
 
+- **Purpose:** Canonical glossary — the one definition per BroPS term.
+- **Scope:** Vocabulary only. Concepts are specified in their own canonical docs.
+- **Owner:** Gev.
+- **Related:** [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), [PRINCIPLES.md](PRINCIPLES.md), [AI_RUNTIME.md](AI_RUNTIME.md), [ARCHITECTURE.md](ARCHITECTURE.md).
+- **Last updated:** 2026-07-19.
+
 ## Հայերեն
 
 - **Owner** — Gev-ը՝ վերջնական որոշում և approval տվող անձը։

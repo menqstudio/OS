@@ -1,3 +1,9 @@
+- **Purpose:** Define Group Chat as a first-class operating workspace for humans and agents.
+- **Scope:** Room types, capabilities, Bro's room modes, message lifecycle, layout, and safety law. Trilingual product surface (HY/EN/RU).
+- **Owner:** Gev.
+- **Related:** [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [WORKSPACES.md](WORKSPACES.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [../ARCHITECTURE.md](../ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md).
+- **Last updated:** 2026-07-19.
+
 # Group Chat Specification
 
 ## Role
