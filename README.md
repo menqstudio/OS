@@ -14,7 +14,8 @@ Bro is the primary interface and coordinator. Specialist agents work inside expl
 
 - Foundation v1: **Locked** (2026-07-19) — see decision D-010
 - Phase 2 interactive prototype: **frontend running** (React + TypeScript + Vite, mock data)
-- Backend (Tauri + Rust + SQLite): deferred to Phase 3–4, specified in `docs/architecture/` and `IMPLEMENTATION_EXECUTION_HANDOFF.md`
+- Phase 3 data core: **SQLite schema + migrations + repositories tested** (`cargo test -p brops-core`, 6 tests GREEN)
+- Tauri desktop host: scaffolded (`src-tauri/`); GUI binary build needs system webview libs — see [src-tauri/README.md](src-tauri/README.md)
 
 ## Run the prototype
 
@@ -44,6 +45,7 @@ The prototype is the frontend app shell: left navigation, top bar, command palet
 - [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) — MenQ Studio Design Standards (visual system, trilingual i18n, themes)
 
 **Implementation contracts**
+- [src-tauri/README.md](src-tauri/README.md) — desktop host + tested SQLite data core
 - [IMPLEMENTATION_EXECUTION_HANDOFF.md](IMPLEMENTATION_EXECUTION_HANDOFF.md) — full build contract (React/Tauri/Rust/SQLite)
 - [MENQ_STUDIO_DESIGN_STANDARD_ADOPTION.md](MENQ_STUDIO_DESIGN_STANDARD_ADOPTION.md) — design-token adoption rules
 - [docs/architecture/DATA_MODEL.md](docs/architecture/DATA_MODEL.md) — entities, enums, state rules
