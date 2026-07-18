@@ -288,6 +288,25 @@
       "owner": "owner-gev",
       "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
       "runtime_prerequisites": ["python3", "cryptography"]
+    },
+    {
+      "id": "L15",
+      "name": "Secret confidentiality",
+      "responsibility": "Secrets are never persisted to policy, state, log, evidence or incident records; free-text errors and reasons are content-scanned and redacted before persistence.",
+      "policy_source": ["config/protected-control-plane.json"],
+      "execution_surfaces": [
+        {"module": "bro_secrets", "symbol": "redact", "kind": "recorder", "path_role": "primary"},
+        {"module": "bro_recovery", "symbol": "settle_mutation", "kind": "recorder", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_secrets.py", "case": "test_clean_text_is_unchanged", "kind": "allow"},
+        {"file": "tests/test_secrets.py", "case": "test_redacts_and_types_the_marker", "kind": "deny"}
+      ],
+      "evidence": {"schema": "gate-decision", "writer": "runtime/bro_secrets.py", "verifier": "runtime/bro_secrets.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST_NOT"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "P2: new content secret-redaction control"}],
+      "runtime_prerequisites": ["python3"]
     }
   ]
 }

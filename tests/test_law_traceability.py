@@ -147,8 +147,11 @@ class BackfillTests(unittest.TestCase):
         self.report = validate_traceability(ROOT)
         self.by_id = {d["id"]: d for d in self.report["derived"]}
 
-    def test_all_fifteen_laws_backfilled(self):
-        self.assertEqual(self.report["law_records_backfilled"], 15)
+    def test_all_core_laws_backfilled(self):
+        # L0-L14 are the audited core; later phases may add further laws (L15+).
+        self.assertGreaterEqual(self.report["law_records_backfilled"], 15)
+        for i in range(15):
+            self.assertIn(f"L{i}", self.by_id)
 
     def test_no_law_is_overclaimed_as_enforced(self):
         # Nothing may read ENFORCED before LIVE proof exists (P0). Verifiability MP-11.

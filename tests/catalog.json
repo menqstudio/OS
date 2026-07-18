@@ -446,6 +446,18 @@
         "required-dependency-fail-closed",
         "optional-dependency-tolerated"
       ]
+    },
+    {
+      "id": "secrets",
+      "path": "tests/test_secrets.py",
+      "covers": [
+        "secret-format-detection",
+        "keyed-secret-detection",
+        "typed-redaction",
+        "no-hash-over-redaction",
+        "recursive-redaction",
+        "recovery-redaction-wiring"
+      ]
     }
   ]
 }

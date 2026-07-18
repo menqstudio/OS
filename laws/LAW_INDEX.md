@@ -61,3 +61,11 @@ Learning records evidence before extracting lessons. Promotion requires sandbox 
 ## L14 — Recovery before GREEN
 
 Interrupted or failed mutation leaves the system RED until journals, locks, partial state, and repository integrity are checked and the expected original or approved tree is recovered. Completion claims before recovery are forbidden.
+
+## L15 — Secret confidentiality
+
+Secrets must never be persisted to a policy, state, log, evidence, or incident record. Free-text errors, stderr tails, and reasons are content-scanned and redacted before persistence. Filename-based prohibition of secret-shaped paths remains in force alongside content redaction.
+
+## L16 — Auditable stop and incident ledger
+
+Bro-started supervised processes can be stopped by process group, and any process that cannot be stopped is recorded. Approvals and incidents are additionally written to a human-readable, append-only, hash-chained ledger that sits beside — never replaces — the cryptographic marker mechanisms.
