@@ -1,5 +1,7 @@
+import json
 import os
 import pathlib
+import shutil
 import sys
 import tempfile
 import unittest
@@ -100,6 +102,65 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(_load_state(TASK["task_id"])["phase"], "REWORK_REQUIRED")
         with self.assertRaises(CompletionError):
             _no_pending_recovery(TASK["task_id"])
+
+
+class RecoveryRecordEd25519Tests(unittest.TestCase):
+    """Owner Authorization Phase 1: the prepared recovery record is verified with
+    Ed25519 against the operator-signed registry, not HMAC. It shares the mutation
+    boundary and per-action authorizer with the execution lease, so it takes the
+    ISSUER authority; a builder process cannot forge its own before-state journal.
+    Wrong-authority and tampered records are refused, and a signed record conforms
+    to the schema."""
+
+    NOW = 1000
+
+    def _fixture(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        from broctl import build_registry, generate_key, sign_payload
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-rec-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "config").mkdir(parents=True)
+        keys = {a: generate_key(a, f"dev-{a}", False)
+                for a in ("operator-root", "issuer", "builder")}
+        (tmp / "config" / "trusted-keys.json").write_text(
+            json.dumps(build_registry(list(keys.values()), self.NOW, 100_000)), encoding="utf-8")
+        return tmp, keys, sign_payload
+
+    def _sign(self, sign_payload, key, payload):
+        body = {"artifact_type": "recovery-record", "key_id": key["key_id"], **payload}
+        return sign_payload(key["private_key"], body)
+
+    def _load(self, tmp, doc):
+        from bro_recovery import _signed_record
+        path = tmp / "record.signed.json"
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        with patch.dict(os.environ, {"BRO_RECOVERY_RECORD": str(path)}):
+            return _signed_record(root=tmp, now=self.NOW)
+
+    def test_issuer_signed_record_loads(self):
+        tmp, keys, sign = self._fixture()
+        loaded = self._load(tmp, self._sign(sign, keys["issuer"], record()))
+        self.assertEqual(loaded["phase"], "PREPARED")
+
+    def test_wrong_authority_may_not_sign_record(self):
+        tmp, keys, sign = self._fixture()
+        with self.assertRaises(RecoveryError):
+            self._load(tmp, self._sign(sign, keys["builder"], record()))
+
+    def test_tampered_record_is_rejected(self):
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["issuer"], record())
+        signed["payload"]["phase"] = "MUTATION_RECORDED"  # altered after signing
+        with self.assertRaises(RecoveryError):
+            self._load(tmp, signed)
+
+    def test_signed_record_conforms_to_schema(self):
+        import jsonschema
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["issuer"], record())
+        schema = json.loads((ROOT / "schemas" / "recovery-record.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate(signed, schema)
+        self.assertEqual(len(signed["signature"]), 128)
 
 
 if __name__ == "__main__":

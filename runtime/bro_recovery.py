@@ -123,20 +123,28 @@ def _write_cas(task_id: str, expected_version: int, value: dict[str, Any]) -> No
                 pass
 
 
-def _signed_record() -> dict[str, Any]:
+def _signed_record(root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
+    # Ed25519, not HMAC: the prepared recovery record is verified in the builder's
+    # process at the mutation gate, so a symmetric key would let the builder forge
+    # its own before-state journal. verify_artifact checks it against the operator-
+    # signed registry; a recovery record is signed by the issuer authority — the
+    # same per-action authorizer that issues the execution lease at this boundary.
+    from bro_signature import SignatureError, load_trusted_keys, verify_artifact
     raw = os.getenv("BRO_RECOVERY_RECORD")
     if not raw:
         raise RecoveryError("missing signed BRO_RECOVERY_RECORD")
     try:
-        return verify_signed_document(_json(pathlib.Path(raw)), "BRO_RECOVERY_KEY")
-    except SecurityError as exc:
+        return verify_artifact(_json(pathlib.Path(raw)), "recovery-record", load_trusted_keys(root), now=now)
+    except SignatureError as exc:
         raise RecoveryError(str(exc)) from exc
 
 
 def validate_prepared_record(*, task: dict[str, Any], agent_id: str, session_id: str, tool_use_id: str, action: dict[str, Any], before: dict[str, str]) -> dict[str, Any]:
     record = _signed_record()
     required = {"schema","record_id","task_id","agent_id","session_id","tool_use_id","phase","effect_class","action_hash","capabilities","targets","before_head","before_tree","after_head","after_tree","before_status_hash","after_status_hash","recovery_proof_hash","irreversible_effects","state_version","previous_record_hash","issued_at_epoch"}
-    if set(record) != required or record.get("schema") != 1 or record.get("phase") != "PREPARED":
+    # artifact_type/key_id are injected by the Ed25519 signer (broctl) and echoed
+    # back by verify_artifact; tolerate them without weakening the required set.
+    if set(record) - {"artifact_type", "key_id"} != required or record.get("schema") != 1 or record.get("phase") != "PREPARED":
         raise RecoveryError("invalid prepared recovery record shape")
     if record.get("effect_class") not in EFFECTS:
         raise RecoveryError("invalid recovery effect class")

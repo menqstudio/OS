@@ -55,6 +55,12 @@ ARTIFACT_AUTHORITY = {
     "agent-profile": ISSUER,
     "mode-grant": ISSUER,
     "execution-lease": ISSUER,
+    # The prepared recovery record is consumed in-process at the same mutation
+    # transaction boundary as the execution lease (bro_control_plane.prepare_mutation
+    # sits beside reserve_execution_lease), and Ed25519 only closes the forge gap if
+    # the signer is external to the builder — the same per-action authorizer that
+    # issues the lease. It therefore takes the issuer authority, like the lease.
+    "recovery-record": ISSUER,
     "protected-authority": OPERATOR,
     "workspace-binding": OPERATOR,
     "evidence-event": EVIDENCE,
