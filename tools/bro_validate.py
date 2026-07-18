@@ -17,6 +17,7 @@ from bro_identity import IdentityError, validate_identity_registry
 from bro_learning import LearningError, validate_learning_registry
 from bro_orchestration import OrchestrationError, validate_orchestration_registry
 from bro_security import SecurityError
+from bro_signature import SignatureError, load_trusted_keys
 from bro_traceability import TraceabilityError, validate_traceability
 from bro_env_health import EnvHealthError, check_environment
 
@@ -126,6 +127,7 @@ def main() -> int:
         tool_registry = load_tool_registry(ROOT)
         traceability = validate_traceability(ROOT)
         env_health = check_environment(ROOT)
+        trusted_keys = load_trusted_keys(ROOT)
     except (
         IdentityError,
         AuthorityError,
@@ -134,6 +136,7 @@ def main() -> int:
         LearningError,
         OrchestrationError,
         SecurityError,
+        SignatureError,
         TraceabilityError,
         EnvHealthError,
     ) as exc:
@@ -173,7 +176,8 @@ def main() -> int:
         f"meta_principles={traceability['meta_layer_principles']}; "
         f"runtime_deps={traceability['runtime_dependencies']}; "
         f"law_records={traceability['law_records_backfilled']}; "
-        f"deps_healthy={len(env_health['checked'])}"
+        f"deps_healthy={len(env_health['checked'])}; "
+        f"trusted_keys={len(trusted_keys)}"
     )
     return 0
 
