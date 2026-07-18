@@ -305,7 +305,10 @@
       "evidence": {"schema": "gate-decision", "writer": "runtime/bro_secrets.py", "verifier": "runtime/bro_secrets.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
       "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST_NOT"},
       "owner": "owner-gev",
-      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "P2: new content secret-redaction control"}],
+      "revisions": [
+        {"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "P2: new content secret-redaction control"},
+        {"ver": "1.0", "type": "Editorial", "date": "2026-07-18", "note": "Ratified as canonical Behavioral law by owner-gev"}
+      ],
       "runtime_prerequisites": ["python3"]
     },
     {
@@ -324,7 +327,10 @@
       "evidence": {"schema": "audit-ledger", "writer": "runtime/bro_audit_log.py", "verifier": "runtime/bro_audit_log.py", "retention": "retained", "integrity_level": "Hash-Chained", "trust_source": "Self"},
       "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
       "owner": "owner-gev",
-      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "P2b/P3: STOP controller v2 + append-only audit ledger"}],
+      "revisions": [
+        {"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "P2b/P3: STOP controller v2 + append-only audit ledger"},
+        {"ver": "1.0", "type": "Editorial", "date": "2026-07-18", "note": "Ratified as canonical Behavioral law by owner-gev"}
+      ],
       "runtime_prerequisites": ["python3"]
     }
   ]

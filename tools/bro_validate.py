@@ -156,6 +156,7 @@ def main() -> int:
         "tools/bro_supervisor.py", "tools/bro_run_receipt.py", "tools/bro_traceability.py",
         "runtime/bro_env_health.py", "runtime/bro_secrets.py",
         "runtime/bro_audit_log.py", "runtime/bro_stop_controller.py",
+        "tools/bro_live_validate.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
