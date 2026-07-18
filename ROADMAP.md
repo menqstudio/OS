@@ -1,5 +1,11 @@
 # BroPS Roadmap
 
+- **Purpose:** Track phased future work from foundation to deployment.
+- **Scope:** Future work only. Shipped changes are in [CHANGELOG.md](CHANGELOG.md); acceptance is in [SUCCESS_CRITERIA.md](SUCCESS_CRITERIA.md).
+- **Owner:** Gev.
+- **Related:** [SUCCESS_CRITERIA.md](SUCCESS_CRITERIA.md), [ARCHITECTURE.md](ARCHITECTURE.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [DECISIONS.md](DECISIONS.md).
+- **Last updated:** 2026-07-19.
+
 ## Phase 0 — Foundation
 
 Status: In progress
@@ -11,6 +17,7 @@ Status: In progress
 - Agent model
 - Product architecture
 - Design-system direction
+- Documentation canonicalized to one source of truth per topic
 
 Exit condition: foundation reviewed and marked Locked.
 
@@ -44,8 +51,10 @@ Exit condition: complete clickable prototype with no dead-end primary flows.
 - React + TypeScript frontend
 - Tauri desktop shell
 - Token-based design system
-- Armenian/English runtime switch
+- Trilingual (HY/EN/RU) runtime switching
 - Local application state and persistence
+- **`DATA_MODEL.md`** — concrete persisted schema (tables, keys, indexes, migrations)
+- **`IMPLEMENTATION.md`** — coding standards and the single implementation contract
 - Test and CI baseline
 
 ## Phase 4 — Core runtime
@@ -78,4 +87,4 @@ Exit condition: complete clickable prototype with no dead-end primary flows.
 
 # Ճանապարհային քարտեզ
 
-Սկզբում lock ենք անում product foundation-ը և UX-ը, հետո ստեղծում ենք ամբողջական interactive prototype, դրանից հետո միայն production app-ը և վերջում Debian AI server-ը։
+Սկզբում lock ենք անում product foundation-ը և UX-ը, հետո ստեղծում ենք ամբողջական interactive prototype, դրանից հետո միայն production app-ը (React + TypeScript + Tauri, trilingual HY/EN/RU) և վերջում Debian AI server-ը։ `DATA_MODEL.md` և `IMPLEMENTATION.md` canonical ֆայլերը ստեղծվում են Phase 3-ում, երբ սկսվում է իրական կոդը։

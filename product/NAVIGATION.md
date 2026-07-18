@@ -1,3 +1,9 @@
+- **Purpose:** Define the user-facing sidebar and navigation projection of the BroPS system.
+- **Scope:** Primary navigation groups, Home, Chat, project workspace, and task views. Trilingual product surface (HY/EN/RU).
+- **Owner:** Gev.
+- **Related:** [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [../ARCHITECTURE.md](../ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md).
+- **Last updated:** 2026-07-19.
+
 # BroPS Navigation
 
 ## Primary sidebar

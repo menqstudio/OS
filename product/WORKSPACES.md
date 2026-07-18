@@ -1,3 +1,9 @@
+- **Purpose:** Specify the responsibility and content of every BroPS workspace surface.
+- **Scope:** Per-workspace definitions from Home through Settings. Trilingual product surface (HY/EN/RU).
+- **Owner:** Gev.
+- **Related:** [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [../ARCHITECTURE.md](../ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md).
+- **Last updated:** 2026-07-19.
+
 # BroPS Workspaces Specification / Աշխատանքային տարածքների սպեցիֆիկացիա
 
 Status: Draft canonical

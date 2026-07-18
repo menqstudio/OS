@@ -1,3 +1,9 @@
+- **Purpose:** Specify global search and the keyboard-first command palette surface.
+- **Scope:** Search coverage, result fields, filters, palette actions, and safety rules. Trilingual product surface (HY/EN/RU).
+- **Owner:** Gev.
+- **Related:** [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [USER_FLOWS.md](USER_FLOWS.md), [../ARCHITECTURE.md](../ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md).
+- **Last updated:** 2026-07-19.
+
 # Search and Command Palette / Որոնում և հրամանների պալիտրա
 
 Status: Draft canonical

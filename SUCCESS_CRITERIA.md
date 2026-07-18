@@ -1,5 +1,11 @@
 # BroPS Success Criteria / BroPS հաջողության չափանիշներ
 
+- **Purpose:** Define the MVP definition of done — the criteria that must be GREEN to ship.
+- **Scope:** Acceptance criteria only. Future work is in [ROADMAP.md](ROADMAP.md).
+- **Owner:** Gev.
+- **Related:** [ROADMAP.md](ROADMAP.md), [PRINCIPLES.md](PRINCIPLES.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [product/USER_FLOWS.md](product/USER_FLOWS.md).
+- **Last updated:** 2026-07-19.
+
 ## Հայերեն
 
 MVP-ն պատրաստ է միայն եթե ստորև նշված բոլոր պարտադիր չափանիշները GREEN են։
@@ -23,7 +29,7 @@ MVP-ն պատրաստ է միայն եթե ստորև նշված բոլոր պա
 - Secrets-ը չեն պահվում plaintext canonical files-ում կամ logs-ում։
 
 ### UX
-- Armenian և English runtime switch-ը ամբողջ core UI-ում իմաստային parity ունի։
+- Armenian, English և Russian (HY/EN/RU) runtime switch-ը ամբողջ core UI-ում իմաստային parity ունի։
 - Light և Dark modes-ը usable են։
 - Core workflows-ը keyboard-accessible են և command palette-ից հասանելի։
 - Loading, empty, error, blocked և awaiting-approval states-ը նախագծված և իրականացված են։
@@ -57,7 +63,7 @@ The MVP is ready only when every mandatory criterion below is GREEN.
 - Secrets are not stored in plaintext canonical files or logs.
 
 ### UX
-- Armenian and English runtime switching has semantic parity across the core UI.
+- Armenian, English, and Russian (HY/EN/RU) runtime switching has semantic parity across the core UI.
 - Light and Dark modes are usable.
 - Core workflows are keyboard-accessible and available from the command palette.
 - Loading, empty, error, blocked, and awaiting-approval states are designed and implemented.

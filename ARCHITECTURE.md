@@ -1,5 +1,11 @@
 # BroPS Product Architecture
 
+- **Purpose:** Describe the system structure of BroPS — domains, entities, execution model, and state separation.
+- **Scope:** Product architecture only. The AI runtime is in [AI_RUNTIME.md](AI_RUNTIME.md); UX surfaces are in [product/](product/).
+- **Owner:** Gev.
+- **Related:** [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), [AI_RUNTIME.md](AI_RUNTIME.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [product/NAVIGATION.md](product/NAVIGATION.md).
+- **Last updated:** 2026-07-19.
+
 ## Core domains
 
 1. Identity and access
@@ -36,6 +42,8 @@
 - ActivityEvent
 - EvidenceRecord
 
+These entities define the conceptual data model. The concrete persisted schema (tables, keys, indexes, migrations) is intentionally not specified yet; it is a Phase 3–4 deliverable (see [ROADMAP.md](ROADMAP.md)) and will be recorded in a dedicated `DATA_MODEL.md` when the application foundation begins.
+
 ## Execution model
 
 1. Gev states intent.
@@ -47,6 +55,8 @@
 7. Results include evidence and status.
 8. Bro synthesizes and reports the final state.
 9. Canonical project records are updated when required.
+
+The mechanics of steps 2–8 (orchestrator modes, agent contracts, engines, events, tool execution, and the approval model) are canonical in [AI_RUNTIME.md](AI_RUNTIME.md).
 
 ## State separation
 
@@ -64,4 +74,4 @@ The first build is a product prototype and application foundation. Debian deploy
 
 # Ճարտարապետություն
 
-BroPS-ը կառուցվում է առանձին domain-ներով, բայց օգտագործողի համար գործում է որպես մեկ միասնական AI Operating System։ Conversation-ը, canonical state-ը, evidence-ը և memory-ն տարբեր շերտեր են և չեն կարող խառնվել։
+BroPS-ը կառուցվում է առանձին domain-ներով, բայց օգտագործողի համար գործում է որպես մեկ միասնական AI Operating System։ Conversation-ը, canonical state-ը, evidence-ը և memory-ն տարբեր շերտեր են և չեն կարող խառնվել։ AI runtime-ի մեխանիկան canonical է [AI_RUNTIME.md](AI_RUNTIME.md)-ում, իսկ UI մակերեսները՝ [product/](product/)-ում։ Կոնկրետ տվյալների սխեման (`DATA_MODEL.md`) կսահմանվի Phase 3–4-ում, երբ սկսվի application-ի հիմքը։
