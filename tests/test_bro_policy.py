@@ -224,13 +224,20 @@ class ConductorBootstrapReadTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("task/agent/skill gate", reason)
 
-    def test_bootstrap_excludes_shell_command_substitution(self):
-        """A shell read with $() command substitution classifies as READ_LOCAL yet
-        executes an arbitrary mutation. The exemption is tool-allowlisted, so Bash
-        is never bootstrap-exempt and falls through to the full contract gate."""
-        classification = self.classified("Bash", {"command": "cat $(rm -rf runtime/bro_policy.py)"})
+    def test_shell_command_substitution_is_denied_at_classification(self):
+        """$() command substitution can smuggle a mutation behind a read-only exe,
+        so it is rejected when the command is classified and never reaches the
+        bootstrap exemption or the mutating-gated scope check."""
+        from bro_security import SecurityError
+        with self.assertRaises(SecurityError):
+            self.classified("Bash", {"command": "cat $(rm -rf runtime/bro_policy.py)"})
+
+    def test_bootstrap_excludes_bash_reads(self):
+        """Even a benign shell read is outside the bootstrap allowlist
+        (Read/Glob/Grep only), so the conductor's Bash falls through to the full
+        contract gate rather than the read-only exemption."""
+        classification = self.classified("Bash", {"command": "cat README.md"})
         self.assertEqual(classification.capabilities, ("READ_LOCAL",))
-        self.assertFalse(classification.mutating)
         ok, reason = authorize_classified_action(self.conductor(), classification, {})
         self.assertFalse(ok)
         self.assertNotIn("bootstrap", reason)

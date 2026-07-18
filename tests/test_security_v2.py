@@ -72,9 +72,23 @@ class SecurityV2Tests(unittest.TestCase):
             self.assertTrue(analyze_command(command)[0].mutating, command)
 
     def test_redirection_and_substitution_are_denied(self):
-        for command in ("echo hacked > file.txt", "cat x < y", "echo `whoami`"):
+        for command in (
+            "echo hacked > file.txt",
+            "cat x < y",
+            "echo `whoami`",
+            "cat $(rm -rf x)",          # unquoted command substitution
+            'cat "$(rm -rf x)"',        # substitution inside double quotes still runs
+            'echo "`whoami`"',          # backtick inside double quotes still runs
+            "echo $((1+1))",            # arithmetic expansion shares the $( opener
+        ):
             with self.assertRaises(SecurityError, msg=command):
                 analyze_command(command)
+
+    def test_single_quoted_substitution_is_literal(self):
+        # Single quotes suppress substitution in the shell, so '$(...)' and
+        # backticks are literal text, not a bypass, and must not be rejected.
+        infos = analyze_command("echo '$(rm -rf x)'")
+        self.assertEqual(infos[0].executable, "echo")
 
     def test_unknown_executable_is_not_read_only(self):
         info = analyze_command("custom-tool --do-anything")[0]

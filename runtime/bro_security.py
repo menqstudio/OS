@@ -77,6 +77,13 @@ def split_shell(command: str) -> list[str]:
             buf.append(c)
             i += 1
             continue
+        # Command substitution ($(...) and backticks) runs in unquoted and
+        # double-quoted context but never inside single quotes. It defeats the
+        # static command analysis the capability and scope gates depend on — a
+        # read-only leading executable can carry a hidden mutation, e.g.
+        # `cat $(rm -rf x)` — so it is denied wherever it would execute.
+        if quote != "'" and (c == "`" or command.startswith("$(", i)):
+            raise SecurityError("shell redirection/substitution is denied")
         if quote:
             buf.append(c)
             if c == quote:
@@ -88,7 +95,7 @@ def split_shell(command: str) -> list[str]:
             buf.append(c)
             i += 1
             continue
-        if c in "><`":
+        if c in "><":
             raise SecurityError("shell redirection/substitution is denied")
         op = None
         for candidate in ("&&", "||", ";", "|", "\n"):
