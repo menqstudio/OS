@@ -478,6 +478,15 @@
         "wired-interpreter-resolves",
         "wired-command-live-deny"
       ]
+    },
+    {
+      "id": "owner-authorization-e2e",
+      "path": "tests/test_owner_authorization_e2e.py",
+      "covers": [
+        "owner-authorization",
+        "contract-bundle-load",
+        "mode-grant-anchoring"
+      ]
     }
   ]
 }
