@@ -269,6 +269,22 @@ def check_corpus(records: list[dict]) -> None:
     _require(not dupes, f"duplicate law ids: {sorted(dupes)}")
 
 
+def verify_law_index_sync(root: pathlib.Path, records: list[dict]) -> None:
+    """Mechanically verify the derived human view (LAW_INDEX.md) has not drifted.
+
+    Derivability Principle MP-12: LAW_INDEX.md is a derived/verified view, never an
+    independent authority. Every canonical law id and name MUST appear in it.
+    """
+    index_path = root / "laws" / "LAW_INDEX.md"
+    if not index_path.is_file():
+        raise TraceabilityError("laws/LAW_INDEX.md (derived human view) is missing")
+    text = index_path.read_text(encoding="utf-8")
+    for record in records:
+        lid, name = record.get("id"), record.get("name", "")
+        _require(lid in text, f"human view drift: {lid} absent from LAW_INDEX.md")
+        _require(name == "" or name in text, f"human view drift: name of {lid} absent from LAW_INDEX.md")
+
+
 # ---- Top-level entrypoint -------------------------------------------------------
 def validate_traceability(root: pathlib.Path = ROOT) -> dict:
     """Validate the OLTS machinery + any backfilled law records. Returns a report.
@@ -281,6 +297,8 @@ def validate_traceability(root: pathlib.Path = ROOT) -> dict:
     registry = load_json(root, "laws/registry.json")
     records = [law for law in registry.get("laws", []) if isinstance(law, dict) and "responsibility" in law]
     check_corpus(records)
+    if records:
+        verify_law_index_sync(root, records)
     derived = []
     for record in records:
         validate_law_record(record, known_dependencies=known)

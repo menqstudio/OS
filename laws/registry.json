@@ -1,27 +1,293 @@
 {
   "schema": 1,
-  "canonical_text": "laws/LAW_INDEX.md",
+  "canonical_text": "laws/registry.json",
+  "human_view": "laws/LAW_INDEX.md",
+  "human_view_is_derived": true,
   "meta_layer": "laws/meta-layer.json",
   "record_schema": "schemas/law-record.schema.json",
   "traceability_validator": "tools/bro_traceability.py",
-  "human_view": "laws/LAW_INDEX.md",
-  "human_view_is_derived": true,
-  "traceability_backfill_status": "pending",
+  "traceability_backfill_status": "complete",
   "laws": [
-    {"id":"L0","name":"Owner and identity","enforcement":"runtime/bro_identity.py","test":"identity-registry"},
-    {"id":"L1","name":"Repository literacy","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
-    {"id":"L2","name":"Bro remains responsive","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
-    {"id":"L3","name":"Task contracts","enforcement":"runtime/bro_contracts.py","test":"contract-gates"},
-    {"id":"L4","name":"Skill loading","enforcement":"runtime/bro_contracts.py","test":"contract-gates"},
-    {"id":"L5","name":"Independent verification","enforcement":"runtime/bro_contracts.py","test":"contract-gates"},
-    {"id":"L6","name":"Operating modes","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
-    {"id":"L7","name":"Git authority","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
-    {"id":"L8","name":"Thirty-minute reread","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
-    {"id":"L9","name":"Fail closed","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
-    {"id":"L10","name":"Clean canonical repository","enforcement":"tools/bro_validate.py","test":"sst-governance"},
-    {"id":"L11","name":"Single source of truth","enforcement":"tools/bro_validate.py","test":"sst-governance"},
-    {"id":"L12","name":"Sandbox-first autonomy","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
-    {"id":"L13","name":"Learning promotion gates","enforcement":"runtime/bro_learning.py","test":"skill-evolution"},
-    {"id":"L14","name":"Recovery before GREEN","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"}
+    {
+      "id": "L0",
+      "name": "Owner and identity",
+      "responsibility": "There is exactly one Bro (bro-000); every agent identity is registry-derived and locked, and no subordinate may claim Bro or a forged identity.",
+      "policy_source": ["agents/registry.json", "agents/authority-policy.json", ".bro/policy.json"],
+      "execution_surfaces": [
+        {"module": "bro_control_plane", "symbol": "_enforce_identity_authority", "kind": "hook", "path_role": "primary"},
+        {"module": "bro_identity", "symbol": "validate_identity_registry", "kind": "validator", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_authority_identity.py", "case": "test_authority_resolves_for_all_canonical_agents", "kind": "allow"},
+        {"file": "tests/test_authority_identity.py", "case": "test_fake_builder_id_is_denied", "kind": "deny"}
+      ],
+      "evidence": {"schema": "gate-decision", "writer": "runtime/bro_identity.py", "verifier": "runtime/bro_identity.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L1",
+      "name": "Mandatory repository literacy",
+      "responsibility": "No tool call or completion proceeds without a fresh full-read receipt for every tracked file and every canonical startup document loaded.",
+      "policy_source": ["config/canonical-read-manifest.json", ".bro/policy.json"],
+      "execution_surfaces": [
+        {"module": "bro_completion", "symbol": "authorize_stop", "kind": "hook", "path_role": "primary"},
+        {"module": "bro_policy", "symbol": "read_all", "kind": "startup", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_bro_policy.py", "case": "test_literacy_allows_fresh_receipt", "kind": "allow"},
+        {"file": "tests/test_bro_policy.py", "case": "test_literacy_denies_missing_receipt", "kind": "deny"}
+      ],
+      "evidence": {"schema": "repository-full-read-receipt", "writer": "runtime/bro_policy.py", "verifier": "runtime/bro_policy.py", "retention": "session", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill; freshness tests are a known P1 gap (CLAIM_ONLY)"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L2",
+      "name": "Bro remains responsive",
+      "responsibility": "The conductor role never mutates the repository and must delegate; Bro does not become a worker, pack lead, or verifier.",
+      "policy_source": [".bro/policy.json", "tools/registry.json"],
+      "execution_surfaces": [
+        {"module": "bro_policy", "symbol": "authorize_classified_action", "kind": "hook", "path_role": "primary"}
+      ],
+      "tests": [
+        {"file": "tests/test_bro_policy.py", "case": "test_review_allows_canonical_read", "kind": "allow"},
+        {"file": "tests/test_bro_policy.py", "case": "test_bro_cannot_mutate", "kind": "deny"}
+      ],
+      "evidence": {"schema": "gate-decision", "writer": "runtime/bro_policy.py", "verifier": "runtime/bro_policy.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L3",
+      "name": "Task contracts",
+      "responsibility": "Every delegated task is a machine-validated contract bound to the exact agent id with objective, scope, prohibited scope, done criteria, verification and rollback.",
+      "policy_source": ["schemas/task-contract.schema.json"],
+      "execution_surfaces": [
+        {"module": "bro_contracts", "symbol": "validate_task_contract", "kind": "validator", "path_role": "primary"}
+      ],
+      "tests": [
+        {"file": "tests/test_bro_contracts.py", "case": "test_registered_base_agent_profile_is_valid", "kind": "allow"},
+        {"file": "tests/test_bro_contracts.py", "case": "test_safe_repository_paths", "kind": "deny"}
+      ],
+      "evidence": {"schema": "task-contract", "writer": "runtime/bro_contracts.py", "verifier": "runtime/bro_contracts.py", "retention": "task", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L4",
+      "name": "Skill loading",
+      "responsibility": "Every specialist loads permanent core skills plus task-required skills before execution; missing or stale skill receipts block work.",
+      "policy_source": ["schemas/skill-receipt.schema.json", "skills/index.json"],
+      "execution_surfaces": [
+        {"module": "bro_contracts", "symbol": "validate_skill_receipt", "kind": "validator", "path_role": "primary"}
+      ],
+      "tests": [
+        {"file": "tests/test_bro_contracts.py", "case": "test_registered_base_agent_profile_is_valid", "kind": "allow"},
+        {"file": "tests/test_bro_contracts.py", "case": "test_only_push_executor_may_have_push_capability", "kind": "deny"}
+      ],
+      "evidence": {"schema": "skill-receipt", "writer": "runtime/bro_contracts.py", "verifier": "runtime/bro_contracts.py", "retention": "task", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill; skill-specific deny coverage is thin (flagged)"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L5",
+      "name": "Independent verification",
+      "responsibility": "A builder cannot issue final GREEN for its own medium/high/critical work; final claims require evidence and a different verifier identity.",
+      "policy_source": ["schemas/verifier-receipt.schema.json", "agents/authority-policy.json"],
+      "execution_surfaces": [
+        {"module": "bro_receipt", "symbol": "verify_receipt_set", "kind": "verifier", "path_role": "primary"},
+        {"module": "bro_evidence", "symbol": "validate_chain", "kind": "verifier", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_execution_receipts.py", "case": "test_passing_receipt_accepted", "kind": "allow"},
+        {"file": "tests/test_execution_receipts.py", "case": "test_builder_key_may_not_sign_a_receipt", "kind": "deny"}
+      ],
+      "evidence": {"schema": "verifier-receipt", "writer": "tools/bro_run_receipt.py", "verifier": "runtime/bro_receipt.py", "retention": "retained", "integrity_level": "Signed", "trust_source": "Independent"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "runtime_prerequisites": ["python3", "cryptography"]
+    },
+    {
+      "id": "L6",
+      "name": "Operating modes",
+      "responsibility": "Review mode is read-only; work mode permits scoped mutation in an isolated worktree but never push; release mode is restricted and boundaried.",
+      "policy_source": [".bro/policy.json", "tools/registry.json"],
+      "execution_surfaces": [
+        {"module": "bro_policy", "symbol": "authorize_classified_action", "kind": "hook", "path_role": "primary"},
+        {"module": "bro_control_plane", "symbol": "_bind_workspace", "kind": "hook", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_bro_policy.py", "case": "test_review_allows_canonical_read", "kind": "allow"},
+        {"file": "tests/test_hooks_subprocess.py", "case": "test_pre_tool_denies_unsigned_work_mode", "kind": "deny"}
+      ],
+      "evidence": {"schema": "gate-decision", "writer": "runtime/bro_policy.py", "verifier": "runtime/bro_policy.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill; live-wired deny proof is a P0 target"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L7",
+      "name": "Git authority",
+      "responsibility": "Approved workers create scoped commits; only the Push Executor may attempt push, through a signed evidence-bound Release Grant V3 and an external credential boundary.",
+      "policy_source": ["schemas/release-grant.schema.json", ".bro/policy.json"],
+      "execution_surfaces": [
+        {"module": "bro_release_v3", "symbol": "authorize_release_push", "kind": "release", "path_role": "primary"},
+        {"module": "bro_security", "symbol": "validate_exact_push", "kind": "verifier", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_release_v3.py", "case": "test_exact_evidence_bound_grant_is_valid", "kind": "allow"},
+        {"file": "tests/test_release_v3.py", "case": "test_wrong_owner_action_and_hashes_are_denied", "kind": "deny"}
+      ],
+      "evidence": {"schema": "release-grant", "writer": "tools/broctl.py", "verifier": "runtime/bro_release_v3.py", "retention": "retained", "integrity_level": "Signed", "trust_source": "Owner"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill; external credential boundary is assumed-external (flag)"}],
+      "runtime_prerequisites": ["python3", "cryptography"]
+    },
+    {
+      "id": "L8",
+      "name": "Thirty-minute reread",
+      "responsibility": "At most thirty minutes after the last complete canonical read, the next tool call triggers a reread before the following action.",
+      "policy_source": [".bro/policy.json", "config/canonical-read-manifest.json"],
+      "execution_surfaces": [
+        {"module": "bro_completion", "symbol": "authorize_stop", "kind": "hook", "path_role": "primary"},
+        {"module": "bro_policy", "symbol": "receipt_fresh", "kind": "validator", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_bro_policy.py", "case": "test_reread_allows_within_interval", "kind": "allow"},
+        {"file": "tests/test_bro_policy.py", "case": "test_reread_blocks_when_stale", "kind": "deny"}
+      ],
+      "evidence": {"schema": "repository-full-read-receipt", "writer": "runtime/bro_policy.py", "verifier": "runtime/bro_policy.py", "retention": "session", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill; freshness tests are a known P1 gap (CLAIM_ONLY)"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L9",
+      "name": "Fail closed",
+      "responsibility": "Missing, stale, malformed, conflicting, unsupported or unverifiable state blocks execution; security-critical errors never silently allow progress.",
+      "policy_source": ["tools/registry.json"],
+      "execution_surfaces": [
+        {"module": "bro_hook", "symbol": "fail_closed", "kind": "hook", "path_role": "primary"},
+        {"module": "bro_authorization", "symbol": "classify_tool_action", "kind": "validator", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_authorization_kernel.py", "case": "test_registry_loads_and_defines_unknown", "kind": "allow"},
+        {"file": "tests/test_authorization_kernel.py", "case": "test_unknown_tool_is_fail_closed", "kind": "deny"}
+      ],
+      "evidence": {"schema": "gate-decision", "writer": "runtime/bro_hook.py", "verifier": "runtime/bro_hook.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L10",
+      "name": "Clean canonical repository",
+      "responsibility": "Canonical instructions, registries, schemas, runtime and tests remain deliberate and minimal; historical reports are not duplicated as active instructions.",
+      "policy_source": ["config/sst-registry.json", "config/documentation-manifest.json"],
+      "execution_surfaces": [
+        {"module": "bro_validate", "symbol": "main", "kind": "build", "path_role": "primary"}
+      ],
+      "tests": [
+        {"file": "tests/test_sst_registry.py", "case": "test_every_domain_has_one_existing_sst_and_validator", "kind": "allow"},
+        {"file": "tests/test_docs_freshness.py", "case": "test_pre_pr8_manifest_metadata_is_denied", "kind": "deny"}
+      ],
+      "evidence": {"schema": "gate-decision", "writer": "tools/bro_validate.py", "verifier": "tools/bro_validate.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "SHOULD"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill; build-time governance, normative strength SHOULD"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L11",
+      "name": "Single Source of Truth",
+      "responsibility": "Every domain has exactly one canonical SST registered in config/sst-registry.json; duplicate truth or orphan objects are an error.",
+      "policy_source": ["config/sst-registry.json"],
+      "execution_surfaces": [
+        {"module": "bro_validate", "symbol": "main", "kind": "build", "path_role": "primary"},
+        {"module": "bro_traceability", "symbol": "check_corpus", "kind": "validator", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_sst_registry.py", "case": "test_every_domain_has_one_existing_sst_and_validator", "kind": "allow"},
+        {"file": "tests/test_law_traceability.py", "case": "test_duplicate_law_ids_are_denied", "kind": "deny"}
+      ],
+      "evidence": {"schema": "gate-decision", "writer": "tools/bro_validate.py", "verifier": "tools/bro_validate.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L12",
+      "name": "Sandbox-first autonomy",
+      "responsibility": "Automatic work is draft-first and sandbox-first; production mutation, external communication, deletion, deployment and irreversible actions require explicit owner approval and the protected control-plane boundary.",
+      "policy_source": ["config/protected-control-plane.json"],
+      "execution_surfaces": [
+        {"module": "bro_protected", "symbol": "authorize_protected_scope", "kind": "hook", "path_role": "primary"},
+        {"module": "bro_control_plane", "symbol": "_bind_workspace", "kind": "hook", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_control_plane_digest.py", "case": "test_standard_task_allowed_outside_protected_roots", "kind": "allow"},
+        {"file": "tests/test_control_plane_digest.py", "case": "test_standard_task_denied_on_protected_path", "kind": "deny"}
+      ],
+      "evidence": {"schema": "gate-decision", "writer": "runtime/bro_protected.py", "verifier": "runtime/bro_protected.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L13",
+      "name": "Controlled learning and skill evolution",
+      "responsibility": "Learning records evidence before extracting lessons; promotion requires sandbox simulation, benchmarks, independent review, controlled approval, monitoring and rollback, and cannot be self-approved.",
+      "policy_source": ["learning/registry.json", "schemas/skill-evolution-proposal.schema.json"],
+      "execution_surfaces": [
+        {"module": "bro_skill_evolution", "symbol": "validate_skill_evolution", "kind": "validator", "path_role": "primary"},
+        {"module": "bro_learning", "symbol": "validate_learning_registry", "kind": "validator", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_skill_evolution.py", "case": "test_learning_pipeline_is_locked", "kind": "allow"},
+        {"file": "tests/test_skill_evolution.py", "case": "test_promotion_is_not_self_approved", "kind": "deny"}
+      ],
+      "evidence": {"schema": "skill-evolution-proposal", "writer": "runtime/bro_skill_evolution.py", "verifier": "runtime/bro_skill_evolution.py", "retention": "retained", "integrity_level": "Unsigned", "trust_source": "Independent"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "runtime_prerequisites": ["python3"]
+    },
+    {
+      "id": "L14",
+      "name": "Recovery before GREEN",
+      "responsibility": "Interrupted or failed mutation leaves the system RED until journals, locks, partial state and repository integrity are checked and the expected tree is recovered; completion before recovery is forbidden.",
+      "policy_source": ["schemas/recovery-record.schema.json"],
+      "execution_surfaces": [
+        {"module": "bro_recovery", "symbol": "prove_recovery", "kind": "recovery", "path_role": "primary"},
+        {"module": "bro_completion", "symbol": "validate_completion", "kind": "verifier", "path_role": "defense_in_depth"}
+      ],
+      "tests": [
+        {"file": "tests/test_recovery.py", "case": "test_success_records_after_state", "kind": "allow"},
+        {"file": "tests/test_recovery.py", "case": "test_interruption_requires_recovery_and_blocks_completion", "kind": "deny"}
+      ],
+      "evidence": {"schema": "recovery-record", "writer": "runtime/bro_recovery.py", "verifier": "runtime/bro_recovery.py", "retention": "retained", "integrity_level": "Signed", "trust_source": "Self"},
+      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "owner": "owner-gev",
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "runtime_prerequisites": ["python3", "cryptography"]
+    }
   ]
 }

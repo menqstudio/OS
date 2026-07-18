@@ -14,6 +14,7 @@ from bro_traceability import (
     load_runtime_dependencies,
     validate_law_record,
     validate_traceability,
+    verify_law_index_sync,
 )
 
 
@@ -136,8 +137,44 @@ class TraceabilityEntrypointTests(unittest.TestCase):
         report = validate_traceability(ROOT)
         self.assertGreaterEqual(report["meta_layer_principles"], 12)
         self.assertGreaterEqual(report["runtime_dependencies"], 3)
-        # L0-L14 backfill is a later phase; entrypoint must not fail when records are absent.
         self.assertGreaterEqual(report["law_records_backfilled"], 0)
+
+
+class BackfillTests(unittest.TestCase):
+    """L0-L14 backfilled records: structurally valid, honestly derived."""
+
+    def setUp(self):
+        self.report = validate_traceability(ROOT)
+        self.by_id = {d["id"]: d for d in self.report["derived"]}
+
+    def test_all_fifteen_laws_backfilled(self):
+        self.assertEqual(self.report["law_records_backfilled"], 15)
+
+    def test_no_law_is_overclaimed_as_enforced(self):
+        # Nothing may read ENFORCED before LIVE proof exists (P0). Verifiability MP-11.
+        for d in self.report["derived"]:
+            self.assertNotEqual(d["enforcement_status"], "ENFORCED", d["id"])
+
+    def test_freshness_laws_are_honestly_not_enforced(self):
+        # The audit's freshness test gap must surface as NOT_ENFORCED, not be hidden.
+        self.assertEqual(self.by_id["L1"]["enforcement_status"], "NOT_ENFORCED")
+        self.assertEqual(self.by_id["L8"]["enforcement_status"], "NOT_ENFORCED")
+        self.assertEqual(self.by_id["L1"]["links"]["test"], "CLAIM_ONLY")
+
+    def test_wired_laws_are_static_proven(self):
+        self.assertEqual(self.by_id["L0"]["links"]["surface"], "STATIC_PROVEN")
+        self.assertEqual(self.by_id["L7"]["effective_proof_level"], "STATIC_PROVEN")
+
+
+class HumanViewDriftTests(unittest.TestCase):
+    def test_live_law_index_is_in_sync(self):
+        registry = __import__("json").loads((ROOT / "laws" / "registry.json").read_text(encoding="utf-8"))
+        records = [law for law in registry["laws"] if "responsibility" in law]
+        verify_law_index_sync(ROOT, records)  # must not raise
+
+    def test_drifted_law_index_is_denied(self):
+        with self.assertRaises(TraceabilityError):
+            verify_law_index_sync(ROOT, [{"id": "L404", "name": "Nonexistent Law"}])
 
 
 if __name__ == "__main__":
