@@ -52,14 +52,15 @@ Exit condition: complete clickable prototype with no dead-end primary flows.
 
 ## Phase 3 — Application foundation
 
-- React + TypeScript frontend
-- Tauri desktop shell
-- Token-based design system
-- Trilingual (HY/EN/RU) runtime switching
-- Local application state and persistence
-- **`DATA_MODEL.md`** — concrete persisted schema (tables, keys, indexes, migrations)
-- **`IMPLEMENTATION.md`** — coding standards and the single implementation contract
-- Test and CI baseline
+Status: In progress — the local data core is built and tested; the Tauri host is scaffolded.
+
+- React + TypeScript frontend ✓ (Phase 2)
+- **SQLite data core** ✓ — `src-tauri/core` schema, migrations, and typed repositories; `cargo test -p brops-core` GREEN (6 tests)
+- **Tauri desktop shell** — scaffolded (`src-tauri/`); the GUI binary build needs system webview libraries (see `src-tauri/README.md`)
+- Token-based design system ✓ (Phase 2)
+- Trilingual (HY/EN/RU) runtime switching ✓ (Phase 2)
+- Concrete persisted schema ✓ — `docs/architecture/DATA_MODEL.md` + `docs/architecture/DATABASE_SCHEMA.md`
+- Remaining: wire React to the typed Tauri commands; secure store; backup/restore; `IMPLEMENTATION.md`; CI (Ubuntu + Windows)
 
 ## Phase 4 — Core runtime
 

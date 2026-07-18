@@ -1,0 +1,26 @@
+[workspace]
+members = ["core"]
+
+[package]
+name = "brops"
+version = "0.1.0"
+edition = "2021"
+description = "BroPS desktop host (Tauri)."
+
+# The GUI host depends on `tauri`, which needs system webview libraries
+# (webkit2gtk on Linux) to build. The UI-independent data core in `core/`
+# builds and tests on its own: `cargo test -p brops-core`.
+
+[lib]
+name = "brops_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+brops-core = { path = "core" }

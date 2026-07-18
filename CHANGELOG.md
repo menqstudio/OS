@@ -7,6 +7,11 @@
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository.
 
+## 2026-07-19 — Phase 3 data core (SQLite) + Tauri scaffold
+
+- Added `src-tauri/core` (`brops-core`): SQLite schema, forward-only migrations, and typed project/task/audit repositories. `cargo test -p brops-core` is GREEN (6 tests: migration idempotency, CRUD, foreign-key enforcement, validation, audit).
+- Scaffolded the Tauri 2 host (`src-tauri/`): `AppState`, typed `#[tauri::command]` surface, `tauri.conf.json`, capabilities. The GUI binary build needs system webview libraries and is documented in `src-tauri/README.md` (not built in the authoring environment).
+
 ## 2026-07-19 — Phase 2 frontend prototype
 
 - Running React + TypeScript + Vite prototype: app shell, command palette, all primary screens with mock data, trilingual HY/EN/RU switching, Dark/Light themes, semantic design tokens. `npm run build` is GREEN.
