@@ -155,11 +155,14 @@ class BackfillTests(unittest.TestCase):
         for d in self.report["derived"]:
             self.assertNotEqual(d["enforcement_status"], "ENFORCED", d["id"])
 
-    def test_freshness_laws_are_honestly_not_enforced(self):
-        # The audit's freshness test gap must surface as NOT_ENFORCED, not be hidden.
-        self.assertEqual(self.by_id["L1"]["enforcement_status"], "NOT_ENFORCED")
-        self.assertEqual(self.by_id["L8"]["enforcement_status"], "NOT_ENFORCED")
-        self.assertEqual(self.by_id["L1"]["links"]["test"], "CLAIM_ONLY")
+    def test_freshness_laws_static_proven_after_p1(self):
+        # P1 closed the audit's freshness test gap: L1/L8 rise from NOT_ENFORCED to
+        # STATIC_ONLY (test link now STATIC_PROVEN). They are still not ENFORCED --
+        # that requires LIVE proof, gated on the P0.1 interpreter commit.
+        self.assertEqual(self.by_id["L1"]["enforcement_status"], "STATIC_ONLY")
+        self.assertEqual(self.by_id["L8"]["enforcement_status"], "STATIC_ONLY")
+        self.assertEqual(self.by_id["L1"]["links"]["test"], "STATIC_PROVEN")
+        self.assertNotEqual(self.by_id["L1"]["enforcement_status"], "ENFORCED")
 
     def test_wired_laws_are_static_proven(self):
         self.assertEqual(self.by_id["L0"]["links"]["surface"], "STATIC_PROVEN")
