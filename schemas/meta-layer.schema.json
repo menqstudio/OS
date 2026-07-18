@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Meta-Layer SST",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "meta_layer_version", "canonical_text", "human_view", "human_view_is_derived", "principles"],
+  "properties": {
+    "schema": {"const": 1},
+    "meta_layer_version": {"type": "string"},
+    "canonical_text": {"type": "string"},
+    "human_view": {"type": "string"},
+    "human_view_is_derived": {"const": true},
+    "status": {"type": "string"},
+    "principles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "since_version", "revision_type", "normative_text"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^MP-[0-9]{2}$"},
+          "name": {"type": "string"},
+          "since_version": {"type": "string"},
+          "revision_type": {"enum": ["Editorial", "Behavioral"]},
+          "normative_text": {"type": "string", "minLength": 16}
+        }
+      }
+    }
+  }
+}

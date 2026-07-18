@@ -17,6 +17,9 @@
     {"id":"skill-evolution-proposal","path":"schemas/skill-evolution-proposal.schema.json"},
     {"id":"skill-receipt","path":"schemas/skill-receipt.schema.json"},
     {"id":"task-contract","path":"schemas/task-contract.schema.json"},
-    {"id":"verifier-receipt","path":"schemas/verifier-receipt.schema.json"}
+    {"id":"verifier-receipt","path":"schemas/verifier-receipt.schema.json"},
+    {"id":"meta-layer","path":"schemas/meta-layer.schema.json"},
+    {"id":"law-record","path":"schemas/law-record.schema.json"},
+    {"id":"runtime-dependency","path":"schemas/runtime-dependency.schema.json"}
   ]
 }

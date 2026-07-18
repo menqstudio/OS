@@ -423,6 +423,19 @@
         "failing-run-recorded-honestly",
         "required-command-set"
       ]
+    },
+    {
+      "id": "law-traceability",
+      "path": "tests/test_law_traceability.py",
+      "covers": [
+        "meta-layer-v11-principles",
+        "runtime-dependency-sst",
+        "law-record-allow-path",
+        "law-record-static-proof",
+        "law-record-deny-paths",
+        "derived-proof-not-hand-written",
+        "traceability-entrypoint"
+      ]
     }
   ]
 }

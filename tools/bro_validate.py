@@ -17,6 +17,7 @@ from bro_identity import IdentityError, validate_identity_registry
 from bro_learning import LearningError, validate_learning_registry
 from bro_orchestration import OrchestrationError, validate_orchestration_registry
 from bro_security import SecurityError
+from bro_traceability import TraceabilityError, validate_traceability
 
 
 def fail(message: str) -> None:
@@ -122,6 +123,7 @@ def main() -> int:
         validate_learning_registry(ROOT)
         orchestration = validate_orchestration_registry(ROOT)
         tool_registry = load_tool_registry(ROOT)
+        traceability = validate_traceability(ROOT)
     except (
         IdentityError,
         AuthorityError,
@@ -130,6 +132,7 @@ def main() -> int:
         LearningError,
         OrchestrationError,
         SecurityError,
+        TraceabilityError,
     ) as exc:
         fail(str(exc))
 
@@ -147,7 +150,7 @@ def main() -> int:
         "runtime/bro_signature.py", "runtime/bro_evidence.py",
         "runtime/bro_receipt.py",
         "tools/bro_docs_freshness.py", "tools/bro_bind_workspace.py", "tools/broctl.py",
-        "tools/bro_supervisor.py", "tools/bro_run_receipt.py",
+        "tools/bro_supervisor.py", "tools/bro_run_receipt.py", "tools/bro_traceability.py",
     ]
     for rel in compile_targets:
         py_compile.compile(str(ROOT / rel), doraise=True)
@@ -160,7 +163,10 @@ def main() -> int:
         f"authorities={authority_count}; skills={skill_count}; schemas={len(schema_paths)}; "
         f"documents={docs_count}; metrics={analytics['metrics']}; "
         f"dashboards={analytics['dashboards']}; orchestration_states={orchestration['states']}; "
-        f"control_room_surfaces={orchestration['surfaces']}; tools={len(tool_registry['tools'])}"
+        f"control_room_surfaces={orchestration['surfaces']}; tools={len(tool_registry['tools'])}; "
+        f"meta_principles={traceability['meta_layer_principles']}; "
+        f"runtime_deps={traceability['runtime_dependencies']}; "
+        f"law_records={traceability['law_records_backfilled']}"
     )
     return 0
 

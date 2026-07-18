@@ -1,6 +1,12 @@
 {
   "schema": 1,
   "canonical_text": "laws/LAW_INDEX.md",
+  "meta_layer": "laws/meta-layer.json",
+  "record_schema": "schemas/law-record.schema.json",
+  "traceability_validator": "tools/bro_traceability.py",
+  "human_view": "laws/LAW_INDEX.md",
+  "human_view_is_derived": true,
+  "traceability_backfill_status": "pending",
   "laws": [
     {"id":"L0","name":"Owner and identity","enforcement":"runtime/bro_identity.py","test":"identity-registry"},
     {"id":"L1","name":"Repository literacy","enforcement":"runtime/bro_policy.py","test":"policy-boundaries"},
