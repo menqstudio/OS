@@ -23,40 +23,31 @@ Bro converts a request into a governed task contract, selects the correct pack o
 
 ## Current merged baseline
 
-Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestration Runtime V1, and Control Room API V1 are merged into `main`.
+Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestration Runtime V1, and Control Room API V1 are merged into `main`. On top of that foundation, the containment, issuance, and execution-integrity work is now merged and **live-wired** into the runtime, and all 17 laws (L0–L16) are traceability-backed and `LIVE_PROVEN`.
 
-- merged PR: `#8`
-- approved candidate HEAD: `f2c457a675248eb805c02889509a40d8a5e1c520`
-- main merge commit: `f736bce585e0e911c36a73d0181c8eb4ef3aebef`
-- final CI run: `29434543079`
-- Windows: GREEN
-- Ubuntu: GREEN
-- independent exact-head real-worktree audit: foundation GREEN; docs freshness GREEN
-- Control Room API targeted tests: 12/12 GREEN
-- full unique suite: 128/128 GREEN
-- documentation inventory: 62/62 at merge
+- latest merged PR: `#13`
+- main merge commit: `5a095750000f1838abac6fe3e794a9d11bed63d0`
+- laws: 17 (L0–L16), all `LIVE_PROVEN`; includes L15 (secret confidentiality) and L16 (auditable stop + incident ledger)
+- live enforcement: workspace binding, path scope, and the protected control-plane digest are wired into `runtime/bro_control_plane.py` (no longer inert)
+- issuance: Ed25519 authorities, an operator-signed trusted-key registry, and the `tools/broctl.py` minting/signing CLI; an external supervisor owns and issues execution leases
+- execution integrity: signed execution receipts binding command, working tree, environment and runner identity
+- STOP Controller v2: process-group termination with an append-only hash-chained audit ledger
+- CI: foundation GREEN on ubuntu-latest and windows-latest (PR #13, 415 tests)
+- inventories: 52 packs, 42 skills, 62 documents
 
-## Open findings
+## Resolved findings and current open work
 
-An independent audit on 2026-07-16 found the merged baseline is not operable and
-not self-defending. These are open:
+The 2026-07-16 audit findings against the PR #8 baseline are resolved:
 
-- **No issuer.** The repository validates signed task contracts, completion
-  manifests, verifier receipts, evidence events and mode grants that nothing in
-  the repository can produce. There is no signer, no key generation, no CLI.
-  Every gate therefore fails closed on an artifact that cannot exist yet.
-- **Symmetric signatures.** `verify_signed_document` is HMAC, so the verifying
-  key is the signing key. The hook runs inside the agent's own process, so a
-  builder holds the key that mints its own GREEN verifier receipt. Verifier
-  independence is unenforceable until signatures are asymmetric.
-- **Unscoped local reads.** `READ_LOCAL` carries `requires_scope: false`, so any
-  path on the machine is readable, and `WebFetch` is classified as a read. Read
-  anything, send anywhere.
-- **Delegation is unregistered.** `Agent`, `Task` and `Skill` are absent from the
-  tool registry, so the conductor's only sanctioned action classifies as UNKNOWN
-  and denies.
-- **The conductor cannot finish a turn.** The Stop gate demands a specialist
-  completion manifest from an agent that by design never executes.
+- **Issuer.** `tools/broctl.py` mints and Ed25519-signs task contracts, agent profiles, mode grants and receipts against an operator-signed trusted-key registry.
+- **Asymmetric signatures.** The evidence chain and execution receipts verify with Ed25519, so a builder key can no longer mint its own GREEN verifier receipt.
+- **Contained reads.** Every tool action, reads included, is bound to the registered workspace and rejected on path escape before it runs.
+- **Registered delegation.** `Agent`, `Task` and `Skill` classify as orchestration, so the conductor can delegate.
+- **Conductor completion.** The conductor may end a turn with no bound task contract; it owes no builder evidence because it never builds.
+
+One P0 remains open:
+
+- **Conductor bootstrap read deadlock.** In `work`/`release` mode the tool gate requires a full task-contract bundle for *every* action, including read-only ones, with no conductor read exemption. The canonical conductor therefore cannot read the repository to bootstrap or orchestrate while the wall is up. The fix is a conductor-only, read-only, workspace-bound bootstrap exemption in `runtime/bro_policy.py`.
 
 ## Operating modes
 
@@ -76,25 +67,12 @@ not self-defending. These are open:
 
 ## Next phase
 
-Containment, not surfaces. Control Room visual surfaces are deferred until Bro
-can actually run.
+- **Resolve the conductor bootstrap read deadlock** (the open P0 above): add the conductor-only, read-only, workspace-bound bootstrap path so the enforcement wall can stay up while the conductor reads to orchestrate.
+- **Owner Authorization Phase 1:** the owner-side flow that mints and Ed25519-signs governed specialist authorizations with `tools/broctl.py`.
+- **Operational rollout:** shadow mode, canary tasks, failure drills, monitoring, backup/restore, and operator runbooks.
+- **Control Room visual surfaces V1:** still deferred until routine task execution is exercised end-to-end.
 
-- **Phase A — containment.** External walls first, because they are the only work
-  with no bootstrap dependency: a dedicated non-admin account for the agent, NTFS
-  ACLs limited to the registered workspace, a fine-grained credential scoped to
-  this repository alone, and a `main` ruleset with no bypass. In-repository:
-  workspace binding, path scope enforcement, and the protected control-plane
-  digest.
-- **Phase B — issuance.** Ed25519 authorities, an operator-signed public key
-  registry, an issuer CLI, and an external supervisor that owns leases. The
-  conductor never holds a lease; a builder runs as a separate process with the
-  lease injected only into it.
-- **Phase C — execution integrity.** Signed test receipts binding command,
-  working tree, environment and runner identity, so "I ran the tests" becomes
-  checkable rather than trusted.
-
-A trust root cannot be issued by the system it roots, so the first bootstrap
-authority is signed by Gev by hand, outside any agent process.
+A trust root cannot be issued by the system it roots, so the first bootstrap authority is signed by Gev by hand, outside any agent process.
 
 ## Authority
 

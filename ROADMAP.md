@@ -1,49 +1,27 @@
 # Bro Roadmap — Post-Merge
 
-**Reviewed:** 2026-07-15  
+**Reviewed:** 2026-07-18  
 **Repository:** `menqstudio/Bro`  
 **Canonical branch:** `main`  
-**Merged PR:** `#8`  
-**Merge commit:** `f736bce585e0e911c36a73d0181c8eb4ef3aebef`
+**Merged PR:** `#13`  
+**Merge commit:** `5a095750000f1838abac6fe3e794a9d11bed63d0`
 
 ## Completed foundation
 
-1. Execution Control Plane V2 is merged.
-2. Canonical orchestration and Control Room V1 contracts are merged.
-3. Orchestration Runtime V1 foundation is merged.
-4. Control Room API V1 is merged as a governed read-only boundary over validated runtime state.
-5. Runtime and API truth now include immutable task contracts, append-only hash-chained records, deterministic queue claims, canonical agent workload, checkpoints, budgets, approval inbox, recovery/quarantine, audit timeline, integrity roots, honest missing-data markers, and validation-only command intents.
-6. Final PR #8 evidence: Windows and Ubuntu GREEN, independent exact-head real-worktree audit GREEN, Control Room API tests 12/12 GREEN, full unique suite 128/128 GREEN, documentation inventory 62/62, and no open P0/P1 findings.
-
-## Audit correction — 2026-07-16
-
-Item 6 above recorded "no open P0/P1 findings" at PR #8. That was true of the
-merged tests and false of the system: the suite proved the gates reject, never
-that they can pass. An independent audit found the baseline is a verifier with no
-issuer. See the open findings in `README.md`.
-
-The consequence for this roadmap is that visual surfaces are not next. A Control
-Room over a system that cannot execute a task would render an empty room.
+1. Execution Control Plane V2, canonical orchestration and Control Room V1 contracts, Orchestration Runtime V1, and Control Room API V1 are merged.
+2. Containment is merged and live-wired: workspace binding, path scope enforcement, and the protected control-plane digest now gate `runtime/bro_control_plane.py`.
+3. Issuance is merged: Ed25519 authorities, an operator-signed trusted-key registry, the `tools/broctl.py` minting/signing CLI, and an external supervisor that owns and issues execution leases.
+4. Execution integrity is merged: signed execution receipts binding command, working tree, environment and runner identity.
+5. STOP Controller v2 and an append-only hash-chained audit ledger (L16), plus content secret confidentiality (L15), are merged.
+6. All 17 laws (L0–L16) are traceability-backed and `LIVE_PROVEN`.
+7. CI: foundation GREEN on ubuntu-latest and windows-latest (PR #13, 415 tests); inventories 52 packs / 42 skills / 62 documents.
 
 ## Next phases
 
-1. **Phase A — containment.** External walls first: dedicated non-admin account,
-   NTFS ACL limited to the registered workspace, repository-scoped credential,
-   `main` ruleset with no bypass. In-repository: workspace binding, path scope,
-   protected control-plane digest. This phase alone has no bootstrap dependency
-   and is the only one that protects the owner from the agent rather than the
-   agent from itself.
-2. **Phase B — issuance.** Ed25519 authorities, operator-signed public key
-   registry, issuer CLI, external supervisor owning leases. The conductor never
-   holds a lease; the builder is a separate process with the lease injected only
-   into it.
-3. **Phase C — execution integrity.** Signed test receipts binding command,
-   working tree, environment and runner identity.
-4. **Credential and evidence services:** isolate production credentials, deploy
-   external append-only ledgers and evidence storage.
-5. **Control Room visual surfaces V1:** deferred until a task can actually run.
-6. **Operational rollout:** shadow mode, canary tasks, failure drills, monitoring,
-   backup/restore, operator runbooks.
+1. **Conductor bootstrap read deadlock (open P0):** add a conductor-only, read-only, workspace-bound bootstrap exemption in `runtime/bro_policy.py` so the enforcement wall can stay up while the canonical conductor reads to bootstrap and orchestrate.
+2. **Owner Authorization Phase 1:** owner-side minting and Ed25519 signing of governed specialist authorizations via `tools/broctl.py`.
+3. **Operational rollout:** shadow mode, canary tasks, failure drills, monitoring, backup/restore, operator runbooks.
+4. **Control Room visual surfaces V1:** deferred until routine task execution is exercised end-to-end.
 
 Each phase requires a dedicated branch, draft PR, exact-head CI, independent verification, current documentation, and Gev's explicit merge approval.
 

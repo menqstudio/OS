@@ -1,19 +1,15 @@
-# Bro Post-Merge Handoff — 2026-07-15
+# Bro Post-Merge Handoff — 2026-07-18
 
 Continue only in `menqstudio/Bro` from current `main`. Do not touch BroPS.
 
 ## Merged baseline
 
-- PR `#8` is closed and merged.
-- approved candidate HEAD: `f2c457a675248eb805c02889509a40d8a5e1c520`
-- main merge commit: `f736bce585e0e911c36a73d0181c8eb4ef3aebef`
-- final CI run: `29434543079`
-- Windows and Ubuntu: GREEN
-- independent exact-head real-worktree audit: foundation GREEN; docs freshness GREEN
-- Control Room API targeted tests: 12/12 GREEN
-- full unique suite: 128/128 GREEN
-- documentation inventory: 62/62 at merge
-- open P0/P1 findings: none
+- latest merged PR: `#13`
+- main merge commit: `5a095750000f1838abac6fe3e794a9d11bed63d0`
+- containment, issuance, and execution-integrity work is merged and live-wired into the runtime
+- all 17 laws (L0–L16) are traceability-backed and `LIVE_PROVEN`, including L15 (secret confidentiality) and L16 (auditable stop + incident ledger)
+- CI: foundation GREEN on ubuntu-latest and windows-latest (415 tests)
+- inventories: 52 packs, 42 skills, 62 documents
 
 ## Mandatory startup
 
@@ -26,45 +22,23 @@ Continue only in `menqstudio/Bro` from current `main`. Do not touch BroPS.
 
 ## Locked foundation
 
-Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestration Runtime V1, and Control Room API V1 are merged. Runtime state remains outside Git and is reconstructed from immutable task contracts plus append-only SHA-256 chained records. The merged API is read-only, integrity-bound, fail-closed, honest about unavailable data, and validates command intent without executing or authorizing mutation.
+Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestration Runtime V1, and Control Room API V1 are merged, and the containment, issuance, and execution-integrity controls are now wired into `runtime/bro_control_plane.py` rather than inert. Runtime state remains outside Git and is reconstructed from immutable task contracts plus append-only SHA-256 chained records. The merged API is read-only, integrity-bound, fail-closed, honest about unavailable data, and validates command intent without executing or authorizing mutation.
 
 ## Next task
 
-**Control Room visual surfaces V1 is deferred.** Building an owner-facing view of
-a system that cannot execute a task would report an empty room. See the open
-findings in `README.md` first.
+**Control Room visual surfaces V1 remains deferred.** The current priority is a live, self-defending conductor.
 
-Start **Phase A containment**. Order matters, and it is not the order intuition
-suggests: external walls come before the issuer, because they are the only work
-with no bootstrap dependency and the only work that protects the owner from the
-agent rather than the agent from itself.
+1. **Resolve the conductor bootstrap read deadlock (open P0).** In `work`/`release` mode `authorize_classified_action` in `runtime/bro_policy.py` requires a full task-contract bundle for every action, including read-only ones. There is no conductor read exemption, so the canonical conductor cannot read the repository to bootstrap or orchestrate while the enforcement wall is up. Add a conductor-only, read-only, workspace-bound bootstrap exemption — symmetric with the existing conductor delegation and stop exemptions — with a test that proves it cannot authorize mutation, orchestration, push, unknown actions, or path escape.
+2. **Owner Authorization Phase 1.** The owner-side flow that mints and Ed25519-signs governed specialist authorizations with `tools/broctl.py`.
 
-Owner-only, and blocking nothing else:
+Owner-only environment hardening (still valid, blocking nothing else):
 
-1. dedicated non-admin Windows account for the agent;
-2. NTFS ACL limited to the registered workspace, inheritance disabled;
+1. dedicated non-admin account for the agent;
+2. filesystem ACL limited to the registered workspace, inheritance disabled;
 3. deny that account access to the owner profile, `.ssh`, and credential stores;
-4. fine-grained GitHub credential scoped to `menqstudio/Bro` alone, without
-   Administration, Secrets or Workflows;
+4. fine-grained GitHub credential scoped to `menqstudio/Bro` alone, without Administration, Secrets or Workflows;
 5. no general owner credential inside the agent account;
-6. `main` ruleset requiring a pull request, blocking force-push and deletion,
-   requiring `foundation (ubuntu-latest, 3.12)` and
-   `foundation (windows-latest, 3.12)`, with `bypass_actors: []`.
-
-In-repository, landed on `remediation/contained-autonomy-phase-a`:
-
-- `runtime/bro_workspace.py` — external workspace binding and path containment;
-- `runtime/bro_protected.py` — fail-closed protected roots and control-plane digest;
-- `runtime/bro_freeze.py` — settlement-only state after a protected mutation;
-- `config/protected-control-plane.json` — access roots and digest roots.
-
-Not yet wired into `runtime/bro_control_plane.py`: the modules are tested but
-inert. Wiring them requires a workspace binding to exist, so it fails closed for
-every caller including CI until one is issued. That wiring is itself the first
-security-maintenance task.
-
-Then Phase B: Ed25519 authorities, operator-signed key registry, issuer CLI,
-external supervisor. Then Phase C: signed execution receipts.
+6. `main` ruleset requiring a pull request, blocking force-push and deletion, requiring `foundation (ubuntu-latest, 3.12)` and `foundation (windows-latest, 3.12)`, with `bypass_actors: []`.
 
 Out of scope unless Gev explicitly expands it:
 
