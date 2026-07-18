@@ -8,7 +8,7 @@
 
 ## Phase 0 — Foundation
 
-Status: In progress
+Status: Locked (2026-07-19) — see decision D-010
 
 - Product identity and vision
 - Canonical laws and decision log
@@ -22,6 +22,8 @@ Status: In progress
 Exit condition: foundation reviewed and marked Locked.
 
 ## Phase 1 — UX architecture
+
+Status: In progress — desktop IA, chat/project/task/decision/approval flows, and canonical states delivered (see `product/`).
 
 - Full information architecture
 - User journeys

@@ -12,9 +12,9 @@ Bro is the primary interface and coordinator. Specialist agents work inside expl
 
 ## Foundation status
 
-- Foundation v1: Draft (documentation canonicalized 2026-07-19)
+- Foundation v1: **Locked** (2026-07-19) — see decision D-010
 - Application code: Not started
-- Current priority: foundation lock, then UX architecture, Group Chat flows, and controlled autonomy
+- Current priority: Phase 1 UX architecture (substantially delivered), then interactive prototype (Phase 2)
 
 ## Documentation index
 

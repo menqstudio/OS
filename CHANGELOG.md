@@ -7,6 +7,15 @@
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository.
 
+## 2026-07-19 — Foundation v1 Locked
+
+- Marked Foundation v1 (Roadmap Phase 0) **Locked** after review, canonicalization, and the Phase 1 UX-architecture layer (decision D-010).
+- Removed the transient `FOUNDATION_REVIEW.md` working artifact.
+
+## 2026-07-19 — Phase 1 UX architecture
+
+- Added `product/INFORMATION_ARCHITECTURE.md`, `product/CHAT_FLOWS.md`, `product/PROJECT_TASK_FLOWS.md`, `product/DECISION_APPROVAL_FLOWS.md`, and `product/STATES.md`.
+
 ## 2026-07-19 — Foundation canonicalized
 
 - Consolidated 35 flat root documents into one source of truth per topic.

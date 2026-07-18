@@ -32,4 +32,4 @@ Before substantive work, read in this order:
 
 ## Current focus
 
-Foundation v1 is canonicalized. Next: complete and review the foundation, then define the UX architecture and Group Chat flows (Roadmap Phase 1).
+Foundation v1 is **Locked** (D-010). Phase 1 UX architecture is substantially delivered under `product/`. Next: complete remaining Phase 1 coverage, then the interactive prototype (Roadmap Phase 2).
