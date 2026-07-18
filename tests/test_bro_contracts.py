@@ -115,6 +115,18 @@ class ModeGrantEd25519Tests(unittest.TestCase):
         with self.assertRaises(ContractError):
             self._load(tmp, signed)
 
+    def test_signed_grant_conforms_to_the_schema(self):
+        """The mode-grant JSON schema must describe the real Ed25519 document: a
+        128-hex signature and a payload carrying artifact_type/key_id. A signed
+        grant validating against schemas/mode-grant.schema.json proves the schema
+        no longer drifts from the runtime."""
+        import jsonschema
+        _tmp, _operator, issuer, sign = self._fixture()
+        signed = self._sign(sign, issuer, self._grant())
+        schema = json.loads((ROOT / "schemas" / "mode-grant.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate(signed, schema)
+        self.assertEqual(len(signed["signature"]), 128)
+
 
 if __name__ == "__main__":
     unittest.main()
