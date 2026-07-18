@@ -147,5 +147,39 @@ class ModeGrantEd25519Tests(unittest.TestCase):
         self.assertEqual(len(signed["signature"]), 128)
 
 
+class SkillReceiptProducerTests(unittest.TestCase):
+    """Owner Authorization Phase 1: the skill-receipt producer builds a receipt
+    whose per-skill hashes match the on-disk SKILL.md files and whose bindings
+    satisfy validate_skill_receipt. Before this there was no producer for the
+    skill receipt at all."""
+
+    NOW = 1_700_000_000
+
+    def _task(self):
+        return {
+            "task_id": "task-skill", "agent_id": "agt-p01-r01",
+            "core_skills": ["ai-agent-engineering"], "additional_skills": [], "reference_skills": [],
+            "repository": {"base_commit": "a" * 40, "tree_identity": "b" * 64},
+        }
+
+    def test_produced_receipt_validates(self):
+        from bro_contracts import validate_skill_receipt
+        from bro_skill_receipt import build_skill_receipt
+        task, agent = self._task(), {"agent_id": "agt-p01-r01"}
+        receipt = build_skill_receipt(task, agent, root=ROOT, now=self.NOW)
+        validated = validate_skill_receipt(receipt, task, canonical_json_sha256(task), agent, ROOT, self.NOW)
+        self.assertEqual(validated["task_id"], "task-skill")
+        self.assertEqual(receipt["skills"][0]["path"], "skills/ai-agent-engineering/SKILL.md")
+
+    def test_corrupted_skill_hash_is_rejected(self):
+        from bro_contracts import validate_skill_receipt
+        from bro_skill_receipt import build_skill_receipt
+        task, agent = self._task(), {"agent_id": "agt-p01-r01"}
+        receipt = build_skill_receipt(task, agent, root=ROOT, now=self.NOW)
+        receipt["skills"][0]["sha256"] = "0" * 64  # no longer matches the on-disk SKILL.md
+        with self.assertRaises(ContractError):
+            validate_skill_receipt(receipt, task, canonical_json_sha256(task), agent, ROOT, self.NOW)
+
+
 if __name__ == "__main__":
     unittest.main()

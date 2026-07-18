@@ -156,6 +156,7 @@ def main() -> int:
         "runtime/bro_signature.py", "runtime/bro_evidence.py",
         "runtime/bro_receipt.py",
         "tools/bro_docs_freshness.py", "tools/bro_bind_workspace.py", "tools/broctl.py",
+        "tools/bro_skill_receipt.py",
         "tools/bro_supervisor.py", "tools/bro_run_receipt.py", "tools/bro_traceability.py",
         "runtime/bro_env_health.py", "runtime/bro_secrets.py",
         "runtime/bro_audit_log.py", "runtime/bro_stop_controller.py",
