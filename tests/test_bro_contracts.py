@@ -12,7 +12,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from bro_contracts import ContractError, load_mode_grant_from_env, safe_repo_path, validate_agent_profile
+from bro_contracts import ContractError, canonical_json_sha256, load_mode_grant_from_env, safe_repo_path, validate_agent_profile
 
 
 class ContractTests(unittest.TestCase):
@@ -57,6 +57,8 @@ class ModeGrantEd25519Tests(unittest.TestCase):
     a wrong-authority or tampered grant is refused."""
 
     NOW = 1_700_000_000
+    AGENT = {"agent_id": "agt-p01-r01", "role": "Agent Builder"}
+    SKILL = {"receipt_id": "sr-1", "skills": ["ai-agent-engineering"]}
 
     def _fixture(self):
         from broctl import build_registry, generate_key, sign_payload
@@ -73,7 +75,10 @@ class ModeGrantEd25519Tests(unittest.TestCase):
         return {
             "schema": 1, "grant_id": "g-1", "nonce": "n" * 16, "session_id": "sess",
             "agent_id": "agt-p01-r01", "role": "specialist", "mode": mode,
-            "task_contract_sha256": task_sha, "repository": "menqstudio/Bro",
+            "task_contract_sha256": task_sha,
+            "agent_profile_sha256": canonical_json_sha256(self.AGENT),
+            "skill_receipt_sha256": canonical_json_sha256(self.SKILL),
+            "repository": "menqstudio/Bro",
             "branch": "feature-x", "head_sha": "a" * 40, "tree_identity": "b" * 64,
             "issued_at_epoch": self.NOW, "expires_at_epoch": self.NOW + 3600,
         }
@@ -85,7 +90,7 @@ class ModeGrantEd25519Tests(unittest.TestCase):
     def _load(self, tmp, signed):
         path = tmp / "grant.signed.json"
         path.write_text(json.dumps(signed), encoding="utf-8")
-        bundle = SimpleNamespace(agent={"agent_id": "agt-p01-r01"}, task_sha256="c" * 64)
+        bundle = SimpleNamespace(agent=self.AGENT, task_sha256="c" * 64, skill_receipt=self.SKILL)
         with patch.dict(os.environ, {"BRO_MODE_GRANT": str(path)}), \
                 patch("bro_contracts.current_commit", return_value="a" * 40), \
                 patch("bro_contracts.current_tree_identity", return_value="b" * 64):
@@ -114,6 +119,20 @@ class ModeGrantEd25519Tests(unittest.TestCase):
         signed = self._sign(sign, issuer, self._grant(task_sha="d" * 64))
         with self.assertRaises(ContractError):
             self._load(tmp, signed)
+
+    def test_wrong_agent_profile_hash_is_rejected(self):
+        tmp, _operator, issuer, sign = self._fixture()
+        g = self._grant()
+        g["agent_profile_sha256"] = "e" * 64  # not the bundle's agent-profile hash
+        with self.assertRaises(ContractError):
+            self._load(tmp, self._sign(sign, issuer, g))
+
+    def test_wrong_skill_receipt_hash_is_rejected(self):
+        tmp, _operator, issuer, sign = self._fixture()
+        g = self._grant()
+        g["skill_receipt_sha256"] = "f" * 64  # not the bundle's skill-receipt hash
+        with self.assertRaises(ContractError):
+            self._load(tmp, self._sign(sign, issuer, g))
 
     def test_signed_grant_conforms_to_the_schema(self):
         """The mode-grant JSON schema must describe the real Ed25519 document: a

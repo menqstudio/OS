@@ -393,15 +393,19 @@ def _signed_payload_from_env(env_name: str, key_env: str) -> dict[str, Any]:
     except SecurityError as exc: raise ContractError(str(exc)) from exc
 
 
-def validate_mode_grant(payload: dict[str, Any], *, session_id: str, agent_id: str, role: str, task_sha256: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
-    required={"schema","grant_id","nonce","session_id","agent_id","role","mode","task_contract_sha256","repository","branch","head_sha","tree_identity","issued_at_epoch","expires_at_epoch"}
+def validate_mode_grant(payload: dict[str, Any], *, session_id: str, agent_id: str, role: str, task_sha256: str, agent_sha256: str, skill_sha256: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
+    required={"schema","grant_id","nonce","session_id","agent_id","role","mode","task_contract_sha256","agent_profile_sha256","skill_receipt_sha256","repository","branch","head_sha","tree_identity","issued_at_epoch","expires_at_epoch"}
     # artifact_type/key_id are injected by the Ed25519 signer (broctl) and echoed
     # back by verify_artifact; accept them without weakening the required set.
     _require_exact_keys(payload, required, optional={"artifact_type", "key_id"})
     if payload["schema"] != 1 or payload["mode"] not in {"work","release"}: raise ContractError("invalid mode grant")
     instant=int(time.time()) if now is None else now
     if payload["issued_at_epoch"] > instant+60 or payload["expires_at_epoch"] <= instant: raise ContractError("mode grant expired or not yet valid")
-    expected={"session_id":session_id,"agent_id":agent_id,"role":role,"task_contract_sha256":task_sha256,"head_sha":current_commit(root),"tree_identity":current_tree_identity(root)}
+    # The mode grant is the only Ed25519-signed artifact in the bundle; anchoring
+    # the agent-profile and skill-receipt hashes here makes the signed grant the
+    # integrity root for those otherwise-unsigned structural artifacts — tampering
+    # with either breaks a signed binding.
+    expected={"session_id":session_id,"agent_id":agent_id,"role":role,"task_contract_sha256":task_sha256,"agent_profile_sha256":agent_sha256,"skill_receipt_sha256":skill_sha256,"head_sha":current_commit(root),"tree_identity":current_tree_identity(root)}
     for key,value in expected.items():
         if payload.get(key) != value: raise ContractError(f"mode grant binding mismatch: {key}")
     return payload
@@ -420,7 +424,7 @@ def load_mode_grant_from_env(bundle: ContractBundle, session_id: str, role: str,
         payload = verify_artifact(load_json(pathlib.Path(path)), "mode-grant", load_trusted_keys(root), now=now)
     except SignatureError as exc:
         raise ContractError(str(exc)) from exc
-    return validate_mode_grant(payload, session_id=session_id, agent_id=bundle.agent["agent_id"], role=role, task_sha256=bundle.task_sha256, root=root, now=now)
+    return validate_mode_grant(payload, session_id=session_id, agent_id=bundle.agent["agent_id"], role=role, task_sha256=bundle.task_sha256, agent_sha256=canonical_json_sha256(bundle.agent), skill_sha256=canonical_json_sha256(bundle.skill_receipt), root=root, now=now)
 
 
 def validate_release_grant_v2(payload: dict[str, Any], root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
