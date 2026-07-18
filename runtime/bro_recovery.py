@@ -10,6 +10,7 @@ from typing import Any
 
 from bro_contracts import canonical_json_sha256
 from bro_repository_state import resolve_state
+from bro_secrets import redact
 from bro_security import SecurityError, verify_signed_document
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -184,7 +185,7 @@ def settle_mutation(task_id: str, tool_use_id: str, *, success: bool, error: str
     effect = state.get("effect_class")
     if effect == "IRREVERSIBLE":
         next_state["phase"] = "FAILED_WITH_IRREVERSIBLE_EFFECT"
-        next_state["irreversible_effects"] = [error or "irreversible mutation failed or was interrupted"]
+        next_state["irreversible_effects"] = [redact(error) or "irreversible mutation failed or was interrupted"]
     elif effect == "UNKNOWN":
         next_state["phase"] = "QUARANTINED"
     else:

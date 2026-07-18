@@ -17,6 +17,8 @@
     {"domain":"documentation","sst":"config/documentation-manifest.json","validator":"tools/bro_docs_freshness.py"},
     {"domain":"orchestration","sst":"orchestration/registry.json","validator":"runtime/bro_orchestration.py"},
     {"domain":"startup-context","sst":"config/canonical-read-manifest.json","validator":"runtime/bro_policy.py"},
-    {"domain":"protected-control-plane","sst":"config/protected-control-plane.json","validator":"runtime/bro_protected.py"}
+    {"domain":"protected-control-plane","sst":"config/protected-control-plane.json","validator":"runtime/bro_protected.py"},
+    {"domain":"meta-layer","sst":"laws/meta-layer.json","validator":"tools/bro_traceability.py"},
+    {"domain":"runtime-dependencies","sst":"config/runtime-dependencies.json","validator":"tools/bro_traceability.py"}
   ]
 }

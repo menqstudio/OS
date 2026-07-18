@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Runtime Dependencies SST",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "canonical_text", "dependencies"],
+  "properties": {
+    "schema": {"const": 1},
+    "canonical_text": {"type": "string"},
+    "dependencies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "resolve", "version", "required_for", "optionality"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"enum": ["interpreter", "library", "executable"]},
+          "resolve": {"type": "string", "description": "import name for libraries, executable name for interpreters/executables"},
+          "version": {"type": "string", "description": "pinned or explicitly constrained; MUST NOT be empty"},
+          "required_for": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"enum": ["runtime", "validation", "test", "build"]}
+          },
+          "optionality": {"enum": ["required", "optional"]},
+          "note": {"type": "string"}
+        }
+      }
+    }
+  }
+}

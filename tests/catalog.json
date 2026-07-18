@@ -423,6 +423,61 @@
         "failing-run-recorded-honestly",
         "required-command-set"
       ]
+    },
+    {
+      "id": "law-traceability",
+      "path": "tests/test_law_traceability.py",
+      "covers": [
+        "meta-layer-v11-principles",
+        "runtime-dependency-sst",
+        "law-record-allow-path",
+        "law-record-static-proof",
+        "law-record-deny-paths",
+        "derived-proof-not-hand-written",
+        "traceability-entrypoint"
+      ]
+    },
+    {
+      "id": "env-health",
+      "path": "tests/test_env_health.py",
+      "covers": [
+        "version-constraint-parsing",
+        "dependency-resolution",
+        "required-dependency-fail-closed",
+        "optional-dependency-tolerated"
+      ]
+    },
+    {
+      "id": "secrets",
+      "path": "tests/test_secrets.py",
+      "covers": [
+        "secret-format-detection",
+        "keyed-secret-detection",
+        "typed-redaction",
+        "no-hash-over-redaction",
+        "recursive-redaction",
+        "recovery-redaction-wiring"
+      ]
+    },
+    {
+      "id": "stop-and-audit",
+      "path": "tests/test_stop_and_audit.py",
+      "covers": [
+        "audit-chain-verify",
+        "audit-payload-redaction",
+        "audit-tamper-detection",
+        "audit-tail-truncation-detection",
+        "stop-real-process-group",
+        "unstopped-incident-recording"
+      ]
+    },
+    {
+      "id": "live-hook-wiring",
+      "path": "tests/test_live_hook_deny.py",
+      "covers": [
+        "wired-interpreter-resolves",
+        "wired-command-live-deny"
+      ]
     }
   ]
 }

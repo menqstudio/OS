@@ -79,6 +79,11 @@ class MembershipTests(unittest.TestCase):
         self.assertTrue(is_protected(MANIFEST, ".git/config"))
         self.assertFalse(is_digest_member(MANIFEST, ".git/config"))
 
+    def test_pycache_bytecode_is_not_a_digest_member(self):
+        self.assertFalse(is_digest_member(MANIFEST, "runtime/__pycache__/bro_policy.cpython-313.pyc"))
+        self.assertFalse(is_digest_member(MANIFEST, "runtime/bro_policy.pyc"))
+        self.assertTrue(is_digest_member(MANIFEST, "runtime/bro_policy.py"))
+
     def test_exception_removes_protection(self):
         manifest = ProtectedManifest(
             protected_roots=("runtime/**",),
@@ -91,6 +96,14 @@ class MembershipTests(unittest.TestCase):
 class DigestTests(DigestFixture):
     def test_unchanged_tree_gives_same_digest(self):
         self.assertEqual(self.digest(), self.digest())
+
+    def test_bytecode_compilation_does_not_change_digest(self):
+        # Cold-cache regression: writing runtime/__pycache__/*.pyc after a binding was
+        # issued must not flip the control-plane digest (availability bug fix).
+        before = self.digest()
+        self.write("runtime/__pycache__/bro_policy.cpython-313.pyc", "compiled bytecode blob")
+        self.write("runtime/bro_policy.pyc", "stray pyc")
+        self.assertEqual(before, self.digest())
 
     def test_digest_is_sha256_hex(self):
         value = self.digest()

@@ -173,5 +173,53 @@ class DelegationTests(unittest.TestCase):
         self.assertTrue(self.classified("SomeInventedTool").unknown)
 
 
+class ReceiptFreshnessTests(unittest.TestCase):
+    """L1 literacy and L8 thirty-minute reread: the audit's missing freshness coverage."""
+
+    def _write_receipt(self, session_id, *, age=0, tree=None):
+        import json
+        import time
+
+        import bro_policy
+        receipt = {
+            "schema": 1,
+            "session_id": session_id,
+            "read_at_epoch": int(time.time()) - age,
+            "tree_identity": bro_policy.tree_identity() if tree is None else tree,
+        }
+        path = bro_policy.receipt_path(session_id)
+        path.write_text(json.dumps(receipt), encoding="utf-8")
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+        return session_id
+
+    def test_literacy_allows_fresh_receipt(self):
+        import bro_policy
+        ok, reason = bro_policy.receipt_fresh(self._write_receipt("olts-fresh", age=0))
+        self.assertTrue(ok, reason)
+
+    def test_literacy_denies_missing_receipt(self):
+        import bro_policy
+        ok, reason = bro_policy.receipt_fresh("olts-no-such-session-xyz")
+        self.assertFalse(ok)
+        self.assertIn("missing", reason)
+
+    def test_reread_allows_within_interval(self):
+        import bro_policy
+        ok, reason = bro_policy.receipt_fresh(self._write_receipt("olts-recent", age=100))
+        self.assertTrue(ok, reason)
+
+    def test_reread_blocks_when_stale(self):
+        import bro_policy
+        ok, reason = bro_policy.receipt_fresh(self._write_receipt("olts-stale", age=100000))
+        self.assertFalse(ok)
+        self.assertIn("stale", reason)
+
+    def test_tree_change_after_receipt_is_denied(self):
+        import bro_policy
+        ok, reason = bro_policy.receipt_fresh(self._write_receipt("olts-treechg", age=0, tree="0" * 64))
+        self.assertFalse(ok)
+        self.assertIn("tree changed", reason)
+
+
 if __name__ == "__main__":
     unittest.main()

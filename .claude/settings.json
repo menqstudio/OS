@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" session-start"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" session-start"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" prompt"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" prompt"
           }
         ]
       }
@@ -26,11 +26,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" pre-tool"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" pre-tool"
           },
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_identity_hook.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_identity_hook.py\""
           }
         ]
       }
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool"
           }
         ]
       }
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool-failure"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool-failure"
           }
         ]
       }
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" subagent-start"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" subagent-start"
           }
         ]
       }
@@ -72,7 +72,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
           }
         ]
       }
@@ -82,7 +82,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
           }
         ]
       }
@@ -92,7 +92,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" instructions-loaded",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" instructions-loaded",
             "async": true
           }
         ]
