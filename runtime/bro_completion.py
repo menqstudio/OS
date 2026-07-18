@@ -33,13 +33,20 @@ def _json(path: pathlib.Path) -> dict[str, Any]:
     return value
 
 
-def _signed_env(path_env: str, key_env: str) -> dict[str, Any]:
+def _signed_env(path_env: str, artifact_type: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
+    # Ed25519, not HMAC: completion manifests and verifier receipts are presented
+    # to the Stop gate from the builder's process, so a symmetric key would let a
+    # builder mint its own GREEN completion or verifier receipt. verify_artifact
+    # checks them against the operator-signed trusted-key registry, so a
+    # completion is signed by the builder authority and a receipt by the verifier
+    # authority — neither of which a policed builder process holds.
+    from bro_signature import SignatureError, load_trusted_keys, verify_artifact
     raw = os.getenv(path_env)
     if not raw:
         raise CompletionError(f"missing {path_env}")
     try:
-        return verify_signed_document(_json(pathlib.Path(raw)), key_env)
-    except SecurityError as exc:
+        return verify_artifact(_json(pathlib.Path(raw)), artifact_type, load_trusted_keys(root), now=now)
+    except SignatureError as exc:
         raise CompletionError(str(exc)) from exc
 
 
@@ -107,9 +114,9 @@ def _clean_repository(root: pathlib.Path) -> None:
 
 
 def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path = ROOT) -> tuple[dict[str, Any], str]:
-    manifest = _signed_env("BRO_COMPLETION_MANIFEST", "BRO_COMPLETION_KEY")
+    manifest = _signed_env("BRO_COMPLETION_MANIFEST", "completion-manifest", root)
     required = {"schema", "task_id", "agent_id", "task_contract_sha256", "candidate_head", "candidate_tree", "done_criteria", "tests", "evidence_event_ids", "open_risks", "rollback_ready", "issued_at_epoch"}
-    if set(manifest) != required or manifest.get("schema") != 1:
+    if set(manifest) - {"artifact_type", "key_id"} != required or manifest.get("schema") != 1:
         raise CompletionError("invalid completion manifest shape")
     task_hash = canonical_json_sha256(task)
     for key, value in {"task_id": task["task_id"], "agent_id": agent_id, "task_contract_sha256": task_hash}.items():
@@ -147,9 +154,9 @@ def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path 
 
 
 def validate_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], task_hash: str, root: pathlib.Path = ROOT) -> dict[str, Any]:
-    receipt = _signed_env("BRO_VERIFIER_RECEIPT", "BRO_VERIFIER_RECEIPT_KEY")
+    receipt = _signed_env("BRO_VERIFIER_RECEIPT", "verifier-receipt", root)
     required = {"schema", "receipt_id", "task_id", "builder_agent_id", "verifier_agent_id", "verifier_role", "independence_level", "task_contract_sha256", "completion_manifest_sha256", "candidate_head", "candidate_tree", "evidence_event_ids", "verdict", "issued_at_epoch", "expires_at_epoch"}
-    if set(receipt) != required or receipt.get("schema") != 1 or receipt.get("verdict") != "GREEN":
+    if set(receipt) - {"artifact_type", "key_id"} != required or receipt.get("schema") != 1 or receipt.get("verdict") != "GREEN":
         raise CompletionError("invalid verifier receipt shape or verdict")
     verification = task["verification"]
     expected = {"task_id": task["task_id"], "builder_agent_id": task["agent_id"], "verifier_agent_id": verification["verifier_agent_id"], "verifier_role": verification["verifier_role"], "task_contract_sha256": task_hash, "completion_manifest_sha256": canonical_json_sha256(manifest), "candidate_head": manifest["candidate_head"], "candidate_tree": manifest["candidate_tree"]}

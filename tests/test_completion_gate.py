@@ -181,5 +181,103 @@ class ConductorStopTests(unittest.TestCase):
         self.assertIn("missing BRO_COMPLETION_MANIFEST", reason)
 
 
+class CompletionEd25519Tests(unittest.TestCase):
+    """Owner Authorization Phase 1: completion manifests and verifier receipts are
+    verified with Ed25519 against the operator-signed registry, not HMAC. A
+    completion is signed by the builder authority and a receipt by the verifier
+    authority; a policed builder process holds neither, so it cannot mint its own
+    GREEN completion or receipt. Wrong-authority and tampered artifacts are
+    refused, and a signed artifact conforms to its JSON schema."""
+
+    NOW = 1_700_000_000
+
+    def _fixture(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        from broctl import build_registry, generate_key, sign_payload
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-comp-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "config").mkdir(parents=True)
+        keys = {a: generate_key(a, f"dev-{a}", False)
+                for a in ("operator-root", "builder", "verifier")}
+        (tmp / "config" / "trusted-keys.json").write_text(
+            json.dumps(build_registry(list(keys.values()), self.NOW, 100_000)), encoding="utf-8")
+        return tmp, keys, sign_payload
+
+    def _sign(self, sign_payload, key, artifact_type, payload):
+        body = {"artifact_type": artifact_type, "key_id": key["key_id"], **payload}
+        return sign_payload(key["private_key"], body)
+
+    def _manifest(self):
+        return {
+            "schema": 1, "task_id": "task-x", "agent_id": "agt-p01-r02",
+            "task_contract_sha256": "a" * 64, "candidate_head": "b" * 40, "candidate_tree": "c" * 64,
+            "done_criteria": [{"criterion": "done", "status": "satisfied", "evidence_event_ids": ["e1"]}],
+            "tests": [{"command": "pytest", "status": "passed", "evidence_event_id": "e2"}],
+            "evidence_event_ids": ["e1", "e2"], "open_risks": [], "rollback_ready": True,
+            "issued_at_epoch": self.NOW,
+        }
+
+    def _receipt(self):
+        return {
+            "schema": 1, "receipt_id": "rcpt-1", "task_id": "task-x",
+            "builder_agent_id": "agt-p01-r02", "verifier_agent_id": "agt-p01-r05",
+            "verifier_role": "Independent Verifier", "independence_level": "L4",
+            "task_contract_sha256": "a" * 64, "completion_manifest_sha256": "d" * 64,
+            "candidate_head": "b" * 40, "candidate_tree": "c" * 64, "evidence_event_ids": ["e1"],
+            "verdict": "GREEN", "issued_at_epoch": self.NOW, "expires_at_epoch": self.NOW + 3600,
+        }
+
+    def _load(self, tmp, env, artifact_type, signed):
+        from bro_completion import _signed_env
+        path = tmp / "artifact.signed.json"
+        path.write_text(json.dumps(signed), encoding="utf-8")
+        with patch.dict(os.environ, {env: str(path)}):
+            return _signed_env(env, artifact_type, root=tmp, now=self.NOW)
+
+    def test_builder_signed_completion_loads_and_matches_schema(self):
+        import jsonschema
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["builder"], "completion-manifest", self._manifest())
+        loaded = self._load(tmp, "BRO_COMPLETION_MANIFEST", "completion-manifest", signed)
+        self.assertEqual(loaded["task_id"], "task-x")
+        schema = json.loads((ROOT / "schemas" / "completion-manifest.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate(signed["payload"], schema)
+
+    def test_wrong_authority_may_not_sign_completion(self):
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["verifier"], "completion-manifest", self._manifest())
+        with self.assertRaises(CompletionError):
+            self._load(tmp, "BRO_COMPLETION_MANIFEST", "completion-manifest", signed)
+
+    def test_tampered_completion_is_rejected(self):
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["builder"], "completion-manifest", self._manifest())
+        signed["payload"]["candidate_head"] = "f" * 40
+        with self.assertRaises(CompletionError):
+            self._load(tmp, "BRO_COMPLETION_MANIFEST", "completion-manifest", signed)
+
+    def test_verifier_signed_receipt_loads_and_matches_schema(self):
+        import jsonschema
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["verifier"], "verifier-receipt", self._receipt())
+        loaded = self._load(tmp, "BRO_VERIFIER_RECEIPT", "verifier-receipt", signed)
+        self.assertEqual(loaded["verdict"], "GREEN")
+        schema = json.loads((ROOT / "schemas" / "verifier-receipt.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate(signed["payload"], schema)
+
+    def test_wrong_authority_may_not_sign_receipt(self):
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["builder"], "verifier-receipt", self._receipt())
+        with self.assertRaises(CompletionError):
+            self._load(tmp, "BRO_VERIFIER_RECEIPT", "verifier-receipt", signed)
+
+    def test_tampered_receipt_is_rejected(self):
+        tmp, keys, sign = self._fixture()
+        signed = self._sign(sign, keys["verifier"], "verifier-receipt", self._receipt())
+        signed["payload"]["verdict"] = "RED"
+        with self.assertRaises(CompletionError):
+            self._load(tmp, "BRO_VERIFIER_RECEIPT", "verifier-receipt", signed)
+
+
 if __name__ == "__main__":
     unittest.main()
