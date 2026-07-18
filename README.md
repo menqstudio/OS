@@ -34,12 +34,19 @@ Bro is the primary interface and coordinator. Specialist agents work inside expl
 - [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) — MenQ Studio Design Standards (visual system, trilingual i18n, themes)
 
 **Product surfaces ([product/](product/))**
-- [product/NAVIGATION.md](product/NAVIGATION.md) — information architecture
+- [product/NAVIGATION.md](product/NAVIGATION.md) — navigation model
+- [product/INFORMATION_ARCHITECTURE.md](product/INFORMATION_ARCHITECTURE.md) — desktop IA, app shell, routing, keyboard
 - [product/SCREEN_INVENTORY.md](product/SCREEN_INVENTORY.md) — screens and global surfaces
 - [product/WORKSPACES.md](product/WORKSPACES.md) — per-workspace specifications
 - [product/GROUP_CHAT.md](product/GROUP_CHAT.md) — first-class Group Chat
 - [product/SEARCH_AND_COMMAND_PALETTE.md](product/SEARCH_AND_COMMAND_PALETTE.md) — search and command palette
-- [product/USER_FLOWS.md](product/USER_FLOWS.md) — core user flows
+- [product/STATES.md](product/STATES.md) — canonical UI state patterns
+
+**Product surfaces — UX flows (Phase 1)**
+- [product/USER_FLOWS.md](product/USER_FLOWS.md) — core user flows (overview)
+- [product/CHAT_FLOWS.md](product/CHAT_FLOWS.md) — Direct Chat and Group Chat flows
+- [product/PROJECT_TASK_FLOWS.md](product/PROJECT_TASK_FLOWS.md) — project and task flows
+- [product/DECISION_APPROVAL_FLOWS.md](product/DECISION_APPROVAL_FLOWS.md) — decision, approval, and agent-run flows
 
 ## Language and themes
 
