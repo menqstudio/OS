@@ -173,6 +173,77 @@ class DelegationTests(unittest.TestCase):
         self.assertTrue(self.classified("SomeInventedTool").unknown)
 
 
+class ConductorBootstrapReadTests(unittest.TestCase):
+    """The conductor must read the repository to bootstrap and orchestrate. In
+    work/release mode every action used to require a full task-contract bundle,
+    including read-only ones, so the canonical conductor could not read at all:
+    the fail-closed wall closed on Bro itself. The bootstrap exemption is
+    conductor-only, read-only, and cannot reach mutation or any non-read
+    capability."""
+
+    def classified(self, tool, value=None):
+        return classify_tool_action(tool, value or {}, ROOT)
+
+    def conductor(self, mode="work"):
+        return State(mode, CONDUCTOR_ROLE, "s", CANONICAL_CONDUCTOR_ID)
+
+    @patch("bro_policy.load_contract_bundle_from_env", side_effect=Exception("must not load"))
+    def test_conductor_may_read_local_without_a_contract(self, load_bundle):
+        classification = self.classified("Read", {"file_path": "README.md"})
+        ok, reason = authorize_classified_action(self.conductor(), classification, {})
+        self.assertTrue(ok, reason)
+        self.assertIn("bootstrap", reason)
+        load_bundle.assert_not_called()
+
+    def test_bootstrap_is_read_only_and_cannot_mutate(self):
+        classification = self.classified("Write", {"file_path": "runtime/x.py"})
+        ok, reason = authorize_classified_action(self.conductor(), classification, {})
+        self.assertFalse(ok)
+        self.assertIn("delegate", reason)
+
+    def test_bootstrap_does_not_extend_to_delegation(self):
+        """Orchestration keeps its own conductor path and message; the read-only
+        exemption must not swallow it."""
+        ok, reason = authorize_classified_action(self.conductor(), self.classified("Task"), {})
+        self.assertTrue(ok, reason)
+        self.assertIn("supervisor issues the lease", reason)
+
+    def test_bootstrap_requires_the_canonical_identity(self):
+        """Role string alone is not the conductor: a bro-role session without the
+        canonical id gets no read exemption and falls through to the contract gate."""
+        classification = self.classified("Read", {"file_path": "README.md"})
+        ok, reason = authorize_classified_action(
+            State("work", CONDUCTOR_ROLE, "s", "agt-p01-r01"), classification, {})
+        self.assertFalse(ok)
+        self.assertIn("task/agent/skill gate", reason)
+
+    def test_specialist_read_still_needs_a_contract(self):
+        classification = self.classified("Read", {"file_path": "README.md"})
+        ok, reason = authorize_classified_action(
+            State("work", "specialist", "s", "agt-p01-r01"), classification, {})
+        self.assertFalse(ok)
+        self.assertIn("task/agent/skill gate", reason)
+
+    def test_bootstrap_excludes_shell_command_substitution(self):
+        """A shell read with $() command substitution classifies as READ_LOCAL yet
+        executes an arbitrary mutation. The exemption is tool-allowlisted, so Bash
+        is never bootstrap-exempt and falls through to the full contract gate."""
+        classification = self.classified("Bash", {"command": "cat $(rm -rf runtime/bro_policy.py)"})
+        self.assertEqual(classification.capabilities, ("READ_LOCAL",))
+        self.assertFalse(classification.mutating)
+        ok, reason = authorize_classified_action(self.conductor(), classification, {})
+        self.assertFalse(ok)
+        self.assertNotIn("bootstrap", reason)
+        self.assertIn("task/agent/skill gate", reason)
+
+    def test_bootstrap_allows_glob_and_grep(self):
+        for tool, tool_input in (("Glob", {"pattern": "**/*.py"}), ("Grep", {"pattern": "def "})):
+            with patch("bro_policy.load_contract_bundle_from_env", side_effect=Exception("must not load")):
+                ok, reason = authorize_classified_action(
+                    self.conductor(), self.classified(tool, tool_input), {})
+                self.assertTrue(ok, f"{tool}: {reason}")
+
+
 class ReceiptFreshnessTests(unittest.TestCase):
     """L1 literacy and L8 thirty-minute reread: the audit's missing freshness coverage."""
 

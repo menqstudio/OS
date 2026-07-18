@@ -63,6 +63,17 @@ CONDUCTOR_ROLE = "bro"
 CANONICAL_CONDUCTOR_ID = "bro-000"
 UNKNOWN_ROLE = "unknown"
 
+# The canonical conductor may bootstrap — read the repository to orchestrate —
+# without a bound task contract, but ONLY through direct read-only tools. Shell
+# tools are excluded by construction: split_shell does not reject $() command
+# substitution, so a "read-only" command such as `cat $(rm -rf x)` classifies as
+# READ_LOCAL yet executes an arbitrary mutation. Gating on an explicit tool
+# allowlist (never Bash/Shell/PowerShell) closes that vector; the capability set
+# is the defence-in-depth second check. READ_EXTERNAL is excluded because a
+# network fetch is not workspace-bound.
+CONDUCTOR_BOOTSTRAP_TOOLS = frozenset({"Read", "Glob", "Grep"})
+CONDUCTOR_BOOTSTRAP_CAPABILITIES = frozenset({"READ_LOCAL"})
+
 
 def current_state(payload: dict) -> State:
     requested = os.getenv("BRO_MODE", load_json(POLICY_PATH)["default_mode"]).strip().lower()
@@ -198,6 +209,24 @@ def authorize_classified_action(
         return False, "Bro remains free and may not perform repository mutation; delegate to a governed specialist"
     if classification.mutating and state.role == UNKNOWN_ROLE:
         return False, "unauthenticated role may not mutate; BRO_ROLE is unset"
+    # Conductor bootstrap: the one canonical conductor may read the repository to
+    # bootstrap and orchestrate without a task-contract bundle, but only through
+    # an explicit allowlist of direct read-only tools (Read/Glob/Grep) — never a
+    # shell tool, whose command substitution can smuggle a mutation past the
+    # read-only classification. Bro never builds and can never mutate (denied
+    # above), so an allowlisted read authorizes nothing a specialist would need a
+    # contract for. The exemption requires the exact canonical identity
+    # (is_conductor, not the role string); the capability check is a second,
+    # defence-in-depth gate. Workspace binding and path escape are enforced
+    # upstream in _bind_workspace, and the hook refreshes the full-read receipt
+    # before this runs, so the path is workspace-bound and receipt-bound. Push,
+    # orchestration, unknown and mutating actions were denied above or carry a
+    # tool/capability outside these sets, and fall through to the full contract gate.
+    if (is_conductor(state)
+            and classification.tool in CONDUCTOR_BOOTSTRAP_TOOLS
+            and classification.capabilities
+            and all(cap in CONDUCTOR_BOOTSTRAP_CAPABILITIES for cap in classification.capabilities)):
+        return True, "conductor read-only bootstrap: no task contract required for a machine-local read"
     try:
         bundle = load_contract_bundle_from_env(ROOT)
     except ContractError as exc:
