@@ -99,8 +99,8 @@ class ControlRoomAPITests(unittest.TestCase):
         self.assertEqual(agent["agents"][0]["task_count"], 1)
 
     def test_checkpoint_view_exposes_evidence_and_freshness(self) -> None:
-        self.runtime.claim_next(AGENT, now_epoch=101)
-        self.runtime.checkpoint("task-api-1", actor_id=AGENT, now_epoch=102, completed_criteria=["Read model built"], open_risks=["None"], next_action="Verify API", evidence_refs=["evidence/checkpoint.json"])
+        lease = self.runtime.claim_next(AGENT, now_epoch=101)["lease_id"]
+        self.runtime.checkpoint("task-api-1", actor_id=AGENT, lease_id=lease, now_epoch=102, completed_criteria=["Read model built"], open_risks=["None"], next_action="Verify API", evidence_refs=["evidence/checkpoint.json"])
         view = self.api.checkpoint_status("task-api-1", now_epoch=103)
         self.assertEqual(view["last_checkpoint"]["evidence_refs"], ["evidence/checkpoint.json"])
         self.assertFalse(view["freshness"]["stale"])
@@ -110,8 +110,8 @@ class ControlRoomAPITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runtime = DurableOrchestrationRuntimeV1(directory, ROOT)
             runtime.create_task(task_contract("task-budget"), now_epoch=100, budget_limits={"tool_calls": {"soft": 1, "hard": 3}})
-            runtime.claim_next(AGENT, now_epoch=101)
-            runtime.record_usage("task-budget", actor_id=AGENT, now_epoch=102, delta={"tool_calls": 2}, evidence_refs=["evidence/usage.json"])
+            lease = runtime.claim_next(AGENT, now_epoch=101)["lease_id"]
+            runtime.record_usage("task-budget", actor_id=AGENT, lease_id=lease, now_epoch=102, delta={"tool_calls": 2}, evidence_refs=["evidence/usage.json"])
             api = ControlRoomAPIV1(runtime)
             budget = api.budget_status("task-budget", now_epoch=103)
             approval = api.approval_inbox(now_epoch=103)

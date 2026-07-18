@@ -2,12 +2,56 @@ import json
 import pathlib
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tools"))
 
+from bro_evidence import event_hash
 from bro_orchestration_runtime import DurableOrchestrationRuntime, OrchestrationRuntimeError
+from bro_signature import load_trusted_keys
+from broctl import build_registry, generate_key, sign_payload
+
+AUTHORITIES = ["operator-root", "issuer", "evidence-recorder", "builder",
+               "verifier", "release"]
+
+
+def build_evidence(store: pathlib.Path, keys: dict, task_id: str, count: int) -> list[str]:
+    """A real signed chain with a signed head.
+
+    complete_task used to accept any non-empty strings, so the tests handed it
+    "evidence/completed.json" and it believed them. Evidence has to resolve now,
+    which means the tests have to produce some.
+    """
+    previous, ids, digest = None, [], ""
+    for sequence in range(1, count + 1):
+        event_id = f"{task_id}-e{sequence}"
+        payload = {
+            "artifact_type": "evidence-event",
+            "key_id": keys["evidence-recorder"]["key_id"],
+            "event_id": event_id, "sequence": sequence,
+            "previous_event_hash": previous, "task_id": task_id,
+            "event_type": "work-recorded", "agent_id": AGENT,
+            "payload_hash": "a" * 64, "issued_at_epoch": 1,
+        }
+        (store / f"{event_id}.json").write_text(
+            json.dumps(sign_payload(keys["evidence-recorder"]["private_key"], payload)),
+            encoding="utf-8")
+        digest = event_hash(payload)
+        previous = digest
+        ids.append(event_id)
+    head = {
+        "artifact_type": "evidence-head",
+        "key_id": keys["evidence-recorder"]["key_id"],
+        "task_id": task_id, "final_event_hash": digest,
+        "event_count": count, "last_sequence": count, "issued_at_epoch": 1,
+    }
+    (store / f"{task_id}.head.json").write_text(
+        json.dumps(sign_payload(keys["evidence-recorder"]["private_key"], head)),
+        encoding="utf-8")
+    return ids
 
 AGENT = "agt-p01-r01"
 OTHER_AGENT = "agt-p01-r02"
@@ -52,7 +96,19 @@ def task_contract(task_id: str, agent_id: str = AGENT) -> dict:
 class DurableRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.runtime = DurableOrchestrationRuntime(pathlib.Path(self.temporary.name), ROOT)
+        base = pathlib.Path(self.temporary.name)
+        self.store = base / "evidence"
+        self.store.mkdir()
+        self.keys = {a: generate_key(a, f"dev-{a}", False) for a in AUTHORITIES}
+        registry_root = base / "registry"
+        (registry_root / "config").mkdir(parents=True)
+        now = int(time.time())
+        (registry_root / "config" / "trusted-keys.json").write_text(
+            json.dumps(build_registry(list(self.keys.values()), now - 60, 86400)),
+            encoding="utf-8")
+        self.trusted = load_trusted_keys(registry_root)
+        self.runtime = DurableOrchestrationRuntime(
+            base / "state", ROOT, evidence_keys=self.trusted, evidence_store=self.store)
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -124,9 +180,9 @@ class DurableRuntimeTests(unittest.TestCase):
             evidence_refs=["evidence/retry.json"]
         )["state"], "queued")
         self.runtime.claim_next(AGENT, now_epoch=104)
+        refs = build_evidence(self.store, self.keys, "task-retry", 2)
         self.assertEqual(self.runtime.complete_task(
-            "task-retry", actor_id=AGENT, now_epoch=105,
-            evidence_refs=["evidence/completed.json"]
+            "task-retry", actor_id=AGENT, now_epoch=105, evidence_refs=refs
         )["state"], "completed")
         with self.assertRaises(OrchestrationRuntimeError):
             self.runtime.cancel_task(
@@ -156,7 +212,7 @@ class DurableRuntimeTests(unittest.TestCase):
 
     def test_hash_chain_tamper_is_denied(self):
         self.runtime.create_task(task_contract("task-tamper"), now_epoch=100)
-        record = pathlib.Path(self.temporary.name) / "tasks" / "task-tamper" / "records" / "00000002.json"
+        record = self.runtime.state_dir / "tasks" / "task-tamper" / "records" / "00000002.json"
         value = json.loads(record.read_text())
         value["payload"]["next_state"] = "completed"
         record.write_text(json.dumps(value))

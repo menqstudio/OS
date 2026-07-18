@@ -9,9 +9,11 @@ from typing import Any
 
 from bro_authority import AuthorityError, validate_verifier_assignment
 from bro_contracts import canonical_json_sha256
+from bro_evidence import EvidenceError, validate_chain, validate_criterion_evidence
 from bro_recovery import RecoveryError, _load_state
 from bro_repository_state import resolve_state
 from bro_security import SecurityError, verify_signed_document
+from bro_signature import SignatureError, load_trusted_keys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 LEVELS = ["L1", "L2", "L3", "L4", "L5"]
@@ -56,24 +58,28 @@ def _external_dir(env_name: str) -> pathlib.Path:
     raise CompletionError(f"{env_name} must be outside the repository")
 
 
-def validate_evidence_chain(task_id: str, event_ids: list[str]) -> str:
-    if not event_ids or len(event_ids) != len(set(event_ids)):
-        raise CompletionError("evidence event IDs must be non-empty and unique")
-    previous = None
-    for event_id in event_ids:
-        try:
-            payload = verify_signed_document(_json(_external_dir("BRO_EVIDENCE_STORE") / f"{event_id}.json"), "BRO_EVIDENCE_KEY")
-        except SecurityError as exc:
-            raise CompletionError(str(exc)) from exc
-        required = {"schema", "event_id", "previous_event_hash", "task_id", "event_type", "agent_id", "payload_hash", "issued_at_epoch", "key_id"}
-        if set(payload) != required or payload.get("schema") != 1:
-            raise CompletionError("invalid evidence event shape")
-        if payload["event_id"] != event_id or payload["task_id"] != task_id:
-            raise CompletionError("evidence event binding mismatch")
-        if payload["previous_event_hash"] != previous:
-            raise CompletionError("evidence chain linkage mismatch")
-        previous = canonical_json_sha256(payload)
-    return previous or ""
+def validate_evidence_chain(task_id: str, event_ids: list[str],
+                            root: pathlib.Path = ROOT) -> str:
+    """Prove the submitted events are the whole chain, not a flattering prefix.
+
+    The previous implementation checked backward linkage over a caller-supplied
+    list. That catches dropping events from the front, because the first must
+    have no predecessor, and says nothing about the back. A builder holding
+    genuine signed events for work-started, tests-passed, tests-failed and
+    rolled-back submitted the first two, and every check passed: the failure and
+    the rollback that hid it were simply never mentioned. No forgery, just
+    selective disclosure.
+
+    It also verified with HMAC, which made the flaw unfixable in place. The
+    verifying key is the signing key and the hook runs in the builder's own
+    process, so any anchor the builder had to present it could also mint.
+    Delegating to the Ed25519 path is what makes the head an authority.
+    """
+    try:
+        return validate_chain(task_id, event_ids, load_trusted_keys(root),
+                              store=_external_dir("BRO_EVIDENCE_STORE"))
+    except (EvidenceError, SignatureError) as exc:
+        raise CompletionError(str(exc)) from exc
 
 
 def _no_pending_execution() -> None:
@@ -122,7 +128,18 @@ def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path 
         raise CompletionError("completion tests are not all passed")
     if manifest.get("open_risks") or manifest.get("rollback_ready") is not True:
         raise CompletionError("completion has open risks or rollback is not ready")
-    validate_evidence_chain(task["task_id"], manifest["evidence_event_ids"])
+    chain_ids = manifest["evidence_event_ids"]
+    validate_evidence_chain(task["task_id"], chain_ids, root)
+    # The criteria above only had to cite *some* evidence id. Nothing tied those
+    # ids to the chain that was just proven, so a criterion could rest on a real,
+    # signed event belonging to a different chain entirely.
+    try:
+        for criterion in criteria:
+            validate_criterion_evidence(task["task_id"], criterion["evidence_event_ids"], chain_ids)
+        for test in tests:
+            validate_criterion_evidence(task["task_id"], [test["evidence_event_id"]], chain_ids)
+    except EvidenceError as exc:
+        raise CompletionError(str(exc)) from exc
     _clean_repository(root)
     _no_pending_execution()
     _no_pending_recovery(task["task_id"])

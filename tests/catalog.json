@@ -216,7 +216,10 @@
         "cancellation",
         "recovery",
         "projection",
-        "tamper-denial"
+        "tamper-denial",
+        "completion-resolves-evidence",
+        "verification-state-required",
+        "no-completion-without-a-verifier"
       ]
     },
     {
@@ -335,6 +338,66 @@
         "tampered-lease-denial",
         "expiry-terminates-builder",
         "denied-task-never-spawns-builder"
+      ]
+    },
+    {
+      "id": "runtime-atomicity",
+      "path": "tests/test_runtime_atomicity.py",
+      "covers": [
+        "exclusive-record-creation",
+        "no-record-overwrite",
+        "concurrent-append-single-winner",
+        "no-orphan-temporaries",
+        "claim-lock-owner-token",
+        "no-cross-holder-lock-deletion",
+        "exclusive-stale-lock-break",
+        "stale-break-leaves-no-debris",
+        "retaken-lock-not-broken",
+        "lock-acquisition-timeout"
+      ]
+    },
+    {
+      "id": "evidence-chain",
+      "path": "tests/test_evidence_chain.py",
+      "covers": [
+        "signed-evidence-head",
+        "truncated-chain-denial",
+        "prefix-is-not-a-chain",
+        "reordered-chain-denial",
+        "sequence-gap-denial",
+        "duplicate-event-denial",
+        "builder-signed-head-denial",
+        "verifier-signed-head-denial",
+        "missing-head-denial",
+        "tampered-head-denial",
+        "head-task-binding",
+        "criterion-evidence-inside-chain",
+        "completion-wrapper-no-mock",
+        "hmac-evidence-path-retired",
+        "criterion-evidence-must-be-in-proven-chain",
+        "missing-registry-fails-closed",
+        "evidence-store-outside-repository"
+      ]
+    },
+    {
+      "id": "reconciler",
+      "path": "tests/test_reconciler.py",
+      "covers": [
+        "lease-is-execution-authority",
+        "checkpoint-requires-live-lease",
+        "usage-requires-live-lease",
+        "completion-requires-live-lease",
+        "foreign-lease-refused",
+        "stranded-task-to-recovery-required",
+        "live-lease-left-alone",
+        "queued-task-not-stranded",
+        "terminal-task-not-touched",
+        "reconcile-idempotent",
+        "reconciler-canonical-actor",
+        "unreadable-task-reported-not-swallowed",
+        "recovery-issues-a-lease",
+        "recovered-task-not-re-stranded",
+        "recovered-agent-can-work"
       ]
     },
     {

@@ -58,6 +58,9 @@ ARTIFACT_AUTHORITY = {
     "protected-authority": OPERATOR,
     "workspace-binding": OPERATOR,
     "evidence-event": EVIDENCE,
+    # The head anchors where a chain ends. It must come from the recorder, never
+    # the builder, or the builder signs a head describing whichever prefix suits it.
+    "evidence-head": EVIDENCE,
     "completion-manifest": BUILDER,
     "verifier-receipt": VERIFIER,
     "release-grant": RELEASE,

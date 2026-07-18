@@ -8,6 +8,7 @@ import tempfile
 from typing import Any
 
 from bro_contracts import ContractError, validate_task_contract
+from bro_evidence import EvidenceError, validate_chain
 from bro_identity import IdentityError, all_agent_identities
 from bro_orchestration import OrchestrationError, build_control_room_projection, validate_transition
 
@@ -31,6 +32,7 @@ def _hash_record(record: dict[str, Any]) -> str:
 
 
 def _atomic_json(path: pathlib.Path, value: dict[str, Any]) -> None:
+    """Atomic replace, for state that is meant to be overwritten."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
         temporary = pathlib.Path(handle.name)
@@ -41,6 +43,41 @@ def _atomic_json(path: pathlib.Path, value: dict[str, Any]) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _exclusive_json(path: pathlib.Path, value: dict[str, Any]) -> None:
+    """Create a record, or refuse. Never overwrite one.
+
+    The append path computed the next sequence from the current record count,
+    checked that the file was absent, and then wrote with os.replace. Two
+    processes could read the same count, both find the path absent, and both
+    write: os.replace is atomic but it overwrites, so one record vanished and
+    the hash chain forked with nobody the wiser. The check and the write have to
+    be the same operation, which is what O_EXCL gives.
+
+    The directory is fsynced too: on a crash the file's contents can otherwise
+    survive while the name that makes it findable does not.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    except FileExistsError as exc:
+        raise OrchestrationRuntimeError(
+            f"record sequence already exists: {path.name}") from exc
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(_canonical(value))
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    if hasattr(os, "O_DIRECTORY"):
+        directory = os.open(path.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
 
 def _load(path: pathlib.Path) -> dict[str, Any]:
@@ -68,7 +105,15 @@ class DurableOrchestrationRuntime:
     reconstructed from immutable task contracts plus hash-chained records.
     """
 
-    def __init__(self, state_dir: pathlib.Path | str, root: pathlib.Path = ROOT):
+    def __init__(self, state_dir: pathlib.Path | str, root: pathlib.Path = ROOT,
+                 *, evidence_keys: dict | None = None,
+                 evidence_store: pathlib.Path | None = None):
+        # Without a verifier the runtime can still read, queue, claim and
+        # checkpoint; it just cannot declare anything finished. Completion is the
+        # one transition that asserts work happened, so it is the one that needs
+        # to be able to check.
+        self.evidence_keys = evidence_keys
+        self.evidence_store = pathlib.Path(evidence_store) if evidence_store else None
         self.root = pathlib.Path(root).resolve()
         self.state_dir = pathlib.Path(state_dir).resolve()
         self.tasks_dir = self.state_dir / "tasks"
@@ -130,9 +175,10 @@ class DurableOrchestrationRuntime:
         }
         record["record_sha256"] = _hash_record(record)
         path = self._task_dir(task_id) / "records" / f"{sequence:08d}.json"
-        if path.exists():
-            raise OrchestrationRuntimeError("record sequence already exists")
-        _atomic_json(path, record)
+        # Exclusive creation, not exists-then-write: the gap between the two is
+        # exactly where a concurrent appender computed the same sequence and
+        # overwrote this record.
+        _exclusive_json(path, record)
         return record
 
     def _state(self, task_id: str) -> str:
@@ -355,13 +401,63 @@ class DurableOrchestrationRuntime:
         self._validate_actor("owner", owner_id)
         return self._transition(task_id, "running", "owner", owner_id, now_epoch, "recovery-proved", _strings(evidence_refs, "evidence_refs", required=True))
 
-    def complete_task(self, task_id: str, *, actor_id: str, now_epoch: int, evidence_refs: list[str]) -> dict[str, Any]:
+    def _resolve_evidence(self, task_id: str, evidence_refs: list[str]) -> None:
+        """Make the assignee's evidence references mean something.
+
+        `_strings` only proved they were non-empty and unique. Nothing opened
+        them, so `evidence_refs=["nope"]` completed a task. Resolving them
+        against the signed chain is what turns a claim into evidence, and the
+        chain must be whole: a prefix that omits the failure is not a shorter
+        proof, it is a different story.
+        """
+        if self.evidence_keys is None or self.evidence_store is None:
+            raise OrchestrationRuntimeError(
+                "completion requires an evidence verifier; this runtime was "
+                "constructed without one and cannot check what it is asserting")
+        try:
+            validate_chain(task_id, evidence_refs, self.evidence_keys,
+                           store=self.evidence_store)
+        except EvidenceError as exc:
+            raise OrchestrationRuntimeError(f"completion evidence RED: {exc}") from exc
+
+    def submit_for_verification(self, task_id: str, *, actor_id: str, now_epoch: int,
+                                evidence_refs: list[str]) -> dict[str, Any]:
+        """running -> verification.
+
+        The state machine has always allowed this edge and nothing ever took it,
+        so `verification` was a state the registry declared and the runtime never
+        entered. A task needing an independent verdict went straight from the
+        builder's hands to completed.
+        """
         if self._state(task_id) != "running":
-            raise OrchestrationRuntimeError("completion requires running task")
+            raise OrchestrationRuntimeError("verification requires running task")
         contract = self._contract(task_id)
         if contract.get("agent_id") != actor_id:
+            raise OrchestrationRuntimeError("submitting actor is not task assignee")
+        refs = _strings(evidence_refs, "evidence_refs", required=True)
+        self._resolve_evidence(task_id, refs)
+        return self._transition(task_id, "verification", "agent", actor_id, now_epoch,
+                                "verification-requested", refs)
+
+    def complete_task(self, task_id: str, *, actor_id: str, now_epoch: int, evidence_refs: list[str]) -> dict[str, Any]:
+        state = self._state(task_id)
+        contract = self._contract(task_id)
+        verification = contract.get("verification") or {}
+        if verification.get("required") is True:
+            # The contract said an independent verdict was required and the
+            # runtime never asked for one: it read that field at write time and
+            # ignored it at the only moment it mattered.
+            if state != "verification":
+                raise OrchestrationRuntimeError(
+                    "this task requires independent verification; it must pass "
+                    "through the verification state, not go straight to completed")
+        elif state != "running":
+            raise OrchestrationRuntimeError("completion requires running task")
+        if contract.get("agent_id") != actor_id:
             raise OrchestrationRuntimeError("completion actor is not task assignee")
-        return self._transition(task_id, "completed", "agent", actor_id, now_epoch, "task-completed", _strings(evidence_refs, "evidence_refs", required=True))
+        refs = _strings(evidence_refs, "evidence_refs", required=True)
+        self._resolve_evidence(task_id, refs)
+        return self._transition(task_id, "completed", "agent", actor_id, now_epoch, "task-completed", refs)
 
     def task_snapshot(self, task_id: str, now_epoch: int) -> dict[str, Any]:
         records = self._records(task_id)
