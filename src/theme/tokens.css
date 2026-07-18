@@ -1,0 +1,74 @@
+/* BroPS design tokens — provisional MenQ Studio Design Standards mapping.
+   PROVISIONAL: canonical MenQ token source not available in this repo; these
+   mirror DESIGN_SYSTEM.md and are marked for review (MENQ adoption §9).
+   All component styling MUST resolve through these tokens — no hard-coded colors. */
+
+:root {
+  /* MenQ foundation scale */
+  --menq-space-1: 4px;
+  --menq-space-2: 8px;
+  --menq-space-3: 12px;
+  --menq-space-4: 16px;
+  --menq-space-5: 24px;
+  --menq-space-6: 32px;
+  --menq-space-7: 48px;
+  --menq-radius-sm: 6px;
+  --menq-radius-md: 10px;
+  --menq-radius-card: 14px;
+  --menq-radius-pill: 999px;
+  --menq-font-sans: "Inter", "Segoe UI", system-ui, -apple-system, "Noto Sans Armenian", sans-serif;
+  --menq-font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+  --menq-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.18);
+  --menq-shadow-2: 0 8px 28px rgba(0, 0, 0, 0.28);
+  --menq-motion-fast: 160ms;
+  --menq-motion-med: 240ms;
+
+  /* Light theme semantic tokens (default) */
+  --menq-color-bg: #f5f6f8;
+  --menq-color-surface: #ffffff;
+  --menq-color-elevated: #ffffff;
+  --menq-color-text: #10131a;
+  --menq-color-muted: #5b6473;
+  --menq-color-border: #e2e5ea;
+  --menq-color-accent: #3d5afe;
+  --menq-color-accent-text: #ffffff;
+  --menq-color-success: #1f9d55;
+  --menq-color-warning: #c77700;
+  --menq-color-danger: #d1435b;
+  --menq-color-info: #2a7de1;
+  --menq-color-focus: #3d5afe;
+  --menq-color-hover: rgba(61, 90, 254, 0.08);
+  --menq-color-selected: rgba(61, 90, 254, 0.12);
+}
+
+:root[data-theme="dark"] {
+  --menq-color-bg: #0c0e13;
+  --menq-color-surface: #14171f;
+  --menq-color-elevated: #1b1f2a;
+  --menq-color-text: #eef1f6;
+  --menq-color-muted: #98a2b3;
+  --menq-color-border: #262b37;
+  --menq-color-accent: #7c8dff;
+  --menq-color-accent-text: #0c0e13;
+  --menq-color-success: #4ade80;
+  --menq-color-warning: #f0b23a;
+  --menq-color-danger: #f2708a;
+  --menq-color-info: #6cb2ff;
+  --menq-color-focus: #7c8dff;
+  --menq-color-hover: rgba(124, 141, 255, 0.12);
+  --menq-color-selected: rgba(124, 141, 255, 0.18);
+}
+
+/* BroPS semantic aliases (resolve back to MenQ tokens) */
+:root {
+  --brops-bg: var(--menq-color-bg);
+  --brops-surface: var(--menq-color-surface);
+  --brops-elevated: var(--menq-color-elevated);
+  --brops-text: var(--menq-color-text);
+  --brops-muted: var(--menq-color-muted);
+  --brops-border: var(--menq-color-border);
+  --brops-accent: var(--menq-color-accent);
+  --brops-accent-text: var(--menq-color-accent-text);
+  --brops-command-surface: var(--menq-color-elevated);
+  --brops-agent-card-radius: var(--menq-radius-card);
+}

@@ -13,8 +13,18 @@ Bro is the primary interface and coordinator. Specialist agents work inside expl
 ## Foundation status
 
 - Foundation v1: **Locked** (2026-07-19) — see decision D-010
-- Application code: Not started
-- Current priority: Phase 1 UX architecture (substantially delivered), then interactive prototype (Phase 2)
+- Phase 2 interactive prototype: **frontend running** (React + TypeScript + Vite, mock data)
+- Backend (Tauri + Rust + SQLite): deferred to Phase 3–4, specified in `docs/architecture/` and `IMPLEMENTATION_EXECUTION_HANDOFF.md`
+
+## Run the prototype
+
+```bash
+npm install
+npm run dev        # http://localhost:1420
+npm run build      # typecheck + production build
+```
+
+The prototype is the frontend app shell: left navigation, top bar, command palette (⌘/Ctrl-K), all primary screens with mock data, trilingual runtime switching (HY/EN/RU), and Dark/Light themes. It uses in-memory mock data — no backend is connected yet. Features that need the desktop backend are visibly marked as prototype rather than shown as working.
 
 ## Documentation index
 
@@ -32,6 +42,15 @@ Bro is the primary interface and coordinator. Specialist agents work inside expl
 - [ARCHITECTURE.md](ARCHITECTURE.md) — domains, entities, execution model
 - [AI_RUNTIME.md](AI_RUNTIME.md) — orchestrator, agents, engines, events, tools, approvals
 - [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) — MenQ Studio Design Standards (visual system, trilingual i18n, themes)
+
+**Implementation contracts**
+- [IMPLEMENTATION_EXECUTION_HANDOFF.md](IMPLEMENTATION_EXECUTION_HANDOFF.md) — full build contract (React/Tauri/Rust/SQLite)
+- [MENQ_STUDIO_DESIGN_STANDARD_ADOPTION.md](MENQ_STUDIO_DESIGN_STANDARD_ADOPTION.md) — design-token adoption rules
+- [docs/architecture/DATA_MODEL.md](docs/architecture/DATA_MODEL.md) — entities, enums, state rules
+- [docs/architecture/DATABASE_SCHEMA.md](docs/architecture/DATABASE_SCHEMA.md) — SQLite schema contract
+- [docs/architecture/AI_RUNTIME_CONTRACTS.md](docs/architecture/AI_RUNTIME_CONTRACTS.md) — provider/model/prompt/run contracts
+- [docs/architecture/DESKTOP_ARCHITECTURE.md](docs/architecture/DESKTOP_ARCHITECTURE.md) — Tauri desktop boundaries
+- [docs/architecture/NOTIFICATIONS_AND_PERMISSIONS.md](docs/architecture/NOTIFICATIONS_AND_PERMISSIONS.md) — RBAC and notifications
 
 **Product surfaces ([product/](product/))**
 - [product/NAVIGATION.md](product/NAVIGATION.md) — navigation model
