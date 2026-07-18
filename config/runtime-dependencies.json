@@ -17,7 +17,7 @@
       "id": "cryptography",
       "kind": "library",
       "resolve": "cryptography",
-      "version": ">=41,<45",
+      "version": ">=41,<47",
       "required_for": ["runtime", "test"],
       "optionality": "required",
       "note": "Ed25519 signing/verification for grants, receipts and the evidence chain."

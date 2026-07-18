@@ -1,3 +1,4 @@
+import os
 import pathlib
 import subprocess
 import sys
@@ -61,6 +62,11 @@ class StopControllerTests(unittest.TestCase):
         self.registry = self.dir / "processes.jsonl"
         self.audit = self.dir / "incidents.jsonl"
 
+    @unittest.skipUnless(
+        hasattr(os, "killpg"),
+        "STOP Controller manages POSIX process groups (os.killpg) and reads "
+        "/proc; the real-process test is Linux/POSIX-only",
+    )
     def test_stops_a_real_process_group(self):
         proc = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(30)"],
