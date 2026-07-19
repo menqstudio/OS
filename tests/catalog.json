@@ -498,6 +498,15 @@
         "workspace-binding-digest",
         "task-lock-binding"
       ]
+    },
+    {
+      "id": "shadow-mode",
+      "path": "tests/test_shadow_mode.py",
+      "covers": [
+        "observe-only-enforcement",
+        "shadow-would-block-ledger",
+        "fail-safe-no-silent-bypass"
+      ]
     }
   ]
 }

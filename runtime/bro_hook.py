@@ -5,6 +5,7 @@ import os
 import pathlib
 import sys
 
+from bro_audit_log import append as audit_append
 from bro_completion import authorize_conductor_stop, authorize_stop
 from bro_contracts import ContractError, validate_task_contract
 from bro_control_plane import authorize_tool, classify_request, settle_execution_tool
@@ -27,6 +28,60 @@ def emit(obj: dict) -> None:
 
 def deny(reason: str) -> None:
     emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}})
+
+
+# --- Shadow (observe-only) enforcement ---------------------------------------
+# BRO_ENFORCEMENT=shadow makes the wall observe rather than block: every decision
+# it *would* have blocked is recorded to the append-only BRO_SHADOW_LEDGER instead
+# of being enforced, so an operator can measure a rollout against real traffic
+# before flipping to enforce. Both env vars share the trust basis of BRO_MODE/
+# BRO_ROLE: the hook reads the harness process environment, which the agent's own
+# tool subprocesses cannot mutate.
+#
+# It is deliberately fail-safe. Shadow softens a block ONLY when the decision was
+# durably recorded: a bypass we cannot record is a bypass we do not grant, so a
+# missing/unwritable/in-repo ledger falls back to enforce. Shadow covers policy
+# decisions only; an unexpected hook fault still denies via fail_closed, because a
+# malfunctioning gate is not a policy verdict.
+def _shadow_enabled() -> bool:
+    return os.getenv("BRO_ENFORCEMENT", "enforce").strip().lower() == "shadow"
+
+
+def _observe(kind: str, reason: str, data: dict, state) -> bool:
+    """Record a would-block decision to the shadow ledger. Return True only when
+    shadow is enabled AND the record was durably written; otherwise False, so the
+    caller enforces the block."""
+    if not _shadow_enabled():
+        return False
+    raw = os.getenv("BRO_SHADOW_LEDGER")
+    if not raw:
+        return False
+    entry = {
+        "kind": kind,
+        "reason": reason,
+        "session_id": state.session_id,
+        "mode": state.mode,
+        "role": state.role,
+        "agent_id": state.agent_id,
+        "tool": str(data.get("tool_name") or ""),
+        "tool_use_id": str(data.get("tool_use_id") or ""),
+    }
+    try:
+        audit_append(pathlib.Path(raw), "shadow-would-block", entry, repo_root=ROOT)
+    except Exception:
+        return False
+    return True
+
+
+def _observe_or_block(*, event: str, kind: str, reason: str, hook_name: str, data: dict, state) -> None:
+    """Enforce a block, or in shadow mode record it and emit a benign observation."""
+    if _observe(kind, reason, data, state):
+        emit({"hookSpecificOutput": {"hookEventName": hook_name, "additionalContext": f"[SHADOW] would block ({kind}): {reason}"}})
+        return
+    if event == "pre-tool":
+        deny(reason)
+    else:
+        emit({"decision": "block", "reason": reason})
 
 
 def _task_from_env() -> dict:
@@ -68,7 +123,7 @@ def main() -> int:
         tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
         allowed, why = authorize_tool(state, tool, tool_input, tool_use_id=str(data.get("tool_use_id") or ""))
         if not allowed:
-            deny(note + why)
+            _observe_or_block(event="pre-tool", kind="pre-tool-deny", reason=note + why, hook_name="PreToolUse", data=data, state=state)
         elif note:
             emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": note}})
         return 0
@@ -90,7 +145,7 @@ def main() -> int:
             except ReleaseV3Error as exc:
                 green, message = False, f"Release Grant V3 settlement RED: {exc}"
             if not green and success:
-                emit({"decision": "block", "reason": message})
+                _observe_or_block(event="post-tool", kind="release-settlement-block", reason=message, hook_name=hook, data=data, state=state)
             else:
                 emit({"hookSpecificOutput": {"hookEventName": hook, "additionalContext": message}})
             return 0
@@ -98,7 +153,7 @@ def main() -> int:
         if not handled:
             return 0
         if not green and success:
-            emit({"decision": "block", "reason": message})
+            _observe_or_block(event="post-tool", kind="execution-settlement-block", reason=message, hook_name=hook, data=data, state=state)
         else:
             emit({"hookSpecificOutput": {"hookEventName": hook, "additionalContext": message}})
         return 0
