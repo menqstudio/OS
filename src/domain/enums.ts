@@ -20,6 +20,8 @@ export const PRIORITIES: Priority[] = ['low', 'normal', 'high', 'critical'];
 export const PROJECT_STATUSES: ProjectStatus[] = ['planned', 'active', 'blocked', 'completed', 'archived'];
 export type MemoryKind = 'fact' | 'preference' | 'note' | 'reference';
 export const MEMORY_KINDS: MemoryKind[] = ['fact', 'preference', 'note', 'reference'];
+export const RUN_STATUSES: RunStatus[] = ['drafted', 'queued', 'planning', 'awaiting_approval', 'running', 'paused', 'succeeded', 'failed', 'cancelled'];
+export const INTEGRATION_STATUSES = ['disconnected', 'connected', 'error'] as const;
 
 // Maps a status-like value to a visual tone used by Badge/StatusPill.
 export type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info';
@@ -36,6 +38,8 @@ export const statusTone: Record<string, Tone> = {
   working: 'accent',
   // approvals
   pending: 'warning', approved: 'success', rejected: 'danger', expired: 'neutral',
+  // integrations (error tone already defined under severity)
+  disconnected: 'neutral', connected: 'success',
   // risk / priority / severity
   low: 'neutral', normal: 'neutral', medium: 'warning', high: 'warning',
   critical: 'danger', info: 'info', success: 'success', warning: 'warning', error: 'danger',

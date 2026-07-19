@@ -12,6 +12,11 @@ pub const APPROVAL_DECISIONS: &[&str] = &["approved", "rejected"];
 pub const CONVERSATION_KINDS: &[&str] = &["direct", "group"];
 pub const MESSAGE_ROLES: &[&str] = &["user", "agent", "system"];
 pub const MEMORY_KINDS: &[&str] = &["fact", "preference", "note", "reference"];
+pub const RUN_STATUSES: &[&str] = &[
+    "drafted", "queued", "planning", "awaiting_approval", "running", "paused", "succeeded",
+    "failed", "cancelled",
+];
+pub const INTEGRATION_STATUSES: &[&str] = &["disconnected", "connected", "error"];
 
 pub fn is_valid(value: &str, allowed: &[&str]) -> bool {
     allowed.contains(&value)
@@ -146,6 +151,59 @@ camel! {
         pub created_at: String,
         pub updated_at: String,
     }
+
+    pub struct Run {
+        pub id: String,
+        pub intent: String,
+        pub status: String,
+        pub plan: String,
+        pub created_at: String,
+        pub updated_at: String,
+    }
+
+    pub struct Event {
+        pub id: String,
+        pub title: String,
+        pub kind: String,
+        pub location: String,
+        pub starts_at: String,
+        pub ends_at: Option<String>,
+        pub created_at: String,
+        pub updated_at: String,
+    }
+
+    pub struct Automation {
+        pub id: String,
+        pub name: String,
+        pub trigger: String,
+        pub action: String,
+        pub enabled: bool,
+        pub created_at: String,
+        pub updated_at: String,
+    }
+
+    pub struct Integration {
+        pub id: String,
+        pub name: String,
+        pub provider: String,
+        pub status: String,
+        pub created_at: String,
+        pub updated_at: String,
+    }
+
+    // Computed at read time — no table of its own.
+    pub struct Metric {
+        pub key: String,
+        pub label: String,
+        pub value: i64,
+    }
+
+    pub struct SecuritySummary {
+        pub pending_approvals: i64,
+        pub decided_approvals: i64,
+        pub audit_events: i64,
+        pub sensitive_events: Vec<ActivityEvent>,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +249,24 @@ pub struct NewMemoryEntry {
     pub scope: String,
     pub kind: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewEvent {
+    pub title: String,
+    pub kind: String,
+    pub location: String,
+    pub starts_at: String,
+    pub ends_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewAutomation {
+    pub name: String,
+    pub trigger: String,
+    pub action: String,
 }
 
 #[derive(Debug, thiserror::Error)]

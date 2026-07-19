@@ -143,6 +143,72 @@ export interface NewMemoryEntry {
   content: string;
 }
 
+export interface Run {
+  id: string;
+  intent: string;
+  status: string;
+  plan: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  kind: string;
+  location: string;
+  startsAt: string;
+  endsAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewEvent {
+  title: string;
+  kind: string;
+  location: string;
+  startsAt: string;
+  endsAt: string | null;
+}
+
+export interface Automation {
+  id: string;
+  name: string;
+  trigger: string;
+  action: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewAutomation {
+  name: string;
+  trigger: string;
+  action: string;
+}
+
+export interface Integration {
+  id: string;
+  name: string;
+  provider: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Metric {
+  key: string;
+  label: string;
+  value: number;
+}
+
+export interface SecuritySummary {
+  pendingApprovals: number;
+  decidedApprovals: number;
+  auditEvents: number;
+  sensitiveEvents: ActivityEvent[];
+}
+
 export interface DirEntry {
   name: string;
   path: string;
