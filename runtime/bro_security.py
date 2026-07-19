@@ -22,7 +22,18 @@ MUTATING_GIT = {
     "config", "merge", "mv", "push", "rebase", "remote", "reset", "restore",
     "revert", "rm", "stash", "submodule", "switch", "tag", "update-ref", "worktree",
 }
-DANGEROUS_CONFIG = ("http.extraheader", "credential.helper", "core.sshcommand")
+# `git -c key=value` (and --config-env) can carry CODE EXECUTION through many keys:
+# core.fsmonitor / core.pager / core.hooksPath / core.editor / sequence.editor /
+# core.sshcommand / diff.external / *.textconv / filter.*.clean|smudge /
+# uploadpack.packObjectsHook / gpg.program, plus credential exfil (http.extraheader,
+# credential.helper) and repository redirection (url.*.insteadOf, remote.*.url,
+# alias.*). A denylist of "dangerous" keys can never be complete, so we allowlist:
+# only these display/format-only keys keep a read-only subcommand read-only; any other
+# injected config makes the command dangerous (no longer classified read-only).
+READ_SAFE_CONFIG = frozenset({
+    "color.ui", "color.diff", "color.status", "color.branch", "color.decorate",
+    "core.quotepath", "core.abbrev", "log.date", "i18n.logoutputencoding", "diff.noprefix",
+})
 GLOBAL_WITH_ARG = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
 READ_ONLY_SHELL = {
     "cat", "echo", "find", "get-childitem", "get-content", "ls", "pwd", "select-string",
@@ -145,12 +156,8 @@ def analyze_git(tokens: list[str]) -> CommandInfo:
                 value = tokens[i].strip("\"'")
             if name in {"-c", "--config-env"}:
                 key = value.split("=", 1)[0].lower()
-                if (
-                    key in DANGEROUS_CONFIG
-                    or key.startswith("alias.")
-                    or (key.startswith("url.") and key.endswith(".insteadof"))
-                    or (key.startswith("remote.") and key.endswith(".url"))
-                ):
+                # Allowlist, not denylist: anything not provably display-only is dangerous.
+                if key not in READ_SAFE_CONFIG:
                     dangerous = True
             i += 1
             continue

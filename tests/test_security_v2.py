@@ -51,6 +51,28 @@ class SecurityV2Tests(unittest.TestCase):
             analyze_command("git -c alias.x=push x origin main")[0].dangerous_config
         )
 
+    def test_code_exec_config_on_read_only_git_is_not_read_only(self):
+        # `git -c <exec-config> status/log/diff` is an RCE vector — the config runs code
+        # while the subcommand looks read-only. Every such injection must be dangerous
+        # (so it is not classified read-only, even in review mode), not just the three
+        # keys the old denylist happened to name.
+        for command in [
+            "git -c core.fsmonitor=evil status",
+            "git -c core.pager=evil log",
+            "git -c core.hooksPath=/tmp/h status",
+            "git -c diff.external=evil diff",
+            "git -c uploadpack.packObjectsHook=evil status",
+            "git -c sequence.editor=evil rebase",
+            "git --config-env=core.sshCommand=EVIL status",
+        ]:
+            info = analyze_command(command)[0]
+            self.assertTrue(info.dangerous_config, command)
+            self.assertTrue(info.mutating, command)
+        # A display-only config keeps a read-only subcommand read-only.
+        safe = analyze_command("git -c color.ui=false status")[0]
+        self.assertFalse(safe.dangerous_config, "color.ui is display-only")
+        self.assertFalse(safe.mutating, "color.ui on status stays read-only")
+
     def test_segments_quotes_windows_and_mixed_case(self):
         infos = analyze_command(
             'git status && C:\\Git\\bin\\GIT.EXE -C . commit -m "x y"; '
