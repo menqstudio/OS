@@ -27,6 +27,34 @@ const DEFAULT_CLAUDE_BIN: &str = "claude";
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
+// Resource caps: the deadline bounds TIME, these bound BYTES, so a compromised /
+// misconfigured provider or `claude` binary can't OOM us with a fast, huge stream.
+const MAX_ASSISTANT_OUTPUT: usize = 8 * 1024 * 1024; // 8 MiB of assistant text
+const MAX_STDOUT_BYTES: u64 = 9 * 1024 * 1024; // hard cap on a child's stdout stream
+const MAX_STDERR_BYTES: u64 = 64 * 1024; // 64 KiB of stderr
+const MAX_HTTP_BODY: usize = 8 * 1024 * 1024; // 8 MiB HTTP response body
+
+/// Read an HTTP response body up to `max` bytes, erroring past the cap so a
+/// hostile/misbehaving endpoint can't OOM us with an unbounded body.
+async fn bounded_body(mut resp: reqwest::Response, max: usize) -> Result<Vec<u8>, String> {
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+        if buf.len() + chunk.len() > max {
+            return Err(format!("response body exceeded {max} bytes"));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+/// Like [`bounded_body`] but returns lossy UTF-8 text (for error messages).
+async fn bounded_text(resp: reqwest::Response, max: usize) -> String {
+    match bounded_body(resp, max).await {
+        Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+        Err(e) => e,
+    }
+}
+
 /// One turn of a conversation. `role` is "user" or "assistant".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMsg {
@@ -224,22 +252,38 @@ impl Drop for TempFileGuard {
 /// protection the transcript gets via stdin.
 fn write_system_prompt_file(system: &str) -> Result<std::path::PathBuf, String> {
     use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = ai_sandbox_dir()?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let path = dir.join(format!("system-{}-{nanos}.txt", std::process::id()));
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
+    let pid = std::process::id();
+    // Exclusive create with a monotonic counter, so two concurrent requests in
+    // this process can never collide and truncate each other's system prompt.
+    for _ in 0..32 {
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = dir.join(format!("system-{pid}-{nanos}-{seq}.txt"));
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true); // O_EXCL — never overwrite/truncate
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = match opts.open(&path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("system prompt file: {e}")),
+        };
+        if let Err(e) = f.write_all(system.as_bytes()) {
+            let _ = std::fs::remove_file(&path); // clean up a partial write
+            return Err(format!("system prompt file: {e}"));
+        }
+        return Ok(path);
     }
-    let mut f = opts.open(&path).map_err(|e| format!("system prompt file: {e}"))?;
-    f.write_all(system.as_bytes()).map_err(|e| format!("system prompt file: {e}"))?;
-    Ok(path)
+    Err("could not create a unique system prompt file".to_string())
 }
 
 /// Build the argv (after the binary) for a `claude -p` chat call. Centralized so
@@ -317,15 +361,18 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     let stderr = child.stderr.take();
     let stderr_task = tokio::spawn(async move {
         let mut buf = String::new();
-        if let Some(mut e) = stderr {
+        if let Some(e) = stderr {
             use tokio::io::AsyncReadExt;
-            let _ = e.read_to_string(&mut buf).await;
+            let _ = e.take(MAX_STDERR_BYTES).read_to_string(&mut buf).await;
         }
         buf
     });
 
     let stdout = child.stdout.take().ok_or("no stdout from claude")?;
-    let mut lines = tokio::io::BufReader::new(stdout).lines();
+    // Hard-cap the total stdout we buffer so a fast/huge stream can't OOM us
+    // (the deadline bounds time; this bounds bytes).
+    let capped = tokio::io::AsyncReadExt::take(stdout, MAX_STDOUT_BYTES);
+    let mut lines = tokio::io::BufReader::new(capped).lines();
     let mut acc = String::new();
     let mut result_text: Option<String> = None;
 
@@ -359,6 +406,9 @@ async fn claude_cli_stream<F: FnMut(&str)>(
                     if let Some(text) = ev.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
                         if !text.is_empty() {
                             acc.push_str(text);
+                            if acc.len() > MAX_ASSISTANT_OUTPUT {
+                                return Err("assistant response exceeded the size limit".to_string());
+                            }
                             on_delta(text);
                         }
                     }
@@ -444,15 +494,33 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
             let _ = stdin.shutdown().await;
         });
     }
-    let out = tokio::time::timeout(Duration::from_secs(120), child.wait_with_output())
-        .await
-        .map_err(|_| "claude CLI timed out".to_string())?
-        .map_err(|e| format!("claude CLI error: {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("claude CLI failed: {}", err.trim()));
+    // Drain stderr (bounded) concurrently so a full pipe can't deadlock the read.
+    let stderr = child.stderr.take();
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = String::new();
+        if let Some(e) = stderr {
+            use tokio::io::AsyncReadExt;
+            let _ = e.take(MAX_STDERR_BYTES).read_to_string(&mut buf).await;
+        }
+        buf
+    });
+    let stdout = child.stdout.take().ok_or_else(|| "no stdout from claude".to_string())?;
+    // Read stdout bounded to MAX_STDOUT_BYTES and wait, all under one deadline —
+    // bounds both time and memory even with a hostile binary.
+    let (status, obuf) = tokio::time::timeout(Duration::from_secs(120), async move {
+        use tokio::io::AsyncReadExt;
+        let mut obuf: Vec<u8> = Vec::new();
+        stdout.take(MAX_STDOUT_BYTES).read_to_end(&mut obuf).await.map_err(|e| e.to_string())?;
+        let status = child.wait().await.map_err(|e| e.to_string())?;
+        Ok::<_, String>((status, obuf))
+    })
+    .await
+    .map_err(|_| "claude CLI timed out".to_string())??;
+    let errbuf = stderr_task.await.unwrap_or_default();
+    if !status.success() {
+        return Err(format!("claude CLI failed: {}", errbuf.trim()));
     }
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stdout = String::from_utf8_lossy(&obuf);
     let json: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("could not parse claude output ({e})"))?;
     json.get("result")
@@ -477,10 +545,11 @@ async fn ollama(url: &str, model: &str, system: &str, messages: &[ChatMsg]) -> R
         .map_err(|e| format!("Local Ollama not reachable ({e})."))?;
     if !resp.status().is_success() {
         let code = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = bounded_text(resp, MAX_STDERR_BYTES as usize).await;
         return Err(format!("Ollama error {code}: {text}"));
     }
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let body = bounded_body(resp, MAX_HTTP_BODY).await?;
+    let json: serde_json::Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     json.get("message")
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
@@ -511,10 +580,11 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
         .map_err(|e| format!("Anthropic request failed: {e}"))?;
     if !resp.status().is_success() {
         let code = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = bounded_text(resp, MAX_STDERR_BYTES as usize).await;
         return Err(format!("Anthropic error {code}: {text}"));
     }
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let body = bounded_body(resp, MAX_HTTP_BODY).await?;
+    let json: serde_json::Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     let text: String = json
         .get("content")
         .and_then(|c| c.as_array())
@@ -568,6 +638,19 @@ mod tests {
                 || a == "--allowedTools" || a == "--allowed-tools"));
             assert!(!args.iter().any(|a| a == "default"), "must not pass --tools default");
         }
+    }
+
+    #[test]
+    fn system_prompt_files_are_unique_and_isolated() {
+        // Two concurrent-ish requests must get distinct files with exactly their
+        // own content — no truncation/overwrite of one another (round-6 race).
+        let a = write_system_prompt_file("persona A").expect("write a");
+        let b = write_system_prompt_file("persona B").expect("write b");
+        assert_ne!(a, b, "each request gets its own system prompt file");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "persona A");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "persona B");
+        let _ = std::fs::remove_file(&a);
+        let _ = std::fs::remove_file(&b);
     }
 
     #[test]
