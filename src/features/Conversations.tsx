@@ -5,6 +5,7 @@ import {
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import { Markdown } from '../components/markdown';
 import type { Conversation, Message } from '../domain/entities';
 
 type Kind = 'direct' | 'group';
@@ -78,7 +79,9 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
                 <Avatar name={m.author} />
                 <div className="chat-bubble">
                   <div className="chat-author">{m.author}</div>
-                  <div>{m.body}</div>
+                  {m.role === 'user'
+                    ? <div className="md-plain">{m.body}</div>
+                    : <Markdown text={m.body} />}
                 </div>
               </div>
             ))}
@@ -115,7 +118,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
           placeholder={t('chat.composer')}
           autoFocus
         />
-        <Button type="submit" variant="primary">{t('action.send')}</Button>
+        <Button type="submit" variant="primary" disabled={busy || thinking}>{t('action.send')}</Button>
       </form>
     </Panel>
   );

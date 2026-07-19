@@ -334,6 +334,7 @@ async fn ollama(url: &str, model: &str, system: &str, messages: &[ChatMsg]) -> R
     let body = serde_json::json!({ "model": model, "messages": msgs, "stream": false });
     let resp = reqwest::Client::new()
         .post(format!("{url}/api/chat"))
+        .timeout(Duration::from_secs(120))
         .json(&body)
         .send()
         .await
@@ -364,6 +365,7 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
     });
     let resp = reqwest::Client::new()
         .post(ANTHROPIC_URL)
+        .timeout(Duration::from_secs(120))
         .header("x-api-key", key)
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("content-type", "application/json")
