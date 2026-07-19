@@ -2,6 +2,8 @@
 
 > A governed Agent Operating System for one always-available conductor, specialized agent packs, hard runtime laws, evidence-backed execution, analytics, learning, and owner-controlled release authority.
 
+> ⛔ **DEPLOYMENT BLOCKED — pending security remediation.** An independent adversarial audit of `main` (2026-07-19, snapshot `60a94dc`) returned **RED: 2 Critical, 9 High, 4 Medium**, including a self-verifying trust root and a review-mode containment bypass. The operational rollout is **scaffolded, not deployment-ready**. Do not deploy or enable mutation-capable usage until the blockers are closed — see [Security remediation](#security-remediation-deployment-blockers).
+
 ## What Bro is
 
 Bro is Gev's single highest-ranking AI conductor. There is exactly one Bro: `bro-000`.
@@ -23,17 +25,22 @@ Bro converts a request into a governed task contract, selects the correct pack o
 
 ## Current merged baseline
 
-Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestration Runtime V1, and Control Room API V1 are merged into `main`. On top of that foundation, the containment, issuance, and execution-integrity work is now merged and **live-wired** into the runtime, and all 17 laws (L0–L16) are traceability-backed and `LIVE_PROVEN`.
+Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestration Runtime V1, and Control Room API V1 are merged into `main`. The containment, issuance, and execution-integrity **components** are merged; `LIVE_PROVEN` is a traceability-validator label (a named test/path exists), **not** a proof of production wiring. The 2026-07-19 audit established that several of these are not wired end-to-end — see the caveats below.
 
-- latest merged PR: `#13`
-- main merge commit: `5a095750000f1838abac6fe3e794a9d11bed63d0`
-- laws: 17 (L0–L16), all `LIVE_PROVEN`; includes L15 (secret confidentiality) and L16 (auditable stop + incident ledger)
+> **`LIVE_PROVEN` caveat.** The label reflects validator-checked existence, not runtime wiring. The audit found the STOP controller has no production caller (and a leader-only liveness false-negative), the external Supervisor's lease schema is rejected by the runtime, execution receipts do not feed the completion verdict, and the durable-runtime completion path requires no independent verifier. Read the items below as *components merged/scaffolded*, not *production-proven*.
+
+- latest merged PR: `#36`
+- main merge commit: `60a94dc1412bc41e592949281a623825ab66c76a`
+- laws: 17 (L0–L16), all validator-labelled `LIVE_PROVEN` (see caveat); includes L15 (secret confidentiality) and L16 (auditable stop + incident ledger)
 - live enforcement: workspace binding, path scope, and the protected control-plane digest are wired into `runtime/bro_control_plane.py` (no longer inert)
-- issuance: Ed25519 authorities, an operator-signed trusted-key registry, and the `tools/broctl.py` minting/signing CLI; an external supervisor owns and issues execution leases
-- execution integrity: signed execution receipts binding command, working tree, environment and runner identity
-- STOP Controller v2: process-group termination with an append-only hash-chained audit ledger
-- CI: foundation GREEN on ubuntu-latest and windows-latest (PR #13, 415 tests)
-- inventories: 52 packs, 42 skills, 62 documents
+- issuance: Ed25519 authorities, a real owner-signed trusted-key registry (PR #29), and the `tools/broctl.py` minting/signing CLI; a Supervisor component issues leases — but its lease schema is not yet accepted by the runtime (audit blocker 8)
+- execution integrity: signed execution receipts exist as a component; they do **not** yet feed the completion verdict (audit blocker 6)
+- STOP Controller v2 exists but is **not wired** into the runtime and has a leader-only liveness false-negative (audit blocker 8)
+- owner authorization has a green end-to-end bundle+ALLOW test (`authorize_tool` ALLOWs a specialist mutation against a real workspace binding, task lock, execution lease and recovery ledger, with failure and interruption drills, PRs #31, #33); however the **durable-runtime** completion path does not require an independent verifier (audit blocker 6)
+- legacy retired: the dead v1/v2 release-grant loaders are removed; Ed25519 Release Grant V3 is the only release path (PR #30)
+- operational rollout: shadow (observe-only) enforcement, integrity-checked backup/restore, a live health monitor, and an operator runbook are merged (PRs #32, #34, #35, #36)
+- CI: foundation GREEN on ubuntu-latest and windows-latest (PR #36, 482 tests)
+- inventories: 52 packs, 42 skills, 63 documents
 
 ## Resolved findings and current open work
 
@@ -66,12 +73,26 @@ Both prior open items are now closed:
 6. Run `python -m unittest discover -s tests -v`.
 7. Continue only when the exact repository state is GREEN.
 
-## Next phase
+## Security remediation (deployment blockers)
 
-- **Full execution-transaction E2E:** drive `authorize_tool` to ALLOW a specialist mutation end-to-end against a real worktree, workspace binding, task lock, execution-lease and recovery ledgers — the integration layer beyond the Phase 1 bundle proof.
-- **Retire the legacy paths:** delete the dead `release-grant-v2` loader in `runtime/bro_contracts.py`.
-- **Operational rollout:** shadow mode, canary tasks, failure drills, monitoring, backup/restore, and operator runbooks.
-- **Control Room visual surfaces V1:** still deferred until routine task execution is exercised end-to-end.
+The 2026-07-19 independent adversarial audit is RED; the components below are merged but **not deployment-ready**. These blockers are the priority and are fixed one per PR, each with a regression test and independent adversarial verification at the exact candidate HEAD — the auditor is not the sole verifier of a fix.
+
+1. **Review-mode shell containment.** Review mode must deny shell/command tools and allow only structured `Read`/`Glob`/`Grep` (with `Glob` patterns workspace-contained), and that denial must be non-shadowable; unparsed shell arguments let `find . -delete` and out-of-workspace reads pass the read-only classification.
+   - **1b. Work-mode shell classifier (separate blocker).** The same unparsed-shell classification means a destructive command such as `find . -delete` still classifies as a *non-mutating read* in work mode, where scope is enforced only for mutating actions. Closing it needs a command-specific argument parser.
+2. **External operator-key pin.** The trusted-key registry must be anchored to an owner-controlled operator public key held outside the registry (OS-protected config / env / secret manager / HSM); a missing pin, a payload fallback, or a pin/registry mismatch must hard-DENY.
+3. **Backup restore traversal.** `bro_backup` restore must reject `..`, absolute paths, symlinks and duplicates and require the destination to stay within the target.
+4. **Corrupt monitor state.** `bro_monitor` must treat missing/unreadable runtime state as ATTENTION, not GREEN.
+5. **Full secret redaction.** Redaction must remove entire PEM key bodies and cover modern token formats (`sk-proj-…`, `github_pat_…`).
+6. **Unified completion + evidence path.** The durable runtime must require an independent, verifier-signed GREEN receipt (builder ≠ verifier) to complete, matching the Stop-gate; execution receipts must feed the completion verdict.
+7. **Owner-signed recovery proof.** `prove_recovery` must require a real owner-signed proof artifact, not an arbitrary hex string.
+8. **STOP integration and Supervisor compatibility.** Fix the process-group liveness check, wire the STOP controller into the runtime, and align the supervisor-issued lease schema and environment bundle with the runtime.
+9. **Hardening.** Audit-log atomicity/locking, an assurance validator that proves live wiring (not path existence), and CI supply-chain hardening (pinned action SHAs, hashed dependencies, workflow permissions/timeout/concurrency).
+
+## After the blockers
+
+- **Client integration contract:** expose Bro's enforced authority — mode grants, execution leases, the append-only audit chain, recovery state — to an operator client (e.g. BroPS) through a defined Bro-side integration surface, so a product UI's approval and evidence rest on the runtime wall rather than on its own local store. Bro-side work only; the client repository stays out of scope here.
+- **Owner-environment hardening:** the dedicated non-admin account, workspace-scoped filesystem ACLs, a fine-grained GitHub credential, and the `main` branch ruleset. Owner-operated, outside any agent process.
+- **Control Room visual surfaces:** the rendered surfaces belong to the operator client (BroPS); Bro exposes the read-only data and the client renders it.
 
 A trust root cannot be issued by the system it roots, so the first bootstrap authority is signed by Gev by hand, outside any agent process.
 

@@ -6,9 +6,10 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXPECTED_REVIEWED_AT = "2026-07-19"
 EXPECTED_BRANCH = "main"
-EXPECTED_MERGED_PR = 27
-EXPECTED_MERGE_COMMIT = "b7c18f248243e63c6d281f74628125469874534d"
-EXPECTED_STATUS = "owner-auth-phase-1-complete"
+EXPECTED_MERGED_PR = 36
+EXPECTED_MERGE_COMMIT = "60a94dc1412bc41e592949281a623825ab66c76a"
+EXPECTED_STATUS = "operational-rollout-scaffolded"
+EXPECTED_DEPLOYMENT = "blocked-pending-security-remediation"
 
 
 class DocsError(ValueError):
@@ -23,6 +24,7 @@ def validate_manifest_metadata(data: dict) -> None:
         "merged_pr": EXPECTED_MERGED_PR,
         "merge_commit": EXPECTED_MERGE_COMMIT,
         "status": EXPECTED_STATUS,
+        "deployment": EXPECTED_DEPLOYMENT,
     }
     for key, value in expected.items():
         if data.get(key) != value:
