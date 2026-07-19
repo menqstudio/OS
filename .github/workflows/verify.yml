@@ -31,6 +31,14 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Compile Python
         run: python -m compileall -q runtime tools tests
+      - name: Assure live wiring
+        # The assurance validator runs each law's allow/deny cases through the WIRED
+        # interpreter named in .claude/settings.json and requires the wired hook to
+        # actually deny — proving enforcement is live, not that files merely exist. It
+        # exits non-zero on any dead wiring. Linux-only: the wired interpreter is
+        # `python3`, which is not on PATH on the Windows runner.
+        if: runner.os == 'Linux'
+        run: python tools/bro_live_validate.py
       - name: Build canonical audit snapshot
         if: always() && runner.os == 'Linux'
         shell: bash

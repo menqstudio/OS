@@ -100,6 +100,30 @@ def validate_live(root: pathlib.Path = ROOT) -> dict:
     }
 
 
+def assurance_failures(report: dict) -> list[str]:
+    """Reasons the live-wiring assurance is NOT satisfied; empty means fully enforced.
+
+    This is what turns the report from a description into a gate. A green report is not
+    "the files exist" — it is: an interpreter is really wired, prerequisites really
+    resolve, the wired hook really denies an out-of-scope action, and every law's
+    allow/deny cases really pass through that interpreter. Anything short is dead
+    wiring and must fail closed.
+    """
+    failures = []
+    if report["wired_interpreter"] is None:
+        failures.append("no wired interpreter resolves from .claude/settings.json")
+    if not report["prerequisites_resolve"]:
+        failures.append("runtime prerequisites do not resolve in the live environment")
+    if not report["wiring_denies"]:
+        failures.append("the wired hook does not deny an out-of-scope action (dead wiring)")
+    if not report["derived"]:
+        failures.append("no laws with a responsibility were found to validate")
+    static_only = [d["id"] for d in report["derived"] if d["enforcement_status"] != "ENFORCED"]
+    if static_only:
+        failures.append(f"laws not LIVE_PROVEN: {', '.join(static_only)}")
+    return failures
+
+
 if __name__ == "__main__":
     report = validate_live()
     enforced = sum(1 for d in report["derived"] if d["enforcement_status"] == "ENFORCED")
@@ -108,3 +132,10 @@ if __name__ == "__main__":
     for d in report["derived"]:
         print(f"  {d['id']:<4} {d['enforcement_status']:<11} {d['effective_proof_level']:<12} {d['live']}")
     print(f"LIVE-VALIDATED: {enforced}/{report['laws']} ENFORCED")
+
+    failures = assurance_failures(report)
+    if failures:
+        for reason in failures:
+            print(f"RED: live-wiring assurance failed — {reason}", file=sys.stderr)
+        raise SystemExit(1)
+    print(f"GREEN: live-wiring assurance — {enforced}/{report['laws']} laws LIVE_PROVEN")
