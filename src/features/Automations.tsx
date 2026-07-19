@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Badge, Async, Modal, FormRow, Input,
+  PageHeader, Panel, Button, Badge, Async, Modal, FormRow, Input, ConfirmDialog,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -53,6 +53,7 @@ function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
 export function Automations() {
   const { t } = useApp();
   const [creating, setCreating] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const s = useAsync(() => desktop.listAutomations(), []);
 
   const toggle = (id: string, enabled: boolean) => {
@@ -60,6 +61,7 @@ export function Automations() {
   };
 
   const remove = (id: string) => {
+    setPendingDelete(null);
     desktop.deleteAutomation(id).then(() => s.reload()).catch(() => s.reload());
   };
 
@@ -72,6 +74,17 @@ export function Automations() {
       />
 
       {creating && <NewRuleForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title={t('confirm.deleteTitle')}
+          message={t('confirm.deleteBody')}
+          confirmLabel={t('action.delete')}
+          cancelLabel={t('action.cancel')}
+          onConfirm={() => remove(pendingDelete)}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
 
       <Panel title={t('nav.automations')}>
         <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
@@ -88,7 +101,7 @@ export function Automations() {
                     <Button type="button" variant="ghost" onClick={() => toggle(a.id, !a.enabled)}>
                       {t(a.enabled ? 'automations.disable' : 'automations.enable')}
                     </Button>
-                    <Button type="button" variant="ghost" onClick={() => remove(a.id)}>
+                    <Button type="button" variant="ghost" onClick={() => setPendingDelete(a.id)}>
                       {t('action.delete')}
                     </Button>
                   </span>

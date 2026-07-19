@@ -145,3 +145,26 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
     </div>
   );
 }
+
+/** Destructive-action confirmation. Blocks a delete/overwrite behind an
+ *  explicit second step so nothing irreversible happens on a single click. */
+export function ConfirmDialog({
+  title, message, confirmLabel, cancelLabel, onConfirm, onCancel,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal title={title} onClose={onCancel}>
+      <div className="muted" style={{ marginBottom: 16 }}>{message}</div>
+      <div className="form-actions">
+        <Button variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
+        <Button variant="danger" onClick={onConfirm}>{confirmLabel}</Button>
+      </div>
+    </Modal>
+  );
+}
