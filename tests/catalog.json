@@ -511,6 +511,16 @@
         "shadow-would-block-ledger",
         "fail-safe-no-silent-bypass"
       ]
+    },
+    {
+      "id": "backup-restore",
+      "path": "tests/test_backup_restore.py",
+      "covers": [
+        "state-backup",
+        "state-restore",
+        "archive-integrity",
+        "ledger-chain-verify"
+      ]
     }
   ]
 }
