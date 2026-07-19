@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +12,23 @@ from typing import Any
 from bro_security import SecurityError, verify_signed_document
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+# The two builder classes the supervisor may delegate. Kept as literals here rather
+# than imported from bro_protected so this module — consumed inside the builder's
+# process — stays free of any control-plane import cycle.
+STANDARD_BUILDER = "standard-builder"
+SECURITY_MAINTENANCE = "security-maintenance"
+
+# The capabilities a supervised builder of each class may hold. protected_scope
+# governs WHICH paths a security task may touch; the capability set itself is the
+# same — a builder writes files, writes the repo, and runs code. A lease may grant a
+# subset but never more than its class allows, so a signed lease cannot over-reach.
+CLASS_CAPABILITIES = {
+    STANDARD_BUILDER: frozenset({"EXECUTE_CODE", "WRITE_FILESYSTEM", "WRITE_REPOSITORY"}),
+    SECURITY_MAINTENANCE: frozenset({"EXECUTE_CODE", "WRITE_FILESYSTEM", "WRITE_REPOSITORY"}),
+}
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 class LeaseError(ValueError):
@@ -33,6 +51,13 @@ class ExecutionLease:
     issued_at_epoch: int
     expires_at_epoch: int
     max_tool_calls: int
+    # Superset bindings carried in the issuer-signed lease. control_plane_digest and
+    # workspace_id are enforced against the consumer's live workspace binding;
+    # task_class and protected_scope carry the owner-approved delegation policy.
+    task_class: str
+    protected_scope: tuple[str, ...]
+    control_plane_digest: str
+    workspace_id: str
 
 
 def _load_json(path: pathlib.Path) -> dict[str, Any]:
@@ -75,12 +100,20 @@ def validate_execution_lease(
     agent_id: str,
     session_id: str,
     required_capabilities: tuple[str, ...],
+    control_plane_digest: str | None = None,
+    workspace_id: str | None = None,
     now: int | None = None,
 ) -> ExecutionLease:
+    # control_plane_digest/workspace_id are enforced when the caller supplies the
+    # live workspace values (the reserve/authorize gate does). Settlement re-loads
+    # the lease with no bound workspace and passes neither — safe, because a lease
+    # can only be settled after a reserve that already enforced them, and a protected
+    # mutation may legitimately have changed the digest by settlement time.
     required = {
         "schema", "lease_id", "nonce", "task_id", "agent_id", "session_id",
         "repository", "branch", "worktree", "head_sha", "tree_identity",
         "allowed_capabilities", "issued_at_epoch", "expires_at_epoch", "max_tool_calls",
+        "task_class", "protected_scope", "control_plane_digest", "workspace_id",
     }
     # artifact_type/key_id are injected by the Ed25519 signer (broctl) and echoed
     # back by verify_artifact; tolerate them without weakening the required set.
@@ -133,6 +166,33 @@ def validate_execution_lease(
     if missing:
         raise LeaseError(f"execution lease lacks capabilities: {missing}")
 
+    task_class = payload.get("task_class")
+    if task_class not in CLASS_CAPABILITIES:
+        raise LeaseError("execution lease task_class invalid")
+    over_grant = sorted(set(allowed) - CLASS_CAPABILITIES[task_class])
+    if over_grant:
+        raise LeaseError(f"execution lease grants capabilities beyond its class: {over_grant}")
+
+    scope = payload.get("protected_scope")
+    if not isinstance(scope, list) or any(not isinstance(p, str) or not p for p in scope):
+        raise LeaseError("execution lease protected_scope must be a list of exact paths")
+    if any(ch in p for p in scope for ch in "*?["):
+        raise LeaseError("execution lease protected_scope must contain exact paths, not patterns")
+    if task_class == STANDARD_BUILDER and scope:
+        raise LeaseError("a standard-builder lease may not carry a protected scope")
+    if task_class == SECURITY_MAINTENANCE and not scope:
+        raise LeaseError("a security-maintenance lease must name its protected scope")
+
+    digest = payload.get("control_plane_digest")
+    if not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest):
+        raise LeaseError("execution lease control_plane_digest invalid")
+    if control_plane_digest is not None and digest != control_plane_digest:
+        raise LeaseError("execution lease binding mismatch: control_plane_digest")
+
+    lease_workspace_id = _require_string(payload.get("workspace_id"), "workspace_id")
+    if workspace_id is not None and lease_workspace_id != workspace_id:
+        raise LeaseError("execution lease binding mismatch: workspace_id")
+
     return ExecutionLease(
         lease_id=lease_id,
         nonce=nonce,
@@ -148,6 +208,10 @@ def validate_execution_lease(
         issued_at_epoch=issued,
         expires_at_epoch=expires,
         max_tool_calls=max_calls,
+        task_class=str(task_class),
+        protected_scope=tuple(scope),
+        control_plane_digest=digest,
+        workspace_id=lease_workspace_id,
     )
 
 
@@ -157,6 +221,8 @@ def load_execution_lease_from_env(
     agent_id: str,
     session_id: str,
     required_capabilities: tuple[str, ...],
+    control_plane_digest: str | None = None,
+    workspace_id: str | None = None,
     now: int | None = None,
     root: pathlib.Path = ROOT,
 ) -> ExecutionLease:
@@ -180,6 +246,8 @@ def load_execution_lease_from_env(
         agent_id=agent_id,
         session_id=session_id,
         required_capabilities=required_capabilities,
+        control_plane_digest=control_plane_digest,
+        workspace_id=workspace_id,
         now=now,
     )
 

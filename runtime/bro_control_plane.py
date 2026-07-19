@@ -81,9 +81,19 @@ def _relative_targets(workspace: Workspace, classification: ActionClassification
     return [path.relative_to(workspace.root).as_posix() for path in resolved]
 
 
-def _lease(state: State, task: dict, classification: ActionClassification):
+def _lease(state: State, task: dict, classification: ActionClassification,
+           workspace: Workspace | None = None):
     caps = tuple(x for x in classification.capabilities if x not in {"READ_LOCAL", "READ_EXTERNAL", "UNKNOWN"})
-    return load_execution_lease_from_env(task=task, agent_id=state.agent_id, session_id=state.session_id, required_capabilities=caps)
+    # The reserve/authorize gate passes the live workspace so the lease is bound to
+    # this exact control plane and workspace at consumption time. Settlement re-loads
+    # the lease with no workspace (a protected mutation may already have changed the
+    # digest); it is reachable only after a reserve that enforced both, so omitting
+    # them there is not a bypass.
+    return load_execution_lease_from_env(
+        task=task, agent_id=state.agent_id, session_id=state.session_id,
+        required_capabilities=caps,
+        control_plane_digest=workspace.control_plane_digest if workspace else None,
+        workspace_id=workspace.workspace_id if workspace else None)
 
 
 def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: str = "") -> tuple[bool, str]:
@@ -136,7 +146,7 @@ def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: 
         try:
             prepare_mutation(task=task, agent_id=state.agent_id, session_id=state.session_id, tool_use_id=tool_use_id, capabilities=classification.capabilities, targets=classification.targets, tool=classification.tool, action_name=classification.action)
             prepared = True
-            reserve_execution_lease(_lease(state, task, classification), tool_use_id)
+            reserve_execution_lease(_lease(state, task, classification, workspace), tool_use_id)
         except (RecoveryError, LeaseError) as exc:
             if prepared:
                 try:

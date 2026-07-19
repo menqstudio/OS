@@ -51,6 +51,10 @@ def payload(worktree: str, now: int = 1000):
         "issued_at_epoch": now - 10,
         "expires_at_epoch": now + 100,
         "max_tool_calls": 1,
+        "task_class": "standard-builder",
+        "protected_scope": [],
+        "control_plane_digest": "e" * 64,
+        "workspace_id": "ws-test",
     }
 
 
@@ -103,6 +107,49 @@ class ExecutionLeaseTests(unittest.TestCase):
             value = payload(temp)
             with self.assertRaises(LeaseError):
                 self.validate(value, temp, required=("WRITE_EXTERNAL",))
+
+    def test_unknown_task_class_and_capability_over_grant_denied(self):
+        with tempfile.TemporaryDirectory() as temp:
+            unknown = payload(temp)
+            unknown["task_class"] = "root-builder"
+            with self.assertRaises(LeaseError):
+                self.validate(unknown, temp)
+            over = payload(temp)                       # class allows no DESTRUCTIVE
+            over["allowed_capabilities"] = ["DESTRUCTIVE"]
+            with self.assertRaises(LeaseError):
+                self.validate(over, temp, required=("DESTRUCTIVE",))
+
+    def test_protected_scope_class_rules_enforced(self):
+        with tempfile.TemporaryDirectory() as temp:
+            std_scope = payload(temp)                  # standard may not carry scope
+            std_scope["protected_scope"] = ["runtime/x.py"]
+            with self.assertRaises(LeaseError):
+                self.validate(std_scope, temp)
+            sec_empty = payload(temp)                  # security must name its scope
+            sec_empty["task_class"] = "security-maintenance"
+            with self.assertRaises(LeaseError):
+                self.validate(sec_empty, temp)
+            glob = payload(temp)                       # exact paths only, no patterns
+            glob["task_class"] = "security-maintenance"
+            glob["protected_scope"] = ["runtime/**"]
+            with self.assertRaises(LeaseError):
+                self.validate(glob, temp)
+
+    def test_control_plane_digest_and_workspace_id_bindings_enforced(self):
+        with tempfile.TemporaryDirectory() as temp:
+            value = payload(temp)
+            kw = dict(task=task(temp), agent_id="agt-p01-r01", session_id="session-1",
+                      required_capabilities=("WRITE_REPOSITORY",), now=1000)
+            lease = validate_execution_lease(
+                value, control_plane_digest="e" * 64, workspace_id="ws-test", **kw)
+            self.assertEqual(lease.control_plane_digest, "e" * 64)
+            self.assertEqual(lease.workspace_id, "ws-test")
+            with self.assertRaises(LeaseError):        # wrong control plane
+                validate_execution_lease(
+                    value, control_plane_digest="f" * 64, workspace_id="ws-test", **kw)
+            with self.assertRaises(LeaseError):        # wrong workspace
+                validate_execution_lease(
+                    value, control_plane_digest="e" * 64, workspace_id="other", **kw)
 
     def test_atomic_reservation_denies_active_reuse_and_consumed_replay(self):
         with tempfile.TemporaryDirectory() as temp, tempfile.TemporaryDirectory() as ledger:

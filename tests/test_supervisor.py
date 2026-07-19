@@ -15,6 +15,13 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import bro_supervisor
 from bro_audit_log import read_all, verify
+from bro_execution_lease import (
+    LeaseError,
+    finalize_execution_lease,
+    load_execution_lease_from_env,
+    reserve_execution_lease,
+)
+from bro_repository_state import resolve_state
 from bro_signature import SignatureError, verify_artifact
 from bro_stop_controller import _proc_state_and_pgrp
 from bro_supervisor import (
@@ -28,6 +35,8 @@ from bro_supervisor import (
     TaskRequest,
     authorize_request,
     issue_lease,
+    prepare_worktree,
+    remove_worktree,
     run_task,
 )
 from broctl import build_registry, generate_key, sign_payload
@@ -178,7 +187,8 @@ class LeaseTests(SupervisorFixture):
     def lease(self, key="issuer"):
         return issue_lease(
             self.request(), self.keys[key], workspace_id="bro-test",
-            repository="menqstudio/bro", worktree="/w", agent_id="agt-p01-r01",
+            repository="menqstudio/bro", worktree="/w", branch="task-1",
+            head_sha="a" * 40, tree_identity="b" * 64, agent_id="agt-p01-r01",
             session_id="s-1", control_plane_digest="a" * 64, ttl_seconds=900, now=NOW)
 
     def test_lease_is_issuer_signed_and_verifies(self):
@@ -376,6 +386,84 @@ class StopIntegrationTests(SupervisorFixture):
         self.assertTrue(any(r["kind"] == "unstopped-process" for r in records),
                         "a live orphan after clean exit must be recorded, never dropped")
         self.assertEqual(verify(ledger), len(records))
+
+
+class SupervisorLeaseRuntimeE2ETests(SupervisorFixture):
+    """The supervisor issues a lease the RUNTIME actually accepts and consumes.
+
+    Before the superset, issue_lease produced a shape validate_execution_lease
+    rejected outright (different, missing keys), so no builder could ever consume a
+    supervised lease — the delegated path was broken end to end. These prove the
+    signed lease now verifies against the trusted registry, binds to the worktree's
+    real state, is enforced against the live control plane, and reserves/finalizes.
+    """
+
+    def _worktree_state(self):
+        worktree, _branch = prepare_worktree(self.repo, "task-1")
+        self.addCleanup(remove_worktree, self.repo, worktree)
+        return worktree, resolve_state(worktree, cwd=worktree)
+
+    def _task_contract(self, state):
+        return {"task_id": "task-1", "repository": {
+            "full_name": "menqstudio/bro", "branch": state.branch,
+            "worktree": str(state.root), "base_commit": state.head_sha,
+            "tree_identity": state.tree_identity}}
+
+    def _issue(self, state, worktree):
+        return issue_lease(
+            self.request(), self.keys["issuer"], workspace_id="bro-test",
+            repository="menqstudio/bro", worktree=str(worktree), branch=state.branch,
+            head_sha=state.head_sha, tree_identity=state.tree_identity,
+            agent_id="agt-p01-r01", session_id="s-1", control_plane_digest="a" * 64,
+            ttl_seconds=900, now=NOW)
+
+    def _write_lease(self, signed):
+        path = self.tmp / "lease.json"
+        path.write_text(json.dumps(signed), encoding="utf-8")
+        return path
+
+    def test_supervisor_lease_is_verified_and_consumed_by_the_runtime(self):
+        worktree, state = self._worktree_state()
+        lease_file = self._write_lease(self._issue(state, worktree))
+        ledger = self.tmp / "ledger"
+        ledger.mkdir()
+        with patch.dict(os.environ, {"BRO_EXECUTION_LEASE": str(lease_file),
+                                     "BRO_EXECUTION_LEASE_LEDGER": str(ledger)}):
+            lease = load_execution_lease_from_env(
+                task=self._task_contract(state), agent_id="agt-p01-r01",
+                session_id="s-1", required_capabilities=("WRITE_REPOSITORY",),
+                control_plane_digest="a" * 64, workspace_id="bro-test",
+                now=NOW + 1, root=self.registry_root)
+            self.assertEqual(lease.task_id, "task-1")
+            self.assertEqual(lease.control_plane_digest, "a" * 64)
+            reserve_execution_lease(lease, "toolu_e2e")
+            finalize_execution_lease(lease, "toolu_e2e")
+            self.assertEqual(len(list(ledger.glob("*.used"))), 1)
+
+    def test_runtime_rejects_control_plane_workspace_and_worktree_mismatches(self):
+        worktree, state = self._worktree_state()
+        lease_file = self._write_lease(self._issue(state, worktree))
+
+        def load(task=None, **over):
+            kw = dict(task=task or self._task_contract(state), agent_id="agt-p01-r01",
+                      session_id="s-1", required_capabilities=("WRITE_REPOSITORY",),
+                      control_plane_digest="a" * 64, workspace_id="bro-test",
+                      now=NOW + 1, root=self.registry_root)
+            kw.update(over)
+            return load_execution_lease_from_env(**kw)
+
+        with patch.dict(os.environ, {"BRO_EXECUTION_LEASE": str(lease_file)}):
+            load()  # baseline: the honest control plane + worktree is accepted
+            with self.assertRaises(LeaseError):          # lease outlived its control plane
+                load(control_plane_digest="b" * 64)
+            with self.assertRaises(LeaseError):          # replayed into another workspace
+                load(workspace_id="other-workspace")
+            for field, wrong in (("branch", "other"), ("base_commit", "c" * 40),
+                                 ("tree_identity", "d" * 64)):
+                bad = self._task_contract(state)
+                bad["repository"][field] = wrong
+                with self.assertRaises(LeaseError, msg=field):
+                    load(task=bad)
 
 
 if __name__ == "__main__":

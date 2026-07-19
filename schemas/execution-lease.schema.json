@@ -21,7 +21,11 @@
     "allowed_capabilities",
     "issued_at_epoch",
     "expires_at_epoch",
-    "max_tool_calls"
+    "max_tool_calls",
+    "task_class",
+    "protected_scope",
+    "control_plane_digest",
+    "workspace_id"
   ],
   "properties": {
     "schema": {"const": 1},
@@ -60,6 +64,14 @@
     },
     "issued_at_epoch": {"type": "integer", "minimum": 0},
     "expires_at_epoch": {"type": "integer", "minimum": 0},
-    "max_tool_calls": {"type": "integer", "minimum": 1, "maximum": 100000}
+    "max_tool_calls": {"type": "integer", "minimum": 1, "maximum": 100000},
+    "task_class": {"enum": ["standard-builder", "security-maintenance"]},
+    "protected_scope": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "control_plane_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "workspace_id": {"type": "string", "minLength": 1}
   }
 }

@@ -122,7 +122,7 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
         path.write_text(json.dumps(obj), encoding="utf-8")
         return str(path)
 
-    def _lease_body(self):
+    def _lease_body(self, control_plane_digest, workspace_id):
         return {
             "schema": 1, "lease_id": "lease-exec-e2e-1", "nonce": "exec-lease-nonce-000001",
             "task_id": self.task_id, "agent_id": AGENT, "session_id": SID,
@@ -130,6 +130,8 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             "head_sha": HEAD, "tree_identity": TREE,
             "allowed_capabilities": ["WRITE_REPOSITORY"],
             "issued_at_epoch": self.now, "expires_at_epoch": self.now + 3600, "max_tool_calls": 8,
+            "task_class": "standard-builder", "protected_scope": [],
+            "control_plane_digest": control_plane_digest, "workspace_id": workspace_id,
         }
 
     def _recovery_body(self, classification):
@@ -162,9 +164,12 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
         grant = sign_mode_grant(build_mode_grant_payload(
             self.task, self.agent, receipt, session_id=SID, role="specialist", mode="work",
             head_sha=HEAD, tree_identity=TREE, now=self.now), self.issuer, self.now)
-        lease = self._sign("execution-lease", self._lease_body())
-        recovery = self._sign("recovery-record", self._recovery_body(classification))
         binding = build_binding(ROOT, "bro-exec-e2e", "test-operator", 3600, self.now)
+        # The lease binds to the SAME control plane and workspace the reserve gate
+        # enforces it against, so the superset lease is accepted end to end.
+        lease = self._sign("execution-lease", self._lease_body(
+            binding["control_plane_digest"], binding["workspace_id"]))
+        recovery = self._sign("recovery-record", self._recovery_body(classification))
         binding_path = self.tmp / "workspace-binding.json"
         binding_path.write_text(json.dumps(binding), encoding="utf-8")
         self._write_lock()

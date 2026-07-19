@@ -37,13 +37,18 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
 from bro_audit_log import append as audit_append
+from bro_execution_lease import CLASS_CAPABILITIES
 from bro_protected import SECURITY, STANDARD, TASK_CLASSES
+from bro_repository_state import RepositoryStateError, resolve_state
 from bro_signature import SignatureError, load_trusted_keys, verify_artifact
 from bro_stop_controller import register, terminate_group
 
 from broctl import sign_payload
 
 DEFAULT_LEASE_SECONDS = 15 * 60
+# A supervised build makes many tool calls; the lease bounds them so a stolen lease
+# cannot drive an unbounded session. Generous but finite, within the schema ceiling.
+DEFAULT_MAX_TOOL_CALLS = 1000
 
 DENIED = "denied"
 COMPLETED = "completed"
@@ -132,29 +137,47 @@ def authorize_request(request: TaskRequest, approval: dict | None,
 
 
 def issue_lease(request: TaskRequest, issuer_key: dict, *, workspace_id: str,
-                repository: str, worktree: str, agent_id: str, session_id: str,
-                control_plane_digest: str, ttl_seconds: int, now: int) -> dict:
-    """Sign a lease bound to exactly one task, agent, session, worktree and
-    control plane. A lease that outlives its control plane authorises work
-    against a system that no longer exists."""
+                repository: str, worktree: str, branch: str, head_sha: str,
+                tree_identity: str, agent_id: str, session_id: str,
+                control_plane_digest: str, ttl_seconds: int, now: int,
+                nonce: str | None = None,
+                max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS) -> dict:
+    """Sign the canonical execution lease the runtime actually consumes.
+
+    One shape, verified by validate_execution_lease inside the builder: the runtime
+    bindings (branch, head_sha, tree_identity, capabilities, nonce, max_tool_calls)
+    that bind the lease to this exact worktree state, PLUS the delegation bindings
+    (task_class, protected_scope, control_plane_digest, workspace_id). Capabilities
+    are fixed by the task class, so a lease cannot grant more than its class allows.
+    A lease that outlives its control plane authorises work against a system that no
+    longer exists — control_plane_digest is what lets the consumer reject that."""
     if issuer_key["authority_type"] != "issuer":
         raise SupervisorError(
             f"a {issuer_key['authority_type']} key may not issue execution leases")
+    if request.task_class not in CLASS_CAPABILITIES:
+        raise SupervisorError(f"unknown task class: {request.task_class!r}")
     payload = {
+        "schema": 1,
         "artifact_type": "execution-lease",
         "key_id": issuer_key["key_id"],
         "lease_id": f"lease-{uuid.uuid4().hex[:16]}",
+        "nonce": nonce or f"nonce-{uuid.uuid4().hex}",
         "task_id": request.task_id,
-        "task_class": request.task_class,
-        "protected_scope": list(request.protected_scope),
         "agent_id": agent_id,
         "session_id": session_id,
-        "workspace_id": workspace_id,
         "repository": repository,
+        "branch": branch,
         "worktree": worktree,
-        "control_plane_digest": control_plane_digest,
+        "head_sha": head_sha,
+        "tree_identity": tree_identity,
+        "allowed_capabilities": sorted(CLASS_CAPABILITIES[request.task_class]),
         "issued_at_epoch": now,
         "expires_at_epoch": now + ttl_seconds,
+        "max_tool_calls": max_tool_calls,
+        "task_class": request.task_class,
+        "protected_scope": list(request.protected_scope),
+        "control_plane_digest": control_plane_digest,
+        "workspace_id": workspace_id,
     }
     return sign_payload(issuer_key["private_key"], payload)
 
@@ -317,6 +340,15 @@ def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pat
     except SupervisorError as exc:
         return SupervisorResult(request.task_id, DENIED, str(exc))
 
+    # The lease binds to the worktree's real state, exactly as the runtime validator
+    # derives it from the builder's task contract — same branch, HEAD sha and tree
+    # identity — so the lease the supervisor issues is one the runtime accepts.
+    try:
+        repo_state = resolve_state(worktree, cwd=worktree)
+    except RepositoryStateError as exc:
+        remove_worktree(repository_root, worktree)
+        return SupervisorResult(request.task_id, DENIED, f"worktree state unusable: {exc}")
+
     state_dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-sup-state-"))
     lease_dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-sup-lease-"))
     lease_path = lease_dir / "lease.json"
@@ -332,6 +364,8 @@ def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pat
         lease = issue_lease(
             request, issuer_key, workspace_id=binding["workspace_id"],
             repository=binding["repository"], worktree=str(worktree),
+            branch=repo_state.branch, head_sha=repo_state.head_sha,
+            tree_identity=repo_state.tree_identity,
             agent_id=agent_id, session_id=session_id,
             control_plane_digest=binding["control_plane_digest"],
             ttl_seconds=ttl_seconds, now=moment)
