@@ -124,6 +124,8 @@ class RecoveryRecordEd25519Tests(unittest.TestCase):
                 for a in ("operator-root", "issuer", "builder")}
         (tmp / "config" / "trusted-keys.json").write_text(
             json.dumps(build_registry(list(keys.values()), self.NOW, 100_000)), encoding="utf-8")
+        from _operator_pin import use_operator_pin
+        use_operator_pin(self, keys["operator-root"]["public_key"])  # external operator-root pin
         return tmp, keys, sign_payload
 
     def _sign(self, sign_payload, key, payload):

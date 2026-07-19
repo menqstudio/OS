@@ -55,6 +55,8 @@ class SupervisorFixture(unittest.TestCase):
         self.registry = build_registry(list(self.keys.values()), NOW, YEAR)
         (self.registry_root / "config" / "trusted-keys.json").write_text(
             json.dumps(self.registry), encoding="utf-8")
+        from _operator_pin import use_operator_pin
+        use_operator_pin(self, self.keys["operator-root"]["public_key"])  # external pin
         from bro_signature import load_trusted_keys
         self.trusted = load_trusted_keys(self.registry_root)
 

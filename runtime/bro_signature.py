@@ -13,17 +13,26 @@ verifier and the offline operator, each outside any agent process. Nothing here
 can produce a signature, which is the point: an enforcement point that could sign
 is an enforcement point that could forge.
 
-The trusted key registry is itself signed by the offline operator root key, so an
-attacker who can write the registry still cannot introduce a key. Every artifact
-type is bound to an authority type, so a builder key cannot sign a verifier
-receipt even if the builder is otherwise legitimate.
+The trusted key registry is signed by the offline operator root key, but the
+registry may NOT name its own anchor: the operator-root public key is pinned from
+outside the tree (BRO_OPERATOR_ROOT_PUBKEY_FILE for production, or
+BRO_OPERATOR_ROOT_PUBKEY for CI). Otherwise an attacker who can write
+config/trusted-keys.json simply replaces the whole document — a new operator key,
+self-signed, listed as its own operator entry — and every downstream signature
+verifies. With the anchor external and unforgeable, writing the registry is not
+enough to introduce a key. Every artifact type is bound to an authority type, so a
+builder key cannot sign a verifier receipt even if the builder is otherwise
+legitimate.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import stat
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +45,12 @@ except ImportError as exc:  # pragma: no cover - exercised by the dependency gat
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REGISTRY_REL = "config/trusted-keys.json"
+
+# The operator-root public key is pinned from OUTSIDE the registry. Production
+# points BRO_OPERATOR_ROOT_PUBKEY_FILE at an operator-controlled file; CI passes
+# the raw key in BRO_OPERATOR_ROOT_PUBKEY. The registry payload is never the pin.
+ENV_PIN = "BRO_OPERATOR_ROOT_PUBKEY"
+ENV_PIN_FILE = "BRO_OPERATOR_ROOT_PUBKEY_FILE"
 
 OPERATOR = "operator-root"
 ISSUER = "issuer"
@@ -157,13 +172,94 @@ def _parse_key(entry: Any) -> TrustedKey:
     )
 
 
+def _pin_from_file(raw_path: str, root: pathlib.Path) -> str:
+    """Read the operator-root pin from an operator-controlled file.
+
+    The file must be an absolute path to a regular, non-symlink file that lives
+    OUTSIDE the repository and is not group/other-writable — otherwise whoever can
+    write the tree (the very attacker the pin defends against) could write the pin
+    too. The writability check is POSIX-only; CI on Windows uses the env pin.
+
+    Containment is enforced against the *lexical* path before any resolution and
+    against every path component: a path lexically inside the repo is rejected even
+    when a symlink parent would redirect it outside (a repo-controlled link must not
+    be able to select the anchor), and a symlink at ANY component — not only the
+    final file — is refused so no intermediate link can point the pin elsewhere.
+    """
+    path = pathlib.Path(raw_path)
+    if not path.is_absolute():
+        raise SignatureError(f"{ENV_PIN_FILE} must be an absolute path: {raw_path!r}")
+    # (1) Lexical containment BEFORE resolving: normalise `.`/`..` without touching
+    # the filesystem and reject anything under the repo (compared against both the
+    # lexical root and its resolved form), so a repo-controlled symlink cannot be
+    # laundered into an "external" anchor.
+    lexical = pathlib.Path(os.path.normpath(str(path)))
+    for boundary in {root, root.resolve()}:
+        if lexical == boundary or boundary in lexical.parents:
+            raise SignatureError(f"{ENV_PIN_FILE} must be outside the repository: {path}")
+    # (2) No symlink at ANY component, walked from the filesystem root down to the
+    # file, so no intermediate or final link can redirect the anchor.
+    for component in (*reversed(path.parents), path):
+        if component.is_symlink():
+            raise SignatureError(f"{ENV_PIN_FILE} path component is a symlink: {component}")
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise SignatureError(f"cannot stat {ENV_PIN_FILE}: {exc}") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise SignatureError(f"{ENV_PIN_FILE} must be a regular file: {path}")
+    # (3) Resolved containment, defence in depth (no symlinks remain to follow).
+    resolved = path.resolve()
+    root_resolved = root.resolve()
+    if resolved == root_resolved or root_resolved in resolved.parents:
+        raise SignatureError(f"{ENV_PIN_FILE} must be outside the repository: {path}")
+    if os.name == "posix" and (info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+        raise SignatureError(f"{ENV_PIN_FILE} must not be group/other-writable: {path}")
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise SignatureError(f"cannot read {ENV_PIN_FILE}: {exc}") from exc
+
+
+def resolve_operator_root_pin(env: Mapping[str, str] | None = None,
+                              root: pathlib.Path = ROOT) -> str:
+    """Resolve the operator-root public key from an out-of-registry pin.
+
+    The registry may not name its own trust anchor (that let an attacker who could
+    write config/trusted-keys.json replace the whole document — new operator key,
+    self-signed — with every downstream verify still passing). The anchor comes from
+    a file the operator controls (BRO_OPERATOR_ROOT_PUBKEY_FILE, production) or an
+    environment variable (BRO_OPERATOR_ROOT_PUBKEY, CI). If both are set they must
+    name the same key; a mismatch, or neither being set, is a hard failure. There is
+    no precedence order and no fallback to the registry payload.
+    """
+    env = os.environ if env is None else env
+    raw_file = env.get(ENV_PIN_FILE)
+    file_key = _pin_from_file(raw_file, root) if raw_file else None
+    raw_env = env.get(ENV_PIN)
+    env_key = raw_env.strip() if raw_env else None
+    if file_key and env_key and file_key != env_key:
+        raise SignatureError(
+            f"operator-root pin mismatch between {ENV_PIN_FILE} and {ENV_PIN}")
+    pin = file_key or env_key
+    if not pin:
+        raise SignatureError(
+            f"no operator-root pin: set {ENV_PIN_FILE} (production) or {ENV_PIN} "
+            "(CI); the registry may not name its own trust anchor")
+    _public_key(pin)  # reject a malformed pin before it is trusted
+    return pin
+
+
 def load_trusted_keys(root: pathlib.Path = ROOT,
                       operator_public_key: str | None = None) -> dict[str, TrustedKey]:
     """Load the registry, refusing it unless the offline operator signed it.
 
-    A registry that is merely present is not trusted. Without this check an
-    attacker who can write the file simply adds their own key and every
-    downstream signature verifies correctly against it.
+    A registry that is merely present is not trusted. The operator-root anchor is
+    pinned from OUTSIDE the registry (see ``resolve_operator_root_pin``): without
+    that, an attacker who can write the file simply supplies their own operator key
+    in the payload, self-signs, and every downstream signature verifies against it.
+    A caller may inject an already-resolved pin as ``operator_public_key``; when it
+    is None the pin is resolved from the external environment, never the payload.
     """
     path = root / REGISTRY_REL
     try:
@@ -177,10 +273,18 @@ def load_trusted_keys(root: pathlib.Path = ROOT,
     payload = document["payload"]
     if not isinstance(payload, dict) or payload.get("schema") != 1:
         raise SignatureError("unsupported trusted key registry schema")
-    root_key = operator_public_key or payload.get("operator_public_key")
-    if not isinstance(root_key, str) or not root_key:
-        raise SignatureError("trusted key registry names no operator root key")
-    verify_detached(payload, document["signature"], root_key)
+    if operator_public_key is not None:
+        pin = operator_public_key
+    else:
+        pin = resolve_operator_root_pin(root=root)
+    # The payload may still carry operator_public_key for provenance, but it is not
+    # the anchor: if it disagrees with the external pin, the registry is lying about
+    # its root and must be refused.
+    declared = payload.get("operator_public_key")
+    if isinstance(declared, str) and declared and declared != pin:
+        raise SignatureError(
+            "registry operator_public_key does not match the external operator pin")
+    verify_detached(payload, document["signature"], pin)
 
     entries = payload.get("keys")
     if not isinstance(entries, list) or not entries:
@@ -191,7 +295,7 @@ def load_trusted_keys(root: pathlib.Path = ROOT,
         if key.key_id in keys:
             raise SignatureError(f"duplicate key id: {key.key_id}")
         keys[key.key_id] = key
-    if not any(k.authority_type == OPERATOR and k.public_key == root_key
+    if not any(k.authority_type == OPERATOR and k.public_key == pin
                for k in keys.values()):
         raise SignatureError("the signing operator key is not present in the registry")
     return keys

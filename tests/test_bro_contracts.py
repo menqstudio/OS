@@ -69,6 +69,8 @@ class ModeGrantEd25519Tests(unittest.TestCase):
         issuer = generate_key("issuer", "iss", False)
         registry = build_registry([operator, issuer], self.NOW, 10_000)
         (tmp / "config" / "trusted-keys.json").write_text(json.dumps(registry), encoding="utf-8")
+        from _operator_pin import use_operator_pin
+        use_operator_pin(self, operator["public_key"])  # external operator-root pin
         return tmp, operator, issuer, sign_payload
 
     def _grant(self, mode="work", task_sha="c" * 64):

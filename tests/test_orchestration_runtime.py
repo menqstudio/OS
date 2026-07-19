@@ -13,6 +13,7 @@ from bro_evidence import event_hash
 from bro_orchestration_runtime import DurableOrchestrationRuntime, OrchestrationRuntimeError
 from bro_signature import load_trusted_keys
 from broctl import build_registry, generate_key, sign_payload
+from _operator_pin import use_operator_pin
 
 AUTHORITIES = ["operator-root", "issuer", "evidence-recorder", "builder",
                "verifier", "release"]
@@ -100,6 +101,7 @@ class DurableRuntimeTests(unittest.TestCase):
         self.store = base / "evidence"
         self.store.mkdir()
         self.keys = {a: generate_key(a, f"dev-{a}", False) for a in AUTHORITIES}
+        use_operator_pin(self, self.keys["operator-root"]["public_key"])  # external pin
         registry_root = base / "registry"
         (registry_root / "config").mkdir(parents=True)
         now = int(time.time())

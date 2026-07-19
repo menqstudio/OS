@@ -97,10 +97,10 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
         # Operator-signed dev registry (the committed registry's issuer key is not
         # on disk). load_trusted_keys is redirected here for every in-process verify.
         (self.tmp / "config").mkdir(parents=True)
-        operator = generate_key("operator-root", "op", False)
+        self.operator = generate_key("operator-root", "op", False)
         self.issuer = generate_key("issuer", "iss", False)
         (self.tmp / "config" / "trusted-keys.json").write_text(
-            json.dumps(build_registry([operator, self.issuer], self.now, 100_000)), encoding="utf-8")
+            json.dumps(build_registry([self.operator, self.issuer], self.now, 100_000)), encoding="utf-8")
 
         # External ledgers / stores, all outside the repository.
         self.locks = self.tmp / "locks"; self.locks.mkdir()
@@ -187,8 +187,10 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
         real_load = bro_signature.load_trusted_keys
         reg = self.tmp
         stack = ExitStack()
+        operator_pub = self.operator["public_key"]
         stack.enter_context(patch("bro_signature.load_trusted_keys",
-                                  new=lambda root=None, operator_public_key=None: real_load(reg)))
+                                  new=lambda root=None, operator_public_key=None: real_load(
+                                      reg, operator_public_key=operator_pub)))
         stack.enter_context(patch("bro_contracts.current_commit", return_value=HEAD))
         stack.enter_context(patch("bro_contracts.current_tree_identity", return_value=TREE))
         stack.enter_context(patch("bro_repository_state.resolve_state", return_value=RepositoryState(

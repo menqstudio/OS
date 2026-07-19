@@ -73,13 +73,15 @@ Both prior open items are now closed:
 6. Run `python -m unittest discover -s tests -v`.
 7. Continue only when the exact repository state is GREEN.
 
+> **Operator configuration required (trust anchor).** The operator-root public key is now pinned from **outside** the trusted-key registry. Before `bro_validate` or any signature-verifying runtime path will run, set the pin: production points `BRO_OPERATOR_ROOT_PUBKEY_FILE` at an operator-controlled file (absolute path, outside the repository, a regular non-symlink, not group/other-writable); CI passes the key in `BRO_OPERATOR_ROOT_PUBKEY`. If both are set they must match; a mismatch, or neither being set, is a hard failure. The registry payload is never the anchor.
+
 ## Security remediation (deployment blockers)
 
 The 2026-07-19 independent adversarial audit is RED; the components below are merged but **not deployment-ready**. These blockers are the priority and are fixed one per PR, each with a regression test and independent adversarial verification at the exact candidate HEAD — the auditor is not the sole verifier of a fix.
 
 1. **Review-mode shell containment.** Review mode must deny shell/command tools and allow only structured `Read`/`Glob`/`Grep` (with `Glob` patterns workspace-contained), and that denial must be non-shadowable; unparsed shell arguments let `find . -delete` and out-of-workspace reads pass the read-only classification.
    - **1b. Work-mode shell classifier (separate blocker).** The same unparsed-shell classification means a destructive command such as `find . -delete` still classifies as a *non-mutating read* in work mode, where scope is enforced only for mutating actions. Closing it needs a command-specific argument parser.
-2. **External operator-key pin.** The trusted-key registry must be anchored to an owner-controlled operator public key held outside the registry (OS-protected config / env / secret manager / HSM); a missing pin, a payload fallback, or a pin/registry mismatch must hard-DENY.
+2. **External operator-key pin.** *(Runtime enforcement implemented; pending independent verification.)* The trusted-key registry is anchored to an owner-controlled operator public key held outside the registry — `BRO_OPERATOR_ROOT_PUBKEY_FILE` (production, OS-protected regular non-symlink file outside the repo) or `BRO_OPERATOR_ROOT_PUBKEY` (CI). A missing pin, a payload fallback, or a pin/registry mismatch hard-fails. Owner-side configuration of the pin (and, later, a secret manager / HSM) remains an operator task.
 3. **Backup restore traversal.** `bro_backup` restore must reject `..`, absolute paths, symlinks and duplicates and require the destination to stay within the target.
 4. **Corrupt monitor state.** `bro_monitor` must treat missing/unreadable runtime state as ATTENTION, not GREEN.
 5. **Full secret redaction.** Redaction must remove entire PEM key bodies and cover modern token formats (`sk-proj-…`, `github_pat_…`).

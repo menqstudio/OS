@@ -20,6 +20,7 @@ from bro_evidence import (
 )
 from bro_signature import load_trusted_keys
 from broctl import build_registry, generate_key, sign_payload
+from _operator_pin import use_operator_pin
 
 NOW = 1_700_000_000
 YEAR = 365 * 24 * 60 * 60
@@ -35,6 +36,7 @@ class EvidenceFixture(unittest.TestCase):
         self.store.mkdir()
 
         self.keys = {a: generate_key(a, f"dev-{a}", False) for a in AUTHORITIES}
+        use_operator_pin(self, self.keys["operator-root"]["public_key"])  # external pin
         registry_root = self.tmp / "registry"
         (registry_root / "config").mkdir(parents=True)
         (registry_root / "config" / "trusted-keys.json").write_text(

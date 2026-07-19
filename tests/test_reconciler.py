@@ -15,6 +15,7 @@ from bro_orchestration_runtime import OrchestrationRuntimeError
 from bro_orchestration_runtime_v1 import RECONCILER_ID, DurableOrchestrationRuntimeV1
 from bro_signature import load_trusted_keys
 from broctl import build_registry, generate_key
+from _operator_pin import use_operator_pin
 from test_orchestration_runtime import AGENT, build_evidence, task_contract
 
 AUTHORITIES = ["operator-root", "issuer", "evidence-recorder", "builder",
@@ -28,6 +29,7 @@ class ReconcilerFixture(unittest.TestCase):
         self.store = self.tmp / "evidence"
         self.store.mkdir()
         self.keys = {a: generate_key(a, f"dev-{a}", False) for a in AUTHORITIES}
+        use_operator_pin(self, self.keys["operator-root"]["public_key"])  # external pin
         registry_root = self.tmp / "registry"
         (registry_root / "config").mkdir(parents=True)
         now = int(time.time())

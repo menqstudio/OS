@@ -160,6 +160,8 @@ class ExecutionLeaseEd25519Tests(unittest.TestCase):
         issuer = generate_key("issuer", "iss", False)
         (tmp / "config" / "trusted-keys.json").write_text(
             json.dumps(build_registry([operator, issuer], self.NOW, 100_000)), encoding="utf-8")
+        from _operator_pin import use_operator_pin
+        use_operator_pin(self, operator["public_key"])  # external operator-root pin
         wt = pathlib.Path(tempfile.mkdtemp(prefix="bro-wt-"))
         self.addCleanup(shutil.rmtree, wt, ignore_errors=True)
         return tmp, wt, operator, issuer, sign_payload
