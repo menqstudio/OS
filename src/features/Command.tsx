@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, StatusPill, Async, Modal, FormRow, Input, Textarea, Select,
+  PageHeader, Panel, Button, Badge, StatusPill, Async, Modal, FormRow, Input, Textarea, Select,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -50,12 +50,14 @@ function NewRunForm({ onClose, onCreated }: { onClose: () => void; onCreated: ()
 }
 
 function RunDetail({ run, onChanged }: { run: Run; onChanged: () => void }) {
-  const { t } = useApp();
+  const { t, setRoute } = useApp();
   const steps = useAsync(() => desktop.listRunSteps(run.id), [run.id]);
   const [title, setTitle] = useState('');
+  const [reqApproval, setReqApproval] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [stepStream, setStepStream] = useState('');
   const [execError, setExecError] = useState<string | null>(null);
+  const [approvalNeeded, setApprovalNeeded] = useState(false);
 
   const advance = () => {
     desktop.advanceRun(run.id).then(() => { steps.reload(); onChanged(); }).catch(() => steps.reload());
@@ -63,16 +65,20 @@ function RunDetail({ run, onChanged }: { run: Run; onChanged: () => void }) {
   const addStep = () => {
     const trimmed = title.trim();
     if (!trimmed) return;
-    desktop.addRunStep(run.id, trimmed, '').then(() => { setTitle(''); steps.reload(); }).catch(() => steps.reload());
+    desktop.addRunStep(run.id, trimmed, '', reqApproval)
+      .then(() => { setTitle(''); setReqApproval(false); steps.reload(); })
+      .catch(() => steps.reload());
   };
   const execute = async () => {
     if (executing) return;
     setExecuting(true);
     setStepStream('');
     setExecError(null);
+    setApprovalNeeded(false);
     try {
       await desktop.streamRunStep(run.id, (ev) => {
         if (ev.type === 'delta') setStepStream((prev) => prev + ev.text);
+        else if (ev.type === 'approvalRequired') setApprovalNeeded(true);
         else if (ev.type === 'error') setExecError(ev.message);
       });
     } catch (e: unknown) {
@@ -119,6 +125,7 @@ function RunDetail({ run, onChanged }: { run: Run; onChanged: () => void }) {
                       <span className="muted">{s.position}.</span>
                       <span>{s.title}</span>
                       {s.detail && <span className="muted">{s.detail}</span>}
+                      {s.requiresApproval && <Badge tone="warning">{t('command.requiresApproval')}</Badge>}
                     </span>
                     <StatusPill status={s.status} />
                   </div>
@@ -130,6 +137,12 @@ function RunDetail({ run, onChanged }: { run: Run; onChanged: () => void }) {
             </div>
           )}
         </Async>
+        {approvalNeeded && (
+          <div className="chat-hint" style={{ marginTop: 8 }}>
+            ⚠ {t('command.approvalRequired')}{' '}
+            <Button small variant="ghost" onClick={() => setRoute('approvals')}>{t('command.goToApprovals')}</Button>
+          </div>
+        )}
         {execError && <div className="chat-hint" style={{ marginTop: 8 }}>⚠ {execError}</div>}
         <form
           className="chat-composer"
@@ -137,6 +150,10 @@ function RunDetail({ run, onChanged }: { run: Run; onChanged: () => void }) {
           onSubmit={(e) => { e.preventDefault(); addStep(); }}
         >
           <Input value={title} placeholder={t('command.addStep')} onChange={(e) => setTitle(e.target.value)} />
+          <label className="row" style={{ gap: 4, whiteSpace: 'nowrap' }} title={t('command.requiresApproval')}>
+            <input type="checkbox" checked={reqApproval} onChange={(e) => setReqApproval(e.target.checked)} />
+            <span className="muted">{t('command.requiresApproval')}</span>
+          </label>
           <Button type="submit" variant="ghost">{t('command.addStep')}</Button>
         </form>
       </Panel>

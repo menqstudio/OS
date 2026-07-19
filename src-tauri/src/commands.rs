@@ -242,9 +242,24 @@ pub fn list_run_steps(state: State<AppState>, run_id: String) -> Result<Vec<RunS
 }
 
 #[tauri::command]
-pub fn add_run_step(state: State<AppState>, run_id: String, title: String, detail: String) -> Result<RunStep, String> {
+pub fn add_run_step(
+    state: State<AppState>,
+    run_id: String,
+    title: String,
+    detail: String,
+    requires_approval: bool,
+) -> Result<RunStep, String> {
     let conn = locked(&state)?;
-    repo::runs::add_step(&conn, &run_id, &title, &detail).map_err(|e| e.to_string())
+    // One transaction so a step asked to be gated is never persisted ungated.
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let step = repo::runs::add_step(&tx, &run_id, &title, &detail).map_err(|e| e.to_string())?;
+    let step = if requires_approval {
+        repo::runs::set_step_requires_approval(&tx, &step.id, true).map_err(|e| e.to_string())?
+    } else {
+        step
+    };
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(step)
 }
 
 #[tauri::command]
@@ -350,7 +365,15 @@ pub async fn stream_reply(
 pub enum RunStepEvent {
     Delta { text: String },
     Done,
+    ApprovalRequired { approval_id: String },
     Error { message: String },
+}
+
+/// Outcome of the approval gate for the next runnable step.
+enum Gate {
+    Ok,
+    Pending(String),
+    Rejected,
 }
 
 /// Execute the next runnable step of a run: ask the AI provider to produce the
@@ -363,7 +386,7 @@ pub async fn stream_run_step(
     run_id: String,
     on_event: tauri::ipc::Channel<RunStepEvent>,
 ) -> Result<(), String> {
-    let (intent, plan, step) = {
+    let (intent, plan, step, gate) = {
         let conn = locked(&state)?;
         let run = repo::runs::get(&conn, &run_id).map_err(|e| e.to_string())?;
         if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
@@ -371,8 +394,52 @@ pub async fn stream_run_step(
             return Ok(());
         }
         let step = repo::runs::next_runnable_step(&conn, &run_id).map_err(|e| e.to_string())?;
-        (run.intent, run.plan, step)
+        // Approval gate: a step flagged requires_approval may not run until an
+        // approval for it has been granted. A prior rejection is terminal; if no
+        // decision exists yet, request one and move the run to awaiting_approval.
+        let gate: Gate = match &step {
+            Some(s) if s.requires_approval => {
+                if repo::approvals::approved_for(&conn, &s.id).map_err(|e| e.to_string())? {
+                    Gate::Ok
+                } else if repo::approvals::rejected_for(&conn, &s.id).map_err(|e| e.to_string())? {
+                    let _ = repo::runs::set_step_status(&conn, &s.id, "failed");
+                    let _ = repo::runs::set_status(&conn, &run_id, "failed");
+                    Gate::Rejected
+                } else if let Some(pending) =
+                    repo::approvals::pending_for(&conn, &s.id).map_err(|e| e.to_string())?
+                {
+                    Gate::Pending(pending.id)
+                } else {
+                    let ap = repo::approvals::create(
+                        &conn,
+                        "Execute run step",
+                        &s.title,
+                        "A2",
+                        "medium",
+                        "gev",
+                        Some("run_step"),
+                        Some(&s.id),
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let _ = repo::runs::set_status(&conn, &run_id, "awaiting_approval");
+                    Gate::Pending(ap.id)
+                }
+            }
+            _ => Gate::Ok,
+        };
+        (run.intent, run.plan, step, gate)
     };
+    match gate {
+        Gate::Rejected => {
+            let _ = on_event.send(RunStepEvent::Error { message: "approval was rejected for this step".into() });
+            return Ok(());
+        }
+        Gate::Pending(approval_id) => {
+            let _ = on_event.send(RunStepEvent::ApprovalRequired { approval_id });
+            return Ok(());
+        }
+        Gate::Ok => {}
+    }
     let step = match step {
         Some(s) => s,
         None => {

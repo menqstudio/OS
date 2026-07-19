@@ -83,8 +83,8 @@ export const desktop = {
   createRun: (intent: string, plan: string) => invoke<Run>('create_run', { intent, plan }),
   setRunStatus: (id: string, status: string) => invoke<Run>('set_run_status', { id, status }),
   listRunSteps: (runId: string) => invoke<RunStep[]>('list_run_steps', { runId }),
-  addRunStep: (runId: string, title: string, detail: string) =>
-    invoke<RunStep>('add_run_step', { runId, title, detail }),
+  addRunStep: (runId: string, title: string, detail: string, requiresApproval = false) =>
+    invoke<RunStep>('add_run_step', { runId, title, detail, requiresApproval }),
   setRunStepStatus: (id: string, status: string) =>
     invoke<RunStep>('set_run_step_status', { id, status }),
   advanceRun: (runId: string) => invoke<Run>('advance_run', { runId }),
@@ -148,4 +148,5 @@ export type StreamEvent =
 export type RunStepEvent =
   | { type: 'delta'; text: string }
   | { type: 'done' }
+  | { type: 'approvalRequired'; approvalId: string }
   | { type: 'error'; message: string };
