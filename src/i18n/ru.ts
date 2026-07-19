@@ -139,6 +139,7 @@ export const ru: Record<DictKey, string> = {
   'integrations.disconnect': 'Отключить',
   'field.provider': 'Провайдер',
   'analytics.subtitle': 'Живые метрики по рабочему пространству',
+  'analytics.chart': 'Сравнение метрик',
   'security.subtitle': 'Согласования и журнал аудита',
   'security.pending': 'Ожидающие согласования',
   'security.decided': 'Решённые согласования',

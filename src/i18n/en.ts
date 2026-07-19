@@ -137,6 +137,7 @@ export const en = {
   'integrations.disconnect': 'Disconnect',
   'field.provider': 'Provider',
   'analytics.subtitle': 'Live metrics across the workspace',
+  'analytics.chart': 'Metric comparison',
   'security.subtitle': 'Approvals and the audit trail',
   'security.pending': 'Pending approvals',
   'security.decided': 'Decided approvals',
