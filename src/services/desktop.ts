@@ -88,6 +88,12 @@ export const desktop = {
   setRunStepStatus: (id: string, status: string) =>
     invoke<RunStep>('set_run_step_status', { id, status }),
   advanceRun: (runId: string) => invoke<Run>('advance_run', { runId }),
+  // execute the next runnable step via the AI provider, streaming its result.
+  streamRunStep: (runId: string, onEvent: (e: RunStepEvent) => void) => {
+    const channel = new Channel<RunStepEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>('stream_run_step', { runId, onEvent: channel });
+  },
 
   // events (calendar)
   listEvents: () => invoke<CalendarEvent[]>('list_events'),
@@ -137,4 +143,9 @@ export const desktop = {
 export type StreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'done'; message: Message }
+  | { type: 'error'; message: string };
+
+export type RunStepEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'done' }
   | { type: 'error'; message: string };

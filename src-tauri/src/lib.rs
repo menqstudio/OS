@@ -77,6 +77,7 @@ pub fn run() {
             commands::reply_in_conversation,
             commands::stream_reply,
             commands::stream_ask,
+            commands::stream_run_step,
             files::list_dir,
         ])
         .run(tauri::generate_context!())

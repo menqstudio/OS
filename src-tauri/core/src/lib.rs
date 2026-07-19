@@ -101,9 +101,9 @@ mod tests {
     }
 
     #[test]
-    fn migrations_reach_v6_with_all_tables() {
+    fn migrations_reach_v7_with_all_tables() {
         let c = conn();
-        assert_eq!(db::current_version(&c).unwrap(), 6);
+        assert_eq!(db::current_version(&c).unwrap(), 7);
         // decisions table exists and is usable
         repo::decisions::create(&c, "T", "gev", "why").unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
@@ -182,6 +182,32 @@ mod tests {
             repo::runs::set_step_status(&c, &steps[0].id, "bogus"),
             Err(CoreError::Invalid { field: "status", .. })
         ));
+    }
+
+    #[test]
+    fn run_step_result_and_next_runnable() {
+        let c = conn();
+        let r = repo::runs::create(&c, "do work", "").unwrap();
+        repo::runs::add_step(&c, &r.id, "step one", "").unwrap();
+        repo::runs::add_step(&c, &r.id, "step two", "").unwrap();
+
+        // next runnable is the first pending step; steps start with empty result
+        let n = repo::runs::next_runnable_step(&c, &r.id).unwrap().unwrap();
+        assert_eq!(n.title, "step one");
+        assert_eq!(n.result, "");
+
+        // recording a result marks the step done and stores the text
+        let done = repo::runs::set_step_result(&c, &n.id, "produced output").unwrap();
+        assert_eq!(done.status, "done");
+        assert_eq!(done.result, "produced output");
+
+        // next runnable now points at step two
+        let n2 = repo::runs::next_runnable_step(&c, &r.id).unwrap().unwrap();
+        assert_eq!(n2.title, "step two");
+
+        repo::runs::set_step_result(&c, &n2.id, "second output").unwrap();
+        // all steps done -> nothing runnable remains
+        assert!(repo::runs::next_runnable_step(&c, &r.id).unwrap().is_none());
     }
 
     #[test]

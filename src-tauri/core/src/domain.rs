@@ -169,6 +169,7 @@ camel! {
         pub title: String,
         pub detail: String,
         pub status: String,
+        pub result: String,
         pub created_at: String,
         pub updated_at: String,
     }

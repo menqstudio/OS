@@ -5,6 +5,7 @@ import {
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import { Markdown } from '../components/markdown';
 import { RUN_STATUSES } from '../domain/enums';
 import type { Run } from '../domain/entities';
 
@@ -52,6 +53,9 @@ function RunDetail({ run, onChanged }: { run: Run; onChanged: () => void }) {
   const { t } = useApp();
   const steps = useAsync(() => desktop.listRunSteps(run.id), [run.id]);
   const [title, setTitle] = useState('');
+  const [executing, setExecuting] = useState(false);
+  const [stepStream, setStepStream] = useState('');
+  const [execError, setExecError] = useState<string | null>(null);
 
   const advance = () => {
     desktop.advanceRun(run.id).then(() => { steps.reload(); onChanged(); }).catch(() => steps.reload());
@@ -61,33 +65,72 @@ function RunDetail({ run, onChanged }: { run: Run; onChanged: () => void }) {
     if (!trimmed) return;
     desktop.addRunStep(run.id, trimmed, '').then(() => { setTitle(''); steps.reload(); }).catch(() => steps.reload());
   };
+  const execute = async () => {
+    if (executing) return;
+    setExecuting(true);
+    setStepStream('');
+    setExecError(null);
+    try {
+      await desktop.streamRunStep(run.id, (ev) => {
+        if (ev.type === 'delta') setStepStream((prev) => prev + ev.text);
+        else if (ev.type === 'error') setExecError(ev.message);
+      });
+    } catch (e: unknown) {
+      setExecError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExecuting(false);
+      setStepStream('');
+      steps.reload();
+      onChanged();
+    }
+  };
+
+  const terminal = run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled';
 
   return (
     <div style={{ marginTop: 16 }}>
       <Panel
         title={run.intent}
-        actions={<Button small variant="primary" onClick={advance}>{t('command.advance')}</Button>}
+        actions={
+          <span className="row" style={{ gap: 8 }}>
+            <Button small variant="ghost" onClick={advance} disabled={executing || terminal}>{t('command.advance')}</Button>
+            <Button small variant="primary" onClick={execute} disabled={executing || terminal}>{t('command.execute')}</Button>
+          </span>
+        }
       >
         <div className="row" style={{ gap: 8, marginBottom: 12 }}>
           <StatusPill status={run.status} />
         </div>
+        {executing && (
+          <div className="run-step-result" style={{ marginBottom: 12 }}>
+            {stepStream
+              ? <span>{stepStream}<span className="chat-cursor" /></span>
+              : <span className="chat-typing"><span></span><span></span><span></span></span>}
+          </div>
+        )}
         <div className="panel-title" style={{ marginBottom: 8 }}>{t('command.steps')}</div>
         <Async state={steps} emptyTitle={t('command.noSteps')}>
           {(items) => (
             <div className="stack">
               {items.map((s) => (
-                <div key={s.id} className="list-row">
-                  <span className="row" style={{ gap: 8 }}>
-                    <span className="muted">{s.position}.</span>
-                    <span>{s.title}</span>
-                    {s.detail && <span className="muted">{s.detail}</span>}
-                  </span>
-                  <StatusPill status={s.status} />
+                <div key={s.id} className="run-step">
+                  <div className="list-row">
+                    <span className="row" style={{ gap: 8 }}>
+                      <span className="muted">{s.position}.</span>
+                      <span>{s.title}</span>
+                      {s.detail && <span className="muted">{s.detail}</span>}
+                    </span>
+                    <StatusPill status={s.status} />
+                  </div>
+                  {s.result && (
+                    <div className="run-step-result"><Markdown text={s.result} /></div>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </Async>
+        {execError && <div className="chat-hint" style={{ marginTop: 8 }}>⚠ {execError}</div>}
         <form
           className="chat-composer"
           style={{ marginTop: 12 }}
@@ -153,7 +196,7 @@ export function Command() {
                     </div>
                   ))}
                 </div>
-                {selected && <RunDetail run={selected} onChanged={() => s.reload()} />}
+                {selected && <RunDetail key={selected.id} run={selected} onChanged={() => s.reload()} />}
               </>
             );
           }}

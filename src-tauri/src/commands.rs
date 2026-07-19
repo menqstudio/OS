@@ -344,6 +344,108 @@ pub async fn stream_reply(
     Ok(())
 }
 
+/// Events streamed while a run step is executed by the AI provider.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum RunStepEvent {
+    Delta { text: String },
+    Done,
+    Error { message: String },
+}
+
+/// Execute the next runnable step of a run: ask the AI provider to produce the
+/// step's result, streaming it; then store the result (marking the step done)
+/// and advance the run. Emits `delta` events, then `done` (or `error`). When no
+/// step remains, emits `done` immediately.
+#[tauri::command]
+pub async fn stream_run_step(
+    state: State<'_, AppState>,
+    run_id: String,
+    on_event: tauri::ipc::Channel<RunStepEvent>,
+) -> Result<(), String> {
+    let (intent, plan, step) = {
+        let conn = locked(&state)?;
+        let run = repo::runs::get(&conn, &run_id).map_err(|e| e.to_string())?;
+        if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
+            let _ = on_event.send(RunStepEvent::Error { message: format!("run is {}", run.status) });
+            return Ok(());
+        }
+        let step = repo::runs::next_runnable_step(&conn, &run_id).map_err(|e| e.to_string())?;
+        (run.intent, run.plan, step)
+    };
+    let step = match step {
+        Some(s) => s,
+        None => {
+            let _ = on_event.send(RunStepEvent::Done);
+            return Ok(());
+        }
+    };
+
+    let system = "You are an execution agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. Produce the concrete result/output for the current step of a run. Be concise and practical; output only the deliverable for THIS step, not meta commentary.".to_string();
+    let user = format!(
+        "Goal (intent): {intent}\n\nOverall plan: {plan}\n\nCurrent step to execute: {}\n\nProduce the result for this step now.",
+        step.title
+    );
+    let history = vec![crate::ai::ChatMsg { role: "user".to_string(), content: user }];
+    let ch = on_event.clone();
+    match crate::ai::generate_stream(&system, &history, move |delta| {
+        let _ = ch.send(RunStepEvent::Delta { text: delta.to_string() });
+    })
+    .await
+    {
+        Ok(full) => {
+            let outcome = {
+                let conn = match locked(&state) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = on_event.send(RunStepEvent::Error { message: e });
+                        return Ok(());
+                    }
+                };
+                // Re-check under the re-acquired lock: while we streamed, the run
+                // may have been cancelled/finished, or this step may already have
+                // been executed by a concurrent run. Bail without a half-write.
+                match repo::runs::get(&conn, &run_id) {
+                    Ok(run) if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") => {
+                        let _ = on_event.send(RunStepEvent::Error { message: format!("run is {}", run.status) });
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+                match repo::runs::get_step(&conn, &step.id) {
+                    Ok(st) if st.status == "done" => {
+                        let _ = on_event.send(RunStepEvent::Done);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+                repo::runs::set_step_result(&conn, &step.id, &full)
+                    .and_then(|_| repo::runs::advance(&conn, &run_id))
+            };
+            match outcome {
+                Ok(_) => {
+                    let _ = on_event.send(RunStepEvent::Done);
+                }
+                Err(e) => {
+                    let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
+                }
+            }
+        }
+        Err(e) => {
+            let _ = on_event.send(RunStepEvent::Error { message: e });
+        }
+    }
+    Ok(())
+}
+
 /// One-shot "Ask Bro": stream an answer to a single prompt WITHOUT a
 /// conversation or persistence. Deltas arrive on the channel; completion is
 /// signalled by the command returning (no `done` event, nothing is stored).

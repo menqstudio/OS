@@ -107,6 +107,7 @@ export const ru: Record<DictKey, string> = {
   'command.newRun': 'Новый запуск',
   'command.steps': 'Шаги',
   'command.advance': 'Продвинуть',
+  'command.execute': 'Выполнить шаг',
   'command.addStep': 'Добавить шаг',
   'command.noSteps': 'Пока нет шагов — добавьте первый ниже.',
   'field.intent': 'Намерение',
