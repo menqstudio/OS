@@ -149,5 +149,28 @@ class ReleaseGrantEd25519Tests(unittest.TestCase):
         finalize_nonce(payload, ledger, "tool-1", cmd)  # the reserved nonce finalizes
 
 
+class LegacyReleaseGrantRetiredTests(unittest.TestCase):
+    """Ed25519 Release Grant V3 (bro_release_v3) is the only live release path.
+    The unsigned v1 loader and the HMAC v2 loader in bro_contracts were dead code
+    — no runtime module or test called them — and are retired. This guards against
+    their re-introduction: a second, weaker release-authorization path is exactly
+    the kind of drift the single V3 path exists to prevent."""
+
+    def test_legacy_release_grant_loaders_are_gone(self):
+        import bro_contracts
+        for symbol in (
+            "validate_release_grant",           # v1 (unsigned)
+            "load_release_grant_from_env",      # v1 loader
+            "validate_release_grant_v2",        # v2 (HMAC)
+            "load_release_grant_v2_from_env",   # v2 loader
+            "_signed_payload_from_env",         # helper only the v2 loader used
+        ):
+            self.assertFalse(hasattr(bro_contracts, symbol),
+                             f"legacy release-grant symbol still present: {symbol}")
+
+    def test_v3_release_path_remains(self):
+        from bro_release_v3 import validate_release_grant_v3  # noqa: F401  the live path
+
+
 if __name__ == "__main__":
     unittest.main()

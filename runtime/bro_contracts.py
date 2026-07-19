@@ -326,38 +326,6 @@ def validate_skill_receipt(
     return value
 
 
-def validate_release_grant(value: dict[str, Any], root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
-    required = {
-        "schema", "grant_id", "approved_by", "repository", "remote", "branch", "expected_head_sha",
-        "expected_tree_identity", "allowed_action", "issued_at_epoch", "expires_at_epoch", "one_time", "consumed"
-    }
-    _require_exact_keys(value, required)
-    if value["schema"] != 1:
-        raise ContractError("release grant schema must be 1")
-    _require_string(value["grant_id"], "grant_id", pattern=ID_RE)
-    if value["approved_by"] != "Gev":
-        raise ContractError("release grant must be approved by Gev")
-    _require_string(value["repository"], "repository")
-    _require_string(value["remote"], "remote")
-    _require_string(value["branch"], "branch")
-    _require_string(value["expected_head_sha"], "expected_head_sha", pattern=GIT_SHA_RE)
-    _require_string(value["expected_tree_identity"], "expected_tree_identity", pattern=SHA256_RE)
-    if value["allowed_action"] != "git-push":
-        raise ContractError("release grant may authorize only git-push")
-    if value["one_time"] is not True or value["consumed"] is not False:
-        raise ContractError("release grant must be unused and one-time")
-    if not isinstance(value["issued_at_epoch"], int) or not isinstance(value["expires_at_epoch"], int):
-        raise ContractError("release grant timestamps must be integers")
-    instant = int(time.time()) if now is None else now
-    if value["issued_at_epoch"] > instant + 60 or value["expires_at_epoch"] <= instant:
-        raise ContractError("release grant is not currently valid")
-    if value["expected_head_sha"] != current_commit(root):
-        raise ContractError("release grant is not bound to the current HEAD")
-    if value["expected_tree_identity"] != current_tree_identity(root):
-        raise ContractError("release grant is not bound to the current repository tree")
-    return value
-
-
 def load_contract_bundle_from_env(root: pathlib.Path = ROOT, now: int | None = None) -> ContractBundle:
     task_path = os.getenv("BRO_TASK_CONTRACT")
     agent_path = os.getenv("BRO_AGENT_PROFILE")
@@ -376,21 +344,6 @@ def load_contract_bundle_from_env(root: pathlib.Path = ROOT, now: int | None = N
     task_sha = canonical_json_sha256(task)
     receipt = validate_skill_receipt(load_json(pathlib.Path(receipt_path)), task, task_sha, agent, root, now)
     return ContractBundle(task=task, task_sha256=task_sha, agent=agent, skill_receipt=receipt)
-
-
-def load_release_grant_from_env(root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
-    path = os.getenv("BRO_RELEASE_GRANT")
-    if not path:
-        raise ContractError("missing BRO_RELEASE_GRANT")
-    return validate_release_grant(load_json(pathlib.Path(path)), root, now)
-
-# Security-v2 signed grants and schema execution.
-def _signed_payload_from_env(env_name: str, key_env: str) -> dict[str, Any]:
-    from bro_security import verify_signed_document, SecurityError
-    path = os.getenv(env_name)
-    if not path: raise ContractError(f"missing {env_name}")
-    try: return verify_signed_document(load_json(pathlib.Path(path)), key_env)
-    except SecurityError as exc: raise ContractError(str(exc)) from exc
 
 
 def validate_mode_grant(payload: dict[str, Any], *, session_id: str, agent_id: str, role: str, task_sha256: str, agent_sha256: str, skill_sha256: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
@@ -425,28 +378,6 @@ def load_mode_grant_from_env(bundle: ContractBundle, session_id: str, role: str,
     except SignatureError as exc:
         raise ContractError(str(exc)) from exc
     return validate_mode_grant(payload, session_id=session_id, agent_id=bundle.agent["agent_id"], role=role, task_sha256=bundle.task_sha256, agent_sha256=canonical_json_sha256(bundle.agent), skill_sha256=canonical_json_sha256(bundle.skill_receipt), root=root, now=now)
-
-
-def validate_release_grant_v2(payload: dict[str, Any], root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
-    required={"schema","grant_id","nonce","approved_by","repository","remote","branch","expected_head_sha","expected_tree_identity","allowed_action","issued_at_epoch","expires_at_epoch"}
-    _require_exact_keys(payload, required)
-    if payload["schema"] != 2 or payload["approved_by"] != "Gev" or payload["allowed_action"] != "git-push": raise ContractError("invalid release grant payload")
-    instant=int(time.time()) if now is None else now
-    if payload["issued_at_epoch"] > instant+60 or payload["expires_at_epoch"] <= instant: raise ContractError("release grant expired or not yet valid")
-    if payload["expected_head_sha"] != current_commit(root): raise ContractError("release grant HEAD mismatch")
-    if payload["expected_tree_identity"] != current_tree_identity(root): raise ContractError("release grant tree mismatch")
-    return payload
-
-
-def load_release_grant_v2_from_env(root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
-    from bro_security import consume_nonce, SecurityError
-    payload=_signed_payload_from_env("BRO_RELEASE_GRANT","BRO_RELEASE_GRANT_KEY")
-    payload=validate_release_grant_v2(payload,root,now)
-    ledger=os.getenv("BRO_RELEASE_LEDGER")
-    if not ledger: raise ContractError("missing external BRO_RELEASE_LEDGER")
-    try: consume_nonce(payload,pathlib.Path(ledger))
-    except SecurityError as exc: raise ContractError(str(exc)) from exc
-    return payload
 
 
 def validate_registered_schemas(root: pathlib.Path = ROOT) -> int:
