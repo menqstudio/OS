@@ -215,6 +215,8 @@ pub mod approvals {
             status: r.get("status")?,
             requested_by: r.get("requested_by")?,
             decision_note: r.get("decision_note")?,
+            entity_type: r.get("entity_type")?,
+            entity_id: r.get("entity_id")?,
             requested_at: r.get("requested_at")?,
             decided_at: r.get("decided_at")?,
         })
@@ -224,6 +226,63 @@ pub mod approvals {
         let mut s = conn.prepare("SELECT * FROM approvals ORDER BY requested_at DESC")?;
         let rows = s.query_map([], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Create a pending approval, optionally linked to the entity that needs it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        conn: &Connection,
+        action_type: &str,
+        target: &str,
+        level: &str,
+        risk_level: &str,
+        requested_by: &str,
+        entity_type: Option<&str>,
+        entity_id: Option<&str>,
+    ) -> CoreResult<Approval> {
+        let id = id();
+        conn.execute(
+            "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, entity_type, entity_id, requested_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8, ?9)",
+            rusqlite::params![id, action_type, target, level, risk_level, requested_by, entity_type, entity_id, now()],
+        )?;
+        super::audit::record(conn, "approval.requested", requested_by, "approval", &id)?;
+        conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id.clone()], map).map_err(not_found(&id))
+    }
+
+    /// True when an approved approval exists for the given entity.
+    pub fn approved_for(conn: &Connection, entity_id: &str) -> CoreResult<bool> {
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM approvals WHERE entity_id = ?1 AND status = 'approved'",
+            [entity_id],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
+    /// True when a rejected approval exists for the entity and none is approved —
+    /// i.e. the entity is blocked by a rejection.
+    pub fn rejected_for(conn: &Connection, entity_id: &str) -> CoreResult<bool> {
+        if approved_for(conn, entity_id)? {
+            return Ok(false);
+        }
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM approvals WHERE entity_id = ?1 AND status = 'rejected'",
+            [entity_id],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
+    /// The most recent still-pending approval for an entity, if any.
+    pub fn pending_for(conn: &Connection, entity_id: &str) -> CoreResult<Option<Approval>> {
+        Ok(conn
+            .query_row(
+                "SELECT * FROM approvals WHERE entity_id = ?1 AND status = 'pending' ORDER BY requested_at DESC LIMIT 1",
+                [entity_id],
+                map,
+            )
+            .optional()?)
     }
 
     /// Decide a pending approval. `decision` must be "approved" or "rejected".
@@ -664,9 +723,22 @@ pub mod runs {
             detail: r.get("detail")?,
             status: r.get("status")?,
             result: r.get("result")?,
+            requires_approval: r.get::<_, i64>("requires_approval")? != 0,
             created_at: r.get("created_at")?,
             updated_at: r.get("updated_at")?,
         })
+    }
+
+    /// Flag (or unflag) whether a step needs approval before it can execute.
+    pub fn set_step_requires_approval(conn: &Connection, id: &str, requires: bool) -> CoreResult<RunStep> {
+        let changed = conn.execute(
+            "UPDATE run_steps SET requires_approval = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![requires as i64, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        get_step(conn, id)
     }
 
     /// The step an execution should run next: the active one if present,
@@ -762,6 +834,22 @@ pub mod runs {
             conn.query_row("SELECT COUNT(*) FROM run_steps WHERE run_id = ?1", [run_id], |r| r.get(0))?;
         if total_steps == 0 {
             return Err(CoreError::Invalid { field: "steps", value: "none".to_string() });
+        }
+
+        // A manual advance must not complete a gated step that isn't approved —
+        // that would bypass the approval. Execution goes through stream_run_step,
+        // which handles the gate (and only calls advance once the step is done).
+        if let Some(active) = conn
+            .query_row(
+                "SELECT * FROM run_steps WHERE run_id = ?1 AND status = 'active' ORDER BY position LIMIT 1",
+                [run_id],
+                map_step,
+            )
+            .optional()?
+        {
+            if active.requires_approval && !super::approvals::approved_for(conn, &active.id)? {
+                return Err(CoreError::Invalid { field: "approval", value: "required".to_string() });
+            }
         }
 
         let now = now();
@@ -1242,7 +1330,8 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
     let r1 = runs::create(conn, "Wire the remaining workspaces to the backend", "schema → repos → commands → UI")?;
     runs::add_step(conn, &r1.id, "Design schema", "migration 0005")?;
     runs::add_step(conn, &r1.id, "Write repositories", "")?;
-    runs::add_step(conn, &r1.id, "Register commands", "")?;
+    let gated = runs::add_step(conn, &r1.id, "Register commands", "")?;
+    runs::set_step_requires_approval(conn, &gated.id, true)?; // demo: this step needs approval to run
     runs::add_step(conn, &r1.id, "Build the screens", "")?;
     runs::advance(conn, &r1.id)?; // moves the run to running with the first step active
     runs::create(conn, "Draft the Phase 6 verification report", "")?;

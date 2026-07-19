@@ -101,9 +101,9 @@ mod tests {
     }
 
     #[test]
-    fn migrations_reach_v7_with_all_tables() {
+    fn migrations_reach_v8_with_all_tables() {
         let c = conn();
-        assert_eq!(db::current_version(&c).unwrap(), 7);
+        assert_eq!(db::current_version(&c).unwrap(), 8);
         // decisions table exists and is usable
         repo::decisions::create(&c, "T", "gev", "why").unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
@@ -208,6 +208,66 @@ mod tests {
         repo::runs::set_step_result(&c, &n2.id, "second output").unwrap();
         // all steps done -> nothing runnable remains
         assert!(repo::runs::next_runnable_step(&c, &r.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn approval_gating_links_and_resolves() {
+        let c = conn();
+        let r = repo::runs::create(&c, "gated run", "").unwrap();
+        let step = repo::runs::add_step(&c, &r.id, "risky step", "").unwrap();
+        assert!(!step.requires_approval);
+        let gated = repo::runs::set_step_requires_approval(&c, &step.id, true).unwrap();
+        assert!(gated.requires_approval);
+
+        // nothing approved or pending yet
+        assert!(!repo::approvals::approved_for(&c, &step.id).unwrap());
+        assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_none());
+
+        // request an approval linked to the step
+        let ap = repo::approvals::create(
+            &c, "Execute run step", "risky step", "A2", "medium", "gev", Some("run_step"), Some(&step.id),
+        ).unwrap();
+        assert_eq!(ap.entity_id.as_deref(), Some(step.id.as_str()));
+        assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_some());
+        assert!(!repo::approvals::approved_for(&c, &step.id).unwrap());
+
+        // approving flips both queries
+        repo::approvals::decide(&c, &ap.id, "approved", None).unwrap();
+        assert!(repo::approvals::approved_for(&c, &step.id).unwrap());
+        assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn advance_blocks_unapproved_gated_step_and_rejected_is_terminal() {
+        let c = conn();
+        let r = repo::runs::create(&c, "gated", "").unwrap();
+        repo::runs::add_step(&c, &r.id, "one", "").unwrap();
+        let s2 = repo::runs::add_step(&c, &r.id, "two", "").unwrap();
+        repo::runs::set_step_requires_approval(&c, &s2.id, true).unwrap();
+
+        repo::runs::advance(&c, &r.id).unwrap(); // step 1 active
+        repo::runs::advance(&c, &r.id).unwrap(); // step 1 done, gated step 2 active
+        // a manual advance can't complete the unapproved gated step
+        assert!(matches!(
+            repo::runs::advance(&c, &r.id),
+            Err(CoreError::Invalid { field: "approval", .. })
+        ));
+
+        // approve it -> advance now proceeds
+        let ap = repo::approvals::create(&c, "Execute run step", "two", "A2", "medium", "gev", Some("run_step"), Some(&s2.id)).unwrap();
+        repo::approvals::decide(&c, &ap.id, "approved", None).unwrap();
+        assert!(repo::runs::advance(&c, &r.id).is_ok());
+
+        // rejected_for: a rejection with no approval blocks
+        let r2 = repo::runs::create(&c, "r2", "").unwrap();
+        let s = repo::runs::add_step(&c, &r2.id, "x", "").unwrap();
+        let rej = repo::approvals::create(&c, "x", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id)).unwrap();
+        repo::approvals::decide(&c, &rej.id, "rejected", None).unwrap();
+        assert!(repo::approvals::rejected_for(&c, &s.id).unwrap());
+        // a later approval clears the rejected-block
+        let ok = repo::approvals::create(&c, "x", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id)).unwrap();
+        repo::approvals::decide(&c, &ok.id, "approved", None).unwrap();
+        assert!(!repo::approvals::rejected_for(&c, &s.id).unwrap());
     }
 
     #[test]

@@ -49,6 +49,8 @@ export interface Approval {
   status: string;
   requestedBy: string;
   decisionNote: string | null;
+  entityType: string | null;
+  entityId: string | null;
   requestedAt: string;
   decidedAt: string | null;
 }
@@ -167,6 +169,7 @@ export interface RunStep {
   detail: string;
   status: string;
   result: string;
+  requiresApproval: boolean;
   createdAt: string;
   updatedAt: string;
 }

@@ -79,6 +79,8 @@ camel! {
         pub status: String,
         pub requested_by: String,
         pub decision_note: Option<String>,
+        pub entity_type: Option<String>,
+        pub entity_id: Option<String>,
         pub requested_at: String,
         pub decided_at: Option<String>,
     }
@@ -170,6 +172,7 @@ camel! {
         pub detail: String,
         pub status: String,
         pub result: String,
+        pub requires_approval: bool,
         pub created_at: String,
         pub updated_at: String,
     }
