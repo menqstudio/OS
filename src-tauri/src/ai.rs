@@ -207,16 +207,51 @@ fn ai_sandbox_dir() -> Result<std::path::PathBuf, String> {
     Err("could not create a private AI sandbox directory".to_string())
 }
 
+/// Removes a temp file when dropped, so the system-prompt file is cleaned up on
+/// every return path (success, error, or timeout) without threading cleanup code
+/// through each branch.
+struct TempFileGuard(std::path::PathBuf);
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Write the system prompt to an owner-only (0600) file inside the private AI
+/// sandbox and return its path. It is passed to claude via
+/// `--append-system-prompt-file` (not `--append-system-prompt <text>`), so the
+/// persona/system text never appears in argv / `/proc/<pid>/cmdline` — the same
+/// protection the transcript gets via stdin.
+fn write_system_prompt_file(system: &str) -> Result<std::path::PathBuf, String> {
+    use std::io::Write;
+    let dir = ai_sandbox_dir()?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let path = dir.join(format!("system-{}-{nanos}.txt", std::process::id()));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(&path).map_err(|e| format!("system prompt file: {e}"))?;
+    f.write_all(system.as_bytes()).map_err(|e| format!("system prompt file: {e}"))?;
+    Ok(path)
+}
+
 /// Build the argv (after the binary) for a `claude -p` chat call. Centralized so
 /// the security lockdown is guaranteed present on every path and unit-testable.
 /// The chat is a pure text completion: no built-in tools, no MCP servers, and no
 /// user/local settings (hooks/plugins) — so a prompt-injection in a message
 /// can't read/write the filesystem or run commands through the coding agent.
 ///
-/// The prompt (which contains the chat transcript) is NOT here — it is written
-/// to the child's stdin so it never appears in argv / `/proc/<pid>/cmdline`,
-/// where another local user could read it while the process runs.
-fn claude_args(system: &str, streaming: bool, model: Option<&str>) -> Vec<String> {
+/// Neither the transcript nor the system prompt is passed as argv: the transcript
+/// goes to stdin and the system prompt is read from `system_file` (0600). So no
+/// user-controlled / confidential text ever lands in `/proc/<pid>/cmdline`.
+fn claude_args(system_file: &std::path::Path, streaming: bool, model: Option<&str>) -> Vec<String> {
     let mut a: Vec<String> = vec!["-p".into(), "--output-format".into()];
     if streaming {
         a.push("stream-json".into());
@@ -225,8 +260,8 @@ fn claude_args(system: &str, streaming: bool, model: Option<&str>) -> Vec<String
     } else {
         a.push("json".into());
     }
-    a.push("--append-system-prompt".into());
-    a.push(system.into());
+    a.push("--append-system-prompt-file".into());
+    a.push(system_file.to_string_lossy().into_owned());
     a.push("--tools".into());
     a.push(String::new()); // "" → disable ALL built-in tools
     a.push("--strict-mcp-config".into()); // ignore every MCP config (we pass none)
@@ -247,8 +282,12 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     on_delta: &mut F,
 ) -> Result<String, String> {
     let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
+    let sys_file = TempFileGuard(write_system_prompt_file(system)?);
+    // Absolute deadline for the WHOLE streaming lifecycle (stdout loop + child
+    // wait + stderr drain) — a child that keeps dribbling lines can't run forever.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
     let mut cmd = tokio::process::Command::new(bin);
-    cmd.args(claude_args(system, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
+    cmd.args(claude_args(&sys_file.0, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
         .current_dir(ai_sandbox_dir()?)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -296,7 +335,10 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     // (hung `claude`, auth prompt, network stall) is bounded by a per-read
     // timeout so the UI never spins forever; kill_on_drop reaps the child.
     loop {
-        let line = match tokio::time::timeout(Duration::from_secs(120), lines.next_line()).await {
+        // Bound each read by the earlier of the absolute request deadline and a
+        // 120s per-read stall cap.
+        let read_deadline = deadline.min(tokio::time::Instant::now() + Duration::from_secs(120));
+        let line = match tokio::time::timeout_at(read_deadline, lines.next_line()).await {
             Err(_) => return Err("claude CLI timed out".to_string()),
             Ok(Ok(Some(l))) => l,
             Ok(Ok(None)) => break,
@@ -331,8 +373,16 @@ async fn claude_cli_stream<F: FnMut(&str)>(
         }
     }
 
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-    let errbuf = stderr_task.await.unwrap_or_default();
+    // Also bound the post-EOF child reap + stderr drain by the same deadline.
+    let status = tokio::time::timeout_at(deadline, child.wait())
+        .await
+        .map_err(|_| "claude CLI timed out".to_string())?
+        .map_err(|e| e.to_string())?;
+    let errbuf = tokio::time::timeout_at(deadline, stderr_task)
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
     if !status.success() {
         let msg = errbuf.trim();
         return Err(if msg.is_empty() {
@@ -370,8 +420,9 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
         "{}\n\nReply to the latest User message.",
         transcript(messages)
     );
+    let sys_file = TempFileGuard(write_system_prompt_file(system)?);
     let mut cmd = tokio::process::Command::new(bin);
-    cmd.args(claude_args(system, false, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
+    cmd.args(claude_args(&sys_file.0, false, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
         .current_dir(ai_sandbox_dir()?)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -492,12 +543,16 @@ mod tests {
     #[test]
     fn claude_args_lock_down_tools_mcp_and_settings_on_every_path() {
         let secret = "User: my password is hunter2";
+        let sys_file = std::path::Path::new("/tmp/brops-ai-sandbox/system-1.txt");
         for streaming in [true, false] {
-            let args = claude_args("be nice", streaming, None);
-            // The transcript/prompt must NOT be in argv (it goes via stdin) — no
-            // arg may carry chat content, and there's no bare prompt positional.
+            let args = claude_args(sys_file, streaming, None);
+            // The transcript (stdin) and system prompt (file) must NOT be in argv —
+            // no arg may carry chat content, and the system goes via a *file* flag,
+            // never inline.
             assert!(!args.iter().any(|a| a.contains(secret) || a.contains("hunter2")));
             assert!(!args.iter().any(|a| a == secret));
+            assert!(args.iter().any(|a| a == "--append-system-prompt-file"), "system via file");
+            assert!(!args.iter().any(|a| a == "--append-system-prompt"), "never inline system prompt");
             // `--tools ""` present as an adjacent pair → all built-in tools off.
             let pos = args.iter().position(|a| a == "--tools").expect("--tools flag present");
             assert_eq!(args.get(pos + 1), Some(&String::new()), "--tools must be followed by \"\"");
@@ -517,9 +572,10 @@ mod tests {
 
     #[test]
     fn claude_args_model_is_optional_and_appended() {
-        let none = claude_args("s", false, None);
+        let sys = std::path::Path::new("/tmp/brops-ai-sandbox/system-1.txt");
+        let none = claude_args(sys, false, None);
         assert!(!none.iter().any(|a| a == "--model"));
-        let some = claude_args("s", true, Some("claude-x"));
+        let some = claude_args(sys, true, Some("claude-x"));
         let pos = some.iter().position(|a| a == "--model").expect("--model present");
         assert_eq!(some.get(pos + 1), Some(&"claude-x".to_string()));
     }
