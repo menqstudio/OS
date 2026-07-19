@@ -64,9 +64,16 @@ def _acquire_lock(path: pathlib.Path) -> int:
         try:
             return os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
-            if time.monotonic() >= deadline:
-                raise AuditError(f"audit ledger lock not acquired within {_LOCK_TIMEOUT}s: {lock}")
-            time.sleep(_LOCK_POLL)
+            pass  # another writer holds the lock
+        except PermissionError:
+            # Windows raises PermissionError (not FileExistsError) when the lock file is
+            # in the delete-pending window between a releaser's close and its unlink;
+            # that is simply "held right now", so retry rather than propagate. A
+            # genuinely unwritable directory still resolves to the bounded AuditError.
+            pass
+        if time.monotonic() >= deadline:
+            raise AuditError(f"audit ledger lock not acquired within {_LOCK_TIMEOUT}s: {lock}")
+        time.sleep(_LOCK_POLL)
 
 
 def _release_lock(fd: int, path: pathlib.Path) -> None:
