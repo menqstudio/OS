@@ -62,6 +62,24 @@ pub fn set_task_status(state: State<AppState>, id: String, status: String) -> Re
     repo::tasks::set_status(&conn, &id, &status).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn list_tasks(state: State<AppState>) -> Result<Vec<Task>, String> {
+    let conn = locked(&state)?;
+    repo::tasks::list_all(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_task(
+    state: State<AppState>,
+    id: String,
+    title: String,
+    description: String,
+    priority: String,
+) -> Result<Task, String> {
+    let conn = locked(&state)?;
+    repo::tasks::update(&conn, &id, &title, &description, &priority).map_err(|e| e.to_string())
+}
+
 // --- agents ---
 
 #[tauri::command]

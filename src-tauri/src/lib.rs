@@ -32,6 +32,8 @@ pub fn run() {
             commands::list_tasks_by_status,
             commands::create_task,
             commands::set_task_status,
+            commands::list_tasks,
+            commands::update_task,
             commands::list_agents,
             commands::list_approvals,
             commands::decide_approval,

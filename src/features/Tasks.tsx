@@ -1,22 +1,17 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Badge, StatusPill, Avatar, Async, Modal, FormRow, Input, Select,
+  PageHeader, Button, Badge, Async, Modal, FormRow, Input, Textarea, Select,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { useToast } from '../components/toast';
-import { statusTone, TASK_STATUSES, PRIORITIES } from '../domain/enums';
+import { statusTone, PRIORITIES } from '../domain/enums';
+import type { Task } from '../domain/entities';
 
-type Tab = { key: string; label: string; status: string };
-
-const TABS: Tab[] = [
-  { key: 'inbox', label: 'Inbox', status: 'inbox' },
-  { key: 'active', label: 'Active', status: 'active' },
-  { key: 'blocked', label: 'Blocked', status: 'blocked' },
-  { key: 'review', label: 'Review', status: 'review' },
-  { key: 'done', label: 'Done', status: 'done' },
-];
+// Board columns, left to right — the full task status vocabulary so no task is
+// ever invisible. Moving a card between columns sets its status.
+const COLUMNS = ['inbox', 'planned', 'active', 'blocked', 'review', 'done', 'cancelled'];
 
 function NewTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { t } = useApp();
@@ -32,21 +27,9 @@ function NewTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
     setBusy(true);
     setError(null);
     desktop
-      .createTask({
-        title: title.trim(),
-        description: '',
-        priority,
-        projectId: projectId || null,
-        assignedAgentId: null,
-      })
-      .then(() => {
-        onCreated();
-        onClose();
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : String(e));
-        setBusy(false);
-      });
+      .createTask({ title: title.trim(), description: '', priority, projectId: projectId || null, assignedAgentId: null })
+      .then(() => { onCreated(); onClose(); })
+      .catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); setBusy(false); });
   };
 
   return (
@@ -57,17 +40,13 @@ function NewTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
       </FormRow>
       <FormRow label={t('field.priority')}>
         <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
-          {PRIORITIES.map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))}
+          {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
         </Select>
       </FormRow>
       <FormRow label={t('field.project')}>
         <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
           <option value="">{t('field.none')}</option>
-          {(projects.data ?? []).map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
+          {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </Select>
       </FormRow>
       <div className="form-actions">
@@ -78,16 +57,71 @@ function NewTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
   );
 }
 
+function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => void; onSaved: () => void }) {
+  const { t } = useApp();
+  const toast = useToast();
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description);
+  const [priority, setPriority] = useState(task.priority);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const save = () => {
+    if (!title.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    desktop
+      .updateTask(task.id, title.trim(), description, priority)
+      .then(() => { toast(t('toast.saved'), 'success'); onSaved(); onClose(); })
+      .catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); setBusy(false); });
+  };
+
+  return (
+    <Modal title={t('form.editTask')} onClose={onClose}>
+      {error && <div className="form-error">{error}</div>}
+      <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+        <Badge tone={statusTone[task.status] ?? 'neutral'}>{task.status.replace(/_/g, ' ')}</Badge>
+      </div>
+      <FormRow label={t('field.title')}>
+        <Input value={title} autoFocus onChange={(e) => setTitle(e.target.value)} />
+      </FormRow>
+      <FormRow label={t('field.description')}>
+        <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
+      </FormRow>
+      <FormRow label={t('field.priority')}>
+        <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
+          {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+        </Select>
+      </FormRow>
+      <div className="form-actions">
+        <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
+        <Button variant="primary" onClick={save}>{t('action.save')}</Button>
+      </div>
+    </Modal>
+  );
+}
+
 export function Tasks() {
   const { t } = useApp();
   const toast = useToast();
-  const [tab, setTab] = useState<string>('inbox');
   const [creating, setCreating] = useState(false);
-  const activeTab = TABS.find((x) => x.key === tab) ?? TABS[0];
-  const s = useAsync(() => desktop.listTasksByStatus(activeTab.status), [activeTab.status]);
+  const [detail, setDetail] = useState<Task | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragStatus, setDragStatus] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  const s = useAsync(() => desktop.listTasks(), []);
 
-  const changeStatus = (id: string, status: string) => {
+  const moveTo = (id: string, status: string) => {
     desktop.setTaskStatus(id, status).then(() => s.reload()).catch(() => s.reload());
+  };
+  const onDrop = (status: string) => {
+    setDragOver(null);
+    // Skip a drop onto the card's own column — no status change, no spurious write.
+    if (dragId && dragStatus !== status) {
+      moveTo(dragId, status);
+    }
+    setDragId(null);
+    setDragStatus(null);
   };
 
   return (
@@ -104,46 +138,50 @@ export function Tasks() {
           onCreated={() => { s.reload(); toast(t('toast.created'), 'success'); }}
         />
       )}
+      {detail && <TaskDetail task={detail} onClose={() => setDetail(null)} onSaved={() => s.reload()} />}
 
-      <div className="row" style={{ gap: 8, marginBottom: 16 }}>
-        {TABS.map((x) => (
-          <Button key={x.key} small variant={x.key === tab ? 'primary' : 'ghost'} onClick={() => setTab(x.key)}>
-            {x.label}
-          </Button>
-        ))}
-      </div>
-
-      <Panel title={activeTab.label}>
-        <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
-          {(items) => (
-            <div className="stack">
-              {items.map((x) => (
-                <div key={x.id} className="list-row">
-                  <span className="row" style={{ gap: 8 }}>
-                    <Avatar name={x.assignedAgentId ?? '—'} />
-                    <span>{x.title}</span>
-                    <span className="muted">{x.assignedAgentId ?? '—'}</span>
-                  </span>
-                  <span className="row" style={{ gap: 8 }}>
-                    <Badge tone={statusTone[x.priority] ?? 'neutral'}>{x.priority}</Badge>
-                    <span className="muted">{x.dueAt ?? '—'}</span>
-                    <Select
-                      value={x.status}
-                      onChange={(e) => changeStatus(x.id, e.target.value)}
-                      style={{ width: 'auto', padding: '4px 8px' }}
-                      title={t('field.status')}
-                    >
-                      {TASK_STATUSES.map((st) => (
-                        <option key={st} value={st}>{st}</option>
-                      ))}
-                    </Select>
-                  </span>
+      <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
+        {(tasks) => (
+          <div className="board">
+            {COLUMNS.map((col) => {
+              const items = tasks.filter((x) => x.status === col);
+              return (
+                <div
+                  key={col}
+                  className={`board-col ${dragOver === col ? 'board-col--over' : ''}`}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(col); }}
+                  onDragLeave={() => setDragOver((c) => (c === col ? null : c))}
+                  onDrop={() => onDrop(col)}
+                >
+                  <div className="board-col-head">
+                    <span className="board-col-title">{col.replace(/_/g, ' ')}</span>
+                    <span className="muted">{items.length}</span>
+                  </div>
+                  <div className="board-col-body">
+                    {items.map((x) => (
+                      <div
+                        key={x.id}
+                        className="board-card"
+                        draggable
+                        onDragStart={() => { setDragId(x.id); setDragStatus(x.status); }}
+                        onDragEnd={() => { setDragId(null); setDragStatus(null); setDragOver(null); }}
+                        onClick={() => setDetail(x)}
+                      >
+                        <div className="board-card-title">{x.title}</div>
+                        <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                          <Badge tone={statusTone[x.priority] ?? 'neutral'}>{x.priority}</Badge>
+                          {x.assignedAgentId && <span className="muted">{x.assignedAgentId}</span>}
+                        </div>
+                      </div>
+                    ))}
+                    {items.length === 0 && <div className="board-empty muted">—</div>}
+                  </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </Async>
-      </Panel>
+              );
+            })}
+          </div>
+        )}
+      </Async>
     </>
   );
 }
