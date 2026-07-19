@@ -177,13 +177,21 @@ def _normalize_repo(value: object) -> str:
     return normalized.lower()
 
 
-def _grant_bindings_ok(grant: dict, bundle) -> tuple[bool, str]:
-    expected_repo = _normalize_repo(bundle.task["repository"]["full_name"])
-    actual_repo = _normalize_repo(grant.get("repository"))
-    if actual_repo != expected_repo:
+def enforce_grant_bindings(grant: dict, task: dict, mode: str) -> tuple[bool, str]:
+    """Bind the mode grant to the task's repository, branch and mode.
+
+    Shared by the tool path and the Stop gate: validate_mode_grant proves the grant
+    is signed and bound to the session, agent, hashes, HEAD and tree, but it does not
+    compare the repository, branch or mode against the task. Without this a correctly
+    signed grant for another repository, branch or mode could authorize an action —
+    or a completion. The grant's mode must equal the task's mode and the current
+    runtime mode."""
+    if _normalize_repo(grant.get("repository")) != _normalize_repo(task["repository"]["full_name"]):
         return False, "grant repository binding mismatch"
-    if str(grant.get("branch")) != str(bundle.task["repository"]["branch"]):
+    if str(grant.get("branch")) != str(task["repository"]["branch"]):
         return False, "grant branch binding mismatch"
+    if grant.get("mode") != task.get("mode") or grant.get("mode") != mode:
+        return False, "grant mode binding mismatch"
     return True, "bound"
 
 
@@ -250,9 +258,7 @@ def authorize_classified_action(
         mode_grant = load_mode_grant_from_env(bundle, state.session_id, state.role, ROOT)
     except ContractError as exc:
         return False, f"mode grant RED: {exc}"
-    if mode_grant["mode"] != state.mode:
-        return False, "mode grant does not authorize requested mode"
-    bound, reason = _grant_bindings_ok(mode_grant, bundle)
+    bound, reason = enforce_grant_bindings(mode_grant, bundle.task, state.mode)
     if not bound:
         return False, reason
     if classification.mutating:

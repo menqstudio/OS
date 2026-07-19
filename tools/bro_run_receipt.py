@@ -17,11 +17,14 @@ actually produced it.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import pathlib
 import platform
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -29,6 +32,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
 from bro_receipt import ReceiptError, catalog_sha256, transcript_sha256
+from bro_repository_state import current_tree_identity
 
 from broctl import sign_payload
 
@@ -42,16 +46,48 @@ def git(root: pathlib.Path, *args: str) -> str:
 
 
 def candidate_state(root: pathlib.Path) -> tuple[str, str]:
-    """Read HEAD and the tree from git, and refuse a dirty worktree.
+    """Read HEAD and the canonical workspace tree identity, refusing a dirty tree.
 
-    A receipt from a dirty tree names a commit that does not describe what ran, so
-    the signature would attest to a state that never existed.
+    The tree is the one canonical identity used end-to-end — the same
+    ``current_tree_identity`` the repository state, mode grant and completion
+    manifest bind — not git's tree object SHA. A receipt that named git's tree could
+    never match the completion candidate, so the flow could not close. A receipt
+    from a dirty tree names a state that never existed, so it is refused.
     """
     if git(root, "status", "--porcelain"):
         raise ReceiptError(
             "worktree is dirty; a receipt from it would name a commit that does "
             "not describe what actually ran")
-    return git(root, "rev-parse", "HEAD"), git(root, "rev-parse", "HEAD^{tree}")
+    return git(root, "rev-parse", "HEAD"), current_tree_identity(root)
+
+
+@contextlib.contextmanager
+def _immutable_snapshot(root: pathlib.Path, head: str):
+    """A runner-controlled checkout of exactly `head`, isolated from `root`.
+
+    The command must run against the same tree the receipt attests. If it ran in
+    `root`, an attacker could edit a file after the tree was hashed, let the command
+    observe the transient version, then restore the file — `root` is clean again and
+    the receipt vouches for a state the run never saw (a TOCTOU race a post-run hash
+    cannot close). Running in a private detached worktree removes the in-`root` window.
+
+    DEPLOYMENT INVARIANT: this snapshot is "immutable" only if the runner executes
+    under an OS identity distinct from the builder's, so the builder cannot write the
+    snapshot directory mid-run. Bro's issuance model already separates the runner
+    (which holds the evidence-recorder key) from the builder process; the operator
+    MUST enforce that separation at the OS level (dedicated runner account, or a
+    sandbox with a private filesystem), or the isolation this provides is only
+    partial. Documented as an owner-environment hardening requirement.
+    """
+    parent = pathlib.Path(tempfile.mkdtemp(prefix="bro-receipt-snap-"))
+    snap = parent / "worktree"
+    git(root, "worktree", "add", "--detach", str(snap), head)
+    try:
+        yield snap
+    finally:
+        subprocess.run(["git", "-C", str(root), "worktree", "remove", "--force", str(snap)],
+                       capture_output=True)
+        shutil.rmtree(parent, ignore_errors=True)
 
 
 def run_and_sign(command: list[str], *, key: dict, task_id: str,
@@ -61,9 +97,16 @@ def run_and_sign(command: list[str], *, key: dict, task_id: str,
             f"a {key['authority_type']} key may not sign execution receipts: that "
             f"requires evidence-recorder authority")
     head, tree = candidate_state(root)
-    started = int(time.time()) if now is None else now
-    completed = subprocess.run(command, cwd=str(root), capture_output=True, text=True)
-    finished = int(time.time()) if now is None else now
+    with _immutable_snapshot(root, head) as snap:
+        # Everything attested is measured from the immutable snapshot the command
+        # actually ran in, not from `root`, which could be edited during the run.
+        snap_tree = current_tree_identity(snap)
+        if snap_tree != tree:
+            raise ReceiptError("snapshot tree diverges from the candidate tree")
+        started = int(time.time()) if now is None else now
+        completed = subprocess.run(command, cwd=str(snap), capture_output=True, text=True)
+        finished = int(time.time()) if now is None else now
+        catalog = catalog_sha256(snap)
 
     payload = {
         "artifact_type": "evidence-event",
@@ -82,7 +125,7 @@ def run_and_sign(command: list[str], *, key: dict, task_id: str,
                            f"py{platform.python_version()}",
         "started_at_epoch": started,
         "finished_at_epoch": finished,
-        "test_catalog_sha256": catalog_sha256(root),
+        "test_catalog_sha256": catalog,
         "issued_at_epoch": finished,
     }
     return sign_payload(key["private_key"], payload), completed

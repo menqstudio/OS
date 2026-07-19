@@ -178,7 +178,8 @@ def main() -> int:
                  if allowed else
                  {"decision": "block", "reason": f"completion gate RED: {exc}; {why}"})
             return 0
-        allowed, why = authorize_stop(task, state.agent_id, ROOT)
+        allowed, why = authorize_stop(state.agent_id, ROOT, session_id=state.session_id,
+                                      role=state.role, mode=state.mode)
         emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": why}} if allowed else {"decision": "block", "reason": why})
         return 0
     return 0

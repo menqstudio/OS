@@ -95,12 +95,12 @@ def verify_receipt(document: dict[str, Any], keys: dict, *, task_id: str,
     if payload["candidate_tree"] != candidate_tree:
         raise ReceiptError("receipt was produced against a different tree")
 
-    # Git object ids are SHA-1 here; the transcript and catalog digests are ours
-    # and are SHA-256. Mixing the two lengths up would silently accept a truncated
-    # digest, so they are checked apart.
-    for field in ("candidate_head", "candidate_tree"):
-        _hex(payload[field], field, 40)
-    for field in ("stdout_sha256", "stderr_sha256", "test_catalog_sha256"):
+    # candidate_head is git's HEAD (SHA-1, 40); the candidate tree is the canonical
+    # workspace tree identity (SHA-256, 64) shared with the repository state and the
+    # completion manifest, not git's tree object SHA. Lengths are checked apart so a
+    # truncated digest cannot be silently accepted.
+    _hex(payload["candidate_head"], "candidate_head", 40)
+    for field in ("candidate_tree", "stdout_sha256", "stderr_sha256", "test_catalog_sha256"):
         _hex(payload[field], field, 64)
 
     if payload["test_catalog_sha256"] != catalog_sha256(root):

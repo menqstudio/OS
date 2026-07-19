@@ -3,12 +3,19 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
+import shlex
 import subprocess
 import time
 from typing import Any
 
 from bro_authority import AuthorityError, validate_verifier_assignment
-from bro_contracts import canonical_json_sha256
+from bro_contracts import (
+    ContractError,
+    canonical_json_sha256,
+    load_contract_bundle_from_env,
+    load_mode_grant_from_env,
+)
 from bro_evidence import EvidenceError, validate_chain, validate_criterion_evidence
 from bro_recovery import RecoveryError, _load_state
 from bro_repository_state import resolve_state
@@ -48,6 +55,75 @@ def _signed_env(path_env: str, artifact_type: str, root: pathlib.Path = ROOT, no
         return verify_artifact(_json(pathlib.Path(raw)), artifact_type, load_trusted_keys(root), now=now)
     except SignatureError as exc:
         raise CompletionError(str(exc)) from exc
+
+
+_RECEIPT_ID = re.compile(r"^rcpt-[0-9a-f]{16}$")
+
+
+def _required_commands(task: dict[str, Any]) -> list[list[str]]:
+    """The commands that MUST have a passing receipt, taken ONLY from the signed
+    task contract's verification.commands. There is no fallback to the test catalog:
+    tests/catalog.json is a plain committed file, not a protected/signed source, and
+    a generic discovery command the builder can satisfy trivially (a `true` that
+    exits 0) would reopen the very bypass this closes. An empty command set is a hard
+    failure — a completion cannot be checked against nothing."""
+    declared = (task.get("verification") or {}).get("commands") or []
+    commands = [shlex.split(c) for c in declared if isinstance(c, str) and c.strip()]
+    if not commands:
+        raise CompletionError(
+            "the signed task contract declares no verification.commands; a completion "
+            "cannot be verified against a required command set")
+    return commands
+
+
+def _validate_execution_receipts(task: dict[str, Any], tests: list[dict[str, Any]], candidate_head: str,
+                                 candidate_tree: str, root: pathlib.Path, now: int | None) -> None:
+    """Make "the tests passed" a checked execution receipt, not a builder's claim.
+
+    Each completion-manifest test cites an execution receipt id. The receipt is an
+    EVIDENCE-signed artifact produced by the runner (bro_run_receipt), not the
+    builder, and it binds the exact command (argv), the candidate HEAD/tree and the
+    registered test catalog. Beyond verifying each receipt, the set of commands that
+    actually passed must cover the trusted required-command set (contract/catalog),
+    so a green `true` — which the builder controls in both the manifest and the
+    signed receipt — cannot stand in for the suite. The cited id must match the
+    receipt's own signed receipt_id (a copy under another filename is rejected) and
+    is unique by signed id, so one execution cannot back two claims."""
+    from bro_receipt import ReceiptError, verify_receipt
+    from bro_signature import load_trusted_keys
+    trusted = load_trusted_keys(root)
+    store = _external_dir("BRO_EXECUTION_RECEIPTS")
+    required = _required_commands(task)
+    seen_ids: set[str] = set()
+    passed: list[list[str]] = []
+    for test in tests:
+        cited = test.get("execution_receipt_id")
+        if not isinstance(cited, str) or not _RECEIPT_ID.match(cited):
+            raise CompletionError("completion test cites a malformed execution receipt id")
+        path = store / f"{cited}.json"
+        try:
+            payload = verify_receipt(_json(path), trusted, task_id=task["task_id"],
+                                     candidate_head=candidate_head, candidate_tree=candidate_tree,
+                                     root=root, now=now)
+        except ReceiptError as exc:
+            raise CompletionError(f"execution receipt {cited} RED: {exc}") from exc
+        # The receipt's own signed id must be the id cited (and the filename it was
+        # loaded from): a signed receipt copied under a second filename is rejected.
+        if payload["receipt_id"] != cited:
+            raise CompletionError(
+                f"execution receipt id mismatch: signed {payload['receipt_id']!r}, cited {cited!r}")
+        if payload["receipt_id"] in seen_ids:
+            raise CompletionError(f"execution receipt cited more than once: {payload['receipt_id']}")
+        seen_ids.add(payload["receipt_id"])
+        if payload["exit_code"] != 0:
+            raise CompletionError(f"execution receipt {cited} records a non-zero exit code")
+        if payload["command"] != test.get("command"):
+            raise CompletionError(
+                f"execution receipt {cited} ran a different command than the test claims")
+        passed.append(payload["command"])
+    for command in required:
+        if command not in passed:
+            raise CompletionError(f"no passing execution receipt for required command: {command}")
 
 
 def _external_dir(env_name: str) -> pathlib.Path:
@@ -131,7 +207,11 @@ def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path 
     if any(not isinstance(x, dict) or x.get("status") != "satisfied" or not x.get("evidence_event_ids") for x in criteria):
         raise CompletionError("completion criterion lacks satisfied evidence")
     tests = manifest.get("tests")
-    if not isinstance(tests, list) or not tests or any(not isinstance(x, dict) or x.get("status") != "passed" for x in tests):
+    if not isinstance(tests, list) or not tests or any(
+            not isinstance(x, dict) or x.get("status") != "passed"
+            or not isinstance(x.get("command"), list) or not x.get("command")
+            or any(not isinstance(arg, str) for arg in x.get("command"))
+            for x in tests):
         raise CompletionError("completion tests are not all passed")
     if manifest.get("open_risks") or manifest.get("rollback_ready") is not True:
         raise CompletionError("completion has open risks or rollback is not ready")
@@ -147,6 +227,10 @@ def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path 
             validate_criterion_evidence(task["task_id"], [test["evidence_event_id"]], chain_ids)
     except EvidenceError as exc:
         raise CompletionError(str(exc)) from exc
+    # Execution receipts feed the verdict: each test's "passed" must rest on a
+    # runner-signed receipt against this exact candidate, not the builder's word.
+    _validate_execution_receipts(task, tests, manifest["candidate_head"],
+                                 manifest["candidate_tree"], root, None)
     _clean_repository(root)
     _no_pending_execution()
     _no_pending_recovery(task["task_id"])
@@ -179,8 +263,40 @@ def validate_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], ta
     return receipt
 
 
-def authorize_stop(task: dict[str, Any], agent_id: str, root: pathlib.Path = ROOT) -> tuple[bool, str]:
+def _authenticated_task(agent_id: str, session_id: str, role: str, mode: str,
+                        root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
+    """Return the task contract only after the FULL signed mode-grant path accepts it.
+
+    At Stop the task contract arrives from the environment and is only structurally
+    valid, so a builder could present a contract whose verification.commands are a
+    cheap `true`. Signature plus task hash is not enough: a grant for another
+    session, agent, repository, branch, HEAD or tree, or an expired one, must not
+    authorize this completion. Running the whole load_mode_grant_from_env /
+    validate_mode_grant path binds the grant to this session, agent, role, the
+    agent-profile and skill-receipt hashes, and the current HEAD and tree, and
+    enforces its validity window — so the required-command set rests on signed
+    authority. The grant's agent must also be the agent finishing the turn."""
+    from bro_policy import enforce_grant_bindings
     try:
+        bundle = load_contract_bundle_from_env(root, now)
+        grant = load_mode_grant_from_env(bundle, session_id, role, root, now)
+    except ContractError as exc:
+        raise CompletionError(str(exc)) from exc
+    if bundle.task.get("agent_id") != agent_id:
+        raise CompletionError(
+            "the signed mode grant's task is not assigned to the acting agent")
+    # validate_mode_grant does not compare the grant's repository, branch or mode
+    # against the task; the same shared check the tool path uses must run here too.
+    bound, reason = enforce_grant_bindings(grant, bundle.task, mode)
+    if not bound:
+        raise CompletionError(reason)
+    return bundle.task
+
+
+def authorize_stop(agent_id: str, root: pathlib.Path = ROOT, *, session_id: str,
+                   role: str, mode: str, now: int | None = None) -> tuple[bool, str]:
+    try:
+        task = _authenticated_task(agent_id, session_id, role, mode, root, now)
         manifest, task_hash = validate_completion(task, agent_id, root)
         if task["verification"]["required"]:
             validate_verifier_receipt(task, manifest, task_hash, root)

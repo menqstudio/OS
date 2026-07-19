@@ -59,7 +59,7 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("Release Grant V3", reason)
 
-    @patch("bro_policy._grant_bindings_ok", return_value=(True, "bound"))
+    @patch("bro_policy.enforce_grant_bindings", return_value=(True, "bound"))
     @patch("bro_policy.enforce_scope")
     @patch("bro_policy.load_mode_grant_from_env")
     @patch("bro_policy.load_contract_bundle_from_env")

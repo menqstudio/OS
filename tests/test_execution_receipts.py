@@ -108,6 +108,17 @@ class SigningTests(ReceiptFixture):
             self.make()
         self.assertIn("dirty", str(caught.exception))
 
+    def test_command_runs_in_an_isolated_snapshot_not_the_root(self):
+        # TOCTOU defence: the command runs in a runner-controlled snapshot, so a
+        # write it performs cannot touch `root`, and the attested tree is `root`'s
+        # original tree — a mid-run edit to root cannot be laundered into the receipt.
+        payload = self.check(self.make([sys.executable, "-c", "open('injected.txt','w').write('x')"]))
+        self.assertEqual(payload["candidate_tree"], self.tree)
+        self.assertFalse((self.repo / "injected.txt").exists())
+        status = subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
+                                capture_output=True, text=True).stdout
+        self.assertEqual(status, "")
+
     def test_failing_command_is_recorded_honestly(self):
         """A receipt records the outcome; it does not launder it."""
         document = self.make([sys.executable, "-c", "raise SystemExit(3)"])
@@ -128,7 +139,7 @@ class VerificationTests(ReceiptFixture):
 
     def test_wrong_tree_denied(self):
         with self.assertRaises(ReceiptError) as caught:
-            self.check(self.make(), candidate_tree="c" * 40)
+            self.check(self.make(), candidate_tree="c" * 64)
         self.assertIn("different tree", str(caught.exception))
 
     def test_tampered_transcript_hash_denied(self):

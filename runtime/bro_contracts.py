@@ -68,15 +68,12 @@ def current_commit(root: pathlib.Path = ROOT) -> str:
 
 
 def current_tree_identity(root: pathlib.Path = ROOT) -> str:
-    raw = subprocess.check_output(["git", "ls-files", "-z"], cwd=root)
-    h = hashlib.sha256()
-    for item in raw.split(b"\0"):
-        if not item:
-            continue
-        rel = item.decode("utf-8")
-        path = root / rel
-        h.update(rel.encode("utf-8") + b"\0" + hashlib.sha256(path.read_bytes()).digest())
-    return h.hexdigest()
+    """The one canonical workspace tree identity, shared with the repository state,
+    the mode grant and the completion manifest so a single tree hash flows end to
+    end. Delegated to bro_repository_state's implementation (tracked plus untracked
+    non-ignored, symlink-aware) rather than a second, tracked-only hash."""
+    from bro_repository_state import current_tree_identity as _canonical_tree_identity
+    return _canonical_tree_identity(root)
 
 
 def _require_exact_keys(value: dict[str, Any], required: set[str], optional: set[str] = set()) -> None:
