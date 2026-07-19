@@ -123,6 +123,30 @@ pub mod tasks {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// All tasks, newest-updated first — used by the board view which groups by
+    /// status client-side.
+    pub fn list_all(conn: &Connection) -> CoreResult<Vec<Task>> {
+        let mut stmt = conn.prepare("SELECT * FROM tasks ORDER BY updated_at DESC")?;
+        let rows = stmt.query_map([], map_task)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Edit a task's title, description, and priority.
+    pub fn update(conn: &Connection, id: &str, title: &str, description: &str, priority: &str) -> CoreResult<Task> {
+        if !is_valid(priority, PRIORITIES) {
+            return Err(CoreError::Invalid { field: "priority", value: priority.to_string() });
+        }
+        let changed = conn.execute(
+            "UPDATE tasks SET title = ?1, description = ?2, priority = ?3, updated_at = ?4 WHERE id = ?5",
+            rusqlite::params![title, description, priority, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "task.updated", "gev", "task", id)?;
+        get(conn, id)
+    }
+
     pub fn set_status(conn: &Connection, id: &str, status: &str) -> CoreResult<Task> {
         if !is_valid(status, TASK_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
