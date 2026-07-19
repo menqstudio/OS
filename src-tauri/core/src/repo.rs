@@ -433,6 +433,31 @@ pub mod chat {
         conn.query_row("SELECT * FROM messages WHERE id = ?1", [id.clone()], map_message)
             .map_err(not_found(&id))
     }
+
+    /// Delete a conversation and (via the FK cascade) all of its messages.
+    /// Rejects an unknown conversation.
+    pub fn delete_conversation(conn: &Connection, id: &str) -> CoreResult<()> {
+        let changed = conn.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "conversation.deleted", "gev", "conversation", id)?;
+        Ok(())
+    }
+
+    /// Rename a conversation and bump its activity timestamp. Rejects an unknown
+    /// conversation.
+    pub fn rename_conversation(conn: &Connection, id: &str, title: &str) -> CoreResult<Conversation> {
+        let changed = conn.execute(
+            "UPDATE conversations SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![title, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "conversation.renamed", "gev", "conversation", id)?;
+        get_conversation(conn, id)
+    }
 }
 
 pub mod knowledge {

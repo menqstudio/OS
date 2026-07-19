@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Select, Skeleton, ErrorState,
+  PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Select, Skeleton,
+  ErrorState, ConfirmDialog,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -9,6 +10,18 @@ import { Markdown } from '../components/markdown';
 import type { Conversation, Message } from '../domain/entities';
 
 type Kind = 'direct' | 'group';
+
+/** The `@mention` token being typed immediately before the caret, if any. A
+ *  mention runs from an `@` at the start of input or after whitespace up to the
+ *  caret, and contains no whitespace. Returns its start offset and the query
+ *  text typed so far (empty right after the `@`). */
+function activeMention(text: string, caret: number): { start: number; query: string } | null {
+  let i = caret - 1;
+  while (i >= 0 && !/\s/.test(text[i]) && text[i] !== '@') i -= 1;
+  if (i < 0 || text[i] !== '@') return null;
+  if (i > 0 && !/\s/.test(text[i - 1])) return null;
+  return { start: i, query: text.slice(i + 1, caret) };
+}
 
 function MessageThread({ conversation, onActivity }: { conversation: Conversation; onActivity: () => void }) {
   const { t } = useApp();
@@ -29,6 +42,64 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [replyError, setReplyError] = useState<string | null>(null);
+  // @mention autocomplete over agent display names.
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionMatches = mention
+    ? agentNames.filter((n) => n.toLowerCase().includes(mention.query.toLowerCase()))
+    : [];
+  const showMentions = mention !== null && mentionMatches.length > 0;
+  const mentionActive = Math.min(mentionIndex, mentionMatches.length - 1);
+
+  const syncMention = (value: string, caret: number) => {
+    const found = activeMention(value, caret);
+    setMention(found);
+    setMentionIndex(0);
+  };
+
+  const onDraftChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setDraft(e.target.value);
+    syncMention(e.target.value, e.target.selectionStart ?? e.target.value.length);
+  };
+
+  const insertMention = (name: string) => {
+    if (!mention) return;
+    const before = draft.slice(0, mention.start);
+    const after = draft.slice(mention.start + 1 + mention.query.length);
+    const inserted = `@${name} `;
+    const caret = before.length + inserted.length;
+    setDraft(before + inserted + after);
+    setMention(null);
+    // Restore focus and place the caret after the inserted mention.
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(caret, caret);
+      }
+    });
+  };
+
+  const onDraftKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (!showMentions) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setMentionIndex((i) => (Math.min(i, mentionMatches.length - 1) + 1) % mentionMatches.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setMentionIndex((i) => {
+        const cur = Math.min(i, mentionMatches.length - 1);
+        return (cur - 1 + mentionMatches.length) % mentionMatches.length;
+      });
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      insertMention(mentionMatches[mentionActive]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setMention(null);
+    }
+  };
 
   const send = async () => {
     const body = draft.trim();
@@ -121,7 +192,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
             <div className="chat-bubble">
               <div className="chat-author">{streamingAuthor}</div>
               {streamingText
-                ? <span>{streamingText}<span className="chat-cursor" /></span>
+                ? <span className="chat-stream"><Markdown text={streamingText} /><span className="chat-cursor" /></span>
                 : <span className="chat-typing"><span></span><span></span><span></span></span>}
             </div>
           </div>
@@ -141,12 +212,34 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
           send();
         }}
       >
-        <Input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={t('chat.composer')}
-          autoFocus
-        />
+        <div className="chat-composer-field">
+          {showMentions && (
+            <ul className="mention-popup" role="listbox" aria-label={t('chat.composer')}>
+              {mentionMatches.map((n, idx) => (
+                <li key={n} role="option" aria-selected={idx === mentionActive}>
+                  <button
+                    type="button"
+                    className={`mention-item ${idx === mentionActive ? 'mention-item--active' : ''}`}
+                    // onMouseDown (not onClick) so the input keeps focus for caret restore.
+                    onMouseDown={(e) => { e.preventDefault(); insertMention(n); }}
+                  >
+                    <Avatar name={n} />
+                    <span>{n}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Input
+            ref={inputRef}
+            value={draft}
+            onChange={onDraftChange}
+            onKeyDown={onDraftKeyDown}
+            onBlur={() => setMention(null)}
+            placeholder={t('chat.composer')}
+            autoFocus
+          />
+        </div>
         <Button type="submit" variant="primary" disabled={busy || thinking}>{t('action.send')}</Button>
       </form>
     </Panel>
@@ -189,12 +282,51 @@ function NewRoomForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
   );
 }
 
+function RenameConversationForm({ conversation, onClose, onRenamed }:
+  { conversation: Conversation; onClose: () => void; onRenamed: () => void }) {
+  const { t } = useApp();
+  const [name, setName] = useState(conversation.title);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    desktop
+      .renameConversation(conversation.id, name.trim())
+      .then(() => {
+        onRenamed();
+        onClose();
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setBusy(false);
+      });
+  };
+
+  return (
+    <Modal title={t('chat.renameTitle')} onClose={onClose}>
+      {error && <div className="form-error">{error}</div>}
+      <FormRow label={t('chat.roomName')}>
+        <Input value={name} autoFocus onChange={(e) => setName(e.target.value)} />
+      </FormRow>
+      <div className="form-actions">
+        <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
+        <Button variant="primary" onClick={submit}>{t('chat.rename')}</Button>
+      </div>
+    </Modal>
+  );
+}
+
 /** Two-pane conversation workspace shared by the Chat (direct) and Group Chat
  *  (group) screens. Both are backed by the same conversations/messages tables. */
 export function Conversations({ kind }: { kind: Kind }) {
   const { t } = useApp();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState<Conversation | null>(null);
+  const [deleting, setDeleting] = useState<Conversation | null>(null);
   const s = useAsync(() => desktop.listConversations(kind), [kind]);
 
   const titleKey = kind === 'group' ? 'nav.groupChat' : 'nav.chat';
@@ -209,6 +341,19 @@ export function Conversations({ kind }: { kind: Kind }) {
         s.reload();
       });
     }
+  };
+
+  const confirmDelete = () => {
+    const target = deleting;
+    if (!target) return;
+    desktop
+      .deleteConversation(target.id)
+      .then(() => {
+        if (selectedId === target.id) setSelectedId(null);
+        setDeleting(null);
+        s.reload();
+      })
+      .catch(() => setDeleting(null));
   };
 
   return (
@@ -229,6 +374,25 @@ export function Conversations({ kind }: { kind: Kind }) {
         />
       )}
 
+      {renaming && (
+        <RenameConversationForm
+          conversation={renaming}
+          onClose={() => setRenaming(null)}
+          onRenamed={() => s.reload()}
+        />
+      )}
+
+      {deleting && (
+        <ConfirmDialog
+          title={t('chat.deleteConversation')}
+          message={t('chat.deleteConfirm')}
+          confirmLabel={t('action.delete')}
+          cancelLabel={t('action.cancel')}
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
+
       <div className="chat-layout">
         <Panel title={t('chat.conversations')}>
           <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
@@ -237,15 +401,32 @@ export function Conversations({ kind }: { kind: Kind }) {
               return (
                 <div className="stack">
                   {conversations.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      className={`chat-item ${c.id === active ? 'chat-item--active' : ''}`}
-                      onClick={() => setSelectedId(c.id)}
-                    >
-                      <span className="chat-item-title">{c.title}</span>
-                      <span className="muted">{c.messageCount}</span>
-                    </button>
+                    <div key={c.id} className="chat-item-row">
+                      <button
+                        type="button"
+                        className={`chat-item ${c.id === active ? 'chat-item--active' : ''}`}
+                        onClick={() => setSelectedId(c.id)}
+                      >
+                        <span className="chat-item-title">{c.title}</span>
+                        <span className="muted">{c.messageCount}</span>
+                      </button>
+                      <div className="chat-item-actions">
+                        <button
+                          type="button"
+                          className="chat-item-action"
+                          title={t('chat.rename')}
+                          aria-label={t('chat.rename')}
+                          onClick={() => setRenaming(c)}
+                        >✎</button>
+                        <button
+                          type="button"
+                          className="chat-item-action chat-item-action--danger"
+                          title={t('chat.deleteConversation')}
+                          aria-label={t('chat.deleteConversation')}
+                          onClick={() => setDeleting(c)}
+                        >🗑</button>
+                      </div>
+                    </div>
                   ))}
                 </div>
               );

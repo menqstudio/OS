@@ -74,6 +74,10 @@ export const hy: Record<DictKey, string> = {
   'chat.you': 'gev',
   'chat.replyFailed': 'Գործակալը չկարողացավ պատասխանել',
   'chat.replyAs': 'Պատասխանել որպես',
+  'chat.rename': 'Վերանվանել',
+  'chat.renameTitle': 'Վերանվանել զրույցը',
+  'chat.deleteConversation': 'Ջնջել զրույցը',
+  'chat.deleteConfirm': 'Այս զրույցը և բոլոր հաղորդագրությունները մշտապես կջնջվեն։',
 
   'projects.subtitle': 'Նպատակակենտրոն աշխատանք',
   'tasks.subtitle': 'Ապացույցներով գործողությունների համակարգ',
