@@ -9,8 +9,9 @@ import { useToast } from '../components/toast';
 import { statusTone, PRIORITIES } from '../domain/enums';
 import type { Task } from '../domain/entities';
 
-// Board columns, left to right. Moving a card between columns sets its status.
-const COLUMNS = ['inbox', 'active', 'blocked', 'review', 'done'];
+// Board columns, left to right — the full task status vocabulary so no task is
+// ever invisible. Moving a card between columns sets its status.
+const COLUMNS = ['inbox', 'planned', 'active', 'blocked', 'review', 'done', 'cancelled'];
 
 function NewTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { t } = useApp();
@@ -106,6 +107,7 @@ export function Tasks() {
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState<Task | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [dragStatus, setDragStatus] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const s = useAsync(() => desktop.listTasks(), []);
 
@@ -114,10 +116,12 @@ export function Tasks() {
   };
   const onDrop = (status: string) => {
     setDragOver(null);
-    if (dragId) {
+    // Skip a drop onto the card's own column — no status change, no spurious write.
+    if (dragId && dragStatus !== status) {
       moveTo(dragId, status);
-      setDragId(null);
     }
+    setDragId(null);
+    setDragStatus(null);
   };
 
   return (
@@ -159,8 +163,8 @@ export function Tasks() {
                         key={x.id}
                         className="board-card"
                         draggable
-                        onDragStart={() => setDragId(x.id)}
-                        onDragEnd={() => { setDragId(null); setDragOver(null); }}
+                        onDragStart={() => { setDragId(x.id); setDragStatus(x.status); }}
+                        onDragEnd={() => { setDragId(null); setDragStatus(null); setDragOver(null); }}
                         onClick={() => setDetail(x)}
                       >
                         <div className="board-card-title">{x.title}</div>
