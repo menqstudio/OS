@@ -78,6 +78,7 @@ export const ru: Record<DictKey, string> = {
   'chat.renameTitle': 'Переименовать разговор',
   'chat.deleteConversation': 'Удалить разговор',
   'chat.deleteConfirm': 'Этот разговор и все его сообщения будут удалены безвозвратно.',
+  'chat.saveToChat': 'Сохранить в чат',
 
   'projects.subtitle': 'Работа, ориентированная на цель',
   'tasks.subtitle': 'Система действий с доказательствами',
@@ -155,6 +156,7 @@ export const ru: Record<DictKey, string> = {
   'palette.results': 'Результаты',
 
   'toast.created': 'Создано',
+  'toast.savedToChat': 'Сохранено в чат',
 
   'field.owner': 'Владелец',
   'field.risk': 'Риск',
