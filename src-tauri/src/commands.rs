@@ -332,6 +332,29 @@ pub async fn stream_reply(
     Ok(())
 }
 
+/// One-shot "Ask Bro": stream an answer to a single prompt WITHOUT a
+/// conversation or persistence. Deltas arrive on the channel; completion is
+/// signalled by the command returning (no `done` event, nothing is stored).
+#[tauri::command]
+pub async fn stream_ask(prompt: String, on_event: tauri::ipc::Channel<StreamEvent>) -> Result<(), String> {
+    let prompt = prompt.trim().to_string();
+    if prompt.is_empty() {
+        let _ = on_event.send(StreamEvent::Error { message: "empty prompt".into() });
+        return Ok(());
+    }
+    let system = "You are Bro, the top-level assistant in the BroPS desktop app for its owner, Gev. Answer the question concisely and helpfully. Do not claim to have taken actions you cannot actually take.".to_string();
+    let history = vec![crate::ai::ChatMsg { role: "user".to_string(), content: prompt }];
+    let ch = on_event.clone();
+    if let Err(e) = crate::ai::generate_stream(&system, &history, move |delta| {
+        let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
+    })
+    .await
+    {
+        let _ = on_event.send(StreamEvent::Error { message: e });
+    }
+    Ok(())
+}
+
 /// Generate a real agent reply for a conversation and persist it as an
 /// `agent`-role message. Reads history under the DB lock, releases it before
 /// the network call (so the future stays Send and the UI stays responsive),

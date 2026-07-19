@@ -119,6 +119,13 @@ export const desktop = {
     channel.onmessage = onEvent;
     return invoke<void>('stream_reply', { conversationId, agent: agent ?? null, onEvent: channel });
   },
+
+  // one-shot Ask Bro: streams an answer to a single prompt (no persistence).
+  streamAsk: (prompt: string, onEvent: (e: StreamEvent) => void) => {
+    const channel = new Channel<StreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>('stream_ask', { prompt, onEvent: channel });
+  },
 };
 
 export type StreamEvent =

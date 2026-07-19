@@ -1,10 +1,35 @@
+import { useState } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, StatusPill, Avatar, Badge, Async } from '../components/ui';
+import { PageHeader, Panel, Button, StatusPill, Avatar, Badge, Async, Input } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import { Markdown } from '../components/markdown';
 
 export function Home() {
   const { t, setRoute } = useApp();
+  const [q, setQ] = useState('');
+  const [answer, setAnswer] = useState('');
+  const [asking, setAsking] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
+
+  const ask = async () => {
+    const prompt = q.trim();
+    if (!prompt || asking) return;
+    setAsking(true);
+    setAnswer('');
+    setAskError(null);
+    try {
+      await desktop.streamAsk(prompt, (ev) => {
+        if (ev.type === 'delta') setAnswer((prev) => prev + ev.text);
+        else if (ev.type === 'error') setAskError(ev.message);
+      });
+    } catch (e: unknown) {
+      setAskError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAsking(false);
+    }
+  };
+
   const active = useAsync(() => desktop.listTasksByStatus('active'), []);
   const approvals = useAsync(
     () => desktop.listApprovals().then((rows) => rows.filter((a) => a.status === 'pending')),
@@ -17,10 +42,22 @@ export function Home() {
     <>
       <PageHeader title={t('nav.home')} subtitle={t('home.subtitle')} />
 
-      <Panel title={t('home.askBro')} actions={<Button variant="primary" onClick={() => setRoute('command')}>{t('action.ask')}</Button>}>
-        <div className="searchbtn" style={{ maxWidth: 'none', cursor: 'text' }} onClick={() => setRoute('command')}>
-          <span>⌘</span><span>{t('command.placeholder')}</span>
-        </div>
+      <Panel title={t('home.askBro')}>
+        <form className="ask-form" onSubmit={(e) => { e.preventDefault(); ask(); }}>
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('command.placeholder')} />
+          <Button type="submit" variant="primary" disabled={asking}>{t('action.ask')}</Button>
+        </form>
+        {(asking || answer || askError) && (
+          <div className="ask-answer">
+            {answer && (asking
+              ? <div className="ask-stream">{answer}<span className="chat-cursor" /></div>
+              : <Markdown text={answer} />)}
+            {asking && !answer && (
+              <span className="chat-typing"><span></span><span></span><span></span></span>
+            )}
+            {askError && <div className="chat-hint">⚠ {askError}</div>}
+          </div>
+        )}
       </Panel>
 
       <div className="grid grid-2" style={{ marginTop: 16 }}>

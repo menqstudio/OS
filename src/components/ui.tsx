@@ -36,10 +36,10 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 }
 
 type BtnVariant = 'default' | 'primary' | 'danger' | 'ghost';
-export function Button({ children, variant = 'default', small, onClick, title, type = 'button' }:
-  { children: React.ReactNode; variant?: BtnVariant; small?: boolean; onClick?: () => void; title?: string; type?: 'button' | 'submit' }) {
+export function Button({ children, variant = 'default', small, onClick, title, type = 'button', disabled }:
+  { children: React.ReactNode; variant?: BtnVariant; small?: boolean; onClick?: () => void; title?: string; type?: 'button' | 'submit'; disabled?: boolean }) {
   const cls = variant === 'default' ? '' : `btn--${variant}`;
-  return <button type={type} title={title} className={`btn ${cls} ${small ? 'btn--sm' : ''}`} onClick={onClick}>{children}</button>;
+  return <button type={type} title={title} disabled={disabled} className={`btn ${cls} ${small ? 'btn--sm' : ''}`} onClick={onClick}>{children}</button>;
 }
 
 export function Badge({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: Tone }) {
