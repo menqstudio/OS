@@ -95,9 +95,33 @@
   border-radius: var(--menq-radius-md); padding: 8px 12px; max-width: 74%; }
 .chat-msg--mine .chat-bubble { background: var(--menq-color-selected); border-color: var(--brops-accent); }
 .chat-author { font-size: 11px; color: var(--brops-muted); margin-bottom: 2px; }
-.chat-composer { display: flex; gap: var(--menq-space-3); }
-.chat-composer .input { flex: 1; }
+.chat-composer { display: flex; gap: var(--menq-space-3); align-items: flex-start; }
+.chat-composer-field { position: relative; flex: 1; }
+.chat-composer-field .input { width: 100%; }
 @media (max-width: 820px) { .chat-layout { grid-template-columns: 1fr; } }
+
+/* conversation row hover actions (rename / delete) */
+.chat-item-row { position: relative; }
+.chat-item-actions { position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  display: none; gap: 2px; }
+.chat-item-row:hover .chat-item-actions,
+.chat-item-row:focus-within .chat-item-actions { display: flex; }
+.chat-item-action { background: var(--menq-color-elevated); border: 1px solid var(--brops-border);
+  border-radius: var(--menq-radius-sm); color: var(--brops-text); cursor: pointer;
+  padding: 2px 6px; font-size: 12px; line-height: 1.4; }
+.chat-item-action:hover { background: var(--menq-color-hover); }
+.chat-item-action--danger:hover { border-color: var(--menq-color-danger); color: var(--menq-color-danger); }
+
+/* @mention autocomplete popup */
+.mention-popup { position: absolute; bottom: calc(100% + 6px); left: 0; right: 0; margin: 0;
+  list-style: none; padding: 4px; max-height: 200px; overflow-y: auto; z-index: 20;
+  background: var(--menq-color-elevated); border: 1px solid var(--brops-border);
+  border-radius: var(--menq-radius-md); box-shadow: var(--menq-shadow-2); }
+.mention-item { display: flex; align-items: center; gap: var(--menq-space-3); width: 100%;
+  text-align: left; background: transparent; border: none; border-radius: var(--menq-radius-sm);
+  padding: 6px 8px; cursor: pointer; color: var(--brops-text); font: inherit; }
+.mention-item:hover, .mention-item--active { background: var(--menq-color-hover); }
+.chat-stream { display: block; }
 
 /* files browser */
 .file-row--dir:hover { background: var(--menq-color-hover); border-radius: var(--menq-radius-md); }

@@ -338,6 +338,33 @@ mod tests {
     }
 
     #[test]
+    fn conversation_delete_and_rename() {
+        let c = conn();
+        let conv = repo::chat::create_conversation(&c, "group", "old title").unwrap();
+        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(), body: "hi".into() }).unwrap();
+        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(), body: "hello".into() }).unwrap();
+
+        // rename updates the stored title
+        let renamed = repo::chat::rename_conversation(&c, &conv.id, "new title").unwrap();
+        assert_eq!(renamed.title, "new title");
+        assert_eq!(repo::chat::get_conversation(&c, &conv.id).unwrap().title, "new title");
+
+        // a second conversation so we can watch the list count drop on delete
+        repo::chat::create_conversation(&c, "group", "keep me").unwrap();
+        assert_eq!(repo::chat::list_conversations(&c, None).unwrap().len(), 2);
+
+        // delete removes the conversation and cascades its messages away
+        repo::chat::delete_conversation(&c, &conv.id).unwrap();
+        assert_eq!(repo::chat::list_conversations(&c, None).unwrap().len(), 1);
+        assert_eq!(repo::chat::list_messages(&c, &conv.id).unwrap().len(), 0);
+        assert!(repo::chat::get_conversation(&c, &conv.id).is_err());
+
+        // deleting/renaming an unknown conversation is a clean NotFound
+        assert!(matches!(repo::chat::delete_conversation(&c, "nope"), Err(CoreError::NotFound(_))));
+        assert!(matches!(repo::chat::rename_conversation(&c, "nope", "x"), Err(CoreError::NotFound(_))));
+    }
+
+    #[test]
     fn seed_populates_and_is_idempotent() {
         let c = conn();
         repo::seed(&c).unwrap();

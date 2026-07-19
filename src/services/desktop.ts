@@ -58,6 +58,9 @@ export const desktop = {
   listMessages: (conversationId: string) =>
     invoke<Message[]>('list_messages', { conversationId }),
   postMessage: (input: NewMessage) => invoke<Message>('post_message', { input }),
+  deleteConversation: (id: string) => invoke<void>('delete_conversation', { id }),
+  renameConversation: (id: string, title: string) =>
+    invoke<Conversation>('rename_conversation', { id, title }),
 
   // knowledge
   listKnowledge: () => invoke<KnowledgeNote[]>('list_knowledge'),

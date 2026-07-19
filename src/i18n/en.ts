@@ -72,6 +72,10 @@ export const en = {
   'chat.you': 'gev',
   'chat.replyFailed': 'Agent could not reply',
   'chat.replyAs': 'Reply as',
+  'chat.rename': 'Rename',
+  'chat.renameTitle': 'Rename conversation',
+  'chat.deleteConversation': 'Delete conversation',
+  'chat.deleteConfirm': 'This conversation and all of its messages will be permanently deleted.',
 
   'projects.subtitle': 'Objective-centered work',
   'tasks.subtitle': 'Action system with evidence',

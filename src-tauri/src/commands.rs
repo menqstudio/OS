@@ -151,6 +151,18 @@ pub fn post_message(state: State<AppState>, input: NewMessage) -> Result<Message
     repo::chat::post_message(&conn, input).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn delete_conversation(state: State<AppState>, id: String) -> Result<(), String> {
+    let conn = locked(&state)?;
+    repo::chat::delete_conversation(&conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_conversation(state: State<AppState>, id: String, title: String) -> Result<Conversation, String> {
+    let conn = locked(&state)?;
+    repo::chat::rename_conversation(&conn, &id, &title).map_err(|e| e.to_string())
+}
+
 // --- knowledge ---
 
 #[tauri::command]

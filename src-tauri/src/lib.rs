@@ -44,6 +44,8 @@ pub fn run() {
             commands::create_conversation,
             commands::list_messages,
             commands::post_message,
+            commands::delete_conversation,
+            commands::rename_conversation,
             commands::list_knowledge,
             commands::search_knowledge,
             commands::create_knowledge,
