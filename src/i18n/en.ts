@@ -70,6 +70,7 @@ export const en = {
   'chat.noMessages': 'No messages yet',
   'chat.noMessagesHint': 'Send the first message below.',
   'chat.you': 'gev',
+  'chat.replyFailed': 'Agent could not reply',
 
   'projects.subtitle': 'Objective-centered work',
   'tasks.subtitle': 'Action system with evidence',

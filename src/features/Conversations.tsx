@@ -12,27 +12,42 @@ type Kind = 'direct' | 'group';
 function MessageThread({ conversation, onActivity }: { conversation: Conversation; onActivity: () => void }) {
   const { t } = useApp();
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
+  const ai = useAsync(() => desktop.aiStatus(), []);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [replyError, setReplyError] = useState<string | null>(null);
 
-  const send = () => {
+  const send = async () => {
     const body = draft.trim();
     if (!body || busy) return;
     setBusy(true);
     setError(null);
-    desktop
-      .postMessage({ conversationId: conversation.id, role: 'user', author: t('chat.you'), body })
-      .then(() => {
-        setDraft('');
-        setBusy(false);
-        s.reload();
-        onActivity();
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : String(e));
-        setBusy(false);
-      });
+    setReplyError(null);
+    try {
+      await desktop.postMessage({ conversationId: conversation.id, role: 'user', author: t('chat.you'), body });
+      setDraft('');
+      s.reload();
+      onActivity();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    // Ask an agent to actually reply. Best-effort: a provider failure is shown
+    // honestly but never loses the user's message.
+    setThinking(true);
+    try {
+      await desktop.replyInConversation(conversation.id);
+      s.reload();
+      onActivity();
+    } catch (e: unknown) {
+      setReplyError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setThinking(false);
+    }
   };
 
   return (
@@ -53,8 +68,22 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
             </div>
           )}
         </Async>
+        {thinking && (
+          <div className="chat-msg chat-msg--other">
+            <Avatar name="B" />
+            <div className="chat-bubble">
+              <span className="chat-typing"><span></span><span></span><span></span></span>
+            </div>
+          </div>
+        )}
       </div>
       {error && <div className="form-error">{error}</div>}
+      {replyError && (
+        <div className="chat-hint" style={{ marginBottom: 8 }}>⚠ {t('chat.replyFailed')}: {replyError}</div>
+      )}
+      {ai.data && !ai.data.ready && !replyError && (
+        <div className="chat-hint" style={{ marginBottom: 8 }}>⚠ {ai.data.detail}</div>
+      )}
       <form
         className="chat-composer"
         onSubmit={(e) => {
