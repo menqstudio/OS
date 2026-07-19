@@ -55,6 +55,40 @@ async fn bounded_text(resp: reqwest::Response, max: usize) -> String {
     }
 }
 
+// Input-side caps: reject an oversized/compromised frontend payload BEFORE any
+// provider allocates a transcript String or JSON body, so it can't OOM us ahead
+// of the time/output limits.
+const MAX_SYSTEM_BYTES: usize = 256 * 1024; // 256 KiB
+const MAX_MESSAGE_BYTES: usize = 1024 * 1024; // 1 MiB per message
+const MAX_CONVERSATION_BYTES: usize = 8 * 1024 * 1024; // 8 MiB total
+const MAX_MESSAGES: usize = 1000;
+
+/// Validate a request's size before dispatching to any provider. Overflow-safe.
+fn validate_input(system: &str, messages: &[ChatMsg]) -> Result<(), String> {
+    if system.len() > MAX_SYSTEM_BYTES {
+        return Err(format!("system prompt too large (> {MAX_SYSTEM_BYTES} bytes)"));
+    }
+    if messages.is_empty() {
+        return Err("no messages to send".to_string());
+    }
+    if messages.len() > MAX_MESSAGES {
+        return Err(format!("too many messages (> {MAX_MESSAGES})"));
+    }
+    let mut total = system.len();
+    for m in messages {
+        if m.content.len() > MAX_MESSAGE_BYTES {
+            return Err(format!("a message is too large (> {MAX_MESSAGE_BYTES} bytes)"));
+        }
+        total = total
+            .checked_add(m.content.len())
+            .ok_or_else(|| "conversation size overflow".to_string())?;
+        if total > MAX_CONVERSATION_BYTES {
+            return Err(format!("conversation too large (> {MAX_CONVERSATION_BYTES} bytes)"));
+        }
+    }
+    Ok(())
+}
+
 /// One turn of a conversation. `role` is "user" or "assistant".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMsg {
@@ -113,19 +147,48 @@ fn resolve() -> Provider {
     Provider::ClaudeCli { bin: claude_bin }
 }
 
+/// Readiness probe for the local `claude` CLI. Spawns `claude --version` with
+/// kill_on_drop so a hung/hostile binary is reaped on timeout (no orphan piling
+/// up across repeated status polls), and drains its output bounded so it can't
+/// flood memory either.
+async fn claude_version_ok(bin: &str) -> bool {
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let stderr = child.stderr.take();
+    let err_task = tokio::spawn(async move {
+        if let Some(e) = stderr {
+            use tokio::io::AsyncReadExt;
+            let mut sink = Vec::new();
+            let _ = e.take(MAX_STDERR_BYTES).read_to_end(&mut sink).await;
+        }
+    });
+    let stdout = child.stdout.take();
+    let fut = async move {
+        if let Some(o) = stdout {
+            use tokio::io::AsyncReadExt;
+            let mut sink = Vec::new();
+            let _ = o.take(MAX_STDERR_BYTES).read_to_end(&mut sink).await;
+        }
+        child.wait().await
+    };
+    let ok = matches!(tokio::time::timeout(Duration::from_secs(4), fut).await, Ok(Ok(s)) if s.success());
+    err_task.abort();
+    ok
+}
+
 /// Report the configured provider and a best-effort readiness check.
 pub async fn status() -> AiStatus {
     match resolve() {
         Provider::ClaudeCli { bin } => {
-            let ok = tokio::time::timeout(
-                Duration::from_secs(4),
-                tokio::process::Command::new(&bin).arg("--version").output(),
-            )
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+            let ok = claude_version_ok(&bin).await;
             AiStatus {
                 provider: "claude-cli".into(),
                 model: env_nonempty("BROPS_CLAUDE_MODEL").unwrap_or_else(|| "claude (subscription)".into()),
@@ -167,6 +230,7 @@ pub async fn status() -> AiStatus {
 
 /// Generate a single reply given a system prompt and prior turns.
 pub async fn generate(system: &str, messages: &[ChatMsg]) -> Result<String, String> {
+    validate_input(system, messages)?;
     match resolve() {
         Provider::ClaudeCli { bin } => claude_cli(&bin, system, messages).await,
         Provider::Anthropic { key, model } => anthropic(&key, &model, system, messages).await,
@@ -183,6 +247,7 @@ pub async fn generate_stream<F: FnMut(&str)>(
     messages: &[ChatMsg],
     mut on_delta: F,
 ) -> Result<String, String> {
+    validate_input(system, messages)?;
     match resolve() {
         Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta).await,
         Provider::Anthropic { key, model } => {
@@ -638,6 +703,25 @@ mod tests {
                 || a == "--allowedTools" || a == "--allowed-tools"));
             assert!(!args.iter().any(|a| a == "default"), "must not pass --tools default");
         }
+    }
+
+    #[test]
+    fn validate_input_enforces_size_and_count_caps() {
+        let msg = |c: &str| ChatMsg { role: "user".into(), content: c.into() };
+        let ok = vec![msg("hi")];
+        assert!(validate_input("sys", &ok).is_ok());
+        // empty conversation → clear error
+        assert!(validate_input("sys", &[]).is_err());
+        // oversized system prompt
+        assert!(validate_input(&"a".repeat(MAX_SYSTEM_BYTES + 1), &ok).is_err());
+        // one oversized message
+        assert!(validate_input("s", &[msg(&"a".repeat(MAX_MESSAGE_BYTES + 1))]).is_err());
+        // too many messages
+        let many: Vec<ChatMsg> = (0..MAX_MESSAGES + 1).map(|_| msg("x")).collect();
+        assert!(validate_input("s", &many).is_err());
+        // total conversation cap (9 × 1 MiB > 8 MiB) even though each message is legal
+        let heavy: Vec<ChatMsg> = (0..9).map(|_| msg(&"a".repeat(1024 * 1024))).collect();
+        assert!(validate_input("s", &heavy).is_err());
     }
 
     #[test]
