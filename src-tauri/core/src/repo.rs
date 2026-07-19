@@ -965,6 +965,149 @@ pub mod security {
     }
 }
 
+pub mod search {
+    use super::*;
+
+    /// Per-entity result cap so no single kind floods the palette.
+    const CAP: i64 = 5;
+
+    /// Truncate a string to at most `max` characters (on a char boundary),
+    /// appending an ellipsis when it was cut.
+    fn clip(s: &str, max: usize) -> String {
+        if s.chars().count() <= max {
+            s.to_string()
+        } else {
+            format!("{}…", s.chars().take(max).collect::<String>())
+        }
+    }
+
+    /// Case-insensitive substring search across the primary entities. An
+    /// empty/whitespace query yields no results. Each entity kind contributes at
+    /// most `CAP` rows; results are grouped by kind in a stable order.
+    pub fn global(conn: &Connection, query: &str) -> CoreResult<Vec<SearchResult>> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let like = format!("%{q}%");
+        let mut out: Vec<SearchResult> = Vec::new();
+
+        // projects
+        let mut s = conn.prepare(
+            "SELECT id, name, status FROM projects \
+             WHERE name LIKE ?1 OR description LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+        )?;
+        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+            Ok(SearchResult {
+                kind: "project".to_string(),
+                id: r.get("id")?,
+                title: r.get("name")?,
+                subtitle: r.get("status")?,
+                route: "projects".to_string(),
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+        // tasks
+        let mut s = conn.prepare(
+            "SELECT id, title, status FROM tasks WHERE title LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+        )?;
+        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+            Ok(SearchResult {
+                kind: "task".to_string(),
+                id: r.get("id")?,
+                title: r.get("title")?,
+                subtitle: r.get("status")?,
+                route: "tasks".to_string(),
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+        // knowledge notes
+        let mut s = conn.prepare(
+            "SELECT id, title, tags FROM knowledge_notes \
+             WHERE title LIKE ?1 OR body LIKE ?1 OR tags LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+        )?;
+        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+            Ok(SearchResult {
+                kind: "knowledge".to_string(),
+                id: r.get("id")?,
+                title: r.get("title")?,
+                subtitle: r.get("tags")?,
+                route: "knowledge".to_string(),
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+        // decisions
+        let mut s = conn.prepare(
+            "SELECT id, title, status FROM decisions WHERE title LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+        )?;
+        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+            Ok(SearchResult {
+                kind: "decision".to_string(),
+                id: r.get("id")?,
+                title: r.get("title")?,
+                subtitle: r.get("status")?,
+                route: "decisions".to_string(),
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+        // agents
+        let mut s = conn.prepare(
+            "SELECT id, display_name, role FROM agents \
+             WHERE display_name LIKE ?1 OR role LIKE ?1 ORDER BY display_name LIMIT ?2",
+        )?;
+        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+            Ok(SearchResult {
+                kind: "agent".to_string(),
+                id: r.get("id")?,
+                title: r.get("display_name")?,
+                subtitle: r.get("role")?,
+                route: "agents".to_string(),
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+        // conversations (route depends on the conversation kind)
+        let mut s = conn.prepare(
+            "SELECT id, title, kind FROM conversations WHERE title LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+        )?;
+        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+            let conv_kind: String = r.get("kind")?;
+            let route = if conv_kind == "group" { "groupChat" } else { "chat" };
+            Ok(SearchResult {
+                kind: "conversation".to_string(),
+                id: r.get("id")?,
+                title: r.get("title")?,
+                subtitle: conv_kind,
+                route: route.to_string(),
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+        // memory entries (title is the content, truncated for the palette)
+        let mut s = conn.prepare(
+            "SELECT id, content, scope FROM memory_entries WHERE content LIKE ?1 \
+             ORDER BY pinned DESC, updated_at DESC LIMIT ?2",
+        )?;
+        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+            let content: String = r.get("content")?;
+            Ok(SearchResult {
+                kind: "memory".to_string(),
+                id: r.get("id")?,
+                title: clip(&content, 60),
+                subtitle: r.get("scope")?,
+                route: "memory".to_string(),
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+
+        Ok(out)
+    }
+}
+
 fn not_found(id: &str) -> impl Fn(rusqlite::Error) -> CoreError + '_ {
     move |e| match e {
         rusqlite::Error::QueryReturnedNoRows => CoreError::NotFound(id.to_string()),

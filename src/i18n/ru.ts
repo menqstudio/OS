@@ -143,6 +143,9 @@ export const ru: Record<DictKey, string> = {
 
   'palette.placeholder': 'Введите команду или запрос…',
   'palette.navigate': 'Навигация',
+  'palette.results': 'Результаты',
+
+  'toast.created': 'Создано',
 
   'field.owner': 'Владелец',
   'field.risk': 'Риск',

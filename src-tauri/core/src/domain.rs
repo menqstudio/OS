@@ -216,6 +216,16 @@ camel! {
         pub audit_events: i64,
         pub sensitive_events: Vec<ActivityEvent>,
     }
+
+    // A single global-search hit. Computed at read time across many tables; the
+    // `route` names the screen the frontend navigates to when it is selected.
+    pub struct SearchResult {
+        pub kind: String,
+        pub id: String,
+        pub title: String,
+        pub subtitle: String,
+        pub route: String,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

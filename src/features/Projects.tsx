@@ -5,6 +5,7 @@ import {
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import { useToast } from '../components/toast';
 import { statusTone, PRIORITIES } from '../domain/enums';
 import type { Project } from '../domain/entities';
 
@@ -93,6 +94,7 @@ function ProjectDetail({ project, onClose }: { project: Project; onClose: () => 
 
 export function Projects() {
   const { t } = useApp();
+  const toast = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const s = useAsync(() => desktop.listProjects(), []);
@@ -105,7 +107,12 @@ export function Projects() {
         actions={<Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>}
       />
 
-      {creating && <NewProjectForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
+      {creating && (
+        <NewProjectForm
+          onClose={() => setCreating(false)}
+          onCreated={() => { s.reload(); toast(t('toast.created'), 'success'); }}
+        />
+      )}
 
       <Panel>
         <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>

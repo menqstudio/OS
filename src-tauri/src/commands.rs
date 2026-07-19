@@ -6,7 +6,7 @@ use brops_core::{
     repo, ActivityEvent, Agent, Approval, Automation, Conversation, Decision, Event, Integration,
     KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent, NewKnowledgeNote,
     NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run, RunStep,
-    SecuritySummary, Task,
+    SearchResult, SecuritySummary, Task,
 };
 use tauri::State;
 
@@ -451,6 +451,14 @@ pub fn list_integrations(state: State<AppState>) -> Result<Vec<Integration>, Str
 pub fn set_integration_status(state: State<AppState>, id: String, status: String) -> Result<Integration, String> {
     let conn = locked(&state)?;
     repo::integrations::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+}
+
+// --- global search ---
+
+#[tauri::command]
+pub fn search_all(state: State<AppState>, query: String) -> Result<Vec<SearchResult>, String> {
+    let conn = locked(&state)?;
+    repo::search::global(&conn, &query).map_err(|e| e.to_string())
 }
 
 // --- analytics / security (computed, read-only) ---

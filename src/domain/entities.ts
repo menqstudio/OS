@@ -220,6 +220,16 @@ export interface Metric {
   value: number;
 }
 
+// A single global-search hit (from the `search_all` command). `route` names the
+// screen the command palette navigates to when the result is selected.
+export interface SearchResult {
+  kind: string;
+  id: string;
+  title: string;
+  subtitle: string;
+  route: string;
+}
+
 export interface SecuritySummary {
   pendingApprovals: number;
   decidedApprovals: number;

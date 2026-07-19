@@ -143,6 +143,9 @@ export const hy: Record<DictKey, string> = {
 
   'palette.placeholder': 'Մուտքագրիր հրաման կամ որոնիր…',
   'palette.navigate': 'Նավարկել',
+  'palette.results': 'Արդյունքներ',
+
+  'toast.created': 'Ստեղծվեց',
 
   'field.owner': 'Պատասխանատու',
   'field.risk': 'Ռիսկ',
