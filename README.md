@@ -10,22 +10,39 @@ BroPS is not a generic dashboard. It is the daily operating environment where Ge
 
 Bro is the primary interface and coordinator. Specialist agents work inside explicit project, permission, approval, and evidence boundaries.
 
-## Foundation status
+## Status — working desktop app (Phases 0–20)
 
-- Foundation v1: **Locked** (2026-07-19) — see decision D-010
-- Phase 2 interactive prototype: **frontend running** (React + TypeScript + Vite, mock data)
-- Phase 3 data core: **SQLite schema + migrations + repositories tested** (`cargo test -p brops-core`, 6 tests GREEN)
-- Tauri desktop host: scaffolded (`src-tauri/`); GUI binary build needs system webview libs — see [src-tauri/README.md](src-tauri/README.md)
+- Foundation v1: **Locked** (2026-07-19) — see decision D-010.
+- **Real backend, no mock layer.** React 19 + TypeScript + Vite frontend over a typed IPC boundary to a Tauri 2 + Rust host with SQLite (`rusqlite`, bundled). `cargo test -p brops-core` is GREEN (**28 tests**), schema **v10**, CI green.
+- **Live AI** through the local `claude` CLI — Gev's own Claude Code subscription, free, no API key — with token-by-token streaming; Anthropic API key and Ollama are optional fallbacks.
+- **Shipped surfaces (all backed by real commands + SQLite):**
+  - Streaming **Chat / Group Chat** — agent picker, `@mention`, delete/rename, live Markdown.
+  - **Command** runs that actually execute step-by-step via the AI, with **approval gating** (a gated step can't run until approved; rejection is terminal).
+  - **Projects** (detail, edit, status change, Overview/Tasks tabs), **Tasks** kanban board (drag between statuses) with **dependencies / blockers** (self-edge + cycle guarded).
+  - **Files** browser with text **view + edit** (2 MB / binary guarded), **Calendar** month view, **Analytics** charts.
+  - **Global full-text search (FTS5)** + command palette with **deep-links** — opens the specific project / task / knowledge note / conversation, not just its screen.
+  - Honest **offline / permission** states, plus Knowledge, Memory, Approvals, Decisions, Activity, Notifications, Integrations, Automations, Security, Settings.
+- **Purpose:** a prettier, handier UI over what Gev already does in VS Code + Claude Code — not a from-scratch reimplementation.
 
-## Run the prototype
+## Run
 
 ```bash
+# Frontend only (browser preview — shows honest offline state, no backend)
 npm install
-npm run dev        # http://localhost:1420
-npm run build      # typecheck + production build
+npm run dev          # http://localhost:1420
+
+# Full desktop app (real Rust + SQLite backend + live AI)
+npm run tauri dev    # dev build with the webview
+# …or a release binary:
+cargo build --release --manifest-path src-tauri/Cargo.toml
+./src-tauri/target/release/brops
+
+# Verify
+npm run build                                                   # tsc --noEmit + vite
+cargo test -p brops-core --manifest-path src-tauri/Cargo.toml   # 28 tests
 ```
 
-The prototype is the frontend app shell: left navigation, top bar, command palette (⌘/Ctrl-K), all primary screens with mock data, trilingual runtime switching (HY/EN/RU), and Dark/Light themes. It uses in-memory mock data — no backend is connected yet. Features that need the desktop backend are visibly marked as prototype rather than shown as working.
+AI uses the local `claude` binary by default. If it isn't on the app's `PATH`, set `BROPS_CLAUDE_BIN`; other knobs: `BROPS_AI_PROVIDER` (`claude` | `anthropic` | `ollama`), `ANTHROPIC_API_KEY`, `BROPS_CLAUDE_MODEL`. The SQLite database lives at `~/.local/share/studio.menq.brops/brops.db`.
 
 ## Documentation index
 

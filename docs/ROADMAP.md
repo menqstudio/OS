@@ -37,7 +37,7 @@ Exit condition: every MVP capability has a defined user flow. ✓
 
 ## Phase 2 — Interactive product prototype
 
-Status: Frontend prototype running (React + TypeScript + Vite; app shell, all primary screens, mock data, HY/EN/RU, Dark/Light). Backend deferred to Phase 3.
+Status: Delivered (2026-07-19) — the clickable shell shipped, then the mock layer was removed once the real backend landed (Phase 3). App shell, all primary screens, HY/EN/RU, Dark/Light.
 
 - Application shell
 - Home and Command
@@ -52,24 +52,26 @@ Exit condition: complete clickable prototype with no dead-end primary flows.
 
 ## Phase 3 — Application foundation
 
-Status: In progress — the local data core is built and tested; the Tauri host is scaffolded.
+Status: Delivered (2026-07-19) — the desktop app runs on a real backend; the mock layer is gone. Schema at **v10**, `cargo test -p brops-core` GREEN (28 tests), CI green.
 
 - React + TypeScript frontend ✓ (Phase 2)
-- **SQLite data core** ✓ — `src-tauri/core` schema, migrations, and typed repositories; `cargo test -p brops-core` GREEN (6 tests)
-- **Tauri desktop shell** — scaffolded (`src-tauri/`); the GUI binary build needs system webview libraries (see `src-tauri/README.md`)
-- Token-based design system ✓ (Phase 2)
-- Trilingual (HY/EN/RU) runtime switching ✓ (Phase 2)
+- **SQLite data core** ✓ — `src-tauri/core` schema (10 migrations), typed repositories, 28 tests
+- **Tauri desktop shell** ✓ — GUI binary builds and runs; typed IPC boundary (`src/services/desktop.ts`), no mock layer
+- Token-based design system ✓ · Trilingual (HY/EN/RU) runtime switching ✓
 - Concrete persisted schema ✓ — `docs/architecture/DATA_MODEL.md` + `docs/architecture/DATABASE_SCHEMA.md`
-- Remaining: wire React to the typed Tauri commands; secure store; backup/restore; `IMPLEMENTATION.md`; CI (Ubuntu + Windows)
+- CI ✓ (GitHub Actions: frontend + data-core + desktop-build)
+- Remaining: secure store, backup/restore, Windows CI runner
 
 ## Phase 4 — Core runtime
 
-- Real chat and room persistence
-- Project/task/decision/approval data model
-- Agent orchestration contracts
-- File and knowledge indexing
-- Activity and evidence system
-- Security and permission enforcement
+Status: Largely delivered (2026-07-19) — see the Phases 4–20 entry in [CHANGELOG.md](../CHANGELOG.md).
+
+- Real chat and room persistence ✓ (streaming Chat/Group Chat, delete/rename)
+- Project/task/decision/approval data model ✓ (incl. task dependencies, approval gating that actually blocks execution)
+- Agent orchestration contracts ✓ (live AI via local `claude` CLI; runs execute step-by-step)
+- File and knowledge indexing ✓ (Files view/edit; global FTS5 search + palette deep-links)
+- Activity and evidence system ✓ (audit trail, run results persisted)
+- Security and permission enforcement — partial (approvals + audit; filesystem confinement still open)
 
 ## Phase 5 — Integrations
 
