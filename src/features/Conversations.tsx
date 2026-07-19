@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useApp } from '../app/store';
 import {
   PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Select, Skeleton,
@@ -322,12 +322,25 @@ function RenameConversationForm({ conversation, onClose, onRenamed }:
 /** Two-pane conversation workspace shared by the Chat (direct) and Group Chat
  *  (group) screens. Both are backed by the same conversations/messages tables. */
 export function Conversations({ kind }: { kind: Kind }) {
-  const { t } = useApp();
+  const { t, focus, clearFocus } = useApp();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<Conversation | null>(null);
   const [deleting, setDeleting] = useState<Conversation | null>(null);
   const s = useAsync(() => desktop.listConversations(kind), [kind]);
+
+  // Consume a command-palette deep-link. The palette already routed to the
+  // Conversations instance matching the picked conversation's kind, so only the
+  // instance that actually owns the id selects it and clears the pending focus;
+  // if the id is absent from this fully-loaded list it belongs to the other
+  // kind — leave focus set so the correctly-routed instance handles it.
+  useEffect(() => {
+    if (focus?.kind !== 'conversation' || s.loading || s.data === null) return;
+    if (s.data.some((c) => c.id === focus.id)) {
+      setSelectedId(focus.id);
+      clearFocus();
+    }
+  }, [focus, s.data, s.loading, clearFocus]);
 
   const titleKey = kind === 'group' ? 'nav.groupChat' : 'nav.chat';
   const subtitleKey = kind === 'group' ? 'groupChat.subtitle' : 'chat.subtitle';
