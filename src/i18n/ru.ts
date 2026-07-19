@@ -90,6 +90,8 @@ export const ru: Record<DictKey, string> = {
   'memory.unpin': 'Открепить',
   'memory.pinned': 'Закреплено',
   'action.delete': 'Удалить',
+  'confirm.deleteTitle': 'Удалить этот элемент?',
+  'confirm.deleteBody': 'Это действие нельзя отменить.',
   'files.subtitle': 'Обзор локальной файловой системы',
   'files.up': 'Вверх',
   'files.folder': 'Папка',

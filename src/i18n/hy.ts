@@ -90,6 +90,8 @@ export const hy: Record<DictKey, string> = {
   'memory.unpin': 'Ապամրացնել',
   'memory.pinned': 'Ամրացված',
   'action.delete': 'Ջնջել',
+  'confirm.deleteTitle': 'Ջնջե՞լ այս տարրը։',
+  'confirm.deleteBody': 'Այս գործողությունը հետ չի շրջվում։',
   'files.subtitle': 'Դիտիր լոկալ ֆայլային համակարգը',
   'files.up': 'Վերև',
   'files.folder': 'Թղթապանակ',

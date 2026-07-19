@@ -13,6 +13,7 @@ import { Automations } from './Automations';
 import { Integrations } from './Integrations';
 import { Analytics } from './Analytics';
 import { Security } from './Security';
+import { Settings } from './Settings';
 import { Projects } from './Projects';
 import { Tasks } from './Tasks';
 import { Agents } from './Agents';
@@ -43,6 +44,7 @@ const screens: Partial<Record<RouteId, React.FC>> = {
   integrations: Integrations,
   analytics: Analytics,
   security: Security,
+  settings: Settings,
 };
 
 export function Screen({ route }: { route: RouteId }) {

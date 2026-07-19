@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Badge, Async, Modal, FormRow, Input, Textarea,
+  PageHeader, Panel, Button, Badge, Async, Modal, FormRow, Input, Textarea, ConfirmDialog,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -58,9 +58,11 @@ export function Knowledge() {
   const { t } = useApp();
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const s = useAsync(() => desktop.searchKnowledge(query), [query]);
 
   const remove = (id: string) => {
+    setPendingDelete(null);
     desktop.deleteKnowledge(id).then(() => s.reload()).catch(() => s.reload());
   };
 
@@ -73,6 +75,17 @@ export function Knowledge() {
       />
 
       {creating && <NewNoteForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title={t('confirm.deleteTitle')}
+          message={t('confirm.deleteBody')}
+          confirmLabel={t('action.delete')}
+          cancelLabel={t('action.cancel')}
+          onConfirm={() => remove(pendingDelete)}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
 
       <div style={{ marginBottom: 16 }}>
         <Input
@@ -91,7 +104,7 @@ export function Knowledge() {
                   <div className="panel">
                     <div className="between">
                       <div className="panel-title">{n.title}</div>
-                      <Button small variant="ghost" onClick={() => remove(n.id)}>{t('action.delete')}</Button>
+                      <Button small variant="ghost" onClick={() => setPendingDelete(n.id)}>{t('action.delete')}</Button>
                     </div>
                     {n.body && <div className="muted" style={{ marginTop: 6 }}>{n.body}</div>}
                     <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap' }}>

@@ -88,6 +88,8 @@ export const en = {
   'memory.unpin': 'Unpin',
   'memory.pinned': 'Pinned',
   'action.delete': 'Delete',
+  'confirm.deleteTitle': 'Delete this item?',
+  'confirm.deleteBody': 'This action cannot be undone.',
   'files.subtitle': 'Browse the local filesystem',
   'files.up': 'Up',
   'files.folder': 'Folder',

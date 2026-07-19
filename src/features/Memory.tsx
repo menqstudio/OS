@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Badge, Async, Modal, FormRow, Input, Textarea, Select,
+  PageHeader, Panel, Button, Badge, Async, Modal, FormRow, Input, Textarea, Select, ConfirmDialog,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -58,12 +58,14 @@ function NewEntryForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
 export function Memory() {
   const { t } = useApp();
   const [creating, setCreating] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const s = useAsync(() => desktop.listMemory(), []);
 
   const togglePin = (id: string, pinned: boolean) => {
     desktop.setMemoryPinned(id, pinned).then(() => s.reload()).catch(() => s.reload());
   };
   const remove = (id: string) => {
+    setPendingDelete(null);
     desktop.deleteMemory(id).then(() => s.reload()).catch(() => s.reload());
   };
 
@@ -76,6 +78,17 @@ export function Memory() {
       />
 
       {creating && <NewEntryForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title={t('confirm.deleteTitle')}
+          message={t('confirm.deleteBody')}
+          confirmLabel={t('action.delete')}
+          cancelLabel={t('action.cancel')}
+          onConfirm={() => remove(pendingDelete)}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
 
       <Panel>
         <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
@@ -93,7 +106,7 @@ export function Memory() {
                     <Button small variant="ghost" onClick={() => togglePin(m.id, !m.pinned)}>
                       {m.pinned ? t('memory.unpin') : t('memory.pin')}
                     </Button>
-                    <Button small variant="ghost" onClick={() => remove(m.id)}>{t('action.delete')}</Button>
+                    <Button small variant="ghost" onClick={() => setPendingDelete(m.id)}>{t('action.delete')}</Button>
                   </span>
                 </div>
               ))}
