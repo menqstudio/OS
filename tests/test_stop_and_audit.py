@@ -16,6 +16,15 @@ from bro_audit_log import AuditError, append, read_all, verify
 from bro_stop_controller import is_group_alive, list_registered, register, stop_all
 
 
+def _append_once(ledger_path: str, index: int) -> None:
+    """Module-level so it survives being sent to a forked process."""
+    import pathlib as _pathlib
+    import sys as _sys
+    _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1] / "runtime"))
+    from bro_audit_log import append as _append
+    _append(_pathlib.Path(ledger_path), "concurrent", {"index": index})
+
+
 class AuditLedgerTests(unittest.TestCase):
     def setUp(self):
         self.dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-audit-"))
@@ -55,6 +64,50 @@ class AuditLedgerTests(unittest.TestCase):
     def test_ledger_inside_repo_is_refused(self):
         with self.assertRaises(AuditError):
             append(ROOT / "inside.jsonl", "x", {}, repo_root=ROOT)
+
+    def test_concurrent_thread_appends_keep_one_valid_chain(self):
+        import threading
+        n = 24
+        gate = threading.Barrier(n)
+        errors = []
+
+        def worker(index):
+            try:
+                gate.wait()                       # all threads race the lock at once
+                append(self.ledger, "concurrent", {"index": index})
+            except Exception as exc:              # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(errors, [])
+        records = read_all(self.ledger)
+        # No forked chain: exactly n records, strictly sequential seqs, every append
+        # present once, and the hash chain + head verify.
+        self.assertEqual([r["seq"] for r in records], list(range(n)))
+        self.assertEqual(verify(self.ledger), n)
+        self.assertEqual(sorted(r["payload"]["index"] for r in records), list(range(n)))
+
+    @unittest.skipUnless(hasattr(os, "fork"), "cross-process lock proof uses fork")
+    def test_concurrent_process_appends_keep_one_valid_chain(self):
+        import multiprocessing
+        n = 16
+        ctx = multiprocessing.get_context("fork")
+        procs = [ctx.Process(target=_append_once, args=(str(self.ledger), i)) for i in range(n)]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join(timeout=30)
+        self.assertTrue(all(p.exitcode == 0 for p in procs),
+                        [p.exitcode for p in procs])
+        records = read_all(self.ledger)
+        self.assertEqual([r["seq"] for r in records], list(range(n)))
+        self.assertEqual(verify(self.ledger), n)
+        self.assertEqual(sorted(r["payload"]["index"] for r in records), list(range(n)))
 
 
 class StopControllerTests(unittest.TestCase):

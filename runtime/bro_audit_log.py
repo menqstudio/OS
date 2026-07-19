@@ -16,11 +16,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
+import time
 
 from bro_secrets import redact_mapping
 
 GENESIS = "0" * 64
+# Bound on how long a writer waits for the exclusive append lock before failing
+# closed. Appends are short (read tail, hash, append one line, replace head), so a
+# wait longer than this means a crashed or wedged holder — surfaced, never ignored.
+_LOCK_TIMEOUT = 10.0
+_LOCK_POLL = 0.01
 
 
 class AuditError(ValueError):
@@ -37,6 +44,39 @@ def _record_hash(prev_hash: str, body: dict) -> str:
 
 def _head_path(path: pathlib.Path) -> pathlib.Path:
     return path.with_suffix(path.suffix + ".head")
+
+
+def _lock_path(path: pathlib.Path) -> pathlib.Path:
+    return path.with_suffix(path.suffix + ".lock")
+
+
+def _acquire_lock(path: pathlib.Path) -> int:
+    """Take an exclusive, cross-process append lock via an O_EXCL lock file.
+
+    O_CREAT|O_EXCL is atomic on POSIX and Windows alike, so exactly one writer holds
+    the lock at a time — the ledger's read-modify-write (compute seq/prev_hash from
+    the tail, append, replace head) can never interleave and fork the chain. A holder
+    that crashes leaves the lock file behind; the next writer waits out the bounded
+    timeout and then fails closed, which is the audit ledger's contract."""
+    lock = _lock_path(path)
+    deadline = time.monotonic() + _LOCK_TIMEOUT
+    while True:
+        try:
+            return os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise AuditError(f"audit ledger lock not acquired within {_LOCK_TIMEOUT}s: {lock}")
+            time.sleep(_LOCK_POLL)
+
+
+def _release_lock(fd: int, path: pathlib.Path) -> None:
+    try:
+        os.close(fd)
+    finally:
+        try:
+            os.unlink(_lock_path(path))
+        except OSError:
+            pass
 
 
 def _assert_external(path: pathlib.Path, root: pathlib.Path) -> None:
@@ -64,16 +104,30 @@ def append(path, kind: str, payload: dict, *, repo_root: pathlib.Path | None = N
     if repo_root is not None:
         _assert_external(p, repo_root)
     p.parent.mkdir(parents=True, exist_ok=True)
-    existing = read_all(p)
-    prev_hash = existing[-1]["hash"] if existing else GENESIS
-    seq = existing[-1]["seq"] + 1 if existing else 0
-    body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, "payload": redact_mapping(payload)}
-    record = dict(body)
-    record["hash"] = _record_hash(prev_hash, body)
-    with p.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, sort_keys=True) + "\n")
-    _head_path(p).write_text(json.dumps({"count": seq + 1, "last_hash": record["hash"]}), encoding="utf-8")
-    return record
+    # The whole read-modify-write is one critical section: two writers that both read
+    # the tail before either appended would compute the same seq/prev_hash and fork
+    # the chain. The lock serialises them; the tail is re-read inside it.
+    lock_fd = _acquire_lock(p)
+    try:
+        existing = read_all(p)
+        prev_hash = existing[-1]["hash"] if existing else GENESIS
+        seq = existing[-1]["seq"] + 1 if existing else 0
+        body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, "payload": redact_mapping(payload)}
+        record = dict(body)
+        record["hash"] = _record_hash(prev_hash, body)
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        # Replace the head atomically so a crash mid-write can never leave a torn head
+        # that verify() would read as a truncation.
+        head = _head_path(p)
+        tmp = head.with_suffix(head.suffix + ".tmp")
+        tmp.write_text(json.dumps({"count": seq + 1, "last_hash": record["hash"]}), encoding="utf-8")
+        os.replace(tmp, head)
+        return record
+    finally:
+        _release_lock(lock_fd, p)
 
 
 def verify(path) -> int:
