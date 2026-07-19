@@ -115,9 +115,79 @@ def backup(sources: dict[str, pathlib.Path], dest: pathlib.Path, *, now: int) ->
     return manifest
 
 
+# A restore must never trust the manifest's paths. A crafted archive can name a
+# source "../x" or an entry rel "../../etc/evil", or slip a symlink into the
+# archive, and drive a write outside the target. Names and rels are validated as
+# strictly-relative, ..-free, backslash-free, non-symlink, and every resolved path
+# is required to stay within its base.
+def _reject_windows_anchor(value: str, label: str) -> None:
+    """Reject any Windows drive letter, drive-relative, or root anchor in a single
+    path component. `_safe_rel`'s POSIX parsing treats `C:` as an ordinary name and
+    `is_absolute()` stays False, but on a Windows *restore* host `target / "C:" /
+    ...` resets to the `C:` drive and escapes the target — regardless of the OS the
+    archive was crafted on. A bare `:` is also refused (drive syntax and NTFS
+    alternate-data-stream syntax both use it; runtime ledger names never do)."""
+    if ":" in value:
+        raise BackupError(f"unsafe {label} (drive/stream colon): {value!r}")
+    win = pathlib.PureWindowsPath(value)
+    if win.drive or win.root:
+        raise BackupError(f"unsafe {label} (drive/root anchor): {value!r}")
+
+
+def _safe_name(name: str) -> str:
+    if not isinstance(name, str) or not name or name in {".", ".."} or "/" in name or "\\" in name:
+        raise BackupError(f"invalid source name in manifest: {name!r}")
+    _reject_windows_anchor(name, "source name")
+    return name
+
+
+def _safe_rel(rel: str) -> pathlib.PurePosixPath:
+    if not isinstance(rel, str) or not rel or rel != rel.strip() or "\\" in rel:
+        raise BackupError(f"invalid archived path: {rel!r}")
+    pure = pathlib.PurePosixPath(rel)
+    if pure.is_absolute() or any(part == ".." for part in pure.parts):
+        raise BackupError(f"unsafe archived path (traversal): {rel!r}")
+    for part in pure.parts:
+        _reject_windows_anchor(part, "archived path component")
+    return pure
+
+
+def _walk_no_symlink(root: pathlib.Path, parts: tuple[str, ...], label: str) -> pathlib.Path:
+    """Descend `parts` from `root`, rejecting a symlink at any component so no
+    component — including a source directory — can redirect a read or write
+    outside `root`. `root` itself is not required to be symlink-free (a target may
+    legitimately be one). Containment is enforced both by construction (names and
+    rels carry no `..`, absolute, or drive parts) and by a final lexical check that
+    the built path stays under `root` — the latter catches a Windows drive-letter
+    component that would otherwise reset the anchor on a Windows host."""
+    cur = root
+    for part in parts:
+        cur = cur / part
+        if cur.is_symlink():
+            raise BackupError(f"{label} path component is a symlink: {cur}")
+    try:
+        cur.relative_to(root)
+    except ValueError:
+        raise BackupError(f"{label} path escapes the target: {cur}") from None
+    return cur
+
+
+def _archived_source(archive: pathlib.Path, name: str, rel: str) -> pathlib.Path:
+    return _walk_no_symlink(archive, (_safe_name(name), *_safe_rel(rel).parts), "archived")
+
+
+def _restore_target(target: pathlib.Path, rel: str) -> pathlib.Path:
+    return _walk_no_symlink(target, _safe_rel(rel).parts, "restore")
+
+
+def _rel_key(rel: str) -> str:
+    """Normalised identity of an archived path, so `a.txt` and `./a.txt` collide."""
+    return _safe_rel(rel).as_posix()
+
+
 def verify_archive(archive: pathlib.Path) -> dict:
     """Re-verify an archive against its manifest without restoring. Raises on any
-    checksum mismatch, missing file, or broken ledger chain."""
+    checksum mismatch, missing file, broken ledger chain, or unsafe/duplicate path."""
     archive = archive.expanduser()
     manifest_path = archive / MANIFEST_NAME
     try:
@@ -127,16 +197,22 @@ def verify_archive(archive: pathlib.Path) -> dict:
     if not isinstance(manifest, dict) or manifest.get("schema") != 1:
         raise BackupError("unsupported backup manifest schema")
     for name, spec in manifest.get("sources", {}).items():
+        seen: set[str] = set()
         for entry in spec.get("files", []):
-            archived = archive / name / entry["rel"]
+            rel = entry["rel"]
+            key = _rel_key(rel)
+            if key in seen:
+                raise BackupError(f"duplicate archived path: {name}/{rel}")
+            seen.add(key)
+            archived = _archived_source(archive, name, rel)
             if not archived.is_file():
-                raise BackupError(f"archived file is missing: {name}/{entry['rel']}")
+                raise BackupError(f"archived file is missing: {name}/{rel}")
             if _sha256(archived) != entry["sha256"]:
-                raise BackupError(f"archived file checksum mismatch: {name}/{entry['rel']}")
+                raise BackupError(f"archived file checksum mismatch: {name}/{rel}")
             if entry.get("audit_chain") is not None:
                 count = _chain_count(archived)
                 if count != entry["audit_chain"]["count"]:
-                    raise BackupError(f"archived ledger chain length changed: {name}/{entry['rel']}")
+                    raise BackupError(f"archived ledger chain length changed: {name}/{rel}")
     return manifest
 
 
@@ -155,13 +231,14 @@ def restore(archive: pathlib.Path, targets: dict[str, pathlib.Path], *, force: b
             raise BackupError(f"archive has no source named {name!r}")
         target = pathlib.Path(target).expanduser()
         for entry in spec["files"]:
-            out = target / entry["rel"]
+            out = _restore_target(target, entry["rel"])
             if out.exists() and not force:
                 raise BackupError(f"refusing to overwrite existing file (use force): {out}")
         for entry in spec["files"]:
-            out = target / entry["rel"]
+            out = _restore_target(target, entry["rel"])
+            src = _archived_source(archive, name, entry["rel"])
             out.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(archive / name / entry["rel"], out)
+            shutil.copyfile(src, out)
         restored[name] = len(spec["files"])
     return restored
 
