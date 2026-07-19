@@ -70,6 +70,28 @@ mod tests {
     }
 
     #[test]
+    fn task_update_and_list_all() {
+        let c = conn();
+        let p = repo::projects::create(
+            &c,
+            NewProject { name: "P".into(), description: "".into(), priority: "low".into(), workspace_id: None },
+        ).unwrap();
+        let t = repo::tasks::create(
+            &c,
+            NewTask { project_id: Some(p.id.clone()), title: "orig".into(), description: "".into(), priority: "low".into(), assigned_agent_id: None },
+        ).unwrap();
+        let up = repo::tasks::update(&c, &t.id, "new title", "a desc", "high").unwrap();
+        assert_eq!(up.title, "new title");
+        assert_eq!(up.description, "a desc");
+        assert_eq!(up.priority, "high");
+        assert!(matches!(
+            repo::tasks::update(&c, &t.id, "x", "y", "bogus"),
+            Err(CoreError::Invalid { field: "priority", .. })
+        ));
+        assert_eq!(repo::tasks::list_all(&c).unwrap().len(), 1);
+    }
+
+    #[test]
     fn foreign_keys_enforced() {
         let c = conn();
         let err = repo::tasks::create(
