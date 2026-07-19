@@ -44,9 +44,14 @@ cargo test -p brops-core --manifest-path src-tauri/Cargo.toml   # 28 tests
 
 AI uses the local `claude` binary by default. If it isn't on the app's `PATH`, set `BROPS_CLAUDE_BIN`; other knobs: `BROPS_AI_PROVIDER` (`claude` | `anthropic` | `ollama`), `ANTHROPIC_API_KEY`, `BROPS_CLAUDE_MODEL`. The SQLite database lives at `~/.local/share/studio.menq.brops/brops.db`.
 
+## Security
+
+BroPS is a single-user local app; the trust boundary that matters is **webview → Rust host**. Filesystem access is confined to a `~/BroPS` root (override `BROPS_FILES_ROOT`) with a sensitive-path denylist; the AI subprocess runs tool-free in an owner-only sandbox with no confidential text in argv; Ollama is loopback-only unless explicitly opted in. The full model, configuration, and known limitations are in **[SECURITY.md](SECURITY.md)** — the codebase has been through ten rounds of adversarial review with no outstanding Critical/High findings.
+
 ## Documentation index
 
 **Product & governance**
+- [SECURITY.md](SECURITY.md) — security model, configuration, and limitations
 - [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md) — identity, mission, vision, scope, users, constraints
 - [PRINCIPLES.md](docs/PRINCIPLES.md) — principles and enforceable laws (L-001..L-012)
 - [TERMINOLOGY.md](docs/TERMINOLOGY.md) — glossary

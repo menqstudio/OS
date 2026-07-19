@@ -186,7 +186,8 @@ pub mod task_deps {
     use super::*;
 
     /// Record that `task_id` depends on `depends_on_id`. Refuses a self-edge and
-    /// a direct cycle (A→B when B→A already exists); duplicates are idempotent.
+    /// any cycle — direct OR transitive (A→B→C→A) — via a reachability walk;
+    /// duplicates are idempotent.
     pub fn add(conn: &Connection, task_id: &str, depends_on_id: &str) -> CoreResult<()> {
         if task_id == depends_on_id {
             return Err(CoreError::Invalid { field: "depends_on_id", value: "a task cannot depend on itself".into() });
@@ -194,12 +195,19 @@ pub mod task_deps {
         // both tasks must exist (clear error rather than a FK failure)
         tasks::get(conn, task_id)?;
         tasks::get(conn, depends_on_id)?;
-        let reverse: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM task_dependencies WHERE task_id = ?1 AND depends_on_id = ?2)",
+        // Adding task_id → depends_on_id closes a cycle iff depends_on_id can
+        // already reach task_id by following depends-on edges. Walk the graph.
+        let creates_cycle: bool = conn.query_row(
+            "WITH RECURSIVE reach(id) AS (
+                 SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1
+                 UNION
+                 SELECT d.depends_on_id FROM task_dependencies d JOIN reach r ON d.task_id = r.id
+             )
+             SELECT EXISTS(SELECT 1 FROM reach WHERE id = ?2)",
             rusqlite::params![depends_on_id, task_id],
             |r| r.get(0),
         )?;
-        if reverse {
+        if creates_cycle {
             return Err(CoreError::Invalid { field: "depends_on_id", value: "that would create a dependency cycle".into() });
         }
         conn.execute(
@@ -654,10 +662,13 @@ pub mod knowledge {
         if q.is_empty() {
             return list(conn);
         }
-        let like = format!("%{q}%");
+        // Escape LIKE wildcards so a literal % or _ in the query matches itself
+        // instead of acting as a wildcard.
+        let escaped = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let like = format!("%{escaped}%");
         let mut s = conn.prepare(
             "SELECT * FROM knowledge_notes \
-             WHERE title LIKE ?1 OR body LIKE ?1 OR tags LIKE ?1 \
+             WHERE title LIKE ?1 ESCAPE '\\' OR body LIKE ?1 ESCAPE '\\' OR tags LIKE ?1 ESCAPE '\\' \
              ORDER BY updated_at DESC",
         )?;
         let rows = s.query_map([like], map)?;
@@ -897,6 +908,18 @@ pub mod runs {
     pub fn set_step_status(conn: &Connection, id: &str, status: &str) -> CoreResult<RunStep> {
         if !is_valid(status, STEP_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
+        }
+        // Enforce the approval gate here too, not just in advance()/stream_run_step:
+        // a gated step can never be marked `done` without an approval, whichever
+        // command sets it.
+        if status == "done" {
+            let step = get_step(conn, id)?;
+            if step.requires_approval && !super::approvals::approved_for(conn, id)? {
+                return Err(CoreError::Invalid {
+                    field: "status",
+                    value: "step requires approval before it can be completed".to_string(),
+                });
+            }
         }
         let changed = conn.execute(
             "UPDATE run_steps SET status = ?1, updated_at = ?2 WHERE id = ?3",

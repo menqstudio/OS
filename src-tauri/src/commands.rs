@@ -16,6 +16,16 @@ fn locked<'a>(state: &'a State<AppState>) -> Result<Conn<'a>, String> {
     state.db.lock().map_err(|e| e.to_string())
 }
 
+/// Clamp a frontend-supplied agent/author name before it is formatted into a
+/// system prompt (or persisted): strip control characters (no newline-injected
+/// instructions) and bound the length. Falls back to "Bro".
+fn sanitize_author(name: Option<String>) -> String {
+    let raw = name.unwrap_or_default();
+    let cleaned: String = raw.chars().filter(|c| !c.is_control()).take(64).collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() { "Bro".to_string() } else { cleaned.to_string() }
+}
+
 // --- projects ---
 
 #[tauri::command]
@@ -345,7 +355,7 @@ pub async fn stream_reply(
     agent: Option<String>,
     on_event: tauri::ipc::Channel<StreamEvent>,
 ) -> Result<(), String> {
-    let author = agent.unwrap_or_else(|| "Bro".to_string());
+    let author = sanitize_author(agent);
     let (system, history) = {
         let conn = locked(&state)?;
         let msgs = repo::chat::list_messages(&conn, &conversation_id).map_err(|e| e.to_string())?;
@@ -590,7 +600,7 @@ pub async fn reply_in_conversation(
     conversation_id: String,
     agent: Option<String>,
 ) -> Result<Message, String> {
-    let author = agent.unwrap_or_else(|| "Bro".to_string());
+    let author = sanitize_author(agent);
     let (system, history) = {
         let conn = locked(&state)?;
         let msgs = repo::chat::list_messages(&conn, &conversation_id).map_err(|e| e.to_string())?;

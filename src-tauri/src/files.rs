@@ -88,18 +88,23 @@ fn is_sensitive(path: &Path) -> bool {
         const DENY_FILES: &[&str] = &[
             ".bashrc", ".bash_profile", ".bash_login", ".bash_history", ".profile",
             ".zshrc", ".zprofile", ".zshenv", ".zsh_history", ".netrc", ".pgpass",
-            ".git-credentials", ".npmrc", ".pypirc", ".htpasswd", ".dockercfg",
+            ".git-credentials", ".gitconfig", ".npmrc", ".pypirc", ".htpasswd", ".dockercfg",
             "authorized_keys", "known_hosts", "credentials", "credentials.json",
             "secrets.json", "secrets.yaml", "secrets.yml", "service-account.json",
             "serviceaccount.json", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
+            // cloud / infra / app secrets that live as plaintext
+            ".my.cnf", ".s3cfg", ".boto", ".databrickscfg", ".vault-token",
+            "wp-config.php", "terraform.tfstate", "terraform.tfvars",
         ];
         const DENY_EXT: &[&str] = &[
             ".pem", ".key", ".p12", ".pfx", ".keystore", ".jks", ".ppk", ".asc", ".kdbx",
+            ".ovpn", ".tfstate", ".tfvars",
         ];
         if DENY_FILES.contains(&name.as_str())
             || name.starts_with(".env")            // .env, .env.local, .env.production…
             || name.starts_with("id_")             // ssh private keys
             || name.contains("credential")
+            || name.contains(".tfstate")           // terraform.tfstate(.backup)
             || DENY_EXT.iter().any(|e| name.ends_with(e))
         {
             return true;
@@ -424,6 +429,13 @@ mod tests {
             "/home/u/.SSH/id_rsa",
             "/home/u/Credentials.JSON",
             "/home/u/.config/gcloud/access_tokens.db",
+            "/home/u/infra/terraform.tfstate",
+            "/home/u/infra/terraform.tfstate.backup",
+            "/home/u/infra/prod.tfvars",
+            "/home/u/.gitconfig",
+            "/home/u/.my.cnf",
+            "/home/u/.vault-token",
+            "/home/u/site/wp-config.php",
         ] {
             assert!(is_sensitive(Path::new(p)), "{p} must be denied");
         }

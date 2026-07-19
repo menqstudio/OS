@@ -7,6 +7,16 @@
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository.
 
+## 2026-07-19 — Security hardening (audit remediation)
+
+Ten rounds of adversarial security review closed every finding; no Critical/High remained. The enforced model is documented in [SECURITY.md](SECURITY.md). Highlights:
+
+- **Filesystem** confined to a `~/BroPS` root (override `BROPS_FILES_ROOT`), canonicalized (no traversal/symlink escape), with an always-on sensitive-path denylist; edits are regular-file-only, size-bounded, atomic, and permission-preserving.
+- **AI subprocess** runs tool-free (`--tools ""`, `--strict-mcp-config`, `--setting-sources project`) in a unique owner-only sandbox; the transcript goes via stdin and the system prompt via a `0600` file — no confidential text in argv; absolute deadlines + byte caps; crash-residue sandboxes are swept by process-liveness.
+- **Network:** Ollama is loopback-only unless `BROPS_ALLOW_REMOTE_OLLAMA=1` (+HTTPS); all outbound clients disable redirects.
+- **Input** is size/role/count-validated before dispatch; **data at rest** is `0700`/`0600`; **CI actions** are SHA-pinned and gated on `clippy -D warnings` + a release build.
+- Final audit pass fixes: one-shot subprocess stderr drain bounded by the deadline; Anthropic client no-redirect; broader secret denylist (tfstate/gitconfig/vault…); sandbox first-init race cleanup; agent-name sanitized before the system prompt; the approval gate is enforced in `set_step_status` (not just `advance`); transitive dependency-cycle detection; `LIKE` wildcard escaping; Approvals surface decision errors + A3 dual-confirm.
+
 ## 2026-07-19 — Phases 4–20: working desktop app
 
 The app moved from a tested data core to a fully working desktop application — every navigation surface is backed by real Tauri commands over SQLite (the mock layer was deleted). Highlights, roughly in build order:

@@ -410,8 +410,15 @@ fn ai_sandbox_dir() -> Result<std::path::PathBuf, String> {
                     let _ = std::fs::remove_dir_all(&dir); // roll back a partial sandbox
                     return Err(e);
                 }
-                let _ = AI_SANDBOX.set(dir.clone());
-                return Ok(AI_SANDBOX.get().cloned().unwrap_or(dir));
+                // If another thread won the first-init race, discard our own dir so
+                // it isn't left orphaned (cleanup skips our current PID for life).
+                return match AI_SANDBOX.set(dir.clone()) {
+                    Ok(()) => Ok(dir),
+                    Err(_) => {
+                        let _ = std::fs::remove_dir_all(&dir);
+                        Ok(AI_SANDBOX.get().cloned().unwrap_or(dir))
+                    }
+                };
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(format!("AI sandbox: {e}")),
@@ -798,6 +805,10 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
             let _ = stdin.shutdown().await;
         });
     }
+    // One absolute deadline for the WHOLE call — the stdout read, the child reap,
+    // AND the stderr drain — so a hostile binary that keeps an stderr fd open (via
+    // a grandchild) after closing stdout can't wedge the request past the deadline.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
     // Drain stderr (bounded) concurrently so a full pipe can't deadlock the read.
     let stderr = child.stderr.take();
     let stderr_task = tokio::spawn(async move {
@@ -809,9 +820,7 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
         buf
     });
     let stdout = child.stdout.take().ok_or_else(|| "no stdout from claude".to_string())?;
-    // Read stdout bounded to MAX_STDOUT_BYTES and wait, all under one deadline —
-    // bounds both time and memory even with a hostile binary.
-    let (status, obuf) = tokio::time::timeout(Duration::from_secs(120), async move {
+    let (status, obuf) = tokio::time::timeout_at(deadline, async move {
         use tokio::io::AsyncReadExt;
         let mut obuf: Vec<u8> = Vec::new();
         stdout.take(MAX_STDOUT_BYTES).read_to_end(&mut obuf).await.map_err(|e| e.to_string())?;
@@ -820,7 +829,11 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
     })
     .await
     .map_err(|_| "claude CLI timed out".to_string())??;
-    let errbuf = stderr_task.await.unwrap_or_default();
+    let errbuf = tokio::time::timeout_at(deadline, stderr_task)
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
     if !status.success() {
         return Err(format!("claude CLI failed: {}", errbuf.trim()));
     }
@@ -873,7 +886,7 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
         "system": system,
         "messages": messages.iter().map(|m| serde_json::json!({ "role": m.role, "content": m.content })).collect::<Vec<_>>(),
     });
-    let resp = reqwest::Client::new()
+    let resp = no_redirect_client()?
         .post(ANTHROPIC_URL)
         .timeout(Duration::from_secs(120))
         .header("x-api-key", key)

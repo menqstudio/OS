@@ -123,6 +123,15 @@ mod tests {
             Err(CoreError::Invalid { field: "depends_on_id", .. })
         ));
 
+        // transitive cycle refused: A→B, B→C already; C→A must be rejected
+        let cc = mk("C");
+        repo::task_deps::add(&c, &b.id, &cc.id).unwrap(); // B depends on C
+        assert!(matches!(
+            repo::task_deps::add(&c, &cc.id, &a.id), // C→A would close A→B→C→A
+            Err(CoreError::Invalid { field: "depends_on_id", .. })
+        ));
+        repo::task_deps::remove(&c, &b.id, &cc.id).unwrap();
+
         // removing the edge, then deleting a task cascades
         repo::task_deps::remove(&c, &a.id, &b.id).unwrap();
         assert_eq!(repo::task_deps::list_for(&c, &a.id).unwrap().len(), 0);
@@ -327,6 +336,25 @@ mod tests {
         let ok = repo::approvals::create(&c, "x", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id)).unwrap();
         repo::approvals::decide(&c, &ok.id, "approved", None).unwrap();
         assert!(!repo::approvals::rejected_for(&c, &s.id).unwrap());
+    }
+
+    #[test]
+    fn set_step_status_cannot_bypass_the_approval_gate() {
+        let c = conn();
+        let r = repo::runs::create(&c, "gated", "").unwrap();
+        let step = repo::runs::add_step(&c, &r.id, "risky", "").unwrap();
+        repo::runs::set_step_requires_approval(&c, &step.id, true).unwrap();
+        // directly marking a gated step done (bypassing advance/stream) is refused
+        assert!(matches!(
+            repo::runs::set_step_status(&c, &step.id, "done"),
+            Err(CoreError::Invalid { field: "status", .. })
+        ));
+        // other statuses are still fine
+        assert!(repo::runs::set_step_status(&c, &step.id, "active").is_ok());
+        // once approved, done succeeds
+        let ap = repo::approvals::create(&c, "x", "risky", "A2", "medium", "gev", Some("run_step"), Some(&step.id)).unwrap();
+        repo::approvals::decide(&c, &ap.id, "approved", None).unwrap();
+        assert!(repo::runs::set_step_status(&c, &step.id, "done").is_ok());
     }
 
     #[test]

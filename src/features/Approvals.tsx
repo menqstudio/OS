@@ -1,19 +1,31 @@
+import { useState } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Card, Button, Badge, StatusPill, Field, Async } from '../components/ui';
+import { PageHeader, Card, Button, Badge, StatusPill, Field, Async, ConfirmDialog } from '../components/ui';
 import { useAsync } from '../hooks/useAsync';
+import { useToast } from '../components/toast';
 import { desktop } from '../services/desktop';
 
 export function Approvals() {
   const { t } = useApp();
+  const toast = useToast();
   const state = useAsync(() => desktop.listApprovals());
+  // An A3 (destructive) approval awaiting the second, explicit confirmation.
+  const [confirmA3, setConfirmA3] = useState<string | null>(null);
 
   const decide = (id: string, decision: 'approved' | 'rejected') => {
     desktop
       .decideApproval(id, decision)
       .then(() => state.reload())
-      .catch(() => {
-        /* keep simple: surface nothing, the list simply stays as-is */
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast(`${t('approvals.decideFailed')}: ${msg}`, 'error');
       });
+  };
+
+  // A3 approvals require a deliberate second confirmation before approving.
+  const requestApprove = (id: string, level: string) => {
+    if (level === 'A3') setConfirmA3(id);
+    else decide(id, 'approved');
   };
 
   return (
@@ -56,7 +68,7 @@ export function Approvals() {
 
                   {a.status === 'pending' && (
                     <div className="row">
-                      <Button variant="primary" onClick={() => decide(a.id, 'approved')}>
+                      <Button variant="primary" onClick={() => requestApprove(a.id, a.level)}>
                         {t('action.approve')}
                       </Button>
                       <Button variant="danger" onClick={() => decide(a.id, 'rejected')}>
@@ -70,6 +82,17 @@ export function Approvals() {
           </div>
         )}
       </Async>
+
+      {confirmA3 && (
+        <ConfirmDialog
+          title={t('approvals.a3ConfirmTitle')}
+          message={t('approvals.a3ConfirmBody')}
+          confirmLabel={t('action.approve')}
+          cancelLabel={t('action.cancel')}
+          onConfirm={() => { const id = confirmA3; setConfirmA3(null); decide(id, 'approved'); }}
+          onCancel={() => setConfirmA3(null)}
+        />
+      )}
     </>
   );
 }

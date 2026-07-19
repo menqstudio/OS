@@ -13,7 +13,7 @@ export function Notifications() {
   const state = useAsync<Notification[]>(() => desktop.listNotifications());
 
   const markRead = (id: string) => {
-    desktop.markNotificationRead(id).then(() => state.reload());
+    desktop.markNotificationRead(id).then(() => state.reload()).catch(() => state.reload());
   };
 
   return (
