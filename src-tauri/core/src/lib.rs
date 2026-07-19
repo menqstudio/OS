@@ -19,7 +19,8 @@ pub fn id() -> String {
 }
 
 /// Current timestamp as milliseconds since the Unix epoch, rendered as text.
-/// (The desktop build swaps this for a full UTC ISO-8601 string.)
+/// The fixed 13-digit width keeps lexicographic `ORDER BY … DESC` correct (all
+/// timestamp columns store this same format — never mix in ISO-8601 text).
 pub fn now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ms = SystemTime::now()

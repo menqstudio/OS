@@ -86,13 +86,20 @@ export function Skeleton({ rows = 3 }: { rows?: number }) {
   );
 }
 
-export function ErrorState({ message, onRetry, retryLabel = 'Retry' }: { message: string; onRetry?: () => void; retryLabel?: string }) {
+export function ErrorState({ message, onRetry, retryLabel }: { message: string; onRetry?: () => void; retryLabel?: string }) {
+  const { t } = useApp();
+  // No desktop backend at all (e.g. browser preview): every screen — including
+  // those that render ErrorState directly instead of through <Async> — shows the
+  // same calm offline state rather than an alarming red backend error.
+  if (!hasBackend()) {
+    return <EmptyState glyph="◍" title={t('state.offline')} hint={t('state.offlineHint')} />;
+  }
   return (
     <div className="empty">
       <div className="empty-glyph" style={{ color: 'var(--menq-color-danger)' }}>⚠</div>
       <div className="empty-title">Couldn’t load from the backend</div>
       <div className="muted" style={{ marginTop: 4, maxWidth: 460, marginInline: 'auto' }}>{message}</div>
-      {onRetry && <div style={{ marginTop: 12 }}><Button small onClick={onRetry}>{retryLabel}</Button></div>}
+      {onRetry && <div style={{ marginTop: 12 }}><Button small onClick={onRetry}>{retryLabel ?? t('action.retry')}</Button></div>}
     </div>
   );
 }
