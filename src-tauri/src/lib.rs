@@ -55,6 +55,8 @@ pub fn run() {
             let conn = brops_core::db::open(db_path.to_string_lossy().as_ref())?;
             brops_core::repo::seed(&conn)?;
             secure_db_files(&db_path)?; // 0600 on db + WAL + SHM
+            // Sweep AI sandbox directories left by crashed/killed prior runs.
+            ai::cleanup_stale_sandboxes();
             app.manage(AppState { db: Mutex::new(conn) });
             Ok(())
         })

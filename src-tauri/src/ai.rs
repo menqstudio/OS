@@ -86,8 +86,8 @@ fn validate_ollama_url(url: &str) -> Result<(), String> {
     let is_loopback = host == "localhost"
         || host_ip.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false);
     if !is_loopback {
-        if env_nonempty("BROPS_ALLOW_REMOTE_OLLAMA").is_none() {
-            return Err("remote Ollama is blocked; set BROPS_ALLOW_REMOTE_OLLAMA=1 to allow a non-local host".to_string());
+        if !env_bool("BROPS_ALLOW_REMOTE_OLLAMA") {
+            return Err("remote Ollama is blocked; set BROPS_ALLOW_REMOTE_OLLAMA=1 (or true) to allow a non-local host".to_string());
         }
         if scheme != "https" {
             return Err("a remote Ollama host must use https".to_string());
@@ -169,6 +169,20 @@ enum Provider {
 
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// Parse an opt-in flag: ONLY exact 1/true/yes/on (case-insensitive) mean ON.
+/// Everything else — including 0/false/no/disabled/unknown/unset — is OFF, so a
+/// dangerous capability fails CLOSED (an operator setting `=0` never enables it).
+fn truthy(v: Option<&str>) -> bool {
+    matches!(
+        v.map(|s| s.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
+}
+
+fn env_bool(key: &str) -> bool {
+    truthy(env_nonempty(key).as_deref())
 }
 
 fn resolve() -> Provider {
@@ -332,6 +346,11 @@ pub async fn generate_stream<F: FnMut(&str)>(
 
 static AI_SANDBOX: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
+/// Marker file we drop inside every sandbox we own, so crash-residue cleanup can
+/// tell OUR directories apart from any other program's `brops-ai-*` name and
+/// never remove the wrong directory.
+const SANDBOX_MARKER: &str = ".brops-sandbox";
+
 /// A unique, owner-only (0700) empty directory created fresh for this process's
 /// `claude` subprocesses, so the CLI can't pick up a nearby project's
 /// `.claude/settings.json`, `.mcp.json`, or source files. `create_dir` (not
@@ -357,6 +376,7 @@ fn ai_sandbox_dir() -> Result<std::path::PathBuf, String> {
                     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
                         .map_err(|e| format!("AI sandbox perms: {e}"))?;
                 }
+                let _ = std::fs::write(dir.join(SANDBOX_MARKER), b"brops-ai-sandbox");
                 let _ = AI_SANDBOX.set(dir.clone());
                 return Ok(AI_SANDBOX.get().cloned().unwrap_or(dir));
             }
@@ -365,6 +385,54 @@ fn ai_sandbox_dir() -> Result<std::path::PathBuf, String> {
         }
     }
     Err("could not create a private AI sandbox directory".to_string())
+}
+
+/// Remove AI sandbox directories left behind by crashed/killed prior runs (a
+/// `Drop` guard doesn't run on crash/kill/power-loss). To avoid ever deleting a
+/// live sibling instance's sandbox or an unrelated directory, this only removes
+/// `brops-ai-*` directories that (a) are not this process's, (b) contain our
+/// [`SANDBOX_MARKER`], and (c) are older than `max_age`. Split from the public
+/// wrapper so it's unit-testable with an explicit base/pid/age.
+fn cleanup_stale_sandboxes_in(base: &std::path::Path, current_pid: u32, max_age: std::time::Duration) {
+    let own_prefix = format!("brops-ai-{current_pid}-");
+    let entries = match std::fs::read_dir(base) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("brops-ai-") || name.starts_with(&own_prefix) {
+            continue; // not ours by name, or our own live sandbox
+        }
+        let path = entry.path();
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !meta.is_dir() || !path.join(SANDBOX_MARKER).is_file() {
+            continue; // only our own marked directories
+        }
+        // Too fresh → possibly a concurrently-running instance; leave it.
+        if let Ok(modified) = meta.modified() {
+            if let Ok(age) = modified.elapsed() {
+                if age < max_age {
+                    continue;
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&path);
+    }
+}
+
+/// Best-effort cleanup of stale AI sandboxes from previous runs. Call once at
+/// startup. Only touches our own marked `brops-ai-*` dirs older than an hour.
+pub fn cleanup_stale_sandboxes() {
+    cleanup_stale_sandboxes_in(
+        &std::env::temp_dir(),
+        std::process::id(),
+        std::time::Duration::from_secs(3600),
+    );
 }
 
 /// Removes a temp file when dropped, so the system-prompt file is cleaned up on
@@ -822,6 +890,49 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(json_part).expect("valid json");
         assert_eq!(v.as_array().unwrap().len(), 1);
         assert_eq!(v[0]["role"], "user");
+    }
+
+    #[test]
+    fn truthy_is_fail_closed() {
+        for on in ["1", "true", "TRUE", "yes", "On", " 1 "] {
+            assert!(truthy(Some(on)), "{on:?} should be ON");
+        }
+        for off in ["0", "false", "no", "disabled", "", "  ", "2", "enable"] {
+            assert!(!truthy(Some(off)), "{off:?} should be OFF");
+        }
+        assert!(!truthy(None));
+    }
+
+    #[test]
+    fn cleanup_removes_only_stale_marked_sandboxes() {
+        let base = std::env::temp_dir().join(format!("brops_cleanup_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let mk = |name: &str, marker: bool| {
+            let d = base.join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            if marker {
+                std::fs::write(d.join(SANDBOX_MARKER), b"x").unwrap();
+            }
+            d
+        };
+        let stale = mk("brops-ai-99999-1-0", true); // other pid, marked → remove
+        let ours = mk(&format!("brops-ai-{}-1-0", std::process::id()), true); // our pid → keep
+        let unmarked = mk("brops-ai-88888-1-0", false); // other pid, no marker → keep
+        let unrelated = mk("something-else", true); // wrong name → keep
+
+        cleanup_stale_sandboxes_in(&base, std::process::id(), std::time::Duration::ZERO);
+        assert!(!stale.exists(), "stale marked sandbox from another pid should be removed");
+        assert!(ours.exists(), "our own sandbox must be kept");
+        assert!(unmarked.exists(), "an unmarked brops-ai dir isn't ours — keep it");
+        assert!(unrelated.exists(), "unrelated dirs are untouched");
+
+        // Freshness guard: a fresh marked other-pid dir is kept (could be a live instance).
+        let fresh = mk("brops-ai-77777-1-0", true);
+        cleanup_stale_sandboxes_in(&base, std::process::id(), std::time::Duration::from_secs(3600));
+        assert!(fresh.exists(), "a fresh marked dir must be kept");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
