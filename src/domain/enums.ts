@@ -22,6 +22,7 @@ export type MemoryKind = 'fact' | 'preference' | 'note' | 'reference';
 export const MEMORY_KINDS: MemoryKind[] = ['fact', 'preference', 'note', 'reference'];
 export const RUN_STATUSES: RunStatus[] = ['drafted', 'queued', 'planning', 'awaiting_approval', 'running', 'paused', 'succeeded', 'failed', 'cancelled'];
 export const INTEGRATION_STATUSES = ['disconnected', 'connected', 'error'] as const;
+export const STEP_STATUSES = ['pending', 'active', 'done', 'failed', 'skipped'] as const;
 
 // Maps a status-like value to a visual tone used by Badge/StatusPill.
 export type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info';

@@ -152,6 +152,17 @@ export interface Run {
   updatedAt: string;
 }
 
+export interface RunStep {
+  id: string;
+  runId: string;
+  position: number;
+  title: string;
+  detail: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CalendarEvent {
   id: string;
   title: string;

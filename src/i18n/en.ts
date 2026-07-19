@@ -95,6 +95,10 @@ export const en = {
 
   'command.runs': 'Runs',
   'command.newRun': 'New run',
+  'command.steps': 'Steps',
+  'command.advance': 'Advance',
+  'command.addStep': 'Add step',
+  'command.noSteps': 'No steps yet — add the first one below.',
   'field.intent': 'Intent',
   'field.plan': 'Plan',
   'calendar.subtitle': 'Scheduled events',
