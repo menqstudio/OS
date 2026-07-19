@@ -38,6 +38,10 @@ pub fn run() {
             commands::list_decisions,
             commands::create_decision,
             commands::list_activity,
+            commands::list_conversations,
+            commands::create_conversation,
+            commands::list_messages,
+            commands::post_message,
         ])
         .run(tauri::generate_context!())
         .expect("error while running BroPS");

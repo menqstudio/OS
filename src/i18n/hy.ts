@@ -65,6 +65,13 @@ export const hy: Record<DictKey, string> = {
   'chat.subtitle': 'Ուղիղ զրույց Բրոյի հետ',
   'groupChat.subtitle': 'Մարդիկ և գործակալներ՝ մեկ սենյակում',
   'chat.composer': 'Հաղորդագրություն, նշիր @գործակալ…',
+  'chat.conversations': 'Զրույցներ',
+  'chat.newConversation': 'Նոր զրույց',
+  'chat.roomName': 'Սենյակի անուն',
+  'chat.pickHint': 'Ընտրիր զրույց՝ հաղորդագրությունները տեսնելու համար։',
+  'chat.noMessages': 'Դեռ հաղորդագրություն չկա',
+  'chat.noMessagesHint': 'Ուղարկիր առաջին հաղորդագրությունը ներքևում։',
+  'chat.you': 'gev',
 
   'projects.subtitle': 'Նպատակակենտրոն աշխատանք',
   'tasks.subtitle': 'Ապացույցներով գործողությունների համակարգ',

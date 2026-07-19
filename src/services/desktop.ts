@@ -5,7 +5,8 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  ActivityEvent, Agent, Approval, Decision, NewProject, NewTask, Notification, Project, Task,
+  ActivityEvent, Agent, Approval, Conversation, Decision, Message, NewMessage, NewProject,
+  NewTask, Notification, Project, Task,
 } from '../domain/entities';
 
 /** True when running inside the Tauri desktop runtime. */
@@ -46,4 +47,13 @@ export const desktop = {
 
   // activity
   listActivity: () => invoke<ActivityEvent[]>('list_activity'),
+
+  // chat
+  listConversations: (kind?: 'direct' | 'group') =>
+    invoke<Conversation[]>('list_conversations', { kind: kind ?? null }),
+  createConversation: (kind: 'direct' | 'group', title: string) =>
+    invoke<Conversation>('create_conversation', { kind, title }),
+  listMessages: (conversationId: string) =>
+    invoke<Message[]>('list_messages', { conversationId }),
+  postMessage: (input: NewMessage) => invoke<Message>('post_message', { input }),
 };

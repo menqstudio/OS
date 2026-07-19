@@ -2,6 +2,8 @@ import React from 'react';
 import type { RouteId } from '../app/nav';
 import { Home } from './Home';
 import { Generic } from './Generic';
+import { Chat } from './Chat';
+import { GroupChat } from './GroupChat';
 import { Projects } from './Projects';
 import { Tasks } from './Tasks';
 import { Agents } from './Agents';
@@ -14,6 +16,8 @@ import { Activity } from './Activity';
 // to <Generic>, which honestly reports that the workspace has no backend yet.
 const screens: Partial<Record<RouteId, React.FC>> = {
   home: Home,
+  chat: Chat,
+  groupChat: GroupChat,
   projects: Projects,
   tasks: Tasks,
   agents: Agents,

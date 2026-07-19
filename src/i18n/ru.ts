@@ -65,6 +65,13 @@ export const ru: Record<DictKey, string> = {
   'chat.subtitle': 'Прямой разговор с Bro',
   'groupChat.subtitle': 'Люди и агенты в одной комнате',
   'chat.composer': 'Сообщение, упомяните @агента…',
+  'chat.conversations': 'Разговоры',
+  'chat.newConversation': 'Новый разговор',
+  'chat.roomName': 'Название комнаты',
+  'chat.pickHint': 'Выберите разговор, чтобы увидеть сообщения.',
+  'chat.noMessages': 'Пока нет сообщений',
+  'chat.noMessagesHint': 'Отправьте первое сообщение ниже.',
+  'chat.you': 'gev',
 
   'projects.subtitle': 'Работа, ориентированная на цель',
   'tasks.subtitle': 'Система действий с доказательствами',

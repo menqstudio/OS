@@ -84,6 +84,32 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
+export interface Conversation {
+  id: string;
+  kind: string;
+  title: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Message {
+  id: string;
+  conversationId: string;
+  role: string;
+  author: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface NewMessage {
+  conversationId: string;
+  role: string;
+  author: string;
+  body: string;
+}
+
 export interface NewProject {
   name: string;
   description: string;

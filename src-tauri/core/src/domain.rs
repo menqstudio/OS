@@ -9,6 +9,8 @@ pub const PROJECT_STATUSES: &[&str] =
     &["planned", "active", "blocked", "completed", "archived"];
 pub const PRIORITIES: &[&str] = &["low", "normal", "high", "critical"];
 pub const APPROVAL_DECISIONS: &[&str] = &["approved", "rejected"];
+pub const CONVERSATION_KINDS: &[&str] = &["direct", "group"];
+pub const MESSAGE_ROLES: &[&str] = &["user", "agent", "system"];
 
 pub fn is_valid(value: &str, allowed: &[&str]) -> bool {
     allowed.contains(&value)
@@ -104,6 +106,25 @@ camel! {
         pub entity_id: Option<String>,
         pub created_at: String,
     }
+
+    pub struct Conversation {
+        pub id: String,
+        pub kind: String,
+        pub title: String,
+        pub message_count: i64,
+        pub last_message_at: Option<String>,
+        pub created_at: String,
+        pub updated_at: String,
+    }
+
+    pub struct Message {
+        pub id: String,
+        pub conversation_id: String,
+        pub role: String,
+        pub author: String,
+        pub body: String,
+        pub created_at: String,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +144,15 @@ pub struct NewTask {
     pub description: String,
     pub priority: String,
     pub assigned_agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewMessage {
+    pub conversation_id: String,
+    pub role: String,
+    pub author: String,
+    pub body: String,
 }
 
 #[derive(Debug, thiserror::Error)]
