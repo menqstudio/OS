@@ -74,6 +74,14 @@ UNKNOWN_ROLE = "unknown"
 CONDUCTOR_BOOTSTRAP_TOOLS = frozenset({"Read", "Glob", "Grep"})
 CONDUCTOR_BOOTSTRAP_CAPABILITIES = frozenset({"READ_LOCAL"})
 
+# Review mode produces findings only, and a shell tool cannot be trusted as
+# read-only: its arguments are not parsed, so `find . -delete` classifies as
+# READ_LOCAL and `cat /etc/passwd` reads outside the workspace, both slipping past
+# the read-only gate. Review therefore allows ONLY these structured read tools;
+# every shell/command tool — and anything unrecognised — is denied. A
+# command-specific parser can widen this later; deny-by-default is the safe floor.
+REVIEW_READ_TOOLS = frozenset({"Read", "Glob", "Grep"})
+
 
 def current_state(payload: dict) -> State:
     requested = os.getenv("BRO_MODE", load_json(POLICY_PATH)["default_mode"]).strip().lower()
@@ -197,6 +205,11 @@ def authorize_classified_action(
             return False, "review mode denies unknown action"
         if classification.orchestration:
             return False, "review mode produces findings only and may not delegate execution"
+        if classification.tool not in REVIEW_READ_TOOLS:
+            return False, (f"review mode allows only structured read tools "
+                           f"{sorted(REVIEW_READ_TOOLS)}; {classification.tool!r} is denied — a "
+                           f"shell/command tool's unparsed arguments can smuggle a mutation or an "
+                           f"out-of-workspace read past the read-only classification")
         return True, "allowed"
     if classification.orchestration:
         if not is_conductor(state):

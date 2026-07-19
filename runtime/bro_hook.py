@@ -53,6 +53,11 @@ def _observe(kind: str, reason: str, data: dict, state) -> bool:
     caller enforces the block."""
     if not _shadow_enabled():
         return False
+    # Review mode is a read-only posture, not a rollout target. Its denials are a
+    # hard invariant: shadow never softens them, or shadow becomes a way to run
+    # shell/mutation under a "read-only" mode.
+    if getattr(state, "mode", "") == "review":
+        return False
     raw = os.getenv("BRO_SHADOW_LEDGER")
     if not raw:
         return False

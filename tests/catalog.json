@@ -531,6 +531,15 @@
         "quarantined-lease-alert",
         "shadow-chain-alert"
       ]
+    },
+    {
+      "id": "review-containment",
+      "path": "tests/test_review_containment.py",
+      "covers": [
+        "review-shell-deny",
+        "structured-read-allowlist",
+        "containment-bypass-regression"
+      ]
     }
   ]
 }

@@ -124,8 +124,15 @@ def _tool_entry(registry: dict[str, Any], tool_name: str) -> dict[str, Any] | No
     return None
 
 
-def _direct_targets(tool_input: dict[str, Any]) -> tuple[str, ...]:
+def _direct_targets(tool_name: str, tool_input: dict[str, Any]) -> tuple[str, ...]:
     values: list[str] = []
+    # Glob's pattern is a path expression (unlike Grep's, which is a regex), so it
+    # is a real path target and must be workspace-contained: without this, a Glob
+    # of "/etc/**" or "../../**" carries no target and slips past the scope gate.
+    if tool_name == "Glob":
+        pattern = tool_input.get("pattern")
+        if isinstance(pattern, str):
+            values.append(pattern)
     for key in ("file_path", "path", "notebook_path", "destination", "source"):
         value = tool_input.get(key)
         if isinstance(value, str):
@@ -239,7 +246,7 @@ def classify_tool_action(
         tool=tool_name,
         action=action_name or "unknown",
         capabilities=capabilities,
-        targets=_direct_targets(tool_input),
+        targets=_direct_targets(tool_name, tool_input),
         mutating=mutating,
         push=False,
         requires_task=bool(action.get("requires_task")),

@@ -150,6 +150,42 @@ class HookSubprocessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
 
+    def test_pre_tool_denies_glob_absolute_pattern(self):
+        # Glob's pattern is a real path target and must be workspace-contained.
+        result = self.run_hook(
+            "pre-tool",
+            {"session_id": "hook-glob-abs", "tool_name": "Glob",
+             "tool_input": {"pattern": "/etc/**"}, "tool_use_id": "toolu_glob_abs"},
+            {"BRO_MODE": "review"},
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+
+    def test_pre_tool_denies_glob_traversal_pattern(self):
+        result = self.run_hook(
+            "pre-tool",
+            {"session_id": "hook-glob-trav", "tool_name": "Glob",
+             "tool_input": {"pattern": "../../**"}, "tool_use_id": "toolu_glob_trav"},
+            {"BRO_MODE": "review"},
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+
+    def test_review_shell_deny_is_not_shadowable(self):
+        # shadow is active (enabled + a usable external ledger), yet a review-mode
+        # shell denial must remain a hard deny — shadow may not become a way to run
+        # a mutation under a read-only mode.
+        ledger = self.state_dir / "shadow-review.jsonl"
+        result = self.run_hook(
+            "pre-tool",
+            {"session_id": "hook-shadow-review", "tool_name": "Bash",
+             "tool_input": {"command": "find . -delete"}, "tool_use_id": "toolu_shadow_review"},
+            {"BRO_MODE": "review", "BRO_ENFORCEMENT": "shadow", "BRO_SHADOW_LEDGER": str(ledger)},
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+        self.assertFalse(ledger.exists())  # a hard deny is not recorded as a would-block
+
     def test_post_tool_non_push_is_noop(self):
         result = self.run_hook(
             "post-tool",
