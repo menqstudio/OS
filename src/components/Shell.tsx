@@ -4,7 +4,7 @@ import { useApp } from '../app/store';
 import { NAV } from '../app/nav';
 import type { Lang } from '../domain/enums';
 import { languageNames } from '../i18n';
-import { desktop } from '../services/desktop';
+import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -74,7 +74,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
         <main className="content">
           <div className="content-inner">
-            <div className="proto-banner">◍ {t('state.prototype')}</div>
+            {!hasBackend() && <div className="proto-banner">◍ {t('state.prototype')}</div>}
             {children}
           </div>
         </main>
