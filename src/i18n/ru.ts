@@ -73,6 +73,7 @@ export const ru: Record<DictKey, string> = {
   'chat.noMessagesHint': 'Отправьте первое сообщение ниже.',
   'chat.you': 'gev',
   'chat.replyFailed': 'Агент не смог ответить',
+  'chat.replyAs': 'Ответить как',
 
   'projects.subtitle': 'Работа, ориентированная на цель',
   'tasks.subtitle': 'Система действий с доказательствами',
