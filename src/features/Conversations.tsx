@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Skeleton, ErrorState,
+  PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Select, Skeleton, ErrorState,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -14,6 +14,11 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const { t } = useApp();
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
   const ai = useAsync(() => desktop.aiStatus(), []);
+  const agents = useAsync(() => desktop.listAgents(), []);
+  const isGroup = conversation.kind === 'group';
+  const agentNames = (agents.data ?? []).map((a) => a.displayName);
+  const [selectedAgent, setSelectedAgent] = useState('Bro');
+  const [streamingAuthor, setStreamingAuthor] = useState('Bro');
   const [draft, setDraft] = useState('');
   // Messages posted during this mounted session, appended optimistically on top
   // of the loaded history so the reply appears with no reload flash. Reset when
@@ -42,16 +47,26 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
       return;
     }
     setBusy(false);
-    // Stream a real agent reply. Best-effort: a provider failure is shown
-    // honestly (as an error event) but never loses the user's message.
+    // Stream real agent replies. In a direct chat the selected agent answers;
+    // in a group room the first couple of specialists answer in turn. A provider
+    // failure is shown honestly and never loses the user's message.
     setThinking(true);
     setStreamingText('');
     try {
-      await desktop.streamReply(conversation.id, (ev) => {
-        if (ev.type === 'delta') setStreamingText((prev) => prev + ev.text);
-        else if (ev.type === 'done') setExtra((prev) => [...prev, ev.message]);
-        else if (ev.type === 'error') setReplyError(ev.message);
-      });
+      const responders = isGroup
+        ? (agentNames.slice(0, 2).length ? agentNames.slice(0, 2) : ['Bro'])
+        : [selectedAgent];
+      for (const who of responders) {
+        setStreamingAuthor(who);
+        setStreamingText('');
+        let failed = false;
+        await desktop.streamReply(conversation.id, (ev) => {
+          if (ev.type === 'delta') setStreamingText((prev) => prev + ev.text);
+          else if (ev.type === 'done') setExtra((prev) => [...prev, ev.message]);
+          else if (ev.type === 'error') { setReplyError(ev.message); failed = true; }
+        }, who);
+        if (failed) break; // don't replay the same provider error for every agent
+      }
     } catch (e: unknown) {
       setReplyError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -65,7 +80,20 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const allMessages = [...history, ...extra];
 
   return (
-    <Panel title={conversation.title}>
+    <Panel
+      title={conversation.title}
+      actions={!isGroup && agentNames.length > 0 ? (
+        <Select
+          value={selectedAgent}
+          onChange={(e) => setSelectedAgent(e.target.value)}
+          style={{ width: 'auto', padding: '4px 8px' }}
+          title={t('chat.replyAs')}
+        >
+          <option value="Bro">Bro</option>
+          {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
+        </Select>
+      ) : undefined}
+    >
       <div className="chat-thread">
         {s.loading && s.data === null && <Skeleton rows={4} />}
         {s.error && <ErrorState message={s.error} onRetry={s.reload} />}
@@ -89,8 +117,9 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
         )}
         {thinking && (
           <div className="chat-msg chat-msg--other">
-            <Avatar name="B" />
+            <Avatar name={streamingAuthor} />
             <div className="chat-bubble">
+              <div className="chat-author">{streamingAuthor}</div>
               {streamingText
                 ? <span>{streamingText}<span className="chat-cursor" /></span>
                 : <span className="chat-typing"><span></span><span></span><span></span></span>}
