@@ -166,6 +166,7 @@ export interface RunStep {
   title: string;
   detail: string;
   status: string;
+  result: string;
   createdAt: string;
   updatedAt: string;
 }

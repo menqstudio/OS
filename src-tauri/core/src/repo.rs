@@ -638,9 +638,46 @@ pub mod runs {
             title: r.get("title")?,
             detail: r.get("detail")?,
             status: r.get("status")?,
+            result: r.get("result")?,
             created_at: r.get("created_at")?,
             updated_at: r.get("updated_at")?,
         })
+    }
+
+    /// The step an execution should run next: the active one if present,
+    /// otherwise the lowest-position pending one. `None` when nothing remains.
+    pub fn next_runnable_step(conn: &Connection, run_id: &str) -> CoreResult<Option<RunStep>> {
+        if let Some(active) = conn
+            .query_row(
+                "SELECT * FROM run_steps WHERE run_id = ?1 AND status = 'active' ORDER BY position LIMIT 1",
+                [run_id],
+                map_step,
+            )
+            .optional()?
+        {
+            return Ok(Some(active));
+        }
+        let pending = conn
+            .query_row(
+                "SELECT * FROM run_steps WHERE run_id = ?1 AND status = 'pending' ORDER BY position LIMIT 1",
+                [run_id],
+                map_step,
+            )
+            .optional()?;
+        Ok(pending)
+    }
+
+    /// Record a produced result for a step and mark it done.
+    pub fn set_step_result(conn: &Connection, id: &str, result: &str) -> CoreResult<RunStep> {
+        let changed = conn.execute(
+            "UPDATE run_steps SET result = ?1, status = 'done', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![result, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "run_step.executed", "gev", "run_step", id)?;
+        get_step(conn, id)
     }
 
     pub fn add_step(conn: &Connection, run_id: &str, title: &str, detail: &str) -> CoreResult<RunStep> {

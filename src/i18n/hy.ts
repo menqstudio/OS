@@ -103,6 +103,7 @@ export const hy: Record<DictKey, string> = {
   'command.newRun': 'Նոր կատարում',
   'command.steps': 'Քայլեր',
   'command.advance': 'Առաջ տանել',
+  'command.execute': 'Կատարել քայլը',
   'command.addStep': 'Ավելացնել քայլ',
   'command.noSteps': 'Դեռ քայլ չկա — ավելացրու առաջինը ներքևում։',
   'field.intent': 'Մտադրություն',

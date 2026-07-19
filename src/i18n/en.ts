@@ -101,6 +101,7 @@ export const en = {
   'command.newRun': 'New run',
   'command.steps': 'Steps',
   'command.advance': 'Advance',
+  'command.execute': 'Execute step',
   'command.addStep': 'Add step',
   'command.noSteps': 'No steps yet — add the first one below.',
   'field.intent': 'Intent',
