@@ -60,6 +60,8 @@ def main() -> int:
         return 0
     try:
         profile = json.loads(pathlib.Path(profile_path).read_text(encoding="utf-8"))
+        if not isinstance(profile, dict):
+            raise IdentityError("agent profile must be a JSON object")
         canonical_id = validate_agent_profile_identity(profile)
     except (OSError, json.JSONDecodeError, IdentityError) as exc:
         _deny(f"agent identity gate RED: {exc}")
@@ -75,4 +77,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Fail closed on ANY unexpected error, like bro_hook: this second PreToolUse hook
+    # must emit a deny and exit 0 rather than crash with a traceback (a non-deny,
+    # non-zero exit would let the gated tool through).
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        _deny(f"agent identity gate RED: unexpected error: {exc}")
+        raise SystemExit(0)

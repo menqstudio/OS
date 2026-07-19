@@ -53,6 +53,12 @@ def matches_pattern(relative: str, pattern: str, *, case_sensitive: bool = True)
         segments = rel.split("/")
         return any(fnmatch.fnmatchcase("/".join(segments[i:]), bare)
                    for i in range(1, len(segments)))
+    # A bare directory pattern (no wildcard) protects everything beneath it, so a
+    # prohibited `.git` denies `.git/config` — matching bro_security.path_allowed's
+    # prefix semantics. Without this a prohibited directory listed without `/**` would
+    # silently under-block its contents.
+    if not any(ch in pat for ch in "*?[") and rel.startswith(pat + "/"):
+        return True
     return False
 
 

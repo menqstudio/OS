@@ -41,11 +41,14 @@ _PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
     ("bearer-token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*")),
 ]
 
-# key=value / key: value with a plausibly-secret key name. Only the value is hidden.
+# key=value / key: value with a plausibly-secret key name. Only the value (group 4) is
+# hidden. The closing quote is an INDEPENDENT optional group, not a backreference to the
+# opener: a value that opens a quote but is never closed (a truncated log/stderr tail,
+# e.g. password="hunter2sekret) would otherwise match nothing and leak the secret verbatim.
 _ASSIGNMENT = re.compile(
     r"(?i)\b(secret|password|passwd|passphrase|token|api[_-]?key|access[_-]?key|client[_-]?secret)"
     r"(\s*[=:]\s*)"
-    r"(['\"]?)([^\s'\"]{6,})(\3)"
+    r"(['\"]?)([^\s'\"]{6,})(['\"]?)"
 )
 
 REDACTION = "[REDACTED:{kind}]"

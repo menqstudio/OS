@@ -38,6 +38,15 @@ class RedactionTests(unittest.TestCase):
         self.assertIn("[REDACTED:keyed-secret]", out)
         self.assertNotIn("hunter2secretvalue", out)
 
+    def test_keyed_secret_with_unclosed_quote_is_redacted(self):
+        # A truncated log/stderr tail can open a quote it never closes; the value must
+        # still be hidden (the old backreference-closed pattern leaked it verbatim).
+        text = 'password="hunter2sekretvalue'
+        self.assertTrue(contains_secret(text))
+        out = redact(text)
+        self.assertNotIn("hunter2sekretvalue", out)
+        self.assertIn("[REDACTED:keyed-secret]", out)
+
     def test_does_not_redact_sha256_or_git_hashes(self):
         # Precision: ubiquitous, legitimate hashes must survive (no over-redaction).
         digest = "a1b2c3d4" * 8  # 64-hex

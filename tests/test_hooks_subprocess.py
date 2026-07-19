@@ -227,6 +227,26 @@ class HookSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
 
+    def test_identity_hook_fails_closed_on_non_dict_profile(self):
+        # A profile that is valid JSON but not an object (a list) parses fine, then
+        # validate_agent_profile_identity does profile.get(...) -> AttributeError. The
+        # hook must emit a deny and exit 0 (fail closed), never crash with a traceback
+        # and a non-deny non-zero exit that lets the mutating tool through.
+        import tempfile
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-idhook-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        profile = tmp / "profile.json"
+        profile.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+        env = os.environ.copy()
+        env.update({"BRO_MODE": "work", "BRO_AGENT_PROFILE": str(profile)})
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "runtime" / "bro_identity_hook.py")],
+            input=json.dumps({"tool_name": "Write", "tool_input": {"file_path": "x.py"}}),
+            text=True, capture_output=True, cwd=ROOT, env=env,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

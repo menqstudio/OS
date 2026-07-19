@@ -87,6 +87,16 @@ class PatternTests(unittest.TestCase):
         self.assertTrue(matches_pattern(".git/config", ".git/config"))
         self.assertFalse(matches_pattern("git/config", ".git/config"))
 
+    def test_bare_directory_pattern_protects_its_contents(self):
+        # A prohibited bare directory (no wildcard) must also match everything beneath
+        # it, mirroring bro_security.path_allowed — otherwise `.git` listed without
+        # `/**` would silently under-block `.git/config`.
+        self.assertTrue(matches_pattern(".git", ".git"))
+        self.assertTrue(matches_pattern(".git/config", ".git"))
+        self.assertTrue(matches_pattern("runtime/bro_policy.py", "runtime"))
+        self.assertFalse(matches_pattern("gitignore", ".git"))       # not a child
+        self.assertFalse(matches_pattern("runtimex/a.py", "runtime"))
+
 
 class RemoteTests(unittest.TestCase):
     def test_https_form(self):
