@@ -496,7 +496,11 @@
         "execution-lease-ledger",
         "recovery-journal",
         "workspace-binding-digest",
-        "task-lock-binding"
+        "task-lock-binding",
+        "failure-drills",
+        "lease-quarantine",
+        "recovery-proof",
+        "interrupted-fencing"
       ]
     },
     {

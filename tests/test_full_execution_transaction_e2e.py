@@ -257,6 +257,57 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             self.assertIn("scope gate RED", reason)
             self.assertEqual(list(self.lease_ledger.iterdir()), [])
 
+    # ---- failure drills -----------------------------------------------------
+    # The ALLOW path is proven above; these drive the same assembled transaction
+    # through failure and interruption and assert the recovery journal and the
+    # execution-lease ledger fail safe: a failed mutation quarantines its lease and
+    # marks recovery required, recovery can be proven to close it, and an
+    # interrupted (unsettled) transaction fences off further mutation on the task.
+    def _recovery_state(self):
+        path = self.recovery_store / f"{hashlib.sha256(self.task_id.encode()).hexdigest()}.state.json"
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def test_drill_failed_settlement_quarantines_lease_and_requires_recovery(self):
+        env = self._bundle_env()
+        with self._patches(), patch.dict(os.environ, env, clear=False):
+            allowed, _ = authorize_tool(self._state(), "Write", TOOL_INPUT, tool_use_id=TUID)
+            self.assertTrue(allowed)
+            # the mutation runs and FAILS: settlement quarantines the reserved lease
+            # and moves the recovery journal to a blocking, recovery-required phase
+            governed, green, msg = settle_execution_tool(
+                self._state(), "Write", TOOL_INPUT, TUID, success=False, error="drill: mutation boom")
+            self.assertTrue(governed, msg)
+            self.assertFalse(green, msg)
+            self.assertIn("quarantined", msg)
+            self.assertEqual([p.suffix for p in self.lease_ledger.iterdir()], [".ambiguous"])
+            self.assertEqual(self._recovery_state()["phase"], "RECOVERY_REQUIRED")
+
+    def test_drill_recovery_proof_closes_a_failed_transaction(self):
+        from bro_recovery import prove_recovery
+        env = self._bundle_env()
+        with self._patches(), patch.dict(os.environ, env, clear=False):
+            authorize_tool(self._state(), "Write", TOOL_INPUT, tool_use_id=TUID)
+            settle_execution_tool(self._state(), "Write", TOOL_INPUT, TUID, success=False, error="drill: boom")
+            self.assertEqual(self._recovery_state()["phase"], "RECOVERY_REQUIRED")
+            # the before-state is restored (snapshot is patched to it) and recovery
+            # is proven; the journal advances out of the blocking phase to rework
+            message = prove_recovery(self.task_id, "d" * 64)
+            self.assertIn("recovery proven", message)
+            self.assertEqual(self._recovery_state()["phase"], "REWORK_REQUIRED")
+
+    def test_drill_interrupted_transaction_fences_further_mutation(self):
+        env = self._bundle_env()
+        with self._patches(), patch.dict(os.environ, env, clear=False):
+            allowed, _ = authorize_tool(self._state(), "Write", TOOL_INPUT, tool_use_id=TUID)
+            self.assertTrue(allowed)
+            # the transaction prepared a PREPARED recovery journal but was never
+            # settled (a crash mid-mutation). A fresh mutation attempt on the same
+            # task must be fenced until the interrupted journal is reconciled.
+            allowed2, reason2 = authorize_tool(self._state(), "Write", TOOL_INPUT, tool_use_id="toolu_exec_e2e_2")
+            self.assertFalse(allowed2)
+            self.assertIn("transaction gate RED", reason2)
+            self.assertIn("blocks mutation", reason2)
+
 
 if __name__ == "__main__":
     unittest.main()
