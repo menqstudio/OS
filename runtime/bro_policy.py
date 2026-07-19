@@ -100,9 +100,61 @@ def is_conductor(state: State) -> bool:
 
     There is exactly one Bro. Treating the role string alone as proof lets any
     session assert it by setting an environment variable, so the canonical agent
-    id must agree.
+    id must agree. Both values are still environment-derived (M-4): callers that
+    grant a conductor exemption must additionally pass
+    verify_conductor_session_token and audit-log the exemption, so an env-only
+    identity claim is at minimum tamper-evidently recorded and can be upgraded
+    to a signed session binding via policy.
     """
     return state.role == CONDUCTOR_ROLE and state.agent_id == CANONICAL_CONDUCTOR_ID
+
+
+CONDUCTOR_SESSION_TOKEN_ENV = "BRO_CONDUCTOR_SESSION_TOKEN"
+CONDUCTOR_SESSION_ARTIFACT = "conductor-session"
+
+
+def verify_conductor_session_token(state: State, root: pathlib.Path = ROOT) -> tuple[bool, str]:
+    """M-4 hook: bind the conductor identity to a signed session token.
+
+    The conductor identity otherwise rests on plain environment variables
+    (BRO_ROLE/BRO_AGENT_ID), which anyone controlling the harness environment can
+    set. This hook closes that when deployed:
+
+    - A presented token (BRO_CONDUCTOR_SESSION_TOKEN, a path to a signed
+      `conductor-session` artifact) MUST verify against the operator-signed
+      trusted-key registry and bind to this session id, agent id and role, with
+      an unexpired validity window; any failure denies (fail closed).
+    - `.bro/policy.json` may set `"require_conductor_session_token": true` to
+      make the token mandatory. The policy file lives inside the protected
+      control-plane digest, unlike the environment, so the requirement itself
+      cannot be switched off by unsetting an env var.
+    - With no token and no requirement the caller may proceed on env identity
+      alone, and the returned note says so — authorize_conductor_stop writes it
+      into the append-only audit ledger on every exemption stop.
+    """
+    try:
+        required = bool(load_json(POLICY_PATH).get("require_conductor_session_token", False))
+    except (OSError, ValueError) as exc:
+        return False, f"conductor session policy unreadable: {exc}"
+    raw = os.getenv(CONDUCTOR_SESSION_TOKEN_ENV)
+    if not raw:
+        if required:
+            return False, "policy requires a signed conductor session token and none is presented"
+        return True, "no conductor session token presented; identity rests on environment"
+    from bro_signature import SignatureError, load_trusted_keys, verify_artifact
+    try:
+        document = json.loads(pathlib.Path(raw).read_text(encoding="utf-8"))
+        payload = verify_artifact(document, CONDUCTOR_SESSION_ARTIFACT, load_trusted_keys(root))
+    except (OSError, ValueError, SignatureError) as exc:
+        return False, f"conductor session token RED: {exc}"
+    for key, value in (("session_id", state.session_id), ("agent_id", state.agent_id),
+                       ("role", state.role)):
+        if payload.get(key) != value:
+            return False, f"conductor session token binding mismatch: {key}"
+    expires = payload.get("expires_at_epoch")
+    if not isinstance(expires, int) or expires <= int(time.time()):
+        return False, "conductor session token is expired or carries no integer expiry"
+    return True, "conductor session token verified against the trusted-key registry"
 
 
 def read_all(session_id: str) -> dict:
@@ -207,6 +259,14 @@ def authorize_classified_action(
     if state.mode not in {"review", "work", "release"}:
         return False, f"unknown BRO_MODE={state.mode!r}"
     if state.mode == "review":
+        # Shell-resolver actions are checked FIRST: whether their parsed
+        # classification came out read-only or mutating, a shell tool is never a
+        # structured read tool in review, and the deny reason must say so.
+        if classification.command_infos:
+            return False, (f"review mode allows only structured read tools "
+                           f"{sorted(REVIEW_READ_TOOLS)}; {classification.tool!r} is denied — a "
+                           f"shell/command tool's unparsed arguments can smuggle a mutation or an "
+                           f"out-of-workspace read past the read-only classification")
         if classification.mutating:
             return False, "review mode is read-only; mutation denied"
         if classification.unknown:
@@ -266,4 +326,18 @@ def authorize_classified_action(
             enforce_scope(ROOT, list(classification.targets), bundle.task["scope"], bundle.task["prohibited_scope"])
         except SecurityError as exc:
             return False, f"scope gate RED: {exc}"
+    else:
+        # Reads are scope-checked too: an out-of-scope read is an exfiltration
+        # primitive, and read-only shell verbs now surface their path targets
+        # precisely so this gate can see them. A read outside the task scope is
+        # denied exactly like a mutation there. Flag tokens (e.g. `git log
+        # --oneline`) are display options, not paths, and are not targets; a
+        # targetless read (echo/pwd/whoami, bare ls, git status) touches no
+        # specific path and needs no scope match.
+        read_targets = [t for t in classification.targets if not t.startswith("-")]
+        if read_targets:
+            try:
+                enforce_scope(ROOT, read_targets, bundle.task["scope"], bundle.task["prohibited_scope"])
+            except SecurityError as exc:
+                return False, f"read scope gate RED: {exc}"
     return True, "allowed"

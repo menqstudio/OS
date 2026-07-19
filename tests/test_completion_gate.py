@@ -5,12 +5,14 @@ import shlex
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from bro_completion import (
     CompletionError,
@@ -38,6 +40,10 @@ TASK = {
 
 def manifest():
     from bro_contracts import canonical_json_sha256
+    # L-5/L-13 hardening: manifests carry a nonce and an explicit validity
+    # window, and must be fresh against the gate's real clock (now=None), so
+    # the fixture is issued "now" rather than at a fixed epoch.
+    now = int(time.time())
     return {
         "schema": 1,
         "task_id": TASK["task_id"],
@@ -50,7 +56,9 @@ def manifest():
         "evidence_event_ids": ["evt-1"],
         "open_risks": [],
         "rollback_ready": True,
-        "issued_at_epoch": 1000,
+        "nonce": "nonce-completion-gate-0001",
+        "issued_at_epoch": now,
+        "expires_at_epoch": now + 3600,
     }
 
 
@@ -229,7 +237,8 @@ class CompletionEd25519Tests(unittest.TestCase):
             "done_criteria": [{"criterion": "done", "status": "satisfied", "evidence_event_ids": ["e1"]}],
             "tests": [{"command": ["pytest"], "status": "passed", "evidence_event_id": "e2", "execution_receipt_id": "rcpt-00000000000000e2"}],
             "evidence_event_ids": ["e1", "e2"], "open_risks": [], "rollback_ready": True,
-            "issued_at_epoch": self.NOW,
+            "nonce": "nonce-ed25519-manifest-01",
+            "issued_at_epoch": self.NOW, "expires_at_epoch": self.NOW + 3600,
         }
 
     def _receipt(self):
@@ -297,7 +306,24 @@ class CompletionEd25519Tests(unittest.TestCase):
 import subprocess
 
 from bro_contracts import canonical_json_sha256
-from test_orchestration_runtime import AGENT, build_evidence
+from test_orchestration_runtime import AGENT, build_evidence as _shared_build_evidence
+
+
+def build_evidence(store, keys, task_id, count):
+    """L-4 hardening: evidence heads must carry a monotonic positive
+    ``head_sequence``. Re-anchor the shared fixture's signed head with one when
+    the shared builder does not emit it yet (idempotent once it does)."""
+    from broctl import sign_payload
+
+    ids = _shared_build_evidence(store, keys, task_id, count)
+    head_path = store / f"{task_id}.head.json"
+    payload = json.loads(head_path.read_text(encoding="utf-8"))["payload"]
+    if "head_sequence" not in payload:
+        payload["head_sequence"] = payload["last_sequence"]
+        head_path.write_text(
+            json.dumps(sign_payload(keys["evidence-recorder"]["private_key"], payload)),
+            encoding="utf-8")
+    return ids
 
 RCPT_NOW = 1_700_000_000
 RCPT_YEAR = 365 * 24 * 60 * 60
@@ -466,7 +492,11 @@ class StopGateFullFlowTests(unittest.TestCase):
             json.dumps(build_registry(list(cls.keys.values()), cls.now - 3600, 365 * 24 * 3600)),
             encoding="utf-8")
         for args in (["init", "-q", "-b", "flow-branch"], ["config", "user.email", "t@e.com"],
-                     ["config", "user.name", "t"], ["add", "-A"]):
+                     ["config", "user.name", "t"],
+                     # The runner snapshot re-checks-out HEAD and must reproduce the
+                     # exact on-disk bytes the tree identity hashed; eol smudging
+                     # (core.autocrlf=true in a global config) would diverge them.
+                     ["config", "core.autocrlf", "false"], ["add", "-A"]):
             subprocess.run(["git", "-C", str(cls.root), *args], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(cls.root), "commit", "-qm", "init"], check=True, capture_output=True)
         cls.branch = "flow-branch"
@@ -523,7 +553,8 @@ class StopGateFullFlowTests(unittest.TestCase):
             "tests": [{"command": command, "status": "passed", "evidence_event_id": refs[1],
                        "execution_receipt_id": rid}],
             "evidence_event_ids": refs, "open_risks": [], "rollback_ready": True,
-            "issued_at_epoch": self.now,
+            "nonce": "nonce-stop-flow-000001",
+            "issued_at_epoch": self.now, "expires_at_epoch": self.now + 3600,
         }
         return self.sign(self.keys["builder"], payload)
 

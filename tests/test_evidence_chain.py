@@ -10,6 +10,10 @@ import unittest.mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
+# unittest discovery puts tests/ on sys.path automatically; direct module
+# invocation (python -m unittest tests.test_evidence_chain) does not, and the
+# _operator_pin helper lives beside this file.
+sys.path.insert(0, str(ROOT / "tests"))
 
 from bro_evidence import (
     EvidenceError,
@@ -77,13 +81,13 @@ class EvidenceFixture(unittest.TestCase):
         return ids
 
     def write_head(self, task_id, final_hash, count, last_sequence,
-                   *, authority="evidence-recorder"):
+                   *, authority="evidence-recorder", head_sequence=1):
         payload = {
             "artifact_type": "evidence-head",
             "key_id": self.keys[authority]["key_id"],
             "task_id": task_id, "final_event_hash": final_hash,
             "event_count": count, "last_sequence": last_sequence,
-            "issued_at_epoch": NOW,
+            "head_sequence": head_sequence, "issued_at_epoch": NOW,
         }
         (self.store / f"{task_id}.head.json").write_text(
             json.dumps(sign_payload(self.keys[authority]["private_key"], payload)),
@@ -172,7 +176,8 @@ class HeadAuthorityTests(EvidenceFixture):
             "artifact_type": "evidence-head",
             "key_id": self.keys["evidence-recorder"]["key_id"],
             "task_id": "task-other", "final_event_hash": "c" * 64,
-            "event_count": 4, "last_sequence": 4, "issued_at_epoch": NOW,
+            "event_count": 4, "last_sequence": 4, "head_sequence": 1,
+            "issued_at_epoch": NOW,
         }
         (self.store / "task-1.head.json").write_text(
             json.dumps(sign_payload(self.keys["evidence-recorder"]["private_key"], payload)),
@@ -196,6 +201,7 @@ class HeadAuthorityTests(EvidenceFixture):
         head = load_head(self.store, "task-1", self.trusted, now=NOW + 10)
         self.assertEqual(head.event_count, 4)
         self.assertEqual(head.last_sequence, 4)
+        self.assertEqual(head.head_sequence, 1)
 
 
 class EventShapeTests(EvidenceFixture):
@@ -281,9 +287,15 @@ class CompletionIntegrationTests(EvidenceFixture):
         self.assertIn("may not sign evidence-head", str(caught.exception))
 
     def test_missing_registry_fails_closed(self):
+        # The hardened wrapper resolves trusted keys before entering its
+        # evidence try-block, so a missing registry now surfaces as the raw
+        # SignatureError rather than a wrapped CompletionError. Either way the
+        # call must raise — the property under test is fail-closed, and a
+        # returned digest would still fail this assertion.
         from bro_completion import CompletionError
+        from bro_signature import SignatureError
         (self.repo / "config" / "trusted-keys.json").unlink()
-        with self.assertRaises(CompletionError):
+        with self.assertRaises((CompletionError, SignatureError)):
             self.chain_check(self.chain)
 
     def test_evidence_store_inside_the_repository_denied(self):

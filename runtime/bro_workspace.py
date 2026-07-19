@@ -5,7 +5,10 @@ import json
 import os
 import pathlib
 import re
+import time
 from dataclasses import dataclass
+
+from bro_signature import SignatureError, load_trusted_keys, verify_artifact
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -29,6 +32,11 @@ class Workspace:
     allowed_remotes: tuple[str, ...]
     allowed_remote_repository: str
     control_plane_digest: str
+    # Enforced at load (M-8): load_workspace always sets the verified value from the
+    # signed payload and rejects an expired binding. The default exists only so a
+    # directly-constructed Workspace (tests/fixtures) does not need the field; it is
+    # never a substitute for the load-time expiry gate.
+    expires_at_epoch: int = 0
 
 
 def matches_pattern(relative: str, pattern: str, *, case_sensitive: bool = True) -> bool:
@@ -110,6 +118,16 @@ def load_workspace(root: pathlib.Path = ROOT) -> Workspace:
 
     The in-repository registry is policy/spec only: an agent editing it cannot
     widen the scope of the running session.
+
+    The binding is an OPERATOR-signed artifact (bro_signature classifies
+    "workspace-binding" as operator authority). The env var that names it is
+    agent-reachable, so an unsigned binding would let an agent point the var at a
+    file it wrote — allowed_paths ["**"], no prohibitions — and dissolve the
+    workspace scope gate entirely (H-1). The document is therefore verified with
+    verify_artifact against the operator-pinned trusted-key registry BEFORE any
+    field is trusted, exactly as BRO_PROTECTED_AUTHORITY is handled; every field
+    below is read from the verified payload, never the raw JSON. Any signature or
+    registry failure denies (fail closed).
     """
     raw = os.getenv("BRO_WORKSPACE_BINDING")
     if not raw:
@@ -120,10 +138,14 @@ def load_workspace(root: pathlib.Path = ROOT) -> Workspace:
     if _contained(_real(str(root)), _real(str(binding_path))):
         raise WorkspaceError("workspace binding must live outside the repository")
     try:
-        value = json.loads(binding_path.read_text(encoding="utf-8"))
+        document = json.loads(binding_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise WorkspaceError(f"cannot load workspace binding: {exc}") from exc
-    if not isinstance(value, dict) or value.get("schema") != 1:
+    try:
+        value = verify_artifact(document, "workspace-binding", load_trusted_keys(root))
+    except SignatureError as exc:
+        raise WorkspaceError(f"workspace binding is not operator-signed: {exc}") from exc
+    if value.get("schema") != 1:
         raise WorkspaceError("unsupported workspace binding schema")
     if value.get("active") is not True:
         raise WorkspaceError("workspace binding is not active")
@@ -133,6 +155,14 @@ def load_workspace(root: pathlib.Path = ROOT) -> Workspace:
     digest = value.get("control_plane_digest")
     if not isinstance(digest, str) or len(digest) != 64:
         raise WorkspaceError("workspace binding carries no control_plane_digest")
+    # M-8: a binding with no enforced lifetime never expires, so a leaked or stale
+    # one stays live forever. The stamped expiry is required, must be a real integer
+    # (bool is an int subtype and is rejected), and must still be in the future.
+    expires = value.get("expires_at_epoch")
+    if not isinstance(expires, int) or isinstance(expires, bool):
+        raise WorkspaceError("workspace binding missing or malformed expires_at_epoch")
+    if int(time.time()) >= expires:
+        raise WorkspaceError(f"workspace binding expired at epoch {expires}")
     workspace_root = _real(value["root"])
     if not workspace_root.is_dir():
         raise WorkspaceError("workspace root does not exist")
@@ -145,6 +175,7 @@ def load_workspace(root: pathlib.Path = ROOT) -> Workspace:
         allowed_remotes=tuple(value.get("allowed_remotes") or ("origin",)),
         allowed_remote_repository=value["allowed_remote_repository"].lower(),
         control_plane_digest=digest,
+        expires_at_epoch=expires,
     )
 
 

@@ -14,6 +14,17 @@ from bro_release_v3 import ReleaseV3Error, settle_release_push
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
+# On Windows the standard streams default to the console code page (e.g. cp1252),
+# so a verdict whose reason carries an em-dash, an accented path, or a canonical
+# document body would crash the emitter itself and the wall would exit with no
+# verdict at all. Force UTF-8 at import so the hook can always speak; if the
+# streams cannot be reconfigured, emit() below still escapes to ASCII.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+except Exception:  # noqa: BLE001 - stream setup must never take down the wall
+    pass
+
 
 def payload() -> dict:
     try:
@@ -23,7 +34,9 @@ def payload() -> dict:
 
 
 def emit(obj: dict) -> None:
-    print(json.dumps(obj, ensure_ascii=False))
+    # ensure_ascii: the machine-readable verdict must stay encodable on any stdout,
+    # even where the reconfigure() above was unavailable (non-UTF-8 code pages).
+    print(json.dumps(obj, ensure_ascii=True))
 
 
 def deny(reason: str) -> None:
@@ -193,15 +206,35 @@ def fail_closed(event: str, exc: BaseException) -> int:
     not anticipate is therefore converted into the same answer they would have
     given: deny. Exit code stays 0 because the decision travels in the payload,
     not the status.
+
+    This path must be bulletproof: the triggering exception may carry the very
+    text the console cannot encode (which may be what got us here), so the reason
+    is forced to ASCII and the verdict falls back to a last-resort writer that
+    bypasses the text layer. If even stdout is gone, exit 2 -- the hook
+    protocol's blocking error -- so the wall still fails closed, never open.
     """
-    reason = f"hook failed closed: {type(exc).__name__}: {exc}"
+    try:
+        detail = str(exc)
+    except Exception:  # noqa: BLE001 - even str(exc) gets no chance to crash the wall
+        detail = "unprintable exception"
+    detail = detail.encode("ascii", errors="backslashreplace").decode("ascii")
+    reason = f"hook failed closed: {type(exc).__name__}: {detail}"
     if event == "pre-tool":
-        deny(reason)
+        verdict = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}
     elif event in {"stop", "post-tool", "post-tool-failure"}:
-        emit({"decision": "block", "reason": reason})
+        verdict = {"decision": "block", "reason": reason}
     else:
-        emit({"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                     "additionalContext": reason}})
+        verdict = {"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                          "additionalContext": reason}}
+    try:
+        emit(verdict)
+    except Exception:  # noqa: BLE001 - the verdict must still go out
+        try:
+            data = json.dumps(verdict, ensure_ascii=True) + "\n"
+            sys.stdout.buffer.write(data.encode("utf-8", "backslashreplace"))
+            sys.stdout.buffer.flush()
+        except Exception:  # noqa: BLE001 - stdout itself is gone; block via exit code
+            return 2
     return 0
 
 

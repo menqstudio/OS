@@ -14,10 +14,17 @@ import os
 from unittest.mock import patch
 
 ENV_PIN = "BRO_OPERATOR_ROOT_PUBKEY"
+ENV_CI_FLAG = "BRO_ENV"
+CI_FLAG_VALUE = "ci"
 
 
 def use_operator_pin(test_case, public_key):
-    """Set the operator-root pin for the lifetime of ``test_case`` (auto-cleaned)."""
-    patcher = patch.dict(os.environ, {ENV_PIN: public_key})
+    """Set the operator-root pin for the lifetime of ``test_case`` (auto-cleaned).
+
+    The raw env pin is honoured only when the CI system marks the environment as
+    CI (BRO_ENV=ci), so the helper sets that flag alongside the pin.
+    """
+    patcher = patch.dict(os.environ, {ENV_PIN: public_key,
+                                      ENV_CI_FLAG: CI_FLAG_VALUE})
     patcher.start()
     test_case.addCleanup(patcher.stop)

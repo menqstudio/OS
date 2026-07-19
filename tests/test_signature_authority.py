@@ -9,6 +9,10 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
+# unittest discovery puts tests/ on sys.path automatically; direct module
+# invocation (python -m unittest tests.test_signature_authority) does not, and
+# the _operator_pin helper lives beside this file.
+sys.path.insert(0, str(ROOT / "tests"))
 
 from bro_signature import (
     ARTIFACT_AUTHORITY,
@@ -306,7 +310,8 @@ class OperatorRootPinTests(SignatureFixture):
     # ---- pin resolution rules ------------------------------------------------
     def test_env_pin_resolves(self):
         self.assertEqual(
-            resolve_operator_root_pin({ENV_PIN: self.operator_pub}), self.operator_pub)
+            resolve_operator_root_pin({ENV_PIN: self.operator_pub, "BRO_ENV": "ci"}),
+            self.operator_pub)
 
     def test_file_pin_resolves_when_outside_repo_regular_and_protected(self):
         pin_file = _write_pin_file(self, self.operator_pub, mode=0o600)
@@ -318,7 +323,8 @@ class OperatorRootPinTests(SignatureFixture):
         pin_file = _write_pin_file(self, self.operator_pub, mode=0o600)
         self.assertEqual(
             resolve_operator_root_pin(
-                {ENV_PIN: self.operator_pub, ENV_PIN_FILE: str(pin_file)}, root=ROOT),
+                {ENV_PIN: self.operator_pub, ENV_PIN_FILE: str(pin_file),
+                 "BRO_ENV": "ci"}, root=ROOT),
             self.operator_pub)
 
     def test_both_present_but_mismatched_is_hard_denied(self):
@@ -326,7 +332,8 @@ class OperatorRootPinTests(SignatureFixture):
         pin_file = _write_pin_file(self, other, mode=0o600)
         with self.assertRaises(SignatureError) as caught:
             resolve_operator_root_pin(
-                {ENV_PIN: self.operator_pub, ENV_PIN_FILE: str(pin_file)}, root=ROOT)
+                {ENV_PIN: self.operator_pub, ENV_PIN_FILE: str(pin_file),
+                 "BRO_ENV": "ci"}, root=ROOT)
         self.assertIn("mismatch", str(caught.exception))
 
     def test_neither_present_is_hard_denied(self):

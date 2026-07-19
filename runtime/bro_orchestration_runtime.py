@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import pathlib
 import tempfile
-from typing import Any
+import time
+import uuid
+from typing import Any, Iterator
 
 from bro_contracts import ContractError, validate_task_contract
 from bro_evidence import EvidenceError, validate_chain
@@ -15,6 +18,10 @@ from bro_orchestration import OrchestrationError, build_control_room_projection,
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ZERO_HASH = "0" * 64
 TERMINAL = {"completed", "failed", "cancelled"}
+DEFAULT_LEASE_SECONDS = 300
+MAX_LEASE_SECONDS = 86400
+LOCK_TIMEOUT_SECONDS = 10
+STALE_LOCK_SECONDS = 30
 
 
 class OrchestrationRuntimeError(ValueError):
@@ -118,6 +125,7 @@ class DurableOrchestrationRuntime:
         self.state_dir = pathlib.Path(state_dir).resolve()
         self.tasks_dir = self.state_dir / "tasks"
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        self.claim_lock = self.state_dir / ".claim.lock"
         self.registry = _load(self.root / "orchestration" / "registry.json")
         self.queue = {
             item["id"]: item["priority"]
@@ -284,26 +292,202 @@ class DurableOrchestrationRuntime:
             raise OrchestrationRuntimeError("runtime config missing or duplicated")
         return configs[0]["payload"]
 
-    def claim_next(self, agent_id: str, *, now_epoch: int) -> dict[str, Any] | None:
-        self._validate_actor("agent", agent_id)
-        candidates: list[tuple[int, int, str]] = []
-        for directory in self.tasks_dir.iterdir():
-            if not directory.is_dir():
-                continue
-            task_id = directory.name
-            if self._state(task_id) != "queued":
-                continue
-            contract = self._contract(task_id)
-            if contract.get("agent_id") != agent_id:
-                continue
-            config = self._config(task_id)
-            first = self._records(task_id)[0]["observed_at_epoch"]
-            candidates.append((-self.queue[config["queue_class"]], first, task_id))
-        if not candidates:
+    # --- Claim serialization and execution leases -------------------------------
+    #
+    # These used to live only in DurableOrchestrationRuntimeV1, which made safety
+    # opt-in via subclass choice: the base class — public, importable — granted
+    # authority to an expired or released lease and let two processes double-claim.
+    # The guard and the lease are the base contract now; the V1 subclass keeps its
+    # richer API (renew/release/recover/reconcile) on top of the same machinery.
+
+    def _lock_owner(self) -> str | None:
+        try:
+            return json.loads(self.claim_lock.read_text(encoding="utf-8")).get("owner_token")
+        except (OSError, json.JSONDecodeError, AttributeError):
             return None
-        _, _, task_id = sorted(candidates)[0]
-        self._transition(task_id, "routing", "bro", "bro-000", now_epoch, "routing-started", [])
-        return self._transition(task_id, "running", "agent", agent_id, now_epoch, "execution-started", [])
+
+    def _break_stale_lock(self, observed_token: str | None) -> None:
+        """Steal a stale lock by renaming it, so only one breaker can win.
+
+        Unlinking it directly meant every process that saw the same stale lock
+        deleted it, and the second deletion landed on the lock the first breaker
+        had already replaced. Rename is exclusive: the loser gets ENOENT because
+        the source is already gone.
+
+        The token observed before the staleness check is re-read here, so a lock
+        that was released and re-taken in the meantime is left alone.
+        """
+        if self._lock_owner() != observed_token:
+            return
+        stolen = self.claim_lock.with_name(f".claim.stale.{uuid.uuid4().hex}")
+        try:
+            os.replace(self.claim_lock, stolen)
+        except (FileNotFoundError, PermissionError):
+            return
+        stolen.unlink(missing_ok=True)
+
+    @contextlib.contextmanager
+    def _claim_guard(self) -> Iterator[None]:
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        token = uuid.uuid4().hex
+        payload = json.dumps({"owner_token": token, "pid": os.getpid(),
+                              "created_at_epoch": int(time.time())}).encode("utf-8")
+        while True:
+            try:
+                descriptor = os.open(self.claim_lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "wb", closefd=True) as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                break
+            except FileExistsError:
+                try:
+                    age = time.time() - self.claim_lock.stat().st_mtime
+                except FileNotFoundError:
+                    continue
+                if age > STALE_LOCK_SECONDS:
+                    # Read the owner only when actually breaking. Reading it on
+                    # every spin put every waiter in a read/delete race with the
+                    # holder's release, and a lost race there leaks the lock: the
+                    # holder cannot confirm the lock is its own, declines to
+                    # remove it, and everyone else waits out the timeout.
+                    self._break_stale_lock(self._lock_owner())
+                    continue
+                if time.monotonic() >= deadline:
+                    raise OrchestrationRuntimeError("claim lock acquisition timed out")
+                time.sleep(0.01)
+        try:
+            yield
+        finally:
+            # Release "my lock", not "the lock". An overrunning holder whose lock
+            # was already broken and retaken must not delete the new holder's,
+            # which would put two processes inside the guard at once.
+            if self._lock_owner() == token:
+                self.claim_lock.unlink(missing_ok=True)
+
+    def _guard_held_by_this_process(self) -> bool:
+        """True when the claim lock is currently held by THIS process.
+
+        The lock payload records its holder's pid, so a wrapper that already
+        acquired the guard (the V1 runtime's lease-checked entry points) can be
+        told apart from an unrelated holder in another process. The check is
+        process-granular, matching the file lock itself.
+        """
+        try:
+            payload = json.loads(self.claim_lock.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return False
+        return isinstance(payload, dict) and payload.get("pid") == os.getpid()
+
+    @contextlib.contextmanager
+    def _mutation_guard(self) -> Iterator[None]:
+        """The claim guard, reentrant per process.
+
+        The base mutation methods must hold the guard themselves so a direct
+        base-class caller is serialized, but a V1 wrapper already holds it when
+        it delegates here — the file lock is not reentrant and re-acquiring
+        would deadlock the wrapped call until timeout.
+        """
+        if self._guard_held_by_this_process():
+            yield
+            return
+        with self._claim_guard():
+            yield
+
+    def _mint_lease(self, task_id: str, agent_id: str, now_epoch: int,
+                    lease_seconds: int) -> str:
+        lease_id = f"lease-{uuid.uuid4().hex}"
+        self._append(task_id, "claim-lease", now_epoch, {
+            "lease_id": lease_id,
+            "agent_id": agent_id,
+            "issued_at_epoch": now_epoch,
+            "expires_at_epoch": now_epoch + lease_seconds,
+        })
+        return lease_id
+
+    def _require_lease(self, task_id: str, agent_id: str, lease_id: str,
+                       now_epoch: int) -> dict[str, Any]:
+        """Execution authority is the lease, not the contract.
+
+        The assignee check asks whether you were ever the right agent for this
+        task. That stays true after the lease expires, after it is released, and
+        after a recovery that issued none, so it answers a question nobody was
+        asking. Only the lease says whether you are authorised right now.
+        """
+        active = self._active_lease(task_id, now_epoch)
+        if active is None or active.get("lease_id") != lease_id or active.get("agent_id") != agent_id:
+            raise OrchestrationRuntimeError("claim lease is missing, expired, or mismatched")
+        return active
+
+    def _active_lease(self, task_id: str, now_epoch: int) -> dict[str, Any] | None:
+        latest: dict[str, Any] | None = None
+        for record in self._records(task_id):
+            if record.get("kind") == "claim-lease":
+                latest = record["payload"]
+            elif record.get("kind") in {"claim-released", "claim-expired"}:
+                latest = None
+        if latest is None:
+            return None
+        if latest["expires_at_epoch"] <= now_epoch:
+            self._append(
+                task_id,
+                "claim-expired",
+                now_epoch,
+                {"lease_id": latest["lease_id"], "reason": "lease-expired-before-claim"},
+            )
+            return None
+        return latest
+
+    def _enforce_execution_authority(self, task_id: str, actor_id: str,
+                                     lease_id: str | None, now_epoch: int) -> None:
+        """Deny any assignee mutation that does not ride an active claim lease.
+
+        Every path — base class or subclass — now requires the task to hold an
+        active, unexpired, unreleased lease for the acting agent; an expired or
+        released claim is denied everywhere, not only in the V1 wrapper. When
+        the caller offers a lease_id it must additionally be THE active lease
+        (the V1 entry points always do); a wrapper that already validated its
+        lease may delegate here without repeating the id.
+        """
+        if lease_id is not None:
+            self._require_lease(task_id, actor_id, lease_id, now_epoch)
+            return
+        active = self._active_lease(task_id, now_epoch)
+        if active is None or active.get("agent_id") != actor_id:
+            raise OrchestrationRuntimeError("claim lease is missing, expired, or mismatched")
+
+    def claim_next(self, agent_id: str, *, now_epoch: int,
+                   lease_seconds: int = DEFAULT_LEASE_SECONDS) -> dict[str, Any] | None:
+        self._validate_actor("agent", agent_id)
+        if not isinstance(now_epoch, int) or now_epoch < 0:
+            raise OrchestrationRuntimeError("time must be a non-negative integer")
+        if not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= MAX_LEASE_SECONDS:
+            raise OrchestrationRuntimeError("lease duration invalid")
+        with self._mutation_guard():
+            candidates: list[tuple[int, int, str]] = []
+            for directory in self.tasks_dir.iterdir():
+                if not directory.is_dir():
+                    continue
+                task_id = directory.name
+                if self._state(task_id) != "queued":
+                    continue
+                contract = self._contract(task_id)
+                if contract.get("agent_id") != agent_id:
+                    continue
+                if self._active_lease(task_id, now_epoch) is not None:
+                    continue
+                config = self._config(task_id)
+                first = self._records(task_id)[0]["observed_at_epoch"]
+                candidates.append((-self.queue[config["queue_class"]], first, task_id))
+            if not candidates:
+                return None
+            _, _, task_id = sorted(candidates)[0]
+            lease_id = self._mint_lease(task_id, agent_id, now_epoch, lease_seconds)
+            self._transition(task_id, "routing", "bro", "bro-000", now_epoch, "routing-started", [])
+            snapshot = self._transition(task_id, "running", "agent", agent_id, now_epoch, "execution-started", [])
+            snapshot["lease_id"] = lease_id
+            snapshot["lease_expires_at_epoch"] = now_epoch + lease_seconds
+            return snapshot
 
     def checkpoint(
         self,
@@ -315,25 +499,28 @@ class DurableOrchestrationRuntime:
         open_risks: list[str],
         next_action: str,
         evidence_refs: list[str],
+        lease_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._state(task_id) != "running":
-            raise OrchestrationRuntimeError("checkpoint requires running task")
-        self._validate_actor("agent", actor_id)
-        contract = self._contract(task_id)
-        if contract.get("agent_id") != actor_id:
-            raise OrchestrationRuntimeError("checkpoint actor is not task assignee")
-        if not isinstance(next_action, str) or not next_action:
-            raise OrchestrationRuntimeError("next_action required")
-        evidence = _strings(evidence_refs, "evidence_refs", required=True)
-        payload = {
-            "actor_id": actor_id,
-            "completed_criteria": _strings(completed_criteria, "completed_criteria", required=True),
-            "open_risks": _strings(open_risks, "open_risks", required=True),
-            "next_action": next_action,
-            "evidence_refs": evidence,
-        }
-        self._append(task_id, "checkpoint", now_epoch, payload)
-        return self.task_snapshot(task_id, now_epoch)
+        with self._mutation_guard():
+            self._enforce_execution_authority(task_id, actor_id, lease_id, now_epoch)
+            if self._state(task_id) != "running":
+                raise OrchestrationRuntimeError("checkpoint requires running task")
+            self._validate_actor("agent", actor_id)
+            contract = self._contract(task_id)
+            if contract.get("agent_id") != actor_id:
+                raise OrchestrationRuntimeError("checkpoint actor is not task assignee")
+            if not isinstance(next_action, str) or not next_action:
+                raise OrchestrationRuntimeError("next_action required")
+            evidence = _strings(evidence_refs, "evidence_refs", required=True)
+            payload = {
+                "actor_id": actor_id,
+                "completed_criteria": _strings(completed_criteria, "completed_criteria", required=True),
+                "open_risks": _strings(open_risks, "open_risks", required=True),
+                "next_action": next_action,
+                "evidence_refs": evidence,
+            }
+            self._append(task_id, "checkpoint", now_epoch, payload)
+            return self.task_snapshot(task_id, now_epoch)
 
     def record_usage(
         self,
@@ -343,26 +530,39 @@ class DurableOrchestrationRuntime:
         now_epoch: int,
         delta: dict[str, int],
         evidence_refs: list[str],
+        lease_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._state(task_id) != "running":
-            raise OrchestrationRuntimeError("usage requires running task")
-        self._validate_actor("agent", actor_id)
-        supported = set(self.registry["budget_policy"]["supported_dimensions"])
-        if not isinstance(delta, dict) or not delta:
-            raise OrchestrationRuntimeError("usage delta required")
-        if any(key not in supported or not isinstance(value, int) or value <= 0 for key, value in delta.items()):
-            raise OrchestrationRuntimeError("usage delta invalid")
-        evidence = _strings(evidence_refs, "evidence_refs", required=True)
-        self._append(task_id, "usage", now_epoch, {"actor_id": actor_id, "delta": delta, "evidence_refs": evidence})
-        totals = self._usage_totals(task_id)
-        limits = self._config(task_id)["budget_limits"]
-        hard = any(limits.get(key, {}).get("hard") is not None and totals[key] > limits[key]["hard"] for key in totals)
-        soft = any(limits.get(key, {}).get("soft") is not None and totals[key] > limits[key]["soft"] for key in totals)
-        if hard:
-            return self._transition(task_id, "blocked", "system", "system-budget", now_epoch, "budget-exceeded", evidence)
-        if soft:
-            return self._transition(task_id, "waiting-approval", "system", "system-budget", now_epoch, "budget-exceeded", evidence)
-        return self.task_snapshot(task_id, now_epoch)
+        with self._mutation_guard():
+            self._enforce_execution_authority(task_id, actor_id, lease_id, now_epoch)
+            if self._state(task_id) != "running":
+                raise OrchestrationRuntimeError("usage requires running task")
+            self._validate_actor("agent", actor_id)
+            supported = set(self.registry["budget_policy"]["supported_dimensions"])
+            if not isinstance(delta, dict) or not delta:
+                raise OrchestrationRuntimeError("usage delta required")
+            if any(key not in supported or not isinstance(value, int) or value <= 0 for key, value in delta.items()):
+                raise OrchestrationRuntimeError("usage delta invalid")
+            evidence = _strings(evidence_refs, "evidence_refs", required=True)
+            self._append(task_id, "usage", now_epoch, {"actor_id": actor_id, "delta": delta, "evidence_refs": evidence})
+            totals = self._usage_totals(task_id)
+            limits = self._config(task_id)["budget_limits"]
+            hard = any(limits.get(key, {}).get("hard") is not None and totals[key] > limits[key]["hard"] for key in totals)
+            soft = any(limits.get(key, {}).get("soft") is not None and totals[key] > limits[key]["soft"] for key in totals)
+            if hard or soft:
+                # The budget gate is taking the task out of running, so it takes
+                # the execution authority with it: a lease left active here would
+                # block the re-claim after an owner-approved retry until it
+                # happened to expire, and would keep asserting an authority the
+                # lifecycle just withdrew.
+                active = self._active_lease(task_id, now_epoch)
+                if active is not None:
+                    self._append(task_id, "claim-released", now_epoch,
+                                 {"lease_id": active["lease_id"], "reason": "budget-exceeded"})
+            if hard:
+                return self._transition(task_id, "blocked", "system", "system-budget", now_epoch, "budget-exceeded", evidence)
+            if soft:
+                return self._transition(task_id, "waiting-approval", "system", "system-budget", now_epoch, "budget-exceeded", evidence)
+            return self.task_snapshot(task_id, now_epoch)
 
     def _usage_totals(self, task_id: str) -> dict[str, int]:
         totals: dict[str, int] = {}
@@ -400,11 +600,27 @@ class DurableOrchestrationRuntime:
             return self._transition(task_id, "recovery-required", actor_type, actor_id, now_epoch, "recovery-required", evidence)
         return self._transition(task_id, "cancelled", actor_type, actor_id, now_epoch, "task-cancelled", evidence)
 
-    def recover_task(self, task_id: str, *, owner_id: str, now_epoch: int, evidence_refs: list[str]) -> dict[str, Any]:
-        if self._state(task_id) != "recovery-required":
-            raise OrchestrationRuntimeError("recovery proof requires recovery-required state")
-        self._validate_actor("owner", owner_id)
-        return self._transition(task_id, "running", "owner", owner_id, now_epoch, "recovery-proved", _strings(evidence_refs, "evidence_refs", required=True))
+    def recover_task(self, task_id: str, *, owner_id: str, now_epoch: int, evidence_refs: list[str],
+                     lease_seconds: int = DEFAULT_LEASE_SECONDS) -> dict[str, Any]:
+        """Recovery hands back authority, not just state: with mutations now
+        lease-gated in the base class, a recovery that issued no lease would land
+        the task in running with nobody authorised to touch it. A wrapper that
+        already holds the guard (the V1 runtime) mints its own lease after this
+        returns, so the base mints only for direct callers."""
+        delegated = self._guard_held_by_this_process()
+        if not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= MAX_LEASE_SECONDS:
+            raise OrchestrationRuntimeError("lease duration invalid")
+        with self._mutation_guard():
+            if self._state(task_id) != "recovery-required":
+                raise OrchestrationRuntimeError("recovery proof requires recovery-required state")
+            self._validate_actor("owner", owner_id)
+            snapshot = self._transition(task_id, "running", "owner", owner_id, now_epoch, "recovery-proved", _strings(evidence_refs, "evidence_refs", required=True))
+            if not delegated:
+                lease_id = self._mint_lease(
+                    task_id, self._contract(task_id)["agent_id"], now_epoch, lease_seconds)
+                snapshot["lease_id"] = lease_id
+                snapshot["lease_expires_at_epoch"] = now_epoch + lease_seconds
+            return snapshot
 
     def _resolve_evidence(self, task_id: str, evidence_refs: list[str]) -> None:
         """Make the assignee's evidence references mean something.
@@ -426,7 +642,8 @@ class DurableOrchestrationRuntime:
             raise OrchestrationRuntimeError(f"completion evidence RED: {exc}") from exc
 
     def submit_for_verification(self, task_id: str, *, actor_id: str, now_epoch: int,
-                                evidence_refs: list[str]) -> dict[str, Any]:
+                                evidence_refs: list[str],
+                                lease_id: str | None = None) -> dict[str, Any]:
         """running -> verification.
 
         The state machine has always allowed this edge and nothing ever took it,
@@ -434,19 +651,33 @@ class DurableOrchestrationRuntime:
         entered. A task needing an independent verdict went straight from the
         builder's hands to completed.
         """
-        if self._state(task_id) != "running":
-            raise OrchestrationRuntimeError("verification requires running task")
-        contract = self._contract(task_id)
-        if contract.get("agent_id") != actor_id:
-            raise OrchestrationRuntimeError("submitting actor is not task assignee")
-        refs = _strings(evidence_refs, "evidence_refs", required=True)
-        self._resolve_evidence(task_id, refs)
-        return self._transition(task_id, "verification", "agent", actor_id, now_epoch,
-                                "verification-requested", refs)
+        with self._mutation_guard():
+            self._enforce_execution_authority(task_id, actor_id, lease_id, now_epoch)
+            if self._state(task_id) != "running":
+                raise OrchestrationRuntimeError("verification requires running task")
+            contract = self._contract(task_id)
+            if contract.get("agent_id") != actor_id:
+                raise OrchestrationRuntimeError("submitting actor is not task assignee")
+            refs = _strings(evidence_refs, "evidence_refs", required=True)
+            self._resolve_evidence(task_id, refs)
+            return self._transition(task_id, "verification", "agent", actor_id, now_epoch,
+                                    "verification-requested", refs)
 
     def complete_task(self, task_id: str, *, actor_id: str, now_epoch: int, evidence_refs: list[str],
                       completion_manifest: dict[str, Any] | None = None,
-                      verifier_receipt: dict[str, Any] | None = None) -> dict[str, Any]:
+                      verifier_receipt: dict[str, Any] | None = None,
+                      lease_id: str | None = None) -> dict[str, Any]:
+        with self._mutation_guard():
+            self._enforce_execution_authority(task_id, actor_id, lease_id, now_epoch)
+            return self._complete_task_locked(
+                task_id, actor_id=actor_id, now_epoch=now_epoch,
+                evidence_refs=evidence_refs, completion_manifest=completion_manifest,
+                verifier_receipt=verifier_receipt)
+
+    def _complete_task_locked(self, task_id: str, *, actor_id: str, now_epoch: int,
+                              evidence_refs: list[str],
+                              completion_manifest: dict[str, Any] | None,
+                              verifier_receipt: dict[str, Any] | None) -> dict[str, Any]:
         state = self._state(task_id)
         contract = self._contract(task_id)
         verification = contract.get("verification") or {}

@@ -17,6 +17,7 @@ operator root key belongs offline.
     python tools/broctl.py keygen --authority operator-root --out KEYDIR
     python tools/broctl.py build-registry --keydir KEYDIR --out config/trusted-keys.json
     python tools/broctl.py sign --key KEYDIR/issuer.json --artifact task-contract --in t.json --out t.signed.json
+    python tools/broctl.py sign --key KEYDIR/operator-root.json --artifact workspace-binding --in b.json --out b.signed.json
     python tools/broctl.py inspect --registry config/trusted-keys.json
 """
 
@@ -24,11 +25,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
+import stat
 import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -36,6 +41,7 @@ from bro_signature import (
     ACTIVE,
     ARTIFACT_AUTHORITY,
     AUTHORITY_TYPES,
+    EVIDENCE,
     OPERATOR,
     SignatureError,
     canonical_bytes,
@@ -43,6 +49,18 @@ from bro_signature import (
 )
 
 DEFAULT_VALIDITY_SECONDS = 365 * 24 * 60 * 60
+
+# Artifact types deliberately UNKNOWN to bro_signature.ARTIFACT_AUTHORITY. Their
+# verifiers (bro_audit_log.verify_signed_payload; bro_backup's manifest check is
+# built on it) bind the signature to an authority TYPE rather than a per-key
+# allowed_artifact_types entry, so a signed audit head or backup manifest can
+# never be replayed as a registry artifact and vice versa. The signing side must
+# mirror those exact bindings: bro_audit_log.ANCHOR_AUTHORITIES for the head,
+# bro_backup.MANIFEST_AUTHORITIES for the manifest.
+OUT_OF_REGISTRY_ARTIFACTS = {
+    "audit-head": (EVIDENCE, OPERATOR),
+    "backup-manifest": (OPERATOR,),
+}
 
 
 def _artifacts_for(authority: str) -> list[str]:
@@ -120,10 +138,61 @@ def _write(path: str, value: dict) -> pathlib.Path:
     return out
 
 
+def _require_private_key_dir(directory: pathlib.Path) -> pathlib.Path:
+    """The directory that will hold a cleartext private key, or a refusal.
+
+    Two refusals, both fail-closed. Inside the repository: a keydir in the tree
+    commits cleanly (no ignore pattern matches issuer.json) and every specialist
+    granted repo read gets the signing root. Group/other-accessible: on a shared
+    host another local account reads the issuer key and mints valid leases. A
+    directory this tool creates is born 0700; a pre-existing one must already be
+    owner-only, it is not silently re-permissioned out from under its owner.
+    """
+    resolved = pathlib.Path(directory).expanduser().resolve()
+    try:
+        resolved.relative_to(REPO_ROOT.resolve())
+    except ValueError:
+        pass
+    else:
+        raise SignatureError(
+            f"refusing to write key material inside the repository: {resolved}")
+    if not resolved.exists():
+        resolved.mkdir(parents=True, exist_ok=True)
+        if os.name == "posix":
+            os.chmod(resolved, 0o700)
+    if not resolved.is_dir():
+        raise SignatureError(f"key directory is not a directory: {resolved}")
+    if os.name == "posix":
+        mode = resolved.stat().st_mode
+        if mode & (stat.S_IRWXG | stat.S_IRWXO):
+            raise SignatureError(
+                f"refusing group/other-accessible key directory: {resolved}")
+    return resolved
+
+
+def _write_key(path: pathlib.Path, value: dict) -> pathlib.Path:
+    """Key material only: exclusive create, owner-only permissions.
+
+    _write inherits the umask — often other-readable — which is fine for signed
+    public artifacts and wrong for the private half of the trust chain. O_EXCL
+    also refuses to clobber an existing key file: silently replacing a signing
+    key is a rotation, and rotations should never happen by accident.
+    """
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise SignatureError(
+            f"refusing to overwrite existing key file: {path}") from exc
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    return path
+
+
 def cmd_keygen(args) -> int:
     key = generate_key(args.authority, args.key_id or f"dev-{args.authority}",
                        args.production)
-    out = _write(str(pathlib.Path(args.out) / f"{key['authority_type']}.json"), key)
+    keydir = _require_private_key_dir(pathlib.Path(args.out))
+    out = _write_key(keydir / f"{key['authority_type']}.json", key)
     print(f"GREEN: development {key['authority_type']} key {key['key_id']}")
     print(f"  path:       {out}")
     print(f"  public key: {key['public_key']}")
@@ -148,13 +217,16 @@ def cmd_build_registry(args) -> int:
 
 def cmd_sign(args) -> int:
     key = _load(args.key)
-    required = ARTIFACT_AUTHORITY.get(args.artifact)
-    if required is None:
-        raise SignatureError(f"unknown artifact type: {args.artifact}")
-    if key["authority_type"] != required:
+    allowed = OUT_OF_REGISTRY_ARTIFACTS.get(args.artifact)
+    if allowed is None:
+        required = ARTIFACT_AUTHORITY.get(args.artifact)
+        if required is None:
+            raise SignatureError(f"unknown artifact type: {args.artifact}")
+        allowed = (required,)
+    if key["authority_type"] not in allowed:
         raise SignatureError(
             f"a {key['authority_type']} key may not sign {args.artifact}: that "
-            f"requires {required} authority")
+            f"requires {' or '.join(allowed)} authority")
     payload = dict(_load(args.input))
     payload["artifact_type"] = args.artifact
     payload["key_id"] = key["key_id"]
@@ -204,7 +276,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sign = sub.add_parser("sign", help="sign an artifact")
     sign.add_argument("--key", required=True)
-    sign.add_argument("--artifact", required=True, choices=sorted(ARTIFACT_AUTHORITY))
+    sign.add_argument("--artifact", required=True,
+                      choices=sorted(set(ARTIFACT_AUTHORITY) | set(OUT_OF_REGISTRY_ARTIFACTS)))
     sign.add_argument("--in", dest="input", required=True)
     sign.add_argument("--out", required=True)
     sign.set_defaults(func=cmd_sign)

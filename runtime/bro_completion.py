@@ -16,7 +16,7 @@ from bro_contracts import (
     load_contract_bundle_from_env,
     load_mode_grant_from_env,
 )
-from bro_evidence import EvidenceError, validate_chain, validate_criterion_evidence
+from bro_evidence import EvidenceError, load_head, validate_chain, validate_criterion_evidence
 from bro_recovery import RecoveryError, _load_state
 from bro_repository_state import resolve_state
 from bro_signature import SignatureError, load_trusted_keys
@@ -58,8 +58,20 @@ def _signed_env(path_env: str, artifact_type: str, root: pathlib.Path = ROOT, no
 
 _RECEIPT_ID = re.compile(r"rcpt-[0-9a-f]{16}")
 
+# L-13: completion-manifest nonce discipline. Same alphabet and length bounds as
+# the grant nonces (bro_security / mode grants), and the schema's own pattern.
+_MANIFEST_NONCE = re.compile(r"[A-Za-z0-9._-]{16,128}")
+
 # Tolerated clock skew for artifacts issued at a slightly-ahead runner clock.
 _CLOCK_SKEW = 60
+
+# L-5: a completion manifest carries issued_at_epoch but no expiry, so without a
+# freshness window a stale GREEN manifest replays forever — roll the repository
+# back to the old candidate and the old completion authorizes a stop again. The
+# window mirrors the verifier-receipt clock discipline (future-issue rejection via
+# _CLOCK_SKEW) and bounds the replay surface to one hour, matching the default
+# mode-grant/lease TTL used across the harness.
+_MANIFEST_MAX_AGE = 3600
 
 
 def _resolved_keys(keys: dict | None, root: pathlib.Path) -> dict:
@@ -170,7 +182,8 @@ def _external_dir(env_name: str) -> pathlib.Path:
 
 def validate_evidence_chain(task_id: str, event_ids: list[str],
                             root: pathlib.Path = ROOT, *, keys: dict | None = None,
-                            store: pathlib.Path | None = None) -> str:
+                            store: pathlib.Path | None = None,
+                            min_head_sequence: int | None = None) -> str:
     """Prove the submitted events are the whole chain, not a flattering prefix.
 
     The previous implementation checked backward linkage over a caller-supplied
@@ -185,11 +198,27 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
     verifying key is the signing key and the hook runs in the builder's own
     process, so any anchor the builder had to present it could also mint.
     Delegating to the Ed25519 path is what makes the head an authority.
+
+    L-4 (binding half): ``min_head_sequence`` is the caller's high-water mark
+    for the signed head's monotonic ``head_sequence``. A genuinely signed but
+    OLDER head — the retained anchor of a self-consistent truncated chain — is
+    rejected as stale.
     """
+    resolved_keys = keys if keys is not None else load_trusted_keys(root)
+    resolved_store = store if store is not None else _external_dir("BRO_EVIDENCE_STORE")
     try:
-        return validate_chain(task_id, event_ids,
-                              keys if keys is not None else load_trusted_keys(root),
-                              store=store if store is not None else _external_dir("BRO_EVIDENCE_STORE"))
+        if min_head_sequence is None:
+            # TODO(L-4): no run-recorded high-water mark exists yet and the
+            # completion-manifest schema carries no head sequence, so the floor
+            # is anchored on the store's own current head. That never leaves the
+            # parameter unset and rejects a head swapped for an older one during
+            # this validation, but it cannot see a rollback that happened before
+            # the call — once a durable high-water source (run state or a
+            # manifest-bound head sequence) lands, thread it through here.
+            min_head_sequence = load_head(resolved_store, task_id, resolved_keys).head_sequence
+        return validate_chain(task_id, event_ids, resolved_keys,
+                              store=resolved_store,
+                              min_head_sequence=min_head_sequence)
     except (EvidenceError, SignatureError) as exc:
         raise CompletionError(str(exc)) from exc
 
@@ -221,12 +250,13 @@ def _clean_repository(root: pathlib.Path) -> None:
 def _check_manifest(task: dict[str, Any], agent_id: str, manifest: dict[str, Any], *,
                     root: pathlib.Path, now: int | None, keys: dict | None,
                     evidence_store: pathlib.Path | None, receipt_store: pathlib.Path | None,
-                    require_live: bool) -> tuple[dict[str, Any], str, list[str]]:
+                    require_live: bool,
+                    min_head_sequence: int | None = None) -> tuple[dict[str, Any], str, list[str]]:
     """Artifact-only validation of a completion manifest, shared by the Stop gate
     (env + live repository) and the durable runtime (in-process keys/store). When
     ``require_live`` the manifest candidate must equal the current repository state;
     otherwise it is bound internally (the durable runtime holds no checkout)."""
-    required = {"schema", "task_id", "agent_id", "task_contract_sha256", "candidate_head", "candidate_tree", "done_criteria", "tests", "evidence_event_ids", "open_risks", "rollback_ready", "issued_at_epoch"}
+    required = {"schema", "task_id", "agent_id", "task_contract_sha256", "candidate_head", "candidate_tree", "done_criteria", "tests", "evidence_event_ids", "open_risks", "rollback_ready", "nonce", "issued_at_epoch", "expires_at_epoch"}
     if set(manifest) - {"artifact_type", "key_id"} != required or manifest.get("schema") != 1:
         raise CompletionError("invalid completion manifest shape")
     task_hash = canonical_json_sha256(task)
@@ -237,6 +267,34 @@ def _check_manifest(task: dict[str, Any], agent_id: str, manifest: dict[str, Any
     # The manifest's builder identity must be the identity its signing key is bound
     # to, not merely a string it wrote.
     _require_signer_identity(trusted, manifest, manifest["agent_id"], "completion manifest")
+    # L-13: the manifest carries a single-use nonce (replay discrimination) and
+    # an explicit builder-declared expiry. The nonce must match the schema's own
+    # pattern; the expiry mirrors the verifier-receipt window discipline
+    # (integer timestamps, non-empty validity window, hard rejection once past)
+    # and can only TIGHTEN the L-5 freshness bound below, never extend it.
+    nonce = manifest.get("nonce")
+    if not isinstance(nonce, str) or not _MANIFEST_NONCE.fullmatch(nonce):
+        raise CompletionError("completion manifest nonce is malformed")
+    # L-5: mirror the verifier-receipt clock check — a manifest issued in the
+    # future is rejected, and a manifest older than the freshness window is
+    # stale and cannot authorize a completion, even against a matching candidate.
+    issued = manifest.get("issued_at_epoch")
+    if not isinstance(issued, int):
+        raise CompletionError("completion manifest issued_at_epoch must be an integer")
+    expires = manifest.get("expires_at_epoch")
+    if not isinstance(expires, int):
+        raise CompletionError("completion manifest expires_at_epoch must be an integer")
+    moment = int(time.time()) if now is None else now
+    if issued >= expires:
+        raise CompletionError("completion manifest has an empty validity window")
+    if issued > moment + _CLOCK_SKEW:
+        raise CompletionError("completion manifest is issued in the future")
+    if moment - issued > _MANIFEST_MAX_AGE:
+        raise CompletionError(
+            f"completion manifest is stale (issued {moment - issued}s ago; "
+            f"freshness window is {_MANIFEST_MAX_AGE}s)")
+    if expires <= moment:
+        raise CompletionError("completion manifest expired")
     if require_live:
         state = resolve_state(root)
         if manifest["candidate_head"] != state.head_sha or manifest["candidate_tree"] != state.tree_identity:
@@ -260,7 +318,10 @@ def _check_manifest(task: dict[str, Any], agent_id: str, manifest: dict[str, Any
     if manifest.get("open_risks") or manifest.get("rollback_ready") is not True:
         raise CompletionError("completion has open risks or rollback is not ready")
     chain_ids = manifest["evidence_event_ids"]
-    validate_evidence_chain(task["task_id"], chain_ids, root, keys=trusted, store=evidence_store)
+    # L-4 (binding half): the caller's recorded high-water mark rides along so a
+    # genuinely signed but OLDER evidence head cannot anchor this completion.
+    validate_evidence_chain(task["task_id"], chain_ids, root, keys=trusted, store=evidence_store,
+                            min_head_sequence=min_head_sequence)
     # The criteria above only had to cite *some* evidence id. Nothing tied those
     # ids to the chain that was just proven, so a criterion could rest on a real,
     # signed event belonging to a different chain entirely.
@@ -292,7 +353,8 @@ def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path 
 
 def _check_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], task_hash: str,
                             receipt: dict[str, Any], *, root: pathlib.Path, now: int | None,
-                            keys: dict | None, evidence_store: pathlib.Path | None) -> dict[str, Any]:
+                            keys: dict | None, evidence_store: pathlib.Path | None,
+                            min_head_sequence: int | None = None) -> dict[str, Any]:
     """Artifact-only validation of an independent verifier receipt, shared by the
     Stop gate and the durable runtime: bound to the manifest and candidate, GREEN and
     unexpired, builder != verifier, independence meeting the risk floor."""
@@ -335,7 +397,8 @@ def _check_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], task
     if level not in LEVELS or LEVELS.index(level) < LEVELS.index(minimum):
         raise CompletionError("verifier independence level is insufficient")
     validate_evidence_chain(task["task_id"], receipt["evidence_event_ids"], root,
-                            keys=trusted, store=evidence_store)
+                            keys=trusted, store=evidence_store,
+                            min_head_sequence=min_head_sequence)
     return receipt
 
 
@@ -357,7 +420,8 @@ def _verify_doc(document: Any, artifact_type: str, keys: dict, now: int | None) 
 
 def authorize_completion_docs(task: dict[str, Any], agent_id: str, *, manifest_doc: Any,
                               receipt_doc: Any, keys: dict, evidence_store: pathlib.Path,
-                              root: pathlib.Path = ROOT, now: int | None = None) -> tuple[dict[str, Any], str]:
+                              root: pathlib.Path = ROOT, now: int | None = None,
+                              min_head_sequence: int | None = None) -> tuple[dict[str, Any], str]:
     """In-process completion authorization for the durable runtime — the same
     artifact checks as the Stop gate (builder-signed manifest, execution receipts
     feeding the verdict, and, when verification is required, an independent verifier
@@ -367,7 +431,7 @@ def authorize_completion_docs(task: dict[str, Any], agent_id: str, *, manifest_d
     manifest = _verify_doc(manifest_doc, "completion-manifest", keys, now)
     manifest, task_hash, receipt_ids = _check_manifest(
         task, agent_id, manifest, root=root, now=now, keys=keys, evidence_store=evidence_store,
-        receipt_store=evidence_store, require_live=False)
+        receipt_store=evidence_store, require_live=False, min_head_sequence=min_head_sequence)
     # The proof carries the WHOLE verified signed documents, not only their hashes:
     # a hash proves a document only to someone who still has the document, and the
     # evidence store is deletable. With the documents persisted in the hash-chained
@@ -385,7 +449,8 @@ def authorize_completion_docs(task: dict[str, Any], agent_id: str, *, manifest_d
     if (task.get("verification") or {}).get("required") is True:
         receipt = _verify_doc(receipt_doc, "verifier-receipt", keys, now)
         _check_verifier_receipt(task, manifest, task_hash, receipt, root=root, now=now,
-                                keys=keys, evidence_store=evidence_store)
+                                keys=keys, evidence_store=evidence_store,
+                                min_head_sequence=min_head_sequence)
         proof.update({
             "verifier_agent_id": receipt["verifier_agent_id"],
             "verifier_receipt_id": receipt["receipt_id"],
@@ -453,8 +518,14 @@ def authorize_conductor_stop(state, root: pathlib.Path = ROOT) -> tuple[bool, st
     Deliberately not covered: whether delegations this turn resolved. That needs
     the supervisor, which does not exist yet, so the honest position is that this
     exemption asserts nothing about delegated work.
+
+    M-4: the conductor identity is environment-derived (BRO_ROLE/BRO_AGENT_ID),
+    so the exemption is additionally (a) bound to a signed conductor session
+    token whenever one is presented or policy requires one, and (b) written to
+    the append-only audit ledger on EVERY grant — an exemption that cannot be
+    tamper-evidently recorded is not granted.
     """
-    from bro_policy import is_conductor
+    from bro_policy import is_conductor, verify_conductor_session_token
 
     if not is_conductor(state):
         return False, ("conductor stop exemption requires the canonical conductor; "
@@ -470,5 +541,29 @@ def authorize_conductor_stop(state, root: pathlib.Path = ROOT) -> tuple[bool, st
                            "it must terminate rather than finish")
     except FreezeError as exc:
         return False, f"freeze state gate RED: {exc}"
+    token_ok, identity_basis = verify_conductor_session_token(state, root)
+    if not token_ok:
+        return False, f"conductor stop exemption RED: {identity_basis}"
+    # The exemption stop is recorded before it is granted. The ledger lives
+    # beside the freeze markers in BRO_SESSION_STATE_DIR (which the freeze gate
+    # above already proved is configured) unless BRO_AUDIT_LEDGER points
+    # elsewhere; both are outside the repository by construction (audit_append
+    # enforces it via repo_root). A failed append fails the stop closed.
+    try:
+        from bro_audit_log import AuditError, append as audit_append
+
+        ledger = pathlib.Path(
+            os.getenv("BRO_AUDIT_LEDGER")
+            or pathlib.Path(os.environ["BRO_SESSION_STATE_DIR"]) / "conductor-stop-audit.jsonl")
+        audit_append(ledger, "conductor-exemption-stop", {
+            "session_id": state.session_id,
+            "role": state.role,
+            "agent_id": state.agent_id,
+            "mode": state.mode,
+            "identity_basis": identity_basis,
+            "stopped_at_epoch": int(time.time()),
+        }, repo_root=root)
+    except (KeyError, OSError, AuditError) as exc:
+        return False, f"conductor stop audit RED: exemption not recorded, not granted: {exc}"
     return True, ("conductor turn: no task contract bound, so no builder evidence "
                   "is owed; startup receipt is current")

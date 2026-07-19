@@ -207,8 +207,114 @@ def remove_worktree(repository_root: pathlib.Path, worktree: pathlib.Path) -> No
     shutil.rmtree(worktree.parent, ignore_errors=True)
 
 
+class _WindowsJobObject:
+    """Kill-on-close Job Object that reaps the builder's whole tree on Windows.
+
+    There are no POSIX process groups here, and ``taskkill /T`` walks a
+    parent-chain snapshot: a grandchild whose parent already exited is reparented
+    and escapes the walk, keeping the injected BRO_EXECUTION_LEASE context alive.
+    Job membership is inherited by every descendant regardless of reparenting, so
+    TerminateJobObject reaps the true tree, the job's accounting counter confirms
+    zero live members (a confirmation, not taskkill's word for it), and the
+    KILL_ON_JOB_CLOSE limit makes even a supervisor crash reap the tree when the
+    handle is closed.
+    """
+
+    _KILL_ON_JOB_CLOSE = 0x2000
+    _EXTENDED_LIMIT_INFORMATION = 9
+    _BASIC_ACCOUNTING_INFORMATION = 1
+
+    def __init__(self) -> None:
+        import ctypes
+
+        class _BasicLimits(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32),
+            ]
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_uint64) for name in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class _ExtendedLimits(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BasicLimits),
+                ("IoInfo", _IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        class _BasicAccounting(ctypes.Structure):
+            _fields_ = [
+                ("TotalUserTime", ctypes.c_int64),
+                ("TotalKernelTime", ctypes.c_int64),
+                ("ThisPeriodTotalUserTime", ctypes.c_int64),
+                ("ThisPeriodTotalKernelTime", ctypes.c_int64),
+                ("TotalPageFaultCount", ctypes.c_uint32),
+                ("TotalProcesses", ctypes.c_uint32),
+                ("ActiveProcesses", ctypes.c_uint32),
+                ("TotalTerminatedProcesses", ctypes.c_uint32),
+            ]
+
+        self._ctypes = ctypes
+        self._accounting_type = _BasicAccounting
+        self._kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        job = self._kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise OSError(f"CreateJobObject failed: {ctypes.get_last_error()}")
+        info = _ExtendedLimits()
+        info.BasicLimitInformation.LimitFlags = self._KILL_ON_JOB_CLOSE
+        if not self._kernel32.SetInformationJobObject(
+                job, self._EXTENDED_LIMIT_INFORMATION,
+                ctypes.byref(info), ctypes.sizeof(info)):
+            error = ctypes.get_last_error()
+            self._kernel32.CloseHandle(job)
+            raise OSError(f"SetInformationJobObject failed: {error}")
+        self._job = job
+
+    def assign(self, process_handle: int) -> None:
+        if not self._kernel32.AssignProcessToJobObject(self._job, int(process_handle)):
+            raise OSError(
+                f"AssignProcessToJobObject failed: {self._ctypes.get_last_error()}")
+
+    def kill_and_confirm(self, grace_seconds: float = 2.0, poll: float = 0.05) -> bool:
+        """Terminate every member and return True only on confirmed zero live members."""
+        if self._job is None:
+            return True
+        self._kernel32.TerminateJobObject(self._job, 1)
+        deadline = time.monotonic() + grace_seconds
+        while True:
+            info = self._accounting_type()
+            ok = self._kernel32.QueryInformationJobObject(
+                self._job, self._BASIC_ACCOUNTING_INFORMATION,
+                self._ctypes.byref(info), self._ctypes.sizeof(info), None)
+            if ok and info.ActiveProcesses == 0:
+                return True
+            if time.monotonic() >= deadline:
+                # A failed query or a survivor both mean "not confirmed stopped".
+                return False
+            time.sleep(poll)
+
+    def close(self) -> None:
+        if self._job is not None:
+            self._kernel32.CloseHandle(self._job)  # KILL_ON_JOB_CLOSE reaps stragglers
+            self._job = None
+
+
 def _teardown_group(pgid: int | None, *, task_id: str,
-                    audit_path: pathlib.Path | None, repo_root: pathlib.Path | None) -> bool:
+                    audit_path: pathlib.Path | None, repo_root: pathlib.Path | None,
+                    job: "_WindowsJobObject | None" = None) -> bool:
     """Stop the builder's whole process group and confirm it stopped.
 
     This is the single teardown every exit path funnels through — timeout, clean
@@ -216,10 +322,22 @@ def _teardown_group(pgid: int | None, *, task_id: str,
     confirmed stopped is written to the append-only audit ledger and reported as
     False. A live orphan is never silently accepted, and never only on timeout.
     Returns True when the group is confirmed stopped (or there is no group to stop).
+
+    On Windows the Job Object is the authority (it reaps and confirms the whole
+    tree, reparented grandchildren included); terminate_group runs as well so the
+    root pid is confirmed even when job assignment was lost.
     """
-    if pgid is None:
+    if pgid is None and job is None:
         return True
-    if terminate_group(pgid):
+    contained = True
+    if job is not None:
+        try:
+            contained = job.kill_and_confirm()
+        except OSError:
+            contained = False
+    if pgid is not None:
+        contained = terminate_group(pgid) and contained
+    if contained:
         return True
     if audit_path is not None:
         audit_append(
@@ -304,9 +422,13 @@ def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pat
     to the append-only audit ledger; even on a clean exit the group is reaped so no
     daemon outlives the lease.
 
-    Process groups are POSIX-only. Where ``os.killpg`` is unavailable (Windows) the
-    builder is terminated by direct child, which cannot guarantee grandchildren are
-    reaped — a documented limitation, not a hidden one.
+    Where ``os.killpg`` is unavailable (Windows) the builder is placed in a
+    kill-on-close Job Object at spawn, so teardown reaps the whole descendant tree
+    — reparented grandchildren included — and confirms zero live members via the
+    job's accounting counter; ``pgid`` is the tree-root pid and terminate_group
+    (taskkill /T + liveness probe) runs as a second confirmation. If the job
+    cannot be created or the builder cannot be assigned to it, the spawn fails
+    closed rather than run an uncontainable builder.
     """
     env = {
         "PATH": os.environ.get("PATH", ""),
@@ -326,17 +448,38 @@ def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pat
     if extra_env:
         env.update(extra_env)
     posix_groups = hasattr(os, "killpg")
-    proc = subprocess.Popen(
-        command, cwd=str(worktree), env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        start_new_session=posix_groups,
-    )
+    # Fail closed BEFORE the builder exists: a Windows spawn without a Job Object
+    # would run a tree the teardown cannot fully reap or confirm.
+    job = None if posix_groups else _WindowsJobObject()
+    try:
+        proc = subprocess.Popen(
+            command, cwd=str(worktree), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=posix_groups,
+        )
+    except Exception:
+        if job is not None:
+            job.close()
+        raise
     # start_new_session makes the child call setsid(), so it leads a new group whose
     # id equals its own pid. Use proc.pid directly rather than os.getpgid(proc.pid):
     # getpgid can race the child's setsid() and return the SUPERVISOR's own group,
     # which a later teardown would then signal — killing the supervisor itself.
-    pgid = proc.pid if posix_groups else None
-    if pgid is not None and stop_registry is not None:
+    # On Windows pgid is the tree-root pid consumed by taskkill /T.
+    pgid = proc.pid
+    if job is not None:
+        try:
+            # Popen._handle is CPython's Windows process HANDLE; assignment must
+            # precede any grandchild spawns escaping the job, so it happens
+            # immediately after Popen returns.
+            job.assign(proc._handle)  # noqa: SLF001
+        except OSError:
+            # The builder is running unjailed: stop it now and refuse the run.
+            _teardown_group(pgid, task_id=task_id, audit_path=audit_path,
+                            repo_root=repo_root)
+            job.close()
+            raise
+    if stop_registry is not None:
         register(stop_registry, task_id, proc.pid, pgid)
 
     timed_out = False
@@ -348,14 +491,12 @@ def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pat
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
-            if pgid is not None:
-                # Kill the whole descendant tree, not just the direct child, before
-                # draining — otherwise the drain blocks on the still-live leader.
-                contained = _teardown_group(
-                    pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root)
-                teardown_done = True
-            else:
-                proc.kill()  # no process groups here; best-effort direct child
+            # Kill the whole descendant tree, not just the direct child, before
+            # draining — otherwise the drain blocks on the still-live leader.
+            contained = _teardown_group(
+                pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root,
+                job=job)
+            teardown_done = True
             try:
                 stdout, stderr = proc.communicate(timeout=5)
             except subprocess.TimeoutExpired:
@@ -365,7 +506,8 @@ def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pat
             # the group. Reap the tree on the same teardown path; a survivor we
             # cannot stop is recorded and reported, exactly as on timeout.
             contained = _teardown_group(
-                pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root)
+                pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root,
+                job=job)
             teardown_done = True
     finally:
         # Any unexpected error path still must not leave the tree running silently.
@@ -373,7 +515,10 @@ def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pat
         # reported as uncontained, not left at the default True.
         if not teardown_done:
             contained = _teardown_group(
-                pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root)
+                pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root,
+                job=job)
+        if job is not None:
+            job.close()
 
     if timed_out:
         return -1, stdout or "", "builder exceeded its lease and was terminated", True, contained

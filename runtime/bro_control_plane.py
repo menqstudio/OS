@@ -4,6 +4,8 @@ import json
 import os
 import pathlib
 
+from bro_audit_log import AuditError
+from bro_audit_log import append as audit_append
 from bro_authority import AuthorityError, resolve_agent_authority, validate_verifier_assignment
 from bro_authorization import ActionClassification, classify_tool_action
 from bro_contracts import ContractError, validate_agent_profile, validate_task_contract
@@ -16,7 +18,7 @@ from bro_release_v3 import ReleaseV3Error, authorize_release_push
 from bro_repository_state import RepositoryStateError, verify_repository_binding
 from bro_security import SecurityError
 from bro_signature import SignatureError, load_trusted_keys, verify_artifact
-from bro_workspace import Workspace, WorkspaceError, authorize_targets, load_workspace
+from bro_workspace import Workspace, WorkspaceError, _real, authorize_targets, load_workspace
 from bro_workspace import verify_repository_binding as verify_workspace_remote
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -68,6 +70,14 @@ def _bind_workspace(classification: ActionClassification) -> Workspace:
     unchanged control plane. A missing, malformed, inactive or stale binding
     denies: scope that cannot be proven is not scope."""
     workspace = load_workspace(ROOT)
+    # M-7: the digest/repository gates verify against ROOT while target scope
+    # resolves against the binding-supplied workspace.root. Unless the two are the
+    # same real path, integrity is proven on one tree while scope is checked on
+    # another — so a root that is not THIS root denies.
+    if _real(str(workspace.root)) != _real(str(ROOT)):
+        raise WorkspaceError(
+            f"workspace binding root {workspace.root} does not match the enforced "
+            f"control-plane root {ROOT}")
     verify_workspace_remote(workspace)
     manifest = load_protected_manifest(ROOT)
     verify_control_plane_digest(ROOT, manifest, workspace.control_plane_digest)
@@ -97,7 +107,57 @@ def _lease(state: State, task: dict, classification: ActionClassification,
         workspace_id=workspace.workspace_id if workspace else None)
 
 
+_AUDIT_LEDGER_ENV = "BRO_AUDIT_LEDGER"
+
+
+def _audit_verdict(kind: str, state: State, tool_name: str, tool_input: dict,
+                   tool_use_id: str, verdict: str, detail: str) -> tuple[bool, str]:
+    """L-7: append one gate-verdict record to the external audit ledger.
+
+    Opt-in via BRO_AUDIT_LEDGER (an absolute path OUTSIDE the repository; the
+    append API enforces externality via repo_root). Returns (recorded, note):
+    recorded is True when the record was durably written or no ledger is
+    configured. When a ledger IS configured and the append fails, the caller must
+    fail closed on a permissive verdict — an allow that cannot be recorded is an
+    allow that is not granted, mirroring the shadow-ledger contract.
+    """
+    raw = os.getenv(_AUDIT_LEDGER_ENV)
+    if not raw:
+        return True, ""
+    targets: list[str] = []
+    try:
+        targets = [str(t) for t in (classify_tool_action(tool_name, tool_input).targets or ())]
+    except SecurityError:
+        pass  # unclassifiable input: the verdict itself is still recorded
+    try:
+        audit_append(pathlib.Path(raw), kind, {
+            "verdict": verdict,
+            "tool": str(tool_name),
+            "targets": targets,
+            "tool_use_id": str(tool_use_id or ""),
+            "mode": state.mode,
+            "role": state.role,
+            "agent_id": state.agent_id,
+            "session_id": state.session_id,
+            "detail": str(detail or ""),
+        }, repo_root=ROOT)
+    except (AuditError, OSError, ValueError) as exc:
+        return False, f"audit ledger append failed: {exc}"
+    return True, ""
+
+
 def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: str = "") -> tuple[bool, str]:
+    """Authorize, then durably record the verdict (L-7). A configured-but-failing
+    ledger downgrades an allow to a deny; a deny stays a deny either way."""
+    allowed, reason = _authorize_tool(state, tool_name, tool_input, tool_use_id)
+    recorded, note = _audit_verdict("authorize-verdict", state, tool_name, tool_input,
+                                    tool_use_id, "allow" if allowed else "deny", reason)
+    if allowed and not recorded:
+        return False, f"audit ledger gate RED: {note}"
+    return allowed, reason
+
+
+def _authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: str = "") -> tuple[bool, str]:
     try:
         classification = classify_request(tool_name, tool_input)
     except SecurityError as exc:
@@ -169,6 +229,21 @@ def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: 
 
 
 def settle_execution_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: str, *, success: bool, error: str = "") -> tuple[bool, bool, str]:
+    """Settle, then durably record the verdict for governed settlements (L-7).
+    A configured-but-failing ledger downgrades a GREEN settlement to RED; a RED
+    settlement stays RED either way. Non-governed calls are pass-through."""
+    settled, green, message = _settle_execution_tool(
+        state, tool_name, tool_input, tool_use_id, success=success, error=error)
+    if not settled:
+        return settled, green, message
+    recorded, note = _audit_verdict("settle-verdict", state, tool_name, tool_input,
+                                    tool_use_id, "green" if green else "red", message)
+    if green and not recorded:
+        return settled, False, f"{message}; audit ledger gate RED: {note}"
+    return settled, green, message
+
+
+def _settle_execution_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: str, *, success: bool, error: str = "") -> tuple[bool, bool, str]:
     try:
         classification = classify_request(tool_name, tool_input)
     except SecurityError as exc:

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from bro_security import (
+    ARG_INSPECTED_READ_ONLY,
     READ_ONLY_SHELL,
     SHELL_MUTATORS,
     SHELL_WRAPPERS,
@@ -158,7 +159,12 @@ def _shell_capabilities(info: CommandInfo) -> tuple[str, ...]:
         if info.recognized_read_only:
             return ("READ_LOCAL",)
         return ("WRITE_REPOSITORY", "EXECUTE_CODE")
-    if info.recognized_read_only and info.executable in READ_ONLY_SHELL:
+    # `find` reaches read-only ONLY through analyze_find's argument inspector;
+    # a mutating find (denied action or unrecognized flag) falls through to
+    # UNKNOWN below and is denied outright — never a governed mutation it could
+    # satisfy, because its true effect cannot be classified.
+    if info.recognized_read_only and (
+            info.executable in READ_ONLY_SHELL or info.executable in ARG_INSPECTED_READ_ONLY):
         return ("READ_LOCAL",)
     if info.executable == "gh":
         return ("WRITE_EXTERNAL", "USE_NETWORK", "USE_CREDENTIAL")

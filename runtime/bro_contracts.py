@@ -107,6 +107,13 @@ def _require_string_list(value: Any, field: str, *, allow_empty: bool = True) ->
 
 def safe_repo_path(value: str) -> str:
     raw = _require_string(value, "repository path").replace("\\", "/")
+    # Scopes must be provably literal (M-6): the enforcement layers historically
+    # disagreed on glob semantics (prefix matching vs fnmatch), and a bare "*"
+    # scope silently disabled confinement entirely. Rejecting glob
+    # metacharacters here means a contract scope always names a real path or
+    # directory prefix, and both enforcement layers agree on what it covers.
+    if any(ch in raw for ch in "*?["):
+        raise ContractError(f"glob metacharacters are not allowed in repository paths: {value!r}")
     path = pathlib.PurePosixPath(raw)
     if path.is_absolute() or raw.startswith("~") or any(part in {"", ".", ".."} for part in path.parts):
         raise ContractError(f"unsafe repository-relative path: {value!r}")
@@ -343,12 +350,17 @@ def load_contract_bundle_from_env(root: pathlib.Path = ROOT, now: int | None = N
     return ContractBundle(task=task, task_sha256=task_sha, agent=agent, skill_receipt=receipt)
 
 
+MODE_GRANT_NONCE_RE = re.compile(r"^[A-Za-z0-9._-]{16,128}$")
+
+
 def validate_mode_grant(payload: dict[str, Any], *, session_id: str, agent_id: str, role: str, task_sha256: str, agent_sha256: str, skill_sha256: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
     required={"schema","grant_id","nonce","session_id","agent_id","role","mode","task_contract_sha256","agent_profile_sha256","skill_receipt_sha256","repository","branch","head_sha","tree_identity","issued_at_epoch","expires_at_epoch"}
     # artifact_type/key_id are injected by the Ed25519 signer (broctl) and echoed
     # back by verify_artifact; accept them without weakening the required set.
     _require_exact_keys(payload, required, optional={"artifact_type", "key_id"})
     if payload["schema"] != 1 or payload["mode"] not in {"work","release"}: raise ContractError("invalid mode grant")
+    if not isinstance(payload["nonce"], str) or not MODE_GRANT_NONCE_RE.fullmatch(payload["nonce"]):
+        raise ContractError("mode grant nonce is malformed")
     instant=int(time.time()) if now is None else now
     if payload["issued_at_epoch"] > instant+60 or payload["expires_at_epoch"] <= instant: raise ContractError("mode grant expired or not yet valid")
     # The mode grant is the only Ed25519-signed artifact in the bundle; anchoring
@@ -359,6 +371,73 @@ def validate_mode_grant(payload: dict[str, Any], *, session_id: str, agent_id: s
     for key,value in expected.items():
         if payload.get(key) != value: raise ContractError(f"mode grant binding mismatch: {key}")
     return payload
+
+
+def _mode_grant_nonce_ledger(root: pathlib.Path = ROOT) -> pathlib.Path | None:
+    """Resolve the mode-grant nonce ledger directory (L-1).
+
+    The ledger is a deployment knob (BRO_MODE_GRANT_NONCE_LEDGER); when it is
+    configured it MUST be an absolute path outside the repository — a ledger the
+    builder can commit over is no ledger — and configuration errors fail closed."""
+    raw = os.getenv("BRO_MODE_GRANT_NONCE_LEDGER")
+    if not raw:
+        return None
+    path = pathlib.Path(raw).expanduser()
+    if not path.is_absolute():
+        raise ContractError("BRO_MODE_GRANT_NONCE_LEDGER must be an absolute path")
+    try:
+        path.resolve(strict=False).relative_to(root.resolve())
+    except ValueError:
+        return path
+    raise ContractError("BRO_MODE_GRANT_NONCE_LEDGER must be outside the repository")
+
+
+def bind_mode_grant_nonce(payload: dict[str, Any], ledger_dir: pathlib.Path) -> None:
+    """Consume the mode-grant nonce against the ledger (L-1).
+
+    A mode grant authorizes a whole session and is re-validated on every tool
+    call, so the nonce is not strictly single-presentation like a release nonce.
+    Instead the FIRST presentation atomically binds the nonce to the grant's full
+    signed fingerprint; later presentations of the SAME grant re-validate
+    idempotently, while any other grant reusing the nonce — a replay under a new
+    session, head, tree or validity window — is rejected. O_EXCL makes the first
+    write the only write, mirroring the release-grant nonce ledger."""
+    nonce = str(payload.get("nonce", ""))
+    if not MODE_GRANT_NONCE_RE.fullmatch(nonce):
+        raise ContractError("mode grant nonce is malformed")
+    binding = canonical_json_sha256({key: payload.get(key) for key in (
+        "grant_id", "session_id", "agent_id", "role", "mode", "task_contract_sha256",
+        "agent_profile_sha256", "skill_receipt_sha256", "repository", "branch",
+        "head_sha", "tree_identity", "issued_at_epoch", "expires_at_epoch")})
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+    record_path = ledger_dir / (hashlib.sha256(nonce.encode()).hexdigest() + ".bound")
+    record = {
+        "schema": 1,
+        "nonce_sha256": record_path.stem,
+        "binding_sha256": binding,
+        "bound_at_epoch": int(time.time()),
+    }
+    try:
+        fd = os.open(record_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        try:
+            existing = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ContractError("mode grant nonce ledger record is unreadable") from exc
+        if existing.get("binding_sha256") != binding:
+            raise ContractError("mode grant nonce was already consumed by a different grant")
+        return
+    except OSError as exc:
+        raise ContractError(f"mode grant nonce ledger is unwritable: {exc}") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, sort_keys=True)
+    except Exception:
+        try:
+            record_path.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def load_mode_grant_from_env(bundle: ContractBundle, session_id: str, role: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
@@ -374,7 +453,11 @@ def load_mode_grant_from_env(bundle: ContractBundle, session_id: str, role: str,
         payload = verify_artifact(load_json(pathlib.Path(path)), "mode-grant", load_trusted_keys(root), now=now)
     except SignatureError as exc:
         raise ContractError(str(exc)) from exc
-    return validate_mode_grant(payload, session_id=session_id, agent_id=bundle.agent["agent_id"], role=role, task_sha256=bundle.task_sha256, agent_sha256=canonical_json_sha256(bundle.agent), skill_sha256=canonical_json_sha256(bundle.skill_receipt), root=root, now=now)
+    grant = validate_mode_grant(payload, session_id=session_id, agent_id=bundle.agent["agent_id"], role=role, task_sha256=bundle.task_sha256, agent_sha256=canonical_json_sha256(bundle.agent), skill_sha256=canonical_json_sha256(bundle.skill_receipt), root=root, now=now)
+    ledger = _mode_grant_nonce_ledger(root)
+    if ledger is not None:
+        bind_mode_grant_nonce(grant, ledger)
+    return grant
 
 
 def validate_registered_schemas(root: pathlib.Path = ROOT) -> int:

@@ -6,8 +6,11 @@ import pathlib
 import sys
 
 from bro_authorization import classify_tool_action
+from bro_contracts import canonical_json_sha256
 from bro_identity import IdentityError, validate_agent_profile_identity
 from bro_security import SecurityError
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def _payload() -> dict:
@@ -65,6 +68,32 @@ def main() -> int:
         canonical_id = validate_agent_profile_identity(profile)
     except (OSError, json.JSONDecodeError, IdentityError) as exc:
         _deny(f"agent identity gate RED: {exc}")
+        return 0
+
+    # The profile is an env-referenced, unsigned JSON file: canonical form alone
+    # proves it is well-shaped, not that anyone authorized it. The signed mode
+    # grant anchors agent_profile_sha256, so the Ed25519 signature over the grant
+    # is the integrity root for the profile — a forged profile breaks the signed
+    # binding and is denied here, before the identity comparison means anything.
+    grant_path = os.getenv("BRO_MODE_GRANT")
+    if not grant_path:
+        _deny("agent identity gate RED: missing BRO_MODE_GRANT")
+        return 0
+    try:
+        from bro_signature import SignatureError, load_trusted_keys, verify_artifact
+        grant_doc = json.loads(pathlib.Path(grant_path).read_text(encoding="utf-8"))
+        if not isinstance(grant_doc, dict):
+            raise SignatureError("mode grant document must be a JSON object")
+        grant = verify_artifact(grant_doc, "mode-grant", load_trusted_keys(ROOT))
+    except (OSError, json.JSONDecodeError, SignatureError) as exc:
+        _deny(f"agent identity gate RED: mode grant unusable: {exc}")
+        return 0
+    if grant.get("agent_profile_sha256") != canonical_json_sha256(profile):
+        _deny("agent identity gate RED: agent profile does not match the signed "
+              "mode grant binding (agent_profile_sha256)")
+        return 0
+    if grant.get("agent_id") != canonical_id:
+        _deny("agent identity gate RED: signed mode grant names a different agent")
         return 0
 
     env_id = os.getenv("BRO_AGENT_ID", "").strip().lower()

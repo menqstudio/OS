@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" session-start"
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" session-start || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" session-start || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" session-start"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" prompt"
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" prompt || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" prompt || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" prompt"
           }
         ]
       }
@@ -26,11 +26,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" pre-tool"
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" pre-tool || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" pre-tool || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" pre-tool"
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_identity_hook.py\""
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_identity_hook.py\" || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_identity_hook.py\" || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_identity_hook.py\""
           }
         ]
       }
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool"
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool"
           }
         ]
       }
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool-failure"
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool-failure || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool-failure || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool-failure"
           }
         ]
       }
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" subagent-start"
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" subagent-start || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" subagent-start || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" subagent-start"
           }
         ]
       }
@@ -72,7 +72,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
           }
         ]
       }
@@ -82,7 +82,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
           }
         ]
       }
@@ -92,7 +92,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" instructions-loaded",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" instructions-loaded || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" instructions-loaded || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" instructions-loaded",
             "async": true
           }
         ]

@@ -11,6 +11,15 @@ child. Any process that cannot be confirmed stopped is written as an incident to
 the append-only audit ledger (L16) — un-stopped state is recorded, never silently
 dropped.
 
+On Windows there are no POSIX process groups: `pgid` is the tree-root pid, the
+tree is terminated with ``taskkill /T /F`` and liveness is confirmed against the
+root pid via the Win32 process API. taskkill walks a parent-chain snapshot, so a
+grandchild reparented after its parent died may escape it — the supervisor closes
+that gap with a kill-on-close Job Object; here any group that cannot be confirmed
+stopped is still reported un-stopped, never silently accepted. terminate_group
+never raises: any OS/platform error is converted to "not confirmed stopped" so
+stop_all always reaches the `unstopped-process` incident branch.
+
 Machine-local registry; pure standard library.
 """
 from __future__ import annotations
@@ -19,9 +28,12 @@ import json
 import os
 import pathlib
 import signal
+import subprocess
 import time
 
 from bro_audit_log import append as audit_append
+
+_POSIX_GROUPS = hasattr(os, "killpg")
 
 
 class StopError(ValueError):
@@ -88,14 +100,37 @@ def _group_has_live_member(pgid: int) -> bool:
     return False
 
 
-def is_group_alive(pgid: int) -> bool:
-    """True if the group still has a live (non-zombie) member signallable by us.
+def _windows_pid_alive(pid: int) -> bool:
+    """True unless the pid can be POSITIVELY confirmed exited.
 
-    killpg(0) only proves the kernel still knows the group id — it also succeeds
-    for a group whose sole survivor is an un-reaped zombie. A positive kernel check
-    is therefore confirmed by scanning /proc for at least one live, non-zombie
-    member of the group; a group with no live member counts as stopped.
+    Win32 has no signal-0 probe (os.kill(pid, 0) on Windows unconditionally
+    TerminateProcess-es the target), so liveness is read from the process object:
+    a handle that cannot be opened means the pid is gone or already reaped; an
+    exit code other than STILL_ACTIVE means it exited. Any query failure counts
+    as alive — an unconfirmed stop must surface, not be assumed.
     """
+    import ctypes
+
+    process_query_limited_information = 0x1000
+    error_access_denied = 5
+    still_active = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(process_query_limited_information, False, int(pid))
+    if not handle:
+        # Access denied means the process exists but we may not query it — the
+        # Windows analogue of killpg's PermissionError: alive and un-stoppable.
+        # Every other open failure means the pid is gone.
+        return ctypes.get_last_error() == error_access_denied
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True  # cannot prove it stopped
+        return code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _is_group_alive_posix(pgid: int) -> bool:
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
@@ -106,7 +141,23 @@ def is_group_alive(pgid: int) -> bool:
     return _group_has_live_member(pgid)
 
 
-def terminate_group(pgid: int, grace_seconds: float = 2.0, poll: float = 0.05) -> bool:
+def is_group_alive(pgid: int) -> bool:
+    """True if the group still has a live (non-zombie) member signallable by us.
+
+    killpg(0) only proves the kernel still knows the group id — it also succeeds
+    for a group whose sole survivor is an un-reaped zombie. A positive kernel check
+    is therefore confirmed by scanning /proc for at least one live, non-zombie
+    member of the group; a group with no live member counts as stopped.
+
+    On Windows `pgid` is the tree-root pid and liveness is confirmed against that
+    pid alone (grandchild coverage is the Job Object's task, see module docstring).
+    """
+    if _POSIX_GROUPS:
+        return _is_group_alive_posix(pgid)
+    return _windows_pid_alive(pgid)
+
+
+def _terminate_group_posix(pgid: int, grace_seconds: float, poll: float) -> bool:
     """SIGTERM the group, wait for graceful exit, then SIGKILL. Return True if stopped."""
     try:
         os.killpg(pgid, signal.SIGTERM)
@@ -133,12 +184,54 @@ def terminate_group(pgid: int, grace_seconds: float = 2.0, poll: float = 0.05) -
     return not is_group_alive(pgid)
 
 
+def _terminate_group_windows(pgid: int, grace_seconds: float, poll: float) -> bool:
+    """Force-kill the tree rooted at `pgid` with taskkill /T /F and confirm it.
+
+    There is no graceful phase: Windows has no SIGTERM analogue that a console
+    child reliably observes, and STOP's contract is containment, not courtesy.
+    taskkill exit code 128 ("no such process") is treated like ProcessLookupError,
+    but the verdict is always the liveness probe, never taskkill's word for it.
+    """
+    subprocess.run(
+        ["taskkill", "/T", "/F", "/PID", str(int(pgid))],
+        capture_output=True, text=True,
+    )
+    deadline = time.monotonic() + grace_seconds
+    while time.monotonic() < deadline:
+        if not is_group_alive(pgid):
+            return True
+        time.sleep(poll)
+    return not is_group_alive(pgid)
+
+
+def terminate_group(pgid: int, grace_seconds: float = 2.0, poll: float = 0.05) -> bool:
+    """Terminate the tracked group/tree on any platform. Return True ONLY when the
+    stop is positively confirmed.
+
+    Never raises: an AttributeError on a platform without killpg, a missing
+    taskkill, or any other OS error would previously escape before the caller's
+    `unstopped-process` branch — the one moment the audit trail matters most. Any
+    failure to stop OR to confirm is reported as False, so every caller's incident
+    path fires instead of silently no-opping.
+    """
+    try:
+        if _POSIX_GROUPS:
+            return _terminate_group_posix(pgid, grace_seconds, poll)
+        return _terminate_group_windows(pgid, grace_seconds, poll)
+    except Exception:  # noqa: BLE001 — unconfirmed is un-stopped, never a crash
+        return False
+
+
 def stop_all(registry_path, audit_path, *, repo_root=None, grace_seconds: float = 2.0) -> dict:
     """Stop every registered process group; record every un-stopped one as an incident."""
     stopped, unstopped = [], []
     for entry in list_registered(registry_path):
         pgid = int(entry["pgid"])
-        if terminate_group(pgid, grace_seconds=grace_seconds):
+        try:
+            confirmed = terminate_group(pgid, grace_seconds=grace_seconds)
+        except Exception:  # noqa: BLE001 — belt over terminate_group's own wrap
+            confirmed = False
+        if confirmed:
             stopped.append(entry)
         else:
             unstopped.append(entry)

@@ -50,9 +50,9 @@ jobs:
         # The assurance validator runs each law's allow/deny cases through the WIRED
         # interpreter named in .claude/settings.json and requires the wired hook to
         # actually deny — proving enforcement is live, not that files merely exist. It
-        # exits non-zero on any dead wiring. Linux-only: the wired interpreter is
-        # `python3`, which is not on PATH on the Windows runner.
-        if: runner.os == 'Linux'
+        # exits non-zero on any dead wiring. Runs on EVERY matrix OS: Windows is where
+        # bare `python3` wiring resolved to a dead Store alias and failed OPEN, so the
+        # Windows leg is the regression gate that turns fail-open wiring into a red build.
         run: python tools/bro_live_validate.py
       - name: Build canonical audit snapshot
         if: always() && runner.os == 'Linux'

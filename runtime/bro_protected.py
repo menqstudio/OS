@@ -4,9 +4,22 @@ import hashlib
 import json
 import os
 import pathlib
+import sys
 from dataclasses import dataclass
 
 from bro_workspace import matches_pattern
+
+# Bytecode-shadowing defence, part 1 (see also assert_no_bytecode_shadow):
+# the control-plane digest deliberately excludes __pycache__/*.pyc (they are
+# non-deterministic build artifacts, see is_digest_member), which means a forged
+# .pyc under a digest root is INVISIBLE to verify_control_plane_digest while
+# CPython may still import it in place of the verified .py source. Enforcement
+# entry points are therefore expected to run with `python -B` (or
+# PYTHONDONTWRITEBYTECODE=1) and to call assert_no_bytecode_shadow() at startup.
+# This process-wide flag stops THIS process minting fresh bytecode under the
+# digest roots; it cannot retroactively remove caches written by other processes
+# — that is what the assertion is for.
+sys.dont_write_bytecode = True
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST_REL = "config/protected-control-plane.json"
@@ -69,18 +82,60 @@ def is_protected(manifest: ProtectedManifest, relative: str) -> bool:
                for p in manifest.protected_roots)
 
 
+def _digest_scope(manifest: ProtectedManifest, relative: str) -> bool:
+    """Digest-root membership WITHOUT the bytecode carve-out: the pattern logic
+    shared by is_digest_member (which additionally excludes bytecode) and
+    assert_no_bytecode_shadow (which polices exactly what that exclusion hides)."""
+    if any(matches_pattern(relative, p) for p in manifest.unprotected_exceptions):
+        return False
+    return any(matches_pattern(relative, p) for p in manifest.digest_roots)
+
+
 def is_digest_member(manifest: ProtectedManifest, relative: str) -> bool:
     # Non-source build artifacts are never a source of truth. Excluding them keeps
     # the control-plane digest deterministic with respect to bytecode compilation:
     # otherwise a cold-cache checkout writes runtime/__pycache__/*.pyc after the
     # binding digest is captured, flipping bound != current and spuriously RED-denying
     # an otherwise-authorized action (a fail-closed-too-eager availability bug).
+    # The flip side of that exclusion is the bytecode-shadowing gap policed by
+    # assert_no_bytecode_shadow: a forged .pyc here would not perturb the digest.
     parts = relative.split("/")
     if "__pycache__" in parts or relative.endswith((".pyc", ".pyo")):
         return False
-    if any(matches_pattern(relative, p) for p in manifest.unprotected_exceptions):
-        return False
-    return any(matches_pattern(relative, p) for p in manifest.digest_roots)
+    return _digest_scope(manifest, relative)
+
+
+def assert_no_bytecode_shadow(root: pathlib.Path, manifest: ProtectedManifest) -> None:
+    """Bytecode-shadowing defence, part 2: fail closed if compiled bytecode exists
+    under a digest root.
+
+    The digest excludes __pycache__/*.pyc for determinism, so a crafted .pyc that
+    CPython would import in place of a digest-verified .py source is invisible to
+    verify_control_plane_digest. Enforcement entry points run with `python -B`
+    (this module also sets sys.dont_write_bytecode on import) and call this at
+    startup: with no bytecode present and none being written, the .py sources the
+    digest verified are the code that actually executes. Any cache under a digest
+    root — stale, legitimate or forged — is reported for removal rather than
+    silently trusted.
+    """
+    offenders: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        here = pathlib.Path(dirpath)
+        for name in list(dirnames):
+            relative = _relative_posix(root, here / name)
+            if name == "__pycache__" and _digest_scope(manifest, f"{relative}/probe"):
+                offenders.append(relative)
+                dirnames.remove(name)  # the directory itself is the finding
+        for name in filenames:
+            if not name.endswith((".pyc", ".pyo")):
+                continue
+            relative = _relative_posix(root, here / name)
+            if _digest_scope(manifest, relative):
+                offenders.append(relative)
+    if offenders:
+        raise ProtectedScopeError(
+            "compiled bytecode under a digest root can shadow digest-verified "
+            f"sources; run enforcement with `python -B` and remove: {sorted(offenders)}")
 
 
 def _relative_posix(root: pathlib.Path, path: pathlib.Path) -> str:

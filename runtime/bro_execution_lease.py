@@ -250,14 +250,44 @@ def load_execution_lease_from_env(
     )
 
 
+def _lease_digest(lease: ExecutionLease) -> str:
+    return hashlib.sha256(f"{lease.lease_id}:{lease.nonce}".encode()).hexdigest()
+
+
 def _lease_paths(lease: ExecutionLease) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
-    digest = hashlib.sha256(f"{lease.lease_id}:{lease.nonce}".encode()).hexdigest()
+    digest = _lease_digest(lease)
     ledger = _ledger_dir()
     return (
         ledger / f"{digest}.active",
         ledger / f"{digest}.used",
         ledger / f"{digest}.ambiguous",
     )
+
+
+def _claim_call_slot(lease: ExecutionLease) -> None:
+    """Atomically claim one of the lease's max_tool_calls slots, or refuse.
+
+    max_tool_calls was validated and never counted — a field that promised a
+    bound the ledger did not enforce. Each successful reservation now claims one
+    numbered slot file via O_EXCL, the same check-is-the-write primitive as the
+    active/used markers, so two concurrent reservations cannot share a slot and
+    a lease can never be reserved more times than it declares. Today the
+    single-use markers cap this at one reservation anyway; the counter makes the
+    signed field enforced in its own right rather than true by accident.
+    """
+    digest = _lease_digest(lease)
+    ledger = _ledger_dir()
+    for slot in range(1, lease.max_tool_calls + 1):
+        path = ledger / f"{digest}.call.{slot:08d}"
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"schema": 1, "slot": slot,
+                       "claimed_at_epoch": int(time.time())}, handle, sort_keys=True)
+        return
+    raise LeaseError("execution lease max_tool_calls exhausted")
 
 
 def reserve_execution_lease(lease: ExecutionLease, tool_use_id: str) -> None:
@@ -286,6 +316,10 @@ def reserve_execution_lease(lease: ExecutionLease, tool_use_id: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(record, handle, sort_keys=True)
+        # Claimed after the active marker so a lost race on `.active` does not
+        # burn a slot; a claimed slot is never returned, even if the reservation
+        # later fails — an ambiguous call still counts against the bound.
+        _claim_call_slot(lease)
     except Exception:
         try:
             active.unlink()

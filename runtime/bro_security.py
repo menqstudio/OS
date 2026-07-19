@@ -36,9 +36,49 @@ READ_SAFE_CONFIG = frozenset({
 })
 GLOBAL_WITH_ARG = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
 READ_ONLY_SHELL = {
-    "cat", "echo", "find", "get-childitem", "get-content", "ls", "pwd", "select-string",
+    "cat", "echo", "get-childitem", "get-content", "ls", "pwd", "select-string",
     "test-path", "type", "where", "where-object", "whoami",
 }
+# The read-only verbs whose positional arguments are filesystem paths. Their
+# targets are surfaced on CommandInfo so the workspace and scope gates can
+# contain READS too: `cat /etc/passwd` must be denied exactly like a direct
+# Read of an absolute path, not sail through with empty targets. Verbs whose
+# arguments are text (echo) or executable names (where) carry no path targets.
+READ_TARGET_SHELL = frozenset({
+    "cat", "get-childitem", "get-content", "ls", "select-string", "test-path", "type",
+})
+# `find` is deliberately NOT in READ_ONLY_SHELL: it executes and mutates inside a
+# single shell segment that split_shell cannot see (`find . -delete` removes
+# files; `-exec/-execdir/-ok/-okdir` run arbitrary commands; `-fls/-fprint/
+# -fprint0/-fprintf` write files). analyze_find gates it behind an argument
+# inspector: the action flags below are never read-only, every other flag must be
+# on the read-only allowlist, and anything unrecognized is fail-closed mutating —
+# an allowlist like READ_SAFE_CONFIG, never a denylist.
+FIND_DENIED_ACTIONS = frozenset({
+    "-delete", "-exec", "-execdir", "-fls", "-fprint", "-fprint0", "-fprintf",
+    "-ok", "-okdir",
+})
+# Read-only find options/tests/actions that take NO argument (compared lowercase,
+# so -H/-L/-P fold into -h/-l/-p; all are read-only symlink options).
+FIND_READ_ONLY_FLAGS = frozenset({
+    "--help", "--version", "-a", "-and", "-d", "-daystart", "-depth", "-empty",
+    "-executable", "-false", "-follow", "-h", "-help", "-l", "-ls", "-mount",
+    "-nogroup", "-noleaf", "-not", "-nouser", "-o", "-or", "-p", "-print",
+    "-print0", "-prune", "-readable", "-true", "-version", "-writable", "-xdev",
+})
+# Read-only find tests that consume exactly ONE following argument (the argument
+# is a pattern/number/format, not a search root, so it is not a path target).
+# -printf writes to stdout only; the file-writing -fprintf stays denied above.
+FIND_READ_ONLY_ARG_FLAGS = frozenset({
+    "-amin", "-anewer", "-atime", "-cmin", "-cnewer", "-ctime", "-fstype",
+    "-gid", "-group", "-ilname", "-iname", "-inum", "-ipath", "-iregex",
+    "-iwholename", "-links", "-lname", "-maxdepth", "-mindepth", "-mmin",
+    "-mtime", "-name", "-newer", "-path", "-perm", "-printf", "-regex",
+    "-regextype", "-samefile", "-size", "-type", "-uid", "-used", "-user",
+    "-wholename", "-xtype",
+})
+# Executables that are read-only ONLY after their arguments pass an inspector.
+ARG_INSPECTED_READ_ONLY = frozenset({"find"})
 SHELL_MUTATORS = {
     "rm", "del", "erase", "rmdir", "remove-item", "set-content", "add-content",
     "out-file", "new-item", "move-item", "copy-item", "mv", "cp", "mkdir", "touch",
@@ -172,6 +212,45 @@ def analyze_git(tokens: list[str]) -> CommandInfo:
     return CommandInfo("git", sub, mutating, sub == "push", args, dangerous, read_only)
 
 
+def analyze_find(tokens: list[str]) -> CommandInfo:
+    """Classify `find` by inspecting every argument (allowlist, fail-closed).
+
+    Read-only ONLY when each flag is a recognized read-only test/option. The
+    action flags that delete, execute or write files (FIND_DENIED_ACTIONS) and
+    any unrecognized flag make the whole invocation mutating; since a mutating
+    `find` maps to no known capability it carries UNKNOWN downstream and is
+    denied outright. Positional arguments are the search roots and become
+    scope/workspace targets so even a read-only `find` is containment-checked.
+    """
+    paths: list[str] = []
+    mutating = False
+    i = 1
+    while i < len(tokens):
+        token = tokens[i].strip("\"'")
+        low = token.lower()
+        if low in {"(", ")", "!", ","}:
+            i += 1
+            continue
+        if low in FIND_DENIED_ACTIONS:
+            mutating = True
+            i += 1
+            continue
+        if low in FIND_READ_ONLY_ARG_FLAGS:
+            i += 2
+            continue
+        if low in FIND_READ_ONLY_FLAGS:
+            i += 1
+            continue
+        if low.startswith("-"):
+            # Unrecognized flag: could be an action variant; fail closed.
+            mutating = True
+            i += 1
+            continue
+        paths.append(token)
+        i += 1
+    return CommandInfo("find", None, mutating, False, tuple(paths) or (".",), False, not mutating)
+
+
 def analyze_command(command: str) -> list[CommandInfo]:
     result = []
     for segment in split_shell(command):
@@ -182,12 +261,20 @@ def analyze_command(command: str) -> list[CommandInfo]:
         if exe == "git":
             result.append(analyze_git(tokens))
             continue
+        if exe == "find":
+            result.append(analyze_find(tokens))
+            continue
         low = [t.strip("\"'").lower() for t in tokens]
         if exe in SHELL_WRAPPERS:
             result.append(CommandInfo(exe, low[1] if len(low) > 1 else None, True, False, tuple(), False, False))
             continue
         if exe in READ_ONLY_SHELL:
-            result.append(CommandInfo(exe, low[1] if len(low) > 1 else None, False, False, tuple(), False, True))
+            # Read targets are populated (path-taking verbs) so the workspace and
+            # scope gates see what is being read; empty targets made reads invisible
+            # to every containment check.
+            targets = (tuple(t.strip("\"'") for t in tokens[1:] if not t.strip("\"'").startswith("-"))
+                       if exe in READ_TARGET_SHELL else ())
+            result.append(CommandInfo(exe, low[1] if len(low) > 1 else None, False, False, targets, False, True))
             continue
         mutating = exe in SHELL_MUTATORS or exe == "gh" or exe not in READ_ONLY_SHELL
         targets = tuple(t.strip("\"'") for t in tokens[1:] if not t.startswith("-")) if mutating else ()
@@ -223,11 +310,33 @@ def normalize_target(root: pathlib.Path, raw: str) -> str:
 
 
 def path_allowed(path: str, allowed: list[str], prohibited: list[str]) -> bool:
-    def match(pattern: str) -> bool:
-        pattern = pattern.rstrip("/")
-        return path == pattern or path.startswith(pattern + "/") or pattern in {".", "*"}
+    """Match a normalized repo-relative path against scope patterns.
 
-    return any(match(item) for item in allowed) and not any(match(item) for item in prohibited)
+    One glob implementation with the workspace layer (bro_workspace.matches_pattern),
+    so a prohibition like `**/*.env` actually fires against `src/.env` instead of
+    being dead prefix text. The old `pattern in {".", "*"}` match-all shortcut is
+    gone: `.` matches only the repository root itself, and a wildcard-only ALLOW
+    pattern (`*`, `**`, ...) grants nothing — a scope must name what it permits,
+    it cannot disable confinement. Wildcard-only PROHIBITIONS keep their glob
+    semantics (blocking more is fail-closed). Literal directory patterns keep
+    their prefix semantics via matches_pattern's bare-directory rule.
+    Contract-supplied scopes are provably literal (safe_repo_path rejects glob
+    metacharacters); the glob path here covers every other caller consistently.
+    """
+    # Deferred import: bro_workspace is stdlib-only and imports nothing from this
+    # module, so there is no cycle; deferring keeps this module's import surface flat.
+    from bro_workspace import matches_pattern
+
+    def match(pattern: str, *, granting: bool) -> bool:
+        pattern = pattern.rstrip("/")
+        if not pattern or pattern == ".":
+            return path == "."
+        if granting and set(pattern) <= {"*", "/"}:
+            return False
+        return path == pattern or matches_pattern(path, pattern)
+
+    return (any(match(item, granting=True) for item in allowed)
+            and not any(match(item, granting=False) for item in prohibited))
 
 
 def enforce_scope(root: pathlib.Path, targets: list[str], allowed: list[str], prohibited: list[str]) -> None:

@@ -49,7 +49,7 @@ from bro_repository_state import RepositoryState, _normal
 import bro_signature
 
 from bro_authorize_specialist import build_mode_grant_payload, sign_mode_grant
-from bro_bind_workspace import build_binding
+from bro_bind_workspace import build_binding, sign_binding
 from bro_skill_receipt import build_skill_receipt
 from broctl import build_registry, generate_key, sign_payload
 
@@ -164,14 +164,20 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
         grant = sign_mode_grant(build_mode_grant_payload(
             self.task, self.agent, receipt, session_id=SID, role="specialist", mode="work",
             head_sha=HEAD, tree_identity=TREE, now=self.now), self.issuer, self.now)
+        # The binding must be OPERATOR-signed with a future expiry: load_workspace
+        # verifies it with verify_artifact("workspace-binding", ...) against the
+        # operator-pinned registry before trusting any field, so the unsigned
+        # Phase A payload is now refused. Sign it with the same test operator key
+        # that anchors the dev registry.
         binding = build_binding(ROOT, "bro-exec-e2e", "test-operator", 3600, self.now)
+        signed_binding = sign_binding(binding, self.operator)
         # The lease binds to the SAME control plane and workspace the reserve gate
         # enforces it against, so the superset lease is accepted end to end.
         lease = self._sign("execution-lease", self._lease_body(
             binding["control_plane_digest"], binding["workspace_id"]))
         recovery = self._sign("recovery-record", self._recovery_body(classification))
         binding_path = self.tmp / "workspace-binding.json"
-        binding_path.write_text(json.dumps(binding), encoding="utf-8")
+        binding_path.write_text(json.dumps(signed_binding), encoding="utf-8")
         self._write_lock()
         return {
             "BRO_MODE": "work", "BRO_ROLE": "specialist", "BRO_AGENT_ID": AGENT, "BRO_SESSION_ID": SID,
@@ -194,9 +200,18 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
         reg = self.tmp
         stack = ExitStack()
         operator_pub = self.operator["public_key"]
-        stack.enter_context(patch("bro_signature.load_trusted_keys",
-                                  new=lambda root=None, operator_public_key=None: real_load(
-                                      reg, operator_public_key=operator_pub)))
+        redirected = lambda root=None, operator_public_key=None: real_load(  # noqa: E731
+            reg, operator_public_key=operator_pub)
+        stack.enter_context(patch("bro_signature.load_trusted_keys", new=redirected))
+        # bro_workspace and bro_control_plane bind load_trusted_keys at import
+        # time (top-level `from bro_signature import ...`), so redirecting only
+        # bro_signature would leave the workspace-binding and protected-authority
+        # verifies anchored to the committed registry, whose operator pin is not
+        # available in a unit test. Redirect their bound names to the same
+        # operator-signed dev registry — the Ed25519 verification itself still
+        # runs for real.
+        stack.enter_context(patch("bro_workspace.load_trusted_keys", new=redirected))
+        stack.enter_context(patch("bro_control_plane.load_trusted_keys", new=redirected))
         stack.enter_context(patch("bro_contracts.current_commit", return_value=HEAD))
         stack.enter_context(patch("bro_contracts.current_tree_identity", return_value=TREE))
         stack.enter_context(patch("bro_repository_state.resolve_state", return_value=RepositoryState(
@@ -208,6 +223,18 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
     def _state(self):
         return State("work", "specialist", SID, AGENT)
 
+    def _ledger_state(self):
+        """Lease marker suffixes and claimed call slots, separately.
+
+        The atomicity hardening makes every successful reservation claim one
+        `.call.NNNNNNNN` slot (the max_tool_calls bound); a claimed slot is
+        never returned, so it legitimately sits beside the `.active`/`.used`/
+        `.ambiguous` marker and is asserted in its own position."""
+        markers, slots = [], []
+        for p in self.lease_ledger.iterdir():
+            (slots if ".call." in p.name else markers).append(p.suffix)
+        return sorted(markers), sorted(slots)
+
     # ---- tests --------------------------------------------------------------
     def test_specialist_mutation_authorizes_and_settles_end_to_end(self):
         env = self._bundle_env()
@@ -216,8 +243,9 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             self.assertTrue(allowed, reason)
             self.assertIn("WRITE_REPOSITORY", reason)
             self.assertIn("recovery journal prepared", reason)
-            # the lease reservation and recovery PREPARED record are now on disk
-            self.assertEqual([p.suffix for p in self.lease_ledger.iterdir()], [".active"])
+            # the lease reservation (plus its claimed call slot) and the recovery
+            # PREPARED record are now on disk
+            self.assertEqual(self._ledger_state(), ([".active"], [".00000001"]))
             state_file = self.recovery_store / f"{hashlib.sha256(self.task_id.encode()).hexdigest()}.state.json"
             self.assertEqual(json.loads(state_file.read_text())["phase"], "PREPARED")
 
@@ -227,7 +255,7 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             self.assertTrue(governed, msg)
             self.assertTrue(recovery_green, msg)
             self.assertIn("execution lease consumed", msg)
-            self.assertEqual([p.suffix for p in self.lease_ledger.iterdir()], [".used"])
+            self.assertEqual(self._ledger_state(), ([".used"], [".00000001"]))
             self.assertEqual(json.loads(state_file.read_text())["phase"], "MUTATION_RECORDED")
 
     def test_forged_protected_authority_cannot_bypass_the_protected_gate(self):
@@ -308,7 +336,7 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             self.assertTrue(governed, msg)
             self.assertFalse(green, msg)
             self.assertIn("quarantined", msg)
-            self.assertEqual([p.suffix for p in self.lease_ledger.iterdir()], [".ambiguous"])
+            self.assertEqual(self._ledger_state(), ([".ambiguous"], [".00000001"]))
             self.assertEqual(self._recovery_state()["phase"], "RECOVERY_REQUIRED")
 
     def test_drill_recovery_proof_closes_a_failed_transaction(self):

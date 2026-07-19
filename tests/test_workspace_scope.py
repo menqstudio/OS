@@ -4,12 +4,17 @@ import pathlib
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tests"))
 
+from _operator_pin import use_operator_pin
+from broctl import build_registry, generate_key, sign_payload
 from bro_workspace import (
     Workspace,
     WorkspaceError,
@@ -259,10 +264,40 @@ class RepositoryBindingTests(WorkspaceFixture):
             verify_repository_binding(self.workspace())
 
 
+_OMIT = object()
+
+
 class BindingLoadTests(WorkspaceFixture):
-    def binding(self, **overrides) -> pathlib.Path:
+    """load_workspace trusts ONLY an operator-signed binding (H-1) with an
+    enforced expiry (M-8). The fixture stands in for the offline operator: it
+    generates a test operator-root key, writes a registry signed by that key
+    into a scratch repository root, and exports the same key as the external
+    CI pin, so verify_artifact's Ed25519 verification runs for real against
+    the pinned trust anchor. Negative fixtures are signed too (except the
+    signature-gate tests themselves), so each one still fails on its own
+    specific property rather than at the signature gate."""
+
+    def setUp(self):
+        super().setUp()
+        self.now = int(time.time())
+        self.repo_root = self.tmp / "repo"
+        (self.repo_root / "config").mkdir(parents=True)
+        self.operator = generate_key("operator-root", "op", False)
+        (self.repo_root / "config" / "trusted-keys.json").write_text(
+            json.dumps(build_registry([self.operator], self.now, 100_000)),
+            encoding="utf-8")
+        use_operator_pin(self, self.operator["public_key"])
+        # The raw env pin is honoured only under the CI flag; the fixture is CI.
+        ci = patch.dict(os.environ, {"BRO_ENV": "ci"})
+        ci.start()
+        self.addCleanup(ci.stop)
+
+    def binding(self, *, signed=True, key=None, **overrides) -> pathlib.Path:
+        key = key or self.operator
         values = dict(
             schema=1,
+            artifact_type="workspace-binding",
+            key_id=key["key_id"],
             workspace_id="bro-primary",
             repository="menqstudio/Bro",
             root=str(self.workspace_root),
@@ -271,48 +306,75 @@ class BindingLoadTests(WorkspaceFixture):
             prohibited_paths=list(PROHIBITED),
             allowed_remotes=["origin"],
             allowed_remote_repository="menqstudio/Bro",
+            expires_at_epoch=self.now + 3600,
             active=True,
         )
         values.update(overrides)
+        payload = {k: v for k, v in values.items() if v is not _OMIT}
+        document = sign_payload(key["private_key"], payload) if signed else payload
         path = self.tmp / "binding.json"
-        path.write_text(json.dumps(values), encoding="utf-8")
+        path.write_text(json.dumps(document), encoding="utf-8")
         return path
 
+    def load(self, path: pathlib.Path):
+        with patch.dict(os.environ, {"BRO_WORKSPACE_BINDING": str(path)}):
+            return load_workspace(self.repo_root)
+
     def test_valid_binding_loads(self):
-        with patch.dict(os.environ, {"BRO_WORKSPACE_BINDING": str(self.binding())}):
-            workspace = load_workspace(ROOT)
+        workspace = self.load(self.binding())
         self.assertEqual(workspace.workspace_id, "bro-primary")
         self.assertEqual(workspace.allowed_remote_repository, "menqstudio/bro")
+        self.assertEqual(workspace.expires_at_epoch, self.now + 3600)
 
     def test_missing_binding_denied(self):
         with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaises(WorkspaceError):
-                load_workspace(ROOT)
+            with self.assertRaisesRegex(WorkspaceError, "missing BRO_WORKSPACE_BINDING"):
+                load_workspace(self.repo_root)
+
+    def test_unsigned_binding_denied(self):
+        # Unsigned BY DESIGN (H-1): the raw Phase A payload — the exact document an
+        # agent could write itself and point the env var at — must die at the
+        # signature gate before any field is trusted.
+        with self.assertRaisesRegex(WorkspaceError, "not operator-signed"):
+            self.load(self.binding(signed=False))
+
+    def test_forged_signature_denied(self):
+        # Signed, but by a key the operator never pinned: an attacker minting
+        # their own "operator" key must not pass the registry-anchored verify.
+        intruder = generate_key("operator-root", "intruder", False)
+        with self.assertRaisesRegex(WorkspaceError, "not operator-signed"):
+            self.load(self.binding(key=intruder))
 
     def test_inactive_binding_denied(self):
-        path = self.binding(active=False)
-        with patch.dict(os.environ, {"BRO_WORKSPACE_BINDING": str(path)}):
-            with self.assertRaises(WorkspaceError):
-                load_workspace(ROOT)
+        # Signed so the failure is the active gate, not the signature gate.
+        with self.assertRaisesRegex(WorkspaceError, "not active"):
+            self.load(self.binding(active=False))
 
     def test_binding_without_digest_denied(self):
-        path = self.binding(control_plane_digest="short")
-        with patch.dict(os.environ, {"BRO_WORKSPACE_BINDING": str(path)}):
-            with self.assertRaises(WorkspaceError):
-                load_workspace(ROOT)
+        with self.assertRaisesRegex(WorkspaceError, "control_plane_digest"):
+            self.load(self.binding(control_plane_digest="short"))
+
+    def test_expired_binding_denied(self):
+        # M-8: operator-signed but past its stamped lifetime — still refused.
+        with self.assertRaisesRegex(WorkspaceError, "expired"):
+            self.load(self.binding(expires_at_epoch=self.now - 10))
+
+    def test_binding_without_expiry_denied(self):
+        # M-8: a signed binding with no enforced lifetime would be live forever.
+        with self.assertRaisesRegex(WorkspaceError, "expires_at_epoch"):
+            self.load(self.binding(expires_at_epoch=_OMIT))
 
     def test_relative_binding_path_denied(self):
         with patch.dict(os.environ, {"BRO_WORKSPACE_BINDING": "binding.json"}):
-            with self.assertRaises(WorkspaceError):
-                load_workspace(ROOT)
+            with self.assertRaisesRegex(WorkspaceError, "absolute"):
+                load_workspace(self.repo_root)
 
     def test_binding_inside_repository_denied(self):
-        inside = ROOT / "bro-test-binding.json"
+        inside = self.repo_root / "bro-test-binding.json"
         inside.write_text(json.dumps({"schema": 1}), encoding="utf-8")
-        self.addCleanup(inside.unlink)
         with patch.dict(os.environ, {"BRO_WORKSPACE_BINDING": str(inside)}):
-            with self.assertRaises(WorkspaceError):
-                load_workspace(ROOT)
+            with self.assertRaisesRegex(WorkspaceError, "outside the repository"):
+                load_workspace(self.repo_root)
 
 
 if __name__ == "__main__":

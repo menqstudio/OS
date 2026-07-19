@@ -7,10 +7,12 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from bro_contracts import canonical_json_sha256
 from bro_evidence import event_hash
@@ -52,7 +54,8 @@ def build_evidence(store: pathlib.Path, keys: dict, task_id: str, count: int) ->
         "artifact_type": "evidence-head",
         "key_id": keys["evidence-recorder"]["key_id"],
         "task_id": task_id, "final_event_hash": digest,
-        "event_count": count, "last_sequence": count, "issued_at_epoch": 1,
+        "event_count": count, "last_sequence": count, "head_sequence": 1,
+        "issued_at_epoch": 1,
     }
     (store / f"{task_id}.head.json").write_text(
         json.dumps(sign_payload(keys["evidence-recorder"]["private_key"], head)),
@@ -291,6 +294,7 @@ class DurableVerificationCompletionTests(DurableRuntimeTests):
 
     def _manifest(self, contract, refs, command, rid, now, *, issued=None, signing_key="builder"):
         key = self.keys[signing_key]
+        issued_at = now if issued is None else issued
         payload = {
             "artifact_type": "completion-manifest", "key_id": key["key_id"],
             "schema": 1, "task_id": contract["task_id"], "agent_id": AGENT,
@@ -301,7 +305,9 @@ class DurableVerificationCompletionTests(DurableRuntimeTests):
             "tests": [{"command": command, "status": "passed", "evidence_event_id": refs[1],
                        "execution_receipt_id": rid}],
             "evidence_event_ids": refs, "open_risks": [], "rollback_ready": True,
-            "issued_at_epoch": now if issued is None else issued,
+            "nonce": uuid.uuid4().hex,
+            "issued_at_epoch": issued_at,
+            "expires_at_epoch": issued_at + 3600,
         }
         return payload, sign_payload(key["private_key"], payload)
 
