@@ -2,16 +2,16 @@
 
 Continue only in `menqstudio/Bro` from current `main`. Do not touch BroPS.
 
-> ⛔ **DEPLOYMENT BLOCKED — `blocked-pending-security-remediation`.** The 2026-07-19 independent adversarial audit returned **RED: 2 Critical, 9 High, 4 Medium**. Status is `operational-rollout-scaffolded`, not complete. Do not deploy or enable mutation-capable use until the blockers below close. Implementation is driver; the auditor verifies each fix's exact HEAD independently (auditor is not the sole verifier of a fix).
+> **Security remediation complete — `pending-owner-environment-hardening`.** The 2026-07-19 independent adversarial audit (**RED: 2 Critical, 9 High, 4 Medium**) is fully remediated: blockers #1–#9 merged (PRs #38–#50), then owner-environment hardening (#51–#52). Implementation was driver; the auditor verified each fix's exact HEAD independently (auditor was not the sole verifier of a fix). A follow-up internal multi-agent review is closing further correctness/hardening items the same way. Deployment still requires the owner-environment steps.
 
 ## Merged baseline
 
-- latest merged PR: `#36`
-- main merge commit: `60a94dc1412bc41e592949281a623825ab66c76a`
-- containment (workspace binding / path scope / control-plane digest) is wired into the runtime; issuance and execution-integrity are merged as components but not yet wired end-to-end (see audit blockers 6, 8)
-- owner authorization has a green end-to-end bundle+ALLOW test and the operational-rollout **components** are merged (see audit caveats): real owner-signed trust root (#29), legacy release-grant loaders retired (#30), full execution-transaction E2E + failure drills (#31, #33), shadow enforcement (#32), backup/restore (#34), operator runbook (#35), live health monitor (#36)
-- all 17 laws (L0–L16) are validator-labelled `LIVE_PROVEN` — a checked test/path exists, **not** a proof of production wiring; the audit found the Supervisor lease, STOP controller, execution receipts, and durable-runtime completion are not wired end-to-end (blockers 6, 8)
-- CI: foundation GREEN on ubuntu-latest and windows-latest (482 tests)
+- latest merged PR: `#52`
+- main merge commit: `bc3b8533aa8f66ed5fa8693b23e0d16621cd4cc9`
+- containment (workspace binding / path scope / control-plane digest), issuance (Ed25519 authorities, owner-signed registry, `broctl`), and execution-integrity (signed receipts feeding the completion verdict) are wired into the runtime end-to-end
+- owner authorization has a green end-to-end bundle+ALLOW test; the durable-runtime completion path requires an independent verifier-signed receipt (builder ≠ verifier); STOP is wired into supervision with whole-group teardown; the supervisor issues the one canonical runtime-enforced execution lease and can produce a full builder bundle (#52)
+- all 17 laws (L0–L16) are live-proven — the fail-closed assurance validator (`tools/bro_live_validate.py`, 9b) runs each law's allow/deny cases through the wired interpreter and gates CI
+- CI: foundation GREEN on ubuntu-latest and windows-latest — SHA-pinned actions, `--require-hashes` deps, least-privilege token (9c); ~616 tests
 - inventories: 52 packs, 42 skills, 63 documents
 
 ## Mandatory startup

@@ -4,7 +4,7 @@ Operational procedures for running the Bro enforcement runtime: enforcement
 modes and shadow rollout, the machine-local state it depends on, recovering a
 failed or interrupted mutation, and backing up / restoring durable state.
 
-This runbook describes behaviour that is merged and covered by tests. It is
+This runbook describes behavior that is merged and covered by tests. It is
 operator-facing: everything here is driven by environment variables the operator
 controls (the same trust basis as `BRO_MODE`/`BRO_ROLE` — the hook reads the
 harness process environment, which an agent's own tool subprocesses cannot
@@ -132,10 +132,14 @@ This is deliberate — an interrupted transaction must be reconciled, not raced.
    state before the mutation.
 2. Restore the worktree to that before-state (e.g. discard the partial change).
 3. Prove recovery — only valid for `REVERSIBLE` / `COMPENSATABLE` effects, and
-   only when the live repository state matches the recorded before-state:
+   only when the live repository state matches the recorded before-state. Recovery
+   now requires an **owner-signed `recovery-proof` artifact** (a document signed by
+   the offline owner-held `recovery` authority, bound to the task/record/before-state/
+   effect-class/state-version), not a bare hex string — obtain that document, then
+   pass it in:
    ```
-   python3 -c "import sys; sys.path.insert(0,'runtime'); import bro_recovery as r; \
-     print(r.prove_recovery('<task_id>', '<64-hex-proof-hash>'))"
+   python3 -c "import sys, json; sys.path.insert(0,'runtime'); import bro_recovery as r; \
+     print(r.prove_recovery('<task_id>', json.load(open('<owner-signed-recovery-proof.json>'))))"
    ```
    On success the journal advances to `REWORK_REQUIRED` and the task can be
    re-attempted. An `IRREVERSIBLE` or `UNKNOWN` effect cannot be proven recovered
@@ -186,4 +190,4 @@ adversary who rewrites both a file and its manifest entry.
 | Back up state | `python3 tools/bro_backup.py backup --dest <dir> --source <name>=<path> ...` |
 | Verify a backup | `python3 tools/bro_backup.py verify --archive <dir>` |
 | Restore state | `python3 tools/bro_backup.py restore --archive <dir> --target <name>=<path> ...` |
-| Prove a reversible recovery | `bro_recovery.prove_recovery(task_id, proof_hash)` |
+| Prove a reversible recovery | `bro_recovery.prove_recovery(task_id, proof_document)` (owner-signed `recovery-proof`) |
