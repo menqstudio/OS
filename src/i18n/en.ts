@@ -71,6 +71,7 @@ export const en = {
   'chat.noMessagesHint': 'Send the first message below.',
   'chat.you': 'gev',
   'chat.replyFailed': 'Agent could not reply',
+  'chat.replyAs': 'Reply as',
 
   'projects.subtitle': 'Objective-centered work',
   'tasks.subtitle': 'Action system with evidence',
