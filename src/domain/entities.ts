@@ -143,6 +143,20 @@ export interface NewMemoryEntry {
   content: string;
 }
 
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  sizeBytes: number;
+  modified: string | null;
+}
+
+export interface DirListing {
+  path: string;
+  parent: string | null;
+  entries: DirEntry[];
+}
+
 export interface NewProject {
   name: string;
   description: string;

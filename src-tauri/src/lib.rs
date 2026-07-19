@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 mod commands;
+mod files;
 
 pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
@@ -50,6 +51,7 @@ pub fn run() {
             commands::create_memory,
             commands::set_memory_pinned,
             commands::delete_memory,
+            files::list_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running BroPS");

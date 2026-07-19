@@ -44,3 +44,5 @@ jobs:
         run: npm run build
       - name: Build the Tauri host
         run: cargo build --manifest-path src-tauri/Cargo.toml
+      - name: Test the Tauri host (filesystem browser, etc.)
+        run: cargo test -p brops --lib --manifest-path src-tauri/Cargo.toml
