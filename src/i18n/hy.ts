@@ -133,6 +133,7 @@ export const hy: Record<DictKey, string> = {
   'integrations.disconnect': 'Անջատել',
   'field.provider': 'Մատակարար',
   'analytics.subtitle': 'Կենդանի ցուցանիշներ ամբողջ աշխատանքով',
+  'analytics.chart': 'Ցուցանիշների համեմատություն',
   'security.subtitle': 'Հաստատումներ և աուդիտի հետք',
   'security.pending': 'Սպասող հաստատումներ',
   'security.decided': 'Որոշված հաստատումներ',
