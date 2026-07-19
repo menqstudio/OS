@@ -66,6 +66,34 @@ function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => voi
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Dependencies (blockers) for this task, plus the full task list to pick new
+  // blockers from. Both reload explicitly after a mutation — never on render.
+  const deps = useAsync(() => desktop.listTaskDependencies(task.id), [task.id]);
+  const allTasks = useAsync(() => desktop.listTasks(), []);
+  const [pick, setPick] = useState('');
+
+  const depList = deps.data ?? [];
+  const available = (allTasks.data ?? []).filter(
+    (x) => x.id !== task.id && !depList.some((d) => d.id === x.id),
+  );
+
+  const addDep = () => {
+    if (!pick) return;
+    setError(null);
+    desktop
+      .addTaskDependency(task.id, pick)
+      .then(() => { deps.reload(); setPick(''); toast(t('toast.saved'), 'success'); })
+      .catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); });
+  };
+
+  const removeDep = (depId: string) => {
+    setError(null);
+    desktop
+      .removeTaskDependency(task.id, depId)
+      .then(() => { deps.reload(); })
+      .catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); });
+  };
+
   const save = () => {
     if (!title.trim() || busy) return;
     setBusy(true);
@@ -93,6 +121,26 @@ function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => voi
           {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
         </Select>
       </FormRow>
+
+      <FormRow label={t('tasks.dependencies')}>
+        <div className="stack" style={{ gap: 8 }}>
+          {depList.length === 0 && <span className="muted">{t('tasks.noDependencies')}</span>}
+          {depList.map((d) => (
+            <div key={d.id} className="row" style={{ gap: 8, justifyContent: 'space-between' }}>
+              <span>{d.title}</span>
+              <Button variant="ghost" small onClick={() => removeDep(d.id)}>{t('tasks.remove')}</Button>
+            </div>
+          ))}
+          <div className="row" style={{ gap: 8 }}>
+            <Select value={pick} onChange={(e) => setPick(e.target.value)}>
+              <option value="">{t('tasks.pickBlocker')}</option>
+              {available.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}
+            </Select>
+            <Button variant="ghost" small onClick={addDep} disabled={!pick}>{t('tasks.addDependency')}</Button>
+          </div>
+        </div>
+      </FormRow>
+
       <div className="form-actions">
         <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant="primary" onClick={save}>{t('action.save')}</Button>
