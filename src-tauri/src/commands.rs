@@ -254,6 +254,84 @@ pub async fn ai_status() -> Result<crate::ai::AiStatus, String> {
     Ok(crate::ai::status().await)
 }
 
+/// Events streamed to the frontend over a Tauri channel while an agent replies.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum StreamEvent {
+    Delta { text: String },
+    Done { message: Message },
+    Error { message: String },
+}
+
+/// Streaming counterpart of `reply_in_conversation`: emits incremental `delta`
+/// events as the agent produces text, then a `done` event carrying the
+/// persisted message (or an `error` event). Returns Ok even on provider failure
+/// — the failure is delivered as an `error` event so the UI can show it inline.
+#[tauri::command]
+pub async fn stream_reply(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    agent: Option<String>,
+    on_event: tauri::ipc::Channel<StreamEvent>,
+) -> Result<(), String> {
+    let author = agent.unwrap_or_else(|| "Bro".to_string());
+    let (system, history) = {
+        let conn = locked(&state)?;
+        let msgs = repo::chat::list_messages(&conn, &conversation_id).map_err(|e| e.to_string())?;
+        let history: Vec<crate::ai::ChatMsg> = msgs
+            .iter()
+            .map(|m| crate::ai::ChatMsg {
+                role: if m.role == "user" { "user".to_string() } else { "assistant".to_string() },
+                content: m.body.clone(),
+            })
+            .collect();
+        let system = format!(
+            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. Reply concisely, directly, and helpfully to the latest message. Do not claim to have taken actions you cannot actually take."
+        );
+        (system, history)
+    };
+    if history.is_empty() {
+        let _ = on_event.send(StreamEvent::Error { message: "nothing to reply to".into() });
+        return Ok(());
+    }
+    let ch = on_event.clone();
+    let result = crate::ai::generate_stream(&system, &history, move |delta| {
+        let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
+    })
+    .await;
+    match result {
+        Ok(full) => {
+            // Persist the reply. Any failure here must still deliver a terminal
+            // event so the streaming UI never stays stuck "thinking".
+            let persisted = {
+                let conn = match locked(&state) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = on_event.send(StreamEvent::Error { message: e });
+                        return Ok(());
+                    }
+                };
+                repo::chat::post_message(
+                    &conn,
+                    NewMessage { conversation_id, role: "agent".to_string(), author, body: full },
+                )
+            };
+            match persisted {
+                Ok(message) => {
+                    let _ = on_event.send(StreamEvent::Done { message });
+                }
+                Err(e) => {
+                    let _ = on_event.send(StreamEvent::Error { message: e.to_string() });
+                }
+            }
+        }
+        Err(e) => {
+            let _ = on_event.send(StreamEvent::Error { message: e });
+        }
+    }
+    Ok(())
+}
+
 /// Generate a real agent reply for a conversation and persist it as an
 /// `agent`-role message. Reads history under the DB lock, releases it before
 /// the network call (so the future stays Send and the UI stays responsive),
