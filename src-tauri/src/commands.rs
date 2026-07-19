@@ -3,8 +3,8 @@
 
 use crate::AppState;
 use brops_core::{
-    repo, ActivityEvent, Agent, Approval, Decision, NewProject, NewTask, Notification, Project,
-    Task,
+    repo, ActivityEvent, Agent, Approval, Conversation, Decision, Message, NewMessage, NewProject,
+    NewTask, Notification, Project, Task,
 };
 use tauri::State;
 
@@ -121,4 +121,30 @@ pub fn create_decision(state: State<AppState>, title: String, rationale: String)
 pub fn list_activity(state: State<AppState>) -> Result<Vec<ActivityEvent>, String> {
     let conn = locked(&state)?;
     repo::activity::list(&conn).map_err(|e| e.to_string())
+}
+
+// --- chat ---
+
+#[tauri::command]
+pub fn list_conversations(state: State<AppState>, kind: Option<String>) -> Result<Vec<Conversation>, String> {
+    let conn = locked(&state)?;
+    repo::chat::list_conversations(&conn, kind.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_conversation(state: State<AppState>, kind: String, title: String) -> Result<Conversation, String> {
+    let conn = locked(&state)?;
+    repo::chat::create_conversation(&conn, &kind, &title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_messages(state: State<AppState>, conversation_id: String) -> Result<Vec<Message>, String> {
+    let conn = locked(&state)?;
+    repo::chat::list_messages(&conn, &conversation_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn post_message(state: State<AppState>, input: NewMessage) -> Result<Message, String> {
+    let conn = locked(&state)?;
+    repo::chat::post_message(&conn, input).map_err(|e| e.to_string())
 }

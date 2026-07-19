@@ -334,6 +334,107 @@ pub mod activity {
     }
 }
 
+pub mod chat {
+    use super::*;
+
+    fn map_conversation(r: &Row) -> rusqlite::Result<Conversation> {
+        Ok(Conversation {
+            id: r.get("id")?,
+            kind: r.get("kind")?,
+            title: r.get("title")?,
+            message_count: r.get("message_count")?,
+            last_message_at: r.get("last_message_at")?,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    fn map_message(r: &Row) -> rusqlite::Result<Message> {
+        Ok(Message {
+            id: r.get("id")?,
+            conversation_id: r.get("conversation_id")?,
+            role: r.get("role")?,
+            author: r.get("author")?,
+            body: r.get("body")?,
+            created_at: r.get("created_at")?,
+        })
+    }
+
+    // Conversations carry a derived message count and last-activity timestamp so
+    // the list view needs a single round trip.
+    const CONVERSATION_SELECT: &str = "SELECT c.id, c.kind, c.title, c.created_at, c.updated_at, \
+         COUNT(m.id) AS message_count, MAX(m.created_at) AS last_message_at \
+         FROM conversations c LEFT JOIN messages m ON m.conversation_id = c.id";
+
+    pub fn create_conversation(conn: &Connection, kind: &str, title: &str) -> CoreResult<Conversation> {
+        if !is_valid(kind, CONVERSATION_KINDS) {
+            return Err(CoreError::Invalid { field: "kind", value: kind.to_string() });
+        }
+        let now = now();
+        let id = id();
+        conn.execute(
+            "INSERT INTO conversations(id, kind, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+            rusqlite::params![id, kind, title, now],
+        )?;
+        super::audit::record(conn, "conversation.created", "gev", "conversation", &id)?;
+        get_conversation(conn, &id)
+    }
+
+    pub fn get_conversation(conn: &Connection, id: &str) -> CoreResult<Conversation> {
+        let sql = format!("{CONVERSATION_SELECT} WHERE c.id = ?1 GROUP BY c.id");
+        conn.query_row(&sql, [id], map_conversation).map_err(not_found(id))
+    }
+
+    pub fn list_conversations(conn: &Connection, kind: Option<&str>) -> CoreResult<Vec<Conversation>> {
+        match kind {
+            Some(k) => {
+                let sql = format!("{CONVERSATION_SELECT} WHERE c.kind = ?1 GROUP BY c.id ORDER BY c.updated_at DESC");
+                let mut s = conn.prepare(&sql)?;
+                let rows = s.query_map([k], map_conversation)?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            }
+            None => {
+                let sql = format!("{CONVERSATION_SELECT} GROUP BY c.id ORDER BY c.updated_at DESC");
+                let mut s = conn.prepare(&sql)?;
+                let rows = s.query_map([], map_conversation)?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            }
+        }
+    }
+
+    pub fn list_messages(conn: &Connection, conversation_id: &str) -> CoreResult<Vec<Message>> {
+        let mut s = conn.prepare(
+            "SELECT * FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC, rowid ASC",
+        )?;
+        let rows = s.query_map([conversation_id], map_message)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Append a message to a conversation and bump the conversation's activity
+    /// timestamp. Rejects an unknown conversation and invalid role.
+    pub fn post_message(conn: &Connection, input: NewMessage) -> CoreResult<Message> {
+        if !is_valid(&input.role, MESSAGE_ROLES) {
+            return Err(CoreError::Invalid { field: "role", value: input.role });
+        }
+        // Fail cleanly if the conversation does not exist (FK would also reject).
+        get_conversation(conn, &input.conversation_id)?;
+        let now = now();
+        let id = id();
+        conn.execute(
+            "INSERT INTO messages(id, conversation_id, role, author, body, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, input.conversation_id, input.role, input.author, input.body, now],
+        )?;
+        conn.execute(
+            "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, input.conversation_id],
+        )?;
+        super::audit::record(conn, "message.posted", &input.author, "conversation", &input.conversation_id)?;
+        conn.query_row("SELECT * FROM messages WHERE id = ?1", [id.clone()], map_message)
+            .map_err(not_found(&id))
+    }
+}
+
 fn not_found(id: &str) -> impl Fn(rusqlite::Error) -> CoreError + '_ {
     move |e| match e {
         rusqlite::Error::QueryReturnedNoRows => CoreError::NotFound(id.to_string()),
@@ -387,6 +488,14 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
 
     decisions::create(conn, "Trilingual product scope (HY/EN/RU)", "gev", "Newest explicit decision supersedes bilingual wording (D-009).")?;
     decisions::create(conn, "Foundation v1 is Locked", "gev", "Reviewed, canonicalized, Phase 1 UX added (D-010).")?;
+
+    let direct = chat::create_conversation(conn, "direct", "Bro")?;
+    chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "user".into(), author: "gev".into(), body: "Bro, where does the desktop build stand?".into() })?;
+    chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "agent".into(), author: "Bro".into(), body: "Data core is green and CRUD is wired to real SQLite. Chat is now persisted too.".into() })?;
+
+    let room = chat::create_conversation(conn, "group", "Foundation room")?;
+    chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Mason".into(), body: "Schema reached v3 — conversations and messages added.".into() })?;
+    chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Probe".into(), body: "Chat repository covered by unit tests.".into() })?;
 
     Ok(())
 }

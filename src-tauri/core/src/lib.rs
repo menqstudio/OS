@@ -7,8 +7,8 @@ pub mod domain;
 pub mod repo;
 
 pub use domain::{
-    ActivityEvent, Agent, Approval, CoreError, CoreResult, Decision, NewProject, NewTask,
-    Notification, Project, Task,
+    ActivityEvent, Agent, Approval, Conversation, CoreError, CoreResult, Decision, Message,
+    NewMessage, NewProject, NewTask, Notification, Project, Task,
 };
 
 /// A new UUID v4 string. IDs are opaque text everywhere in the schema.
@@ -99,12 +99,56 @@ mod tests {
     }
 
     #[test]
-    fn migrations_reach_v2_with_decisions() {
+    fn migrations_reach_v3_with_decisions_and_chat() {
         let c = conn();
-        assert_eq!(db::current_version(&c).unwrap(), 2);
+        assert_eq!(db::current_version(&c).unwrap(), 3);
         // decisions table exists and is usable
         repo::decisions::create(&c, "T", "gev", "why").unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
+        // conversations table exists and is usable
+        let conv = repo::chat::create_conversation(&c, "direct", "Bro").unwrap();
+        assert_eq!(conv.message_count, 0);
+    }
+
+    #[test]
+    fn chat_post_and_list_ordered() {
+        let c = conn();
+        let conv = repo::chat::create_conversation(&c, "group", "room").unwrap();
+        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(), body: "first".into() }).unwrap();
+        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(), body: "second".into() }).unwrap();
+
+        let msgs = repo::chat::list_messages(&c, &conv.id).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].body, "first");
+        assert_eq!(msgs[1].body, "second");
+
+        // the conversation aggregate reflects the posted messages
+        let reloaded = repo::chat::get_conversation(&c, &conv.id).unwrap();
+        assert_eq!(reloaded.message_count, 2);
+        assert!(reloaded.last_message_at.is_some());
+    }
+
+    #[test]
+    fn chat_rejects_bad_role_and_unknown_conversation() {
+        let c = conn();
+        let conv = repo::chat::create_conversation(&c, "direct", "Bro").unwrap();
+        assert!(matches!(
+            repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "bogus".into(), author: "x".into(), body: "y".into() }),
+            Err(CoreError::Invalid { field: "role", .. })
+        ));
+        assert!(repo::chat::post_message(&c, NewMessage { conversation_id: "nope".into(), role: "user".into(), author: "x".into(), body: "y".into() }).is_err());
+        assert!(repo::chat::create_conversation(&c, "bogus-kind", "x").is_err());
+    }
+
+    #[test]
+    fn chat_list_filters_by_kind() {
+        let c = conn();
+        repo::chat::create_conversation(&c, "direct", "Bro").unwrap();
+        repo::chat::create_conversation(&c, "group", "room a").unwrap();
+        repo::chat::create_conversation(&c, "group", "room b").unwrap();
+        assert_eq!(repo::chat::list_conversations(&c, Some("group")).unwrap().len(), 2);
+        assert_eq!(repo::chat::list_conversations(&c, Some("direct")).unwrap().len(), 1);
+        assert_eq!(repo::chat::list_conversations(&c, None).unwrap().len(), 3);
     }
 
     #[test]
@@ -117,6 +161,7 @@ mod tests {
         assert!(repo::approvals::list(&c).unwrap().len() >= 2);
         assert!(repo::notifications::list(&c).unwrap().len() >= 2);
         assert!(repo::decisions::list(&c).unwrap().len() >= 2);
+        assert!(repo::chat::list_conversations(&c, None).unwrap().len() >= 2);
         // running again must not duplicate
         repo::seed(&c).unwrap();
         assert_eq!(repo::projects::list(&c).unwrap().len(), after_first);

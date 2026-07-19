@@ -63,6 +63,13 @@ export const en = {
   'chat.subtitle': 'Direct conversation with Bro',
   'groupChat.subtitle': 'Humans and agents, one room',
   'chat.composer': 'Message, mention @agent…',
+  'chat.conversations': 'Conversations',
+  'chat.newConversation': 'New conversation',
+  'chat.roomName': 'Room name',
+  'chat.pickHint': 'Pick a conversation to view its messages.',
+  'chat.noMessages': 'No messages yet',
+  'chat.noMessagesHint': 'Send the first message below.',
+  'chat.you': 'gev',
 
   'projects.subtitle': 'Objective-centered work',
   'tasks.subtitle': 'Action system with evidence',
