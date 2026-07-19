@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../app/store';
 import {
   PageHeader, Panel, Button, Badge, Async, Modal, FormRow, Input, Textarea, ConfirmDialog,
@@ -55,11 +55,27 @@ function NewNoteForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
 }
 
 export function Knowledge() {
-  const { t } = useApp();
+  const { t, focus, clearFocus } = useApp();
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const s = useAsync(() => desktop.searchKnowledge(query), [query]);
+
+  // Deep-link consumer: when a `knowledge` focus is pending, select and scroll
+  // to the matching note once the list has loaded. Clear focus only after we
+  // resolve it — if the note is present we highlight it; if it is genuinely
+  // absent from a fully-loaded list we still clear focus to avoid a stuck state.
+  useEffect(() => {
+    if (focus?.kind !== 'knowledge' || s.loading || !s.data) return;
+    const target = s.data.find((n) => n.id === focus.id);
+    if (target) {
+      setSelectedId(target.id);
+      rowRefs.current[target.id]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    clearFocus();
+  }, [focus, s.data, s.loading, clearFocus]);
 
   const remove = (id: string) => {
     setPendingDelete(null);
@@ -100,7 +116,12 @@ export function Knowledge() {
           {(notes) => (
             <div className="stack">
               {notes.map((n) => (
-                <div key={n.id} className="card">
+                <div
+                  key={n.id}
+                  ref={(el) => { rowRefs.current[n.id] = el; }}
+                  className={`card ${selectedId === n.id ? 'card--focused' : ''}`}
+                  style={selectedId === n.id ? { outline: '2px solid var(--brops-accent)', borderRadius: 8 } : undefined}
+                >
                   <div className="panel">
                     <div className="between">
                       <div className="panel-title">{n.title}</div>

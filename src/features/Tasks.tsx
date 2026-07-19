@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useApp } from '../app/store';
 import {
   PageHeader, Button, Badge, Async, Modal, FormRow, Input, Textarea, Select,
@@ -102,7 +102,7 @@ function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => voi
 }
 
 export function Tasks() {
-  const { t } = useApp();
+  const { t, focus, clearFocus } = useApp();
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState<Task | null>(null);
@@ -110,6 +110,21 @@ export function Tasks() {
   const [dragStatus, setDragStatus] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const s = useAsync(() => desktop.listTasks(), []);
+
+  // Deep-link consumer: when a `task` focus is pending, open its detail once the
+  // list has loaded. Clear focus only after we actually open the task, so a
+  // focus set before data arrives still resolves. If the id is genuinely absent
+  // from a fully-loaded list, clear focus too, to avoid a stuck pending state.
+  useEffect(() => {
+    if (focus?.kind !== 'task' || s.loading || !s.data) return;
+    const target = s.data.find((x) => x.id === focus.id);
+    if (target) {
+      setDetail(target);
+      clearFocus();
+    } else {
+      clearFocus();
+    }
+  }, [focus, s.data, s.loading, clearFocus]);
 
   const moveTo = (id: string, status: string) => {
     desktop.setTaskStatus(id, status).then(() => s.reload()).catch(() => s.reload());
