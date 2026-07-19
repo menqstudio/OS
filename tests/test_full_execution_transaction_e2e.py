@@ -230,6 +230,27 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             self.assertEqual([p.suffix for p in self.lease_ledger.iterdir()], [".used"])
             self.assertEqual(json.loads(state_file.read_text())["phase"], "MUTATION_RECORDED")
 
+    def test_forged_protected_authority_cannot_bypass_the_protected_gate(self):
+        # The enforcement hook runs INSIDE the builder's process, which controls its
+        # own environment. A builder that points BRO_PROTECTED_AUTHORITY at a file it
+        # signed itself (here with the issuer key — anything but the operator authority
+        # protected-authority requires) must not defeat the protected-control-plane
+        # gate. Before the signature check this forged grant was accepted verbatim.
+        protected_write = {"file_path": "runtime/e2e-protected.py"}
+        forged = sign_payload(self.issuer["private_key"], {
+            "artifact_type": "protected-authority", "key_id": self.issuer["key_id"],
+            "task_id": self.task_id, "owner_approval": True,
+            "task_class": "security-maintenance",
+            "protected_scope": ["runtime/e2e-protected.py"],
+            "verification": {"independence_level": 4}, "issued_at_epoch": self.now})
+        env = self._bundle_env()
+        env["BRO_PROTECTED_AUTHORITY"] = self._write("forged-authority.json", forged)
+        with self._patches(), patch.dict(os.environ, env, clear=False):
+            allowed, reason = authorize_tool(
+                self._state(), "Write", protected_write, tool_use_id=TUID)
+            self.assertFalse(allowed, reason)
+            self.assertIn("protected control-plane gate", reason)
+
     def test_missing_execution_lease_denies_and_rolls_back_recovery(self):
         env = self._bundle_env()
         env.pop("BRO_EXECUTION_LEASE")

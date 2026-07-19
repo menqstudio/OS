@@ -15,6 +15,7 @@ from bro_recovery import RecoveryError, cancel_prepared, prepare_mutation, settl
 from bro_release_v3 import ReleaseV3Error, authorize_release_push
 from bro_repository_state import RepositoryStateError, verify_repository_binding
 from bro_security import SecurityError
+from bro_signature import SignatureError, load_trusted_keys, verify_artifact
 from bro_workspace import Workspace, WorkspaceError, authorize_targets, load_workspace
 from bro_workspace import verify_repository_binding as verify_workspace_remote
 
@@ -132,11 +133,21 @@ def authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: 
         except RepositoryStateError as exc:
             return False, f"repository binding gate RED: {exc}"
         try:
-            authority = _load_bound_json("BRO_PROTECTED_AUTHORITY") if os.getenv(
-                "BRO_PROTECTED_AUTHORITY") else {"task_class": "standard-builder"}
+            # protected-authority is an OPERATOR-signed artifact. The enforcement hook
+            # runs inside the builder's own process, which controls its environment, so
+            # reading it as unsigned JSON would let a builder point the var at a file it
+            # wrote — declaring itself security-maintenance with owner approval — and
+            # defeat this gate entirely. Verify the operator signature; only an UNSET
+            # var falls back to the least-privileged standard-builder default.
+            if os.getenv("BRO_PROTECTED_AUTHORITY"):
+                authority = verify_artifact(
+                    _load_bound_json("BRO_PROTECTED_AUTHORITY"), "protected-authority",
+                    load_trusted_keys(ROOT))
+            else:
+                authority = {"task_class": "standard-builder"}
             authorize_protected_scope(load_protected_manifest(ROOT), authority,
                                       _relative_targets(workspace, classification))
-        except (ContractError, ProtectedScopeError, WorkspaceError) as exc:
+        except (ContractError, ProtectedScopeError, WorkspaceError, SignatureError) as exc:
             return False, f"protected control-plane gate RED: {exc}"
     allowed, reason = authorize_classified_action(state, classification, tool_input)
     if not allowed:
