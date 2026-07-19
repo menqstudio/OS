@@ -521,6 +521,16 @@
         "archive-integrity",
         "ledger-chain-verify"
       ]
+    },
+    {
+      "id": "monitor",
+      "path": "tests/test_monitor.py",
+      "covers": [
+        "live-health-scan",
+        "blocking-recovery-alert",
+        "quarantined-lease-alert",
+        "shadow-chain-alert"
+      ]
     }
   ]
 }
