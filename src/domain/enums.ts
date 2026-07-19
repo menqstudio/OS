@@ -14,6 +14,11 @@ export type Severity = 'info' | 'success' | 'warning' | 'error' | 'critical';
 export type Lang = 'hy' | 'en' | 'ru';
 export type Theme = 'dark' | 'light';
 
+// Value lists for form controls — mirror the allowed sets in src-tauri/core.
+export const TASK_STATUSES: TaskStatus[] = ['inbox', 'planned', 'active', 'blocked', 'review', 'done', 'cancelled'];
+export const PRIORITIES: Priority[] = ['low', 'normal', 'high', 'critical'];
+export const PROJECT_STATUSES: ProjectStatus[] = ['planned', 'active', 'blocked', 'completed', 'archived'];
+
 // Maps a status-like value to a visual tone used by Badge/StatusPill.
 export type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info';
 

@@ -94,6 +94,17 @@ export const en = {
   'field.reversible': 'Reversible',
   'value.yes': 'Yes',
   'value.no': 'No',
+
+  'action.create': 'Create',
+  'action.cancel': 'Cancel',
+  'form.newProject': 'New project',
+  'form.newTask': 'New task',
+  'field.name': 'Name',
+  'field.title': 'Title',
+  'field.description': 'Description',
+  'field.priority': 'Priority',
+  'field.project': 'Project',
+  'field.none': 'None',
 } as const;
 
 export type DictKey = keyof typeof en;

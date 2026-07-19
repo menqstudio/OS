@@ -1,10 +1,60 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, Badge, StatusPill, Field, Async } from '../components/ui';
+import {
+  PageHeader, Panel, Button, Badge, StatusPill, Field, Async, Modal, FormRow, Input, Textarea, Select,
+} from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
-import { statusTone } from '../domain/enums';
+import { statusTone, PRIORITIES } from '../domain/enums';
 import type { Project } from '../domain/entities';
+
+function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const { t } = useApp();
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [priority, setPriority] = useState('normal');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    desktop
+      .createProject({ name: name.trim(), description: description.trim(), priority, workspaceId: null })
+      .then(() => {
+        onCreated();
+        onClose();
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setBusy(false);
+      });
+  };
+
+  return (
+    <Modal title={t('form.newProject')} onClose={onClose}>
+      {error && <div className="form-error">{error}</div>}
+      <FormRow label={t('field.name')}>
+        <Input value={name} autoFocus onChange={(e) => setName(e.target.value)} />
+      </FormRow>
+      <FormRow label={t('field.description')}>
+        <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
+      </FormRow>
+      <FormRow label={t('field.priority')}>
+        <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
+          {PRIORITIES.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </Select>
+      </FormRow>
+      <div className="form-actions">
+        <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
+        <Button variant="primary" onClick={submit}>{t('action.create')}</Button>
+      </div>
+    </Modal>
+  );
+}
 
 function ProjectDetail({ project, onClose }: { project: Project; onClose: () => void }) {
   const { t } = useApp();
@@ -19,7 +69,7 @@ function ProjectDetail({ project, onClose }: { project: Project; onClose: () => 
         <div className="muted" style={{ marginBottom: 12 }}>{project.description}</div>
         <div className="grid grid-3" style={{ marginBottom: 12 }}>
           <Field label={t('field.status')}><StatusPill status={project.status} /></Field>
-          <Field label={t('field.risk')}>
+          <Field label={t('field.priority')}>
             <Badge tone={statusTone[project.priority] ?? 'neutral'}>{project.priority}</Badge>
           </Field>
         </div>
@@ -44,6 +94,7 @@ function ProjectDetail({ project, onClose }: { project: Project; onClose: () => 
 export function Projects() {
   const { t } = useApp();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const s = useAsync(() => desktop.listProjects(), []);
 
   return (
@@ -51,8 +102,10 @@ export function Projects() {
       <PageHeader
         title={t('nav.projects')}
         subtitle={t('projects.subtitle')}
-        actions={<Button variant="primary">{t('action.new')}</Button>}
+        actions={<Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>}
       />
+
+      {creating && <NewProjectForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
 
       <Panel>
         <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>

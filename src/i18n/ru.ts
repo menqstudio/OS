@@ -96,4 +96,15 @@ export const ru: Record<DictKey, string> = {
   'field.reversible': 'Обратимо',
   'value.yes': 'Да',
   'value.no': 'Нет',
+
+  'action.create': 'Создать',
+  'action.cancel': 'Отмена',
+  'form.newProject': 'Новый проект',
+  'form.newTask': 'Новая задача',
+  'field.name': 'Название',
+  'field.title': 'Заголовок',
+  'field.description': 'Описание',
+  'field.priority': 'Приоритет',
+  'field.project': 'Проект',
+  'field.none': 'Нет',
 };
