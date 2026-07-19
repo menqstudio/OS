@@ -3,10 +3,12 @@
   "title": "Runtime Dependencies SST",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "canonical_text", "dependencies"],
+  "required": ["schema", "canonical_text", "record_schema", "policy", "dependencies"],
   "properties": {
     "schema": {"const": 1},
     "canonical_text": {"type": "string"},
+    "record_schema": {"type": "string", "description": "path to this schema (self-reference)"},
+    "policy": {"type": "string", "description": "fail-closed policy statement for the SST"},
     "dependencies": {
       "type": "array",
       "minItems": 1,
