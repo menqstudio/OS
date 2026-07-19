@@ -12,7 +12,8 @@ const MIGRATION_0006: &str = include_str!("../schema/0006_run_steps.sql");
 const MIGRATION_0007: &str = include_str!("../schema/0007_run_step_result.sql");
 const MIGRATION_0008: &str = include_str!("../schema/0008_approval_gating.sql");
 const MIGRATION_0009: &str = include_str!("../schema/0009_task_dependencies.sql");
-pub const SCHEMA_VERSION: i64 = 9;
+const MIGRATION_0010: &str = include_str!("../schema/0010_search_fts.sql");
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// Open a database file with foreign keys and WAL enabled, and migrate it.
 pub fn open(path: &str) -> CoreResult<Connection> {
@@ -52,6 +53,7 @@ pub fn migrate(conn: &Connection) -> CoreResult<()> {
         (7, MIGRATION_0007),
         (8, MIGRATION_0008),
         (9, MIGRATION_0009),
+        (10, MIGRATION_0010),
     ] {
         if !is_applied(conn, version)? {
             conn.execute_batch(sql)?;

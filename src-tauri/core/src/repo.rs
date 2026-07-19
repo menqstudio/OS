@@ -1221,23 +1221,40 @@ pub mod search {
         }
     }
 
-    /// Case-insensitive substring search across the primary entities. An
-    /// empty/whitespace query yields no results. Each entity kind contributes at
-    /// most `CAP` rows; results are grouped by kind in a stable order.
-    pub fn global(conn: &Connection, query: &str) -> CoreResult<Vec<SearchResult>> {
-        let q = query.trim();
-        if q.is_empty() {
-            return Ok(Vec::new());
+    /// Turn free user text into a safe FTS5 MATCH query: each whitespace token
+    /// becomes a quoted prefix term joined by implicit AND (e.g. `foo ba` →
+    /// `"foo"* "ba"*`). Punctuation is stripped so the query can never be an FTS
+    /// syntax error; non-ASCII letters (Armenian, Cyrillic) are kept. Returns
+    /// None when no usable token remains, so the caller returns no results.
+    fn fts_query(query: &str) -> Option<String> {
+        let mut terms: Vec<String> = Vec::new();
+        for raw in query.split_whitespace() {
+            let cleaned: String = raw.chars().filter(|c| c.is_alphanumeric() || *c == '_').collect();
+            if !cleaned.is_empty() {
+                terms.push(format!("\"{cleaned}\"*"));
+            }
         }
-        let like = format!("%{q}%");
+        if terms.is_empty() { None } else { Some(terms.join(" ")) }
+    }
+
+    /// Full-text search across the primary entities via the `search_index` FTS5
+    /// table (tokenized, prefix, multi-term AND). An empty/whitespace query
+    /// yields no results. Each entity kind contributes at most `CAP` rows;
+    /// results are grouped by kind in a stable order.
+    pub fn global(conn: &Connection, query: &str) -> CoreResult<Vec<SearchResult>> {
+        let fts = match fts_query(query) {
+            Some(f) => f,
+            None => return Ok(Vec::new()),
+        };
         let mut out: Vec<SearchResult> = Vec::new();
 
         // projects
         let mut s = conn.prepare(
             "SELECT id, name, status FROM projects \
-             WHERE name LIKE ?1 OR description LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+             WHERE id IN (SELECT entity_id FROM search_index WHERE kind = 'project' AND search_index MATCH ?1) \
+             ORDER BY updated_at DESC LIMIT ?2",
         )?;
-        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+        let rows = s.query_map(rusqlite::params![fts, CAP], |r| {
             Ok(SearchResult {
                 kind: "project".to_string(),
                 id: r.get("id")?,
@@ -1250,9 +1267,11 @@ pub mod search {
 
         // tasks
         let mut s = conn.prepare(
-            "SELECT id, title, status FROM tasks WHERE title LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+            "SELECT id, title, status FROM tasks \
+             WHERE id IN (SELECT entity_id FROM search_index WHERE kind = 'task' AND search_index MATCH ?1) \
+             ORDER BY updated_at DESC LIMIT ?2",
         )?;
-        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+        let rows = s.query_map(rusqlite::params![fts, CAP], |r| {
             Ok(SearchResult {
                 kind: "task".to_string(),
                 id: r.get("id")?,
@@ -1266,9 +1285,10 @@ pub mod search {
         // knowledge notes
         let mut s = conn.prepare(
             "SELECT id, title, tags FROM knowledge_notes \
-             WHERE title LIKE ?1 OR body LIKE ?1 OR tags LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+             WHERE id IN (SELECT entity_id FROM search_index WHERE kind = 'knowledge' AND search_index MATCH ?1) \
+             ORDER BY updated_at DESC LIMIT ?2",
         )?;
-        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+        let rows = s.query_map(rusqlite::params![fts, CAP], |r| {
             Ok(SearchResult {
                 kind: "knowledge".to_string(),
                 id: r.get("id")?,
@@ -1281,9 +1301,11 @@ pub mod search {
 
         // decisions
         let mut s = conn.prepare(
-            "SELECT id, title, status FROM decisions WHERE title LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+            "SELECT id, title, status FROM decisions \
+             WHERE id IN (SELECT entity_id FROM search_index WHERE kind = 'decision' AND search_index MATCH ?1) \
+             ORDER BY updated_at DESC LIMIT ?2",
         )?;
-        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+        let rows = s.query_map(rusqlite::params![fts, CAP], |r| {
             Ok(SearchResult {
                 kind: "decision".to_string(),
                 id: r.get("id")?,
@@ -1297,9 +1319,10 @@ pub mod search {
         // agents
         let mut s = conn.prepare(
             "SELECT id, display_name, role FROM agents \
-             WHERE display_name LIKE ?1 OR role LIKE ?1 ORDER BY display_name LIMIT ?2",
+             WHERE id IN (SELECT entity_id FROM search_index WHERE kind = 'agent' AND search_index MATCH ?1) \
+             ORDER BY display_name LIMIT ?2",
         )?;
-        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+        let rows = s.query_map(rusqlite::params![fts, CAP], |r| {
             Ok(SearchResult {
                 kind: "agent".to_string(),
                 id: r.get("id")?,
@@ -1312,9 +1335,11 @@ pub mod search {
 
         // conversations (route depends on the conversation kind)
         let mut s = conn.prepare(
-            "SELECT id, title, kind FROM conversations WHERE title LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+            "SELECT id, title, kind FROM conversations \
+             WHERE id IN (SELECT entity_id FROM search_index WHERE kind = 'conversation' AND search_index MATCH ?1) \
+             ORDER BY updated_at DESC LIMIT ?2",
         )?;
-        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+        let rows = s.query_map(rusqlite::params![fts, CAP], |r| {
             let conv_kind: String = r.get("kind")?;
             let route = if conv_kind == "group" { "groupChat" } else { "chat" };
             Ok(SearchResult {
@@ -1329,10 +1354,11 @@ pub mod search {
 
         // memory entries (title is the content, truncated for the palette)
         let mut s = conn.prepare(
-            "SELECT id, content, scope FROM memory_entries WHERE content LIKE ?1 \
+            "SELECT id, content, scope FROM memory_entries \
+             WHERE id IN (SELECT entity_id FROM search_index WHERE kind = 'memory' AND search_index MATCH ?1) \
              ORDER BY pinned DESC, updated_at DESC LIMIT ?2",
         )?;
-        let rows = s.query_map(rusqlite::params![like, CAP], |r| {
+        let rows = s.query_map(rusqlite::params![fts, CAP], |r| {
             let content: String = r.get("content")?;
             Ok(SearchResult {
                 kind: "memory".to_string(),

@@ -159,9 +159,9 @@ mod tests {
     }
 
     #[test]
-    fn migrations_reach_v9_with_all_tables() {
+    fn migrations_reach_v10_with_all_tables() {
         let c = conn();
-        assert_eq!(db::current_version(&c).unwrap(), 9);
+        assert_eq!(db::current_version(&c).unwrap(), 10);
         // decisions table exists and is usable
         repo::decisions::create(&c, "T", "gev", "why").unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
@@ -418,6 +418,36 @@ mod tests {
         // an empty query returns nothing (no accidental full dump).
         assert_eq!(repo::search::global(&c, "").unwrap().len(), 0);
         assert_eq!(repo::search::global(&c, "   ").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn fts_search_prefix_multiterm_and_trigger_sync() {
+        let c = conn();
+        let p = repo::projects::create(
+            &c,
+            NewProject { name: "Localization Engine".into(), description: "translate strings".into(), priority: "high".into(), workspace_id: None },
+        ).unwrap();
+
+        // prefix match: "Local" finds "Localization" via the INSERT trigger
+        assert_eq!(repo::search::global(&c, "Local").unwrap().iter().filter(|r| r.kind == "project").count(), 1);
+        // body is indexed too
+        assert_eq!(repo::search::global(&c, "translate").unwrap().iter().filter(|r| r.kind == "project").count(), 1);
+        // multi-term is AND: both must match
+        assert_eq!(repo::search::global(&c, "Local translate").unwrap().iter().filter(|r| r.kind == "project").count(), 1);
+        assert_eq!(repo::search::global(&c, "Local nomatchxyz").unwrap().iter().filter(|r| r.kind == "project").count(), 0);
+        // punctuation-only / empty queries never error and return nothing
+        assert_eq!(repo::search::global(&c, "  ***  ").unwrap().len(), 0);
+        assert_eq!(repo::search::global(&c, "\"';--").unwrap().len(), 0);
+
+        // UPDATE trigger re-indexes: old term gone, new term found
+        repo::projects::update(&c, &p.id, "Renamed Widget", "translate strings", "high").unwrap();
+        assert_eq!(repo::search::global(&c, "Localization").unwrap().iter().filter(|r| r.kind == "project").count(), 0);
+        assert_eq!(repo::search::global(&c, "Widget").unwrap().iter().filter(|r| r.kind == "project").count(), 1);
+
+        // DELETE trigger removes it from the index (cascade also drops it, but
+        // deleting the project directly must clear the search row)
+        c.execute("DELETE FROM projects WHERE id = ?1", [&p.id]).unwrap();
+        assert_eq!(repo::search::global(&c, "Widget").unwrap().iter().filter(|r| r.kind == "project").count(), 0);
     }
 
     #[test]
