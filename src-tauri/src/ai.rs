@@ -170,6 +170,41 @@ pub async fn generate_stream<F: FnMut(&str)>(
     }
 }
 
+/// A dedicated empty working directory for the `claude` subprocess. Running the
+/// CLI here means it can never pick up a nearby project's `.claude/settings.json`,
+/// `.mcp.json`, or source files. Combined with `--tools ""` this keeps chat a
+/// pure text completion — a prompt-injection in a message cannot read or mutate
+/// the filesystem or run shell/MCP tools through the coding agent.
+fn ai_sandbox_dir() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join("brops-ai-sandbox");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Build the argv (after the binary) for a `claude -p` chat call. Centralized so
+/// the tool-lockdown flag is guaranteed present on every path and unit-testable.
+/// `--tools ""` disables ALL built-in tools (Read/Bash/Edit/MCP/…), overriding
+/// whatever the user's Claude settings allowlist; chat is completion-only.
+fn claude_args(prompt: &str, system: &str, streaming: bool, model: Option<&str>) -> Vec<String> {
+    let mut a: Vec<String> = vec!["-p".into(), prompt.into(), "--output-format".into()];
+    if streaming {
+        a.push("stream-json".into());
+        a.push("--verbose".into());
+        a.push("--include-partial-messages".into());
+    } else {
+        a.push("json".into());
+    }
+    a.push("--append-system-prompt".into());
+    a.push(system.into());
+    a.push("--tools".into());
+    a.push(String::new()); // "" → disable all tools
+    if let Some(m) = model {
+        a.push("--model".into());
+        a.push(m.into());
+    }
+    a
+}
+
 async fn claude_cli_stream<F: FnMut(&str)>(
     bin: &str,
     system: &str,
@@ -178,23 +213,14 @@ async fn claude_cli_stream<F: FnMut(&str)>(
 ) -> Result<String, String> {
     let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
     let mut cmd = tokio::process::Command::new(bin);
-    cmd.arg("-p")
-        .arg(&prompt)
-        .arg("--output-format")
-        .arg("stream-json")
-        .arg("--verbose")
-        .arg("--include-partial-messages")
-        .arg("--append-system-prompt")
-        .arg(system)
+    cmd.args(claude_args(&prompt, system, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
+        .current_dir(ai_sandbox_dir())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         // Ensure the child is killed if this future is dropped or returns early
         // (timeout, read error) — never leak a running `claude` process.
         .kill_on_drop(true);
-    if let Some(model) = env_nonempty("BROPS_CLAUDE_MODEL") {
-        cmd.arg("--model").arg(model);
-    }
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN, or set ANTHROPIC_API_KEY.")
     })?;
@@ -297,15 +323,9 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
         transcript(messages)
     );
     let mut cmd = tokio::process::Command::new(bin);
-    cmd.arg("-p")
-        .arg(&prompt)
-        .arg("--output-format")
-        .arg("json")
-        .arg("--append-system-prompt")
-        .arg(system);
-    if let Some(model) = env_nonempty("BROPS_CLAUDE_MODEL") {
-        cmd.arg("--model").arg(model);
-    }
+    cmd.args(claude_args(&prompt, system, false, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
+        .current_dir(ai_sandbox_dir())
+        .stdin(std::process::Stdio::null());
     let out = tokio::time::timeout(Duration::from_secs(120), cmd.output())
         .await
         .map_err(|_| "claude CLI timed out".to_string())?
@@ -396,4 +416,35 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
         return Err("Anthropic returned no text content".to_string());
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Security regression: chat calls must disable ALL Claude tools so a
+    // prompt-injection can't read/write files or run commands via the agent.
+    #[test]
+    fn claude_args_disable_all_tools_on_every_path() {
+        for streaming in [true, false] {
+            let args = claude_args("hi", "be nice", streaming, None);
+            // `--tools ""` present as an adjacent pair.
+            let pos = args.iter().position(|a| a == "--tools").expect("--tools flag present");
+            assert_eq!(args.get(pos + 1), Some(&String::new()), "--tools must be followed by \"\"");
+            // never bypass permissions / re-enable tools.
+            assert!(!args.iter().any(|a| a == "--dangerously-skip-permissions"
+                || a == "--allow-dangerously-skip-permissions"
+                || a == "--allowedTools" || a == "--allowed-tools"));
+            assert!(!args.iter().any(|a| a == "default"), "must not pass --tools default");
+        }
+    }
+
+    #[test]
+    fn claude_args_model_is_optional_and_appended() {
+        let none = claude_args("p", "s", false, None);
+        assert!(!none.iter().any(|a| a == "--model"));
+        let some = claude_args("p", "s", true, Some("claude-x"));
+        let pos = some.iter().position(|a| a == "--model").expect("--model present");
+        assert_eq!(some.get(pos + 1), Some(&"claude-x".to_string()));
+    }
 }

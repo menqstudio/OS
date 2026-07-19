@@ -1,13 +1,19 @@
-//! Read-only filesystem browser. Unlike the rest of the command surface this
-//! does not touch SQLite — it lists real directory contents through `std::fs`
-//! so the Files workspace shows the actual disk, not a mock. Browsing is
-//! read-only; nothing here mutates the filesystem.
+//! Filesystem workspace: browse a directory tree and view/edit text files
+//! through `std::fs` (no SQLite). Access is **confined to a single root** (the
+//! user's home by default, or `BROPS_FILES_ROOT`) — the security boundary
+//! between the untrusted webview and the real disk. Every path is canonicalized
+//! (resolving `..` and symlinks) and rejected if it escapes the root, so a
+//! compromised renderer cannot read or write arbitrary files. Editing is limited
+//! to existing regular files, bounded in size, and written atomically.
 
 use serde::Serialize;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
-use tauri::Manager;
+
+/// Largest file we will read into / write from the editor.
+const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +32,56 @@ pub struct DirListing {
     pub parent: Option<String>,
     pub entries: Vec<DirEntry>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContent {
+    pub path: String,
+    pub content: String,
+    /// True when the file is not editable as text here (non-regular, too large,
+    /// or binary/non-UTF-8).
+    pub readonly: bool,
+    pub size_bytes: u64,
+}
+
+// --- security: confine every path to one canonical root ---------------------
+
+/// The one directory subtree the file commands may touch. Defaults to the user's
+/// home directory; override with `BROPS_FILES_ROOT` to a narrower workspace.
+/// Returned canonicalized so containment checks compare real paths.
+fn files_root() -> Result<PathBuf, String> {
+    let raw = match std::env::var("BROPS_FILES_ROOT") {
+        Ok(v) if !v.trim().is_empty() => PathBuf::from(v),
+        _ => std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| "no files root configured (HOME unset, BROPS_FILES_ROOT unset)".to_string())?,
+    };
+    fs::canonicalize(&raw).map_err(|e| format!("files root {}: {e}", raw.display()))
+}
+
+/// Canonicalize `raw` (which must already exist) and confirm it lies inside
+/// `root` after resolving `..` and symlinks — rejecting path-traversal and
+/// symlink escapes. An empty `raw` resolves to the root itself. Split out from
+/// [`confine`] so tests can pass an explicit root without touching env vars.
+fn confine_in(root: &Path, raw: &str) -> Result<PathBuf, String> {
+    if raw.is_empty() {
+        return Ok(root.to_path_buf());
+    }
+    let canon = fs::canonicalize(raw).map_err(|e| format!("{raw}: {e}"))?;
+    // Component-wise containment (not string-prefix): "/home/gev2" is NOT inside
+    // "/home/gev".
+    if !canon.starts_with(root) {
+        return Err(format!("{}: outside the allowed files root", canon.display()));
+    }
+    Ok(canon)
+}
+
+/// Production confinement against the configured [`files_root`].
+fn confine(raw: &str) -> Result<PathBuf, String> {
+    confine_in(&files_root()?, raw)
+}
+
+// --- listing ----------------------------------------------------------------
 
 fn modified_ms(meta: &fs::Metadata) -> Option<String> {
     meta.modified()
@@ -70,77 +126,100 @@ pub fn read_listing(dir: &Path) -> std::io::Result<DirListing> {
 }
 
 #[tauri::command]
-pub fn list_dir(app: tauri::AppHandle, path: Option<String>) -> Result<DirListing, String> {
-    let dir: PathBuf = match path {
-        Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => app.path().home_dir().map_err(|e| e.to_string())?,
-    };
-    read_listing(&dir).map_err(|e| format!("{}: {e}", dir.display()))
-}
-
-/// Largest file we will read into the editor. Bigger files (or binaries) are
-/// refused so the UI never tries to load a gigabyte into a textarea.
-const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileContent {
-    pub path: String,
-    pub content: String,
-    /// True when the file is not editable as text here (too large or binary).
-    pub readonly: bool,
-    pub size_bytes: u64,
-}
-
-/// Read a text file for viewing/editing. Refuses directories, over-large files,
-/// and non-UTF-8 (binary) content — reporting `readonly` with an explanation in
-/// `content` rather than failing, so the UI can show a calm message.
-pub fn read_text(path: &Path) -> std::io::Result<FileContent> {
-    let meta = fs::metadata(path)?;
-    if meta.is_dir() {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "path is a directory"));
+pub fn list_dir(path: Option<String>) -> Result<DirListing, String> {
+    let root = files_root()?;
+    let dir = confine_in(&root, path.as_deref().unwrap_or(""))?;
+    let mut listing = read_listing(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // Never offer an "Up" that leaves the confinement root.
+    let escapes_root = listing
+        .parent
+        .as_ref()
+        .map(|p| !Path::new(p).starts_with(&root))
+        .unwrap_or(false);
+    if dir == root || escapes_root {
+        listing.parent = None;
     }
-    let size = meta.len();
+    Ok(listing)
+}
+
+// --- read / write a text file -----------------------------------------------
+
+/// Read a text file for viewing/editing. Only **regular files** are editable —
+/// directories, symlinks, and character/FIFO/socket devices are reported
+/// `readonly` (a device like `/dev/zero` has length 0 but never reaches EOF, so
+/// we must not `fs::read` it). The read is **bounded** to `MAX_EDIT_BYTES + 1`
+/// so a file that lies about (or grows past) its length can't exhaust memory.
+/// Over-large or non-UTF-8 content is reported `readonly` rather than failing.
+pub fn read_text(path: &Path) -> std::io::Result<FileContent> {
+    let meta = fs::symlink_metadata(path)?;
     let path_str = path.to_string_lossy().into_owned();
+    if !meta.file_type().is_file() {
+        return Ok(FileContent { path: path_str, content: String::new(), readonly: true, size_bytes: 0 });
+    }
+    let file = fs::File::open(path)?;
+    let mut buf = Vec::new();
+    file.take(MAX_EDIT_BYTES + 1).read_to_end(&mut buf)?;
+    let size = buf.len() as u64;
     if size > MAX_EDIT_BYTES {
         return Ok(FileContent { path: path_str, content: String::new(), readonly: true, size_bytes: size });
     }
-    let bytes = fs::read(path)?;
-    match String::from_utf8(bytes) {
+    match String::from_utf8(buf) {
         Ok(content) => Ok(FileContent { path: path_str, content, readonly: false, size_bytes: size }),
         Err(_) => Ok(FileContent { path: path_str, content: String::new(), readonly: true, size_bytes: size }),
     }
 }
 
-#[tauri::command]
-pub fn read_file(path: String) -> Result<FileContent, String> {
-    read_text(Path::new(&path)).map_err(|e| format!("{path}: {e}"))
+/// Overwrite an existing regular file's text, atomically (temp + rename in the
+/// same directory). Refuses to create new files, write non-regular targets, or
+/// exceed the size cap on the *new* content — so a huge payload can't exhaust
+/// the disk and a partial write can never truncate the original.
+fn write_text(path: &Path, content: &str) -> Result<(), String> {
+    if content.len() as u64 > MAX_EDIT_BYTES {
+        return Err(format!("content exceeds the {MAX_EDIT_BYTES}-byte edit limit"));
+    }
+    let meta = fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !meta.file_type().is_file() {
+        return Err(format!("{}: not a regular file", path.display()));
+    }
+    let parent = path.parent().ok_or_else(|| format!("{}: no parent directory", path.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("{}: invalid file name", path.display()))?;
+    let tmp = parent.join(format!(".{file_name}.{}.brops-tmp", std::process::id()));
+    fs::write(&tmp, content.as_bytes()).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("{}: {e}", path.display())
+    })
 }
 
-/// Overwrite an existing file's contents. Refuses to create a new file or write
-/// over a directory — editing here is limited to files the browser already
-/// surfaced, so a typo can't scatter new files across the disk.
+#[tauri::command]
+pub fn read_file(path: String) -> Result<FileContent, String> {
+    let p = confine(&path)?;
+    read_text(&p).map_err(|e| format!("{path}: {e}"))
+}
+
 #[tauri::command]
 pub fn write_file(path: String, content: String) -> Result<(), String> {
-    let p = Path::new(&path);
-    let meta = fs::metadata(p).map_err(|e| format!("{path}: {e}"))?;
-    if meta.is_dir() {
-        return Err(format!("{path}: is a directory"));
-    }
-    if meta.len() > MAX_EDIT_BYTES {
-        return Err(format!("{path}: file is too large to edit here"));
-    }
-    fs::write(p, content).map_err(|e| format!("{path}: {e}"))
+    let p = confine(&path)?;
+    write_text(&p, &content).map_err(|e| format!("{path}: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn scratch(tag: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("brops_files_{}_{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        base
+    }
+
     #[test]
     fn listing_sorts_dirs_first_then_name() {
-        let root = std::env::temp_dir().join(format!("brops_files_test_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = scratch("listing");
         fs::create_dir_all(root.join("zeta_dir")).unwrap();
         fs::create_dir_all(root.join("alpha_dir")).unwrap();
         fs::write(root.join("mid.txt"), b"hello").unwrap();
@@ -154,8 +233,104 @@ mod tests {
         assert_eq!(mid.size_bytes, 5);
         assert!(!mid.is_dir);
         assert!(listing.entries[0].is_dir);
-        assert_eq!(listing.parent.as_deref(), Some(root.parent().unwrap().to_string_lossy().as_ref()));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn confine_allows_inside_and_rejects_escape() {
+        let base = scratch("confine");
+        fs::create_dir_all(base.join("inside")).unwrap();
+        fs::write(base.join("inside/f.txt"), b"hi").unwrap();
+        let root = fs::canonicalize(&base).unwrap();
+
+        // inside the root → allowed
+        let ok = confine_in(&root, base.join("inside/f.txt").to_str().unwrap()).unwrap();
+        assert!(ok.starts_with(&root));
+        // empty → the root itself
+        assert_eq!(confine_in(&root, "").unwrap(), root);
+        // absolute path outside the root → rejected (exists but escapes)
+        assert!(confine_in(&root, "/").is_err());
+        // `..` traversal that climbs out of the root → rejected
+        let climb = base.join("inside/../..");
+        assert!(confine_in(&root, climb.to_str().unwrap()).is_err());
+        // a non-existent path → rejected (canonicalize fails)
+        assert!(confine_in(&root, base.join("nope").to_str().unwrap()).is_err());
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confine_rejects_symlink_escape() {
+        let base = scratch("symlink");
+        fs::create_dir_all(base.join("inside")).unwrap();
+        let root = fs::canonicalize(&base).unwrap();
+        // a secret outside the root, and a symlink inside the root pointing at it
+        let outside = std::env::temp_dir().join(format!("brops_secret_{}.txt", std::process::id()));
+        fs::write(&outside, b"secret").unwrap();
+        let link = base.join("inside/escape");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        // following the symlink lands outside the root → rejected
+        assert!(confine_in(&root, link.to_str().unwrap()).is_err());
+
+        let _ = fs::remove_file(&outside);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn read_text_regular_file_bounds_and_types() {
+        let base = scratch("read");
+        fs::write(base.join("f.txt"), b"hi there").unwrap();
+
+        // a directory is not editable
+        assert!(read_text(&base).unwrap().readonly);
+
+        // a small utf-8 file reads back exactly
+        let fc = read_text(&base.join("f.txt")).unwrap();
+        assert_eq!(fc.content, "hi there");
+        assert!(!fc.readonly);
+
+        // an over-large file is reported readonly, not loaded
+        let big = base.join("big.bin");
+        fs::write(&big, vec![b'a'; MAX_EDIT_BYTES as usize + 16]).unwrap();
+        let fc = read_text(&big).unwrap();
+        assert!(fc.readonly);
+        assert!(fc.size_bytes > MAX_EDIT_BYTES);
+
+        // binary / non-utf8 → readonly
+        fs::write(base.join("b.bin"), [0xff_u8, 0xfe, 0x00, 0x01]).unwrap();
+        assert!(read_text(&base.join("b.bin")).unwrap().readonly);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn write_text_enforces_limits_and_persists_atomically() {
+        let base = scratch("write");
+        let f = base.join("f.txt");
+        fs::write(&f, b"orig").unwrap();
+
+        // oversize new content is rejected before any write
+        let huge = "a".repeat(MAX_EDIT_BYTES as usize + 1);
+        assert!(write_text(&f, &huge).is_err());
+        assert_eq!(fs::read_to_string(&f).unwrap(), "orig"); // original untouched
+
+        // writing over a directory is rejected
+        assert!(write_text(&base, "x").is_err());
+
+        // happy path persists the new content
+        write_text(&f, "updated").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "updated");
+        // no stray temp files left behind
+        let leftovers = fs::read_dir(&base)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("brops-tmp"))
+            .count();
+        assert_eq!(leftovers, 0);
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

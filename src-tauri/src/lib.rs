@@ -12,6 +12,23 @@ pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
 }
 
+/// Restrict the app data directory (0700) and the SQLite database + WAL/SHM
+/// (0600) to the owner on Unix. Best-effort — never blocks startup.
+#[cfg(unix)]
+fn harden_data_dir(dir: &std::path::Path, db_path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    for suffix in ["", "-wal", "-shm"] {
+        let p = std::path::PathBuf::from(format!("{}{}", db_path.display(), suffix));
+        if p.exists() {
+            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn harden_data_dir(_dir: &std::path::Path, _db_path: &std::path::Path) {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -21,6 +38,9 @@ pub fn run() {
             let db_path = dir.join("brops.db");
             let conn = brops_core::db::open(db_path.to_string_lossy().as_ref())?;
             brops_core::repo::seed(&conn)?;
+            // Harden permissions: the app data dir and the SQLite files can hold
+            // conversation content, memory, and audit data — keep them owner-only.
+            harden_data_dir(&dir, &db_path);
             app.manage(AppState { db: Mutex::new(conn) });
             Ok(())
         })
