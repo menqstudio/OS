@@ -1,24 +1,25 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, Badge, StatusPill, Avatar, EmptyState } from '../components/ui';
-import { tasks } from '../data/mock';
-import { statusTone, type TaskStatus } from '../domain/enums';
+import { PageHeader, Panel, Button, Badge, StatusPill, Avatar, Async } from '../components/ui';
+import { desktop } from '../services/desktop';
+import { useAsync } from '../hooks/useAsync';
+import { statusTone } from '../domain/enums';
 
-type Tab = { key: string; label: string; match: (s: TaskStatus) => boolean };
+type Tab = { key: string; label: string; status: string };
 
 const TABS: Tab[] = [
-  { key: 'inbox', label: 'Inbox', match: (s) => s === 'inbox' },
-  { key: 'active', label: 'Active', match: (s) => s === 'active' || s === 'planned' },
-  { key: 'blocked', label: 'Blocked', match: (s) => s === 'blocked' },
-  { key: 'review', label: 'Review', match: (s) => s === 'review' },
-  { key: 'done', label: 'Done', match: (s) => s === 'done' || s === 'cancelled' },
+  { key: 'inbox', label: 'Inbox', status: 'inbox' },
+  { key: 'active', label: 'Active', status: 'active' },
+  { key: 'blocked', label: 'Blocked', status: 'blocked' },
+  { key: 'review', label: 'Review', status: 'review' },
+  { key: 'done', label: 'Done', status: 'done' },
 ];
 
 export function Tasks() {
   const { t } = useApp();
   const [tab, setTab] = useState<string>('inbox');
   const active = TABS.find((x) => x.key === tab) ?? TABS[0];
-  const filtered = tasks.filter((x) => active.match(x.status));
+  const s = useAsync(() => desktop.listTasksByStatus(active.status), [active.status]);
 
   return (
     <>
@@ -37,28 +38,26 @@ export function Tasks() {
       </div>
 
       <Panel title={active.label}>
-        {filtered.length === 0 ? (
-          <EmptyState title={t('state.empty')} hint={t('state.emptyHint')} />
-        ) : (
-          <div className="stack">
-            {filtered.map((x) => (
-              <div key={x.id} className="list-row">
-                <span className="row" style={{ gap: 8 }}>
-                  <Avatar name={x.assignee} />
-                  <span>{x.title}</span>
-                  {x.status === 'blocked' && x.blockedReason && (
-                    <span className="muted">· {x.blockedReason}</span>
-                  )}
-                </span>
-                <span className="row" style={{ gap: 8 }}>
-                  <Badge tone={statusTone[x.priority] ?? 'neutral'}>{x.priority}</Badge>
-                  {x.dueAt && <span className="muted">{x.dueAt}</span>}
-                  <StatusPill status={x.status} />
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+        <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
+          {(items) => (
+            <div className="stack">
+              {items.map((x) => (
+                <div key={x.id} className="list-row">
+                  <span className="row" style={{ gap: 8 }}>
+                    <Avatar name={x.assignedAgentId ?? '—'} />
+                    <span>{x.title}</span>
+                    <span className="muted">{x.assignedAgentId ?? '—'}</span>
+                  </span>
+                  <span className="row" style={{ gap: 8 }}>
+                    <Badge tone={statusTone[x.priority] ?? 'neutral'}>{x.priority}</Badge>
+                    <span className="muted">{x.dueAt ?? '—'}</span>
+                    <StatusPill status={x.status} />
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Async>
       </Panel>
     </>
   );

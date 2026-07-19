@@ -18,6 +18,7 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let db_path = dir.join("brops.db");
             let conn = brops_core::db::open(db_path.to_string_lossy().as_ref())?;
+            brops_core::repo::seed(&conn)?;
             app.manage(AppState { db: Mutex::new(conn) });
             Ok(())
         })
@@ -26,8 +27,17 @@ pub fn run() {
             commands::create_project,
             commands::set_project_status,
             commands::list_tasks_by_project,
+            commands::list_tasks_by_status,
             commands::create_task,
             commands::set_task_status,
+            commands::list_agents,
+            commands::list_approvals,
+            commands::decide_approval,
+            commands::list_notifications,
+            commands::mark_notification_read,
+            commands::list_decisions,
+            commands::create_decision,
+            commands::list_activity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running BroPS");

@@ -1,6 +1,7 @@
 import React from 'react';
 import './ui.css';
 import { statusTone, type Tone } from '../domain/enums';
+import type { AsyncState } from '../hooks/useAsync';
 
 export function Card({ children, className = '', style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
   return <div className={`card ${className}`} style={style}>{children}</div>;
@@ -71,4 +72,44 @@ export function Field({ label, children }: { label: string; children: React.Reac
       <span>{children}</span>
     </div>
   );
+}
+
+export function Skeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="stack" aria-busy="true">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="skeleton" style={{ height: 18, width: `${90 - i * 8}%` }} />
+      ))}
+    </div>
+  );
+}
+
+export function ErrorState({ message, onRetry, retryLabel = 'Retry' }: { message: string; onRetry?: () => void; retryLabel?: string }) {
+  return (
+    <div className="empty">
+      <div className="empty-glyph" style={{ color: 'var(--menq-color-danger)' }}>⚠</div>
+      <div className="empty-title">Couldn’t load from the backend</div>
+      <div className="muted" style={{ marginTop: 4, maxWidth: 460, marginInline: 'auto' }}>{message}</div>
+      {onRetry && <div style={{ marginTop: 12 }}><Button small onClick={onRetry}>{retryLabel}</Button></div>}
+    </div>
+  );
+}
+
+/** Uniform loading / error / empty / populated rendering around a list command. */
+export function Async<T>({
+  state,
+  emptyTitle = 'Nothing here yet',
+  emptyHint,
+  children,
+}: {
+  state: AsyncState<T[]>;
+  emptyTitle?: string;
+  emptyHint?: string;
+  children: (data: T[]) => React.ReactNode;
+}) {
+  if (state.loading && state.data === null) return <Skeleton rows={4} />;
+  if (state.error) return <ErrorState message={state.error} onRetry={state.reload} />;
+  const data = state.data ?? [];
+  if (data.length === 0) return <EmptyState title={emptyTitle} hint={emptyHint} />;
+  return <>{children(data)}</>;
 }
