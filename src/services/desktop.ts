@@ -3,7 +3,7 @@
 // Outside a Tauri runtime (e.g. a plain browser) these reject, and the UI shows
 // its error state — that is the honest "backend unavailable" behaviour.
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, Channel } from '@tauri-apps/api/core';
 import type {
   ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
   DirListing, Integration, KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
@@ -111,4 +111,17 @@ export const desktop = {
   aiStatus: () => invoke<AiStatus>('ai_status'),
   replyInConversation: (conversationId: string, agent?: string) =>
     invoke<Message>('reply_in_conversation', { conversationId, agent: agent ?? null }),
+
+  // ai streaming: emits {type:'delta'|'done'|'error'} over a channel while the
+  // agent produces text. Resolves when the stream ends.
+  streamReply: (conversationId: string, onEvent: (e: StreamEvent) => void, agent?: string) => {
+    const channel = new Channel<StreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>('stream_reply', { conversationId, agent: agent ?? null, onEvent: channel });
+  },
 };
+
+export type StreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'done'; message: Message }
+  | { type: 'error'; message: string };

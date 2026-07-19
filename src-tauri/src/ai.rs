@@ -18,6 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tokio::io::AsyncBufReadExt;
 
 const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-5";
 const DEFAULT_OLLAMA_MODEL: &str = "llama3.2";
@@ -143,6 +144,140 @@ pub async fn generate(system: &str, messages: &[ChatMsg]) -> Result<String, Stri
         Provider::Anthropic { key, model } => anthropic(&key, &model, system, messages).await,
         Provider::Ollama { model, url } => ollama(&url, &model, system, messages).await,
     }
+}
+
+/// Streaming generation: `on_delta` is called with each incremental text chunk
+/// as it arrives; the full text is returned at the end. Only the local `claude`
+/// CLI streams token-by-token today; the Anthropic and Ollama providers fall
+/// back to a single final chunk (still correct, just not incremental).
+pub async fn generate_stream<F: FnMut(&str)>(
+    system: &str,
+    messages: &[ChatMsg],
+    mut on_delta: F,
+) -> Result<String, String> {
+    match resolve() {
+        Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta).await,
+        Provider::Anthropic { key, model } => {
+            let full = anthropic(&key, &model, system, messages).await?;
+            on_delta(&full);
+            Ok(full)
+        }
+        Provider::Ollama { model, url } => {
+            let full = ollama(&url, &model, system, messages).await?;
+            on_delta(&full);
+            Ok(full)
+        }
+    }
+}
+
+async fn claude_cli_stream<F: FnMut(&str)>(
+    bin: &str,
+    system: &str,
+    messages: &[ChatMsg],
+    on_delta: &mut F,
+) -> Result<String, String> {
+    let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.arg("-p")
+        .arg(&prompt)
+        .arg("--output-format")
+        .arg("stream-json")
+        .arg("--verbose")
+        .arg("--include-partial-messages")
+        .arg("--append-system-prompt")
+        .arg(system)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        // Ensure the child is killed if this future is dropped or returns early
+        // (timeout, read error) — never leak a running `claude` process.
+        .kill_on_drop(true);
+    if let Some(model) = env_nonempty("BROPS_CLAUDE_MODEL") {
+        cmd.arg("--model").arg(model);
+    }
+    let mut child = cmd.spawn().map_err(|e| {
+        format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN, or set ANTHROPIC_API_KEY.")
+    })?;
+
+    // Drain stderr concurrently so a full stderr pipe can never deadlock the
+    // stdout read loop.
+    let stderr = child.stderr.take();
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = String::new();
+        if let Some(mut e) = stderr {
+            use tokio::io::AsyncReadExt;
+            let _ = e.read_to_string(&mut buf).await;
+        }
+        buf
+    });
+
+    let stdout = child.stdout.take().ok_or("no stdout from claude")?;
+    let mut lines = tokio::io::BufReader::new(stdout).lines();
+    let mut acc = String::new();
+    let mut result_text: Option<String> = None;
+
+    // stream-json emits one JSON object per line. Token deltas arrive as
+    // {type:"stream_event", event:{type:"content_block_delta", delta:{text}}};
+    // the final full text arrives as {type:"result", result}. A stalled read
+    // (hung `claude`, auth prompt, network stall) is bounded by a per-read
+    // timeout so the UI never spins forever; kill_on_drop reaps the child.
+    loop {
+        let line = match tokio::time::timeout(Duration::from_secs(120), lines.next_line()).await {
+            Err(_) => return Err("claude CLI timed out".to_string()),
+            Ok(Ok(Some(l))) => l,
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => return Err(e.to_string()),
+        };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("stream_event") => {
+                let ev = &v["event"];
+                if ev.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                    if let Some(text) = ev.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
+                        if !text.is_empty() {
+                            acc.push_str(text);
+                            on_delta(text);
+                        }
+                    }
+                }
+            }
+            Some("result") => {
+                if let Some(r) = v.get("result").and_then(|r| r.as_str()) {
+                    result_text = Some(r.trim().to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    let errbuf = stderr_task.await.unwrap_or_default();
+    if !status.success() {
+        let msg = errbuf.trim();
+        return Err(if msg.is_empty() {
+            "claude CLI failed".to_string()
+        } else {
+            format!("claude CLI failed: {msg}")
+        });
+    }
+
+    // Prefer the streamed accumulation; fall back to the result line.
+    let full = if !acc.trim().is_empty() {
+        acc.trim().to_string()
+    } else {
+        result_text.unwrap_or_default()
+    };
+    if full.is_empty() {
+        return Err("claude returned no result".to_string());
+    }
+    Ok(full)
 }
 
 fn transcript(messages: &[ChatMsg]) -> String {

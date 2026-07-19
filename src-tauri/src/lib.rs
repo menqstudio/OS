@@ -72,6 +72,7 @@ pub fn run() {
             commands::get_security_summary,
             commands::ai_status,
             commands::reply_in_conversation,
+            commands::stream_reply,
             files::list_dir,
         ])
         .run(tauri::generate_context!())

@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input,
+  PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Skeleton, ErrorState,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
-import type { Conversation } from '../domain/entities';
+import type { Conversation, Message } from '../domain/entities';
 
 type Kind = 'direct' | 'group';
 
@@ -14,21 +14,26 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
   const ai = useAsync(() => desktop.aiStatus(), []);
   const [draft, setDraft] = useState('');
+  // Messages posted during this mounted session, appended optimistically on top
+  // of the loaded history so the reply appears with no reload flash. Reset when
+  // the component remounts per conversation (keyed on conversation.id).
+  const [extra, setExtra] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
   const [thinking, setThinking] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [replyError, setReplyError] = useState<string | null>(null);
 
   const send = async () => {
     const body = draft.trim();
-    if (!body || busy) return;
+    if (!body || busy || thinking) return;
     setBusy(true);
     setError(null);
     setReplyError(null);
     try {
-      await desktop.postMessage({ conversationId: conversation.id, role: 'user', author: t('chat.you'), body });
+      const userMsg = await desktop.postMessage({ conversationId: conversation.id, role: 'user', author: t('chat.you'), body });
+      setExtra((prev) => [...prev, userMsg]);
       setDraft('');
-      s.reload();
       onActivity();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -36,43 +41,56 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
       return;
     }
     setBusy(false);
-    // Ask an agent to actually reply. Best-effort: a provider failure is shown
-    // honestly but never loses the user's message.
+    // Stream a real agent reply. Best-effort: a provider failure is shown
+    // honestly (as an error event) but never loses the user's message.
     setThinking(true);
+    setStreamingText('');
     try {
-      await desktop.replyInConversation(conversation.id);
-      s.reload();
-      onActivity();
+      await desktop.streamReply(conversation.id, (ev) => {
+        if (ev.type === 'delta') setStreamingText((prev) => prev + ev.text);
+        else if (ev.type === 'done') setExtra((prev) => [...prev, ev.message]);
+        else if (ev.type === 'error') setReplyError(ev.message);
+      });
     } catch (e: unknown) {
       setReplyError(e instanceof Error ? e.message : String(e));
     } finally {
       setThinking(false);
+      setStreamingText('');
+      onActivity();
     }
   };
+
+  const history = s.data ?? [];
+  const allMessages = [...history, ...extra];
 
   return (
     <Panel title={conversation.title}>
       <div className="chat-thread">
-        <Async state={s} emptyTitle={t('chat.noMessages')} emptyHint={t('chat.noMessagesHint')}>
-          {(messages) => (
-            <div className="stack">
-              {messages.map((m) => (
-                <div key={m.id} className={`chat-msg chat-msg--${m.role === 'user' ? 'mine' : 'other'}`}>
-                  <Avatar name={m.author} />
-                  <div className="chat-bubble">
-                    <div className="chat-author">{m.author}</div>
-                    <div>{m.body}</div>
-                  </div>
+        {s.loading && s.data === null && <Skeleton rows={4} />}
+        {s.error && <ErrorState message={s.error} onRetry={s.reload} />}
+        {s.data !== null && !s.error && allMessages.length === 0 && !thinking && (
+          <EmptyState title={t('chat.noMessages')} hint={t('chat.noMessagesHint')} />
+        )}
+        {allMessages.length > 0 && (
+          <div className="stack">
+            {allMessages.map((m) => (
+              <div key={m.id} className={`chat-msg chat-msg--${m.role === 'user' ? 'mine' : 'other'}`}>
+                <Avatar name={m.author} />
+                <div className="chat-bubble">
+                  <div className="chat-author">{m.author}</div>
+                  <div>{m.body}</div>
                 </div>
-              ))}
-            </div>
-          )}
-        </Async>
+              </div>
+            ))}
+          </div>
+        )}
         {thinking && (
           <div className="chat-msg chat-msg--other">
             <Avatar name="B" />
             <div className="chat-bubble">
-              <span className="chat-typing"><span></span><span></span><span></span></span>
+              {streamingText
+                ? <span>{streamingText}<span className="chat-cursor" /></span>
+                : <span className="chat-typing"><span></span><span></span><span></span></span>}
             </div>
           </div>
         )}
@@ -214,7 +232,9 @@ export function Conversations({ kind }: { kind: Kind }) {
                 </Panel>
               );
             }
-            return <MessageThread conversation={active} onActivity={() => s.reload()} />;
+            // key on the conversation id so switching remounts the thread —
+            // its streaming/error state never bleeds across conversations.
+            return <MessageThread key={active.id} conversation={active} onActivity={() => s.reload()} />;
           })()}
         </div>
       </div>
