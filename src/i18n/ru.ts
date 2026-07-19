@@ -196,6 +196,19 @@ export const ru: Record<DictKey, string> = {
   'projects.tab.tasks': 'Задачи',
   'projects.linkedTasks': 'Связанные задачи',
 
+  'tasks.dependencies': 'Зависимости',
+  'tasks.dependsOn': 'Зависит от',
+  'tasks.addDependency': 'Добавить зависимость',
+  'tasks.noDependencies': 'Нет зависимостей',
+  'tasks.remove': 'Удалить',
+  'tasks.pickBlocker': 'Выберите блокирующую задачу…',
+
+  'files.open': 'Открыть',
+  'files.save': 'Сохранить',
+  'files.close': 'Закрыть',
+  'files.cantPreview': 'Этот файл нельзя редактировать здесь (двоичный или слишком большой).',
+  'files.saved': 'Файл сохранён',
+
   'state.offline': 'Бэкенд недоступен',
   'state.offlineHint': 'Режим предпросмотра — операции с данными отключены, пока не подключён десктоп-бэкенд.',
   'state.offlineBanner': 'Режим предпросмотра — десктоп-бэкенд не подключён. Изменения не сохранятся.',

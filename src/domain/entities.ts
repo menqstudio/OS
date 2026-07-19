@@ -255,6 +255,14 @@ export interface DirListing {
   entries: DirEntry[];
 }
 
+export interface FileContent {
+  path: string;
+  content: string;
+  // True when the file can't be edited as text here (too large or binary).
+  readonly: boolean;
+  sizeBytes: number;
+}
+
 export interface NewProject {
   name: string;
   description: string;

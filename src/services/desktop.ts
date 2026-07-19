@@ -6,7 +6,7 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import type {
   ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
-  DirListing, Integration, KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
+  DirListing, FileContent, Integration, KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
   NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
   RunStep, SearchResult, SecuritySummary, Task,
 } from '../domain/entities';
@@ -34,6 +34,13 @@ export const desktop = {
   setTaskStatus: (id: string, status: string) => invoke<Task>('set_task_status', { id, status }),
   updateTask: (id: string, title: string, description: string, priority: string) =>
     invoke<Task>('update_task', { id, title, description, priority }),
+  // task dependencies (blockers) — each mutating call returns the fresh list
+  listTaskDependencies: (taskId: string) =>
+    invoke<Task[]>('list_task_dependencies', { taskId }),
+  addTaskDependency: (taskId: string, dependsOnId: string) =>
+    invoke<Task[]>('add_task_dependency', { taskId, dependsOnId }),
+  removeTaskDependency: (taskId: string, dependsOnId: string) =>
+    invoke<Task[]>('remove_task_dependency', { taskId, dependsOnId }),
 
   // agents
   listAgents: () => invoke<Agent[]>('list_agents'),
@@ -80,8 +87,10 @@ export const desktop = {
     invoke<MemoryEntry>('set_memory_pinned', { id, pinned }),
   deleteMemory: (id: string) => invoke<void>('delete_memory', { id }),
 
-  // files (read-only filesystem browser; path omitted = home dir)
+  // files (filesystem browser; path omitted = home dir). read/write a text file
   listDir: (path?: string) => invoke<DirListing>('list_dir', { path: path ?? null }),
+  readFile: (path: string) => invoke<FileContent>('read_file', { path }),
+  writeFile: (path: string, content: string) => invoke<void>('write_file', { path, content }),
 
   // runs (command)
   listRuns: () => invoke<Run[]>('list_runs'),

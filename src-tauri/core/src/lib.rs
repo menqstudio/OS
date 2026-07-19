@@ -92,6 +92,42 @@ mod tests {
     }
 
     #[test]
+    fn task_dependencies_add_list_remove_and_guards() {
+        let c = conn();
+        let mk = |title: &str| repo::tasks::create(
+            &c,
+            NewTask { project_id: None, title: title.into(), description: "".into(), priority: "normal".into(), assigned_agent_id: None },
+        ).unwrap();
+        let a = mk("A");
+        let b = mk("B");
+
+        // A depends on B
+        repo::task_deps::add(&c, &a.id, &b.id).unwrap();
+        let deps = repo::task_deps::list_for(&c, &a.id).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].id, b.id);
+
+        // idempotent
+        repo::task_deps::add(&c, &a.id, &b.id).unwrap();
+        assert_eq!(repo::task_deps::list_for(&c, &a.id).unwrap().len(), 1);
+
+        // self-edge refused
+        assert!(matches!(
+            repo::task_deps::add(&c, &a.id, &a.id),
+            Err(CoreError::Invalid { field: "depends_on_id", .. })
+        ));
+        // direct cycle refused (B already depends on A? no — A depends on B, so B→A is a cycle)
+        assert!(matches!(
+            repo::task_deps::add(&c, &b.id, &a.id),
+            Err(CoreError::Invalid { field: "depends_on_id", .. })
+        ));
+
+        // removing the edge, then deleting a task cascades
+        repo::task_deps::remove(&c, &a.id, &b.id).unwrap();
+        assert_eq!(repo::task_deps::list_for(&c, &a.id).unwrap().len(), 0);
+    }
+
+    #[test]
     fn foreign_keys_enforced() {
         let c = conn();
         let err = repo::tasks::create(
@@ -123,9 +159,9 @@ mod tests {
     }
 
     #[test]
-    fn migrations_reach_v8_with_all_tables() {
+    fn migrations_reach_v9_with_all_tables() {
         let c = conn();
-        assert_eq!(db::current_version(&c).unwrap(), 8);
+        assert_eq!(db::current_version(&c).unwrap(), 9);
         // decisions table exists and is usable
         repo::decisions::create(&c, "T", "gev", "why").unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);

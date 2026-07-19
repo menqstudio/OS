@@ -194,6 +194,19 @@ export const en = {
   'projects.tab.tasks': 'Tasks',
   'projects.linkedTasks': 'Linked tasks',
 
+  'tasks.dependencies': 'Dependencies',
+  'tasks.dependsOn': 'Depends on',
+  'tasks.addDependency': 'Add dependency',
+  'tasks.noDependencies': 'No dependencies',
+  'tasks.remove': 'Remove',
+  'tasks.pickBlocker': 'Choose a blocking task…',
+
+  'files.open': 'Open',
+  'files.save': 'Save',
+  'files.close': 'Close',
+  'files.cantPreview': 'This file can’t be edited here (binary or too large).',
+  'files.saved': 'File saved',
+
   'state.offline': 'Backend unavailable',
   'state.offlineHint': 'Running in preview mode — data actions are disabled until the desktop backend is connected.',
   'state.offlineBanner': 'Preview mode — desktop backend not connected. Changes will not be saved.',

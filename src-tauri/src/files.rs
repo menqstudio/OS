@@ -78,6 +78,61 @@ pub fn list_dir(app: tauri::AppHandle, path: Option<String>) -> Result<DirListin
     read_listing(&dir).map_err(|e| format!("{}: {e}", dir.display()))
 }
 
+/// Largest file we will read into the editor. Bigger files (or binaries) are
+/// refused so the UI never tries to load a gigabyte into a textarea.
+const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContent {
+    pub path: String,
+    pub content: String,
+    /// True when the file is not editable as text here (too large or binary).
+    pub readonly: bool,
+    pub size_bytes: u64,
+}
+
+/// Read a text file for viewing/editing. Refuses directories, over-large files,
+/// and non-UTF-8 (binary) content — reporting `readonly` with an explanation in
+/// `content` rather than failing, so the UI can show a calm message.
+pub fn read_text(path: &Path) -> std::io::Result<FileContent> {
+    let meta = fs::metadata(path)?;
+    if meta.is_dir() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "path is a directory"));
+    }
+    let size = meta.len();
+    let path_str = path.to_string_lossy().into_owned();
+    if size > MAX_EDIT_BYTES {
+        return Ok(FileContent { path: path_str, content: String::new(), readonly: true, size_bytes: size });
+    }
+    let bytes = fs::read(path)?;
+    match String::from_utf8(bytes) {
+        Ok(content) => Ok(FileContent { path: path_str, content, readonly: false, size_bytes: size }),
+        Err(_) => Ok(FileContent { path: path_str, content: String::new(), readonly: true, size_bytes: size }),
+    }
+}
+
+#[tauri::command]
+pub fn read_file(path: String) -> Result<FileContent, String> {
+    read_text(Path::new(&path)).map_err(|e| format!("{path}: {e}"))
+}
+
+/// Overwrite an existing file's contents. Refuses to create a new file or write
+/// over a directory — editing here is limited to files the browser already
+/// surfaced, so a typo can't scatter new files across the disk.
+#[tauri::command]
+pub fn write_file(path: String, content: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    let meta = fs::metadata(p).map_err(|e| format!("{path}: {e}"))?;
+    if meta.is_dir() {
+        return Err(format!("{path}: is a directory"));
+    }
+    if meta.len() > MAX_EDIT_BYTES {
+        return Err(format!("{path}: file is too large to edit here"));
+    }
+    fs::write(p, content).map_err(|e| format!("{path}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

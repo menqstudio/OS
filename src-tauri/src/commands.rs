@@ -86,6 +86,26 @@ pub fn update_task(
     repo::tasks::update(&conn, &id, &title, &description, &priority).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn list_task_dependencies(state: State<AppState>, task_id: String) -> Result<Vec<Task>, String> {
+    let conn = locked(&state)?;
+    repo::task_deps::list_for(&conn, &task_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_task_dependency(state: State<AppState>, task_id: String, depends_on_id: String) -> Result<Vec<Task>, String> {
+    let conn = locked(&state)?;
+    repo::task_deps::add(&conn, &task_id, &depends_on_id).map_err(|e| e.to_string())?;
+    repo::task_deps::list_for(&conn, &task_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_task_dependency(state: State<AppState>, task_id: String, depends_on_id: String) -> Result<Vec<Task>, String> {
+    let conn = locked(&state)?;
+    repo::task_deps::remove(&conn, &task_id, &depends_on_id).map_err(|e| e.to_string())?;
+    repo::task_deps::list_for(&conn, &task_id).map_err(|e| e.to_string())
+}
+
 // --- agents ---
 
 #[tauri::command]

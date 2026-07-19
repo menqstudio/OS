@@ -196,6 +196,19 @@ export const hy: Record<DictKey, string> = {
   'projects.tab.tasks': 'Առաջադրանքներ',
   'projects.linkedTasks': 'Կապված առաջադրանքներ',
 
+  'tasks.dependencies': 'Կախվածություններ',
+  'tasks.dependsOn': 'Կախված է',
+  'tasks.addDependency': 'Ավելացնել կախվածություն',
+  'tasks.noDependencies': 'Կախվածություններ չկան',
+  'tasks.remove': 'Հեռացնել',
+  'tasks.pickBlocker': 'Ընտրիր արգելափակող առաջադրանք…',
+
+  'files.open': 'Բացել',
+  'files.save': 'Պահել',
+  'files.close': 'Փակել',
+  'files.cantPreview': 'Այս ֆայլը հնարավոր չէ խմբագրել այստեղ (երկուական կամ շատ մեծ):',
+  'files.saved': 'Ֆայլը պահված է',
+
   'state.offline': 'Backend-ը հասանելի չէ',
   'state.offlineHint': 'Preview ռեժիմ — տվյալների գործողություններն անջատված են, մինչև desktop backend-ը միանա։',
   'state.offlineBanner': 'Preview ռեժիմ — desktop backend-ը միացած չէ։ Փոփոխությունները չեն պահվի։',

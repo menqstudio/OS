@@ -180,6 +180,56 @@ pub mod tasks {
     }
 }
 
+/// Directed task dependencies: `task_id` depends on `depends_on_id` (the latter
+/// should finish first). Used by the board to show blockers.
+pub mod task_deps {
+    use super::*;
+
+    /// Record that `task_id` depends on `depends_on_id`. Refuses a self-edge and
+    /// a direct cycle (A→B when B→A already exists); duplicates are idempotent.
+    pub fn add(conn: &Connection, task_id: &str, depends_on_id: &str) -> CoreResult<()> {
+        if task_id == depends_on_id {
+            return Err(CoreError::Invalid { field: "depends_on_id", value: "a task cannot depend on itself".into() });
+        }
+        // both tasks must exist (clear error rather than a FK failure)
+        tasks::get(conn, task_id)?;
+        tasks::get(conn, depends_on_id)?;
+        let reverse: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_dependencies WHERE task_id = ?1 AND depends_on_id = ?2)",
+            rusqlite::params![depends_on_id, task_id],
+            |r| r.get(0),
+        )?;
+        if reverse {
+            return Err(CoreError::Invalid { field: "depends_on_id", value: "that would create a dependency cycle".into() });
+        }
+        conn.execute(
+            "INSERT OR IGNORE INTO task_dependencies(task_id, depends_on_id) VALUES (?1, ?2)",
+            rusqlite::params![task_id, depends_on_id],
+        )?;
+        super::audit::record(conn, "task.dependency_added", "gev", "task", task_id)?;
+        Ok(())
+    }
+
+    pub fn remove(conn: &Connection, task_id: &str, depends_on_id: &str) -> CoreResult<()> {
+        conn.execute(
+            "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_id = ?2",
+            rusqlite::params![task_id, depends_on_id],
+        )?;
+        Ok(())
+    }
+
+    /// The tasks that `task_id` depends on (its blockers), newest edge first.
+    pub fn list_for(conn: &Connection, task_id: &str) -> CoreResult<Vec<Task>> {
+        let mut stmt = conn.prepare(
+            "SELECT t.* FROM tasks t
+             JOIN task_dependencies d ON d.depends_on_id = t.id
+             WHERE d.task_id = ?1 ORDER BY t.updated_at DESC",
+        )?;
+        let rows = stmt.query_map([task_id], map_task)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+}
+
 pub mod audit {
     use super::*;
 

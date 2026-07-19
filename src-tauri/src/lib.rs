@@ -35,6 +35,9 @@ pub fn run() {
             commands::set_task_status,
             commands::list_tasks,
             commands::update_task,
+            commands::list_task_dependencies,
+            commands::add_task_dependency,
+            commands::remove_task_dependency,
             commands::list_agents,
             commands::list_approvals,
             commands::decide_approval,
@@ -82,6 +85,8 @@ pub fn run() {
             commands::stream_ask,
             commands::stream_run_step,
             files::list_dir,
+            files::read_file,
+            files::write_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running BroPS");
