@@ -487,6 +487,17 @@
         "contract-bundle-load",
         "mode-grant-anchoring"
       ]
+    },
+    {
+      "id": "full-execution-transaction-e2e",
+      "path": "tests/test_full_execution_transaction_e2e.py",
+      "covers": [
+        "authorize-tool-allow",
+        "execution-lease-ledger",
+        "recovery-journal",
+        "workspace-binding-digest",
+        "task-lock-binding"
+      ]
     }
   ]
 }
