@@ -6,6 +6,7 @@ import { Chat } from './Chat';
 import { GroupChat } from './GroupChat';
 import { Knowledge } from './Knowledge';
 import { Memory } from './Memory';
+import { Files } from './Files';
 import { Projects } from './Projects';
 import { Tasks } from './Tasks';
 import { Agents } from './Agents';
@@ -29,6 +30,7 @@ const screens: Partial<Record<RouteId, React.FC>> = {
   notifications: Notifications,
   decisions: Decisions,
   activity: Activity,
+  files: Files,
 };
 
 export function Screen({ route }: { route: RouteId }) {

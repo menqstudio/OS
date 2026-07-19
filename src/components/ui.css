@@ -98,3 +98,6 @@
 .chat-composer { display: flex; gap: var(--menq-space-3); }
 .chat-composer .input { flex: 1; }
 @media (max-width: 820px) { .chat-layout { grid-template-columns: 1fr; } }
+
+/* files browser */
+.file-row--dir:hover { background: var(--menq-color-hover); border-radius: var(--menq-radius-md); }

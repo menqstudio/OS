@@ -5,8 +5,9 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  ActivityEvent, Agent, Approval, Conversation, Decision, KnowledgeNote, MemoryEntry, Message,
-  NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Task,
+  ActivityEvent, Agent, Approval, Conversation, Decision, DirListing, KnowledgeNote, MemoryEntry,
+  Message, NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification,
+  Project, Task,
 } from '../domain/entities';
 
 /** True when running inside the Tauri desktop runtime. */
@@ -69,4 +70,7 @@ export const desktop = {
   setMemoryPinned: (id: string, pinned: boolean) =>
     invoke<MemoryEntry>('set_memory_pinned', { id, pinned }),
   deleteMemory: (id: string) => invoke<void>('delete_memory', { id }),
+
+  // files (read-only filesystem browser; path omitted = home dir)
+  listDir: (path?: string) => invoke<DirListing>('list_dir', { path: path ?? null }),
 };
