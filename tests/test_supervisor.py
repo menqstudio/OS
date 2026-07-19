@@ -1,21 +1,28 @@
 import json
+import os
 import pathlib
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
 
+import bro_supervisor
+from bro_audit_log import read_all, verify
 from bro_signature import SignatureError, verify_artifact
+from bro_stop_controller import _proc_state_and_pgrp
 from bro_supervisor import (
     COMPLETED,
     DENIED,
     EXPIRED,
     FAILED,
+    UNCONTAINED,
     SupervisorError,
     SupervisorResult,
     TaskRequest,
@@ -267,6 +274,108 @@ class RunTests(SupervisorFixture):
         cwd = result.evidence[0][len("evidence:"):]
         self.assertNotEqual(pathlib.Path(cwd).resolve(), self.repo.resolve())
         self.assertTrue((pathlib.Path(cwd) / "src.txt").exists())
+
+
+class StopIntegrationTests(SupervisorFixture):
+    """The STOP controller is wired into supervision, not merely available.
+
+    The audit gap: the old timeout SIGKILL reaped only the direct builder and
+    recorded nothing, so a builder's own children were orphaned when the lease
+    expired. The supervisor now launches the builder as a process-group leader and
+    tears the whole tree down, recording any group it cannot confirm stopped.
+    """
+
+    @unittest.skipUnless(
+        hasattr(os, "killpg") and hasattr(os, "fork"),
+        "whole-tree teardown is POSIX-only (process groups)",
+    )
+    def test_expired_builder_reaps_the_whole_process_tree(self):
+        marker = self.tmp / "grandchild.pid"
+        builder = [sys.executable, "-c",
+                   "import os,sys,time\n"
+                   "pid=os.fork()\n"
+                   "if pid==0:\n"
+                   "    time.sleep(60)\n"          # grandchild the old path orphaned
+                   "    os._exit(0)\n"
+                   f"open({str(marker)!r},'w').write(str(pid))\n"
+                   "sys.stdout.flush()\n"
+                   "time.sleep(60)\n"]            # builder outlives its lease
+        result = self.supervise(self.request(), builder=builder, ttl_seconds=1)
+        self.assertEqual(result.status, EXPIRED, result.message)
+
+        for _ in range(100):
+            if marker.exists():
+                break
+            time.sleep(0.05)
+        gpid = int(marker.read_text())
+        info = _proc_state_and_pgrp(gpid)
+        # Dead or a reaped zombie is a pass; a live sleeper means it was orphaned.
+        self.assertTrue(
+            info is None or info[0] in ("Z", "X", "x"),
+            f"grandchild {gpid} survived lease teardown: state={info}")
+
+    @unittest.skipUnless(
+        hasattr(os, "killpg"),
+        "process-group incident recording is POSIX-only",
+    )
+    def test_group_that_cannot_be_stopped_is_recorded_as_an_incident(self):
+        ledger = self.tmp / "incidents.jsonl"     # external to the worked repo
+        real_terminate = bro_supervisor.terminate_group
+
+        def terminate_but_report_unstopped(pgid, **kwargs):
+            real_terminate(pgid, **kwargs)        # really stop it, so nothing leaks
+            return False                          # ...but drive the un-stopped path
+
+        with patch.object(bro_supervisor, "terminate_group",
+                          terminate_but_report_unstopped):
+            result = self.supervise(
+                self.request(),
+                builder=[sys.executable, "-c", "import time;time.sleep(30)"],
+                ttl_seconds=1, audit_path=ledger)
+
+        self.assertEqual(result.status, EXPIRED, result.message)
+        records = read_all(ledger)
+        self.assertTrue(any(r["kind"] == "unstopped-process" for r in records),
+                        "an un-stoppable group must be recorded, never dropped")
+        self.assertEqual(verify(ledger), len(records))
+
+    @unittest.skipUnless(
+        hasattr(os, "killpg") and hasattr(os, "fork"),
+        "clean-exit group teardown is POSIX-only",
+    )
+    def test_clean_exit_leaving_an_unstoppable_survivor_is_not_completed(self):
+        # The hole this guards: the builder LEADER exits 0 while a grandchild closes
+        # its inherited pipes and keeps running. communicate() returns cleanly, so the
+        # timeout branch never fires — yet a live orphan remains. If teardown cannot
+        # confirm the group stopped, the run must be recorded as an incident and must
+        # NOT be reported COMPLETED. Teardown is forced to report "not stopped" here;
+        # it still really kills the survivor so the test leaks nothing.
+        ledger = self.tmp / "incidents.jsonl"           # external to the worked repo
+        builder = [sys.executable, "-c",
+                   "import os,sys,time,signal\n"
+                   "pid=os.fork()\n"
+                   "if pid==0:\n"
+                   "    signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+                   "    os.close(0); os.close(1); os.close(2)\n"  # unblock communicate()
+                   "    time.sleep(60)\n"                          # orphan that survives
+                   "    os._exit(0)\n"
+                   "os._exit(0)\n"]                                # leader exits 0, clean
+        real_terminate = bro_supervisor.terminate_group
+
+        def cannot_confirm_stop(pgid, **kwargs):
+            real_terminate(pgid, **kwargs)              # really stop it, so nothing leaks
+            return False                                # ...but report it unconfirmed
+
+        with patch.object(bro_supervisor, "terminate_group", cannot_confirm_stop):
+            result = self.supervise(self.request(), builder=builder, audit_path=ledger)
+
+        self.assertNotEqual(result.status, COMPLETED,
+                            "a clean exit with a live orphan is not a success")
+        self.assertEqual(result.status, UNCONTAINED, result.message)
+        records = read_all(ledger)
+        self.assertTrue(any(r["kind"] == "unstopped-process" for r in records),
+                        "a live orphan after clean exit must be recorded, never dropped")
+        self.assertEqual(verify(ledger), len(records))
 
 
 if __name__ == "__main__":

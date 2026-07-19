@@ -36,8 +36,10 @@ from dataclasses import asdict, dataclass, field
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
+from bro_audit_log import append as audit_append
 from bro_protected import SECURITY, STANDARD, TASK_CLASSES
 from bro_signature import SignatureError, load_trusted_keys, verify_artifact
+from bro_stop_controller import register, terminate_group
 
 from broctl import sign_payload
 
@@ -47,6 +49,10 @@ DENIED = "denied"
 COMPLETED = "completed"
 FAILED = "failed"
 EXPIRED = "expired"
+# The builder finished, but its process group could not be confirmed stopped: a
+# live orphan remains. Never reported as COMPLETED — an uncontained result is not
+# a successful one.
+UNCONTAINED = "uncontained"
 
 
 class SupervisorError(Exception):
@@ -176,13 +182,51 @@ def remove_worktree(repository_root: pathlib.Path, worktree: pathlib.Path) -> No
     shutil.rmtree(worktree.parent, ignore_errors=True)
 
 
+def _teardown_group(pgid: int | None, *, task_id: str,
+                    audit_path: pathlib.Path | None, repo_root: pathlib.Path | None) -> bool:
+    """Stop the builder's whole process group and confirm it stopped.
+
+    This is the single teardown every exit path funnels through — timeout, clean
+    exit, or exception — so the invariant holds everywhere: a group that cannot be
+    confirmed stopped is written to the append-only audit ledger and reported as
+    False. A live orphan is never silently accepted, and never only on timeout.
+    Returns True when the group is confirmed stopped (or there is no group to stop).
+    """
+    if pgid is None:
+        return True
+    if terminate_group(pgid):
+        return True
+    if audit_path is not None:
+        audit_append(
+            audit_path, "unstopped-process",
+            {"task_id": task_id, "pid": pgid, "pgid": pgid,
+             "detail": "builder process group could not be confirmed stopped"},
+            repo_root=repo_root)
+    return False
+
+
 def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pathlib.Path,
                   binding_path: pathlib.Path, state_dir: pathlib.Path, agent_id: str,
-                  session_id: str, timeout: float) -> tuple[int, str, str, bool]:
-    """Run the builder in its own process with the lease in its environment only.
+                  session_id: str, timeout: float, task_id: str,
+                  stop_registry: pathlib.Path | None = None,
+                  audit_path: pathlib.Path | None = None,
+                  repo_root: pathlib.Path | None = None) -> tuple[int, str, str, bool]:
+    """Run the builder in its own process group with the lease in its environment only.
 
-    The supervisor's own environment is not inherited wholesale: the builder gets
-    what it needs and nothing that would let it reach the issuer.
+    Two properties matter here. First, the supervisor's environment is not
+    inherited wholesale: the builder gets what it needs and nothing that would let
+    it reach the issuer. Second, the builder is launched as a process-group leader
+    (``start_new_session``) and torn down by GROUP, never by direct child. A builder
+    that spawns its own children would otherwise leak orphaned grandchildren when the
+    lease expires — the per-child SIGKILL that ``subprocess.run(timeout=...)`` performs
+    reaps only the leader and records nothing about what it left alive. On timeout the
+    whole group is stopped, and any group that cannot be confirmed stopped is written
+    to the append-only audit ledger; even on a clean exit the group is reaped so no
+    daemon outlives the lease.
+
+    Process groups are POSIX-only. Where ``os.killpg`` is unavailable (Windows) the
+    builder is terminated by direct child, which cannot guarantee grandchildren are
+    reaped — a documented limitation, not a hidden one.
     """
     env = {
         "PATH": os.environ.get("PATH", ""),
@@ -195,20 +239,65 @@ def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pat
         "BRO_WORKSPACE_BINDING": str(binding_path),
         "BRO_SESSION_STATE_DIR": str(state_dir),
     }
+    posix_groups = hasattr(os, "killpg")
+    proc = subprocess.Popen(
+        command, cwd=str(worktree), env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=posix_groups,
+    )
+    # start_new_session makes the child call setsid(), so it leads a new group whose
+    # id equals its own pid. Use proc.pid directly rather than os.getpgid(proc.pid):
+    # getpgid can race the child's setsid() and return the SUPERVISOR's own group,
+    # which a later teardown would then signal — killing the supervisor itself.
+    pgid = proc.pid if posix_groups else None
+    if pgid is not None and stop_registry is not None:
+        register(stop_registry, task_id, proc.pid, pgid)
+
+    timed_out = False
+    contained = True
+    teardown_done = False
+    stdout = stderr = ""
     try:
-        completed = subprocess.run(command, cwd=str(worktree), env=env,
-                                   capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        # Expiry is enforced by killing the process, not by asking it to stop.
-        return -1, "", "builder exceeded its lease and was terminated", True
-    return completed.returncode, completed.stdout, completed.stderr, False
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            if pgid is not None:
+                # Kill the whole descendant tree, not just the direct child, before
+                # draining — otherwise the drain blocks on the still-live leader.
+                contained = _teardown_group(
+                    pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root)
+                teardown_done = True
+            else:
+                proc.kill()  # no process groups here; best-effort direct child
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                stdout, stderr = "", ""
+        else:
+            # Clean or failed exit of the leader still leaves its own children in
+            # the group. Reap the tree on the same teardown path; a survivor we
+            # cannot stop is recorded and reported, exactly as on timeout.
+            contained = _teardown_group(
+                pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root)
+            teardown_done = True
+    finally:
+        # Any unexpected error path still must not leave the tree running silently.
+        if not teardown_done:
+            _teardown_group(pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root)
+
+    if timed_out:
+        return -1, stdout or "", "builder exceeded its lease and was terminated", True, contained
+    code = proc.returncode if proc.returncode is not None else -1
+    return code, stdout or "", stderr or "", False, contained
 
 
 def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pathlib.Path,
              registry_root: pathlib.Path, binding_path: pathlib.Path,
              builder_command: list[str], approval: dict | None = None,
              agent_id: str = "agt-p01-r01", ttl_seconds: int = DEFAULT_LEASE_SECONDS,
-             now: int | None = None) -> SupervisorResult:
+             now: int | None = None,
+             audit_path: pathlib.Path | None = None) -> SupervisorResult:
     moment = int(time.time()) if now is None else now
     session_id = f"sup-{uuid.uuid4().hex[:12]}"
     try:
@@ -231,6 +320,14 @@ def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pat
     state_dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-sup-state-"))
     lease_dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-sup-lease-"))
     lease_path = lease_dir / "lease.json"
+    # STOP working area: an ephemeral process registry, plus the ledger that
+    # records any group the supervisor could not confirm stopped. An operator may
+    # point incidents at a central external ledger via ``audit_path``; otherwise
+    # they land here, and the directory is kept only when a timeout may have
+    # written one — never silently discarded.
+    stop_dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-sup-stop-"))
+    stop_registry = stop_dir / "processes.jsonl"
+    incidents = audit_path if audit_path is not None else stop_dir / "incidents.jsonl"
     try:
         lease = issue_lease(
             request, issuer_key, workspace_id=binding["workspace_id"],
@@ -240,23 +337,41 @@ def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pat
             ttl_seconds=ttl_seconds, now=moment)
         lease_path.write_text(json.dumps(lease), encoding="utf-8")
 
-        code, stdout, stderr, timed_out = spawn_builder(
+        code, stdout, stderr, timed_out, contained = spawn_builder(
             builder_command, worktree=worktree, lease_path=lease_path,
             binding_path=binding_path, state_dir=state_dir, agent_id=agent_id,
-            session_id=session_id, timeout=float(ttl_seconds))
+            session_id=session_id, timeout=float(ttl_seconds),
+            task_id=request.task_id, stop_registry=stop_registry,
+            audit_path=incidents, repo_root=repository_root)
     except (SupervisorError, OSError) as exc:
         remove_worktree(repository_root, worktree)
+        shutil.rmtree(stop_dir, ignore_errors=True)
         return SupervisorResult(request.task_id, FAILED, str(exc))
     finally:
         # The lease dies with the run. A lease that outlives its builder is a
         # credential lying on disk.
         shutil.rmtree(lease_dir, ignore_errors=True)
 
+    # Keep the STOP directory only when an incident may have landed in the default
+    # ledger — a timeout OR an uncontained group. With an external audit_path the
+    # directory holds nothing but the ephemeral registry, so it is always removable.
+    if audit_path is not None or (contained and not timed_out):
+        shutil.rmtree(stop_dir, ignore_errors=True)
+
     evidence = tuple(line for line in stdout.splitlines() if line.startswith("evidence:"))
     if timed_out:
         remove_worktree(repository_root, worktree)
         return SupervisorResult(request.task_id, EXPIRED,
                                 "lease expired; builder terminated", None, evidence)
+    if not contained:
+        # The builder returned, but a member of its group could not be confirmed
+        # stopped (the incident is already recorded). A live orphan is not success:
+        # never COMPLETED, and the worktree is left in place rather than pulled out
+        # from under a process still using it.
+        return SupervisorResult(
+            request.task_id, UNCONTAINED,
+            "builder finished but left a process group that could not be stopped",
+            code, evidence)
     if code != 0:
         return SupervisorResult(request.task_id, FAILED,
                                 f"builder exited {code}: {stderr.strip()[:200]}",

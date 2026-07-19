@@ -42,25 +42,59 @@ def list_registered(registry_path) -> list[dict]:
     return [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def _leader_state(pid: int) -> str | None:
-    """Process state char from /proc, or None if the pid is gone. 'Z'/'X' == dead."""
+def _iter_proc_pids():
+    """Yield the numeric pids currently under /proc; nothing if /proc is absent."""
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return
+    for name in names:
+        if name.isdigit():
+            yield int(name)
+
+
+def _proc_state_and_pgrp(pid: int) -> tuple[str, int] | None:
+    """(state_char, pgrp) from /proc/<pid>/stat, or None if the pid is gone."""
     try:
         data = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
     except OSError:
         return None
-    # /proc/<pid>/stat: "<pid> (<comm>) <state> ...". comm may contain spaces/parens,
-    # so split on the LAST ') '.
+    # /proc/<pid>/stat: "<pid> (<comm>) <state> <ppid> <pgrp> ...". comm may contain
+    # spaces and parens, so split on the LAST ') ' and index the numeric tail.
     try:
-        return data.rsplit(") ", 1)[1].split(" ", 1)[0]
-    except IndexError:
+        tail = data.rsplit(") ", 1)[1].split()
+        return tail[0], int(tail[2])
+    except (IndexError, ValueError):
         return None
 
 
-def is_group_alive(pgid: int) -> bool:
-    """True if the group still has a live (non-zombie) leader signallable by us.
+def _group_has_live_member(pgid: int) -> bool:
+    """True if any process in group `pgid` is present and not a zombie/dead.
 
-    A reaped or zombie/defunct leader counts as stopped: killpg(0) still succeeds for
-    an un-reaped zombie, so the kernel check alone would falsely report it alive.
+    Scanning every process — not only the leader pid — is what closes the liveness
+    false negative. A process group outlives its leader: once the leader exits and
+    is reaped, /proc/<pgid> is gone, yet a surviving child still carries the group
+    and killpg(0) still succeeds. Checking the leader's /proc entry alone would
+    then report the group dead while orphaned grandchildren keep running — exactly
+    the un-stopped state STOP exists to prevent.
+    """
+    for pid in _iter_proc_pids():
+        info = _proc_state_and_pgrp(pid)
+        if info is None:
+            continue
+        state, pgrp = info
+        if pgrp == pgid and state not in ("Z", "X", "x"):
+            return True
+    return False
+
+
+def is_group_alive(pgid: int) -> bool:
+    """True if the group still has a live (non-zombie) member signallable by us.
+
+    killpg(0) only proves the kernel still knows the group id — it also succeeds
+    for a group whose sole survivor is an un-reaped zombie. A positive kernel check
+    is therefore confirmed by scanning /proc for at least one live, non-zombie
+    member of the group; a group with no live member counts as stopped.
     """
     try:
         os.killpg(pgid, 0)
@@ -69,10 +103,7 @@ def is_group_alive(pgid: int) -> bool:
     except PermissionError:
         # Exists but we cannot signal it: alive and, for our purposes, un-stoppable.
         return True
-    state = _leader_state(pgid)  # pgid == group-leader pid by construction
-    if state in (None, "Z", "X", "x"):
-        return False
-    return True
+    return _group_has_live_member(pgid)
 
 
 def terminate_group(pgid: int, grace_seconds: float = 2.0, poll: float = 0.05) -> bool:

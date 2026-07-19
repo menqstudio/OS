@@ -1,5 +1,6 @@
 import os
 import pathlib
+import signal
 import subprocess
 import sys
 import tempfile
@@ -92,6 +93,50 @@ class StopControllerTests(unittest.TestCase):
     def test_registry_round_trips(self):
         register(self.registry, "t", 10, 10)
         self.assertEqual(list_registered(self.registry)[0]["task_id"], "t")
+
+    @unittest.skipUnless(
+        hasattr(os, "killpg") and hasattr(os, "fork"),
+        "a group outliving its reaped leader needs POSIX fork + killpg",
+    )
+    def test_group_reads_alive_after_leader_reaped_with_child_alive(self):
+        # The false negative this guards: a process group outlives its leader. The
+        # leader spawns a child in its group, then exits and is reaped, so
+        # /proc/<pgid> is gone while the orphaned child keeps running. Checking the
+        # leader pid alone would report the group dead and STOP would walk away from
+        # a live grandchild — the exact state it exists to catch. is_group_alive
+        # must scan the whole group and still read it as alive.
+        script = (
+            "import os,sys,time,signal\n"
+            "os.setsid()\n"                 # own the new group; pgid == this pid
+            "if os.fork()==0:\n"
+            # Survive being orphaned: an orphaned session child is sent SIGHUP when
+            # its leader exits, and it inherited the leader's stdout pipe. Ignore the
+            # hangup and drop the pipe so the child genuinely outlives the leader —
+            # that is the state under test.
+            "    signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+            "    os.close(1)\n"
+            "    time.sleep(30)\n"          # child keeps the group alive
+            "    os._exit(0)\n"
+            "sys.stdout.write(str(os.getpid()))\n"
+            "sys.stdout.flush()\n"
+            "os._exit(0)\n"                 # leader exits immediately
+        )
+        proc = subprocess.Popen([sys.executable, "-c", script],
+                                stdout=subprocess.PIPE, text=True)
+        self.addCleanup(proc.stdout.close)
+        pgid = int(proc.stdout.readline().strip())
+        proc.wait(timeout=5)               # reap the leader; only the child remains
+
+        def _cleanup():
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        self.addCleanup(_cleanup)
+
+        self.assertTrue(
+            is_group_alive(pgid),
+            "leader reaped but child still alive → group must read as alive")
 
 
 if __name__ == "__main__":
