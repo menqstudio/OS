@@ -76,6 +76,7 @@ export const en = {
   'chat.renameTitle': 'Rename conversation',
   'chat.deleteConversation': 'Delete conversation',
   'chat.deleteConfirm': 'This conversation and all of its messages will be permanently deleted.',
+  'chat.saveToChat': 'Save to chat',
 
   'projects.subtitle': 'Objective-centered work',
   'tasks.subtitle': 'Action system with evidence',
@@ -150,6 +151,7 @@ export const en = {
   'palette.results': 'Results',
 
   'toast.created': 'Created',
+  'toast.savedToChat': 'Saved to chat',
 
   'field.owner': 'Owner',
   'field.risk': 'Risk',

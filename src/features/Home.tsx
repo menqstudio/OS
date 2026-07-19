@@ -4,13 +4,16 @@ import { PageHeader, Panel, Button, StatusPill, Avatar, Badge, Async, Input } fr
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Markdown } from '../components/markdown';
+import { useToast } from '../components/toast';
 
 export function Home() {
   const { t, setRoute } = useApp();
+  const toast = useToast();
   const [q, setQ] = useState('');
   const [answer, setAnswer] = useState('');
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const ask = async () => {
     const prompt = q.trim();
@@ -27,6 +30,38 @@ export function Home() {
       setAskError(e instanceof Error ? e.message : String(e));
     } finally {
       setAsking(false);
+    }
+  };
+
+  // Persist a finished Ask-Bro answer as a new direct conversation, then jump to
+  // the Chat screen. The question is captured before any await because the input
+  // may change while the async work runs; the answer is read from state.
+  const saveToChat = async () => {
+    if (saving || asking || !answer || askError) return;
+    const question = q.trim();
+    const savedAnswer = answer;
+    const title = question ? question.slice(0, 48) : 'Ask Bro';
+    setSaving(true);
+    try {
+      const conversation = await desktop.createConversation('direct', title);
+      await desktop.postMessage({
+        conversationId: conversation.id,
+        role: 'user',
+        author: t('chat.you'),
+        body: question || title,
+      });
+      await desktop.postMessage({
+        conversationId: conversation.id,
+        role: 'agent',
+        author: 'Bro',
+        body: savedAnswer,
+      });
+      toast(t('toast.savedToChat'), 'success');
+      setRoute('chat');
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -56,6 +91,13 @@ export function Home() {
               <span className="chat-typing"><span></span><span></span><span></span></span>
             )}
             {askError && <div className="chat-hint">⚠ {askError}</div>}
+            {!asking && answer && !askError && (
+              <div style={{ marginTop: 8 }}>
+                <Button small variant="ghost" onClick={saveToChat} disabled={saving}>
+                  {t('chat.saveToChat')}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </Panel>
