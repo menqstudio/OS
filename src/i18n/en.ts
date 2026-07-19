@@ -175,9 +175,12 @@ export const en = {
 
   'action.create': 'Create',
   'action.cancel': 'Cancel',
+  'action.edit': 'Edit',
+  'action.retry': 'Retry',
   'form.newProject': 'New project',
   'form.newTask': 'New task',
   'form.editTask': 'Edit task',
+  'form.editProject': 'Edit project',
   'action.save': 'Save',
   'toast.saved': 'Saved',
   'field.name': 'Name',
@@ -186,6 +189,15 @@ export const en = {
   'field.priority': 'Priority',
   'field.project': 'Project',
   'field.none': 'None',
+
+  'projects.tab.overview': 'Overview',
+  'projects.tab.tasks': 'Tasks',
+  'projects.linkedTasks': 'Linked tasks',
+
+  'state.offline': 'Backend unavailable',
+  'state.offlineHint': 'Running in preview mode — data actions are disabled until the desktop backend is connected.',
+  'state.offlineBanner': 'Preview mode — desktop backend not connected. Changes will not be saved.',
+  'state.permissionDenied': 'Not permitted',
 } as const;
 
 export type DictKey = keyof typeof en;

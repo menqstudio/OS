@@ -28,6 +28,7 @@ pub fn run() {
             commands::list_projects,
             commands::create_project,
             commands::set_project_status,
+            commands::update_project,
             commands::list_tasks_by_project,
             commands::list_tasks_by_status,
             commands::create_task,

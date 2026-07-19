@@ -5,7 +5,7 @@ import { desktop, hasBackend } from '../services/desktop';
 import type { SearchResult } from '../domain/entities';
 
 export function CommandPalette() {
-  const { paletteOpen, setPaletteOpen, setRoute, t } = useApp();
+  const { paletteOpen, setPaletteOpen, setRoute, openEntity, t } = useApp();
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const [entities, setEntities] = useState<SearchResult[]>([]);
@@ -79,7 +79,8 @@ export function CommandPalette() {
     } else {
       const ent = entities[idx - navResults.length];
       if (!ent) return;
-      setRoute(ent.route as RouteId);
+      // Deep-link: land on the screen AND open the specific item.
+      openEntity(ent.route as RouteId, ent.kind, ent.id);
     }
     setPaletteOpen(false);
   };

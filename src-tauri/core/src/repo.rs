@@ -81,6 +81,22 @@ pub mod projects {
         super::audit::record(conn, "project.status_changed", "gev", "project", id)?;
         get(conn, id)
     }
+
+    /// Edit a project's name, description, and priority.
+    pub fn update(conn: &Connection, id: &str, name: &str, description: &str, priority: &str) -> CoreResult<Project> {
+        if !is_valid(priority, PRIORITIES) {
+            return Err(CoreError::Invalid { field: "priority", value: priority.to_string() });
+        }
+        let changed = conn.execute(
+            "UPDATE projects SET name = ?1, description = ?2, priority = ?3, updated_at = ?4 WHERE id = ?5",
+            rusqlite::params![name, description, priority, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "project.updated", "gev", "project", id)?;
+        get(conn, id)
+    }
 }
 
 pub mod tasks {

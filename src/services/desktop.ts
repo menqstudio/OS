@@ -22,6 +22,8 @@ export const desktop = {
   createProject: (input: NewProject) => invoke<Project>('create_project', { input }),
   setProjectStatus: (id: string, status: string) =>
     invoke<Project>('set_project_status', { id, status }),
+  updateProject: (id: string, name: string, description: string, priority: string) =>
+    invoke<Project>('update_project', { id, name, description, priority }),
 
   // tasks
   listTasksByProject: (projectId: string) =>

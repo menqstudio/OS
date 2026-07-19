@@ -177,9 +177,12 @@ export const ru: Record<DictKey, string> = {
 
   'action.create': 'Создать',
   'action.cancel': 'Отмена',
+  'action.edit': 'Редактировать',
+  'action.retry': 'Повторить',
   'form.newProject': 'Новый проект',
   'form.newTask': 'Новая задача',
   'form.editTask': 'Редактировать задачу',
+  'form.editProject': 'Редактировать проект',
   'action.save': 'Сохранить',
   'toast.saved': 'Сохранено',
   'field.name': 'Название',
@@ -188,4 +191,13 @@ export const ru: Record<DictKey, string> = {
   'field.priority': 'Приоритет',
   'field.project': 'Проект',
   'field.none': 'Нет',
+
+  'projects.tab.overview': 'Обзор',
+  'projects.tab.tasks': 'Задачи',
+  'projects.linkedTasks': 'Связанные задачи',
+
+  'state.offline': 'Бэкенд недоступен',
+  'state.offlineHint': 'Режим предпросмотра — операции с данными отключены, пока не подключён десктоп-бэкенд.',
+  'state.offlineBanner': 'Режим предпросмотра — десктоп-бэкенд не подключён. Изменения не сохранятся.',
+  'state.permissionDenied': 'Не разрешено',
 };

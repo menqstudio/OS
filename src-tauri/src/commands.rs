@@ -36,6 +36,12 @@ pub fn set_project_status(state: State<AppState>, id: String, status: String) ->
     repo::projects::set_status(&conn, &id, &status).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn update_project(state: State<AppState>, id: String, name: String, description: String, priority: String) -> Result<Project, String> {
+    let conn = locked(&state)?;
+    repo::projects::update(&conn, &id, &name, &description, &priority).map_err(|e| e.to_string())
+}
+
 // --- tasks ---
 
 #[tauri::command]

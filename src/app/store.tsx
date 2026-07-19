@@ -3,9 +3,22 @@ import type { Lang, Theme } from '../domain/enums';
 import type { RouteId } from './nav';
 import { translate, type DictKey } from '../i18n';
 
+/** A deep-link target: which entity a screen should auto-open on arrival.
+ *  Set by the command palette (or any "jump to X" action); the receiving
+ *  screen reads it, opens the matching detail, then clears it via clearFocus. */
+export interface FocusTarget {
+  kind: string;
+  id: string;
+}
+
 interface AppState {
   route: RouteId;
   setRoute: (r: RouteId) => void;
+  focus: FocusTarget | null;
+  /** Navigate to `route` AND ask that screen to open entity `kind:id`. */
+  openEntity: (route: RouteId, kind: string, id: string) => void;
+  /** A screen calls this once it has consumed the pending focus target. */
+  clearFocus: () => void;
   theme: Theme;
   toggleTheme: () => void;
   lang: Lang;
@@ -36,10 +49,20 @@ const LS = {
 };
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [route, setRoute] = useState<RouteId>('home');
+  const [route, setRouteState] = useState<RouteId>('home');
+  const [focus, setFocus] = useState<FocusTarget | null>(null);
   const [theme, setTheme] = useState<Theme>(() => LS.get<Theme>('brops.theme', 'dark'));
   const [lang, setLangState] = useState<Lang>(() => LS.get<Lang>('brops.lang', 'en'));
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Plain navigation clears any pending focus so a later manual visit to the
+  // same screen doesn't re-trigger a stale deep-link.
+  const setRoute = useCallback((r: RouteId) => { setFocus(null); setRouteState(r); }, []);
+  const openEntity = useCallback((r: RouteId, kind: string, id: string) => {
+    setFocus({ kind, id });
+    setRouteState(r);
+  }, []);
+  const clearFocus = useCallback(() => setFocus(null), []);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -56,8 +79,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const t = useCallback((key: DictKey) => translate(lang, key), [lang]);
 
   const value = useMemo<AppState>(
-    () => ({ route, setRoute, theme, toggleTheme, lang, setLang, paletteOpen, setPaletteOpen, t }),
-    [route, theme, toggleTheme, lang, setLang, paletteOpen, t],
+    () => ({ route, setRoute, focus, openEntity, clearFocus, theme, toggleTheme, lang, setLang, paletteOpen, setPaletteOpen, t }),
+    [route, setRoute, focus, openEntity, clearFocus, theme, toggleTheme, lang, setLang, paletteOpen, t],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

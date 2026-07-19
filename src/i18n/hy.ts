@@ -177,9 +177,12 @@ export const hy: Record<DictKey, string> = {
 
   'action.create': 'Ստեղծել',
   'action.cancel': 'Չեղարկել',
+  'action.edit': 'Խմբագրել',
+  'action.retry': 'Կրկնել',
   'form.newProject': 'Նոր նախագիծ',
   'form.newTask': 'Նոր առաջադրանք',
   'form.editTask': 'Խմբագրել առաջադրանքը',
+  'form.editProject': 'Խմբագրել նախագիծը',
   'action.save': 'Պահել',
   'toast.saved': 'Պահված է',
   'field.name': 'Անուն',
@@ -188,4 +191,13 @@ export const hy: Record<DictKey, string> = {
   'field.priority': 'Առաջնահերթություն',
   'field.project': 'Նախագիծ',
   'field.none': 'Չկա',
+
+  'projects.tab.overview': 'Ընդհանուր',
+  'projects.tab.tasks': 'Առաջադրանքներ',
+  'projects.linkedTasks': 'Կապված առաջադրանքներ',
+
+  'state.offline': 'Backend-ը հասանելի չէ',
+  'state.offlineHint': 'Preview ռեժիմ — տվյալների գործողություններն անջատված են, մինչև desktop backend-ը միանա։',
+  'state.offlineBanner': 'Preview ռեժիմ — desktop backend-ը միացած չէ։ Փոփոխությունները չեն պահվի։',
+  'state.permissionDenied': 'Թույլատրված չէ',
 };
