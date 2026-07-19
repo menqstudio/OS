@@ -2,6 +2,8 @@ import React from 'react';
 import './ui.css';
 import { statusTone, type Tone } from '../domain/enums';
 import type { AsyncState } from '../hooks/useAsync';
+import { hasBackend } from '../services/desktop';
+import { useApp } from '../app/store';
 
 export function Card({ children, className = '', style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
   return <div className={`card ${className}`} style={style}>{children}</div>;
@@ -107,8 +109,18 @@ export function Async<T>({
   emptyHint?: string;
   children: (data: T[]) => React.ReactNode;
 }) {
+  const { t } = useApp();
   if (state.loading && state.data === null) return <Skeleton rows={4} />;
-  if (state.error) return <ErrorState message={state.error} onRetry={state.reload} />;
+  if (state.error) {
+    // No desktop backend at all (e.g. browser preview): show a calm offline
+    // state, not the alarming red error meant for real backend failures.
+    if (!hasBackend()) {
+      return <EmptyState glyph="◍" title={t('state.offline')} hint={t('state.offlineHint')} />;
+    }
+    const denied = /denied|not permitted|permission/i.test(state.error);
+    const message = denied ? `${t('state.permissionDenied')}: ${state.error}` : state.error;
+    return <ErrorState message={message} onRetry={state.reload} retryLabel={t('action.retry')} />;
+  }
   const data = state.data ?? [];
   if (data.length === 0) return <EmptyState title={emptyTitle} hint={emptyHint} />;
   return <>{children(data)}</>;
