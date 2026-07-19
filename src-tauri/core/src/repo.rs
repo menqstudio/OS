@@ -577,6 +577,289 @@ pub mod memory {
     }
 }
 
+pub mod runs {
+    use super::*;
+
+    fn map(r: &Row) -> rusqlite::Result<Run> {
+        Ok(Run {
+            id: r.get("id")?,
+            intent: r.get("intent")?,
+            status: r.get("status")?,
+            plan: r.get("plan")?,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    pub fn create(conn: &Connection, intent: &str, plan: &str) -> CoreResult<Run> {
+        let now = now();
+        let id = id();
+        conn.execute(
+            "INSERT INTO runs(id, intent, status, plan, created_at, updated_at)
+             VALUES (?1, ?2, 'drafted', ?3, ?4, ?4)",
+            rusqlite::params![id, intent, plan, now],
+        )?;
+        super::audit::record(conn, "run.created", "gev", "run", &id)?;
+        get(conn, &id)
+    }
+
+    pub fn get(conn: &Connection, id: &str) -> CoreResult<Run> {
+        conn.query_row("SELECT * FROM runs WHERE id = ?1", [id], map).map_err(not_found(id))
+    }
+
+    pub fn list(conn: &Connection) -> CoreResult<Vec<Run>> {
+        let mut s = conn.prepare("SELECT * FROM runs ORDER BY updated_at DESC")?;
+        let rows = s.query_map([], map)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn set_status(conn: &Connection, id: &str, status: &str) -> CoreResult<Run> {
+        if !is_valid(status, RUN_STATUSES) {
+            return Err(CoreError::Invalid { field: "status", value: status.to_string() });
+        }
+        let changed = conn.execute(
+            "UPDATE runs SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![status, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "run.status_changed", "gev", "run", id)?;
+        get(conn, id)
+    }
+}
+
+pub mod events {
+    use super::*;
+
+    fn map(r: &Row) -> rusqlite::Result<Event> {
+        Ok(Event {
+            id: r.get("id")?,
+            title: r.get("title")?,
+            kind: r.get("kind")?,
+            location: r.get("location")?,
+            starts_at: r.get("starts_at")?,
+            ends_at: r.get("ends_at")?,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    pub fn create(conn: &Connection, input: NewEvent) -> CoreResult<Event> {
+        let now = now();
+        let id = id();
+        conn.execute(
+            "INSERT INTO events(id, title, kind, location, starts_at, ends_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            rusqlite::params![id, input.title, input.kind, input.location, input.starts_at, input.ends_at, now],
+        )?;
+        super::audit::record(conn, "event.created", "gev", "event", &id)?;
+        get(conn, &id)
+    }
+
+    pub fn get(conn: &Connection, id: &str) -> CoreResult<Event> {
+        conn.query_row("SELECT * FROM events WHERE id = ?1", [id], map).map_err(not_found(id))
+    }
+
+    pub fn list(conn: &Connection) -> CoreResult<Vec<Event>> {
+        let mut s = conn.prepare("SELECT * FROM events ORDER BY starts_at ASC")?;
+        let rows = s.query_map([], map)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+        let changed = conn.execute("DELETE FROM events WHERE id = ?1", [id])?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "event.deleted", "gev", "event", id)?;
+        Ok(())
+    }
+}
+
+pub mod automations {
+    use super::*;
+
+    fn map(r: &Row) -> rusqlite::Result<Automation> {
+        Ok(Automation {
+            id: r.get("id")?,
+            name: r.get("name")?,
+            trigger: r.get("trigger")?,
+            action: r.get("action")?,
+            enabled: r.get::<_, i64>("enabled")? != 0,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    pub fn create(conn: &Connection, input: NewAutomation) -> CoreResult<Automation> {
+        let now = now();
+        let id = id();
+        conn.execute(
+            "INSERT INTO automations(id, name, trigger, action, enabled, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
+            rusqlite::params![id, input.name, input.trigger, input.action, now],
+        )?;
+        super::audit::record(conn, "automation.created", "gev", "automation", &id)?;
+        get(conn, &id)
+    }
+
+    pub fn get(conn: &Connection, id: &str) -> CoreResult<Automation> {
+        conn.query_row("SELECT * FROM automations WHERE id = ?1", [id], map).map_err(not_found(id))
+    }
+
+    pub fn list(conn: &Connection) -> CoreResult<Vec<Automation>> {
+        let mut s = conn.prepare("SELECT * FROM automations ORDER BY name")?;
+        let rows = s.query_map([], map)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn set_enabled(conn: &Connection, id: &str, enabled: bool) -> CoreResult<Automation> {
+        let changed = conn.execute(
+            "UPDATE automations SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![enabled as i64, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "automation.toggled", "gev", "automation", id)?;
+        get(conn, id)
+    }
+
+    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+        let changed = conn.execute("DELETE FROM automations WHERE id = ?1", [id])?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "automation.deleted", "gev", "automation", id)?;
+        Ok(())
+    }
+}
+
+pub mod integrations {
+    use super::*;
+
+    fn map(r: &Row) -> rusqlite::Result<Integration> {
+        Ok(Integration {
+            id: r.get("id")?,
+            name: r.get("name")?,
+            provider: r.get("provider")?,
+            status: r.get("status")?,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    pub fn create(conn: &Connection, name: &str, provider: &str) -> CoreResult<Integration> {
+        let now = now();
+        let id = id();
+        conn.execute(
+            "INSERT INTO integrations(id, name, provider, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'disconnected', ?4, ?4)",
+            rusqlite::params![id, name, provider, now],
+        )?;
+        get(conn, &id)
+    }
+
+    pub fn get(conn: &Connection, id: &str) -> CoreResult<Integration> {
+        conn.query_row("SELECT * FROM integrations WHERE id = ?1", [id], map).map_err(not_found(id))
+    }
+
+    pub fn list(conn: &Connection) -> CoreResult<Vec<Integration>> {
+        let mut s = conn.prepare("SELECT * FROM integrations ORDER BY name")?;
+        let rows = s.query_map([], map)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Set a connector's local status. This records the desired state; it does
+    /// not itself reach any external service.
+    pub fn set_status(conn: &Connection, id: &str, status: &str) -> CoreResult<Integration> {
+        if !is_valid(status, INTEGRATION_STATUSES) {
+            return Err(CoreError::Invalid { field: "status", value: status.to_string() });
+        }
+        let changed = conn.execute(
+            "UPDATE integrations SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![status, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "integration.status_changed", "gev", "integration", id)?;
+        get(conn, id)
+    }
+}
+
+pub mod analytics {
+    use super::*;
+
+    fn count(conn: &Connection, sql: &str) -> CoreResult<i64> {
+        Ok(conn.query_row(sql, [], |r| r.get(0))?)
+    }
+
+    /// A curated set of headline counts computed over the live tables.
+    pub fn metrics(conn: &Connection) -> CoreResult<Vec<Metric>> {
+        let defs: &[(&str, &str, &str)] = &[
+            ("projects", "Projects", "SELECT COUNT(*) FROM projects"),
+            ("projects_active", "Active projects", "SELECT COUNT(*) FROM projects WHERE status = 'active'"),
+            ("tasks", "Tasks", "SELECT COUNT(*) FROM tasks"),
+            ("tasks_open", "Open tasks", "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','cancelled')"),
+            ("approvals_pending", "Pending approvals", "SELECT COUNT(*) FROM approvals WHERE status = 'pending'"),
+            ("runs", "Runs", "SELECT COUNT(*) FROM runs"),
+            ("events", "Events", "SELECT COUNT(*) FROM events"),
+            ("automations_on", "Automations enabled", "SELECT COUNT(*) FROM automations WHERE enabled = 1"),
+            ("knowledge", "Knowledge notes", "SELECT COUNT(*) FROM knowledge_notes"),
+            ("memory", "Memory entries", "SELECT COUNT(*) FROM memory_entries"),
+            ("audit", "Audit events", "SELECT COUNT(*) FROM audit_events"),
+        ];
+        let mut out = Vec::with_capacity(defs.len());
+        for (key, label, sql) in defs {
+            out.push(Metric { key: (*key).to_string(), label: (*label).to_string(), value: count(conn, sql)? });
+        }
+        Ok(out)
+    }
+}
+
+pub mod security {
+    use super::*;
+
+    fn map_event(r: &Row) -> rusqlite::Result<ActivityEvent> {
+        Ok(ActivityEvent {
+            id: r.get("id")?,
+            event_type: r.get("event_type")?,
+            actor_id: r.get("actor_id")?,
+            entity_type: r.get("entity_type")?,
+            entity_id: r.get("entity_id")?,
+            created_at: r.get("created_at")?,
+        })
+    }
+
+    /// Read-only security posture computed from approvals and the audit log.
+    /// "Sensitive" events are approvals, deletions, and status changes.
+    pub fn summary(conn: &Connection) -> CoreResult<SecuritySummary> {
+        let pending: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM approvals WHERE status = 'pending'", [], |r| r.get(0))?;
+        let decided: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM approvals WHERE status IN ('approved','rejected')", [], |r| r.get(0))?;
+        let audit: i64 = conn.query_row("SELECT COUNT(*) FROM audit_events", [], |r| r.get(0))?;
+
+        let mut s = conn.prepare(
+            "SELECT * FROM audit_events \
+             WHERE event_type LIKE '%approval%' OR event_type LIKE '%deleted%' \
+                OR event_type LIKE '%status_changed%' \
+             ORDER BY created_at DESC LIMIT 25",
+        )?;
+        let rows = s.query_map([], map_event)?;
+        let sensitive = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(SecuritySummary {
+            pending_approvals: pending,
+            decided_approvals: decided,
+            audit_events: audit,
+            sensitive_events: sensitive,
+        })
+    }
+}
+
 fn not_found(id: &str) -> impl Fn(rusqlite::Error) -> CoreError + '_ {
     move |e| match e {
         rusqlite::Error::QueryReturnedNoRows => CoreError::NotFound(id.to_string()),
@@ -645,6 +928,23 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
     let m = memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "Respond in Armenian; work only in menqstudio/BroPS.".into() })?;
     memory::set_pinned(conn, &m.id, true)?;
     memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "Foundation v1 is Locked (D-010).".into() })?;
+
+    let r1 = runs::create(conn, "Wire the remaining workspaces to the backend", "1. schema  2. repos  3. commands  4. UI")?;
+    runs::set_status(conn, &r1.id, "running")?;
+    runs::create(conn, "Draft the Phase 5 verification report", "")?;
+
+    let start = now();
+    events::create(conn, NewEvent { title: "Phase 5 review".into(), kind: "review".into(), location: "Desktop".into(), starts_at: start.clone(), ends_at: None })?;
+    events::create(conn, NewEvent { title: "Foundation sync".into(), kind: "meeting".into(), location: "Group Chat".into(), starts_at: start, ends_at: None })?;
+
+    let a1 = automations::create(conn, NewAutomation { name: "Notify on failed run".into(), trigger: "run.status = failed".into(), action: "create notification".into() })?;
+    let a2 = automations::create(conn, NewAutomation { name: "Auto-archive done projects".into(), trigger: "project.status = completed".into(), action: "set archived".into() })?;
+    automations::set_enabled(conn, &a2.id, false)?;
+    let _ = a1;
+
+    let i1 = integrations::create(conn, "GitHub", "github")?;
+    integrations::set_status(conn, &i1.id, "connected")?;
+    integrations::create(conn, "Slack", "slack")?;
 
     Ok(())
 }

@@ -7,9 +7,10 @@ pub mod domain;
 pub mod repo;
 
 pub use domain::{
-    ActivityEvent, Agent, Approval, Conversation, CoreError, CoreResult, Decision, KnowledgeNote,
-    Message, MemoryEntry, NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask,
-    Notification, Project, Task,
+    ActivityEvent, Agent, Approval, Automation, Conversation, CoreError, CoreResult, Decision,
+    Event, Integration, KnowledgeNote, Message, MemoryEntry, Metric, NewAutomation, NewEvent,
+    NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
+    SecuritySummary, Task,
 };
 
 /// A new UUID v4 string. IDs are opaque text everywhere in the schema.
@@ -100,9 +101,9 @@ mod tests {
     }
 
     #[test]
-    fn migrations_reach_v4_with_all_tables() {
+    fn migrations_reach_v5_with_all_tables() {
         let c = conn();
-        assert_eq!(db::current_version(&c).unwrap(), 4);
+        assert_eq!(db::current_version(&c).unwrap(), 5);
         // decisions table exists and is usable
         repo::decisions::create(&c, "T", "gev", "why").unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
@@ -114,6 +115,60 @@ mod tests {
         assert_eq!(repo::knowledge::list(&c).unwrap().len(), 1);
         repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "note".into(), content: "M".into() }).unwrap();
         assert_eq!(repo::memory::list(&c, None).unwrap().len(), 1);
+        // runs / events / automations / integrations tables exist and are usable
+        repo::runs::create(&c, "intent", "").unwrap();
+        assert_eq!(repo::runs::list(&c).unwrap().len(), 1);
+        repo::events::create(&c, NewEvent { title: "E".into(), kind: "event".into(), location: "".into(), starts_at: "1".into(), ends_at: None }).unwrap();
+        assert_eq!(repo::events::list(&c).unwrap().len(), 1);
+        repo::automations::create(&c, NewAutomation { name: "A".into(), trigger: "".into(), action: "".into() }).unwrap();
+        assert_eq!(repo::automations::list(&c).unwrap().len(), 1);
+        repo::integrations::create(&c, "GH", "github").unwrap();
+        assert_eq!(repo::integrations::list(&c).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn run_status_transitions_and_validates() {
+        let c = conn();
+        let r = repo::runs::create(&c, "do the thing", "plan").unwrap();
+        assert_eq!(r.status, "drafted");
+        let running = repo::runs::set_status(&c, &r.id, "running").unwrap();
+        assert_eq!(running.status, "running");
+        assert!(matches!(
+            repo::runs::set_status(&c, &r.id, "bogus"),
+            Err(CoreError::Invalid { field: "status", .. })
+        ));
+    }
+
+    #[test]
+    fn automation_toggle_and_integration_status() {
+        let c = conn();
+        let a = repo::automations::create(&c, NewAutomation { name: "A".into(), trigger: "t".into(), action: "x".into() }).unwrap();
+        assert!(a.enabled);
+        let off = repo::automations::set_enabled(&c, &a.id, false).unwrap();
+        assert!(!off.enabled);
+
+        let i = repo::integrations::create(&c, "GitHub", "github").unwrap();
+        assert_eq!(i.status, "disconnected");
+        let on = repo::integrations::set_status(&c, &i.id, "connected").unwrap();
+        assert_eq!(on.status, "connected");
+        assert!(repo::integrations::set_status(&c, &i.id, "bogus").is_err());
+    }
+
+    #[test]
+    fn analytics_and_security_compute_over_seed() {
+        let c = conn();
+        repo::seed(&c).unwrap();
+        let metrics = repo::analytics::metrics(&c).unwrap();
+        let projects = metrics.iter().find(|m| m.key == "projects").unwrap();
+        assert!(projects.value >= 2);
+        let runs = metrics.iter().find(|m| m.key == "runs").unwrap();
+        assert!(runs.value >= 2);
+
+        let sec = repo::security::summary(&c).unwrap();
+        assert!(sec.pending_approvals >= 1);
+        assert!(sec.audit_events >= 1);
+        // seeded run/automation/integration status changes are sensitive events
+        assert!(!sec.sensitive_events.is_empty());
     }
 
     #[test]
@@ -202,6 +257,10 @@ mod tests {
         assert!(repo::chat::list_conversations(&c, None).unwrap().len() >= 2);
         assert!(repo::knowledge::list(&c).unwrap().len() >= 2);
         assert!(repo::memory::list(&c, None).unwrap().len() >= 2);
+        assert!(repo::runs::list(&c).unwrap().len() >= 2);
+        assert!(repo::events::list(&c).unwrap().len() >= 2);
+        assert!(repo::automations::list(&c).unwrap().len() >= 2);
+        assert!(repo::integrations::list(&c).unwrap().len() >= 2);
         // running again must not duplicate
         repo::seed(&c).unwrap();
         assert_eq!(repo::projects::list(&c).unwrap().len(), after_first);

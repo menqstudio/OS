@@ -5,9 +5,10 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  ActivityEvent, Agent, Approval, Conversation, Decision, DirListing, KnowledgeNote, MemoryEntry,
-  Message, NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification,
-  Project, Task,
+  ActivityEvent, Agent, Approval, Automation, CalendarEvent, Conversation, Decision, DirListing,
+  Integration, KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
+  NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
+  SecuritySummary, Task,
 } from '../domain/entities';
 
 /** True when running inside the Tauri desktop runtime. */
@@ -73,4 +74,30 @@ export const desktop = {
 
   // files (read-only filesystem browser; path omitted = home dir)
   listDir: (path?: string) => invoke<DirListing>('list_dir', { path: path ?? null }),
+
+  // runs (command)
+  listRuns: () => invoke<Run[]>('list_runs'),
+  createRun: (intent: string, plan: string) => invoke<Run>('create_run', { intent, plan }),
+  setRunStatus: (id: string, status: string) => invoke<Run>('set_run_status', { id, status }),
+
+  // events (calendar)
+  listEvents: () => invoke<CalendarEvent[]>('list_events'),
+  createEvent: (input: NewEvent) => invoke<CalendarEvent>('create_event', { input }),
+  deleteEvent: (id: string) => invoke<void>('delete_event', { id }),
+
+  // automations
+  listAutomations: () => invoke<Automation[]>('list_automations'),
+  createAutomation: (input: NewAutomation) => invoke<Automation>('create_automation', { input }),
+  setAutomationEnabled: (id: string, enabled: boolean) =>
+    invoke<Automation>('set_automation_enabled', { id, enabled }),
+  deleteAutomation: (id: string) => invoke<void>('delete_automation', { id }),
+
+  // integrations
+  listIntegrations: () => invoke<Integration[]>('list_integrations'),
+  setIntegrationStatus: (id: string, status: string) =>
+    invoke<Integration>('set_integration_status', { id, status }),
+
+  // analytics / security (computed, read-only)
+  getAnalytics: () => invoke<Metric[]>('get_analytics'),
+  getSecuritySummary: () => invoke<SecuritySummary>('get_security_summary'),
 };

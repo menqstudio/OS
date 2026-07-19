@@ -3,9 +3,10 @@
 
 use crate::AppState;
 use brops_core::{
-    repo, ActivityEvent, Agent, Approval, Conversation, Decision, KnowledgeNote, MemoryEntry,
-    Message, NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification,
-    Project, Task,
+    repo, ActivityEvent, Agent, Approval, Automation, Conversation, Decision, Event, Integration,
+    KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent, NewKnowledgeNote,
+    NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run, SecuritySummary,
+    Task,
 };
 use tauri::State;
 
@@ -200,4 +201,98 @@ pub fn set_memory_pinned(state: State<AppState>, id: String, pinned: bool) -> Re
 pub fn delete_memory(state: State<AppState>, id: String) -> Result<(), String> {
     let conn = locked(&state)?;
     repo::memory::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+// --- runs (command) ---
+
+#[tauri::command]
+pub fn list_runs(state: State<AppState>) -> Result<Vec<Run>, String> {
+    let conn = locked(&state)?;
+    repo::runs::list(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_run(state: State<AppState>, intent: String, plan: String) -> Result<Run, String> {
+    let conn = locked(&state)?;
+    repo::runs::create(&conn, &intent, &plan).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_run_status(state: State<AppState>, id: String, status: String) -> Result<Run, String> {
+    let conn = locked(&state)?;
+    repo::runs::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+}
+
+// --- events (calendar) ---
+
+#[tauri::command]
+pub fn list_events(state: State<AppState>) -> Result<Vec<Event>, String> {
+    let conn = locked(&state)?;
+    repo::events::list(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_event(state: State<AppState>, input: NewEvent) -> Result<Event, String> {
+    let conn = locked(&state)?;
+    repo::events::create(&conn, input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_event(state: State<AppState>, id: String) -> Result<(), String> {
+    let conn = locked(&state)?;
+    repo::events::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+// --- automations ---
+
+#[tauri::command]
+pub fn list_automations(state: State<AppState>) -> Result<Vec<Automation>, String> {
+    let conn = locked(&state)?;
+    repo::automations::list(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_automation(state: State<AppState>, input: NewAutomation) -> Result<Automation, String> {
+    let conn = locked(&state)?;
+    repo::automations::create(&conn, input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_automation_enabled(state: State<AppState>, id: String, enabled: bool) -> Result<Automation, String> {
+    let conn = locked(&state)?;
+    repo::automations::set_enabled(&conn, &id, enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_automation(state: State<AppState>, id: String) -> Result<(), String> {
+    let conn = locked(&state)?;
+    repo::automations::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+// --- integrations ---
+
+#[tauri::command]
+pub fn list_integrations(state: State<AppState>) -> Result<Vec<Integration>, String> {
+    let conn = locked(&state)?;
+    repo::integrations::list(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_integration_status(state: State<AppState>, id: String, status: String) -> Result<Integration, String> {
+    let conn = locked(&state)?;
+    repo::integrations::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+}
+
+// --- analytics / security (computed, read-only) ---
+
+#[tauri::command]
+pub fn get_analytics(state: State<AppState>) -> Result<Vec<Metric>, String> {
+    let conn = locked(&state)?;
+    repo::analytics::metrics(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_security_summary(state: State<AppState>) -> Result<SecuritySummary, String> {
+    let conn = locked(&state)?;
+    repo::security::summary(&conn).map_err(|e| e.to_string())
 }
