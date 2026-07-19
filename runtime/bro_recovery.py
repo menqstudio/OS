@@ -202,7 +202,31 @@ def settle_mutation(task_id: str, tool_use_id: str, *, success: bool, error: str
     return False, f"mutation requires recovery: {next_state['phase']}"
 
 
-def prove_recovery(task_id: str, proof_hash: str) -> str:
+def _verify_recovery_proof(document: Any, root: pathlib.Path, now: int | None) -> dict[str, Any]:
+    """Verify an owner-signed recovery-proof artifact.
+
+    The proof is Ed25519-signed by the owner-held RECOVERY authority (verified against
+    the externally-pinned trusted-key registry), so a policed builder process cannot
+    mint it. verify_artifact refuses any other authority."""
+    from bro_signature import SignatureError, load_trusted_keys, verify_artifact
+    if not isinstance(document, dict):
+        raise RecoveryError("recovery proof document is required")
+    try:
+        return verify_artifact(document, "recovery-proof", load_trusted_keys(root), now=now)
+    except SignatureError as exc:
+        raise RecoveryError(str(exc)) from exc
+
+
+def prove_recovery(task_id: str, proof_document: dict[str, Any], root: pathlib.Path = ROOT,
+                   now: int | None = None) -> str:
+    """Clear a recovery-required task on a real owner-signed proof, not a hex token.
+
+    The previous implementation accepted any 64-hex string, so the builder that
+    interrupted the mutation could clear its own quarantine. The proof is now an
+    owner-signed recovery-proof artifact bound to THIS task, recovery record,
+    restored state, effect class and state version, so it cannot be forged or replayed
+    onto a different recovery. The whole signed document is persisted alongside its
+    hash so a later audit can re-verify it from the record alone."""
     state = _load_state(task_id)
     if not state or state.get("phase") not in {"RECOVERY_REQUIRED", "RECOVERY_STARTED"}:
         raise RecoveryError("task is not recoverable from current phase")
@@ -211,9 +235,23 @@ def prove_recovery(task_id: str, proof_hash: str) -> str:
     current = snapshot(ROOT)
     if (current["head"], current["tree"], current["status_hash"]) != (state["before_head"], state["before_tree"], state["before_status_hash"]):
         raise RecoveryError("original repository state has not been restored")
-    if not isinstance(proof_hash, str) or len(proof_hash) != 64 or any(c not in "0123456789abcdef" for c in proof_hash):
-        raise RecoveryError("recovery proof hash invalid")
+    payload = _verify_recovery_proof(proof_document, root, now)
+    required = {"schema", "task_id", "record_id", "before_head", "before_tree",
+                "before_status_hash", "effect_class", "state_version", "issued_at_epoch"}
+    if set(payload) - {"artifact_type", "key_id"} != required or payload.get("schema") != 1:
+        raise RecoveryError("invalid recovery proof shape")
+    expected = {"task_id": task_id, "record_id": state["record_id"],
+                "before_head": state["before_head"], "before_tree": state["before_tree"],
+                "before_status_hash": state["before_status_hash"],
+                "effect_class": state["effect_class"], "state_version": state["state_version"]}
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise RecoveryError(f"recovery proof binding mismatch: {key}")
     next_state = dict(state)
-    next_state.update({"phase":"REWORK_REQUIRED","recovery_proof_hash":proof_hash})
+    next_state.update({
+        "phase": "REWORK_REQUIRED",
+        "recovery_proof_hash": canonical_json_sha256(proof_document),
+        "recovery_proof_document": proof_document,
+    })
     _write_cas(task_id, int(state["state_version"]), next_state)
     return "recovery proven; task requires rework"

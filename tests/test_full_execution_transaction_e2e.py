@@ -99,8 +99,9 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
         (self.tmp / "config").mkdir(parents=True)
         self.operator = generate_key("operator-root", "op", False)
         self.issuer = generate_key("issuer", "iss", False)
+        self.recovery = generate_key("recovery", "rec", False)
         (self.tmp / "config" / "trusted-keys.json").write_text(
-            json.dumps(build_registry([self.operator, self.issuer], self.now, 100_000)), encoding="utf-8")
+            json.dumps(build_registry([self.operator, self.issuer, self.recovery], self.now, 100_000)), encoding="utf-8")
 
         # External ledgers / stores, all outside the repository.
         self.locks = self.tmp / "locks"; self.locks.mkdir()
@@ -292,8 +293,18 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             settle_execution_tool(self._state(), "Write", TOOL_INPUT, TUID, success=False, error="drill: boom")
             self.assertEqual(self._recovery_state()["phase"], "RECOVERY_REQUIRED")
             # the before-state is restored (snapshot is patched to it) and recovery
-            # is proven; the journal advances out of the blocking phase to rework
-            message = prove_recovery(self.task_id, "d" * 64)
+            # is proven with an owner-signed recovery-proof bound to this record; the
+            # journal advances out of the blocking phase to rework
+            state = self._recovery_state()
+            proof = sign_payload(self.recovery["private_key"], {
+                "artifact_type": "recovery-proof", "key_id": self.recovery["key_id"], "schema": 1,
+                "task_id": self.task_id, "record_id": state["record_id"],
+                "before_head": state["before_head"], "before_tree": state["before_tree"],
+                "before_status_hash": state["before_status_hash"],
+                "effect_class": state["effect_class"], "state_version": state["state_version"],
+                "issued_at_epoch": self.now,
+            })
+            message = prove_recovery(self.task_id, proof, root=self.tmp, now=self.now)
             self.assertIn("recovery proven", message)
             self.assertEqual(self._recovery_state()["phase"], "REWORK_REQUIRED")
 

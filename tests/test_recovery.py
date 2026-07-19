@@ -4,15 +4,20 @@ import pathlib
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tools"))
 
 from bro_completion import CompletionError, _no_pending_recovery
 from bro_contracts import canonical_json_sha256
 from bro_recovery import RecoveryError, _load_state, _state_path, _write_cas, assert_recovery_clear, prepare_mutation, prove_recovery, settle_mutation
+from bro_signature import load_trusted_keys, verify_artifact
+from broctl import build_registry, generate_key, sign_payload
+from _operator_pin import use_operator_pin
 
 TASK = {"task_id": "task-recovery-1"}
 ACTION = {"tool":"Write","action":"write","capabilities":["WRITE_REPOSITORY"],"targets":["runtime/x.py"]}
@@ -27,6 +32,37 @@ class RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         os.environ["BRO_RECOVERY_STORE"] = self.temp.name
+        # an ephemeral registry holding the owner-held recovery authority; recovery
+        # proofs are signed by it and verified against it
+        self.regdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.regdir.cleanup)
+        self.keys = {a: generate_key(a, f"dev-{a}", False) for a in ("operator-root", "recovery")}
+        use_operator_pin(self, self.keys["operator-root"]["public_key"])
+        self.root = pathlib.Path(self.regdir.name)
+        (self.root / "config").mkdir(parents=True)
+        self.now = int(time.time())
+        (self.root / "config" / "trusted-keys.json").write_text(
+            json.dumps(build_registry(list(self.keys.values()), self.now - 60, 86400)), encoding="utf-8")
+
+    def proof(self, *, key="recovery", **over):
+        """A recovery-proof signed by the recovery authority, bound by default to the
+        task's current recovery state; overrides let a test break a single binding."""
+        st = _load_state(TASK["task_id"]) or {}
+        payload = {
+            "artifact_type": "recovery-proof", "key_id": self.keys[key]["key_id"], "schema": 1,
+            "task_id": TASK["task_id"], "record_id": st.get("record_id", "recovery-1"),
+            "before_head": st.get("before_head", BEFORE["head"]),
+            "before_tree": st.get("before_tree", BEFORE["tree"]),
+            "before_status_hash": st.get("before_status_hash", BEFORE["status_hash"]),
+            "effect_class": st.get("effect_class", "REVERSIBLE"),
+            "state_version": st.get("state_version", 0), "issued_at_epoch": self.now,
+        }
+        payload.update(over)
+        return sign_payload(self.keys[key]["private_key"], payload)
+
+    def prove(self, document=None):
+        return prove_recovery(TASK["task_id"], self.proof() if document is None else document,
+                              root=self.root, now=self.now)
 
     def tearDown(self):
         os.environ.pop("BRO_RECOVERY_STORE", None)
@@ -87,7 +123,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(state["phase"], "FAILED_WITH_IRREVERSIBLE_EFFECT")
         self.assertTrue(state["irreversible_effects"])
         with self.assertRaises(RecoveryError):
-            prove_recovery(TASK["task_id"], "1"*64)
+            self.prove()
 
     def test_recovery_requires_exact_original_state(self):
         self.prepare("REVERSIBLE")
@@ -95,13 +131,53 @@ class RecoveryTests(unittest.TestCase):
         with patch("bro_recovery.snapshot", return_value=changed):
             settle_mutation(TASK["task_id"], "toolu_1", success=False)
             with self.assertRaises(RecoveryError):
-                prove_recovery(TASK["task_id"], "1"*64)
+                self.prove()
         with patch("bro_recovery.snapshot", return_value=BEFORE):
-            message=prove_recovery(TASK["task_id"], "1"*64)
+            message=self.prove()
         self.assertIn("rework", message)
         self.assertEqual(_load_state(TASK["task_id"])["phase"], "REWORK_REQUIRED")
         with self.assertRaises(CompletionError):
             _no_pending_recovery(TASK["task_id"])
+
+    # ---- owner-signed recovery proof (blocker 7) ----------------------------
+    def _to_recovery_required(self):
+        self.prepare("REVERSIBLE")
+        with patch("bro_recovery.snapshot", return_value=BEFORE):
+            settle_mutation(TASK["task_id"], "toolu_1", success=False, error="interrupted")
+
+    def test_unsigned_or_hex_token_no_longer_proves_recovery(self):
+        self._to_recovery_required()
+        with patch("bro_recovery.snapshot", return_value=BEFORE):
+            for bogus in ("d" * 64, {"not": "a signed artifact"}):
+                with self.assertRaises(RecoveryError):
+                    self.prove(bogus)
+
+    def test_proof_signed_by_a_non_recovery_authority_is_denied(self):
+        self._to_recovery_required()
+        with patch("bro_recovery.snapshot", return_value=BEFORE):
+            with self.assertRaises(RecoveryError):
+                self.prove(self.proof(key="operator-root"))
+
+    def test_proof_bound_to_a_different_recovery_is_denied(self):
+        self._to_recovery_required()
+        with patch("bro_recovery.snapshot", return_value=BEFORE):
+            for field, wrong in (("record_id", "other-record"), ("before_head", "9" * 40),
+                                 ("state_version", 999), ("task_id", "task-other")):
+                with self.assertRaises(RecoveryError):
+                    self.prove(self.proof(**{field: wrong}))
+
+    def test_owner_signed_proof_is_persisted_and_re_verifiable(self):
+        self._to_recovery_required()
+        with patch("bro_recovery.snapshot", return_value=BEFORE):
+            self.prove()
+        state = _load_state(TASK["task_id"])
+        self.assertEqual(state["phase"], "REWORK_REQUIRED")
+        doc = state["recovery_proof_document"]
+        self.assertEqual(state["recovery_proof_hash"], canonical_json_sha256(doc))
+        # re-verify the persisted signed proof against the registry — from the record
+        payload = verify_artifact(doc, "recovery-proof", load_trusted_keys(self.root), now=self.now)
+        self.assertEqual(payload["record_id"], "recovery-1")
+        self.assertEqual(payload["task_id"], TASK["task_id"])
 
 
 class RecoveryRecordEd25519Tests(unittest.TestCase):

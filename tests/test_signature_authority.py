@@ -25,7 +25,7 @@ from broctl import build_registry, generate_key, sign_payload
 from _operator_pin import use_operator_pin
 
 AUTHORITIES = ["operator-root", "issuer", "evidence-recorder", "builder",
-               "verifier", "release"]
+               "verifier", "release", "recovery"]
 
 NOW = 1_700_000_000
 YEAR = 365 * 24 * 60 * 60
@@ -84,7 +84,7 @@ class KeyGenerationTests(SignatureFixture):
 class RegistryTrustTests(SignatureFixture):
     def test_signed_registry_loads(self):
         keys = self.load()
-        self.assertEqual(len(keys), 6)
+        self.assertEqual(len(keys), len(AUTHORITIES))
         self.assertEqual(keys["dev-verifier"].authority_type, "verifier")
 
     def test_unsigned_registry_denied(self):

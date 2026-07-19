@@ -58,7 +58,12 @@ EVIDENCE = "evidence-recorder"
 BUILDER = "builder"
 VERIFIER = "verifier"
 RELEASE = "release"
-AUTHORITY_TYPES = {OPERATOR, ISSUER, EVIDENCE, BUILDER, VERIFIER, RELEASE}
+# A dedicated owner-controlled authority for attesting that an interrupted or
+# quarantined mutation has been recovered. It is separate from operator-root so the
+# offline trust anchor is not used per recovery, and separate from the builder/issuer
+# so the policed builder process cannot mint its own recovery proof.
+RECOVERY = "recovery"
+AUTHORITY_TYPES = {OPERATOR, ISSUER, EVIDENCE, BUILDER, VERIFIER, RELEASE, RECOVERY}
 
 ACTIVE = "active"
 REVOKED = "revoked"
@@ -85,6 +90,10 @@ ARTIFACT_AUTHORITY = {
     "completion-manifest": BUILDER,
     "verifier-receipt": VERIFIER,
     "release-grant": RELEASE,
+    # The proof that a recovery actually happened is an authorisation, not a claim,
+    # so it comes from the owner-held recovery authority — never the builder, which
+    # would otherwise clear its own interrupted mutation with an arbitrary token.
+    "recovery-proof": RECOVERY,
     "trusted-key-registry": OPERATOR,
 }
 
