@@ -49,15 +49,21 @@ def satisfies(actual: str, constraint: str) -> bool:
         for op in (">=", "<=", "==", ">", "<"):
             if clause.startswith(op):
                 b = _ver_tuple(clause[len(op):])
-                if op == ">=" and not a >= b:
+                # Zero-pad both to equal length so 1.2 compares as 1.2.0: otherwise a
+                # shorter tuple sorts BEFORE an equal-prefix longer one, so satisfies(
+                # "1.2", ">=1.2.0") wrongly returns False and RED-blocks a compatible dep.
+                width = max(len(a), len(b))
+                aa = a + (0,) * (width - len(a))
+                bb = b + (0,) * (width - len(b))
+                if op == ">=" and not aa >= bb:
                     return False
-                if op == "<=" and not a <= b:
+                if op == "<=" and not aa <= bb:
                     return False
-                if op == "==" and not a == b:
+                if op == "==" and not aa == bb:
                     return False
-                if op == ">" and not a > b:
+                if op == ">" and not aa > bb:
                     return False
-                if op == "<" and not a < b:
+                if op == "<" and not aa < bb:
                     return False
                 break
         else:

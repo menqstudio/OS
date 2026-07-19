@@ -9,8 +9,6 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from bro_security import SecurityError, verify_signed_document
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 # The two builder classes the supervisor may delegate. Kept as literals here rather

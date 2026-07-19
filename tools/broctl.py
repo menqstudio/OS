@@ -166,7 +166,17 @@ def cmd_sign(args) -> int:
 
 
 def cmd_inspect(args) -> int:
-    keys = load_trusted_keys(pathlib.Path(args.registry).resolve().parents[1])
+    # load_trusted_keys reads <root>/config/trusted-keys.json. Deriving root as the
+    # grandparent of --registry silently verifies THAT canonical path even when the
+    # operator named a different file, so an operator could believe they inspected
+    # registry X while the tool checked Y. Require --registry to BE the canonical path.
+    registry_path = pathlib.Path(args.registry).resolve()
+    root = registry_path.parent.parent
+    if (root / "config" / "trusted-keys.json").resolve() != registry_path:
+        print("RED: --registry must be a <root>/config/trusted-keys.json path: "
+              f"{registry_path}", file=sys.stderr)
+        return 1
+    keys = load_trusted_keys(root)
     print(f"GREEN: registry verified against its operator root; {len(keys)} keys")
     for key in sorted(keys.values(), key=lambda k: k.key_id):
         print(f"  {key.status:<8} {key.authority_type:<18} {key.key_id:<22} "

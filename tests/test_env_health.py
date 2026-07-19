@@ -20,6 +20,16 @@ class VersionTests(unittest.TestCase):
         self.assertTrue(satisfies("43.0.0", ">=41,<45"))
         self.assertFalse(satisfies("45.0.0", ">=41,<45"))
         self.assertTrue(satisfies("4.19.2", ">=4.18,<5"))
+
+    def test_satisfies_unequal_length_versions(self):
+        # 1.2 must compare as 1.2.0, not sort before an equal-prefix longer tuple —
+        # otherwise a compatible required dependency is wrongly RED-flagged.
+        self.assertTrue(satisfies("1.2", ">=1.2.0"))
+        self.assertTrue(satisfies("1.2", "<=1.2.0"))
+        self.assertTrue(satisfies("1.2.0", ">=1.2"))
+        self.assertTrue(satisfies("2.0", "==2.0.0"))
+        self.assertFalse(satisfies("1.2", ">1.2.0"))
+        self.assertFalse(satisfies("1.2.1", "<=1.2"))
         self.assertFalse(satisfies("5.0.0", ">=4.18,<5"))
 
 

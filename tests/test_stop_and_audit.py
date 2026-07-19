@@ -61,6 +61,15 @@ class AuditLedgerTests(unittest.TestCase):
         with self.assertRaises(AuditError):
             verify(self.ledger)
 
+    def test_corrupt_json_line_raises_audit_error(self):
+        # A corrupt record is a broken ledger; verify() must fail closed as AuditError,
+        # not surface a raw JSONDecodeError that AuditError-only callers would miss.
+        append(self.ledger, "a", {"x": 1})
+        self.ledger.write_text(self.ledger.read_text(encoding="utf-8") + "{not json\n",
+                               encoding="utf-8")
+        with self.assertRaises(AuditError):
+            verify(self.ledger)
+
     def test_ledger_inside_repo_is_refused(self):
         with self.assertRaises(AuditError):
             append(ROOT / "inside.jsonl", "x", {}, repo_root=ROOT)

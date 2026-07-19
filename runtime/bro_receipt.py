@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import pathlib
+import re
 import time
 from typing import Any
 
@@ -60,12 +61,10 @@ def catalog_sha256(root: pathlib.Path = ROOT) -> str:
 
 
 def _hex(value: Any, field: str, length: int) -> None:
-    if not isinstance(value, str) or len(value) != length:
-        raise ReceiptError(f"{field} must be {length} hex characters")
-    try:
-        int(value, 16)
-    except ValueError as exc:
-        raise ReceiptError(f"{field} is not hex") from exc
+    # int(value, 16) accepts a leading +/- sign and surrounding whitespace, so it is
+    # not a strict hex-digit check; match the [0-9a-f] regexes used everywhere else.
+    if not isinstance(value, str) or len(value) != length or not re.fullmatch(r"[0-9a-f]+", value):
+        raise ReceiptError(f"{field} must be {length} lowercase hex characters")
 
 
 def verify_receipt(document: dict[str, Any], keys: dict, *, task_id: str,

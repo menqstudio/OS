@@ -369,8 +369,11 @@ def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pat
             teardown_done = True
     finally:
         # Any unexpected error path still must not leave the tree running silently.
+        # Capture the result so a group that could not be confirmed stopped here is
+        # reported as uncontained, not left at the default True.
         if not teardown_done:
-            _teardown_group(pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root)
+            contained = _teardown_group(
+                pgid, task_id=task_id, audit_path=audit_path, repo_root=repo_root)
 
     if timed_out:
         return -1, stdout or "", "builder exceeded its lease and was terminated", True, contained

@@ -19,7 +19,6 @@ from bro_contracts import (
 from bro_evidence import EvidenceError, validate_chain, validate_criterion_evidence
 from bro_recovery import RecoveryError, _load_state
 from bro_repository_state import resolve_state
-from bro_security import SecurityError, verify_signed_document
 from bro_signature import SignatureError, load_trusted_keys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -57,7 +56,7 @@ def _signed_env(path_env: str, artifact_type: str, root: pathlib.Path = ROOT, no
         raise CompletionError(str(exc)) from exc
 
 
-_RECEIPT_ID = re.compile(r"^rcpt-[0-9a-f]{16}$")
+_RECEIPT_ID = re.compile(r"rcpt-[0-9a-f]{16}")
 
 # Tolerated clock skew for artifacts issued at a slightly-ahead runner clock.
 _CLOCK_SKEW = 60
@@ -125,7 +124,7 @@ def _validate_execution_receipts(task: dict[str, Any], tests: list[dict[str, Any
     passed: list[list[str]] = []
     for test in tests:
         cited = test.get("execution_receipt_id")
-        if not isinstance(cited, str) or not _RECEIPT_ID.match(cited):
+        if not isinstance(cited, str) or not _RECEIPT_ID.fullmatch(cited):
             raise CompletionError("completion test cites a malformed execution receipt id")
         path = receipt_store / f"{cited}.json"
         try:
@@ -252,6 +251,10 @@ def _check_manifest(task: dict[str, Any], agent_id: str, manifest: dict[str, Any
             not isinstance(x, dict) or x.get("status") != "passed"
             or not isinstance(x.get("command"), list) or not x.get("command")
             or any(not isinstance(arg, str) for arg in x.get("command"))
+            # evidence_event_id is dereferenced below (test["evidence_event_id"]); require
+            # it here so a manifest omitting it fails closed as a CompletionError rather
+            # than escaping the gate with an unhandled KeyError.
+            or not isinstance(x.get("evidence_event_id"), str) or not x.get("evidence_event_id")
             for x in tests):
         raise CompletionError("completion tests are not all passed")
     if manifest.get("open_risks") or manifest.get("rollback_ready") is not True:
