@@ -1,0 +1,26 @@
+# Low findings (13)
+
+Read-only audit; proposed patches. Grouped by theme; each is independently actionable.
+
+## Replay / freshness surface
+- **L-1 — Mode-grant `nonce` never consumed.** `runtime/bro_contracts.py:346`. Validated but never reserved/consumed (unlike release grants). Replay is inert today (bound to session/head/tree) but the field promises a control it doesn't provide. **Fix:** consume it against the nonce ledger, or remove it. **Accept:** a replayed mode grant is rejected, or the field is gone.
+- **L-4 — Evidence head has no monotonicity binding.** `runtime/bro_evidence.py:71-142`. `load_head` proves the list reproduces *that* head, but nothing binds it to "latest"; a retained older signed head enables a self-consistent truncated chain if the store path is influenced. **Fix:** bind `evidence_head_sha256` into the signed completion manifest and/or a monotonic head sequence checked against a high-water mark. **Accept:** an older signed head is rejected.
+- **L-5 — Completion manifest freshness never checked.** `runtime/bro_completion.py:221-279`. Unlike the verifier receipt, the gate never reads `issued_at_epoch` for age — a stale GREEN manifest replays if the repo is rolled back to the candidate. **Fix:** enforce a freshness window + per-turn nonce. **Accept:** a manifest older than the window is rejected.
+- **L-13 — Schema replay gaps.** `schemas/completion-manifest.schema.json`, `schemas/mode-grant.schema.json`. Completion-manifest lacks `expires_at_epoch`/`nonce`; mode-grant leaves `grant_id`/`session_id`/`agent_id`/`role` as unconstrained bare strings. **Fix:** add expiry+nonce; tighten string constraints (minLength/pattern) to match execution-lease. **Accept:** schemas reject empty/loose identifiers.
+
+## Unsigned / self-asserted trust
+- **L-2 — Identity hook trusts an unsigned profile.** `runtime/bro_identity_hook.py:57-76`. Validates canonical form of an env-referenced profile, not a signature. **Fix:** verify via the signed mode-grant binding (`agent_profile_sha256`). **Accept:** a forged env-referenced profile is rejected by the identity hook.
+- **L-8 — Control-room-API actor is self-asserted.** `runtime/bro_control_room_api.py:328-330`. Actor identity is string-matching on caller-supplied fields; read-only so no direct mutation, but it stamps a forged-actor command `valid:true`. **Fix:** bind command authority to a signed artifact before any consumer trusts `valid`. **Accept:** a forged `requested_by_type:"owner"` command is not marked valid.
+- **L-11 — `production:false` registry accepted on the production pin path.** `runtime/bro_signature.py`. The `production` flag is never checked; a dev registry (whose private halves exist on a dev machine) verifies fine in production if the pin matches. **Fix:** refuse `production:false` when the pin comes from the production `_FILE` path. **Accept:** a dev registry is rejected on the production path.
+
+## Integrity / audit coverage
+- **L-6 — Digest excludes `.pyc`/`__pycache__` → bytecode-shadowing gap.** `runtime/bro_protected.py:72-83`. Bytecode substitution is invisible to `verify_control_plane_digest` (CPython mtime/hash checks constrain exploitation). **Fix:** run enforcement with `-B`/`sys.dont_write_bytecode` and assert no `__pycache__` under digest roots, or include `.pyc` in the digest. **Accept:** a stray `.pyc` under a digest root is detected or impossible.
+- **L-7 — Hook authorize/settle decisions are not audit-logged.** `runtime/bro_control_plane.py:100-168`. Only supervisor lease issuance is recorded; allow/deny at the enforcement wall leaves no ledger entry. **Fix:** emit an audit record per authorize/settle verdict (tool, targets, verdict, tool_use_id). **Accept:** each gate decision appears in the ledger.
+
+## Windows platform
+- **L-9 — Windows lease process-tree not group-reaped.** `tools/bro_supervisor.py:307-309,328,338,358`. On Windows only the direct child is killed; a grandchild orphan retains injected `BRO_EXECUTION_LEASE` context. **Fix:** use a Windows Job Object (kill-on-close) so teardown reaps the whole tree. **Accept:** teardown kills grandchildren on Windows.
+
+## Hygiene / DLP
+- **L-3 — `max_tool_calls` is dead code.** `runtime/bro_execution_lease.py:130-134`. Validated but never counted; the ledger enforces single-use instead. **Fix:** enforce it with a per-lease atomic counter, or remove the misleading field. **Accept:** either the field is enforced or removed and documented.
+- **L-10 — `.gitignore` has no key-material patterns.** `.gitignore` + `tools/broctl.py`. `broctl keygen` writes cleartext keys to an arbitrary dir; a keydir inside the repo commits cleanly (deny patterns don't match `issuer.json`). **Fix:** add `*.key`/`*.pem`/`keys/` patterns; make broctl refuse in-repo out-dirs (see M-9). **Accept:** key files are gitignored and in-repo keydirs are refused.
+- **L-12 — Secret scanner recall gap.** `runtime/bro_secrets.py:22-52`. By design flags only known key shapes / keyword-tagged assignments; untagged high-entropy secrets pass into recovery/quarantine records. **Fix:** if stronger DLP is wanted, add an entropy heuristic for known credential-carrying fields (tuned to avoid git-hash false positives); otherwise document the accepted limitation. **Accept:** documented, or entropy heuristic added.
