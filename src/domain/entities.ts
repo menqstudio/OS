@@ -110,6 +110,39 @@ export interface NewMessage {
   body: string;
 }
 
+export interface KnowledgeNote {
+  id: string;
+  title: string;
+  body: string;
+  source: string;
+  tags: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewKnowledgeNote {
+  title: string;
+  body: string;
+  source: string;
+  tags: string;
+}
+
+export interface MemoryEntry {
+  id: string;
+  scope: string;
+  kind: string;
+  content: string;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewMemoryEntry {
+  scope: string;
+  kind: string;
+  content: string;
+}
+
 export interface NewProject {
   name: string;
   description: string;

@@ -5,8 +5,8 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  ActivityEvent, Agent, Approval, Conversation, Decision, Message, NewMessage, NewProject,
-  NewTask, Notification, Project, Task,
+  ActivityEvent, Agent, Approval, Conversation, Decision, KnowledgeNote, MemoryEntry, Message,
+  NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Task,
 } from '../domain/entities';
 
 /** True when running inside the Tauri desktop runtime. */
@@ -56,4 +56,17 @@ export const desktop = {
   listMessages: (conversationId: string) =>
     invoke<Message[]>('list_messages', { conversationId }),
   postMessage: (input: NewMessage) => invoke<Message>('post_message', { input }),
+
+  // knowledge
+  listKnowledge: () => invoke<KnowledgeNote[]>('list_knowledge'),
+  searchKnowledge: (query: string) => invoke<KnowledgeNote[]>('search_knowledge', { query }),
+  createKnowledge: (input: NewKnowledgeNote) => invoke<KnowledgeNote>('create_knowledge', { input }),
+  deleteKnowledge: (id: string) => invoke<void>('delete_knowledge', { id }),
+
+  // memory
+  listMemory: (scope?: string) => invoke<MemoryEntry[]>('list_memory', { scope: scope ?? null }),
+  createMemory: (input: NewMemoryEntry) => invoke<MemoryEntry>('create_memory', { input }),
+  setMemoryPinned: (id: string, pinned: boolean) =>
+    invoke<MemoryEntry>('set_memory_pinned', { id, pinned }),
+  deleteMemory: (id: string) => invoke<void>('delete_memory', { id }),
 };

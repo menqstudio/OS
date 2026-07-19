@@ -4,6 +4,8 @@ import { Home } from './Home';
 import { Generic } from './Generic';
 import { Chat } from './Chat';
 import { GroupChat } from './GroupChat';
+import { Knowledge } from './Knowledge';
+import { Memory } from './Memory';
 import { Projects } from './Projects';
 import { Tasks } from './Tasks';
 import { Agents } from './Agents';
@@ -21,6 +23,8 @@ const screens: Partial<Record<RouteId, React.FC>> = {
   projects: Projects,
   tasks: Tasks,
   agents: Agents,
+  knowledge: Knowledge,
+  memory: Memory,
   approvals: Approvals,
   notifications: Notifications,
   decisions: Decisions,

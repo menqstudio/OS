@@ -3,8 +3,9 @@
 
 use crate::AppState;
 use brops_core::{
-    repo, ActivityEvent, Agent, Approval, Conversation, Decision, Message, NewMessage, NewProject,
-    NewTask, Notification, Project, Task,
+    repo, ActivityEvent, Agent, Approval, Conversation, Decision, KnowledgeNote, MemoryEntry,
+    Message, NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification,
+    Project, Task,
 };
 use tauri::State;
 
@@ -147,4 +148,56 @@ pub fn list_messages(state: State<AppState>, conversation_id: String) -> Result<
 pub fn post_message(state: State<AppState>, input: NewMessage) -> Result<Message, String> {
     let conn = locked(&state)?;
     repo::chat::post_message(&conn, input).map_err(|e| e.to_string())
+}
+
+// --- knowledge ---
+
+#[tauri::command]
+pub fn list_knowledge(state: State<AppState>) -> Result<Vec<KnowledgeNote>, String> {
+    let conn = locked(&state)?;
+    repo::knowledge::list(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn search_knowledge(state: State<AppState>, query: String) -> Result<Vec<KnowledgeNote>, String> {
+    let conn = locked(&state)?;
+    repo::knowledge::search(&conn, &query).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_knowledge(state: State<AppState>, input: NewKnowledgeNote) -> Result<KnowledgeNote, String> {
+    let conn = locked(&state)?;
+    repo::knowledge::create(&conn, input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_knowledge(state: State<AppState>, id: String) -> Result<(), String> {
+    let conn = locked(&state)?;
+    repo::knowledge::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+// --- memory ---
+
+#[tauri::command]
+pub fn list_memory(state: State<AppState>, scope: Option<String>) -> Result<Vec<MemoryEntry>, String> {
+    let conn = locked(&state)?;
+    repo::memory::list(&conn, scope.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_memory(state: State<AppState>, input: NewMemoryEntry) -> Result<MemoryEntry, String> {
+    let conn = locked(&state)?;
+    repo::memory::create(&conn, input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_memory_pinned(state: State<AppState>, id: String, pinned: bool) -> Result<MemoryEntry, String> {
+    let conn = locked(&state)?;
+    repo::memory::set_pinned(&conn, &id, pinned).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_memory(state: State<AppState>, id: String) -> Result<(), String> {
+    let conn = locked(&state)?;
+    repo::memory::delete(&conn, &id).map_err(|e| e.to_string())
 }

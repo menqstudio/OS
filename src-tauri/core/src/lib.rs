@@ -7,8 +7,9 @@ pub mod domain;
 pub mod repo;
 
 pub use domain::{
-    ActivityEvent, Agent, Approval, Conversation, CoreError, CoreResult, Decision, Message,
-    NewMessage, NewProject, NewTask, Notification, Project, Task,
+    ActivityEvent, Agent, Approval, Conversation, CoreError, CoreResult, Decision, KnowledgeNote,
+    Message, MemoryEntry, NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask,
+    Notification, Project, Task,
 };
 
 /// A new UUID v4 string. IDs are opaque text everywhere in the schema.
@@ -99,15 +100,52 @@ mod tests {
     }
 
     #[test]
-    fn migrations_reach_v3_with_decisions_and_chat() {
+    fn migrations_reach_v4_with_all_tables() {
         let c = conn();
-        assert_eq!(db::current_version(&c).unwrap(), 3);
+        assert_eq!(db::current_version(&c).unwrap(), 4);
         // decisions table exists and is usable
         repo::decisions::create(&c, "T", "gev", "why").unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
         // conversations table exists and is usable
         let conv = repo::chat::create_conversation(&c, "direct", "Bro").unwrap();
         assert_eq!(conv.message_count, 0);
+        // knowledge + memory tables exist and are usable
+        repo::knowledge::create(&c, NewKnowledgeNote { title: "K".into(), body: "".into(), source: "".into(), tags: "".into() }).unwrap();
+        assert_eq!(repo::knowledge::list(&c).unwrap().len(), 1);
+        repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "note".into(), content: "M".into() }).unwrap();
+        assert_eq!(repo::memory::list(&c, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn knowledge_search_matches_title_body_tags() {
+        let c = conn();
+        repo::knowledge::create(&c, NewKnowledgeNote { title: "Migrations".into(), body: "forward only".into(), source: "".into(), tags: "sqlite".into() }).unwrap();
+        repo::knowledge::create(&c, NewKnowledgeNote { title: "IPC".into(), body: "typed boundary".into(), source: "".into(), tags: "architecture".into() }).unwrap();
+        assert_eq!(repo::knowledge::search(&c, "forward").unwrap().len(), 1);
+        assert_eq!(repo::knowledge::search(&c, "sqlite").unwrap().len(), 1);
+        assert_eq!(repo::knowledge::search(&c, "typed").unwrap().len(), 1);
+        assert_eq!(repo::knowledge::search(&c, "").unwrap().len(), 2); // empty = list all
+        assert_eq!(repo::knowledge::search(&c, "nomatch").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn memory_pin_orders_and_delete_works() {
+        let c = conn();
+        repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "note".into(), content: "first".into() }).unwrap();
+        let second = repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "second".into() }).unwrap();
+        // pin the older one so it sorts to the top
+        repo::memory::set_pinned(&c, &second.id, true).unwrap();
+        let list = repo::memory::list(&c, None).unwrap();
+        assert!(list[0].pinned);
+        assert_eq!(list[0].content, "second");
+        // bad kind rejected
+        assert!(matches!(
+            repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "bogus".into(), content: "x".into() }),
+            Err(CoreError::Invalid { field: "kind", .. })
+        ));
+        // delete removes it
+        repo::memory::delete(&c, &second.id).unwrap();
+        assert_eq!(repo::memory::list(&c, None).unwrap().len(), 1);
     }
 
     #[test]
@@ -162,6 +200,8 @@ mod tests {
         assert!(repo::notifications::list(&c).unwrap().len() >= 2);
         assert!(repo::decisions::list(&c).unwrap().len() >= 2);
         assert!(repo::chat::list_conversations(&c, None).unwrap().len() >= 2);
+        assert!(repo::knowledge::list(&c).unwrap().len() >= 2);
+        assert!(repo::memory::list(&c, None).unwrap().len() >= 2);
         // running again must not duplicate
         repo::seed(&c).unwrap();
         assert_eq!(repo::projects::list(&c).unwrap().len(), after_first);
