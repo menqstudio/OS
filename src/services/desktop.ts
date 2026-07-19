@@ -8,7 +8,7 @@ import type {
   ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
   DirListing, Integration, KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
   NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
-  RunStep, SecuritySummary, Task,
+  RunStep, SearchResult, SecuritySummary, Task,
 } from '../domain/entities';
 
 /** True when running inside the Tauri desktop runtime. */
@@ -102,6 +102,9 @@ export const desktop = {
   listIntegrations: () => invoke<Integration[]>('list_integrations'),
   setIntegrationStatus: (id: string, status: string) =>
     invoke<Integration>('set_integration_status', { id, status }),
+
+  // global search (across projects, tasks, knowledge, decisions, agents, chats, memory)
+  searchAll: (query: string) => invoke<SearchResult[]>('search_all', { query }),
 
   // analytics / security (computed, read-only)
   getAnalytics: () => invoke<Metric[]>('get_analytics'),

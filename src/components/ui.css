@@ -137,3 +137,19 @@
 .ask-stream { white-space: pre-wrap; }
 
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* toasts (stacked bottom-right, auto-dismiss, click to dismiss) */
+.toaster { position: fixed; right: var(--menq-space-5); bottom: var(--menq-space-5); z-index: 80;
+  display: flex; flex-direction: column; gap: var(--menq-space-3); align-items: flex-end; pointer-events: none; }
+.toast { pointer-events: auto; cursor: pointer; text-align: left; font: inherit;
+  min-width: 220px; max-width: min(380px, 90vw);
+  background: var(--brops-elevated); color: var(--brops-text);
+  border: 1px solid var(--brops-border); border-left: 3px solid var(--brops-accent);
+  border-radius: var(--menq-radius-md); box-shadow: var(--menq-shadow-2);
+  padding: 10px 13px; font-size: 13px;
+  animation: toast-in var(--menq-motion-fast) ease-out; }
+.toast--success { border-left-color: var(--menq-color-success); }
+.toast--error { border-left-color: var(--menq-color-danger); }
+.toast--info { border-left-color: var(--menq-color-info); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }

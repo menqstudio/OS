@@ -5,6 +5,7 @@ import {
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import { useToast } from '../components/toast';
 import { statusTone, TASK_STATUSES, PRIORITIES } from '../domain/enums';
 
 type Tab = { key: string; label: string; status: string };
@@ -79,6 +80,7 @@ function NewTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
 
 export function Tasks() {
   const { t } = useApp();
+  const toast = useToast();
   const [tab, setTab] = useState<string>('inbox');
   const [creating, setCreating] = useState(false);
   const activeTab = TABS.find((x) => x.key === tab) ?? TABS[0];
@@ -96,7 +98,12 @@ export function Tasks() {
         actions={<Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>}
       />
 
-      {creating && <NewTaskForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
+      {creating && (
+        <NewTaskForm
+          onClose={() => setCreating(false)}
+          onCreated={() => { s.reload(); toast(t('toast.created'), 'success'); }}
+        />
+      )}
 
       <div className="row" style={{ gap: 8, marginBottom: 16 }}>
         {TABS.map((x) => (

@@ -45,8 +45,10 @@
   border-radius: var(--menq-radius-card); box-shadow: var(--menq-shadow-2); overflow: hidden; }
 .palette input { width: 100%; border: none; background: transparent; color: var(--brops-text); padding: var(--menq-space-4); font-size: 15px; outline: none; }
 .palette-list { max-height: 340px; overflow-y: auto; border-top: 1px solid var(--brops-border); }
-.palette-item { display: flex; align-items: center; gap: var(--menq-space-3); padding: 10px var(--menq-space-4); }
+.palette-item { display: flex; align-items: center; gap: var(--menq-space-3); padding: 10px var(--menq-space-4); cursor: pointer; }
 .palette-item.active { background: var(--menq-color-selected); }
+.palette-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--brops-muted);
+  padding: 8px var(--menq-space-4) 4px; border-top: 1px solid var(--brops-border); margin-top: 4px; }
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: 64px 1fr; }

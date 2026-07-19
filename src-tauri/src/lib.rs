@@ -68,6 +68,7 @@ pub fn run() {
             commands::delete_automation,
             commands::list_integrations,
             commands::set_integration_status,
+            commands::search_all,
             commands::get_analytics,
             commands::get_security_summary,
             commands::ai_status,

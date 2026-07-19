@@ -10,7 +10,7 @@ pub use domain::{
     ActivityEvent, Agent, Approval, Automation, Conversation, CoreError, CoreResult, Decision,
     Event, Integration, KnowledgeNote, Message, MemoryEntry, Metric, NewAutomation, NewEvent,
     NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
-    RunStep, SecuritySummary, Task,
+    RunStep, SearchResult, SecuritySummary, Task,
 };
 
 /// A new UUID v4 string. IDs are opaque text everywhere in the schema.
@@ -263,6 +263,17 @@ mod tests {
         assert_eq!(repo::knowledge::search(&c, "typed").unwrap().len(), 1);
         assert_eq!(repo::knowledge::search(&c, "").unwrap().len(), 2); // empty = list all
         assert_eq!(repo::knowledge::search(&c, "nomatch").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn search_finds_across_entities() {
+        let c = conn();
+        repo::seed(&c).unwrap();
+        // "Localization" appears in a seeded project name and an agent role.
+        assert!(repo::search::global(&c, "Localization").unwrap().len() >= 1);
+        // an empty query returns nothing (no accidental full dump).
+        assert_eq!(repo::search::global(&c, "").unwrap().len(), 0);
+        assert_eq!(repo::search::global(&c, "   ").unwrap().len(), 0);
     }
 
     #[test]

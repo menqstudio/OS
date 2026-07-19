@@ -142,6 +142,9 @@ export const en = {
 
   'palette.placeholder': 'Type a command or search…',
   'palette.navigate': 'Navigate',
+  'palette.results': 'Results',
+
+  'toast.created': 'Created',
 
   'field.owner': 'Owner',
   'field.risk': 'Risk',
