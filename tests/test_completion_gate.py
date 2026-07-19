@@ -66,8 +66,10 @@ class CompletionGateTests(unittest.TestCase):
         with (
             patch("bro_completion._signed_env", return_value=manifest()),
             patch("bro_completion.resolve_state", return_value=RepositoryState(ROOT, ROOT, "x", "a" * 40, "b" * 64)),
+            patch("bro_completion._resolved_keys", return_value={}),
+            patch("bro_completion._require_signer_identity"),
             patch("bro_completion.validate_evidence_chain"),
-            patch("bro_completion._validate_execution_receipts"),
+            patch("bro_completion._validate_execution_receipts", return_value=[]),
             patch("bro_completion._clean_repository", side_effect=CompletionError("repository is dirty")),
         ):
             with self.assertRaises(CompletionError):
@@ -77,8 +79,10 @@ class CompletionGateTests(unittest.TestCase):
         with (
             patch("bro_completion._signed_env", return_value=manifest()),
             patch("bro_completion.resolve_state", return_value=RepositoryState(ROOT, ROOT, "x", "a" * 40, "b" * 64)),
+            patch("bro_completion._resolved_keys", return_value={}),
+            patch("bro_completion._require_signer_identity"),
             patch("bro_completion.validate_evidence_chain"),
-            patch("bro_completion._validate_execution_receipts"),
+            patch("bro_completion._validate_execution_receipts", return_value=[]),
             patch("bro_completion._clean_repository"),
             patch("bro_completion._no_pending_execution", side_effect=CompletionError("pending or ambiguous execution lease exists")),
         ):
@@ -89,6 +93,8 @@ class CompletionGateTests(unittest.TestCase):
         with (
             patch("bro_completion._signed_env", return_value=manifest()),
             patch("bro_completion.resolve_state", return_value=RepositoryState(ROOT, ROOT, "x", "a" * 40, "b" * 64)),
+            patch("bro_completion._resolved_keys", return_value={}),
+            patch("bro_completion._require_signer_identity"),
             patch("bro_completion.validate_evidence_chain", side_effect=CompletionError("evidence chain linkage mismatch")),
         ):
             with self.assertRaises(CompletionError):
@@ -454,6 +460,7 @@ class StopGateFullFlowTests(unittest.TestCase):
         shutil.copytree(ROOT, cls.root, ignore=shutil.ignore_patterns(
             ".git", "__pycache__", "*.pyc", "scratchpad", ".pytest_cache"))
         cls.keys = {a: generate_key(a, f"dev-{a}", False) for a in FLOW_KEYS}
+        cls.keys["builder"]["subject_agent_id"] = FLOW_AGENT  # bind builder identity to its key
         cls.now = int(_time.time())
         (cls.root / "config" / "trusted-keys.json").write_text(
             json.dumps(build_registry(list(cls.keys.values()), cls.now - 3600, 365 * 24 * 3600)),

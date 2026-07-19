@@ -49,7 +49,8 @@ def _artifacts_for(authority: str) -> list[str]:
     return sorted(a for a, required in ARTIFACT_AUTHORITY.items() if required == authority)
 
 
-def generate_key(authority: str, key_id: str, production: bool) -> dict:
+def generate_key(authority: str, key_id: str, production: bool,
+                 subject_agent_id: str | None = None) -> dict:
     if authority not in AUTHORITY_TYPES:
         raise SignatureError(f"unknown authority type: {authority}")
     if production:
@@ -57,7 +58,7 @@ def generate_key(authority: str, key_id: str, production: bool) -> dict:
             "broctl does not generate production keys: a production root belongs "
             "offline, on hardware this tool cannot reach")
     private = Ed25519PrivateKey.generate()
-    return {
+    key = {
         "key_id": key_id,
         "authority_type": authority,
         "private_key": private.private_bytes_raw().hex(),
@@ -65,6 +66,9 @@ def generate_key(authority: str, key_id: str, production: bool) -> dict:
         "production": False,
         "warning": "DEVELOPMENT KEY - NOT FOR PRODUCTION - stored unencrypted",
     }
+    if subject_agent_id is not None:
+        key["subject_agent_id"] = subject_agent_id
+    return key
 
 
 def sign_payload(private_key_hex: str, payload: dict) -> dict:
@@ -96,6 +100,8 @@ def build_registry(keys: list[dict], now: int, validity: int) -> dict:
                 "not_after_epoch": now + validity,
                 "status": ACTIVE,
                 "issued_by": operator["key_id"],
+                **({"subject_agent_id": key["subject_agent_id"]}
+                   if key.get("subject_agent_id") else {}),
             }
             for key in sorted(keys, key=lambda k: k["key_id"])
         ],

@@ -197,6 +197,7 @@ class DurableOrchestrationRuntime:
         now_epoch: int,
         reason_code: str,
         evidence_refs: list[str],
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         previous = None
         records = self._records(task_id)
@@ -216,6 +217,10 @@ class DurableOrchestrationRuntime:
             "reason_code": reason_code,
             "evidence_refs": _strings(evidence_refs, "evidence_refs"),
         }
+        if extra:
+            # Persisted inside the same hash-chained record, so a completion's
+            # authorization proof is durable and tamper-evident.
+            payload.update(extra)
         self._append(task_id, "transition", now_epoch, payload)
         return self.task_snapshot(task_id, now_epoch)
 
@@ -439,25 +444,60 @@ class DurableOrchestrationRuntime:
         return self._transition(task_id, "verification", "agent", actor_id, now_epoch,
                                 "verification-requested", refs)
 
-    def complete_task(self, task_id: str, *, actor_id: str, now_epoch: int, evidence_refs: list[str]) -> dict[str, Any]:
+    def complete_task(self, task_id: str, *, actor_id: str, now_epoch: int, evidence_refs: list[str],
+                      completion_manifest: dict[str, Any] | None = None,
+                      verifier_receipt: dict[str, Any] | None = None) -> dict[str, Any]:
         state = self._state(task_id)
         contract = self._contract(task_id)
         verification = contract.get("verification") or {}
+        extra: dict[str, Any] | None = None
         if verification.get("required") is True:
             # The contract said an independent verdict was required and the
             # runtime never asked for one: it read that field at write time and
-            # ignored it at the only moment it mattered.
+            # ignored it at the only moment it mattered. Reaching the verification
+            # state is not the verdict; an independent verifier receipt is.
             if state != "verification":
                 raise OrchestrationRuntimeError(
                     "this task requires independent verification; it must pass "
                     "through the verification state, not go straight to completed")
-        elif state != "running":
-            raise OrchestrationRuntimeError("completion requires running task")
+            proof = self._authorize_independent_completion(
+                contract, actor_id, completion_manifest, verifier_receipt)
+            # The refs recorded are the verified manifest's evidence, not whatever
+            # the caller passed, and the authorization proof is persisted in the
+            # same hash-chained transition so a later audit can re-verify it even if
+            # the evidence store is gone.
+            refs = list(proof["evidence_event_ids"])
+            extra = {"completion_proof": proof}
+        else:
+            if state != "running":
+                raise OrchestrationRuntimeError("completion requires running task")
+            refs = _strings(evidence_refs, "evidence_refs", required=True)
+            self._resolve_evidence(task_id, refs)
         if contract.get("agent_id") != actor_id:
             raise OrchestrationRuntimeError("completion actor is not task assignee")
-        refs = _strings(evidence_refs, "evidence_refs", required=True)
-        self._resolve_evidence(task_id, refs)
-        return self._transition(task_id, "completed", "agent", actor_id, now_epoch, "task-completed", refs)
+        return self._transition(task_id, "completed", "agent", actor_id, now_epoch,
+                                "task-completed", refs, extra=extra)
+
+    def _authorize_independent_completion(self, contract: dict[str, Any], actor_id: str,
+                                          completion_manifest: dict[str, Any] | None,
+                                          verifier_receipt: dict[str, Any] | None) -> dict[str, Any]:
+        """A verification-required task may complete only on an independent
+        verifier-signed GREEN receipt (builder != verifier), matching the Stop gate.
+        The runtime checks it in-process with its own trusted keys and evidence store
+        and its OWN clock (now=None) — the caller cannot rewind time to revive an
+        expired or future-issued receipt. Returns the authorization proof to persist."""
+        if self.evidence_keys is None or self.evidence_store is None:
+            raise OrchestrationRuntimeError(
+                "completion verification requires evidence keys and an evidence store")
+        from bro_completion import CompletionError, authorize_completion_docs
+        try:
+            _manifest, _task_hash, proof = authorize_completion_docs(
+                contract, actor_id, manifest_doc=completion_manifest,
+                receipt_doc=verifier_receipt, keys=self.evidence_keys,
+                evidence_store=self.evidence_store, root=self.root, now=None)
+        except CompletionError as exc:
+            raise OrchestrationRuntimeError(f"completion verification RED: {exc}") from exc
+        return proof
 
     def task_snapshot(self, task_id: str, now_epoch: int) -> dict[str, Any]:
         records = self._records(task_id)

@@ -59,6 +59,32 @@ def _signed_env(path_env: str, artifact_type: str, root: pathlib.Path = ROOT, no
 
 _RECEIPT_ID = re.compile(r"^rcpt-[0-9a-f]{16}$")
 
+# Tolerated clock skew for artifacts issued at a slightly-ahead runner clock.
+_CLOCK_SKEW = 60
+
+
+def _resolved_keys(keys: dict | None, root: pathlib.Path) -> dict:
+    from bro_signature import load_trusted_keys
+    return keys if keys is not None else load_trusted_keys(root)
+
+
+def _require_signer_identity(keys: dict, payload: dict[str, Any], expected_agent_id: str,
+                             label: str) -> None:
+    """The trusted key that signed `payload` must be cryptographically bound
+    (subject_agent_id) to the identity the payload claims.
+
+    Otherwise any holder of a builder- or verifier-authority key could sign as any
+    agent by simply writing that agent's id into the artifact, and builder != verifier
+    would be a string comparison one key could satisfy on both sides. Binding the
+    claimed identity to the signing key closes that."""
+    key = keys.get(payload.get("key_id")) if isinstance(keys, dict) else None
+    subject = getattr(key, "subject_agent_id", None) if key is not None else None
+    if not subject:
+        raise CompletionError(f"{label} signing key is not bound to an agent identity")
+    if subject != expected_agent_id:
+        raise CompletionError(
+            f"{label} is signed by a key bound to {subject!r}, not the claimed {expected_agent_id!r}")
+
 
 def _required_commands(task: dict[str, Any]) -> list[list[str]]:
     """The commands that MUST have a passing receipt, taken ONLY from the signed
@@ -77,7 +103,8 @@ def _required_commands(task: dict[str, Any]) -> list[list[str]]:
 
 
 def _validate_execution_receipts(task: dict[str, Any], tests: list[dict[str, Any]], candidate_head: str,
-                                 candidate_tree: str, root: pathlib.Path, now: int | None) -> None:
+                                 candidate_tree: str, root: pathlib.Path, now: int | None,
+                                 *, keys: dict | None = None, store: pathlib.Path | None = None) -> None:
     """Make "the tests passed" a checked execution receipt, not a builder's claim.
 
     Each completion-manifest test cites an execution receipt id. The receipt is an
@@ -88,19 +115,19 @@ def _validate_execution_receipts(task: dict[str, Any], tests: list[dict[str, Any
     so a green `true` — which the builder controls in both the manifest and the
     signed receipt — cannot stand in for the suite. The cited id must match the
     receipt's own signed receipt_id (a copy under another filename is rejected) and
-    is unique by signed id, so one execution cannot back two claims."""
+    is unique by signed id, so one execution cannot back two claims. Returns the
+    ordered list of verified receipt ids so the completion proof can persist them."""
     from bro_receipt import ReceiptError, verify_receipt
-    from bro_signature import load_trusted_keys
-    trusted = load_trusted_keys(root)
-    store = _external_dir("BRO_EXECUTION_RECEIPTS")
+    trusted = _resolved_keys(keys, root)
+    receipt_store = store if store is not None else _external_dir("BRO_EXECUTION_RECEIPTS")
     required = _required_commands(task)
-    seen_ids: set[str] = set()
+    seen_ids: list[str] = []
     passed: list[list[str]] = []
     for test in tests:
         cited = test.get("execution_receipt_id")
         if not isinstance(cited, str) or not _RECEIPT_ID.match(cited):
             raise CompletionError("completion test cites a malformed execution receipt id")
-        path = store / f"{cited}.json"
+        path = receipt_store / f"{cited}.json"
         try:
             payload = verify_receipt(_json(path), trusted, task_id=task["task_id"],
                                      candidate_head=candidate_head, candidate_tree=candidate_tree,
@@ -114,7 +141,7 @@ def _validate_execution_receipts(task: dict[str, Any], tests: list[dict[str, Any
                 f"execution receipt id mismatch: signed {payload['receipt_id']!r}, cited {cited!r}")
         if payload["receipt_id"] in seen_ids:
             raise CompletionError(f"execution receipt cited more than once: {payload['receipt_id']}")
-        seen_ids.add(payload["receipt_id"])
+        seen_ids.append(payload["receipt_id"])
         if payload["exit_code"] != 0:
             raise CompletionError(f"execution receipt {cited} records a non-zero exit code")
         if payload["command"] != test.get("command"):
@@ -124,6 +151,7 @@ def _validate_execution_receipts(task: dict[str, Any], tests: list[dict[str, Any
     for command in required:
         if command not in passed:
             raise CompletionError(f"no passing execution receipt for required command: {command}")
+    return seen_ids
 
 
 def _external_dir(env_name: str) -> pathlib.Path:
@@ -142,7 +170,8 @@ def _external_dir(env_name: str) -> pathlib.Path:
 
 
 def validate_evidence_chain(task_id: str, event_ids: list[str],
-                            root: pathlib.Path = ROOT) -> str:
+                            root: pathlib.Path = ROOT, *, keys: dict | None = None,
+                            store: pathlib.Path | None = None) -> str:
     """Prove the submitted events are the whole chain, not a flattering prefix.
 
     The previous implementation checked backward linkage over a caller-supplied
@@ -159,8 +188,9 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
     Delegating to the Ed25519 path is what makes the head an authority.
     """
     try:
-        return validate_chain(task_id, event_ids, load_trusted_keys(root),
-                              store=_external_dir("BRO_EVIDENCE_STORE"))
+        return validate_chain(task_id, event_ids,
+                              keys if keys is not None else load_trusted_keys(root),
+                              store=store if store is not None else _external_dir("BRO_EVIDENCE_STORE"))
     except (EvidenceError, SignatureError) as exc:
         raise CompletionError(str(exc)) from exc
 
@@ -189,8 +219,14 @@ def _clean_repository(root: pathlib.Path) -> None:
         raise CompletionError("repository is dirty")
 
 
-def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path = ROOT) -> tuple[dict[str, Any], str]:
-    manifest = _signed_env("BRO_COMPLETION_MANIFEST", "completion-manifest", root)
+def _check_manifest(task: dict[str, Any], agent_id: str, manifest: dict[str, Any], *,
+                    root: pathlib.Path, now: int | None, keys: dict | None,
+                    evidence_store: pathlib.Path | None, receipt_store: pathlib.Path | None,
+                    require_live: bool) -> tuple[dict[str, Any], str]:
+    """Artifact-only validation of a completion manifest, shared by the Stop gate
+    (env + live repository) and the durable runtime (in-process keys/store). When
+    ``require_live`` the manifest candidate must equal the current repository state;
+    otherwise it is bound internally (the durable runtime holds no checkout)."""
     required = {"schema", "task_id", "agent_id", "task_contract_sha256", "candidate_head", "candidate_tree", "done_criteria", "tests", "evidence_event_ids", "open_risks", "rollback_ready", "issued_at_epoch"}
     if set(manifest) - {"artifact_type", "key_id"} != required or manifest.get("schema") != 1:
         raise CompletionError("invalid completion manifest shape")
@@ -198,9 +234,14 @@ def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path 
     for key, value in {"task_id": task["task_id"], "agent_id": agent_id, "task_contract_sha256": task_hash}.items():
         if manifest.get(key) != value:
             raise CompletionError(f"completion manifest binding mismatch: {key}")
-    state = resolve_state(root)
-    if manifest["candidate_head"] != state.head_sha or manifest["candidate_tree"] != state.tree_identity:
-        raise CompletionError("completion candidate does not match current repository state")
+    trusted = _resolved_keys(keys, root)
+    # The manifest's builder identity must be the identity its signing key is bound
+    # to, not merely a string it wrote.
+    _require_signer_identity(trusted, manifest, manifest["agent_id"], "completion manifest")
+    if require_live:
+        state = resolve_state(root)
+        if manifest["candidate_head"] != state.head_sha or manifest["candidate_tree"] != state.tree_identity:
+            raise CompletionError("completion candidate does not match current repository state")
     criteria = manifest.get("done_criteria")
     if not isinstance(criteria, list) or [x.get("criterion") for x in criteria if isinstance(x, dict)] != task["done_criteria"]:
         raise CompletionError("completion done criteria do not exactly match task")
@@ -216,7 +257,7 @@ def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path 
     if manifest.get("open_risks") or manifest.get("rollback_ready") is not True:
         raise CompletionError("completion has open risks or rollback is not ready")
     chain_ids = manifest["evidence_event_ids"]
-    validate_evidence_chain(task["task_id"], chain_ids, root)
+    validate_evidence_chain(task["task_id"], chain_ids, root, keys=trusted, store=evidence_store)
     # The criteria above only had to cite *some* evidence id. Nothing tied those
     # ids to the chain that was just proven, so a criterion could rest on a real,
     # signed event belonging to a different chain entirely.
@@ -229,16 +270,29 @@ def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path 
         raise CompletionError(str(exc)) from exc
     # Execution receipts feed the verdict: each test's "passed" must rest on a
     # runner-signed receipt against this exact candidate, not the builder's word.
-    _validate_execution_receipts(task, tests, manifest["candidate_head"],
-                                 manifest["candidate_tree"], root, None)
+    receipt_ids = _validate_execution_receipts(task, tests, manifest["candidate_head"],
+                                               manifest["candidate_tree"], root, now,
+                                               keys=trusted, store=receipt_store)
+    return manifest, task_hash, receipt_ids
+
+
+def validate_completion(task: dict[str, Any], agent_id: str, root: pathlib.Path = ROOT) -> tuple[dict[str, Any], str]:
+    manifest = _signed_env("BRO_COMPLETION_MANIFEST", "completion-manifest", root)
+    manifest, task_hash, _receipt_ids = _check_manifest(task, agent_id, manifest, root=root, now=None,
+                                                        keys=None, evidence_store=None, receipt_store=None,
+                                                        require_live=True)
     _clean_repository(root)
     _no_pending_execution()
     _no_pending_recovery(task["task_id"])
     return manifest, task_hash
 
 
-def validate_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], task_hash: str, root: pathlib.Path = ROOT) -> dict[str, Any]:
-    receipt = _signed_env("BRO_VERIFIER_RECEIPT", "verifier-receipt", root)
+def _check_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], task_hash: str,
+                            receipt: dict[str, Any], *, root: pathlib.Path, now: int | None,
+                            keys: dict | None, evidence_store: pathlib.Path | None) -> dict[str, Any]:
+    """Artifact-only validation of an independent verifier receipt, shared by the
+    Stop gate and the durable runtime: bound to the manifest and candidate, GREEN and
+    unexpired, builder != verifier, independence meeting the risk floor."""
     required = {"schema", "receipt_id", "task_id", "builder_agent_id", "verifier_agent_id", "verifier_role", "independence_level", "task_contract_sha256", "completion_manifest_sha256", "candidate_head", "candidate_tree", "evidence_event_ids", "verdict", "issued_at_epoch", "expires_at_epoch"}
     if set(receipt) - {"artifact_type", "key_id"} != required or receipt.get("schema") != 1 or receipt.get("verdict") != "GREEN":
         raise CompletionError("invalid verifier receipt shape or verdict")
@@ -247,9 +301,27 @@ def validate_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], ta
     for key, value in expected.items():
         if receipt.get(key) != value:
             raise CompletionError(f"verifier receipt binding mismatch: {key}")
-    now = int(time.time())
-    if not isinstance(receipt["issued_at_epoch"], int) or not isinstance(receipt["expires_at_epoch"], int) or receipt["expires_at_epoch"] <= now:
-        raise CompletionError("verifier receipt expired or invalid")
+    # The verifier identity must be the one its signing key is bound to; otherwise
+    # any verifier-authority key could sign claiming to be the designated verifier.
+    trusted = _resolved_keys(keys, root)
+    _require_signer_identity(trusted, receipt, receipt["verifier_agent_id"], "verifier receipt")
+    # Runtime-owned clock (moment is int(time.time()) unless a trusted caller pins
+    # it): reject a future-issued receipt, an empty validity window, expiry, and one
+    # that predates the manifest it verifies. The durable runtime passes now=None so
+    # a caller cannot rewind the clock to revive an expired or future receipt.
+    issued, expires = receipt["issued_at_epoch"], receipt["expires_at_epoch"]
+    if not isinstance(issued, int) or not isinstance(expires, int):
+        raise CompletionError("verifier receipt timestamps must be integers")
+    moment = int(time.time()) if now is None else now
+    if issued >= expires:
+        raise CompletionError("verifier receipt has an empty validity window")
+    if issued > moment + _CLOCK_SKEW:
+        raise CompletionError("verifier receipt is issued in the future")
+    if expires <= moment:
+        raise CompletionError("verifier receipt expired")
+    manifest_issued = manifest.get("issued_at_epoch")
+    if isinstance(manifest_issued, int) and issued < manifest_issued:
+        raise CompletionError("verifier receipt predates the completion manifest")
     try:
         validate_verifier_assignment(builder_agent_id=task["agent_id"], verifier_agent_id=receipt["verifier_agent_id"], verifier_role=receipt["verifier_role"], risk=task["risk"], root=root)
     except AuthorityError as exc:
@@ -259,8 +331,65 @@ def validate_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], ta
     level = receipt["independence_level"]
     if level not in LEVELS or LEVELS.index(level) < LEVELS.index(minimum):
         raise CompletionError("verifier independence level is insufficient")
-    validate_evidence_chain(task["task_id"], receipt["evidence_event_ids"])
+    validate_evidence_chain(task["task_id"], receipt["evidence_event_ids"], root,
+                            keys=trusted, store=evidence_store)
     return receipt
+
+
+def validate_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], task_hash: str, root: pathlib.Path = ROOT) -> dict[str, Any]:
+    receipt = _signed_env("BRO_VERIFIER_RECEIPT", "verifier-receipt", root)
+    return _check_verifier_receipt(task, manifest, task_hash, receipt, root=root, now=None,
+                                   keys=None, evidence_store=None)
+
+
+def _verify_doc(document: Any, artifact_type: str, keys: dict, now: int | None) -> dict[str, Any]:
+    from bro_signature import SignatureError, verify_artifact
+    if not isinstance(document, dict):
+        raise CompletionError(f"{artifact_type} document is required")
+    try:
+        return verify_artifact(document, artifact_type, keys, now=now)
+    except SignatureError as exc:
+        raise CompletionError(str(exc)) from exc
+
+
+def authorize_completion_docs(task: dict[str, Any], agent_id: str, *, manifest_doc: Any,
+                              receipt_doc: Any, keys: dict, evidence_store: pathlib.Path,
+                              root: pathlib.Path = ROOT, now: int | None = None) -> tuple[dict[str, Any], str]:
+    """In-process completion authorization for the durable runtime — the same
+    artifact checks as the Stop gate (builder-signed manifest, execution receipts
+    feeding the verdict, and, when verification is required, an independent verifier
+    receipt with builder != verifier), keyed off supplied trusted keys and evidence
+    store rather than the builder's environment and without the live-repository
+    checks. Execution receipts are looked up in the same evidence store."""
+    manifest = _verify_doc(manifest_doc, "completion-manifest", keys, now)
+    manifest, task_hash, receipt_ids = _check_manifest(
+        task, agent_id, manifest, root=root, now=now, keys=keys, evidence_store=evidence_store,
+        receipt_store=evidence_store, require_live=False)
+    # The proof carries the WHOLE verified signed documents, not only their hashes:
+    # a hash proves a document only to someone who still has the document, and the
+    # evidence store is deletable. With the documents persisted in the hash-chained
+    # transition, a later audit can re-verify the signatures, key ids, verdict,
+    # identity and timestamps from the record alone.
+    proof = {
+        "task_contract_sha256": task_hash,
+        "completion_manifest_sha256": canonical_json_sha256(manifest),
+        "completion_manifest_document": manifest_doc,
+        "candidate_head": manifest["candidate_head"],
+        "candidate_tree": manifest["candidate_tree"],
+        "evidence_event_ids": list(manifest["evidence_event_ids"]),
+        "execution_receipt_ids": receipt_ids,
+    }
+    if (task.get("verification") or {}).get("required") is True:
+        receipt = _verify_doc(receipt_doc, "verifier-receipt", keys, now)
+        _check_verifier_receipt(task, manifest, task_hash, receipt, root=root, now=now,
+                                keys=keys, evidence_store=evidence_store)
+        proof.update({
+            "verifier_agent_id": receipt["verifier_agent_id"],
+            "verifier_receipt_id": receipt["receipt_id"],
+            "verifier_receipt_sha256": canonical_json_sha256(receipt),
+            "verifier_receipt_document": receipt_doc,
+        })
+    return manifest, task_hash, proof
 
 
 def _authenticated_task(agent_id: str, session_id: str, role: str, mode: str,

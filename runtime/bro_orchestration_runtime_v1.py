@@ -272,12 +272,15 @@ class DurableOrchestrationRuntimeV1(DurableOrchestrationRuntime):
                 evidence_refs=evidence_refs)
 
     def complete_task(self, task_id: str, *, actor_id: str, lease_id: str,
-                      now_epoch: int, evidence_refs: list[str]) -> dict[str, Any]:
+                      now_epoch: int, evidence_refs: list[str],
+                      completion_manifest: dict[str, Any] | None = None,
+                      verifier_receipt: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._claim_guard():
             self._require_lease(task_id, actor_id, lease_id, now_epoch)
             return super().complete_task(
                 task_id, actor_id=actor_id, now_epoch=now_epoch,
-                evidence_refs=evidence_refs)
+                evidence_refs=evidence_refs, completion_manifest=completion_manifest,
+                verifier_receipt=verifier_receipt)
 
     def recover_task(self, task_id: str, *, owner_id: str, now_epoch: int,
                      evidence_refs: list[str],

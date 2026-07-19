@@ -103,6 +103,11 @@ class TrustedKey:
     not_after_epoch: int
     status: str
     issued_by: str
+    # The agent identity this key speaks for. Optional for backward compatibility
+    # (older registries omit it), but the completion path REQUIRES it for the
+    # builder and verifier keys so a signer cannot claim an identity that is not
+    # cryptographically bound to its key.
+    subject_agent_id: str | None = None
 
 
 def canonical_bytes(value: dict[str, Any]) -> bytes:
@@ -160,6 +165,9 @@ def _parse_key(entry: Any) -> TrustedKey:
         if not isinstance(entry.get(field), int):
             raise SignatureError(f"trusted key entry missing {field}")
     _public_key(entry["public_key"])
+    subject = entry.get("subject_agent_id")
+    if subject is not None and (not isinstance(subject, str) or not subject):
+        raise SignatureError(f"key {entry['key_id']} has an invalid subject_agent_id")
     return TrustedKey(
         key_id=entry["key_id"],
         public_key=entry["public_key"],
@@ -169,6 +177,7 @@ def _parse_key(entry: Any) -> TrustedKey:
         not_after_epoch=entry["not_after_epoch"],
         status=entry["status"],
         issued_by=entry["issued_by"],
+        subject_agent_id=subject,
     )
 
 
