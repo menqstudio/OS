@@ -11,6 +11,40 @@ harness process environment, which an agent's own tool subprocesses cannot
 mutate) and by `tools/bro_backup.py`. See `docs/OPERATING_MODES.md` for the
 review/work/release model and `docs/ARCHITECTURE.md` for the control plane.
 
+## 0. First: verify deployment posture
+
+Before the runtime enforces anything, prove the environment it runs in is
+hardened. `tools/bro_deploy_preflight.py` is a fail-closed check that turns the
+configuration below from prose into a gate:
+
+```
+python3 tools/bro_deploy_preflight.py
+```
+
+It exits non-zero — printing each `RED:` reason — unless all of the following hold:
+
+- **The operator-root pin comes from a file.** `BRO_OPERATOR_ROOT_PUBKEY_FILE` is
+  set to an operator-controlled file, outside the repo, owner-only, resolving to the
+  key that signed the registry. The raw `BRO_OPERATOR_ROOT_PUBKEY` env var is for CI
+  only; a production deployment that relies on it is reported un-hardened.
+- **The registry is hardened.** It authenticates against that pin, carries the
+  owner-held `recovery` authority, and every `builder`/`verifier` key is bound to a
+  `subject_agent_id`, so its signatures are tied to an agent identity.
+- **Ledgers are external.** Every configured ledger/store
+  (`BRO_EXECUTION_LEASE_LEDGER`, `BRO_RECOVERY_STORE`, `BRO_TASK_LOCK_LEDGER`,
+  `BRO_EVIDENCE_STORE`, `BRO_RELEASE_LEDGER`, `BRO_SHADOW_LEDGER`) is an absolute
+  path outside the checkout, and `BRO_ENFORCEMENT=shadow` is never left without its
+  `BRO_SHADOW_LEDGER` (which would fail open).
+
+This is a deployment check, not a CI step: CI legitimately pins via the env var,
+which the preflight — correctly — reports as un-hardened for production.
+
+Two owner responsibilities the preflight cannot check from inside the process, and
+which remain yours: the `recovery` private key is held **offline** (the registry
+ships only its public key), and the runner producing execution-receipt worktree
+snapshots runs under an **OS identity distinct** from the builder, so the snapshot a
+receipt attests cannot be mutated by the process it polices.
+
 ## 1. Machine-local state
 
 Durable runtime state lives **outside** the repository by contract, on
@@ -145,6 +179,7 @@ adversary who rewrites both a file and its manifest entry.
 
 | Task | Command |
 | --- | --- |
+| Verify deployment posture | `python3 tools/bro_deploy_preflight.py` |
 | Enable shadow rollout | `export BRO_ENFORCEMENT=shadow BRO_SHADOW_LEDGER=<external .jsonl>` |
 | Return to enforce | `unset BRO_ENFORCEMENT` (or set it to `enforce`) |
 | Read shadow would-block records | `bro_audit_log.verify` + `read_all` on `BRO_SHADOW_LEDGER` |
