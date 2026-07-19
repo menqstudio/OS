@@ -113,3 +113,35 @@ export function Async<T>({
   if (data.length === 0) return <EmptyState title={emptyTitle} hint={emptyHint} />;
   return <>{children(data)}</>;
 }
+
+export function FormRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="form-row">
+      <span className="field-label">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return <input className="input" {...props} />;
+}
+
+export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return <textarea className="textarea" {...props} />;
+}
+
+export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select className="select" {...props} />;
+}
+
+export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="modal-title">{title}</div>
+        {children}
+      </div>
+    </div>
+  );
+}

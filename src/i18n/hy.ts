@@ -96,4 +96,15 @@ export const hy: Record<DictKey, string> = {
   'field.reversible': 'Հետշրջելի',
   'value.yes': 'Այո',
   'value.no': 'Ոչ',
+
+  'action.create': 'Ստեղծել',
+  'action.cancel': 'Չեղարկել',
+  'form.newProject': 'Նոր նախագիծ',
+  'form.newTask': 'Նոր առաջադրանք',
+  'field.name': 'Անուն',
+  'field.title': 'Վերնագիր',
+  'field.description': 'Նկարագրություն',
+  'field.priority': 'Առաջնահերթություն',
+  'field.project': 'Նախագիծ',
+  'field.none': 'Չկա',
 };
