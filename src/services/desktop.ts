@@ -27,8 +27,11 @@ export const desktop = {
   listTasksByProject: (projectId: string) =>
     invoke<Task[]>('list_tasks_by_project', { projectId }),
   listTasksByStatus: (status: string) => invoke<Task[]>('list_tasks_by_status', { status }),
+  listTasks: () => invoke<Task[]>('list_tasks'),
   createTask: (input: NewTask) => invoke<Task>('create_task', { input }),
   setTaskStatus: (id: string, status: string) => invoke<Task>('set_task_status', { id, status }),
+  updateTask: (id: string, title: string, description: string, priority: string) =>
+    invoke<Task>('update_task', { id, title, description, priority }),
 
   // agents
   listAgents: () => invoke<Agent[]>('list_agents'),
