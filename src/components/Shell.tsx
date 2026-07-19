@@ -4,13 +4,17 @@ import { useApp } from '../app/store';
 import { NAV } from '../app/nav';
 import type { Lang } from '../domain/enums';
 import { languageNames } from '../i18n';
-import { approvals, notifications } from '../data/mock';
+import { desktop, hasBackend } from '../services/desktop';
+import { useAsync } from '../hooks/useAsync';
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const { route, setRoute, theme, toggleTheme, lang, setLang, setPaletteOpen, t } = useApp();
 
-  const pendingApprovals = approvals.filter((a) => a.status === 'pending').length;
-  const unread = notifications.filter((n) => !n.read).length;
+  // Real badge counts from the backend; absent (0) when no backend is connected.
+  const approvalsState = useAsync(() => desktop.listApprovals(), []);
+  const notifsState = useAsync(() => desktop.listNotifications(), []);
+  const pendingApprovals = (approvalsState.data ?? []).filter((a) => a.status === 'pending').length;
+  const unread = (notifsState.data ?? []).filter((n) => n.readAt === null).length;
 
   return (
     <div className="shell">
@@ -70,7 +74,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
         <main className="content">
           <div className="content-inner">
-            <div className="proto-banner">◍ {t('state.prototype')}</div>
+            {!hasBackend() && <div className="proto-banner">◍ {t('state.prototype')}</div>}
             {children}
           </div>
         </main>

@@ -1,19 +1,20 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Card, Button, StatusPill, EmptyState } from '../components/ui';
-import { notifications } from '../data/mock';
+import { PageHeader, Card, Button, StatusPill, EmptyState, Async } from '../components/ui';
+import { useAsync } from '../hooks/useAsync';
+import { desktop } from '../services/desktop';
+import type { Notification } from '../domain/entities';
 
 type TabId = 'unread' | 'all';
 
 export function Notifications() {
   const { t } = useApp();
   const [tab, setTab] = useState<TabId>('unread');
-  const [readIds, setReadIds] = useState<Record<string, boolean>>({});
+  const state = useAsync<Notification[]>(() => desktop.listNotifications());
 
-  const markRead = (id: string) => setReadIds((prev) => ({ ...prev, [id]: true }));
-
-  const items = notifications.map((n) => ({ ...n, read: n.read || !!readIds[n.id] }));
-  const visible = tab === 'unread' ? items.filter((n) => !n.read) : items;
+  const markRead = (id: string) => {
+    desktop.markNotificationRead(id).then(() => state.reload());
+  };
 
   return (
     <>
@@ -28,31 +29,39 @@ export function Notifications() {
         </Button>
       </div>
 
-      {visible.length === 0 ? (
-        <EmptyState title={t('state.empty')} hint={t('state.emptyHint')} glyph="✓" />
-      ) : (
-        <div className="stack">
-          {visible.map((n) => (
-            <Card key={n.id}>
-              <div className="between row">
-                <div className="stack" style={{ gap: 4 }}>
-                  <div className="row">
-                    <StatusPill status={n.severity} />
-                    <span style={{ fontWeight: 600 }}>{n.title}</span>
+      <Async state={state} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
+        {(items) => {
+          const visible = tab === 'unread' ? items.filter((n) => n.readAt === null) : items;
+
+          if (visible.length === 0) {
+            return <EmptyState title={t('state.empty')} hint={t('state.emptyHint')} glyph="✓" />;
+          }
+
+          return (
+            <div className="stack">
+              {visible.map((n) => (
+                <Card key={n.id}>
+                  <div className="between row">
+                    <div className="stack" style={{ gap: 4 }}>
+                      <div className="row">
+                        <StatusPill status={n.severity} />
+                        <span style={{ fontWeight: 600 }}>{n.title}</span>
+                      </div>
+                      <div className="muted">{n.body}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>{n.createdAt}</div>
+                    </div>
+                    {n.readAt === null && (
+                      <Button small variant="ghost" onClick={() => markRead(n.id)}>
+                        Mark read
+                      </Button>
+                    )}
                   </div>
-                  <div className="muted">{n.body}</div>
-                  <div className="muted" style={{ fontSize: 12 }}>{n.createdAt}</div>
-                </div>
-                {!n.read && (
-                  <Button small variant="ghost" onClick={() => markRead(n.id)}>
-                    Mark read
-                  </Button>
-                )}
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
+                </Card>
+              ))}
+            </div>
+          );
+        }}
+      </Async>
     </>
   );
 }

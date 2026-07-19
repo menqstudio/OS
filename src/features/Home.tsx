@@ -1,13 +1,17 @@
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, StatusPill, Avatar, Badge } from '../components/ui';
-import { tasks, commandRuns, approvals, agents } from '../data/mock';
+import { PageHeader, Panel, Button, StatusPill, Avatar, Badge, Async } from '../components/ui';
+import { desktop } from '../services/desktop';
+import { useAsync } from '../hooks/useAsync';
 
 export function Home() {
   const { t, setRoute } = useApp();
-  const priorities = tasks.filter((x) => x.status !== 'done' && x.status !== 'cancelled').slice(0, 4);
-  const runs = commandRuns;
-  const pending = approvals.filter((a) => a.status === 'pending');
-  const active = agents.filter((a) => a.activeRuns > 0 || a.status === 'working' || a.status === 'thinking');
+  const active = useAsync(() => desktop.listTasksByStatus('active'), []);
+  const approvals = useAsync(
+    () => desktop.listApprovals().then((rows) => rows.filter((a) => a.status === 'pending')),
+    [],
+  );
+  const agents = useAsync(() => desktop.listAgents(), []);
+  const projects = useAsync(() => desktop.listProjects(), []);
 
   return (
     <>
@@ -21,47 +25,63 @@ export function Home() {
 
       <div className="grid grid-2" style={{ marginTop: 16 }}>
         <Panel title={t('home.priorities')} actions={<Button small variant="ghost" onClick={() => setRoute('tasks')}>{t('action.viewAll')}</Button>}>
-          <div className="stack">
-            {priorities.map((x) => (
-              <div key={x.id} className="list-row">
-                <span>{x.title}</span>
-                <StatusPill status={x.status} />
+          <Async state={active} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
+            {(items) => (
+              <div className="stack">
+                {items.map((x) => (
+                  <div key={x.id} className="list-row">
+                    <span>{x.title}</span>
+                    <StatusPill status={x.status} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+          </Async>
         </Panel>
 
         <Panel title={t('home.approvals')} actions={<Button small variant="ghost" onClick={() => setRoute('approvals')}>{t('action.viewAll')}</Button>}>
-          <div className="stack">
-            {pending.map((a) => (
-              <div key={a.id} className="list-row">
-                <span>{a.action}</span>
-                <Badge tone="warning">{a.level}</Badge>
+          <Async state={approvals} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
+            {(items) => (
+              <div className="stack">
+                {items.map((a) => (
+                  <div key={a.id} className="list-row">
+                    <span>{a.actionType}</span>
+                    <Badge tone="warning">{a.level}</Badge>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title={t('home.activeRuns')} actions={<Button small variant="ghost" onClick={() => setRoute('command')}>{t('action.viewAll')}</Button>}>
-          <div className="stack">
-            {runs.map((r) => (
-              <div key={r.id} className="list-row">
-                <span>{r.commandText}</span>
-                <StatusPill status={r.status} />
-              </div>
-            ))}
-          </div>
+            )}
+          </Async>
         </Panel>
 
         <Panel title={t('home.agents')} actions={<Button small variant="ghost" onClick={() => setRoute('agents')}>{t('action.viewAll')}</Button>}>
-          <div className="stack">
-            {active.map((a) => (
-              <div key={a.id} className="list-row">
-                <span className="row"><Avatar name={a.name} />{a.name} · <span className="muted">{a.role}</span></span>
-                <StatusPill status={a.status} />
+          <Async state={agents} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
+            {(items) => (
+              <div className="stack">
+                {items.map((a) => (
+                  <div key={a.id} className="list-row">
+                    <span className="row"><Avatar name={a.displayName} />{a.displayName} · <span className="muted">{a.role}</span></span>
+                    <StatusPill status={a.status} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+          </Async>
+        </Panel>
+
+        <Panel title={t('nav.projects')} actions={<Button small variant="ghost" onClick={() => setRoute('projects')}>{t('action.viewAll')}</Button>}>
+          <Async state={projects} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
+            {(items) => (
+              <div className="stack">
+                {items.map((p) => (
+                  <div key={p.id} className="list-row">
+                    <span>{p.name}</span>
+                    <StatusPill status={p.status} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Async>
         </Panel>
       </div>
     </>

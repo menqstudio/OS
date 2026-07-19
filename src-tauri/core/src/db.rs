@@ -4,7 +4,8 @@ use crate::domain::CoreResult;
 use rusqlite::Connection;
 
 const MIGRATION_0001: &str = include_str!("../schema/0001_initial.sql");
-pub const SCHEMA_VERSION: i64 = 1;
+const MIGRATION_0002: &str = include_str!("../schema/0002_decisions.sql");
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Open a database file with foreign keys and WAL enabled, and migrate it.
 pub fn open(path: &str) -> CoreResult<Connection> {
@@ -34,12 +35,14 @@ pub fn migrate(conn: &Connection) -> CoreResult<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
     )?;
-    if !is_applied(conn, 1)? {
-        conn.execute_batch(MIGRATION_0001)?;
-        conn.execute(
-            "INSERT INTO _migrations(version, applied_at) VALUES (1, ?1)",
-            [crate::now()],
-        )?;
+    for (version, sql) in [(1, MIGRATION_0001), (2, MIGRATION_0002)] {
+        if !is_applied(conn, version)? {
+            conn.execute_batch(sql)?;
+            conn.execute(
+                "INSERT INTO _migrations(version, applied_at) VALUES (?1, ?2)",
+                rusqlite::params![version, crate::now()],
+            )?;
+        }
     }
     Ok(())
 }

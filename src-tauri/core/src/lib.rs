@@ -6,7 +6,10 @@ pub mod db;
 pub mod domain;
 pub mod repo;
 
-pub use domain::{CoreError, CoreResult, NewProject, NewTask, Project, Task};
+pub use domain::{
+    ActivityEvent, Agent, Approval, CoreError, CoreResult, Decision, NewProject, NewTask,
+    Notification, Project, Task,
+};
 
 /// A new UUID v4 string. IDs are opaque text everywhere in the schema.
 pub fn id() -> String {
@@ -93,6 +96,43 @@ mod tests {
         )
         .unwrap();
         assert!(repo::projects::set_status(&c, &p.id, "not-a-status").is_err());
+    }
+
+    #[test]
+    fn migrations_reach_v2_with_decisions() {
+        let c = conn();
+        assert_eq!(db::current_version(&c).unwrap(), 2);
+        // decisions table exists and is usable
+        repo::decisions::create(&c, "T", "gev", "why").unwrap();
+        assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn seed_populates_and_is_idempotent() {
+        let c = conn();
+        repo::seed(&c).unwrap();
+        let after_first = repo::projects::list(&c).unwrap().len();
+        assert!(after_first >= 2);
+        assert!(repo::agents::list(&c).unwrap().len() >= 6);
+        assert!(repo::approvals::list(&c).unwrap().len() >= 2);
+        assert!(repo::notifications::list(&c).unwrap().len() >= 2);
+        assert!(repo::decisions::list(&c).unwrap().len() >= 2);
+        // running again must not duplicate
+        repo::seed(&c).unwrap();
+        assert_eq!(repo::projects::list(&c).unwrap().len(), after_first);
+    }
+
+    #[test]
+    fn approval_decide_flow() {
+        let c = conn();
+        repo::seed(&c).unwrap();
+        let pending: Vec<_> = repo::approvals::list(&c).unwrap().into_iter().filter(|a| a.status == "pending").collect();
+        assert!(!pending.is_empty());
+        let decided = repo::approvals::decide(&c, &pending[0].id, "approved", Some("ok")).unwrap();
+        assert_eq!(decided.status, "approved");
+        assert!(decided.decided_at.is_some());
+        // deciding a non-pending approval fails
+        assert!(repo::approvals::decide(&c, &pending[0].id, "rejected", None).is_err());
     }
 
     #[test]
