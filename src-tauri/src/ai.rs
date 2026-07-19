@@ -212,8 +212,12 @@ fn ai_sandbox_dir() -> Result<std::path::PathBuf, String> {
 /// The chat is a pure text completion: no built-in tools, no MCP servers, and no
 /// user/local settings (hooks/plugins) — so a prompt-injection in a message
 /// can't read/write the filesystem or run commands through the coding agent.
-fn claude_args(prompt: &str, system: &str, streaming: bool, model: Option<&str>) -> Vec<String> {
-    let mut a: Vec<String> = vec!["-p".into(), prompt.into(), "--output-format".into()];
+///
+/// The prompt (which contains the chat transcript) is NOT here — it is written
+/// to the child's stdin so it never appears in argv / `/proc/<pid>/cmdline`,
+/// where another local user could read it while the process runs.
+fn claude_args(system: &str, streaming: bool, model: Option<&str>) -> Vec<String> {
+    let mut a: Vec<String> = vec!["-p".into(), "--output-format".into()];
     if streaming {
         a.push("stream-json".into());
         a.push("--verbose".into());
@@ -244,9 +248,9 @@ async fn claude_cli_stream<F: FnMut(&str)>(
 ) -> Result<String, String> {
     let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
     let mut cmd = tokio::process::Command::new(bin);
-    cmd.args(claude_args(&prompt, system, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
+    cmd.args(claude_args(system, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
         .current_dir(ai_sandbox_dir()?)
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         // Ensure the child is killed if this future is dropped or returns early
@@ -255,6 +259,13 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN, or set ANTHROPIC_API_KEY.")
     })?;
+
+    // Feed the transcript over stdin (never argv) and close it so claude sees EOF.
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin.write_all(prompt.as_bytes()).await.map_err(|e| format!("writing prompt to claude: {e}"))?;
+        let _ = stdin.shutdown().await;
+    }
 
     // Drain stderr concurrently so a full stderr pipe can never deadlock the
     // stdout read loop.
@@ -354,15 +365,26 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
         transcript(messages)
     );
     let mut cmd = tokio::process::Command::new(bin);
-    cmd.args(claude_args(&prompt, system, false, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
+    cmd.args(claude_args(system, false, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
         .current_dir(ai_sandbox_dir()?)
-        .stdin(std::process::Stdio::null());
-    let out = tokio::time::timeout(Duration::from_secs(120), cmd.output())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = cmd.spawn().map_err(|e| {
+        format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN to its path, or set ANTHROPIC_API_KEY.")
+    })?;
+    // Feed the transcript over stdin (never argv) so it can't be read from
+    // /proc/<pid>/cmdline while the process runs.
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin.write_all(prompt.as_bytes()).await.map_err(|e| format!("writing prompt to claude: {e}"))?;
+        let _ = stdin.shutdown().await;
+    }
+    let out = tokio::time::timeout(Duration::from_secs(120), child.wait_with_output())
         .await
         .map_err(|_| "claude CLI timed out".to_string())?
-        .map_err(|e| {
-            format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN to its path, or set ANTHROPIC_API_KEY.")
-        })?;
+        .map_err(|e| format!("claude CLI error: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         return Err(format!("claude CLI failed: {}", err.trim()));
@@ -457,8 +479,13 @@ mod tests {
     // prompt-injection can't read/write files or run commands via the agent.
     #[test]
     fn claude_args_lock_down_tools_mcp_and_settings_on_every_path() {
+        let secret = "User: my password is hunter2";
         for streaming in [true, false] {
-            let args = claude_args("hi", "be nice", streaming, None);
+            let args = claude_args("be nice", streaming, None);
+            // The transcript/prompt must NOT be in argv (it goes via stdin) — no
+            // arg may carry chat content, and there's no bare prompt positional.
+            assert!(!args.iter().any(|a| a.contains(secret) || a.contains("hunter2")));
+            assert!(!args.iter().any(|a| a == secret));
             // `--tools ""` present as an adjacent pair → all built-in tools off.
             let pos = args.iter().position(|a| a == "--tools").expect("--tools flag present");
             assert_eq!(args.get(pos + 1), Some(&String::new()), "--tools must be followed by \"\"");
@@ -478,9 +505,9 @@ mod tests {
 
     #[test]
     fn claude_args_model_is_optional_and_appended() {
-        let none = claude_args("p", "s", false, None);
+        let none = claude_args("s", false, None);
         assert!(!none.iter().any(|a| a == "--model"));
-        let some = claude_args("p", "s", true, Some("claude-x"));
+        let some = claude_args("s", true, Some("claude-x"));
         let pos = some.iter().position(|a| a == "--model").expect("--model present");
         assert_eq!(some.get(pos + 1), Some(&"claude-x".to_string()));
     }

@@ -69,30 +69,38 @@ fn files_root() -> Result<PathBuf, String> {
 /// secret/credential/startup paths. Enforced on top of root confinement so that
 /// a broad `BROPS_FILES_ROOT` (e.g. `$HOME`) still can't reach these.
 fn is_sensitive(path: &Path) -> bool {
+    // Matching is case-insensitive (a `.SSH` or `Credentials.JSON` must not slip
+    // through) and covers common variants, not just exact names.
     const DENY_DIRS: &[&str] = &[
         ".ssh", ".aws", ".gnupg", ".gpg", ".kube", ".docker", ".claude", ".azure",
-        ".gcloud", ".password-store", ".mozilla", ".git",
+        ".gcloud", ".config", ".password-store", ".mozilla", ".git", ".secrets",
     ];
     for comp in path.components() {
         if let Component::Normal(os) = comp {
-            let s = os.to_string_lossy();
+            let s = os.to_string_lossy().to_ascii_lowercase();
             if DENY_DIRS.iter().any(|d| *d == s) {
                 return true;
             }
         }
     }
-    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+    if let Some(raw) = path.file_name().and_then(|n| n.to_str()) {
+        let name = raw.to_ascii_lowercase();
         const DENY_FILES: &[&str] = &[
             ".bashrc", ".bash_profile", ".bash_login", ".bash_history", ".profile",
             ".zshrc", ".zprofile", ".zshenv", ".zsh_history", ".netrc", ".pgpass",
-            ".git-credentials", ".npmrc", ".pypirc", ".env", "authorized_keys", "known_hosts",
+            ".git-credentials", ".npmrc", ".pypirc", ".htpasswd", ".dockercfg",
+            "authorized_keys", "known_hosts", "credentials", "credentials.json",
+            "secrets.json", "secrets.yaml", "secrets.yml", "service-account.json",
+            "serviceaccount.json", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
         ];
-        if DENY_FILES.contains(&name)
-            || name.ends_with(".pem")
-            || name.ends_with(".key")
-            || name.ends_with(".p12")
-            || name.ends_with(".pfx")
-            || name.starts_with("id_")
+        const DENY_EXT: &[&str] = &[
+            ".pem", ".key", ".p12", ".pfx", ".keystore", ".jks", ".ppk", ".asc", ".kdbx",
+        ];
+        if DENY_FILES.contains(&name.as_str())
+            || name.starts_with(".env")            // .env, .env.local, .env.production…
+            || name.starts_with("id_")             // ssh private keys
+            || name.contains("credential")
+            || DENY_EXT.iter().any(|e| name.ends_with(e))
         {
             return true;
         }
@@ -175,7 +183,14 @@ pub fn read_listing(dir: &Path) -> std::io::Result<DirListing> {
 pub fn list_dir(path: Option<String>) -> Result<DirListing, String> {
     let root = files_root()?;
     let dir = confine_in(&root, path.as_deref().unwrap_or(""))?;
+    // Enforce the sensitive-path denylist on listing too (not just read/write),
+    // so a `.ssh`/`.aws` directory can't even be enumerated.
+    if is_sensitive(&dir) {
+        return Err(format!("{}: access to this sensitive path is blocked", dir.display()));
+    }
     let mut listing = read_listing(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // Hide sensitive children so they can't be seen or clicked into.
+    listing.entries.retain(|e| !is_sensitive(Path::new(&e.path)));
     // Never offer an "Up" that leaves the confinement root.
     let escapes_root = listing
         .parent
@@ -240,20 +255,30 @@ fn write_text(path: &Path, content: &str) -> Result<(), String> {
     let tmp = parent.join(format!(".{file_name}.{}.{nanos}.brops-tmp", std::process::id()));
 
     // create_new (O_CREAT|O_EXCL) fails if the name already exists (regular file
-    // OR symlink), so a pre-planted temp can't be followed or overwritten.
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)
-        .map_err(|e| format!("{}: {e}", tmp.display()))?;
+    // OR symlink), so a pre-planted temp can't be followed or overwritten. The
+    // temp is created owner-only (0600) from the START, so the content is never
+    // briefly world-readable under a permissive umask.
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(&tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
     if let Err(e) = f.write_all(content.as_bytes()).and_then(|_| f.sync_all()) {
         drop(f);
         let _ = fs::remove_file(&tmp);
         return Err(format!("{}: {e}", tmp.display()));
     }
-    // Preserve the original file's permissions so editing a 0600 secret can't
-    // silently widen it to the umask default.
-    let _ = fs::set_permissions(&tmp, meta.permissions());
+    // Apply the original file's exact permissions so a 0600 secret stays 0600 (and
+    // a 0644 file isn't needlessly tightened). A failure here aborts — never leave
+    // the file with the wrong mode.
+    if let Err(e) = fs::set_permissions(&tmp, meta.permissions()) {
+        drop(f);
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("{}: preserving permissions failed: {e}", tmp.display()));
+    }
     drop(f);
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
@@ -367,10 +392,21 @@ mod tests {
             "/home/u/secret.pem",
             "/home/u/cert.key",
             "/home/u/app/.env",
+            // variants the round-3 audit flagged
+            "/home/u/app/.env.local",
+            "/home/u/app/.env.production",
+            "/home/u/svc/credentials.json",
+            "/home/u/svc/my-credential.txt",
+            "/home/u/secrets.yaml",
+            "/home/u/vault.kdbx",
+            // case-insensitive
+            "/home/u/.SSH/id_rsa",
+            "/home/u/Credentials.JSON",
+            "/home/u/.config/gcloud/access_tokens.db",
         ] {
             assert!(is_sensitive(Path::new(p)), "{p} must be denied");
         }
-        for p in ["/home/u/project/src/main.rs", "/home/u/notes.txt", "/home/u/BroPS/todo.md"] {
+        for p in ["/home/u/project/src/main.rs", "/home/u/notes.txt", "/home/u/BroPS/todo.md", "/home/u/env.md"] {
             assert!(!is_sensitive(Path::new(p)), "{p} must be allowed");
         }
     }
