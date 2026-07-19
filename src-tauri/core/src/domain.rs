@@ -11,6 +11,7 @@ pub const PRIORITIES: &[&str] = &["low", "normal", "high", "critical"];
 pub const APPROVAL_DECISIONS: &[&str] = &["approved", "rejected"];
 pub const CONVERSATION_KINDS: &[&str] = &["direct", "group"];
 pub const MESSAGE_ROLES: &[&str] = &["user", "agent", "system"];
+pub const MEMORY_KINDS: &[&str] = &["fact", "preference", "note", "reference"];
 
 pub fn is_valid(value: &str, allowed: &[&str]) -> bool {
     allowed.contains(&value)
@@ -125,6 +126,26 @@ camel! {
         pub body: String,
         pub created_at: String,
     }
+
+    pub struct KnowledgeNote {
+        pub id: String,
+        pub title: String,
+        pub body: String,
+        pub source: String,
+        pub tags: String,
+        pub created_at: String,
+        pub updated_at: String,
+    }
+
+    pub struct MemoryEntry {
+        pub id: String,
+        pub scope: String,
+        pub kind: String,
+        pub content: String,
+        pub pinned: bool,
+        pub created_at: String,
+        pub updated_at: String,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +174,23 @@ pub struct NewMessage {
     pub role: String,
     pub author: String,
     pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewKnowledgeNote {
+    pub title: String,
+    pub body: String,
+    pub source: String,
+    pub tags: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewMemoryEntry {
+    pub scope: String,
+    pub kind: String,
+    pub content: String,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -6,7 +6,8 @@ use rusqlite::Connection;
 const MIGRATION_0001: &str = include_str!("../schema/0001_initial.sql");
 const MIGRATION_0002: &str = include_str!("../schema/0002_decisions.sql");
 const MIGRATION_0003: &str = include_str!("../schema/0003_conversations.sql");
-pub const SCHEMA_VERSION: i64 = 3;
+const MIGRATION_0004: &str = include_str!("../schema/0004_knowledge_memory.sql");
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Open a database file with foreign keys and WAL enabled, and migrate it.
 pub fn open(path: &str) -> CoreResult<Connection> {
@@ -36,7 +37,12 @@ pub fn migrate(conn: &Connection) -> CoreResult<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
     )?;
-    for (version, sql) in [(1, MIGRATION_0001), (2, MIGRATION_0002), (3, MIGRATION_0003)] {
+    for (version, sql) in [
+        (1, MIGRATION_0001),
+        (2, MIGRATION_0002),
+        (3, MIGRATION_0003),
+        (4, MIGRATION_0004),
+    ] {
         if !is_applied(conn, version)? {
             conn.execute_batch(sql)?;
             conn.execute(

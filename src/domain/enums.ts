@@ -18,6 +18,8 @@ export type Theme = 'dark' | 'light';
 export const TASK_STATUSES: TaskStatus[] = ['inbox', 'planned', 'active', 'blocked', 'review', 'done', 'cancelled'];
 export const PRIORITIES: Priority[] = ['low', 'normal', 'high', 'critical'];
 export const PROJECT_STATUSES: ProjectStatus[] = ['planned', 'active', 'blocked', 'completed', 'archived'];
+export type MemoryKind = 'fact' | 'preference' | 'note' | 'reference';
+export const MEMORY_KINDS: MemoryKind[] = ['fact', 'preference', 'note', 'reference'];
 
 // Maps a status-like value to a visual tone used by Badge/StatusPill.
 export type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info';

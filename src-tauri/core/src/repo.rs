@@ -435,6 +435,148 @@ pub mod chat {
     }
 }
 
+pub mod knowledge {
+    use super::*;
+
+    fn map(r: &Row) -> rusqlite::Result<KnowledgeNote> {
+        Ok(KnowledgeNote {
+            id: r.get("id")?,
+            title: r.get("title")?,
+            body: r.get("body")?,
+            source: r.get("source")?,
+            tags: r.get("tags")?,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    pub fn create(conn: &Connection, input: NewKnowledgeNote) -> CoreResult<KnowledgeNote> {
+        let now = now();
+        let id = id();
+        conn.execute(
+            "INSERT INTO knowledge_notes(id, title, body, source, tags, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            rusqlite::params![id, input.title, input.body, input.source, input.tags, now],
+        )?;
+        super::audit::record(conn, "knowledge.created", "gev", "knowledge_note", &id)?;
+        get(conn, &id)
+    }
+
+    pub fn get(conn: &Connection, id: &str) -> CoreResult<KnowledgeNote> {
+        conn.query_row("SELECT * FROM knowledge_notes WHERE id = ?1", [id], map)
+            .map_err(not_found(id))
+    }
+
+    pub fn list(conn: &Connection) -> CoreResult<Vec<KnowledgeNote>> {
+        let mut s = conn.prepare("SELECT * FROM knowledge_notes ORDER BY updated_at DESC")?;
+        let rows = s.query_map([], map)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Case-insensitive substring search over title, body, and tags. An empty
+    /// query returns everything (same as `list`).
+    pub fn search(conn: &Connection, query: &str) -> CoreResult<Vec<KnowledgeNote>> {
+        let q = query.trim();
+        if q.is_empty() {
+            return list(conn);
+        }
+        let like = format!("%{q}%");
+        let mut s = conn.prepare(
+            "SELECT * FROM knowledge_notes \
+             WHERE title LIKE ?1 OR body LIKE ?1 OR tags LIKE ?1 \
+             ORDER BY updated_at DESC",
+        )?;
+        let rows = s.query_map([like], map)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+        let changed = conn.execute("DELETE FROM knowledge_notes WHERE id = ?1", [id])?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "knowledge.deleted", "gev", "knowledge_note", id)?;
+        Ok(())
+    }
+}
+
+pub mod memory {
+    use super::*;
+
+    fn map(r: &Row) -> rusqlite::Result<MemoryEntry> {
+        Ok(MemoryEntry {
+            id: r.get("id")?,
+            scope: r.get("scope")?,
+            kind: r.get("kind")?,
+            content: r.get("content")?,
+            pinned: r.get::<_, i64>("pinned")? != 0,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    pub fn create(conn: &Connection, input: NewMemoryEntry) -> CoreResult<MemoryEntry> {
+        if !is_valid(&input.kind, MEMORY_KINDS) {
+            return Err(CoreError::Invalid { field: "kind", value: input.kind });
+        }
+        let now = now();
+        let id = id();
+        conn.execute(
+            "INSERT INTO memory_entries(id, scope, kind, content, pinned, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)",
+            rusqlite::params![id, input.scope, input.kind, input.content, now],
+        )?;
+        super::audit::record(conn, "memory.created", "gev", "memory_entry", &id)?;
+        get(conn, &id)
+    }
+
+    pub fn get(conn: &Connection, id: &str) -> CoreResult<MemoryEntry> {
+        conn.query_row("SELECT * FROM memory_entries WHERE id = ?1", [id], map)
+            .map_err(not_found(id))
+    }
+
+    /// List entries, pinned first, then most-recently updated. Optionally
+    /// filtered to a single scope.
+    pub fn list(conn: &Connection, scope: Option<&str>) -> CoreResult<Vec<MemoryEntry>> {
+        match scope {
+            Some(sc) => {
+                let mut s = conn.prepare(
+                    "SELECT * FROM memory_entries WHERE scope = ?1 ORDER BY pinned DESC, updated_at DESC",
+                )?;
+                let rows = s.query_map([sc], map)?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            }
+            None => {
+                let mut s = conn.prepare(
+                    "SELECT * FROM memory_entries ORDER BY pinned DESC, updated_at DESC",
+                )?;
+                let rows = s.query_map([], map)?;
+                Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            }
+        }
+    }
+
+    pub fn set_pinned(conn: &Connection, id: &str, pinned: bool) -> CoreResult<MemoryEntry> {
+        let changed = conn.execute(
+            "UPDATE memory_entries SET pinned = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![pinned as i64, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        get(conn, id)
+    }
+
+    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+        let changed = conn.execute("DELETE FROM memory_entries WHERE id = ?1", [id])?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        super::audit::record(conn, "memory.deleted", "gev", "memory_entry", id)?;
+        Ok(())
+    }
+}
+
 fn not_found(id: &str) -> impl Fn(rusqlite::Error) -> CoreError + '_ {
     move |e| match e {
         rusqlite::Error::QueryReturnedNoRows => CoreError::NotFound(id.to_string()),
@@ -496,6 +638,13 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
     let room = chat::create_conversation(conn, "group", "Foundation room")?;
     chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Mason".into(), body: "Schema reached v3 — conversations and messages added.".into() })?;
     chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Probe".into(), body: "Chat repository covered by unit tests.".into() })?;
+
+    knowledge::create(conn, NewKnowledgeNote { title: "Typed IPC boundary".into(), body: "React reaches SQLite only through #[tauri::command]s; no raw SQL crosses the boundary.".into(), source: "docs/architecture".into(), tags: "architecture,ipc".into() })?;
+    knowledge::create(conn, NewKnowledgeNote { title: "Forward-only migrations".into(), body: "Schema advances one numbered migration at a time; runner is idempotent.".into(), source: "src-tauri/core/db.rs".into(), tags: "sqlite,migrations".into() })?;
+
+    let m = memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "Respond in Armenian; work only in menqstudio/BroPS.".into() })?;
+    memory::set_pinned(conn, &m.id, true)?;
+    memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "Foundation v1 is Locked (D-010).".into() })?;
 
     Ok(())
 }

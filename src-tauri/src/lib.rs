@@ -42,6 +42,14 @@ pub fn run() {
             commands::create_conversation,
             commands::list_messages,
             commands::post_message,
+            commands::list_knowledge,
+            commands::search_knowledge,
+            commands::create_knowledge,
+            commands::delete_knowledge,
+            commands::list_memory,
+            commands::create_memory,
+            commands::set_memory_pinned,
+            commands::delete_memory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running BroPS");
