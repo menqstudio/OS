@@ -9,8 +9,8 @@
 use serde::Serialize;
 use std::fs;
 use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Largest file we will read into / write from the editor.
 const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
@@ -46,17 +46,58 @@ pub struct FileContent {
 
 // --- security: confine every path to one canonical root ---------------------
 
-/// The one directory subtree the file commands may touch. Defaults to the user's
-/// home directory; override with `BROPS_FILES_ROOT` to a narrower workspace.
-/// Returned canonicalized so containment checks compare real paths.
+/// The one directory subtree the file commands may touch. To avoid granting the
+/// whole home directory (SSH/AWS keys, shell rc, tool configs) by default, this
+/// is a dedicated `~/BroPS` workspace unless `BROPS_FILES_ROOT` points somewhere
+/// narrower/specific. Returned canonicalized so containment compares real paths.
 fn files_root() -> Result<PathBuf, String> {
     let raw = match std::env::var("BROPS_FILES_ROOT") {
         Ok(v) if !v.trim().is_empty() => PathBuf::from(v),
-        _ => std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or_else(|| "no files root configured (HOME unset, BROPS_FILES_ROOT unset)".to_string())?,
+        _ => {
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .ok_or_else(|| "no files root (HOME unset, BROPS_FILES_ROOT unset)".to_string())?;
+            let ws = home.join("BroPS");
+            let _ = fs::create_dir_all(&ws); // so the default workspace can be browsed
+            ws
+        }
     };
     fs::canonicalize(&raw).map_err(|e| format!("files root {}: {e}", raw.display()))
+}
+
+/// Defense-in-depth denylist: even inside the files root, never touch known
+/// secret/credential/startup paths. Enforced on top of root confinement so that
+/// a broad `BROPS_FILES_ROOT` (e.g. `$HOME`) still can't reach these.
+fn is_sensitive(path: &Path) -> bool {
+    const DENY_DIRS: &[&str] = &[
+        ".ssh", ".aws", ".gnupg", ".gpg", ".kube", ".docker", ".claude", ".azure",
+        ".gcloud", ".password-store", ".mozilla", ".git",
+    ];
+    for comp in path.components() {
+        if let Component::Normal(os) = comp {
+            let s = os.to_string_lossy();
+            if DENY_DIRS.iter().any(|d| *d == s) {
+                return true;
+            }
+        }
+    }
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        const DENY_FILES: &[&str] = &[
+            ".bashrc", ".bash_profile", ".bash_login", ".bash_history", ".profile",
+            ".zshrc", ".zprofile", ".zshenv", ".zsh_history", ".netrc", ".pgpass",
+            ".git-credentials", ".npmrc", ".pypirc", ".env", "authorized_keys", "known_hosts",
+        ];
+        if DENY_FILES.contains(&name)
+            || name.ends_with(".pem")
+            || name.ends_with(".key")
+            || name.ends_with(".p12")
+            || name.ends_with(".pfx")
+            || name.starts_with("id_")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Canonicalize `raw` (which must already exist) and confirm it lies inside
@@ -76,9 +117,14 @@ fn confine_in(root: &Path, raw: &str) -> Result<PathBuf, String> {
     Ok(canon)
 }
 
-/// Production confinement against the configured [`files_root`].
+/// Production confinement against the configured [`files_root`], plus the
+/// sensitive-path denylist.
 fn confine(raw: &str) -> Result<PathBuf, String> {
-    confine_in(&files_root()?, raw)
+    let p = confine_in(&files_root()?, raw)?;
+    if is_sensitive(&p) {
+        return Err(format!("{}: access to this sensitive path is blocked", p.display()));
+    }
+    Ok(p)
 }
 
 // --- listing ----------------------------------------------------------------
@@ -169,11 +215,15 @@ pub fn read_text(path: &Path) -> std::io::Result<FileContent> {
     }
 }
 
-/// Overwrite an existing regular file's text, atomically (temp + rename in the
-/// same directory). Refuses to create new files, write non-regular targets, or
-/// exceed the size cap on the *new* content — so a huge payload can't exhaust
-/// the disk and a partial write can never truncate the original.
+/// Overwrite an existing regular file's text, atomically. Writes to a uniquely
+/// named, **exclusively created** (`O_EXCL`) sibling temp — so it can't follow or
+/// clobber a planted temp/symlink — fsyncs it, copies the **original file's
+/// permissions** onto it (a 0600 secret stays 0600), then renames it over the
+/// target and fsyncs the directory. Refuses new files, non-regular targets, and
+/// content over the size cap, so a huge payload can't exhaust the disk and a
+/// partial write can never truncate the original.
 fn write_text(path: &Path, content: &str) -> Result<(), String> {
+    use std::io::Write;
     if content.len() as u64 > MAX_EDIT_BYTES {
         return Err(format!("content exceeds the {MAX_EDIT_BYTES}-byte edit limit"));
     }
@@ -186,12 +236,35 @@ fn write_text(path: &Path, content: &str) -> Result<(), String> {
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| format!("{}: invalid file name", path.display()))?;
-    let tmp = parent.join(format!(".{file_name}.{}.brops-tmp", std::process::id()));
-    fs::write(&tmp, content.as_bytes()).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let tmp = parent.join(format!(".{file_name}.{}.{nanos}.brops-tmp", std::process::id()));
+
+    // create_new (O_CREAT|O_EXCL) fails if the name already exists (regular file
+    // OR symlink), so a pre-planted temp can't be followed or overwritten.
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| format!("{}: {e}", tmp.display()))?;
+    if let Err(e) = f.write_all(content.as_bytes()).and_then(|_| f.sync_all()) {
+        drop(f);
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", tmp.display()));
+    }
+    // Preserve the original file's permissions so editing a 0600 secret can't
+    // silently widen it to the umask default.
+    let _ = fs::set_permissions(&tmp, meta.permissions());
+    drop(f);
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         format!("{}: {e}", path.display())
-    })
+    })?;
+    // Best-effort durability: fsync the directory so the rename survives a crash.
+    #[cfg(unix)]
+    if let Ok(dir) = fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -277,6 +350,29 @@ mod tests {
 
         let _ = fs::remove_file(&outside);
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn sensitive_paths_are_denied() {
+        for p in [
+            "/home/u/.ssh/id_ed25519",
+            "/home/u/.ssh/authorized_keys",
+            "/home/u/.aws/credentials",
+            "/home/u/.gnupg/secring.gpg",
+            "/home/u/.bashrc",
+            "/home/u/.zshrc",
+            "/home/u/.netrc",
+            "/home/u/.git-credentials",
+            "/home/u/project/.git/hooks/pre-commit",
+            "/home/u/secret.pem",
+            "/home/u/cert.key",
+            "/home/u/app/.env",
+        ] {
+            assert!(is_sensitive(Path::new(p)), "{p} must be denied");
+        }
+        for p in ["/home/u/project/src/main.rs", "/home/u/notes.txt", "/home/u/BroPS/todo.md"] {
+            assert!(!is_sensitive(Path::new(p)), "{p} must be allowed");
+        }
     }
 
     #[test]

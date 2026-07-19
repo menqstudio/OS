@@ -12,22 +12,35 @@ pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
 }
 
-/// Restrict the app data directory (0700) and the SQLite database + WAL/SHM
-/// (0600) to the owner on Unix. Best-effort — never blocks startup.
+/// Restrict the app data directory to the owner (0700). Called BEFORE the DB is
+/// opened, so the database is created inside an already-private directory.
+/// A failure here aborts startup rather than running with weak permissions.
 #[cfg(unix)]
-fn harden_data_dir(dir: &std::path::Path, db_path: &std::path::Path) {
+fn secure_data_dir(dir: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+}
+#[cfg(not(unix))]
+fn secure_data_dir(_dir: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Restrict the SQLite database and its WAL/SHM sidecars to the owner (0600).
+#[cfg(unix)]
+fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
     for suffix in ["", "-wal", "-shm"] {
         let p = std::path::PathBuf::from(format!("{}{}", db_path.display(), suffix));
         if p.exists() {
-            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
         }
     }
+    Ok(())
 }
-
 #[cfg(not(unix))]
-fn harden_data_dir(_dir: &std::path::Path, _db_path: &std::path::Path) {}
+fn secure_db_files(_db_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -35,12 +48,13 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
+            // Owner-only (0700) BEFORE opening the DB, so conversation/memory/audit
+            // data is never briefly world-readable. A failure aborts startup.
+            secure_data_dir(&dir)?;
             let db_path = dir.join("brops.db");
             let conn = brops_core::db::open(db_path.to_string_lossy().as_ref())?;
             brops_core::repo::seed(&conn)?;
-            // Harden permissions: the app data dir and the SQLite files can hold
-            // conversation content, memory, and audit data — keep them owner-only.
-            harden_data_dir(&dir, &db_path);
+            secure_db_files(&db_path)?; // 0600 on db + WAL + SHM
             app.manage(AppState { db: Mutex::new(conn) });
             Ok(())
         })

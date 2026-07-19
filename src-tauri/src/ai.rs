@@ -170,21 +170,48 @@ pub async fn generate_stream<F: FnMut(&str)>(
     }
 }
 
-/// A dedicated empty working directory for the `claude` subprocess. Running the
-/// CLI here means it can never pick up a nearby project's `.claude/settings.json`,
-/// `.mcp.json`, or source files. Combined with `--tools ""` this keeps chat a
-/// pure text completion — a prompt-injection in a message cannot read or mutate
-/// the filesystem or run shell/MCP tools through the coding agent.
-fn ai_sandbox_dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join("brops-ai-sandbox");
-    let _ = std::fs::create_dir_all(&dir);
-    dir
+static AI_SANDBOX: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// A unique, owner-only (0700) empty directory created fresh for this process's
+/// `claude` subprocesses, so the CLI can't pick up a nearby project's
+/// `.claude/settings.json`, `.mcp.json`, or source files. `create_dir` (not
+/// `_all`) fails if the name already exists, so a pre-planted `/tmp` directory or
+/// symlink can never be reused to smuggle in config. Cached for the process.
+fn ai_sandbox_dir() -> Result<std::path::PathBuf, String> {
+    if let Some(p) = AI_SANDBOX.get() {
+        return Ok(p.clone());
+    }
+    let base = std::env::temp_dir();
+    let pid = std::process::id();
+    for attempt in 0..16u32 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = base.join(format!("brops-ai-{pid}-{nanos}-{attempt}"));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                        .map_err(|e| format!("AI sandbox perms: {e}"))?;
+                }
+                let _ = AI_SANDBOX.set(dir.clone());
+                return Ok(AI_SANDBOX.get().cloned().unwrap_or(dir));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("AI sandbox: {e}")),
+        }
+    }
+    Err("could not create a private AI sandbox directory".to_string())
 }
 
 /// Build the argv (after the binary) for a `claude -p` chat call. Centralized so
-/// the tool-lockdown flag is guaranteed present on every path and unit-testable.
-/// `--tools ""` disables ALL built-in tools (Read/Bash/Edit/MCP/…), overriding
-/// whatever the user's Claude settings allowlist; chat is completion-only.
+/// the security lockdown is guaranteed present on every path and unit-testable.
+/// The chat is a pure text completion: no built-in tools, no MCP servers, and no
+/// user/local settings (hooks/plugins) — so a prompt-injection in a message
+/// can't read/write the filesystem or run commands through the coding agent.
 fn claude_args(prompt: &str, system: &str, streaming: bool, model: Option<&str>) -> Vec<String> {
     let mut a: Vec<String> = vec!["-p".into(), prompt.into(), "--output-format".into()];
     if streaming {
@@ -197,7 +224,11 @@ fn claude_args(prompt: &str, system: &str, streaming: bool, model: Option<&str>)
     a.push("--append-system-prompt".into());
     a.push(system.into());
     a.push("--tools".into());
-    a.push(String::new()); // "" → disable all tools
+    a.push(String::new()); // "" → disable ALL built-in tools
+    a.push("--strict-mcp-config".into()); // ignore every MCP config (we pass none)
+    a.push("--setting-sources".into());
+    a.push("project".into()); // only project settings (empty sandbox) — excludes user hooks/plugins/MCP
+    a.push("--no-session-persistence".into());
     if let Some(m) = model {
         a.push("--model".into());
         a.push(m.into());
@@ -214,7 +245,7 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(claude_args(&prompt, system, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
-        .current_dir(ai_sandbox_dir())
+        .current_dir(ai_sandbox_dir()?)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -324,7 +355,7 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
     );
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(claude_args(&prompt, system, false, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
-        .current_dir(ai_sandbox_dir())
+        .current_dir(ai_sandbox_dir()?)
         .stdin(std::process::Stdio::null());
     let out = tokio::time::timeout(Duration::from_secs(120), cmd.output())
         .await
@@ -425,12 +456,18 @@ mod tests {
     // Security regression: chat calls must disable ALL Claude tools so a
     // prompt-injection can't read/write files or run commands via the agent.
     #[test]
-    fn claude_args_disable_all_tools_on_every_path() {
+    fn claude_args_lock_down_tools_mcp_and_settings_on_every_path() {
         for streaming in [true, false] {
             let args = claude_args("hi", "be nice", streaming, None);
-            // `--tools ""` present as an adjacent pair.
+            // `--tools ""` present as an adjacent pair → all built-in tools off.
             let pos = args.iter().position(|a| a == "--tools").expect("--tools flag present");
             assert_eq!(args.get(pos + 1), Some(&String::new()), "--tools must be followed by \"\"");
+            // MCP fully locked to the (absent) --mcp-config → no MCP servers load.
+            assert!(args.iter().any(|a| a == "--strict-mcp-config"), "must pass --strict-mcp-config");
+            // only project settings load (from the empty sandbox) → no user hooks/plugins/MCP.
+            let sp = args.iter().position(|a| a == "--setting-sources").expect("--setting-sources present");
+            assert_eq!(args.get(sp + 1), Some(&"project".to_string()));
+            assert!(args.iter().any(|a| a == "--no-session-persistence"));
             // never bypass permissions / re-enable tools.
             assert!(!args.iter().any(|a| a == "--dangerously-skip-permissions"
                 || a == "--allow-dangerously-skip-permissions"
