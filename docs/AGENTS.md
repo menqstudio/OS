@@ -3,7 +3,7 @@
 - **Purpose:** The working contract for any human or AI contributor to BroPS.
 - **Scope:** How to work in this repository. Product truth lives in the canonical docs below.
 - **Owner:** Gev.
-- **Related:** [README.md](README.md), [PRINCIPLES.md](PRINCIPLES.md), [AI_RUNTIME.md](AI_RUNTIME.md), [DECISIONS.md](DECISIONS.md).
+- **Related:** [README.md](../README.md), [PRINCIPLES.md](PRINCIPLES.md), [AI_RUNTIME.md](architecture/AI_RUNTIME.md), [DECISIONS.md](DECISIONS.md).
 - **Last updated:** 2026-07-19.
 
 Before substantive work, read in this order:

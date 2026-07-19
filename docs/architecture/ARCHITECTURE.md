@@ -1,9 +1,9 @@
 # BroPS Product Architecture
 
 - **Purpose:** Describe the system structure of BroPS — domains, entities, execution model, and state separation.
-- **Scope:** Product architecture only. The AI runtime is in [AI_RUNTIME.md](AI_RUNTIME.md); UX surfaces are in [product/](product/).
+- **Scope:** Product architecture only. The AI runtime is in [AI_RUNTIME.md](AI_RUNTIME.md); UX surfaces are in [product/](../product/).
 - **Owner:** Gev.
-- **Related:** [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), [AI_RUNTIME.md](AI_RUNTIME.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [product/NAVIGATION.md](product/NAVIGATION.md).
+- **Related:** [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md), [AI_RUNTIME.md](AI_RUNTIME.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [product/NAVIGATION.md](../product/NAVIGATION.md).
 - **Last updated:** 2026-07-19.
 
 ## Core domains
@@ -42,7 +42,7 @@
 - ActivityEvent
 - EvidenceRecord
 
-These entities define the conceptual data model. The concrete persisted schema (tables, keys, indexes, migrations) is intentionally not specified yet; it is a Phase 3–4 deliverable (see [ROADMAP.md](ROADMAP.md)) and will be recorded in a dedicated `DATA_MODEL.md` when the application foundation begins.
+These entities define the conceptual data model. The concrete persisted schema (tables, keys, indexes, migrations) is intentionally not specified yet; it is a Phase 3–4 deliverable (see [ROADMAP.md](../ROADMAP.md)) and will be recorded in a dedicated `DATA_MODEL.md` when the application foundation begins.
 
 ## Execution model
 
@@ -74,4 +74,4 @@ The first build is a product prototype and application foundation. Debian deploy
 
 # Ճարտարապետություն
 
-BroPS-ը կառուցվում է առանձին domain-ներով, բայց օգտագործողի համար գործում է որպես մեկ միասնական AI Operating System։ Conversation-ը, canonical state-ը, evidence-ը և memory-ն տարբեր շերտեր են և չեն կարող խառնվել։ AI runtime-ի մեխանիկան canonical է [AI_RUNTIME.md](AI_RUNTIME.md)-ում, իսկ UI մակերեսները՝ [product/](product/)-ում։ Կոնկրետ տվյալների սխեման (`DATA_MODEL.md`) կսահմանվի Phase 3–4-ում, երբ սկսվի application-ի հիմքը։
+BroPS-ը կառուցվում է առանձին domain-ներով, բայց օգտագործողի համար գործում է որպես մեկ միասնական AI Operating System։ Conversation-ը, canonical state-ը, evidence-ը և memory-ն տարբեր շերտեր են և չեն կարող խառնվել։ AI runtime-ի մեխանիկան canonical է [AI_RUNTIME.md](AI_RUNTIME.md)-ում, իսկ UI մակերեսները՝ [product/](../product/)-ում։ Կոնկրետ տվյալների սխեման (`DATA_MODEL.md`) կսահմանվի Phase 3–4-ում, երբ սկսվի application-ի հիմքը։

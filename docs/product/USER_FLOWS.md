@@ -1,7 +1,7 @@
 - **Purpose:** Describe the primary end-to-end user flows through BroPS.
 - **Scope:** Command-to-outcome, group collaboration, project execution, approval, memory/knowledge, and the global flow rule. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [../ARCHITECTURE.md](../ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md).
+- **Related:** [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [../ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS User Flows / Օգտագործողի հոսքեր

@@ -1,14 +1,14 @@
 - **Purpose:** Define the canonical, implementable UX flows for Projects and Tasks in BroPS Phase 1 — creation, workspace tabs, task lifecycle, task views, message-to-task and agent delegation, and project close.
 - **Scope:** Project creation, project workspace tabs, task board/list lifecycle, the eight task views, create-task-from-message, assign-to-agent, the review→done evidence gate, project close, and the per-flow states every screen must handle. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [WORKSPACES.md](WORKSPACES.md), [NAVIGATION.md](NAVIGATION.md), [../AI_RUNTIME.md](../AI_RUNTIME.md), [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md).
+- **Related:** [WORKSPACES.md](WORKSPACES.md), [NAVIGATION.md](NAVIGATION.md), [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md), [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md).
 - **Last updated:** 2026-07-19.
 
 # Project & Task Flows
 
 Status: Draft canonical
 
-This document is the detailed UX contract for the **Projects** and **Tasks** workspaces defined in [WORKSPACES.md](WORKSPACES.md) and projected in [NAVIGATION.md](NAVIGATION.md). Every execution, delegation, evidence, and approval rule defers to [../AI_RUNTIME.md](../AI_RUNTIME.md); no flow here may weaken those rules. Where a flow prepares a protected action or a recordable choice, it hands off to [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md).
+This document is the detailed UX contract for the **Projects** and **Tasks** workspaces defined in [WORKSPACES.md](WORKSPACES.md) and projected in [NAVIGATION.md](NAVIGATION.md). Every execution, delegation, evidence, and approval rule defers to [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md); no flow here may weaken those rules. Where a flow prepares a protected action or a recordable choice, it hands off to [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md).
 
 ## 1. Canonical vocabulary
 
@@ -174,7 +174,7 @@ Every flow above must render seven states honestly; none may hide execution, app
 
 Կարգավիճակ՝ Draft canonical
 
-Այս փաստաթուղթը **Projects** և **Tasks** աշխատանքային տարածքների մանրամասն UX պայմանագիրն է ([WORKSPACES.md](WORKSPACES.md), [NAVIGATION.md](NAVIGATION.md))։ Կատարման, delegation-ի, evidence-ի և approval-ի բոլոր կանոնները ենթարկվում են [../AI_RUNTIME.md](../AI_RUNTIME.md)-ին. այստեղ ոչ մի հոսք չի կարող թուլացնել դրանք։ Երբ հոսքը պատրաստում է պաշտպանված գործողություն կամ գրանցելի ընտրություն, այն փոխանցում է [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md)-ին։
+Այս փաստաթուղթը **Projects** և **Tasks** աշխատանքային տարածքների մանրամասն UX պայմանագիրն է ([WORKSPACES.md](WORKSPACES.md), [NAVIGATION.md](NAVIGATION.md))։ Կատարման, delegation-ի, evidence-ի և approval-ի բոլոր կանոնները ենթարկվում են [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ին. այստեղ ոչ մի հոսք չի կարող թուլացնել դրանք։ Երբ հոսքը պատրաստում է պաշտպանված գործողություն կամ գրանցելի ընտրություն, այն փոխանցում է [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md)-ին։
 
 ## 1. Կանոնական բառապաշար
 

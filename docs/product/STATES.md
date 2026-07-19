@@ -1,14 +1,14 @@
 - **Purpose:** Define the single canonical set of UI state patterns that every BroPS screen and surface inherits, so state behavior is consistent, honest, and reusable across the product.
 - **Scope:** Phase 1 UX. The ten canonical states (loading, empty, populated, error, offline, permission-denied, blocked, awaiting-approval, destructive-confirmation, success) plus the rules and mappings that govern them. Trilingual product surface (HY/EN/RU) in Dark and Light.
 - **Owner:** Gev.
-- **Related:** [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [../DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md), [INFORMATION_ARCHITECTURE.md](INFORMATION_ARCHITECTURE.md).
+- **Related:** [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), [INFORMATION_ARCHITECTURE.md](INFORMATION_ARCHITECTURE.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Canonical UI State Patterns / Ինտերֆեյսի վիճակների կանոնական օրինաչափություններ
 
 Status: Draft canonical
 
-Every screen and surface listed in [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md) inherits these patterns. A screen may extend a pattern for its content, but it may never replace, contradict, or weaken it. When a screen conflicts with this document, this document wins; when this document conflicts with [../DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md), the Design System wins.
+Every screen and surface listed in [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md) inherits these patterns. A screen may extend a pattern for its content, but it may never replace, contradict, or weaken it. When a screen conflicts with this document, this document wins; when this document conflicts with [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), the Design System wins.
 
 All visual treatment below is expressed through the semantic token families defined in the Design System (background/surface hierarchy, text hierarchy, borders, primary/secondary/destructive actions, success/warning/danger/information states, and focus/hover/pressed/selected/disabled/loading states). **No state may hard-code a theme color.**
 
@@ -160,7 +160,7 @@ Canonical short labels every screen reuses. Equal meaning and quality in all thr
 
 Կարգավիճակ: Նախնական կանոնական
 
-[SCREEN_INVENTORY.md](SCREEN_INVENTORY.md)-ում թվարկված յուրաքանչյուր էկրան և մակերես ժառանգում է այս օրինաչափությունները։ Էկրանը կարող է ընդլայնել օրինաչափությունն իր բովանդակության համար, բայց երբեք չի կարող փոխարինել, հակասել կամ թուլացնել այն։ Երբ էկրանը հակասում է այս փաստաթղթին՝ հաղթում է այս փաստաթուղթը. երբ այս փաստաթուղթը հակասում է [../DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md)-ին՝ հաղթում է Design System-ը։
+[SCREEN_INVENTORY.md](SCREEN_INVENTORY.md)-ում թվարկված յուրաքանչյուր էկրան և մակերես ժառանգում է այս օրինաչափությունները։ Էկրանը կարող է ընդլայնել օրինաչափությունն իր բովանդակության համար, բայց երբեք չի կարող փոխարինել, հակասել կամ թուլացնել այն։ Երբ էկրանը հակասում է այս փաստաթղթին՝ հաղթում է այս փաստաթուղթը. երբ այս փաստաթուղթը հակասում է [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md)-ին՝ հաղթում է Design System-ը։
 
 Ամբողջ վիզուալ մշակումը արտահայտվում է Design System-ի semantic token ընտանիքներով (ֆոն/մակերես, տեքստի հիերարխիա, եզրագծեր, primary/secondary/destructive գործողություններ և success/warning/danger/information վիճակներ)։ **Ոչ մի վիճակ չի կարող կոշտ կոդավորել թեմայի գույն։**
 

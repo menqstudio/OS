@@ -3,7 +3,7 @@
 **Purpose:** Define the single canonical visual, motion, localization, theming, and accessibility standard for all MenQ Studio product surfaces.
 **Scope:** Every user-facing surface — product shell, screens, components, chat/agent surfaces, notifications, and states — across all product UIs. Product UIs inherit from this document. They may extend it, but they may never replace or contradict it.
 **Owner:** Gev
-**Related:** [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) · [product/SCREEN_INVENTORY.md](product/SCREEN_INVENTORY.md) · [product/NAVIGATION.md](product/NAVIGATION.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
+**Related:** [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md) · [product/SCREEN_INVENTORY.md](../product/SCREEN_INVENTORY.md) · [product/NAVIGATION.md](../product/NAVIGATION.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 **Last updated:** 2026-07-19
 
 This is THE only design source. When any product UI, spec, or component appears to conflict with this document, this document wins.

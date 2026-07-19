@@ -6,7 +6,7 @@
 
 **Owner:** Gev
 
-**Related:** [PRINCIPLES.md](PRINCIPLES.md) · [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) · [ROADMAP.md](ROADMAP.md) · [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
+**Related:** [PRINCIPLES.md](PRINCIPLES.md) · [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) · [ROADMAP.md](ROADMAP.md) · [DESIGN_SYSTEM.md](architecture/DESIGN_SYSTEM.md)
 
 **Last updated:** 2026-07-19
 
@@ -136,7 +136,7 @@ Product, UX, and architecture are designed and validated before server/Debian de
 
 **Սեփականատեր.** Gev
 
-**Առնչվող.** [PRINCIPLES.md](PRINCIPLES.md) · [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) · [ROADMAP.md](ROADMAP.md) · [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
+**Առնչվող.** [PRINCIPLES.md](PRINCIPLES.md) · [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) · [ROADMAP.md](ROADMAP.md) · [DESIGN_SYSTEM.md](architecture/DESIGN_SYSTEM.md)
 
 **Վերջին թարմացում.** 2026-07-19
 

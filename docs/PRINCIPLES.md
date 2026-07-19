@@ -6,7 +6,7 @@
 
 **Owner / Պատասխանատու:** Gev
 
-**Related / Առնչվող:** [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), [DECISIONS.md](DECISIONS.md), [AI_RUNTIME.md](AI_RUNTIME.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
+**Related / Առնչվող:** [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), [DECISIONS.md](DECISIONS.md), [AI_RUNTIME.md](architecture/AI_RUNTIME.md), [DESIGN_SYSTEM.md](architecture/DESIGN_SYSTEM.md)
 
 **Last updated / Վերջին թարմացում:** 2026-07-19
 

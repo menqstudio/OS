@@ -3,7 +3,7 @@
 - **Purpose:** Define the MVP definition of done — the criteria that must be GREEN to ship.
 - **Scope:** Acceptance criteria only. Future work is in [ROADMAP.md](ROADMAP.md).
 - **Owner:** Gev.
-- **Related:** [ROADMAP.md](ROADMAP.md), [PRINCIPLES.md](PRINCIPLES.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [product/USER_FLOWS.md](product/USER_FLOWS.md).
+- **Related:** [ROADMAP.md](ROADMAP.md), [PRINCIPLES.md](PRINCIPLES.md), [DESIGN_SYSTEM.md](architecture/DESIGN_SYSTEM.md), [product/USER_FLOWS.md](product/USER_FLOWS.md).
 - **Last updated:** 2026-07-19.
 
 ## Հայերեն

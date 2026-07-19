@@ -2,7 +2,7 @@
 
 - **Purpose:** The Tauri 2 + Rust desktop host and the local SQLite data core.
 - **Owner:** Gev.
-- **Related:** [../IMPLEMENTATION_EXECUTION_HANDOFF.md](../IMPLEMENTATION_EXECUTION_HANDOFF.md), [../docs/architecture/DESKTOP_ARCHITECTURE.md](../docs/architecture/DESKTOP_ARCHITECTURE.md), [../docs/architecture/DATABASE_SCHEMA.md](../docs/architecture/DATABASE_SCHEMA.md).
+- **Related:** [../IMPLEMENTATION_EXECUTION_HANDOFF.md](../docs/IMPLEMENTATION_EXECUTION_HANDOFF.md), [../docs/architecture/DESKTOP_ARCHITECTURE.md](../docs/architecture/DESKTOP_ARCHITECTURE.md), [../docs/architecture/DATABASE_SCHEMA.md](../docs/architecture/DATABASE_SCHEMA.md).
 - **Last updated:** 2026-07-19.
 
 ## Layout

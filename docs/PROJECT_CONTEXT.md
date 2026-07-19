@@ -3,7 +3,7 @@
 - **Purpose:** Canonical product-framing document for BroPS — the single source for identity, mission, vision, scope, users, and constraints.
 - **Scope:** Product framing and boundaries only. Deep architecture, principles, roadmap, design, and terminology live in their own canonical files.
 - **Owner:** Gev.
-- **Related:** [PRINCIPLES.md](PRINCIPLES.md), [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [TERMINOLOGY.md](TERMINOLOGY.md).
+- **Related:** [PRINCIPLES.md](PRINCIPLES.md), [ARCHITECTURE.md](architecture/ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md), [DESIGN_SYSTEM.md](architecture/DESIGN_SYSTEM.md), [TERMINOLOGY.md](TERMINOLOGY.md).
 - **Last updated:** 2026-07-19.
 
 ## English

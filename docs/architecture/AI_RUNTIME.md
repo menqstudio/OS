@@ -3,7 +3,7 @@
 **Purpose:** Canonical specification of the BroPS AI runtime — the Bro orchestrator, the multi-agent runtime, agents, personas, and the engines, event system, tool-execution boundary, and approval model that govern how work is understood, delegated, executed, verified, and recorded.
 **Scope:** All AI-driven execution inside BroPS: intent handling, agent delegation, context and knowledge assembly, memory, decisions, events, tool side effects, and approvals.
 **Owner:** Gev
-**Related:** [ARCHITECTURE.md](ARCHITECTURE.md), [PRINCIPLES.md](PRINCIPLES.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [product/GROUP_CHAT.md](product/GROUP_CHAT.md)
+**Related:** [ARCHITECTURE.md](ARCHITECTURE.md), [PRINCIPLES.md](../PRINCIPLES.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [product/GROUP_CHAT.md](../product/GROUP_CHAT.md)
 **Last updated:** 2026-07-19
 
 > Product language scope is trilingual HY / EN / RU. Each section below carries an English body; where a source was bilingual, a matching Armenian rendering is preserved for meaning parity.

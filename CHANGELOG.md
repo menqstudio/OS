@@ -1,7 +1,7 @@
 # BroPS Changelog
 
 - **Purpose:** Record notable repository changes, most recent first.
-- **Scope:** Documentation and, later, released application changes. Future work is in [ROADMAP.md](ROADMAP.md).
+- **Scope:** Documentation and, later, released application changes. Future work is in [ROADMAP.md](docs/ROADMAP.md).
 - **Owner:** Gev.
 - **Last updated:** 2026-07-19.
 

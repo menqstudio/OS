@@ -1,9 +1,9 @@
 # BroPS Roadmap
 
 - **Purpose:** Track phased future work from foundation to deployment.
-- **Scope:** Future work only. Shipped changes are in [CHANGELOG.md](CHANGELOG.md); acceptance is in [SUCCESS_CRITERIA.md](SUCCESS_CRITERIA.md).
+- **Scope:** Future work only. Shipped changes are in [CHANGELOG.md](../CHANGELOG.md); acceptance is in [SUCCESS_CRITERIA.md](SUCCESS_CRITERIA.md).
 - **Owner:** Gev.
-- **Related:** [SUCCESS_CRITERIA.md](SUCCESS_CRITERIA.md), [ARCHITECTURE.md](ARCHITECTURE.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), [DECISIONS.md](DECISIONS.md).
+- **Related:** [SUCCESS_CRITERIA.md](SUCCESS_CRITERIA.md), [ARCHITECTURE.md](architecture/ARCHITECTURE.md), [DESIGN_SYSTEM.md](architecture/DESIGN_SYSTEM.md), [DECISIONS.md](DECISIONS.md).
 - **Last updated:** 2026-07-19.
 
 ## Phase 0 — Foundation

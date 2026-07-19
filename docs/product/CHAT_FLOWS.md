@@ -1,14 +1,14 @@
 - **Purpose:** Define the canonical detailed UX flows for Direct Chat and Group Chat as observable, step-by-step behavior (Phase 1 UX).
 - **Scope:** Direct Chat (Gev + Bro), Group Chat rooms, the message lifecycle as UI steps, Bro's five room modes as visible behaviors, per-flow states, and the chat safety law. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [GROUP_CHAT.md](GROUP_CHAT.md), [USER_FLOWS.md](USER_FLOWS.md), [../AI_RUNTIME.md](../AI_RUNTIME.md), [INFORMATION_ARCHITECTURE.md](INFORMATION_ARCHITECTURE.md), [NAVIGATION.md](NAVIGATION.md), [WORKSPACES.md](WORKSPACES.md).
+- **Related:** [GROUP_CHAT.md](GROUP_CHAT.md), [USER_FLOWS.md](USER_FLOWS.md), [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md), [INFORMATION_ARCHITECTURE.md](INFORMATION_ARCHITECTURE.md), [NAVIGATION.md](NAVIGATION.md), [WORKSPACES.md](WORKSPACES.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Chat Flows
 
 Status: Draft canonical
 
-This document specifies what the user actually sees and does. It is concrete and step-by-step. Every status name, lifecycle, and approval level used here is the one defined in [../AI_RUNTIME.md](../AI_RUNTIME.md) and MUST NOT drift. Agent statuses are `Offline, Idle, Observing, Thinking, Waiting approval, Working, Blocked, Review, Failed, Completed`. Bro operating modes are `Answer, Plan, Execute, Review, Coordinate, Recovery`. Approval levels are `A0, A1, A2, A3`. The message lifecycle is `Draft → Sent → Routed → Acknowledged → Working → Result posted → Evidence attached → Accepted | Reopened`.
+This document specifies what the user actually sees and does. It is concrete and step-by-step. Every status name, lifecycle, and approval level used here is the one defined in [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md) and MUST NOT drift. Agent statuses are `Offline, Idle, Observing, Thinking, Waiting approval, Working, Blocked, Review, Failed, Completed`. Bro operating modes are `Answer, Plan, Execute, Review, Coordinate, Recovery`. Approval levels are `A0, A1, A2, A3`. The message lifecycle is `Draft → Sent → Routed → Acknowledged → Working → Result posted → Evidence attached → Accepted | Reopened`.
 
 ---
 
@@ -204,7 +204,7 @@ A chat message never silently grants authority. Sending, mentioning, or agreeing
 
 Կարգավիճակ․ Draft canonical
 
-Այս փաստաթուղթը սահմանում է, թե իրականում ինչ է տեսնում և անում օգտատերը։ Այն կոնկրետ է և քայլ առ քայլ։ Բոլոր status-երը, lifecycle-ները և approval level-ները նույնն են, ինչ [../AI_RUNTIME.md](../AI_RUNTIME.md)-ում, և ՉՊԵՏՔ Է շեղվեն։ Ագենտի status-երն են՝ `Offline, Idle, Observing, Thinking, Waiting approval, Working, Blocked, Review, Failed, Completed`։ Bro-ի ռեժիմներն են՝ `Answer, Plan, Execute, Review, Coordinate, Recovery`։ Approval level-երն են՝ `A0, A1, A2, A3`։ Հաղորդագրության lifecycle-ն է՝ `Draft → Sent → Routed → Acknowledged → Working → Result posted → Evidence attached → Accepted | Reopened`։
+Այս փաստաթուղթը սահմանում է, թե իրականում ինչ է տեսնում և անում օգտատերը։ Այն կոնկրետ է և քայլ առ քայլ։ Բոլոր status-երը, lifecycle-ները և approval level-ները նույնն են, ինչ [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ում, և ՉՊԵՏՔ Է շեղվեն։ Ագենտի status-երն են՝ `Offline, Idle, Observing, Thinking, Waiting approval, Working, Blocked, Review, Failed, Completed`։ Bro-ի ռեժիմներն են՝ `Answer, Plan, Execute, Review, Coordinate, Recovery`։ Approval level-երն են՝ `A0, A1, A2, A3`։ Հաղորդագրության lifecycle-ն է՝ `Draft → Sent → Routed → Acknowledged → Working → Result posted → Evidence attached → Accepted | Reopened`։
 
 ---
 

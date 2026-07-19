@@ -1,7 +1,7 @@
 - **Purpose:** Canonical, detailed UX flows for Decisions, Approvals, and Agent runs in BroPS (Phase 1 UX). This file makes the AI_RUNTIME decision states, approval levels, and agent statuses concrete and implementable at the screen level.
 - **Scope:** The Decision lifecycle UX, the Approval queue and approval-gate UX (levels A0–A3), and the Agent profile / delegation / live-run UX, including per-flow loading, empty, error, offline, expired, and blocked states. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [../AI_RUNTIME.md](../AI_RUNTIME.md), [../DECISIONS.md](../DECISIONS.md), [PROJECT_TASK_FLOWS.md](PROJECT_TASK_FLOWS.md), [CHAT_FLOWS.md](CHAT_FLOWS.md), [USER_FLOWS.md](USER_FLOWS.md), [GROUP_CHAT.md](GROUP_CHAT.md).
+- **Related:** [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md), [../DECISIONS.md](../DECISIONS.md), [PROJECT_TASK_FLOWS.md](PROJECT_TASK_FLOWS.md), [CHAT_FLOWS.md](CHAT_FLOWS.md), [USER_FLOWS.md](USER_FLOWS.md), [GROUP_CHAT.md](GROUP_CHAT.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Decision, Approval & Agent Flows
