@@ -208,7 +208,7 @@ def authorize_classified_action(
         return False, f"unknown BRO_MODE={state.mode!r}"
     if state.mode == "review":
         if classification.mutating:
-            return False, "review mode is technically read-only"
+            return False, "review mode is read-only; mutation denied"
         if classification.unknown:
             return False, "review mode denies unknown action"
         if classification.orchestration:

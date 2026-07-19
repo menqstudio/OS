@@ -290,7 +290,7 @@ def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pat
                   stop_registry: pathlib.Path | None = None,
                   audit_path: pathlib.Path | None = None,
                   repo_root: pathlib.Path | None = None,
-                  extra_env: dict[str, str] | None = None) -> tuple[int, str, str, bool]:
+                  extra_env: dict[str, str] | None = None) -> tuple[int, str, str, bool, bool]:
     """Run the builder in its own process group with the lease in its environment only.
 
     Two properties matter here. First, the supervisor's environment is not

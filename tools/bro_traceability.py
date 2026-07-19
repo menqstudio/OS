@@ -251,8 +251,6 @@ def derive_static_proof(root: pathlib.Path, record: dict) -> dict:
     # A MUST-law can only reach ENFORCED at LIVE_PROVEN, which static analysis cannot grant.
     strong = record["failure_behavior"]["normative_strength"] in STRONG_NORMATIVE
     enforcement_status = "STATIC_ONLY" if effective == "STATIC_PROVEN" else "NOT_ENFORCED"
-    if not strong and effective == "STATIC_PROVEN":
-        enforcement_status = "STATIC_ONLY"
     return {
         "id": record["id"],
         "links": links,

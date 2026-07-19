@@ -31,8 +31,13 @@ from bro_traceability import load_runtime_dependencies
 
 
 def wired_interpreter(root: pathlib.Path) -> str | None:
-    settings = json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    token = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"].split()[0]
+    # A malformed/absent settings.json means nothing is wired; treat it as no
+    # interpreter (a clean RED via assurance_failures) rather than an uncaught traceback.
+    try:
+        settings = json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        token = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"].split()[0]
+    except (OSError, json.JSONDecodeError, KeyError, IndexError, AttributeError):
+        return None
     return shutil.which(token)
 
 

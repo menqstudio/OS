@@ -197,7 +197,7 @@ def fail_closed(event: str, exc: BaseException) -> int:
     reason = f"hook failed closed: {type(exc).__name__}: {exc}"
     if event == "pre-tool":
         deny(reason)
-    elif event in {"stop", "subagent-stop", "post-tool", "post-tool-failure"}:
+    elif event in {"stop", "post-tool", "post-tool-failure"}:
         emit({"decision": "block", "reason": reason})
     else:
         emit({"hookSpecificOutput": {"hookEventName": "SessionStart",

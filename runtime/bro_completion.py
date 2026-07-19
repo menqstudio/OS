@@ -103,7 +103,7 @@ def _required_commands(task: dict[str, Any]) -> list[list[str]]:
 
 def _validate_execution_receipts(task: dict[str, Any], tests: list[dict[str, Any]], candidate_head: str,
                                  candidate_tree: str, root: pathlib.Path, now: int | None,
-                                 *, keys: dict | None = None, store: pathlib.Path | None = None) -> None:
+                                 *, keys: dict | None = None, store: pathlib.Path | None = None) -> list[str]:
     """Make "the tests passed" a checked execution receipt, not a builder's claim.
 
     Each completion-manifest test cites an execution receipt id. The receipt is an
@@ -221,7 +221,7 @@ def _clean_repository(root: pathlib.Path) -> None:
 def _check_manifest(task: dict[str, Any], agent_id: str, manifest: dict[str, Any], *,
                     root: pathlib.Path, now: int | None, keys: dict | None,
                     evidence_store: pathlib.Path | None, receipt_store: pathlib.Path | None,
-                    require_live: bool) -> tuple[dict[str, Any], str]:
+                    require_live: bool) -> tuple[dict[str, Any], str, list[str]]:
     """Artifact-only validation of a completion manifest, shared by the Stop gate
     (env + live repository) and the durable runtime (in-process keys/store). When
     ``require_live`` the manifest candidate must equal the current repository state;

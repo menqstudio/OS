@@ -91,7 +91,7 @@ def _immutable_snapshot(root: pathlib.Path, head: str):
 
 
 def run_and_sign(command: list[str], *, key: dict, task_id: str,
-                 root: pathlib.Path, runner_id: str, now: int | None = None) -> dict:
+                 root: pathlib.Path, runner_id: str, now: int | None = None) -> tuple[dict, subprocess.CompletedProcess]:
     if key["authority_type"] != "evidence-recorder":
         raise ReceiptError(
             f"a {key['authority_type']} key may not sign execution receipts: that "
