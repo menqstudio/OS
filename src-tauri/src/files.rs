@@ -154,11 +154,15 @@ pub fn read_listing(dir: &Path) -> std::io::Result<DirListing> {
             Ok(e) => e,
             Err(_) => continue,
         };
-        let meta = match entry.metadata() {
+        let path = entry.path();
+        // symlink_metadata does NOT follow the link, so a symlink reports its own
+        // (small) size/mtime and is_dir=false — it can't leak the target's dir
+        // flag / size / mtime, and the UI treats it as a non-navigable file.
+        // Opening it still goes through confine(), which resolves + re-checks it.
+        let meta = match fs::symlink_metadata(&path) {
             Ok(m) => m,
             Err(_) => continue,
         };
-        let path = entry.path();
         entries.push(DirEntry {
             name: entry.file_name().to_string_lossy().into_owned(),
             path: path.to_string_lossy().into_owned(),
@@ -333,6 +337,23 @@ mod tests {
         assert!(listing.entries[0].is_dir);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn listing_does_not_follow_symlinks() {
+        let base = scratch("listsym");
+        fs::create_dir_all(base.join("realdir")).unwrap();
+        fs::write(base.join("realdir/big"), vec![b'a'; 5000]).unwrap();
+        std::os::unix::fs::symlink(base.join("realdir"), base.join("linkdir")).unwrap();
+
+        let listing = read_listing(&base).unwrap();
+        let link = listing.entries.iter().find(|e| e.name == "linkdir").unwrap();
+        // the symlink must NOT report the target's directory flag / size.
+        assert!(!link.is_dir, "a symlink to a dir must not be listed as a dir");
+        assert!(link.size_bytes < 5000, "symlink must report its own size, not the target's");
+
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

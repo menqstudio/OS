@@ -260,11 +260,17 @@ async fn claude_cli_stream<F: FnMut(&str)>(
         format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN, or set ANTHROPIC_API_KEY.")
     })?;
 
-    // Feed the transcript over stdin (never argv) and close it so claude sees EOF.
+    // Feed the transcript over stdin (never argv → not in /proc/<pid>/cmdline) on
+    // a background task, so a full pipe (large transcript, child not yet reading)
+    // can't block us before the read loop's per-read timeout can fire. If we bail,
+    // kill_on_drop reaps the child and this task's write fails harmlessly.
     if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        stdin.write_all(prompt.as_bytes()).await.map_err(|e| format!("writing prompt to claude: {e}"))?;
-        let _ = stdin.shutdown().await;
+        let bytes = prompt.into_bytes();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(&bytes).await;
+            let _ = stdin.shutdown().await;
+        });
     }
 
     // Drain stderr concurrently so a full stderr pipe can never deadlock the
@@ -374,12 +380,18 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN to its path, or set ANTHROPIC_API_KEY.")
     })?;
-    // Feed the transcript over stdin (never argv) so it can't be read from
-    // /proc/<pid>/cmdline while the process runs.
+    // Feed the transcript to stdin (never argv → not in /proc/<pid>/cmdline) on a
+    // background task that runs concurrently with the timeout-bounded wait — so a
+    // stalled stdin write (full pipe, child not reading) can't hang the request
+    // forever. On timeout, kill_on_drop reaps the child and this task's write
+    // fails harmlessly.
     if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        stdin.write_all(prompt.as_bytes()).await.map_err(|e| format!("writing prompt to claude: {e}"))?;
-        let _ = stdin.shutdown().await;
+        let bytes = prompt.into_bytes();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(&bytes).await;
+            let _ = stdin.shutdown().await;
+        });
     }
     let out = tokio::time::timeout(Duration::from_secs(120), child.wait_with_output())
         .await
