@@ -152,6 +152,13 @@ export interface Run {
   updatedAt: string;
 }
 
+export interface AiStatus {
+  provider: string;
+  model: string;
+  ready: boolean;
+  detail: string;
+}
+
 export interface RunStep {
   id: string;
   runId: string;

@@ -4,6 +4,7 @@
 use std::sync::Mutex;
 use tauri::Manager;
 
+mod ai;
 mod commands;
 mod files;
 
@@ -69,6 +70,8 @@ pub fn run() {
             commands::set_integration_status,
             commands::get_analytics,
             commands::get_security_summary,
+            commands::ai_status,
+            commands::reply_in_conversation,
             files::list_dir,
         ])
         .run(tauri::generate_context!())

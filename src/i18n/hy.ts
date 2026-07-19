@@ -72,6 +72,7 @@ export const hy: Record<DictKey, string> = {
   'chat.noMessages': 'Դեռ հաղորդագրություն չկա',
   'chat.noMessagesHint': 'Ուղարկիր առաջին հաղորդագրությունը ներքևում։',
   'chat.you': 'gev',
+  'chat.replyFailed': 'Գործակալը չկարողացավ պատասխանել',
 
   'projects.subtitle': 'Նպատակակենտրոն աշխատանք',
   'tasks.subtitle': 'Ապացույցներով գործողությունների համակարգ',

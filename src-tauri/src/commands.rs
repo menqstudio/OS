@@ -247,6 +247,51 @@ pub fn advance_run(state: State<AppState>, run_id: String) -> Result<Run, String
     repo::runs::advance(&conn, &run_id).map_err(|e| e.to_string())
 }
 
+// --- AI (live agent replies) ---
+
+#[tauri::command]
+pub async fn ai_status() -> Result<crate::ai::AiStatus, String> {
+    Ok(crate::ai::status().await)
+}
+
+/// Generate a real agent reply for a conversation and persist it as an
+/// `agent`-role message. Reads history under the DB lock, releases it before
+/// the network call (so the future stays Send and the UI stays responsive),
+/// then writes the reply under the lock again.
+#[tauri::command]
+pub async fn reply_in_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    agent: Option<String>,
+) -> Result<Message, String> {
+    let author = agent.unwrap_or_else(|| "Bro".to_string());
+    let (system, history) = {
+        let conn = locked(&state)?;
+        let msgs = repo::chat::list_messages(&conn, &conversation_id).map_err(|e| e.to_string())?;
+        let history: Vec<crate::ai::ChatMsg> = msgs
+            .iter()
+            .map(|m| crate::ai::ChatMsg {
+                role: if m.role == "user" { "user".to_string() } else { "assistant".to_string() },
+                content: m.body.clone(),
+            })
+            .collect();
+        let system = format!(
+            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. Reply concisely, directly, and helpfully to the latest message. Do not claim to have taken actions you cannot actually take."
+        );
+        (system, history)
+    };
+    if history.is_empty() {
+        return Err("nothing to reply to".to_string());
+    }
+    let text = crate::ai::generate(&system, &history).await?;
+    let conn = locked(&state)?;
+    repo::chat::post_message(
+        &conn,
+        NewMessage { conversation_id, role: "agent".to_string(), author, body: text },
+    )
+    .map_err(|e| e.to_string())
+}
+
 // --- events (calendar) ---
 
 #[tauri::command]

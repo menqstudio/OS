@@ -5,8 +5,8 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  ActivityEvent, Agent, Approval, Automation, CalendarEvent, Conversation, Decision, DirListing,
-  Integration, KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
+  ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
+  DirListing, Integration, KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
   NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
   RunStep, SecuritySummary, Task,
 } from '../domain/entities';
@@ -106,4 +106,9 @@ export const desktop = {
   // analytics / security (computed, read-only)
   getAnalytics: () => invoke<Metric[]>('get_analytics'),
   getSecuritySummary: () => invoke<SecuritySummary>('get_security_summary'),
+
+  // ai (live agent replies)
+  aiStatus: () => invoke<AiStatus>('ai_status'),
+  replyInConversation: (conversationId: string, agent?: string) =>
+    invoke<Message>('reply_in_conversation', { conversationId, agent: agent ?? null }),
 };
