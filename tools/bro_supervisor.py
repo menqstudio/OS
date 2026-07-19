@@ -37,7 +37,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
 from bro_audit_log import append as audit_append
+from bro_authorize_specialist import build_mode_grant_payload, sign_mode_grant
 from bro_execution_lease import CLASS_CAPABILITIES
+from bro_skill_receipt import build_skill_receipt
 from bro_protected import SECURITY, STANDARD, TASK_CLASSES
 from bro_repository_state import RepositoryStateError, resolve_state
 from bro_signature import SignatureError, load_trusted_keys, verify_artifact
@@ -228,12 +230,67 @@ def _teardown_group(pgid: int | None, *, task_id: str,
     return False
 
 
+def produce_builder_bundle(task_contract: dict, agent_profile: dict, approval: dict | None, *,
+                           issuer_key: dict, repository_full_name: str,
+                           worktree: pathlib.Path, repo_state, session_id: str,
+                           now: int, bundle_dir: pathlib.Path,
+                           ttl_seconds: int) -> dict[str, str]:
+    """Produce the governed authorization bundle a supervised builder verifies.
+
+    The owner authors WHAT the task is (semantics, agent identity, skills,
+    verification); the supervisor binds WHERE it runs. The owner cannot know the
+    branch, HEAD and tree identity of the isolated worktree the supervisor creates
+    per task, so the supervisor rewrites the contract's repository block to that
+    worktree and issuer-signs the mode grant that anchors the contract, profile and
+    skill-receipt hashes over the new binding. The builder cannot run this — it holds
+    no issuer key — so it can verify this bundle but never widen it.
+
+    Returns the BRO_* environment the builder must be given to verify its authority.
+    """
+    if agent_profile.get("agent_id") != task_contract.get("agent_id"):
+        raise SupervisorError("task contract and agent profile name different agents")
+    task = dict(task_contract)
+    task["repository"] = {
+        "full_name": repository_full_name,
+        "branch": repo_state.branch,
+        "worktree": str(worktree),
+        "base_commit": repo_state.head_sha,
+        "tree_identity": repo_state.tree_identity,
+    }
+    receipt = build_skill_receipt(task, agent_profile, root=worktree, now=now,
+                                  ttl_seconds=ttl_seconds)
+    grant_payload = build_mode_grant_payload(
+        task, agent_profile, receipt, session_id=session_id, role="specialist",
+        mode=task["mode"], head_sha=repo_state.head_sha,
+        tree_identity=repo_state.tree_identity, now=now, ttl_seconds=ttl_seconds)
+    signed_grant = sign_mode_grant(grant_payload, issuer_key, now)
+
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = {
+        "BRO_TASK_CONTRACT": ("task-contract.json", task),
+        "BRO_AGENT_PROFILE": ("agent-profile.json", agent_profile),
+        "BRO_SKILL_RECEIPT": ("skill-receipt.json", receipt),
+        "BRO_MODE_GRANT": ("mode-grant.signed.json", signed_grant),
+    }
+    env: dict[str, str] = {}
+    for var, (name, obj) in artifacts.items():
+        path = bundle_dir / name
+        path.write_text(json.dumps(obj), encoding="utf-8")
+        env[var] = str(path)
+    if approval is not None:
+        path = bundle_dir / "protected-authority.json"
+        path.write_text(json.dumps(approval), encoding="utf-8")
+        env["BRO_PROTECTED_AUTHORITY"] = str(path)
+    return env
+
+
 def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pathlib.Path,
                   binding_path: pathlib.Path, state_dir: pathlib.Path, agent_id: str,
                   session_id: str, timeout: float, task_id: str,
                   stop_registry: pathlib.Path | None = None,
                   audit_path: pathlib.Path | None = None,
-                  repo_root: pathlib.Path | None = None) -> tuple[int, str, str, bool]:
+                  repo_root: pathlib.Path | None = None,
+                  extra_env: dict[str, str] | None = None) -> tuple[int, str, str, bool]:
     """Run the builder in its own process group with the lease in its environment only.
 
     Two properties matter here. First, the supervisor's environment is not
@@ -262,6 +319,12 @@ def spawn_builder(command: list[str], *, worktree: pathlib.Path, lease_path: pat
         "BRO_WORKSPACE_BINDING": str(binding_path),
         "BRO_SESSION_STATE_DIR": str(state_dir),
     }
+    # The governed authorization bundle (task contract, agent profile, skill receipt,
+    # signed mode grant, protected authority) and the external lease ledger, when the
+    # supervisor produced one. Still no issuer key: the builder receives only what it
+    # must verify, never what would let it mint its own authority.
+    if extra_env:
+        env.update(extra_env)
     posix_groups = hasattr(os, "killpg")
     proc = subprocess.Popen(
         command, cwd=str(worktree), env=env,
@@ -320,9 +383,22 @@ def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pat
              builder_command: list[str], approval: dict | None = None,
              agent_id: str = "agt-p01-r01", ttl_seconds: int = DEFAULT_LEASE_SECONDS,
              now: int | None = None,
-             audit_path: pathlib.Path | None = None) -> SupervisorResult:
+             audit_path: pathlib.Path | None = None,
+             task_contract: dict | None = None,
+             agent_profile: dict | None = None) -> SupervisorResult:
     moment = int(time.time()) if now is None else now
     session_id = f"sup-{uuid.uuid4().hex[:12]}"
+    # When the owner hands over a task contract + agent profile, the supervisor issues
+    # the builder its full governed authorization bundle bound to this worktree; the
+    # lease's agent id must then be the contract's, not the caller default.
+    if task_contract is not None:
+        if agent_profile is None:
+            return SupervisorResult(request.task_id, DENIED,
+                                    "a task contract requires an agent profile")
+        if task_contract.get("task_id") != request.task_id:
+            return SupervisorResult(request.task_id, DENIED,
+                                    "task contract task_id does not match the request")
+        agent_id = task_contract.get("agent_id", agent_id)
     try:
         keys = load_trusted_keys(registry_root)
         reason = authorize_request(request, approval, keys, now=moment)
@@ -360,7 +436,21 @@ def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pat
     stop_dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-sup-stop-"))
     stop_registry = stop_dir / "processes.jsonl"
     incidents = audit_path if audit_path is not None else stop_dir / "incidents.jsonl"
+    # The builder's authorization bundle and its external lease ledger, when the owner
+    # provided a contract. Both are outside the repository so nothing is committable.
+    bundle_dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-sup-bundle-"))
+    lease_ledger: pathlib.Path | None = None
     try:
+        extra_env: dict[str, str] = {}
+        if task_contract is not None:
+            extra_env = produce_builder_bundle(
+                task_contract, agent_profile, approval, issuer_key=issuer_key,
+                repository_full_name=binding["repository"], worktree=worktree,
+                repo_state=repo_state, session_id=session_id, now=moment,
+                bundle_dir=bundle_dir, ttl_seconds=ttl_seconds)
+            lease_ledger = pathlib.Path(tempfile.mkdtemp(prefix="bro-sup-leaseledger-"))
+            extra_env["BRO_EXECUTION_LEASE_LEDGER"] = str(lease_ledger)
+
         lease = issue_lease(
             request, issuer_key, workspace_id=binding["workspace_id"],
             repository=binding["repository"], worktree=str(worktree),
@@ -376,15 +466,18 @@ def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pat
             binding_path=binding_path, state_dir=state_dir, agent_id=agent_id,
             session_id=session_id, timeout=float(ttl_seconds),
             task_id=request.task_id, stop_registry=stop_registry,
-            audit_path=incidents, repo_root=repository_root)
+            audit_path=incidents, repo_root=repository_root, extra_env=extra_env)
     except (SupervisorError, OSError) as exc:
         remove_worktree(repository_root, worktree)
         shutil.rmtree(stop_dir, ignore_errors=True)
         return SupervisorResult(request.task_id, FAILED, str(exc))
     finally:
-        # The lease dies with the run. A lease that outlives its builder is a
-        # credential lying on disk.
+        # The lease, the signed authorization bundle and the lease ledger all die with
+        # the run. A grant or lease that outlives its builder is a credential on disk.
         shutil.rmtree(lease_dir, ignore_errors=True)
+        shutil.rmtree(bundle_dir, ignore_errors=True)
+        if lease_ledger is not None:
+            shutil.rmtree(lease_ledger, ignore_errors=True)
 
     # Keep the STOP directory only when an incident may have landed in the default
     # ledger — a timeout OR an uncontained group. With an external audit_path the

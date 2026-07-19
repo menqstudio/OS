@@ -15,11 +15,13 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import bro_supervisor
 from bro_audit_log import read_all, verify
+from bro_contracts import canonical_json_sha256, validate_mode_grant
 from bro_execution_lease import (
     LeaseError,
     finalize_execution_lease,
     load_execution_lease_from_env,
     reserve_execution_lease,
+    validate_execution_lease,
 )
 from bro_repository_state import resolve_state
 from bro_signature import SignatureError, verify_artifact
@@ -36,6 +38,7 @@ from bro_supervisor import (
     authorize_request,
     issue_lease,
     prepare_worktree,
+    produce_builder_bundle,
     remove_worktree,
     run_task,
 )
@@ -464,6 +467,98 @@ class SupervisorLeaseRuntimeE2ETests(SupervisorFixture):
                 bad["repository"][field] = wrong
                 with self.assertRaises(LeaseError, msg=field):
                     load(task=bad)
+
+
+class SupervisorBuilderBundleTests(SupervisorFixture):
+    """The supervisor issues a builder its full governed authorization bundle.
+
+    The owner authors WHAT the task is; the supervisor binds WHERE it runs — it
+    rewrites the contract's repository block to the isolated worktree it created and
+    issuer-signs the mode grant over that binding. These prove the produced bundle is
+    consistent and runtime-valid, and that the lease agrees with the rebound contract.
+    """
+
+    def _owner_task(self):
+        return {
+            "schema": 1, "task_id": "task-1", "title": "t", "objective": "o",
+            "mode": "work", "risk": "low", "pack_id": "ai-agent-builders",
+            "agent_id": "agt-p01-r02", "assignee_role": "Agent Builder",
+            "scope": ["docs"], "prohibited_scope": ["release"], "inputs": [],
+            "core_skills": [], "additional_skills": [], "reference_skills": [],
+            "done_criteria": ["done"],
+            "verification": {"required": False, "verifier_agent_id": None,
+                             "verifier_role": None, "commands": []},
+            "rollback": {"strategy": "discard the worktree", "commands": []},
+            # A placeholder the supervisor must overwrite with the real worktree state.
+            "repository": {"full_name": "PLACEHOLDER", "branch": "?", "worktree": "?",
+                           "base_commit": "0" * 40, "tree_identity": "0" * 64},
+        }
+
+    def _owner_agent(self):
+        return {"schema": 1, "agent_id": "agt-p01-r02", "pack_id": "ai-agent-builders",
+                "role": "Agent Builder", "core_skills": [],
+                "allowed_modes": ["review", "work"], "can_verify": False, "can_push": False}
+
+    def _bundle(self, name):
+        worktree, _branch = prepare_worktree(self.repo, "task-1")
+        self.addCleanup(remove_worktree, self.repo, worktree)
+        repo_state = resolve_state(worktree, cwd=worktree)
+        env = produce_builder_bundle(
+            self._owner_task(), self._owner_agent(), None, issuer_key=self.keys["issuer"],
+            repository_full_name="menqstudio/bro", worktree=worktree, repo_state=repo_state,
+            session_id="s-1", now=NOW, bundle_dir=self.tmp / name, ttl_seconds=900)
+        return env, worktree, repo_state
+
+    def test_repository_is_rebound_to_the_worktree(self):
+        env, worktree, repo_state = self._bundle("b1")
+        task = json.loads(pathlib.Path(env["BRO_TASK_CONTRACT"]).read_text(encoding="utf-8"))
+        self.assertEqual(task["repository"], {
+            "full_name": "menqstudio/bro", "branch": repo_state.branch,
+            "worktree": str(worktree), "base_commit": repo_state.head_sha,
+            "tree_identity": repo_state.tree_identity})
+
+    def test_mode_grant_is_issuer_signed_and_validates_against_the_worktree(self):
+        env, worktree, _repo_state = self._bundle("b2")
+        task = json.loads(pathlib.Path(env["BRO_TASK_CONTRACT"]).read_text(encoding="utf-8"))
+        agent = json.loads(pathlib.Path(env["BRO_AGENT_PROFILE"]).read_text(encoding="utf-8"))
+        receipt = json.loads(pathlib.Path(env["BRO_SKILL_RECEIPT"]).read_text(encoding="utf-8"))
+        grant = json.loads(pathlib.Path(env["BRO_MODE_GRANT"]).read_text(encoding="utf-8"))
+        payload = verify_artifact(grant, "mode-grant", self.trusted, now=NOW + 1)
+        # The signed grant anchors the (unsigned) contract/profile/receipt hashes and
+        # binds them to this worktree's head + tree; validate_mode_grant proves it.
+        validate_mode_grant(
+            payload, session_id="s-1", agent_id="agt-p01-r02", role="specialist",
+            task_sha256=canonical_json_sha256(task),
+            agent_sha256=canonical_json_sha256(agent),
+            skill_sha256=canonical_json_sha256(receipt), root=worktree, now=NOW + 1)
+
+    def test_lease_agrees_with_the_rebound_contract(self):
+        env, worktree, repo_state = self._bundle("b3")
+        task = json.loads(pathlib.Path(env["BRO_TASK_CONTRACT"]).read_text(encoding="utf-8"))
+        signed = issue_lease(
+            self.request(), self.keys["issuer"], workspace_id="bro-test",
+            repository="menqstudio/bro", worktree=str(worktree), branch=repo_state.branch,
+            head_sha=repo_state.head_sha, tree_identity=repo_state.tree_identity,
+            agent_id="agt-p01-r02", session_id="s-1", control_plane_digest="a" * 64,
+            ttl_seconds=900, now=NOW)
+        payload = verify_artifact(signed, "execution-lease", self.trusted, now=NOW + 1)
+        lease = validate_execution_lease(
+            payload, task=task, agent_id="agt-p01-r02", session_id="s-1",
+            required_capabilities=("WRITE_REPOSITORY",), now=NOW + 1)
+        self.assertEqual(lease.task_id, "task-1")
+
+    def test_agent_profile_mismatch_is_rejected(self):
+        worktree, _branch = prepare_worktree(self.repo, "task-1")
+        self.addCleanup(remove_worktree, self.repo, worktree)
+        repo_state = resolve_state(worktree, cwd=worktree)
+        wrong_agent = self._owner_agent()
+        wrong_agent["agent_id"] = "agt-p09-r09"
+        with self.assertRaises(SupervisorError):
+            produce_builder_bundle(
+                self._owner_task(), wrong_agent, None, issuer_key=self.keys["issuer"],
+                repository_full_name="menqstudio/bro", worktree=worktree,
+                repo_state=repo_state, session_id="s-1", now=NOW,
+                bundle_dir=self.tmp / "b4", ttl_seconds=900)
 
 
 if __name__ == "__main__":
