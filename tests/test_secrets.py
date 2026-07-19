@@ -67,5 +67,52 @@ class RecoveryWiringTests(unittest.TestCase):
         self.assertNotIn("abcdefghijklmnopqrstuvwxyz0123", redacted)
 
 
+class RedactionCompletenessTests(unittest.TestCase):
+    """Security remediation, blocker 5: redaction hid only the PEM header and
+    missed modern token formats. No key byte and no whole token may survive."""
+
+    def test_full_pem_leaves_no_key_bytes(self):
+        pem = ("-----BEGIN OPENSSH PRIVATE KEY-----\n"
+               "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gt\n"
+               "ZWQyNTUxOQAAACD\n"
+               "-----END OPENSSH PRIVATE KEY-----\n"
+               "trailing log line here")
+        out = redact(pem)
+        self.assertNotIn("b3BlbnNz", out)                 # body gone
+        self.assertNotIn("END OPENSSH", out)              # END marker gone
+        self.assertIn("REDACTED", out)
+        self.assertIn("trailing log line here", out)      # following text preserved
+
+    def test_truncated_pem_body_is_redacted(self):
+        out = redact("-----BEGIN RSA PRIVATE KEY-----\n"
+                     "MIIEabcdEFGH1234567890abcdEFGH1234567890abcd\nmorebase64AAAABBBBCCCCDDDD1234")
+        self.assertNotIn("MIIEabcd", out)
+
+    def test_truncated_pem_short_body_and_tail_are_redacted(self):
+        # a truncated key with short body lines and no END: everything from the
+        # BEGIN header to end of input is key material and must be redacted
+        out = redact("-----BEGIN PRIVATE KEY-----\nABCD1234\nEFGH5678\n")
+        self.assertNotIn("ABCD1234", out)
+        self.assertNotIn("EFGH5678", out)
+        self.assertIn("REDACTED", out)
+
+    def test_complete_pem_preserves_following_text(self):
+        # a COMPLETE block must not consume text after END
+        out = redact("-----BEGIN PRIVATE KEY-----\nABCD1234\n-----END PRIVATE KEY-----\nkeep me")
+        self.assertNotIn("ABCD1234", out)
+        self.assertIn("keep me", out)
+
+    def test_modern_token_formats_are_redacted(self):
+        for token in ("sk-proj-abcdEFGH1234567890ijklMNOP",
+                      "github_pat_11ABCDEFG0abcdef1234567890ABCDEF"):
+            out = redact(f"leaked {token} here")
+            self.assertNotIn(token, out)
+            self.assertIn("REDACTED", out)
+
+    def test_no_over_redaction_of_ordinary_text(self):
+        text = "normal log line, sha 3f2a1b9c, path /runtime/x.py, count=42"
+        self.assertEqual(redact(text), text)
+
+
 if __name__ == "__main__":
     unittest.main()

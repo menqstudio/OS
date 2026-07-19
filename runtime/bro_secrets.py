@@ -22,11 +22,21 @@ import re
 _PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
     ("aws-access-key-id", re.compile(r"AKIA[0-9A-Z]{16}")),
     ("anthropic-key", re.compile(r"sk-ant-[A-Za-z0-9._-]{20,}")),
+    ("openai-project-key", re.compile(r"sk-proj-[A-Za-z0-9_-]{20,}")),
     ("openai-key", re.compile(r"sk-[A-Za-z0-9]{32,}")),
     ("github-token", re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}")),
+    ("github-fine-grained-pat", re.compile(r"github_pat_[A-Za-z0-9_]{20,}")),
     ("slack-token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}")),
     ("google-api-key", re.compile(r"AIza[0-9A-Za-z._-]{35}")),
-    ("private-key-block", re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")),
+    # The whole key block, not just the header. First alternative matches a
+    # complete block BEGIN..END (non-greedy), leaving following text intact. When
+    # there is no END the block is truncated and any remaining body — however
+    # short — is still key material, so the fallback redacts from the BEGIN header
+    # to end of input rather than trusting a per-line length floor.
+    ("private-key-block", re.compile(
+        r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?"
+        r"-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----"
+        r"|-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*")),
     ("jwt", re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
     ("bearer-token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*")),
 ]
