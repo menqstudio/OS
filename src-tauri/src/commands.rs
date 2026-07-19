@@ -5,8 +5,8 @@ use crate::AppState;
 use brops_core::{
     repo, ActivityEvent, Agent, Approval, Automation, Conversation, Decision, Event, Integration,
     KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent, NewKnowledgeNote,
-    NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run, SecuritySummary,
-    Task,
+    NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run, RunStep,
+    SecuritySummary, Task,
 };
 use tauri::State;
 
@@ -221,6 +221,30 @@ pub fn create_run(state: State<AppState>, intent: String, plan: String) -> Resul
 pub fn set_run_status(state: State<AppState>, id: String, status: String) -> Result<Run, String> {
     let conn = locked(&state)?;
     repo::runs::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_run_steps(state: State<AppState>, run_id: String) -> Result<Vec<RunStep>, String> {
+    let conn = locked(&state)?;
+    repo::runs::list_steps(&conn, &run_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_run_step(state: State<AppState>, run_id: String, title: String, detail: String) -> Result<RunStep, String> {
+    let conn = locked(&state)?;
+    repo::runs::add_step(&conn, &run_id, &title, &detail).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_run_step_status(state: State<AppState>, id: String, status: String) -> Result<RunStep, String> {
+    let conn = locked(&state)?;
+    repo::runs::set_step_status(&conn, &id, &status).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn advance_run(state: State<AppState>, run_id: String) -> Result<Run, String> {
+    let conn = locked(&state)?;
+    repo::runs::advance(&conn, &run_id).map_err(|e| e.to_string())
 }
 
 // --- events (calendar) ---

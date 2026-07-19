@@ -8,7 +8,7 @@ import type {
   ActivityEvent, Agent, Approval, Automation, CalendarEvent, Conversation, Decision, DirListing,
   Integration, KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
   NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
-  SecuritySummary, Task,
+  RunStep, SecuritySummary, Task,
 } from '../domain/entities';
 
 /** True when running inside the Tauri desktop runtime. */
@@ -79,6 +79,12 @@ export const desktop = {
   listRuns: () => invoke<Run[]>('list_runs'),
   createRun: (intent: string, plan: string) => invoke<Run>('create_run', { intent, plan }),
   setRunStatus: (id: string, status: string) => invoke<Run>('set_run_status', { id, status }),
+  listRunSteps: (runId: string) => invoke<RunStep[]>('list_run_steps', { runId }),
+  addRunStep: (runId: string, title: string, detail: string) =>
+    invoke<RunStep>('add_run_step', { runId, title, detail }),
+  setRunStepStatus: (id: string, status: string) =>
+    invoke<RunStep>('set_run_step_status', { id, status }),
+  advanceRun: (runId: string) => invoke<Run>('advance_run', { runId }),
 
   // events (calendar)
   listEvents: () => invoke<CalendarEvent[]>('list_events'),

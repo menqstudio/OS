@@ -10,7 +10,7 @@ pub use domain::{
     ActivityEvent, Agent, Approval, Automation, Conversation, CoreError, CoreResult, Decision,
     Event, Integration, KnowledgeNote, Message, MemoryEntry, Metric, NewAutomation, NewEvent,
     NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
-    SecuritySummary, Task,
+    RunStep, SecuritySummary, Task,
 };
 
 /// A new UUID v4 string. IDs are opaque text everywhere in the schema.
@@ -101,9 +101,9 @@ mod tests {
     }
 
     #[test]
-    fn migrations_reach_v5_with_all_tables() {
+    fn migrations_reach_v6_with_all_tables() {
         let c = conn();
-        assert_eq!(db::current_version(&c).unwrap(), 5);
+        assert_eq!(db::current_version(&c).unwrap(), 6);
         // decisions table exists and is usable
         repo::decisions::create(&c, "T", "gev", "why").unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
@@ -137,6 +137,88 @@ mod tests {
             repo::runs::set_status(&c, &r.id, "bogus"),
             Err(CoreError::Invalid { field: "status", .. })
         ));
+    }
+
+    #[test]
+    fn run_steps_advance_lifecycle() {
+        let c = conn();
+        let r = repo::runs::create(&c, "ship it", "").unwrap();
+        repo::runs::add_step(&c, &r.id, "one", "").unwrap();
+        repo::runs::add_step(&c, &r.id, "two", "").unwrap();
+        // steps are positioned in insertion order and start pending
+        let steps = repo::runs::list_steps(&c, &r.id).unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].position, 1);
+        assert_eq!(steps[1].position, 2);
+        assert!(steps.iter().all(|s| s.status == "pending"));
+
+        // first advance: run -> running, step 1 active
+        let after1 = repo::runs::advance(&c, &r.id).unwrap();
+        assert_eq!(after1.status, "running");
+        let steps = repo::runs::list_steps(&c, &r.id).unwrap();
+        assert_eq!(steps[0].status, "active");
+        assert_eq!(steps[1].status, "pending");
+
+        // second advance: step 1 done, step 2 active
+        repo::runs::advance(&c, &r.id).unwrap();
+        let steps = repo::runs::list_steps(&c, &r.id).unwrap();
+        assert_eq!(steps[0].status, "done");
+        assert_eq!(steps[1].status, "active");
+
+        // third advance: step 2 done, no pending left -> run succeeded
+        let done = repo::runs::advance(&c, &r.id).unwrap();
+        assert_eq!(done.status, "succeeded");
+        let steps = repo::runs::list_steps(&c, &r.id).unwrap();
+        assert!(steps.iter().all(|s| s.status == "done"));
+
+        // a terminated (succeeded) run cannot be advanced again
+        assert!(matches!(
+            repo::runs::advance(&c, &r.id),
+            Err(CoreError::Invalid { field: "status", .. })
+        ));
+
+        // invalid step status rejected
+        assert!(matches!(
+            repo::runs::set_step_status(&c, &steps[0].id, "bogus"),
+            Err(CoreError::Invalid { field: "status", .. })
+        ));
+    }
+
+    #[test]
+    fn advance_rejects_terminal_and_stepless_runs() {
+        let c = conn();
+        // a run with no steps cannot be advanced (no accidental jump to succeeded)
+        let empty = repo::runs::create(&c, "no plan", "").unwrap();
+        assert!(matches!(
+            repo::runs::advance(&c, &empty.id),
+            Err(CoreError::Invalid { field: "steps", .. })
+        ));
+        assert_eq!(repo::runs::get(&c, &empty.id).unwrap().status, "drafted");
+
+        // a cancelled run with pending steps is NOT resurrected by advance
+        let r = repo::runs::create(&c, "cancel me", "").unwrap();
+        repo::runs::add_step(&c, &r.id, "s1", "").unwrap();
+        repo::runs::add_step(&c, &r.id, "s2", "").unwrap();
+        repo::runs::set_status(&c, &r.id, "cancelled").unwrap();
+        assert!(matches!(
+            repo::runs::advance(&c, &r.id),
+            Err(CoreError::Invalid { field: "status", .. })
+        ));
+        // still cancelled; steps untouched
+        assert_eq!(repo::runs::get(&c, &r.id).unwrap().status, "cancelled");
+        assert!(repo::runs::list_steps(&c, &r.id).unwrap().iter().all(|s| s.status == "pending"));
+    }
+
+    #[test]
+    fn run_steps_cascade_delete_with_run() {
+        let c = conn();
+        let r = repo::runs::create(&c, "temp", "").unwrap();
+        repo::runs::add_step(&c, &r.id, "s", "").unwrap();
+        assert_eq!(repo::runs::list_steps(&c, &r.id).unwrap().len(), 1);
+        c.execute("DELETE FROM runs WHERE id = ?1", [&r.id]).unwrap();
+        assert_eq!(repo::runs::list_steps(&c, &r.id).unwrap().len(), 0);
+        // adding a step to a missing run is rejected
+        assert!(repo::runs::add_step(&c, "nope", "x", "").is_err());
     }
 
     #[test]
@@ -261,6 +343,11 @@ mod tests {
         assert!(repo::events::list(&c).unwrap().len() >= 2);
         assert!(repo::automations::list(&c).unwrap().len() >= 2);
         assert!(repo::integrations::list(&c).unwrap().len() >= 2);
+        // the first seeded run has an executable plan and is mid-flight
+        let seeded_run = repo::runs::list(&c).unwrap().into_iter().find(|r| r.status == "running").unwrap();
+        let steps = repo::runs::list_steps(&c, &seeded_run.id).unwrap();
+        assert!(steps.len() >= 4);
+        assert_eq!(steps[0].status, "active");
         // running again must not duplicate
         repo::seed(&c).unwrap();
         assert_eq!(repo::projects::list(&c).unwrap().len(), after_first);

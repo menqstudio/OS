@@ -17,6 +17,7 @@ pub const RUN_STATUSES: &[&str] = &[
     "failed", "cancelled",
 ];
 pub const INTEGRATION_STATUSES: &[&str] = &["disconnected", "connected", "error"];
+pub const STEP_STATUSES: &[&str] = &["pending", "active", "done", "failed", "skipped"];
 
 pub fn is_valid(value: &str, allowed: &[&str]) -> bool {
     allowed.contains(&value)
@@ -157,6 +158,17 @@ camel! {
         pub intent: String,
         pub status: String,
         pub plan: String,
+        pub created_at: String,
+        pub updated_at: String,
+    }
+
+    pub struct RunStep {
+        pub id: String,
+        pub run_id: String,
+        pub position: i64,
+        pub title: String,
+        pub detail: String,
+        pub status: String,
         pub created_at: String,
         pub updated_at: String,
     }

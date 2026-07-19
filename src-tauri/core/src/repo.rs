@@ -2,7 +2,7 @@
 
 use crate::domain::*;
 use crate::{id, now};
-use rusqlite::{Connection, Row};
+use rusqlite::{Connection, OptionalExtension, Row};
 
 fn map_project(r: &Row) -> rusqlite::Result<Project> {
     Ok(Project {
@@ -627,6 +627,111 @@ pub mod runs {
         super::audit::record(conn, "run.status_changed", "gev", "run", id)?;
         get(conn, id)
     }
+
+    // --- run steps: the ordered plan the run executes through ---
+
+    fn map_step(r: &Row) -> rusqlite::Result<RunStep> {
+        Ok(RunStep {
+            id: r.get("id")?,
+            run_id: r.get("run_id")?,
+            position: r.get("position")?,
+            title: r.get("title")?,
+            detail: r.get("detail")?,
+            status: r.get("status")?,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    pub fn add_step(conn: &Connection, run_id: &str, title: &str, detail: &str) -> CoreResult<RunStep> {
+        get(conn, run_id)?; // reject an unknown run before inserting
+        let position: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(position), 0) + 1 FROM run_steps WHERE run_id = ?1",
+            [run_id],
+            |r| r.get(0),
+        )?;
+        let now = now();
+        let id = id();
+        conn.execute(
+            "INSERT INTO run_steps(id, run_id, position, title, detail, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?6)",
+            rusqlite::params![id, run_id, position, title, detail, now],
+        )?;
+        get_step(conn, &id)
+    }
+
+    pub fn get_step(conn: &Connection, id: &str) -> CoreResult<RunStep> {
+        conn.query_row("SELECT * FROM run_steps WHERE id = ?1", [id], map_step).map_err(not_found(id))
+    }
+
+    pub fn list_steps(conn: &Connection, run_id: &str) -> CoreResult<Vec<RunStep>> {
+        let mut s = conn.prepare("SELECT * FROM run_steps WHERE run_id = ?1 ORDER BY position")?;
+        let rows = s.query_map([run_id], map_step)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn set_step_status(conn: &Connection, id: &str, status: &str) -> CoreResult<RunStep> {
+        if !is_valid(status, STEP_STATUSES) {
+            return Err(CoreError::Invalid { field: "status", value: status.to_string() });
+        }
+        let changed = conn.execute(
+            "UPDATE run_steps SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![status, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(CoreError::NotFound(id.to_string()));
+        }
+        get_step(conn, id)
+    }
+
+    /// Advance a run's execution by one step: mark the active step done and
+    /// activate the next pending one. When no pending steps remain the run is
+    /// marked `succeeded`; the run moves to `running` on the first advance.
+    /// This models the lifecycle only — it never executes anything on the host.
+    ///
+    /// Rejects advancing a terminated run (succeeded/failed/cancelled) or a run
+    /// with no steps. All state changes commit atomically.
+    pub fn advance(conn: &Connection, run_id: &str) -> CoreResult<Run> {
+        let run = get(conn, run_id)?;
+        if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
+            return Err(CoreError::Invalid { field: "status", value: run.status });
+        }
+        let total_steps: i64 =
+            conn.query_row("SELECT COUNT(*) FROM run_steps WHERE run_id = ?1", [run_id], |r| r.get(0))?;
+        if total_steps == 0 {
+            return Err(CoreError::Invalid { field: "steps", value: "none".to_string() });
+        }
+
+        let now = now();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE run_steps SET status = 'done', updated_at = ?1 WHERE run_id = ?2 AND status = 'active'",
+            rusqlite::params![now, run_id],
+        )?;
+        // Only QueryReturnedNoRows becomes None; any real error propagates.
+        let next: Option<String> = tx
+            .query_row(
+                "SELECT id FROM run_steps WHERE run_id = ?1 AND status = 'pending' ORDER BY position LIMIT 1",
+                [run_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match next {
+            Some(step_id) => {
+                tx.execute(
+                    "UPDATE run_steps SET status = 'active', updated_at = ?1 WHERE id = ?2",
+                    rusqlite::params![now, step_id],
+                )?;
+                if run.status != "running" {
+                    set_status(&tx, run_id, "running")?;
+                }
+            }
+            None => set_status(&tx, run_id, "succeeded").map(|_| ())?,
+        }
+        super::audit::record(&tx, "run.advanced", "gev", "run", run_id)?;
+        tx.commit()?;
+        get(conn, run_id)
+    }
 }
 
 pub mod events {
@@ -929,9 +1034,13 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
     memory::set_pinned(conn, &m.id, true)?;
     memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "Foundation v1 is Locked (D-010).".into() })?;
 
-    let r1 = runs::create(conn, "Wire the remaining workspaces to the backend", "1. schema  2. repos  3. commands  4. UI")?;
-    runs::set_status(conn, &r1.id, "running")?;
-    runs::create(conn, "Draft the Phase 5 verification report", "")?;
+    let r1 = runs::create(conn, "Wire the remaining workspaces to the backend", "schema → repos → commands → UI")?;
+    runs::add_step(conn, &r1.id, "Design schema", "migration 0005")?;
+    runs::add_step(conn, &r1.id, "Write repositories", "")?;
+    runs::add_step(conn, &r1.id, "Register commands", "")?;
+    runs::add_step(conn, &r1.id, "Build the screens", "")?;
+    runs::advance(conn, &r1.id)?; // moves the run to running with the first step active
+    runs::create(conn, "Draft the Phase 6 verification report", "")?;
 
     let start = now();
     events::create(conn, NewEvent { title: "Phase 5 review".into(), kind: "review".into(), location: "Desktop".into(), starts_at: start.clone(), ends_at: None })?;

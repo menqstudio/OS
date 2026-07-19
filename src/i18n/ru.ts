@@ -97,6 +97,10 @@ export const ru: Record<DictKey, string> = {
 
   'command.runs': 'Запуски',
   'command.newRun': 'Новый запуск',
+  'command.steps': 'Шаги',
+  'command.advance': 'Продвинуть',
+  'command.addStep': 'Добавить шаг',
+  'command.noSteps': 'Пока нет шагов — добавьте первый ниже.',
   'field.intent': 'Намерение',
   'field.plan': 'План',
   'calendar.subtitle': 'Запланированные события',
