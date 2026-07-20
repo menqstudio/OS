@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "metrics_sst": "analytics/metrics.json",
+  "dashboards_sst": "analytics/dashboards.json",
+  "status_schema": "schemas/agent-status.schema.json",
+  "validator": "runtime/bro_analytics.py",
+  "rules": {
+    "evidence_links_required": true,
+    "drilldowns_required": true,
+    "freshness_required": true,
+    "unknown_status_is_not_green": true
+  }
+}

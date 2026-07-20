@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "meta_layer_version": "1.1",
+  "canonical_text": "laws/meta-layer.json",
+  "human_view": "laws/LAW_INDEX.md",
+  "human_view_is_derived": true,
+  "status": "canonical-candidate-pending-lock",
+  "principles": [
+    {
+      "id": "MP-01",
+      "name": "Normative Vocabulary",
+      "since_version": "1.0",
+      "revision_type": "Editorial",
+      "normative_text": "Normative strength is expressed only with the keywords MUST, MUST NOT, SHALL, SHOULD, MAY, interpreted per RFC 2119. Every normative statement declares its strength with one of these keywords."
+    },
+    {
+      "id": "MP-02",
+      "name": "Interpretation Rule",
+      "since_version": "1.0",
+      "revision_type": "Editorial",
+      "normative_text": "A law is interpreted by its canonical normative text. Where wording is ambiguous, the interpretation that fails closed and is more restrictive governs."
+    },
+    {
+      "id": "MP-03",
+      "name": "Single Responsibility",
+      "since_version": "1.0",
+      "revision_type": "Editorial",
+      "normative_text": "Each law and each requirement has exactly one responsibility and exactly one canonical owner SST. Duplicate canonical ownership of the same fact is forbidden."
+    },
+    {
+      "id": "MP-04",
+      "name": "Layered Precedence",
+      "since_version": "1.0",
+      "revision_type": "Editorial",
+      "normative_text": "The layer order Meta-Layer > Operating Laws > Machine Policies > Runtime Enforcement > Evidence/Tests is canonical. On conflict, a higher layer overrides a lower layer."
+    },
+    {
+      "id": "MP-05",
+      "name": "Specificity Rule",
+      "since_version": "1.0",
+      "revision_type": "Editorial",
+      "normative_text": "Within one layer, the more specific requirement governs the more general one for the scope it addresses."
+    },
+    {
+      "id": "MP-06",
+      "name": "Explicit Overrides Only",
+      "since_version": "1.0",
+      "revision_type": "Editorial",
+      "normative_text": "An override of any requirement MUST be explicit and declared at its canonical source. Silent or implicit override is forbidden."
+    },
+    {
+      "id": "MP-07",
+      "name": "Conflict Detection",
+      "since_version": "1.0",
+      "revision_type": "Editorial",
+      "normative_text": "Two active normative requirements that remain mutually exclusive after scope, layer, specificity, and explicit-override analysis are a CONFLICT. A CONFLICT MUST stop work and be presented to the owner; it MUST NOT be resolved unilaterally."
+    },
+    {
+      "id": "MP-08",
+      "name": "Law Precedence",
+      "since_version": "1.0",
+      "revision_type": "Editorial",
+      "normative_text": "Precedence among laws is canonical and machine-registered. Precedence is not inferred ad hoc during execution."
+    },
+    {
+      "id": "MP-09",
+      "name": "Amendment Principle",
+      "since_version": "1.0",
+      "revision_type": "Editorial",
+      "normative_text": "The Meta-Layer changes only through a recorded amendment justified by a real new architectural requirement or a proven internal contradiction. Ordinary work does not alter it."
+    },
+    {
+      "id": "MP-10",
+      "name": "Traceability Principle",
+      "since_version": "1.1",
+      "revision_type": "Behavioral",
+      "normative_text": "Every canonical Operating Law MUST possess a complete, machine-verifiable traceability chain: Law -> Policy -> Execution Surface -> Runtime Prerequisites -> Test -> Evidence. If any required link is absent, unresolved, or fails validation, the law MUST NOT be considered enforced. Detailed requirements are defined by the canonical Operating Law Traceability Specification (OLTS); this principle carries no implementation detail."
+    },
+    {
+      "id": "MP-11",
+      "name": "Verifiability Principle",
+      "since_version": "1.1",
+      "revision_type": "Behavioral",
+      "normative_text": "A canonical statement MUST NOT claim more certainty than the available evidence proves. Every enforcement or status claim carries a Proof Level and MUST NOT exceed the minimum Proof Level of the links it depends on."
+    },
+    {
+      "id": "MP-12",
+      "name": "Derivability Principle",
+      "since_version": "1.1",
+      "revision_type": "Behavioral",
+      "normative_text": "A canonical fact SHOULD be derived from its authoritative source rather than asserted whenever derivation is possible. Enforcement status, Proof Level, laws/LAW_INDEX.md, and human documentation MUST be derived, not hand-written."
+    }
+  ]
+}

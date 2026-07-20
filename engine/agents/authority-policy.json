@@ -1,0 +1,48 @@
+{
+  "schema": 2,
+  "source": "packs/registry.json",
+  "identity_source": "agents/registry.json",
+  "derivation": "default builder authority; designated verifier is the final declared role of each pack with independent_verifier_required=true; exact overrides govern release roles",
+  "risk_order": ["low", "medium", "high", "critical"],
+  "default": {
+    "can_build": true,
+    "can_verify": false,
+    "can_release": false,
+    "allowed_modes": ["review", "work"],
+    "risk_ceiling": "high"
+  },
+  "designated_verifier": {
+    "strategy": "final-declared-role-for-independent-verifier-pack",
+    "can_build": false,
+    "can_verify": true,
+    "can_release": false,
+    "allowed_modes": ["review", "work"],
+    "risk_ceiling": "critical"
+  },
+  "exact_overrides": [
+    {
+      "pack_id": "git-release-control",
+      "role": "Push Executor",
+      "can_build": false,
+      "can_verify": false,
+      "can_release": true,
+      "allowed_modes": ["release"],
+      "risk_ceiling": "critical"
+    },
+    {
+      "pack_id": "git-release-control",
+      "role": "Release Verifier",
+      "can_build": false,
+      "can_verify": true,
+      "can_release": false,
+      "allowed_modes": ["review", "work", "release"],
+      "risk_ceiling": "critical"
+    }
+  ],
+  "independence_minimum_by_risk": {
+    "low": "L1",
+    "medium": "L1",
+    "high": "L2",
+    "critical": "L3"
+  }
+}

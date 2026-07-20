@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/menqstudio/Bro/schemas/dashboard-manifest.schema.json",
+  "title": "Bro Dashboard Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dashboard_id", "owner_pack", "audience", "metrics", "refresh_seconds", "drilldowns", "status_values"],
+  "properties": {
+    "dashboard_id": {"type": "string", "pattern": "^[a-z0-9._-]+$"},
+    "owner_pack": {"type": "string"},
+    "audience": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "metrics": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "refresh_seconds": {"type": "integer", "minimum": 1},
+    "drilldowns": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "status_values": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}
+  }
+}

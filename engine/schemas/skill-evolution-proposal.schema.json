@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/menqstudio/Bro/schemas/skill-evolution-proposal.schema.json",
+  "title": "Bro Skill Evolution Proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "proposal_id", "skill_id", "proposed_by_agent_id", "gap_evidence", "candidate", "benchmarks", "risk", "independent_review", "owner_approval", "promotion_status", "rollback"],
+  "properties": {
+    "schema": {"const": 1},
+    "proposal_id": {"type": "string", "pattern": "^[a-z0-9._-]+$"},
+    "skill_id": {"type": "string", "pattern": "^[a-z0-9._-]+$"},
+    "proposed_by_agent_id": {"type": "string", "pattern": "^agt-p[0-9]{2,}-r[0-9]{2,}$"},
+    "gap_evidence": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "baseline_sha256", "proposed_version"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "baseline_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "proposed_version": {"type": "string"}
+      }
+    },
+    "benchmarks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commands", "expected_outcomes", "regression_required", "safety_required"],
+      "properties": {
+        "commands": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "expected_outcomes": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "regression_required": {"const": true},
+        "safety_required": {"const": true}
+      }
+    },
+    "risk": {"enum": ["low", "medium", "high", "critical"]},
+    "independent_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verifier_agent_id", "verdict", "evidence_paths"],
+      "properties": {
+        "verifier_agent_id": {"type": "string", "pattern": "^agt-p[0-9]{2,}-r[0-9]{2,}$"},
+        "verdict": {"enum": ["pending", "green", "red"]},
+        "evidence_paths": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "owner_approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "approved", "approved_by"],
+      "properties": {
+        "required": {"const": true},
+        "approved": {"type": "boolean"},
+        "approved_by": {"type": ["string", "null"], "enum": ["Gev", null]}
+      }
+    },
+    "promotion_status": {"enum": ["draft", "benchmarking", "review", "pending-owner", "approved", "promoted", "rejected", "rolled-back"]},
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["previous_sha256", "instructions"],
+      "properties": {
+        "previous_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "instructions": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "event_schema": "schemas/orchestration-event.schema.json",
+  "command_schema": "schemas/control-room-command.schema.json",
+  "initial_state": "draft",
+  "terminal_states": ["completed", "failed", "cancelled"],
+  "states": [
+    "draft",
+    "awaiting-approval",
+    "queued",
+    "routing",
+    "running",
+    "blocked",
+    "waiting-approval",
+    "verification",
+    "recovery-required",
+    "quarantined",
+    "completed",
+    "failed",
+    "cancelled"
+  ],
+  "transitions": {
+    "draft": ["awaiting-approval", "queued", "cancelled"],
+    "awaiting-approval": ["queued", "cancelled"],
+    "queued": ["routing", "cancelled"],
+    "routing": ["running", "blocked", "waiting-approval", "failed", "cancelled"],
+    "running": ["blocked", "waiting-approval", "verification", "recovery-required", "quarantined", "completed", "failed", "cancelled"],
+    "blocked": ["queued", "routing", "running", "waiting-approval", "recovery-required", "failed", "cancelled"],
+    "waiting-approval": ["queued", "routing", "running", "verification", "failed", "cancelled"],
+    "verification": ["running", "recovery-required", "quarantined", "completed", "failed"],
+    "recovery-required": ["running", "quarantined", "failed", "cancelled"],
+    "quarantined": ["recovery-required", "failed", "cancelled"],
+    "completed": [],
+    "failed": [],
+    "cancelled": []
+  },
+  "reason_codes": [
+    "task-created",
+    "approval-required",
+    "approval-granted",
+    "approval-denied",
+    "queued-for-routing",
+    "routing-started",
+    "routing-complete",
+    "execution-started",
+    "checkpoint",
+    "dependency-blocked",
+    "budget-exceeded",
+    "owner-input-required",
+    "verification-requested",
+    "verification-passed",
+    "verification-failed",
+    "recovery-required",
+    "recovery-proved",
+    "ambiguity-detected",
+    "task-completed",
+    "task-failed",
+    "task-cancelled",
+    "retry-approved",
+    "reassigned"
+  ],
+  "queue_classes": [
+    {"id": "recovery", "priority": 100, "preemptible": false},
+    {"id": "owner-interactive", "priority": 80, "preemptible": false},
+    {"id": "deadline", "priority": 60, "preemptible": true},
+    {"id": "standard", "priority": 40, "preemptible": true},
+    {"id": "background", "priority": 20, "preemptible": true}
+  ],
+  "routing_policy": {
+    "identity_source": "agents/registry.json",
+    "pack_source": "packs/registry.json",
+    "skill_source": "skills/index.json",
+    "display_names_are_authoritative": false,
+    "cross_pack_allowed": true,
+    "independent_verifier_separation_required": true
+  },
+  "checkpoint_policy": {
+    "max_age_seconds": 900,
+    "evidence_refs_required": true,
+    "open_risks_required": true,
+    "next_action_required": true
+  },
+  "budget_policy": {
+    "supported_dimensions": ["elapsed_seconds", "tool_calls", "retries", "concurrency", "tokens", "cost_minor_units"],
+    "hard_limit_action": "blocked",
+    "soft_limit_action": "waiting-approval",
+    "silent_overrun_forbidden": true
+  },
+  "commands": [
+    {"id": "approve", "actors": ["owner"], "allowed_states": ["awaiting-approval", "waiting-approval"], "evidence_required": true},
+    {"id": "deny", "actors": ["owner"], "allowed_states": ["awaiting-approval", "waiting-approval"], "evidence_required": true},
+    {"id": "cancel", "actors": ["owner", "bro"], "allowed_states": ["draft", "awaiting-approval", "queued", "routing", "running", "blocked", "waiting-approval", "verification", "recovery-required", "quarantined"], "evidence_required": false},
+    {"id": "retry", "actors": ["owner"], "allowed_states": ["blocked", "failed", "cancelled"], "evidence_required": true},
+    {"id": "reassign", "actors": ["owner", "bro"], "allowed_states": ["queued", "routing", "blocked", "waiting-approval"], "evidence_required": true},
+    {"id": "request-verification", "actors": ["owner", "bro"], "allowed_states": ["running", "blocked", "waiting-approval"], "evidence_required": true}
+  ],
+  "control_room_surfaces": [
+    {"id": "mission-overview", "read_models": ["task-summary", "state-counts", "freshness"], "commands": [], "source_required": true, "freshness_required": true, "drilldown_required": true, "evidence_required": true},
+    {"id": "task-detail", "read_models": ["task-contract", "routing", "checkpoints", "evidence", "approvals", "recovery", "audit"], "commands": ["cancel", "retry", "reassign", "request-verification"], "source_required": true, "freshness_required": true, "drilldown_required": true, "evidence_required": true},
+    {"id": "agent-pack-view", "read_models": ["identity", "workload", "status", "verification-separation"], "commands": ["reassign"], "source_required": true, "freshness_required": true, "drilldown_required": true, "evidence_required": true},
+    {"id": "approval-inbox", "read_models": ["approval-request", "risk", "expiry", "evidence"], "commands": ["approve", "deny"], "source_required": true, "freshness_required": true, "drilldown_required": true, "evidence_required": true},
+    {"id": "recovery-quarantine", "read_models": ["original-state", "observed-effect", "proof", "allowed-actions", "ambiguity"], "commands": ["cancel", "retry"], "source_required": true, "freshness_required": true, "drilldown_required": true, "evidence_required": true},
+    {"id": "audit-timeline", "read_models": ["append-only-events"], "commands": [], "source_required": true, "freshness_required": true, "drilldown_required": true, "evidence_required": true}
+  ],
+  "rules": {
+    "unknown_state_is_not_green": true,
+    "impossible_transition_is_denied": true,
+    "terminal_states_are_immutable": true,
+    "events_are_append_only": true,
+    "ui_direct_repository_mutation_forbidden": true,
+    "ui_direct_credential_access_forbidden": true,
+    "ui_direct_release_mutation_forbidden": true
+  }
+}

@@ -1,0 +1,14 @@
+.bro/runtime/
+.bro/grants/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+.DS_Store
+Thumbs.db
+
+# Key material must never be committed (broctl keygen output, operator pins,
+# issuer/recorder/verifier private halves).
+*.key
+*.pem
+keys/

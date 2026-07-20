@@ -1,0 +1,205 @@
+import os
+import pathlib
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "runtime"))
+
+import bro_stop_controller
+from bro_audit_log import AuditError, append, read_all, verify
+from bro_stop_controller import is_group_alive, list_registered, register, stop_all
+
+
+def _append_once(ledger_path: str, index: int) -> None:
+    """Module-level so it survives being sent to a forked process."""
+    import pathlib as _pathlib
+    import sys as _sys
+    _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1] / "runtime"))
+    from bro_audit_log import append as _append
+    _append(_pathlib.Path(ledger_path), "concurrent", {"index": index})
+
+
+class AuditLedgerTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-audit-"))
+        self.ledger = self.dir / "audit.jsonl"
+
+    def test_append_then_verify_chain(self):
+        append(self.ledger, "approval", {"action": "git-push", "target": "main"})
+        append(self.ledger, "incident", {"detail": "something"})
+        self.assertEqual(verify(self.ledger), 2)
+
+    def test_payload_secret_is_redacted(self):
+        append(self.ledger, "incident", {"detail": "leaked token=ghp_1234567890abcdefghij1234ABCD"})
+        raw = self.ledger.read_text(encoding="utf-8")
+        self.assertNotIn("ghp_1234567890abcdefghij1234ABCD", raw)
+        self.assertIn("REDACTED", raw)
+
+    def test_tamper_is_detected(self):
+        import json
+        append(self.ledger, "a", {"x": 1})
+        append(self.ledger, "b", {"x": 2})
+        lines = self.ledger.read_text(encoding="utf-8").splitlines()
+        rec = json.loads(lines[0])
+        rec["payload"]["x"] = 999  # change the value but keep the stored hash
+        lines[0] = json.dumps(rec, sort_keys=True)
+        self.ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        with self.assertRaises(AuditError):
+            verify(self.ledger)
+
+    def test_tail_truncation_is_detected(self):
+        append(self.ledger, "a", {"x": 1})
+        append(self.ledger, "b", {"x": 2})
+        lines = self.ledger.read_text(encoding="utf-8").splitlines()
+        self.ledger.write_text(lines[0] + "\n", encoding="utf-8")  # drop last, keep head
+        with self.assertRaises(AuditError):
+            verify(self.ledger)
+
+    def test_corrupt_json_line_raises_audit_error(self):
+        # A corrupt record is a broken ledger; verify() must fail closed as AuditError,
+        # not surface a raw JSONDecodeError that AuditError-only callers would miss.
+        append(self.ledger, "a", {"x": 1})
+        self.ledger.write_text(self.ledger.read_text(encoding="utf-8") + "{not json\n",
+                               encoding="utf-8")
+        with self.assertRaises(AuditError):
+            verify(self.ledger)
+
+    def test_ledger_inside_repo_is_refused(self):
+        with self.assertRaises(AuditError):
+            append(ROOT / "inside.jsonl", "x", {}, repo_root=ROOT)
+
+    def test_concurrent_thread_appends_keep_one_valid_chain(self):
+        import threading
+        n = 24
+        gate = threading.Barrier(n)
+        errors = []
+
+        def worker(index):
+            try:
+                gate.wait()                       # all threads race the lock at once
+                append(self.ledger, "concurrent", {"index": index})
+            except Exception as exc:              # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(errors, [])
+        records = read_all(self.ledger)
+        # No forked chain: exactly n records, strictly sequential seqs, every append
+        # present once, and the hash chain + head verify.
+        self.assertEqual([r["seq"] for r in records], list(range(n)))
+        self.assertEqual(verify(self.ledger), n)
+        self.assertEqual(sorted(r["payload"]["index"] for r in records), list(range(n)))
+
+    @unittest.skipUnless(hasattr(os, "fork"), "cross-process lock proof uses fork")
+    def test_concurrent_process_appends_keep_one_valid_chain(self):
+        import multiprocessing
+        n = 16
+        ctx = multiprocessing.get_context("fork")
+        procs = [ctx.Process(target=_append_once, args=(str(self.ledger), i)) for i in range(n)]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join(timeout=30)
+        self.assertTrue(all(p.exitcode == 0 for p in procs),
+                        [p.exitcode for p in procs])
+        records = read_all(self.ledger)
+        self.assertEqual([r["seq"] for r in records], list(range(n)))
+        self.assertEqual(verify(self.ledger), n)
+        self.assertEqual(sorted(r["payload"]["index"] for r in records), list(range(n)))
+
+
+class StopControllerTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-stop-"))
+        self.registry = self.dir / "processes.jsonl"
+        self.audit = self.dir / "incidents.jsonl"
+
+    @unittest.skipUnless(
+        hasattr(os, "killpg"),
+        "STOP Controller manages POSIX process groups (os.killpg) and reads "
+        "/proc; the real-process test is Linux/POSIX-only",
+    )
+    def test_stops_a_real_process_group(self):
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            start_new_session=True,
+        )
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        # A session leader's pgid equals its pid.
+        register(self.registry, "task-1", proc.pid, proc.pid)
+        report = stop_all(self.registry, self.audit)
+        self.assertTrue(any(e["pid"] == proc.pid for e in report["stopped"]))
+        proc.wait(timeout=5)
+        self.assertFalse(is_group_alive(proc.pid))
+
+    def test_unstoppable_process_is_recorded_as_incident(self):
+        register(self.registry, "task-stuck", 424242, 424242)
+        with patch.object(bro_stop_controller, "terminate_group", return_value=False):
+            report = stop_all(self.registry, self.audit, repo_root=ROOT)
+        self.assertEqual(len(report["unstopped"]), 1)
+        records = read_all(self.audit)
+        self.assertTrue(any(r["kind"] == "unstopped-process" for r in records))
+        self.assertEqual(verify(self.audit), len(records))
+
+    def test_registry_round_trips(self):
+        register(self.registry, "t", 10, 10)
+        self.assertEqual(list_registered(self.registry)[0]["task_id"], "t")
+
+    @unittest.skipUnless(
+        hasattr(os, "killpg") and hasattr(os, "fork"),
+        "a group outliving its reaped leader needs POSIX fork + killpg",
+    )
+    def test_group_reads_alive_after_leader_reaped_with_child_alive(self):
+        # The false negative this guards: a process group outlives its leader. The
+        # leader spawns a child in its group, then exits and is reaped, so
+        # /proc/<pgid> is gone while the orphaned child keeps running. Checking the
+        # leader pid alone would report the group dead and STOP would walk away from
+        # a live grandchild — the exact state it exists to catch. is_group_alive
+        # must scan the whole group and still read it as alive.
+        script = (
+            "import os,sys,time,signal\n"
+            "os.setsid()\n"                 # own the new group; pgid == this pid
+            "if os.fork()==0:\n"
+            # Survive being orphaned: an orphaned session child is sent SIGHUP when
+            # its leader exits, and it inherited the leader's stdout pipe. Ignore the
+            # hangup and drop the pipe so the child genuinely outlives the leader —
+            # that is the state under test.
+            "    signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+            "    os.close(1)\n"
+            "    time.sleep(30)\n"          # child keeps the group alive
+            "    os._exit(0)\n"
+            "sys.stdout.write(str(os.getpid()))\n"
+            "sys.stdout.flush()\n"
+            "os._exit(0)\n"                 # leader exits immediately
+        )
+        proc = subprocess.Popen([sys.executable, "-c", script],
+                                stdout=subprocess.PIPE, text=True)
+        self.addCleanup(proc.stdout.close)
+        pgid = int(proc.stdout.readline().strip())
+        proc.wait(timeout=5)               # reap the leader; only the child remains
+
+        def _cleanup():
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        self.addCleanup(_cleanup)
+
+        self.assertTrue(
+            is_group_alive(pgid),
+            "leader reaped but child still alive → group must read as alive")
+
+
+if __name__ == "__main__":
+    unittest.main()

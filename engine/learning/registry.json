@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "status": "foundation",
+  "modes": ["task-learning","error-learning","agent-learning","routing-learning","skill-learning","preference-learning","system-learning"],
+  "pipeline": ["observe","record-evidence","extract-lesson","create-proposal","sandbox-simulation","benchmark","independent-review","owner-approval","versioned-promotion","monitor","rollback"],
+  "promotion_rules": {
+    "sandbox_required": true,
+    "benchmark_required": true,
+    "independent_verifier_required": true,
+    "owner_approval_required_for_high_impact": true,
+    "rollback_required": true,
+    "self_verification_forbidden": true,
+    "secret_pii_ingestion_forbidden": true
+  },
+  "skill_evolution_policy": "skills/evolution-policy.json",
+  "validator": "runtime/bro_learning.py"
+}

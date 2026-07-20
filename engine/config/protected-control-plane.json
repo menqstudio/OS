@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "purpose": "Fail-closed control-plane protection. protected_roots governs ACCESS: any matching path is denied to standard-builder tasks, and a new file under a protected root is protected from creation. digest_roots governs DIGEST MEMBERSHIP only and never weakens access. A security-maintenance task may touch only the exact paths named in its owner-issued authority artifact. Trust-granting and CI-executed surfaces are covered in full: tools/** (registered validators, liveness gates, supervisor, key tooling), tests/** (CI gates on them), requirements-ci.txt (the sole CI supply-chain input) and .bro/policy.json (selects the operating mode). Bytecode caches (__pycache__/*.pyc) are excluded from the digest by runtime/bro_protected.py, never listed here.",
+  "protected_roots": [
+    "runtime/**",
+    "config/**",
+    "schemas/**",
+    "tools/**",
+    "tests/**",
+    "requirements-ci.txt",
+    ".bro/policy.json",
+    "agents/authority-policy.json",
+    "agents/registry.json",
+    "orchestration/registry.json",
+    "laws/**",
+    ".claude/**",
+    ".github/workflows/**",
+    ".git/**",
+    "**/.env",
+    "**/*secret*",
+    "**/*credential*",
+    "**/*private-key*"
+  ],
+  "digest_roots": [
+    "runtime/**",
+    "config/**",
+    "schemas/**",
+    "tools/**",
+    "tests/**",
+    "requirements-ci.txt",
+    ".bro/policy.json",
+    "agents/authority-policy.json",
+    "agents/registry.json",
+    "orchestration/registry.json",
+    "laws/**",
+    ".claude/**",
+    ".github/workflows/**"
+  ],
+  "unprotected_exceptions": []
+}

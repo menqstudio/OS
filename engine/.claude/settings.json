@@ -1,0 +1,102 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" session-start || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" session-start || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" session-start"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" prompt || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" prompt || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" prompt"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" pre-tool || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" pre-tool || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" pre-tool"
+          },
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_identity_hook.py\" || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_identity_hook.py\" || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_identity_hook.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell|Shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool-failure || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool-failure || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" post-tool-failure"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" subagent-start || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" subagent-start || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" subagent-start"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" stop"
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" instructions-loaded || python3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" instructions-loaded || py -3 \"$CLAUDE_PROJECT_DIR/runtime/bro_hook.py\" instructions-loaded",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
