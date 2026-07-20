@@ -1,23 +1,26 @@
 # OS Master Execution Roadmap · OS-ի գլխավոր կատարման ճանապարհ
 
-**Status: `Active — Canonical Execution Authority` (v1.0 candidate · NOT Locked — Owner lock pending)**
-**Կարգավիճակ՝ `Active — Canonical Execution Authority` (v1.0 candidate · NOT Locked — Owner-ի lock սպասվում է)**
+**Status: `v1.0 · Canonical Execution Authority` — 🔒 Locked (Owner-approved 2026-07-21 · basis HEAD `2e0157b`)**
+**Կարգավիճակ՝ `v1.0 · Canonical Execution Authority` — 🔒 Locked (Owner-approved 2026-07-21 · basis HEAD `2e0157b`)**
 
 > This document is the **single execution source** for `menqstudio/OS`. When a Claude (or ChatGPT)
 > session is told *"go build the next thing"*, it opens this file, finds the current phase, and takes
 > the next **unchecked** task — without needing any chat context. When state changes, this file is
 > updated **in the same commit** as the change.
 >
-> **Not Locked yet.** This is a **v1.0 candidate**. It becomes `Locked` only when the Owner explicitly
-> approves an exact HEAD (*"Approve v1.0 HEAD `<sha>` as Locked"*). Until then it is **Active** and editable
-> under normal review. §I (Change Control) describes the discipline that **takes effect on that Lock** — it
-> is the proposed policy, not yet in force. Only Phase 0 (Foundation) is *done*-locked.
+> **🔒 Locked at v1.0** (Owner-approved 2026-07-21; basis HEAD `2e0157b` — the exact merged `main` HEAD
+> audited GREEN before approval). **Locked ≠ frozen execution:** phases run, task boxes get checked,
+> `PROJECT_STATE.md` moves — building proceeds normally. What Lock protects is the **plan**: the product
+> content (architecture, trust boundaries, security model, execution order, phase scope) does not change
+> without the §I Change-Control process — propose → Architect audit → Owner approve → implement. Only
+> Phase 0 (Foundation) is additionally *done*-locked.
 >
 > Սա `menqstudio/OS`-ի **միակ կատարման աղբյուրն** է։ Երբ session-ին ասում են «գնա կառուցիր հաջորդը»,
 > ինքը բացում է այս ֆայլը, գտնում ընթացիկ phase-ը, վերցնում հաջորդ **unchecked** task-ը՝ առանց chat
-> context-ի կարիքի։ **Դեռ Locked չէ** — սա v1.0 candidate է, դառնում է Locked միայն երբ Owner-ը հստակ
-> approve անի exact HEAD-ը։ Մինչ այդ՝ **Active** ու editable։ §I-ը (Change Control) նկարագրում է կարգը, որ
-> **ուժի մեջ է մտնում այդ Lock-ից հետո**՝ դեռ ուժի մեջ չէ։ Միայն Phase 0-ն է *done*-locked.
+> context-ի կարիքի։ **🔒 Locked v1.0-ում** (Owner-approved 2026-07-21, basis HEAD `2e0157b`)։ **Locked ≠
+> սառեցված execution** — phase-երը գնում են, box-երը նշվում են, building-ը շարունակվում ա։ Lock-ը պաշտպանում
+> ա **պլանը**՝ product content-ը (architecture/trust/security/execution order/phase scope) չի փոխվում առանց
+> §I change-control-ի (propose → Architect audit → Owner approve → implement)։ Միայն Phase 0-ն է *done*-locked.
 
 ---
 
@@ -305,7 +308,7 @@ hand-forked; a **Superseded** artifact is kept only for provenance.
 
 | Artifact | Domain / role | Status | Authority |
 |---|---|---|---|
-| `MASTER_EXECUTION_ROADMAP.md` | Execution plan (scope · sequence · per-phase spec) | **Canonical (Active; v1.0 candidate, Lock pending)** | This document |
+| `MASTER_EXECUTION_ROADMAP.md` | Execution plan (scope · sequence · per-phase spec) | **Canonical (v1.0, 🔒 Locked)** | This document |
 | `CLAUDE.md` | The brain — identity · rules · environment | **Canonical** | Owner/Architect |
 | `brops-aios.html` | UI / interaction reference (22 pages · design tokens) | **Canonical UI Reference** | Owner |
 | `bridge/contracts/task-request.schema.json` · `bridge-result.schema.json` | Bridge request/result contract | **Canonical Contract** | Architect-approved |
@@ -326,10 +329,10 @@ not in this registry is **not** authoritative.
 
 ## I. Change Control · Փոփոխության վերահսկում
 
-This roadmap is currently **Active (v1.0 candidate, NOT Locked)**. The policy below is what an Owner
-**Lock** switches on: once the Owner approves an exact HEAD as Locked, the roadmap becomes
-**change-controlled**, protecting it from drifting mid-work — the exact failure the Architecture Freeze
-exists to stop (ten rounds of redesign, zero applied lines). Until Lock, edits go through normal review.
+This roadmap is **🔒 Locked at v1.0** (Owner-approved 2026-07-21, basis HEAD `2e0157b`). It is now
+**change-controlled**: the product content does not change without the process below — protecting it from
+drifting mid-work, the exact failure the Architecture Freeze exists to stop (ten rounds of redesign, zero
+applied lines). Editorial/status updates still flow normally (see "Not controlled" below).
 
 **A change that touches any of these is a _controlled change_:**
 1. **Architecture** (component boundaries, the subprocess/sidecar model, data ownership).
@@ -354,7 +357,7 @@ trust, security, or order to make progress **stops** and raises a controlled-cha
 ### I.1 Version log
 | Version | Date | Change | Approved by |
 |---|---|---|---|
-| v1.0-candidate | 2026-07-20 | Initial canonical execution source: 11 phases × 16 sections, per-page UI specs, verified-receipt spine, ownership matrix, artifact registry, change control. | — **pending Owner approval** (not yet Locked) |
+| v1.0 | 2026-07-21 | Initial canonical execution source: 11 phases × 16 sections, per-page UI specs, verified-receipt spine, ownership matrix, artifact registry, change control. | 👑 **Gev — 🔒 Locked** (basis HEAD `2e0157b`) |
 
 ---
 

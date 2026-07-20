@@ -3,17 +3,18 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** T-006 merged to `main` — HEAD `c573c25` (PR #4, squash)
+**Last updated · Վերջին թարմացում:** roadmap **v1.0 🔒 Locked** — Owner-approved, basis HEAD `2e0157b`
 
 ---
 
 ## 📍 Where we are · Որտեղ ենք
 
 - **Canonical execution source:** [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md) — status
-  `Active — Canonical Execution Authority` (**v1.0 candidate, NOT Locked** — Owner lock of an exact HEAD
-  pending), **11 phases** fully expanded (16 sections each) with per-page UI specs from `brops-aios.html`,
-  an Execution Ownership Matrix (§G), a Canonical Artifact Registry (§H), and a Change-Control policy (§I,
-  effective on Lock). A cold-start session takes the next unchecked task there.
+  `v1.0 · Canonical Execution Authority` 🔒 **Locked** (Owner-approved 2026-07-21, basis HEAD `2e0157b`),
+  **11 phases** fully expanded (16 sections each) with per-page UI specs from `brops-aios.html`, an
+  Execution Ownership Matrix (§G), a Canonical Artifact Registry (§H), and Change Control (§I, now in
+  force). A cold-start session takes the next unchecked task there. **Locked = product content
+  change-controlled, not execution frozen** — building proceeds.
 - **Phase 0 — Foundation:** ✅ DONE (locked). OS monorepo assembled (`engine/` = Bro, `apps/desktop/` =
   BroPS, subtree history preserved), bilingual docs, unified CI.
 - **Engine CI:** ✅ green — the 9 monorepo-coupled tests skip-guard themselves (option **C**);
@@ -29,7 +30,7 @@
 |---|---|---|---|
 | 🔨 Claude | — (T-006 ✅ merged; no active claim) · next open = **Phase 1 slice 2** | — | 🟢 available |
 | 📐 ChatGPT | — | — | — |
-| 👑 Gev | reviews / approvals · **v1.0 Lock pending** (roadmap merged, awaiting Owner Lock) | — | — |
+| 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 
 ## ⏭️ Next task · Հաջորդ task
 
