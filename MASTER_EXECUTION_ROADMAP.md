@@ -44,7 +44,7 @@ phase. That is the whole onboarding for *building*.
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Foundation | ✅ **Locked (done)** |
-| 1 | Bridge | 🔨 **In progress** — slice 1 (contract + adapter + tests) built & verified **10/10** on PR #3 (commit `5be8d95`); desktop Rust wiring (`Provider::GovernedEngine`) + slices 2–3 open |
+| 1 | Bridge | 🔨 **In progress** — slice 1 (contract + adapter + tests + bridge CI leg) **merged to `main`** (PR #3, `41cf4ff`, 10/10); desktop Rust wiring (`Provider::GovernedEngine`) + slices 2–3 open |
 | 2 | Governance Sidecar | ⏳ Ready (P1 contract exists) |
 | 3 | Desktop Integration | ⏳ Blocked on P1 round-trip + P2 gate |
 | 4 | UI/UX System | ⏳ Blocked on P3 |
@@ -513,13 +513,13 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
 - [ ] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **not yet implemented** (design only; slice 2).
 - [ ] One governed round-trip proven end-to-end (or documented manual smoke) — **slice 2**.
 - [ ] Governed streaming path — **slice 3**.
-- [ ] Bridge CI leg added and green.
+- [x] Bridge CI leg added and green (PR #3, merged to `main`).
 - [ ] Chat receipt badge + settings toggle shipped in the cockpit UI.
 
 **Task checklist.**
 - [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`).
 - [ ] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence.
-- [ ] Slice 2 — add the bridge CI leg to the unified workflow.
+- [x] Bridge CI leg added to the unified workflow (PR #3, merged `41cf4ff`).
 - [ ] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider toggle (per UI/UX above).
 - [ ] Slice 3 — governed streaming (deltas through the wall), receipt at end.
 - [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands.
