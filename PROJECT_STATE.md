@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** master-roadmap PR (branch `docs/master-execution-roadmap`)
+**Last updated · Վերջին թարմացում:** T-006 merged to `main` — HEAD `c573c25` (PR #4, squash)
 
 ---
 
@@ -27,9 +27,9 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | T-006 master execution roadmap | `docs/master-execution-roadmap` | 🔎 in review (draft PR) |
+| 🔨 Claude | — (T-006 ✅ merged; no active claim) · next open = **Phase 1 slice 2** | — | 🟢 available |
 | 📐 ChatGPT | — | — | — |
-| 👑 Gev | reviews / approvals | — | — |
+| 👑 Gev | reviews / approvals · **v1.0 Lock pending** (roadmap merged, awaiting Owner Lock) | — | — |
 
 ## ⏭️ Next task · Հաջորդ task
 
