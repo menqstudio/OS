@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bridge.result",
-  "description": "What the sidecar returns to the desktop. Fail-closed + receipt-mandatory: `result` is non-null ONLY when `ok` is true and a `receipt` is present; a failure never carries a result.",
+  "description": "What the sidecar returns to the desktop. Fail-closed + VERIFIED-receipt-mandatory: `result` is non-null ONLY when `ok` is true and a `receipt` with `verified: true` is present; a failure never carries a result. `verified` is set by the adapter only after an injected verifier confirms the run's signed evidence.",
   "type": "object",
   "additionalProperties": false,
   "required": ["ok", "result", "receipt", "error"],
@@ -14,14 +14,18 @@
     "receipt": {
       "type": ["object", "null"],
       "additionalProperties": false,
-      "required": ["task_id", "status", "evidence"],
+      "required": ["task_id", "status", "evidence", "verified"],
       "properties": {
         "task_id": { "type": "string" },
         "status": { "type": "string" },
         "exit_code": { "type": ["integer", "null"] },
-        "evidence": { "type": "array", "items": { "type": "string" } }
+        "evidence": { "type": "array", "items": { "type": "string" } },
+        "verified": {
+          "type": "boolean",
+          "description": "True only after the injected verifier confirmed the run's signed evidence. `ok: true` REQUIRES `verified: true`; the adapter never returns a result otherwise."
+        }
       },
-      "description": "The governed-run receipt (from bro_supervisor.SupervisorResult). Mandatory alongside any result."
+      "description": "The governed-run receipt (from bro_supervisor.SupervisorResult), verified. Mandatory (with verified:true) alongside any result."
     },
     "error": { "type": ["string", "null"] }
   }

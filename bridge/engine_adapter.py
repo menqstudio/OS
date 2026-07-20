@@ -44,6 +44,9 @@ def _receipt_of(outcome: Any) -> Receipt:
         "status": getattr(outcome, "status", None),
         "exit_code": getattr(outcome, "exit_code", None),
         "evidence": list(getattr(outcome, "evidence", ()) or ()),
+        # A receipt is a receipt only once it VERIFIES. Default false; set true by
+        # run_governed_turn ONLY after the injected verifier confirms the evidence.
+        "verified": False,
     }
 
 
@@ -51,6 +54,7 @@ def run_governed_turn(
     request: Request,
     *,
     run_task: Callable[[Request], Any],
+    verify_receipt: Callable[[Any], bool],
     read_result: Callable[[Any], str],
 ) -> Result:
     """Run one desktop AI turn as a governed engine task.
@@ -62,8 +66,13 @@ def run_governed_turn(
     run_task : callable(request_dict) -> SupervisorResult
         The engine supervisor, already bound to the sidecar's operator
         provisioning (keys, registry, workspace binding, repo, builder command).
+    verify_receipt : callable(SupervisorResult) -> bool
+        Confirms the run's evidence is a genuine SIGNED/verified receipt. The
+        adapter holds no keys, so it delegates verification to the engine
+        (wired in the sidecar). A result is NEVER returned for an outcome that
+        does not verify — "receipt mandatory" means "verified receipt mandatory".
     read_result : callable(SupervisorResult) -> str
-        Reads the builder's captured output after a COMPLETED, receipted run.
+        Reads the builder's captured output after a COMPLETED, verified run.
 
     Returns
     -------
@@ -98,6 +107,21 @@ def run_governed_turn(
         return _fail(
             receipt["task_id"] or task_id,
             "completed run produced no evidence — refusing an unreceipted result",
+        )
+
+    # A receipt is only a receipt if it VERIFIES. The adapter holds no keys, so it
+    # delegates to the injected verifier (wired to the engine's evidence/signature
+    # verification in the sidecar). Fail-closed on a failed or erroring verification.
+    try:
+        verified = bool(verify_receipt(outcome))
+    except Exception as exc:  # noqa: BLE001 — fail closed
+        return _fail(receipt["task_id"] or task_id, f"receipt verification error: {exc}", receipt=receipt)
+    receipt["verified"] = verified
+    if not verified:
+        return _fail(
+            receipt["task_id"] or task_id,
+            "run evidence did not verify — refusing an unverified receipt",
+            receipt=receipt,
         )
 
     try:

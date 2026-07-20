@@ -13,20 +13,24 @@ governed run-ով (supervisor→lease→wall→receipt). Desktop-ը երբեք l
 ```
 Webview → Tauri cmd (Rust) → localhost auth IPC → engine sidecar (Python)
    → engine_adapter.run_governed_turn → bro_supervisor.run_task
-     → lease → 🧱 wall → sandboxed AI → {result, receipt}
-   ← receipt is mandatory; a failure never carries a result (fail-closed)
+     → lease → 🧱 wall → sandboxed AI → {result, verified receipt}
+   ← a VERIFIED receipt is mandatory; a failure never carries a result (fail-closed)
 ```
 
 ## What's here now (Slice 1 — T-003) ✅
 - **`contracts/`** — the request/response contract:
   `task-request.schema.json` (desktop → sidecar) and `bridge-result.schema.json`
   (`{ ok, result, receipt, error }`, receipt-mandatory).
-- **`engine_adapter.py`** — `run_governed_turn(request, *, run_task, read_result)`.
-  Enforces the two invariants (Architect sign-off): **fail-closed** (any error or a
-  non-`completed` run → NO result) and **receipt mandatory** (a result is returned only
-  with a non-empty receipt). Engine core is untouched — it only *calls* `run_task`.
-- **`tests/`** — unit tests pinning both invariants (supervisor dependency-injected, so
-  no real keys/leases needed). `cd bridge && python -m unittest discover -s tests`.
+- **`engine_adapter.py`** — `run_governed_turn(request, *, run_task, verify_receipt, read_result)`.
+  Enforces the invariants (Architect sign-off): **fail-closed** (any error or a
+  non-`completed` run → NO result) and **VERIFIED-receipt mandatory** — a result is returned
+  only with a receipt whose evidence **verifies** (`receipt.verified == true`). The adapter
+  holds no keys, so verification is an **injected callback** (`verify_receipt`) wired to the
+  engine's evidence/signature verification in the sidecar; a plain outcome object is never
+  treated as a signed receipt. Engine core is untouched — the adapter only *calls* `run_task`.
+- **`tests/`** — 10 unit tests pinning the invariants incl. the verify gate (supervisor and
+  verifier dependency-injected, so no real keys/leases needed).
+  `cd bridge && python -m unittest discover -s tests`.
 
 ## Next slices (not built yet)
 - **Slice 2 — sidecar transport:** `engine_sidecar.py`, an operator-provisioned local

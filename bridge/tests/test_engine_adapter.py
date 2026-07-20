@@ -24,20 +24,37 @@ VALID_REQUEST = {"task_id": "t1", "task_class": "standard-build", "rationale": "
 
 
 class RunGovernedTurnTests(unittest.TestCase):
-    def _run(self, *, run_task, read_result=lambda o: "hello", request=None):
+    def _run(self, *, run_task, verify_receipt=lambda o: True, read_result=lambda o: "hello", request=None):
         return engine_adapter.run_governed_turn(
             request if request is not None else dict(VALID_REQUEST),
-            run_task=run_task, read_result=read_result,
+            run_task=run_task, verify_receipt=verify_receipt, read_result=read_result,
         )
 
-    def test_completed_with_evidence_returns_result_and_receipt(self):
+    def test_completed_verified_returns_result_and_receipt(self):
         res = self._run(run_task=lambda r: _outcome())
         self.assertTrue(res["ok"])
         self.assertEqual(res["result"], "hello")
         self.assertIsNotNone(res["receipt"])
         self.assertEqual(res["receipt"]["status"], "completed")
         self.assertEqual(res["receipt"]["evidence"], ["ev-1"])
+        self.assertTrue(res["receipt"]["verified"])   # a result implies a VERIFIED receipt
         self.assertIsNone(res["error"])
+
+    def test_unverified_receipt_is_fail_closed(self):
+        # Completed + evidence, but the evidence does NOT verify -> no result.
+        res = self._run(run_task=lambda r: _outcome(), verify_receipt=lambda o: False)
+        self.assertFalse(res["ok"])
+        self.assertIsNone(res["result"])              # <-- never a result without a verified receipt
+        self.assertFalse(res["receipt"]["verified"])
+        self.assertIn("did not verify", res["error"])
+
+    def test_verification_exception_is_fail_closed(self):
+        def boom(_o):
+            raise RuntimeError("verifier unreachable")
+        res = self._run(run_task=lambda r: _outcome(), verify_receipt=boom)
+        self.assertFalse(res["ok"])
+        self.assertIsNone(res["result"])
+        self.assertIn("verification error", res["error"])
 
     def test_denied_run_is_fail_closed_no_result(self):
         res = self._run(run_task=lambda r: _outcome(status="denied", evidence=(), message="not authorized"))
@@ -90,6 +107,7 @@ class RunGovernedTurnTests(unittest.TestCase):
             lambda: self._run(run_task=lambda r: _outcome(status="denied", evidence=())),
             lambda: self._run(run_task=lambda r: _outcome(status="uncontained", evidence=("e",))),
             lambda: self._run(run_task=lambda r: _outcome(evidence=())),
+            lambda: self._run(run_task=lambda r: _outcome(), verify_receipt=lambda o: False),
             lambda: self._run(run_task=lambda r: (_ for _ in ()).throw(RuntimeError("x"))),
         ]
         for run in cases:
