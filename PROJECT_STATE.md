@@ -24,9 +24,9 @@
 - **Engine CI:** ✅ green — the 9 monorepo-coupled tests skip-guard themselves (option **C**);
   `OK (591 passed, 38 skipped, 0 failed)`.
 - **Phase 1 — Bridge:** 🔨 in progress — `bridge/DESIGN.md` **APPROVED**; slice 1 (contract + adapter +
-  tests) **built & verified 10/10** on `feat/phase1-bridge` (PR #3, commit `5be8d95` — receipt-must-VERIFY
-  merge-blocker landed). **Not yet done:** desktop Rust `Provider::GovernedEngine` wiring in `ai.rs`,
-  round-trip, bridge CI leg, chat badge/settings toggle, streaming.
+  tests + **bridge CI leg**) **merged to `main`** (PR #3, HEAD `41cf4ff`, 10/10 canonical — receipt-must-
+  VERIFY invariant landed). **Not yet done (slice 2+):** desktop Rust `Provider::GovernedEngine` wiring in
+  `ai.rs`, governed round-trip, chat receipt badge, settings toggle, streaming.
 
 ## 👷 Who's working on what (NOW) · Ով ինչի վրա ա (ՀԻՄԱ)
 
