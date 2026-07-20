@@ -11,6 +11,26 @@
 
 ---
 
+## ⛔ STARTUP LAW — mandatory, every session · ՊԱՐՏԱԴԻՐ, ամեն session
+
+**Before doing ANYTHING** (any tool call, any edit, any answer beyond a greeting), every chat — Claude *and* ChatGPT — must:
+
+1. **`git pull`** — get the latest state.
+2. **Read `CLAUDE.md`** (this file) — the brain.
+3. **Read `PROJECT_STATE.md`** — the live status.
+4. **Check & claim your task in `TASKS.md`** — never two agents on the same task.
+
+Only then start. **No exceptions.**
+
+**Ամեն բան անելուց ԱՌԱՋ** (ցանկացած tool/edit/պատասխան), ամեն չատ — Claude *ու* ChatGPT — պիտի՝
+**1)** `git pull` · **2)** կարդա `CLAUDE.md` · **3)** կարդա `PROJECT_STATE.md` · **4)** ստուգիր ու վերցրու քո task-ը `TASKS.md`-ում։ Միայն հետո սկսի։ **Բացառություն չկա։**
+
+**Roles · Դերեր:** [`OWNERS.md`](./OWNERS.md) — 👑 Gev = Owner · 📐 ChatGPT = Architect/Auditor · 🔨 Claude = Builder.
+**Canonical files (read every session) · Canonical ֆայլեր:** `CLAUDE.md` · `PROJECT_STATE.md` · `TASKS.md` · `OWNERS.md`.
+**Work rule:** no direct `main`; every task = branch + PR (uses the PR template); merge only after the Owner approves.
+
+---
+
 # English
 
 > This file is the single source of truth for what this repo *is*, where it stands, how to
