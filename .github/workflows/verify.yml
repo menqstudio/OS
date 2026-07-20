@@ -41,9 +41,20 @@ jobs:
         # foundation validation fails closed, which is the point of the pin.
         run: python tools/bro_validate.py
         env:
+          # The raw operator-root pin is honoured only when the workflow marks the
+          # environment as CI (remediation M-1); without BRO_ENV=ci the validator
+          # fails closed and refuses the env pin. Set by workflow configuration
+          # here, never by an ambient/attacker env.
+          BRO_ENV: ci
           BRO_OPERATOR_ROOT_PUBKEY: 7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c
       - name: Run policy tests
+        # The full-flow completion-gate tests exercise the REAL committed operator
+        # registry (not an ephemeral per-fixture key), so they need the same CI pin
+        # and BRO_ENV=ci the validator does; ephemeral-key tests override it locally.
         run: python -m unittest discover -s tests -v
+        env:
+          BRO_ENV: ci
+          BRO_OPERATOR_ROOT_PUBKEY: 7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c
       - name: Compile Python
         run: python -m compileall -q runtime tools tests
       - name: Assure live wiring
