@@ -12,7 +12,7 @@ permissions:
 # (bridge) smoke test is added in Phase 1.
 jobs:
   cockpit-frontend:
-    name: Cockpit · frontend (typecheck + build)
+    name: Cockpit · frontend (typecheck + build + test)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -26,6 +26,7 @@ jobs:
           cache-dependency-path: apps/desktop/package-lock.json
       - run: npm ci
       - run: npm run build
+      - run: npm run test
 
   cockpit-core:
     name: Cockpit · SQLite data core (cargo test)
