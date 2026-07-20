@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } fro
 import { useApp } from '../app/store';
 import {
   PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Select, Skeleton,
-  ErrorState, ConfirmDialog,
+  ErrorState, ConfirmDialog, Badge,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -177,7 +177,14 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
               <div key={m.id} className={`chat-msg chat-msg--${m.role === 'user' ? 'mine' : 'other'}`}>
                 <Avatar name={m.author} />
                 <div className="chat-bubble">
-                  <div className="chat-author">{m.author}</div>
+                  <div className="chat-author">
+                    {m.author}
+                    {m.role === 'agent' && m.receipt && (
+                      <Badge tone={m.receipt === 'verified' ? 'success' : 'danger'}>
+                        {t(m.receipt === 'verified' ? 'chat.verified' : 'chat.blocked')}
+                      </Badge>
+                    )}
+                  </div>
                   {m.role === 'user'
                     ? <div className="md-plain">{m.body}</div>
                     : <Markdown text={m.body} />}

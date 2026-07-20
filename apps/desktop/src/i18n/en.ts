@@ -77,6 +77,8 @@ export const en = {
   'chat.deleteConversation': 'Delete conversation',
   'chat.deleteConfirm': 'This conversation and all of its messages will be permanently deleted.',
   'chat.saveToChat': 'Save to chat',
+  'chat.verified': 'Verified',
+  'chat.blocked': 'Blocked',
 
   'projects.subtitle': 'Objective-centered work',
   'tasks.subtitle': 'Action system with evidence',
@@ -158,6 +160,10 @@ export const en = {
   'settings.theme.dark': 'Dark',
   'settings.theme.light': 'Light',
   'settings.language': 'Language',
+  'settings.governedEngine': 'Governed engine (experimental)',
+  'settings.governedEngineHint': 'Route AI turns through the engine wall — every reply carries a verified signed receipt. Off by default; real turns need an operator-provisioned sidecar.',
+  'settings.on': 'On',
+  'settings.off': 'Off',
 
   'palette.placeholder': 'Type a command or search…',
   'palette.navigate': 'Navigate',

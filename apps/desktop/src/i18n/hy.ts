@@ -79,6 +79,8 @@ export const hy: Record<DictKey, string> = {
   'chat.deleteConversation': 'Ջնջել զրույցը',
   'chat.deleteConfirm': 'Այս զրույցը և բոլոր հաղորդագրությունները մշտապես կջնջվեն։',
   'chat.saveToChat': 'Պահել զրույցում',
+  'chat.verified': 'Ստուգված',
+  'chat.blocked': 'Արգելափակված',
 
   'projects.subtitle': 'Նպատակակենտրոն աշխատանք',
   'tasks.subtitle': 'Ապացույցներով գործողությունների համակարգ',
@@ -160,6 +162,10 @@ export const hy: Record<DictKey, string> = {
   'settings.theme.dark': 'Մուգ',
   'settings.theme.light': 'Բաց',
   'settings.language': 'Լեզու',
+  'settings.governedEngine': 'Կառավարվող շարժիչ (փորձնական)',
+  'settings.governedEngineHint': 'AI-ի քայլերն անցկացնել engine-ի wall-ով — ամեն պատասխան կրում է verified signed receipt։ Default-ով անջատված; իրական քայլերը պահանջում են operator-provisioned sidecar։',
+  'settings.on': 'Միացված',
+  'settings.off': 'Անջատված',
 
   'palette.placeholder': 'Մուտքագրիր հրաման կամ որոնիր…',
   'palette.navigate': 'Նավարկել',
