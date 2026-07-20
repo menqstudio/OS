@@ -67,8 +67,8 @@ Both halves arrived **already audited and fixed** (see §6). They were brought i
 ## 3. Roadmap — where we are
 
 > **The canonical execution plan is [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)**
-> (status `Active — Canonical Execution Authority` — v1.0 candidate, **NOT Locked**; the §I change-control
-> policy takes effect only on explicit Owner lock of an exact HEAD). It expands the product into **11 phases** with
+> (status `v1.0 · Canonical Execution Authority` — 🔒 **Locked** (Owner-approved 2026-07-21, basis HEAD
+> `2e0157b`); product content is change-controlled per its §I). It expands the product into **11 phases** with
 > per-phase Objective / Scope / Architecture / UI-UX / Backend / Contracts / Data models / Dependencies /
 > Security gates / Tests / CI / Docs / Acceptance / Merge gate / Stop conditions / Definition of Done,
 > and per-page UI specs from the canonical prototype `brops-aios.html`. A cold-start session takes the
@@ -192,8 +192,8 @@ OS/
 ## 3. Roadmap — որտեղ ենք
 
 > **Կանոնական կատարման պլանը՝ [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)**
-> (կարգավիճակ՝ `Active — Canonical Execution Authority` — v1.0 candidate, **դեռ Locked չէ**; §I-ի
-> change-control կարգը ուժի մեջ է մտնում միայն Owner-ի exact HEAD lock-ից հետո)։ Ընդլայնում է product-ը **11 phase**-ի՝ ամեն
+> (կարգավիճակ՝ `v1.0 · Canonical Execution Authority` — 🔒 **Locked** (Owner-approved 2026-07-21, basis
+> HEAD `2e0157b`); product content-ը change-controlled ա ըստ §I-ի)։ Ընդլայնում է product-ը **11 phase**-ի՝ ամեն
 > phase-ի Objective/Scope/Architecture/UI-UX/Backend/Contracts/Data models/Dependencies/Security gates/
 > Tests/CI/Docs/Acceptance/Merge gate/Stop conditions/Definition of Done-ով, ու էջ-առ-էջ UI spec-երով՝
 > canonical prototype `brops-aios.html`-ից։ Cold-start session-ը վերցնում է հաջորդ **unchecked** task-ը
