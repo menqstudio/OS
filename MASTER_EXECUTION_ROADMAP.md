@@ -1,25 +1,23 @@
 # OS Master Execution Roadmap · OS-ի գլխավոր կատարման ճանապարհ
 
-**Status: `v1.0 · Canonical Execution Authority` — 🔒 Locked (Owner-declared 2026-07-20)**
-**Կարգավիճակ՝ `v1.0 · Canonical Execution Authority` — 🔒 Locked (Owner-declared 2026-07-20)**
+**Status: `Active — Canonical Execution Authority` (v1.0 candidate · NOT Locked — Owner lock pending)**
+**Կարգավիճակ՝ `Active — Canonical Execution Authority` (v1.0 candidate · NOT Locked — Owner-ի lock սպասվում է)**
 
 > This document is the **single execution source** for `menqstudio/OS`. When a Claude (or ChatGPT)
 > session is told *"go build the next thing"*, it opens this file, finds the current phase, and takes
 > the next **unchecked** task — without needing any chat context. When state changes, this file is
 > updated **in the same commit** as the change.
 >
-> **🔒 Locked ≠ frozen execution.** *Locked* means the **plan** is v1.0-canonical and **change-controlled**
-> (§I Change Control): the architecture, trust boundaries, security model, and execution order do not
-> change without Architect review + Owner approval *before* implementation. **Execution proceeds
-> normally** — phases run, task boxes get checked, `PROJECT_STATE.md` moves. Only Phase 0 (Foundation) is
-> *done*-locked. The Lock is ratified on Owner merge of this v1.0; edits after that follow §I.
+> **Not Locked yet.** This is a **v1.0 candidate**. It becomes `Locked` only when the Owner explicitly
+> approves an exact HEAD (*"Approve v1.0 HEAD `<sha>` as Locked"*). Until then it is **Active** and editable
+> under normal review. §I (Change Control) describes the discipline that **takes effect on that Lock** — it
+> is the proposed policy, not yet in force. Only Phase 0 (Foundation) is *done*-locked.
 >
 > Սա `menqstudio/OS`-ի **միակ կատարման աղբյուրն** է։ Երբ session-ին ասում են «գնա կառուցիր հաջորդը»,
 > ինքը բացում է այս ֆայլը, գտնում ընթացիկ phase-ը, վերցնում հաջորդ **unchecked** task-ը՝ առանց chat
-> context-ի կարիքի։ **🔒 Locked ≠ սառեցված execution.** *Locked* նշանակում է՝ **պլանը** v1.0-canonical է ու
-> **change-controlled** (§I)՝ architecture/trust boundary/security/execution order-ը չեն փոխվում առանց
-> Architect review + Owner approval-ի *մինչ* implementation-ը։ Execution-ը գնում է նորմալ։ Lock-ը
-> ratify է լինում Owner-ի merge-ով։
+> context-ի կարիքի։ **Դեռ Locked չէ** — սա v1.0 candidate է, դառնում է Locked միայն երբ Owner-ը հստակ
+> approve անի exact HEAD-ը։ Մինչ այդ՝ **Active** ու editable։ §I-ը (Change Control) նկարագրում է կարգը, որ
+> **ուժի մեջ է մտնում այդ Lock-ից հետո**՝ դեռ ուժի մեջ չէ։ Միայն Phase 0-ն է *done*-locked.
 
 ---
 
@@ -43,7 +41,7 @@ phase. That is the whole onboarding for *building*.
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Foundation | ✅ **Locked (done)** |
-| 1 | Bridge | 🔨 **In progress** — slice 1 built & verified (8/8); slices 2–3 open |
+| 1 | Bridge | 🔨 **In progress** — slice 1 (contract + adapter + tests) built & verified **10/10** on PR #3 (commit `5be8d95`); desktop Rust wiring (`Provider::GovernedEngine`) + slices 2–3 open |
 | 2 | Governance Sidecar | ⏳ Ready (P1 contract exists) |
 | 3 | Desktop Integration | ⏳ Blocked on P1 round-trip + P2 gate |
 | 4 | UI/UX System | ⏳ Blocked on P3 |
@@ -102,7 +100,7 @@ cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 cd engine && BRO_ENV=ci python -m unittest discover -s tests   # ~615 tests, ~16 Windows platform-skips
 
 # Bridge — Phase-1 governed adapter
-cd bridge && BRO_ENV=ci python -m unittest discover -s tests    # slice-1: 8/8
+cd bridge && BRO_ENV=ci python -m unittest discover -s tests    # slice-1: 10/10 (PR #3, commit 5be8d95)
 
 # Documentation validation (run before every roadmap/docs PR)
 python engine/tools/bro_docs_freshness.py        # doc inventory / freshness
@@ -307,7 +305,7 @@ hand-forked; a **Superseded** artifact is kept only for provenance.
 
 | Artifact | Domain / role | Status | Authority |
 |---|---|---|---|
-| `MASTER_EXECUTION_ROADMAP.md` | Execution plan (scope · sequence · per-phase spec) | **Canonical (v1.0, Locked)** | This document |
+| `MASTER_EXECUTION_ROADMAP.md` | Execution plan (scope · sequence · per-phase spec) | **Canonical (Active; v1.0 candidate, Lock pending)** | This document |
 | `CLAUDE.md` | The brain — identity · rules · environment | **Canonical** | Owner/Architect |
 | `brops-aios.html` | UI / interaction reference (22 pages · design tokens) | **Canonical UI Reference** | Owner |
 | `bridge/contracts/task-request.schema.json` · `bridge-result.schema.json` | Bridge request/result contract | **Canonical Contract** | Architect-approved |
@@ -328,8 +326,10 @@ not in this registry is **not** authoritative.
 
 ## I. Change Control · Փոփոխության վերահսկում
 
-The roadmap is **Locked at v1.0**. That protects it from drifting mid-work — the exact failure the
-Architecture Freeze exists to stop (ten rounds of redesign, zero applied lines).
+This roadmap is currently **Active (v1.0 candidate, NOT Locked)**. The policy below is what an Owner
+**Lock** switches on: once the Owner approves an exact HEAD as Locked, the roadmap becomes
+**change-controlled**, protecting it from drifting mid-work — the exact failure the Architecture Freeze
+exists to stop (ten rounds of redesign, zero applied lines). Until Lock, edits go through normal review.
 
 **A change that touches any of these is a _controlled change_:**
 1. **Architecture** (component boundaries, the subprocess/sidecar model, data ownership).
@@ -354,7 +354,7 @@ trust, security, or order to make progress **stops** and raises a controlled-cha
 ### I.1 Version log
 | Version | Date | Change | Approved by |
 |---|---|---|---|
-| v1.0 | 2026-07-20 | Initial canonical execution source: 11 phases × 16 sections, per-page UI specs, verified-receipt spine, ownership matrix, artifact registry, change control. | 👑 Gev (on merge) |
+| v1.0-candidate | 2026-07-20 | Initial canonical execution source: 11 phases × 16 sections, per-page UI specs, verified-receipt spine, ownership matrix, artifact registry, change control. | — **pending Owner approval** (not yet Locked) |
 
 ---
 
@@ -462,9 +462,9 @@ signed receipt + evidence → adapter verifies → Tauri returns result (+ recei
 - Empty/first-run: if no governed turn has run, the badge area shows a one-line HY hint "Governed mode off".
 
 **Backend work.** `bridge/engine_adapter.py` (spawn supervisor for one AI turn, parse outcome, run the
-injected verifier, set `verified`). Rust: add `Provider::GovernedEngine` in `ai.rs` behind the env flag;
-existing `claude-cli`/`anthropic`/`ollama` paths stay **byte-for-byte unchanged**. Slice 1 is
-non-streaming (result at end).
+injected verifier, set `verified`) — **done on PR #3** (10/10). Rust (**slice 2, NOT yet implemented**):
+add `Provider::GovernedEngine` in `ai.rs` behind the env flag; existing `claude-cli`/`anthropic`/`ollama`
+paths stay **byte-for-byte unchanged**. Slice 1 is non-streaming (result at end).
 
 **Contracts / schemas.** `bridge/contracts/task-request.schema.json` and `bridge/contracts/bridge-result.schema.json`
 (see §F). `task-request` carries **no lease/key/env**; `bridge-result` is fail-closed + **VERIFIED-receipt-
@@ -482,7 +482,7 @@ local sidecar).
 sidecar/lease/receipt → no result. `verified` set **only** after the injected verifier confirms signed
 evidence. No engine security code modified (else → audited task).
 
-**Tests.** `bridge/tests/test_engine_adapter.py` — slice 1 **8/8 green**. Cover: request shape rejects
+**Tests.** `bridge/tests/test_engine_adapter.py` — slice 1 **10/10 green** (PR #3, commit `5be8d95`). Cover: request shape rejects
 lease/key/env; result fail-closed when `ok=false`; `result` null unless `verified`; verifier-negative →
 no result. Existing engine + cockpit suites stay green.
 
@@ -506,15 +506,15 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
 
 **Definition of Done.**
 - [x] `task-request` + `bridge-result` contracts defined and tested.
-- [x] Adapter (`engine_adapter.py`) built; slice-1 tests 8/8.
-- [x] Opt-in `Provider::GovernedEngine` (default OFF); legacy paths unchanged.
+- [x] Adapter (`engine_adapter.py`) built; slice-1 tests **10/10** (PR #3, commit `5be8d95`).
+- [ ] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **not yet implemented** (design only; slice 2).
 - [ ] One governed round-trip proven end-to-end (or documented manual smoke) — **slice 2**.
 - [ ] Governed streaming path — **slice 3**.
 - [ ] Bridge CI leg added and green.
 - [ ] Chat receipt badge + settings toggle shipped in the cockpit UI.
 
 **Task checklist.**
-- [x] T-003 slice 1 — contract + adapter + tests (verified 8/8).
+- [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`).
 - [ ] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence.
 - [ ] Slice 2 — add the bridge CI leg to the unified workflow.
 - [ ] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider toggle (per UI/UX above).
@@ -1320,7 +1320,7 @@ is the claim board. A phase task here should have a matching `TASKS.md` row when
 
 ## L. Provenance · Ծագում
 Built from: `brops-aios.html` (canonical UI, 22 pages + design tokens), `bridge/DESIGN.md` (APPROVED,
-slice-1 verified 8/8), `bridge/contracts/*.schema.json`, `engine/runtime/bro_receipt.py` +
+slice-1 verified 10/10, PR #3 commit 5be8d95), `bridge/contracts/*.schema.json`, `engine/runtime/bro_receipt.py` +
 `bro_execution_lease.py` + `bro_evidence.py`, and the canonical docs (`CLAUDE.md`, `PROJECT_STATE.md`,
 `TASKS.md`, `OWNERS.md`, `docs/ARCHITECTURE.md`). Language: English execution body (identifiers/commands),
 bilingual headers, Armenian page names — matching the repo's bilingual convention while keeping the

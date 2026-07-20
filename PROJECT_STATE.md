@@ -10,17 +10,18 @@
 ## 📍 Where we are · Որտեղ ենք
 
 - **Canonical execution source:** [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md) — status
-  `v1.0 · Canonical Execution Authority` 🔒 **Locked** (change-controlled per its §I), **11 phases** fully
-  expanded (16 sections each) with per-page UI specs from `brops-aios.html`, an Execution Ownership Matrix
-  (§G), a Canonical Artifact Registry (§H), and Change Control (§I). A cold-start session takes the next
-  unchecked task there. **Locked = plan change-controlled, not execution frozen** — building proceeds.
+  `Active — Canonical Execution Authority` (**v1.0 candidate, NOT Locked** — Owner lock of an exact HEAD
+  pending), **11 phases** fully expanded (16 sections each) with per-page UI specs from `brops-aios.html`,
+  an Execution Ownership Matrix (§G), a Canonical Artifact Registry (§H), and a Change-Control policy (§I,
+  effective on Lock). A cold-start session takes the next unchecked task there.
 - **Phase 0 — Foundation:** ✅ DONE (locked). OS monorepo assembled (`engine/` = Bro, `apps/desktop/` =
   BroPS, subtree history preserved), bilingual docs, unified CI.
 - **Engine CI:** ✅ green — the 9 monorepo-coupled tests skip-guard themselves (option **C**);
   `OK (591 passed, 38 skipped, 0 failed)`.
 - **Phase 1 — Bridge:** 🔨 in progress — `bridge/DESIGN.md` **APPROVED**; slice 1 (contract + adapter +
-  tests) **built & verified (8/8)** on `feat/phase1-bridge` (PR #3). Slices 2–3 (round-trip, CI leg, UI
-  badge/toggle, streaming) open.
+  tests) **built & verified 10/10** on `feat/phase1-bridge` (PR #3, commit `5be8d95` — receipt-must-VERIFY
+  merge-blocker landed). **Not yet done:** desktop Rust `Provider::GovernedEngine` wiring in `ai.rs`,
+  round-trip, bridge CI leg, chat badge/settings toggle, streaming.
 
 ## 👷 Who's working on what (NOW) · Ով ինչի վրա ա (ՀԻՄԱ)
 

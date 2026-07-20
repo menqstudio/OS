@@ -67,8 +67,8 @@ Both halves arrived **already audited and fixed** (see §6). They were brought i
 ## 3. Roadmap — where we are
 
 > **The canonical execution plan is [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)**
-> (status `v1.0 · Canonical Execution Authority` — 🔒 Locked, change-controlled per its §I). It expands
-> the product into **11 phases** with
+> (status `Active — Canonical Execution Authority` — v1.0 candidate, **NOT Locked**; the §I change-control
+> policy takes effect only on explicit Owner lock of an exact HEAD). It expands the product into **11 phases** with
 > per-phase Objective / Scope / Architecture / UI-UX / Backend / Contracts / Data models / Dependencies /
 > Security gates / Tests / CI / Docs / Acceptance / Merge gate / Stop conditions / Definition of Done,
 > and per-page UI specs from the canonical prototype `brops-aios.html`. A cold-start session takes the
@@ -81,7 +81,7 @@ Both halves arrived **already audited and fixed** (see §6). They were brought i
 | Phase | Goal | Status |
 |-------|------|--------|
 | **0 — Foundation** | monorepo assembled · bilingual docs · unified CI · history preserved | ✅ **DONE (locked)** |
-| **1 — Bridge** | route desktop AI exec through the engine supervisor/lease/wall (replace direct `claude` spawn in `ai.rs`) | 🔨 **In progress** — slice 1 built & verified (8/8); slices 2–3 open |
+| **1 — Bridge** | route desktop AI exec through the engine supervisor/lease/wall (replace direct `claude` spawn in `ai.rs`) | 🔨 **In progress** — slice 1 verified **10/10** (PR #3, `5be8d95`); desktop Rust wiring + slices 2–3 open |
 | **2 — Governance Sidecar** | cockpit surfaces for approvals · decisions · evidence chain · signals (mirror, never decide) | ⏳ ready (P1 contract exists) |
 | **3 — Desktop Integration** | app shell + `home`/`chat`(governed)/`settings`; wire the core loop | ⏳ blocked on P1+P2 |
 | **4 — UI/UX System** | component library + theming + motion + a11y; `activity`/`analytics`/`library` | ⏳ blocked on P3 |
@@ -192,8 +192,8 @@ OS/
 ## 3. Roadmap — որտեղ ենք
 
 > **Կանոնական կատարման պլանը՝ [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)**
-> (կարգավիճակ՝ `v1.0 · Canonical Execution Authority` — 🔒 Locked, change-controlled ըստ իր §I-ի)։
-> Ընդլայնում է product-ը **11 phase**-ի՝ ամեն
+> (կարգավիճակ՝ `Active — Canonical Execution Authority` — v1.0 candidate, **դեռ Locked չէ**; §I-ի
+> change-control կարգը ուժի մեջ է մտնում միայն Owner-ի exact HEAD lock-ից հետո)։ Ընդլայնում է product-ը **11 phase**-ի՝ ամեն
 > phase-ի Objective/Scope/Architecture/UI-UX/Backend/Contracts/Data models/Dependencies/Security gates/
 > Tests/CI/Docs/Acceptance/Merge gate/Stop conditions/Definition of Done-ով, ու էջ-առ-էջ UI spec-երով՝
 > canonical prototype `brops-aios.html`-ից։ Cold-start session-ը վերցնում է հաջորդ **unchecked** task-ը
@@ -204,7 +204,7 @@ OS/
 | Phase | Նպատակ | Վիճակ |
 |-------|--------|-------|
 | **0 — Foundation** | monorepo հավաքված · երկլեզու docs · միասնական CI · history պահած | ✅ **DONE (locked)** |
-| **1 — Bridge** | desktop AI exec-ը engine-ի supervisor/lease/wall-ով (`ai.rs`-ի ուղիղ `claude` spawn-ը փոխարինել) | 🔨 **Ընթացքում** — slice 1 կառուցված ու verified (8/8); slices 2–3 բաց |
+| **1 — Bridge** | desktop AI exec-ը engine-ի supervisor/lease/wall-ով (`ai.rs`-ի ուղիղ `claude` spawn-ը փոխարինել) | 🔨 **Ընթացքում** — slice 1 verified **10/10** (PR #3, `5be8d95`); desktop Rust wiring + slices 2–3 բաց |
 | **2 — Governance Sidecar** | cockpit surface-եր՝ approvals · decisions · evidence chain · signals (mirror, ոչ decide) | ⏳ ready (P1 contract կա) |
 | **3 — Desktop Integration** | app shell + `home`/`chat`(governed)/`settings`; core loop-ը wire | ⏳ blocked P1+P2 |
 | **4 — UI/UX System** | component library + theming + motion + a11y; `activity`/`analytics`/`library` | ⏳ blocked P3 |
