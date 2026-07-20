@@ -16,14 +16,13 @@
 **Before doing ANYTHING** (any tool call, any edit, any answer beyond a greeting), every chat — Claude *and* ChatGPT — must:
 
 1. **`git pull`** — get the latest state.
-2. **Read `CLAUDE.md`** (this file) — the brain.
-3. **Read `PROJECT_STATE.md`** — the live status.
-4. **Check & claim your task in `TASKS.md`** — never two agents on the same task.
+2. **Read, IN FULL, every file in [`START_HERE.md`](./START_HERE.md):** `CLAUDE.md` → `PROJECT_STATE.md` → `TASKS.md` → `OWNERS.md` → `docs/ARCHITECTURE.md`.
+3. **Claim your task in `TASKS.md`** — never two agents on the same task.
 
-Only then start. **No exceptions.**
+Only then start. **No exceptions.** When Gev says *"go read the repo / կարդա ՄԴները"* — that phrase **is** this law: read every file in `START_HERE.md` fully, pull, claim a task, then begin, **without waiting for any further explanation.**
 
 **Ամեն բան անելուց ԱՌԱՋ** (ցանկացած tool/edit/պատասխան), ամեն չատ — Claude *ու* ChatGPT — պիտի՝
-**1)** `git pull` · **2)** կարդա `CLAUDE.md` · **3)** կարդա `PROJECT_STATE.md` · **4)** ստուգիր ու վերցրու քո task-ը `TASKS.md`-ում։ Միայն հետո սկսի։ **Բացառություն չկա։**
+**1)** `git pull` · **2)** կարդա ԱՄԲՈՂՋՈՎ [`START_HERE.md`](./START_HERE.md)-ի բոլոր ֆայլերը (`CLAUDE.md` → `PROJECT_STATE.md` → `TASKS.md` → `OWNERS.md` → `docs/ARCHITECTURE.md`) · **3)** claim արա task-ը `TASKS.md`-ում։ Միայն հետո սկսի։ **Բացառություն չկա։** Երբ Gev-ը ասում ա *«գնա ռեպո կարդա ՄԴները»* — էդ բառը **հենց** այս օրենքն ա՝ կարդա `START_HERE.md`-ի ամեն ֆայլ ամբողջովին, pull արա, task claim արա, հետո սկսի, **առանց ավել բացատրություն սպասելու։**
 
 **Roles · Դերեր:** [`OWNERS.md`](./OWNERS.md) — 👑 Gev = Owner · 📐 ChatGPT = Architect/Auditor · 🔨 Claude = Builder.
 **Canonical files (read every session) · Canonical ֆայլեր:** `CLAUDE.md` · `PROJECT_STATE.md` · `TASKS.md` · `OWNERS.md`.
