@@ -12,9 +12,9 @@
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-001** | Coordination canon (OWNERS · PROJECT_STATE · TASKS · PR template · Startup Law) | 🔨 Claude | Review | `chore/coordination-canon` |
+| **T-001** | Coordination canon (OWNERS · PROJECT_STATE · TASKS · PR template · Startup Law) | 🔨 Claude | ✅ Done | merged |
 | **T-002** | Root-model decision — **DECIDED: Option 1 (subtree + C)** for stability; see CLAUDE.md §3 | 📐 ChatGPT + 👑 Gev | ✅ Done | — |
-| **T-003** | Phase 1 — bridge: `apps/desktop ↔ adapter ↔ engine` (route desktop AI exec through engine supervisor/lease/wall) | _unclaimed_ | Todo | — |
+| **T-003** | Phase 1 — bridge: `apps/desktop ↔ adapter ↔ engine` (route desktop AI exec through engine supervisor/lease/wall) | 🔨 Claude | In-Progress — design in review (`bridge/DESIGN.md`) | `feat/phase1-bridge` |
 | **T-004** | Bro deferred security items O-1..O-5 (from `fix/audit-followups`) | _unclaimed_ | Blocked (wall-coupled, needs Owner go) | — |
 | **T-005** | Option-2 feasibility (**AUDITED**): engine as submodule + targeted fix to Bro's worktree check (`git rev-parse --show-toplevel` instead of `git worktree list`). **Separate branch/PR, Owner approval, must not destabilize.** | _unclaimed_ | Todo | — |
 

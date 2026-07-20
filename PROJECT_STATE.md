@@ -17,8 +17,8 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | T-001 coordination canon | `chore/coordination-canon` | 🔎 in review (PR open) |
-| 📐 ChatGPT | — | — | — |
+| 🔨 Claude | T-003 Phase 1 bridge — design proposal | `feat/phase1-bridge` | 📝 design in review (`bridge/DESIGN.md`); awaiting Architect sign-off before any code |
+| 📐 ChatGPT | review `bridge/DESIGN.md` (esp. §4 questions) | — | ⏳ |
 | 👑 Gev | reviews / approvals | — | — |
 
 ## ⏭️ Next task · Հաջորդ task
