@@ -1,8 +1,10 @@
 # Bridge — Design proposal (T-003, Phase 1)
 
-> **Status: PROPOSAL for Architect review.** No engine-touching code is written until the
-> Architect (ChatGPT) signs off on this design — the bridge is security-coupled.
-> **Կարգավիճակ՝ ԱՌԱՋԱՐԿ Architect-ի review-ի համար։** Engine-touching կոդ չի գրվում մինչ sign-off։
+> **Status: APPROVED** — Architect signed off (entrypoint = `bridge/engine_adapter.py`, no engine-core
+> change; trust root = operator-provisioned local supervisor sidecar + localhost authenticated IPC;
+> contracts in `bridge/contracts/` for now; slice 1 non-streaming; provider default OFF, fail-closed,
+> receipt mandatory). **Slice 1 (contract + adapter + tests) is built & verified (8/8).** Slices 2–3 next.
+> **Կարգավիճակ՝ ՀԱՍՏԱՏՎԱԾ** — Architect sign-off. Slice 1 (contract + adapter + tests) կառուցված ու verified։
 
 Builder: Claude. Reviewer: ChatGPT (Architect). Approver: Gev (Owner).
 

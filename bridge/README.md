@@ -1,17 +1,40 @@
 # bridge/ 🔗
 
-**Placeholder — Phase 1.** No integration code yet (Phase 0 assembles; it does not wire).
+The integration layer between the desktop **cockpit** (`apps/desktop`) and the governance
+**engine** (`engine/`). Slice by slice, this replaces the desktop's direct `claude` spawn
+with a **governed** run: the engine's supervisor issues a lease to a separate builder, runs
+it behind the wall, and returns a **receipt**. The desktop is a *conductor* and never holds
+the lease/key/env.
 
-## English
-The **bridge** is where the cockpit's backend (`apps/desktop/src-tauri`, Rust) will call into the governance **engine** (`engine/`, Python). It replaces the desktop's current direct `claude` spawn (`apps/desktop/src-tauri/src/ai.rs`) with a governed call:
+`bridge`-ը cockpit-ի ու engine-ի ինտեգրման շերտն ա. desktop-ի ուղիղ `claude` spawn-ը փոխարինում ա
+governed run-ով (supervisor→lease→wall→receipt). Desktop-ը երբեք lease/key չի պահում։
 
+## Flow (target)
 ```
-Tauri command (Rust) → bridge → engine: bro_supervisor
-   → execution lease → 🧱 hook wall → sandboxed AI → signed receipt → back
+Webview → Tauri cmd (Rust) → localhost auth IPC → engine sidecar (Python)
+   → engine_adapter.run_governed_turn → bro_supervisor.run_task
+     → lease → 🧱 wall → sandboxed AI → {result, receipt}
+   ← receipt is mandatory; a failure never carries a result (fail-closed)
 ```
 
-**Boundary:** subprocess/sidecar (matches the engine's CLI/hook model), not PyO3 embedding.
-**Contract:** requests and receipts are validated against the shared schemas in [`../contracts/`](../contracts/).
+## What's here now (Slice 1 — T-003) ✅
+- **`contracts/`** — the request/response contract:
+  `task-request.schema.json` (desktop → sidecar) and `bridge-result.schema.json`
+  (`{ ok, result, receipt, error }`, receipt-mandatory).
+- **`engine_adapter.py`** — `run_governed_turn(request, *, run_task, read_result)`.
+  Enforces the two invariants (Architect sign-off): **fail-closed** (any error or a
+  non-`completed` run → NO result) and **receipt mandatory** (a result is returned only
+  with a non-empty receipt). Engine core is untouched — it only *calls* `run_task`.
+- **`tests/`** — unit tests pinning both invariants (supervisor dependency-injected, so
+  no real keys/leases needed). `cd bridge && python -m unittest discover -s tests`.
 
-## Հայերեն
-**bridge**-ը էն տեղն ա, որտեղ cockpit-ի backend-ը (`apps/desktop/src-tauri`, Rust) կկանչի governance **engine**-ը (`engine/`, Python)։ Փոխարինում ա desktop-ի հիմիկվա ուղիղ `claude` spawn-ը (`ai.rs`) governed call-ով (տես վերևի flow-ը)։ Boundary-ն subprocess/sidecar ա; request/receipt-ները validate են [`../contracts/`](../contracts/)-ի schema-ների դեմ։
+## Next slices (not built yet)
+- **Slice 2 — sidecar transport:** `engine_sidecar.py`, an operator-provisioned local
+  service on `127.0.0.1` with authenticated IPC (bearer token) that holds the provisioning
+  (issuer key, trusted-key registry, workspace binding, repo) and wires `run_task` +
+  the `builder_command` that runs the AI under the wall.
+- **Slice 3 — desktop client:** an opt-in `Provider::GovernedEngine` in `apps/desktop`
+  behind `BROPS_AI_PROVIDER=engine` (**default OFF**, existing providers untouched),
+  which calls the sidecar over localhost IPC and fails closed without a receipt.
+
+Design + open decisions: [`DESIGN.md`](./DESIGN.md).

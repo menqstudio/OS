@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bridge.task-request",
+  "description": "What the desktop cockpit asks the engine sidecar to run as a governed task. Carries no lease, no key, no environment (mirrors bro_supervisor.TaskRequest).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "task_class", "rationale"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "task_class": { "type": "string", "minLength": 1 },
+    "rationale": { "type": "string", "minLength": 1 },
+    "protected_scope": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Exact paths only (no glob metacharacters), per bro_supervisor.TaskRequest."
+    }
+  }
+}

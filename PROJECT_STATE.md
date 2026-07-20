@@ -17,8 +17,8 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | T-003 Phase 1 bridge — design proposal | `feat/phase1-bridge` | 📝 design in review (`bridge/DESIGN.md`); awaiting Architect sign-off before any code |
-| 📐 ChatGPT | review `bridge/DESIGN.md` (esp. §4 questions) | — | ⏳ |
+| 🔨 Claude | T-003 Phase 1 bridge — **slice 1** (contract + adapter + tests) | `feat/phase1-bridge` | 🔎 in review; adapter tests 8/8; slices 2 (sidecar) & 3 (Rust client) next |
+| 📐 ChatGPT | ✅ signed off the bridge design (sidecar + localhost auth IPC) | — | done |
 | 👑 Gev | reviews / approvals | — | — |
 
 ## ⏭️ Next task · Հաջորդ task
