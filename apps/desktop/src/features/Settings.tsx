@@ -4,7 +4,7 @@ import { languageNames } from '../i18n';
 import type { Lang, Theme } from '../domain/enums';
 
 export function Settings() {
-  const { t, theme, toggleTheme, lang, setLang } = useApp();
+  const { t, theme, toggleTheme, lang, setLang, governedEngine, setGovernedEngine } = useApp();
 
   const selectTheme = (value: Theme) => {
     if (value !== theme) toggleTheme();
@@ -39,6 +39,23 @@ export function Settings() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="list-row">
+            <span>
+              {t('settings.governedEngine')}
+              <span className="muted" style={{ display: 'block', fontSize: 12, marginTop: 2, maxWidth: 420 }}>
+                {t('settings.governedEngineHint')}
+              </span>
+            </span>
+            <span className="row">
+              <Button variant={governedEngine ? 'primary' : 'default'} onClick={() => setGovernedEngine(true)}>
+                {t('settings.on')}
+              </Button>
+              <Button variant={!governedEngine ? 'primary' : 'default'} onClick={() => setGovernedEngine(false)}>
+                {t('settings.off')}
+              </Button>
+            </span>
           </div>
         </div>
       </Panel>

@@ -79,6 +79,8 @@ export const ru: Record<DictKey, string> = {
   'chat.deleteConversation': 'Удалить разговор',
   'chat.deleteConfirm': 'Этот разговор и все его сообщения будут удалены безвозвратно.',
   'chat.saveToChat': 'Сохранить в чат',
+  'chat.verified': 'Проверено',
+  'chat.blocked': 'Заблокировано',
 
   'projects.subtitle': 'Работа, ориентированная на цель',
   'tasks.subtitle': 'Система действий с доказательствами',
@@ -160,6 +162,10 @@ export const ru: Record<DictKey, string> = {
   'settings.theme.dark': 'Тёмная',
   'settings.theme.light': 'Светлая',
   'settings.language': 'Язык',
+  'settings.governedEngine': 'Управляемый движок (эксперим.)',
+  'settings.governedEngineHint': 'Проводить ходы ИИ через стену движка — каждый ответ несёт проверенную подписанную квитанцию. По умолчанию выключено; для реальных ходов нужен sidecar от оператора.',
+  'settings.on': 'Вкл.',
+  'settings.off': 'Выкл.',
 
   'palette.placeholder': 'Введите команду или запрос…',
   'palette.navigate': 'Навигация',
