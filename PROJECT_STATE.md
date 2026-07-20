@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** roadmap **v1.0 🔒 Locked** — Owner-approved, basis HEAD `2e0157b`
+**Last updated · Վերջին թարմացում:** T-007 — coordination-docs enforcement (CI gate + Stop-hook)
 
 ---
 
@@ -15,6 +15,10 @@
   Execution Ownership Matrix (§G), a Canonical Artifact Registry (§H), and Change Control (§I, now in
   force). A cold-start session takes the next unchecked task there. **Locked = product content
   change-controlled, not execution frozen** — building proceeds.
+- **Coordination enforcement (T-007):** the Startup Law / docs-sync is now **enforced, not
+  remembered** — a fail-closed **CI gate** (`tools/check_coordination.py`: roadmap 11×16, canonical
+  files, TASKS statuses, PROJECT_STATE freshness) plus a fail-open **Stop-hook** (`.claude/`) that
+  reminds when code changes without a coordination-doc sync.
 - **Phase 0 — Foundation:** ✅ DONE (locked). OS monorepo assembled (`engine/` = Bro, `apps/desktop/` =
   BroPS, subtree history preserved), bilingual docs, unified CI.
 - **Engine CI:** ✅ green — the 9 monorepo-coupled tests skip-guard themselves (option **C**);
@@ -28,7 +32,7 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | — (T-006 ✅ merged; no active claim) · next open = **Phase 1 slice 2** | — | 🟢 available |
+| 🔨 Claude | T-007 coordination-docs enforcement (CI gate + Stop-hook) | `chore/enforce-coordination-docs` | 🔎 in review |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 
