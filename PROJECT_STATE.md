@@ -23,12 +23,12 @@
 
 ## ⏭️ Next task · Հաջորդ task
 
-1. **T-002 — Phase-1 root-model decision (A submodule vs B monorepo-aware).** Owner + Architect call. Blocks the "true" full-enforcement CI.
-2. **T-003 — Phase 1 bridge** — route the desktop's AI execution through the engine's supervisor/lease/wall.
+1. **T-003 — Phase 1 bridge** — route the desktop's AI execution through the engine's supervisor/lease/wall, shaped as `apps/desktop ↔ adapter ↔ engine`.
+2. **T-005 — Option-2 feasibility (AUDITED, later)** — engine as a submodule + a targeted fix to Bro's worktree check. Separate branch/PR, Owner approval, must not destabilize.
 
 ## 🚧 Blockers · Խոչընդոտներ
 
-- **A/B root-model decision** pending (see `CLAUDE.md` §3). Until then the 9 enforcement-path tests are skip-deferred (option C), not deleted.
+- ~~A/B root-model decision~~ → **DECIDED: Option 1 (subtree + C)** for stability (Architect call). The 9 enforcement-path tests stay skip-deferred (C); no security code touched. Option 2 (submodule + Bro worktree-check fix) is a future audited task — **T-005**. Verified finding: a submodule alone does NOT fix it (`git worktree list` reports the git-dir). See `CLAUDE.md` §3.
 - Bro deferred security items **O-1..O-5** (residual-exploitable; tracked on Bro's `fix/audit-followups`) — do not rush, wall/owner-env coupled.
 
 ## 🔁 Startup Law · Startup օրենք
