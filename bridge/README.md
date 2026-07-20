@@ -17,18 +17,23 @@ Webview → Tauri cmd (Rust) → localhost auth IPC → engine sidecar (Python)
    ← a VERIFIED receipt is mandatory; a failure never carries a result (fail-closed)
 ```
 
-## What's built now (Slices 1–3) ✅
+## What's here now — governed-turn transport + infrastructure (opt-in, default OFF)
+
+> **This is the transport + plumbing, not a completed end-to-end feature.** Real governed turns are
+> pending operator provisioning **and** the verify-seam audit (see below); until then every path is
+> **fail-closed** — no result is ever returned without a verified receipt.
+
 - **`contracts/`** — the request/response contract: `task-request.schema.json` (desktop → sidecar)
   and `bridge-result.schema.json` (`{ ok, result, receipt, error }`, **VERIFIED-receipt-mandatory**).
-- **`engine_adapter.py`** (Slice 1) — `run_governed_turn(request, *, run_task, verify_receipt,
+- **`engine_adapter.py`** (adapter) — `run_governed_turn(request, *, run_task, verify_receipt,
   read_result)`. **Fail-closed** (any error / non-`completed` run → NO result) and **VERIFIED-receipt
   mandatory** (a result only with `receipt.verified == true`). Holds no keys — verification is an
   injected callback; engine core untouched (the adapter only *calls* `run_task`).
-- **`engine_sidecar.py`** (Slice 2) — the process the desktop shells out to: reads one task-request on
-  **stdin**, writes one bridge-result on **stdout**, hosting `run_governed_turn`. Always exits 0 (the
-  verdict travels in `ok`); every error path is fail-closed.
-- **`apps/desktop` `Provider::GovernedEngine`** (Slice 3, `src-tauri/src/ai.rs`) — **opt-in, default
-  OFF**; spawns the sidecar (task-request via stdin, bounded reads, deadline, kill-on-drop) and
+- **`engine_sidecar.py`** (sidecar transport) — the process the desktop shells out to: reads one
+  task-request on **stdin**, writes one bridge-result on **stdout**, hosting `run_governed_turn`. Always
+  exits 0 (the verdict travels in `ok`); every error path is fail-closed.
+- **`apps/desktop` `Provider::GovernedEngine`** (desktop provider, `src-tauri/src/ai.rs`) — **opt-in,
+  default OFF**; spawns the sidecar (task-request via stdin, bounded reads, deadline, kill-on-drop) and
   **re-enforces** `ok && receipt.verified` desktop-side, else fail-closed. Existing `claude-cli` /
   `anthropic` / `ollama` paths are byte-for-byte unchanged.
 - **`tests/`** — **18** unit tests (10 adapter + 8 sidecar). `cd bridge && python -m unittest discover -s tests`.
@@ -44,7 +49,7 @@ Without the allow flag the desktop falls back to its default provider. Override 
 path with `BROPS_GOVERNED_PYTHON` / `BROPS_GOVERNED_SIDECAR`.
 
 ## Manual smoke (no provisioning needed)
-Prove the transport + the verified-receipt invariant end to end with canned callables:
+Prove the transport + the verified-receipt invariant with canned callables (self-test only):
 ```
 echo '{"task_id":"t-smoke","task_class":"standard-builder","rationale":"say hi"}' \
   | python bridge/engine_sidecar.py --self-test
