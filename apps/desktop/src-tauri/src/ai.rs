@@ -30,6 +30,11 @@ const DEFAULT_OLLAMA_PORT: u16 = 11434;
 const DEFAULT_CLAUDE_BIN: &str = "claude";
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+// Governed engine (opt-in, default OFF): the desktop shells out to the bridge
+// sidecar, which runs the turn behind the engine wall and returns a VERIFIED receipt.
+const DEFAULT_GOVERNED_PYTHON: &str = "python";
+const DEFAULT_GOVERNED_SIDECAR: &str = "bridge/engine_sidecar.py";
+const GOVERNED_TASK_CLASS: &str = "standard-builder"; // engine bro_protected.STANDARD
 
 // Resource caps: the deadline bounds TIME, these bound BYTES, so a compromised /
 // misconfigured provider or `claude` binary can't OOM us with a fast, huge stream.
@@ -256,6 +261,7 @@ enum Provider {
     ClaudeCli { bin: String },
     Anthropic { key: String, model: String },
     Ollama { model: String, url: String },
+    GovernedEngine { python: String, sidecar: String },
 }
 
 fn env_nonempty(key: &str) -> Option<String> {
@@ -303,6 +309,19 @@ fn resolve() -> Provider {
             };
         }
         Some("claude-cli") => return Provider::ClaudeCli { bin: claude_bin },
+        Some("governed-engine") => {
+            // Opt-in AND gated: default OFF. Requires the explicit provider force
+            // *and* BROPS_ALLOW_GOVERNED_ENGINE=1 (mirrors BROPS_ALLOW_REMOTE_OLLAMA).
+            // Without the allow flag, fall through to the safe default rather than
+            // route AI turns through an unconfigured governed path.
+            if env_bool("BROPS_ALLOW_GOVERNED_ENGINE") {
+                return Provider::GovernedEngine {
+                    python: env_nonempty("BROPS_GOVERNED_PYTHON").unwrap_or_else(|| DEFAULT_GOVERNED_PYTHON.to_string()),
+                    sidecar: env_nonempty("BROPS_GOVERNED_SIDECAR").unwrap_or_else(|| DEFAULT_GOVERNED_SIDECAR.to_string()),
+                };
+            }
+            eprintln!("[brops] WARN BROPS_AI_PROVIDER=governed-engine ignored: set BROPS_ALLOW_GOVERNED_ENGINE=1 to enable; falling back to the default provider");
+        }
         _ => {}
     }
     // Auto: a metered key means the user opted into Anthropic; otherwise default
@@ -410,6 +429,14 @@ pub async fn status() -> AiStatus {
                 },
             }
         }
+        Provider::GovernedEngine { python, sidecar } => AiStatus {
+            provider: "governed-engine".into(),
+            model: format!("{python} {sidecar}"),
+            // Real turns require operator provisioning (issuer key + trusted-key
+            // registry + workspace binding); until then the sidecar fails closed.
+            ready: false,
+            detail: "Governed engine (opt-in): every AI turn runs behind the engine wall and returns a VERIFIED signed receipt. Real turns need an operator-provisioned supervisor sidecar; until provisioned it fails closed. Self-test the plumbing with BRIDGE_SIDECAR_FAKE=1.".into(),
+        },
     }
 }
 
@@ -425,6 +452,7 @@ pub async fn generate(system: &str, messages: &[ChatMsg]) -> Result<String, Stri
         Provider::ClaudeCli { bin } => claude_cli(&bin, system, messages).await,
         Provider::Anthropic { key, model } => anthropic(&key, &model, system, messages).await,
         Provider::Ollama { model, url } => ollama(&url, &model, system, messages).await,
+        Provider::GovernedEngine { python, sidecar } => governed_engine(&python, &sidecar, system, messages).await,
     }
 }
 
@@ -449,6 +477,13 @@ pub async fn generate_stream<F: FnMut(&str)>(
         }
         Provider::Ollama { model, url } => {
             let full = ollama(&url, &model, system, messages).await?;
+            on_delta(&full);
+            Ok(full)
+        }
+        Provider::GovernedEngine { python, sidecar } => {
+            // The sidecar is request/response (not a token stream): run once, emit
+            // the whole verified reply as a single delta.
+            let full = governed_engine(&python, &sidecar, system, messages).await?;
             on_delta(&full);
             Ok(full)
         }
@@ -998,6 +1033,131 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
         .ok_or_else(|| "claude returned no result".to_string())
 }
 
+/// Build a `bridge.task-request` JSON for one governed AI turn. Carries no lease,
+/// key, or environment (the sidecar/engine own those); the system prompt +
+/// conversation travel as `rationale`, JSON-escaped so content can't forge structure.
+fn governed_request(system: &str, messages: &[ChatMsg]) -> String {
+    let rationale = format!(
+        "{system}\n\n{}\n\nReply to the latest user message.",
+        transcript(messages)
+    );
+    serde_json::json!({
+        "task_id": governed_task_id(),
+        "task_class": GOVERNED_TASK_CLASS,
+        "rationale": rationale,
+    })
+    .to_string()
+}
+
+/// A process-unique task id (monotonic counter + wall-clock nanos; no extra crate).
+fn governed_task_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("t-{nanos:x}-{n:x}")
+}
+
+/// Enforce the verified-receipt-mandatory invariant on a parsed bridge-result:
+/// return the reply ONLY when `ok == true` AND `receipt.verified == true`;
+/// otherwise fail closed with the engine's reason. Never returns a partial or
+/// unverified result — the same guarantee the Python adapter makes, re-checked on
+/// the desktop so an unverified turn is never rendered. (Pure fn — unit-testable.)
+fn interpret_bridge_result(doc: &serde_json::Value) -> Result<String, String> {
+    let ok = doc.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let verified = doc
+        .get("receipt")
+        .and_then(|r| r.get("verified"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if ok && verified {
+        doc.get("result")
+            .and_then(|r| r.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "governed engine reported success but returned no result".to_string())
+    } else {
+        let reason = doc
+            .get("error")
+            .and_then(|e| e.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("governed engine did not return a verified result");
+        Err(format!("governed engine fail-closed: {reason}"))
+    }
+}
+
+/// Governed-engine provider: shell out to the bridge sidecar, which runs the turn
+/// behind the engine wall and returns a `bridge.result`. Mirrors the `claude_cli`
+/// subprocess discipline (stdin payload, bounded reads, one absolute deadline,
+/// kill-on-drop) and is fail-closed + VERIFIED-receipt-mandatory via
+/// [`interpret_bridge_result`].
+async fn governed_engine(
+    python: &str,
+    sidecar: &str,
+    system: &str,
+    messages: &[ChatMsg],
+) -> Result<String, String> {
+    let request = governed_request(system, messages);
+    let mut cmd = tokio::process::Command::new(python);
+    cmd.arg(sidecar)
+        .current_dir(ai_sandbox_dir()?)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = cmd.spawn().map_err(|e| {
+        format!("Could not run the governed engine sidecar (`{python} {sidecar}`): {e}. Set BROPS_GOVERNED_PYTHON / BROPS_GOVERNED_SIDECAR, or unset BROPS_ALLOW_GOVERNED_ENGINE.")
+    })?;
+    // Feed the task-request via stdin (never argv → not in /proc/<pid>/cmdline) on a
+    // concurrent task, so a stalled write can't hang the deadline-bounded wait.
+    if let Some(mut stdin) = child.stdin.take() {
+        let bytes = request.into_bytes();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(&bytes).await;
+            let _ = stdin.shutdown().await;
+        });
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    let stderr = child.stderr.take();
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = String::new();
+        if let Some(e) = stderr {
+            use tokio::io::AsyncReadExt;
+            let _ = e.take(MAX_STDERR_BYTES).read_to_string(&mut buf).await;
+        }
+        buf
+    });
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "no stdout from governed engine sidecar".to_string())?;
+    let (status, obuf) = tokio::time::timeout_at(deadline, async move {
+        use tokio::io::AsyncReadExt;
+        let mut obuf: Vec<u8> = Vec::new();
+        stdout.take(MAX_STDOUT_BYTES).read_to_end(&mut obuf).await.map_err(|e| e.to_string())?;
+        let status = child.wait().await.map_err(|e| e.to_string())?;
+        Ok::<_, String>((status, obuf))
+    })
+    .await
+    .map_err(|_| "governed engine sidecar timed out".to_string())??;
+    let errbuf = tokio::time::timeout_at(deadline, stderr_task)
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+    if !status.success() {
+        return Err(format!("governed engine sidecar crashed: {}", errbuf.trim()));
+    }
+    let stdout = String::from_utf8_lossy(&obuf);
+    let doc: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("could not parse bridge-result ({e})"))?;
+    interpret_bridge_result(&doc)
+}
+
 async fn ollama(url: &str, model: &str, system: &str, messages: &[ChatMsg]) -> Result<String, String> {
     let mut msgs = vec![serde_json::json!({ "role": "system", "content": system })];
     for m in messages {
@@ -1296,5 +1456,50 @@ mod tests {
         let some = claude_args(sys, true, Some("claude-x"));
         let pos = some.iter().position(|a| a == "--model").expect("--model present");
         assert_eq!(some.get(pos + 1), Some(&"claude-x".to_string()));
+    }
+
+    #[test]
+    fn governed_engine_accepts_only_verified_results() {
+        let good = serde_json::json!({
+            "ok": true, "result": "hi there", "error": null,
+            "receipt": {"task_id": "t", "status": "completed", "evidence": ["e"], "verified": true}
+        });
+        assert_eq!(interpret_bridge_result(&good).unwrap(), "hi there");
+    }
+
+    #[test]
+    fn governed_engine_is_fail_closed_without_a_verified_receipt() {
+        // ok:true but receipt.verified:false — the result must NOT leak.
+        let unverified = serde_json::json!({
+            "ok": true, "result": "should-be-ignored", "error": null,
+            "receipt": {"task_id": "t", "status": "completed", "evidence": [], "verified": false}
+        });
+        assert!(interpret_bridge_result(&unverified).is_err());
+        // ok:false — engine error surfaced, no result.
+        let denied = serde_json::json!({
+            "ok": false, "result": null, "receipt": null, "error": "denied: not authorized"
+        });
+        assert!(interpret_bridge_result(&denied).unwrap_err().contains("denied"));
+        // receipt entirely absent — fail closed.
+        let no_receipt = serde_json::json!({"ok": true, "result": "x", "error": null});
+        assert!(interpret_bridge_result(&no_receipt).is_err());
+    }
+
+    #[test]
+    fn governed_request_is_a_valid_lease_free_task_request() {
+        let msgs = vec![ChatMsg { role: "user".into(), content: "hello world".into() }];
+        let req: serde_json::Value = serde_json::from_str(&governed_request("sys", &msgs)).unwrap();
+        assert_eq!(req["task_class"], GOVERNED_TASK_CLASS);
+        assert!(req["task_id"].as_str().unwrap().starts_with("t-"));
+        assert!(req["rationale"].as_str().unwrap().contains("hello world"));
+        // Carries NO lease / key / environment — the conductor never holds them.
+        for forbidden in ["lease", "key", "env", "issuer", "protected_scope"] {
+            assert!(req.get(forbidden).is_none(), "request must not carry {forbidden}");
+        }
+    }
+
+    #[test]
+    fn governed_task_ids_are_unique() {
+        assert_ne!(governed_task_id(), governed_task_id());
     }
 }
