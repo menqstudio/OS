@@ -435,7 +435,7 @@ pub async fn status() -> AiStatus {
             // Real turns require operator provisioning (issuer key + trusted-key
             // registry + workspace binding); until then the sidecar fails closed.
             ready: false,
-            detail: "Governed engine (opt-in): every AI turn runs behind the engine wall and returns a VERIFIED signed receipt. Real turns need an operator-provisioned supervisor sidecar; until provisioned it fails closed. Self-test the plumbing with BRIDGE_SIDECAR_FAKE=1.".into(),
+            detail: "Governed engine (opt-in): every AI turn runs behind the engine wall and returns a VERIFIED signed receipt. Real turns need an operator-provisioned supervisor sidecar; until provisioned it fails closed. Self-test the plumbing with `python bridge/engine_sidecar.py --self-test`.".into(),
         },
     }
 }
@@ -1103,6 +1103,11 @@ async fn governed_engine(
     let request = governed_request(system, messages);
     let mut cmd = tokio::process::Command::new(python);
     cmd.arg(sidecar)
+        // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
+        // reach the production sidecar via inherited env. The sidecar honors self-test
+        // via the --self-test CLI flag ONLY (which we never pass), and we also strip the
+        // legacy fake env var here so an env-activated fabricated verifier is impossible.
+        .env_remove("BRIDGE_SIDECAR_FAKE")
         .current_dir(ai_sandbox_dir()?)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

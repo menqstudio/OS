@@ -77,10 +77,16 @@ class EngineSidecarTests(unittest.TestCase):
         self.assertTrue(doc["receipt"]["verified"])
         self.assertEqual(doc["receipt"]["status"], "completed")
 
-    def test_self_test_via_env_flag(self):
+    def test_env_var_does_NOT_activate_fake(self):
+        # SECURITY (Architect merge-blocker): fake mode is --self-test (CLI) ONLY.
+        # A production launch inherits its parent env; an env-activated fake verifier
+        # there would fabricate a "verified" result. Setting the env var WITHOUT the
+        # flag must reach real mode and fail closed — never a fake verified receipt.
         doc = _drive(_VALID, env={"BRIDGE_SIDECAR_FAKE": "1"})
-        self.assertTrue(doc["ok"])
-        self.assertTrue(doc["receipt"]["verified"])
+        self.assertFalse(doc["ok"])
+        self.assertIsNone(doc["result"])
+        self.assertIsInstance(doc["error"], str)
+        self.assertNotIn("SELF-TEST", doc["error"] or "")
 
     def test_invalid_json_stdin_fails_closed(self):
         doc = _drive("this is not json", argv=["--self-test"])

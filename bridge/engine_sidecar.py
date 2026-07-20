@@ -11,10 +11,11 @@ VERIFIES (`verified=true`); every failure is fail-closed (`result=null`).**
 
 Modes
 -----
-* ``--self-test`` / ``BRIDGE_SIDECAR_FAKE=1`` — inject canned callables (no engine,
-  no provisioning). Proves the stdin->stdout->bridge-result path end to end,
+* ``--self-test`` (CLI flag ONLY — never an env var) — inject canned callables (no
+  engine, no provisioning). Proves the stdin->stdout->bridge-result path end to end,
   including the ``verified=true`` happy path. Used by CI + unit tests.
-  **Never for real use** (it fabricates a passing verifier).
+  **Never for real use** (it fabricates a passing verifier); the desktop never passes
+  it and strips any fake flag from the child env, so production cannot reach it.
 * real (default) — wire the engine. Requires operator-provisioned state on disk
   (issuer key, trusted-key registry, signed workspace binding, builder command),
   supplied via env: ``BRO_KEYDIR``, ``BRO_REGISTRY_ROOT``, ``BRO_BINDING``,
@@ -45,7 +46,6 @@ if str(_HERE) not in sys.path:
 
 from engine_adapter import run_governed_turn  # noqa: E402  (bridge/ on path above)
 
-_TRUTHY = {"1", "true", "yes", "on"}
 # Operator-provisioned state the real supervisor requires (none may come from the desktop).
 _PROVISION_ENV = (
     "BRO_KEYDIR",
@@ -139,9 +139,12 @@ def run(argv: list[str], stdin, stdout) -> int:
         json.dump(_fail(task_id, f"invalid task-request on stdin: {exc}"), stdout)
         return 0
 
-    fake = ("--self-test" in argv) or (
-        os.environ.get("BRIDGE_SIDECAR_FAKE", "").strip().lower() in _TRUTHY
-    )
+    # Self-test is a CLI-flag-only backdoor — deliberately NOT reachable via an
+    # environment variable. A production desktop launch inherits its parent env; an
+    # env-activated fake verifier there would fabricate a "verified" result. The
+    # desktop never passes --self-test (and strips any fake flag before spawning), so
+    # production can only ever reach real mode. (Architect merge-blocker, slice 2.)
+    fake = "--self-test" in argv
     try:
         if fake:
             result = run_governed_turn(
