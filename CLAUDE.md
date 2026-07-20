@@ -62,7 +62,7 @@ The engine CI leg fails **9 of ~615 tests** in the monorepo. **Root cause:** Bro
 - **B · Make Bro monorepo-aware** — allow `ROOT` to be a subdirectory of a registered worktree → true one-repo, but a deliberate, tested change to security code we just audited.
 - **C · Scope Phase-0 CI now** — run the ~606 independent tests, mark the 9 as documented Phase-1-deferred → honest green now; validate the full enforcement path after A/B is chosen.
 
-**Awaiting Gev's choice. Do not implement A or B without his explicit go.**
+**Status:** Option **C is applied** — the engine CI leg is green. The 9 monorepo-coupled tests (`FullExecutionTransactionE2ETests`, `HookSubprocessTests`) skip-guard themselves when `engine/` is not a git checkout root, and **auto-re-enable under option A**. No runtime/security code was touched — only test guards. **A vs B remains the Phase-1 root-model decision — do not implement either without Gev's explicit go.**
 
 ## 4. How to work here — verify commands
 
@@ -166,7 +166,7 @@ Engine CI leg-ը **~615-ից 9 test fail ա** monorepo-ում։ **Root cause:** 
 - **B · Bro-ն monorepo-aware դարձնել** — `ROOT`-ը թույլ տալ որ լինի registered worktree-ի subdirectory → իսկական one-repo, բայց deliberate, tested փոփոխություն հենց նոր-audited security կոդում։
 - **C · Phase-0 CI scope** — հիմա run ~606-ը, 9-ը documented Phase-1-deferred → honest green հիմա; լրիվ enforcement path-ը validate ա A/B-ի ընտրությունից հետո։
 
-**Սպասում ենք Gev-ի ընտրությանը։ Մի իրականացրու A կամ B առանց իր հստակ go-ի։**
+**Վիճակ:** Option **C կիրառված ա** — engine CI leg-ը green ա։ 9 monorepo-coupled test-երը (`FullExecutionTransactionE2ETests`, `HookSubprocessTests`) ինքնաբերաբար skip են, երբ `engine/`-ը git checkout root չէ, ու **A-ի տակ ինքնաբերաբար նորից կվազեն**։ Ոչ մի runtime/security կոդ չի դիպչել — միայն test guard-եր։ **A vs B մնում ա Phase-1 root-model որոշումը — մի իրականացրու առանց Gev-ի հստակ go-ի։**
 
 ## 4. Ոնց աշխատել այստեղ — verify կոմանդներ
 
