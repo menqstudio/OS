@@ -22,6 +22,7 @@
 | **T-004** | Bro deferred security items O-1..O-5 (from `fix/audit-followups`) — roadmap Phase 10 | _unclaimed_ | Blocked (wall-coupled, needs Owner go) | — |
 | **T-005** | Option-2 feasibility (**AUDITED**): engine as submodule + targeted fix to Bro's worktree check (`git rev-parse --show-toplevel` instead of `git worktree list`). **Separate branch/PR, Owner approval, must not destabilize.** — roadmap Phase 10 | _unclaimed_ | Todo | — |
 | **T-006** | Master execution roadmap — expand `MASTER_EXECUTION_ROADMAP.md` into the canonical execution source (11 phases × 16 sections, per-page UI specs, docs sync) | 🔨 Claude | ✅ Done (merged) | `docs/master-execution-roadmap` → **PR #4 merged** (`c573c25`) |
+| **T-007** | Coordination-docs enforcement — CI gate (`tools/check_coordination.py`) + Stop-hook (`.claude/`) so the Startup Law / docs-sync is **enforced, not remembered** (fail-closed CI wall + fail-open Claude reminder) | 🔨 Claude | Review | `chore/enforce-coordination-docs` |
 
 ## How to claim · Ինչպես claim անել
 1. `git pull` and read this board. · `git pull` ու կարդա board-ը։
