@@ -55,3 +55,17 @@ jobs:
         run: pip install --require-hashes -r requirements-ci.txt
       - name: Run the engine test suite
         run: python -m unittest discover -s tests
+
+  bridge:
+    name: Bridge · engine adapter (python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install bridge test dependencies (jsonschema, hash-pinned via engine)
+        run: pip install --require-hashes -r engine/requirements-ci.txt
+      - name: Run the bridge adapter tests
+        working-directory: bridge
+        run: python -m unittest discover -s tests
