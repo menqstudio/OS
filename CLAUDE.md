@@ -66,12 +66,30 @@ Both halves arrived **already audited and fixed** (see §6). They were brought i
 
 ## 3. Roadmap — where we are
 
+> **The canonical execution plan is [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)**
+> (status `Active — Canonical Execution Authority`). It expands the product into **11 phases** with
+> per-phase Objective / Scope / Architecture / UI-UX / Backend / Contracts / Data models / Dependencies /
+> Security gates / Tests / CI / Docs / Acceptance / Merge gate / Stop conditions / Definition of Done,
+> and per-page UI specs from the canonical prototype `brops-aios.html`. A cold-start session takes the
+> next **unchecked** task there. This table is the summary; the roadmap is the source.
+>
+> The earlier 4-step framing (Scaffold · Bridge · One approval gate · Contracts) is **superseded** by the
+> 11-phase plan: *One approval gate* is now Phase 2 (Governance Sidecar); *Contracts dedupe* begins in
+> Phase 3 and is finalized in Phase 10.
+
 | Phase | Goal | Status |
 |-------|------|--------|
-| **0 — Scaffold** | monorepo assembled · bilingual docs · unified CI · history preserved | ✅ **DONE** |
-| **1 — Bridge** | route the desktop's AI execution through the engine's supervisor/lease/wall — replace the direct `claude` spawn in `apps/desktop/src-tauri/src/ai.rs` with a governed call | ⏳ not started |
-| **2 — One approval gate** | the desktop defers to the engine's Ed25519 approval/lease system; a single authoritative gate instead of two | ⏳ not started |
-| **3 — Contracts** | dedupe the shared schemas (execution-lease · approval · task-contract · mode-grant) into `contracts/` as one source of truth | ⏳ not started |
+| **0 — Foundation** | monorepo assembled · bilingual docs · unified CI · history preserved | ✅ **DONE (locked)** |
+| **1 — Bridge** | route desktop AI exec through the engine supervisor/lease/wall (replace direct `claude` spawn in `ai.rs`) | 🔨 **In progress** — slice 1 built & verified (8/8); slices 2–3 open |
+| **2 — Governance Sidecar** | cockpit surfaces for approvals · decisions · evidence chain · signals (mirror, never decide) | ⏳ ready (P1 contract exists) |
+| **3 — Desktop Integration** | app shell + `home`/`chat`(governed)/`settings`; wire the core loop | ⏳ blocked on P1+P2 |
+| **4 — UI/UX System** | component library + theming + motion + a11y; `activity`/`analytics`/`library` | ⏳ blocked on P3 |
+| **5 — Memory & Knowledge** | `memory`/`knowledge`/`research`(governed)/`files` | ⏳ blocked on P3 |
+| **6 — Multi-Agent** | `agents`/`command`/`tasks`/`projects`; governed pack dispatch | ⏳ blocked on P4+P5 |
+| **7 — Group Chat** | `group` collaboration hall; per-agent governed turns | ⏳ blocked on P6 |
+| **8 — Automation** | `automations`/`calendar`; governed scheduled runs | ⏳ blocked on P4+P5 |
+| **9 — Integrations** | `integrations`; governed inbound/outbound, no desktop secrets | ⏳ blocked on P7+P8 |
+| **10 — Production** | signed/updatable build; full enforcement-path CI (retire option-C skips via T-005); `contracts/` dedupe; close O-1..O-5 | ⏳ blocked on P9 |
 
 ### ⚠️ OPEN DECISION — blocks a fully-green CI
 
@@ -172,12 +190,28 @@ OS/
 
 ## 3. Roadmap — որտեղ ենք
 
+> **Կանոնական կատարման պլանը՝ [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)**
+> (կարգավիճակ՝ `Active — Canonical Execution Authority`)։ Ընդլայնում է product-ը **11 phase**-ի՝ ամեն
+> phase-ի Objective/Scope/Architecture/UI-UX/Backend/Contracts/Data models/Dependencies/Security gates/
+> Tests/CI/Docs/Acceptance/Merge gate/Stop conditions/Definition of Done-ով, ու էջ-առ-էջ UI spec-երով՝
+> canonical prototype `brops-aios.html`-ից։ Cold-start session-ը վերցնում է հաջորդ **unchecked** task-ը
+> էնտեղից։ Այս աղյուսակը ամփոփումն է, roadmap-ը՝ աղբյուրը։ Հին 4-քայլ framing-ը (Scaffold · Bridge · One
+> approval gate · Contracts) **փոխարինված է**. *One approval gate* → Phase 2 (Governance Sidecar),
+> *Contracts dedupe* → սկսվում է Phase 3-ում, ավարտվում Phase 10-ում։
+
 | Phase | Նպատակ | Վիճակ |
 |-------|--------|-------|
-| **0 — Scaffold** | monorepo հավաքված · երկլեզու docs · միասնական CI · history պահած | ✅ **DONE** |
-| **1 — Bridge** | desktop-ի AI execution-ը անցկացնել engine-ի supervisor/lease/wall-ով — `apps/desktop/src-tauri/src/ai.rs`-ի ուղիղ `claude` spawn-ը փոխարինել governed call-ով | ⏳ չսկսած |
-| **2 — Մեկ approval gate** | desktop-ը defer ա անում engine-ի Ed25519 approval/lease համակարգին; մեկ authoritative gate երկուսի փոխարեն | ⏳ չսկսած |
-| **3 — Contracts** | shared schema-ները (execution-lease · approval · task-contract · mode-grant) dedupe անել `contracts/`-ում՝ single source of truth | ⏳ չսկսած |
+| **0 — Foundation** | monorepo հավաքված · երկլեզու docs · միասնական CI · history պահած | ✅ **DONE (locked)** |
+| **1 — Bridge** | desktop AI exec-ը engine-ի supervisor/lease/wall-ով (`ai.rs`-ի ուղիղ `claude` spawn-ը փոխարինել) | 🔨 **Ընթացքում** — slice 1 կառուցված ու verified (8/8); slices 2–3 բաց |
+| **2 — Governance Sidecar** | cockpit surface-եր՝ approvals · decisions · evidence chain · signals (mirror, ոչ decide) | ⏳ ready (P1 contract կա) |
+| **3 — Desktop Integration** | app shell + `home`/`chat`(governed)/`settings`; core loop-ը wire | ⏳ blocked P1+P2 |
+| **4 — UI/UX System** | component library + theming + motion + a11y; `activity`/`analytics`/`library` | ⏳ blocked P3 |
+| **5 — Memory & Knowledge** | `memory`/`knowledge`/`research`(governed)/`files` | ⏳ blocked P3 |
+| **6 — Multi-Agent** | `agents`/`command`/`tasks`/`projects`; governed pack dispatch | ⏳ blocked P4+P5 |
+| **7 — Group Chat** | `group` համագործակցության սրահ; per-agent governed turn-եր | ⏳ blocked P6 |
+| **8 — Automation** | `automations`/`calendar`; governed scheduled run-եր | ⏳ blocked P4+P5 |
+| **9 — Integrations** | `integrations`; governed inbound/outbound, desktop-ում secret չկա | ⏳ blocked P7+P8 |
+| **10 — Production** | signed/updatable build; լրիվ enforcement-path CI (T-005-ով option-C skip-երը retire); `contracts/` dedupe; O-1..O-5 փակել | ⏳ blocked P9 |
 
 ### ⚠️ ԲԱՑ ՈՐՈՇՈՒՄ — блокирует fully-green CI
 

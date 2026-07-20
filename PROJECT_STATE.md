@@ -3,28 +3,41 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** coordination-canon PR (branch `chore/coordination-canon`)
+**Last updated · Վերջին թարմացում:** master-roadmap PR (branch `docs/master-execution-roadmap`)
 
 ---
 
 ## 📍 Where we are · Որտեղ ենք
 
-- **Phase 0 — Scaffold:** ✅ DONE. OS monorepo assembled (`engine/` = Bro, `apps/desktop/` = BroPS, subtree history preserved), bilingual docs, unified CI.
-- **Engine CI:** ✅ green — the 9 monorepo-coupled tests skip-guard themselves (option **C**); `OK (591 passed, 38 skipped, 0 failed)`.
-- **Phase 1 — Bridge:** ⏳ not started.
+- **Canonical execution source:** [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md) — status
+  `Active — Canonical Execution Authority`, **11 phases** fully expanded (16 sections each) with per-page
+  UI specs from `brops-aios.html`. A cold-start session takes the next unchecked task there.
+- **Phase 0 — Foundation:** ✅ DONE (locked). OS monorepo assembled (`engine/` = Bro, `apps/desktop/` =
+  BroPS, subtree history preserved), bilingual docs, unified CI.
+- **Engine CI:** ✅ green — the 9 monorepo-coupled tests skip-guard themselves (option **C**);
+  `OK (591 passed, 38 skipped, 0 failed)`.
+- **Phase 1 — Bridge:** 🔨 in progress — `bridge/DESIGN.md` **APPROVED**; slice 1 (contract + adapter +
+  tests) **built & verified (8/8)** on `feat/phase1-bridge` (PR #3). Slices 2–3 (round-trip, CI leg, UI
+  badge/toggle, streaming) open.
 
 ## 👷 Who's working on what (NOW) · Ով ինչի վրա ա (ՀԻՄԱ)
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | T-001 coordination canon | `chore/coordination-canon` | 🔎 in review (PR open) |
+| 🔨 Claude | T-006 master execution roadmap | `docs/master-execution-roadmap` | 🔎 in review (draft PR) |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals | — | — |
 
 ## ⏭️ Next task · Հաջորդ task
 
-1. **T-003 — Phase 1 bridge** — route the desktop's AI execution through the engine's supervisor/lease/wall, shaped as `apps/desktop ↔ adapter ↔ engine`.
-2. **T-005 — Option-2 feasibility (AUDITED, later)** — engine as a submodule + a targeted fix to Bro's worktree check. Separate branch/PR, Owner approval, must not destabilize.
+Follow [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md). Immediate open items:
+
+1. **Phase 1 slice 2** — prove one governed round-trip, add the bridge CI leg, ship the `chat` verified-
+   receipt badge + Settings governed-provider toggle (see roadmap Phase 1 task checklist). `feat/phase1-bridge`.
+2. **Phase 2 (Governance Sidecar)** — can start now (P1 contract exists): `approvals`/`decisions`/
+   `security`/`notifications` surfaces, mirror-never-decide.
+3. **T-005 — Option-2 (AUDITED, Phase 10)** — engine submodule + worktree-check native fix. Separate
+   branch/PR, Owner approval, must not destabilize.
 
 ## 🚧 Blockers · Խոչընդոտներ
 
