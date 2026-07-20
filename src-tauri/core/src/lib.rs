@@ -169,9 +169,9 @@ mod tests {
     }
 
     #[test]
-    fn migrations_reach_v10_with_all_tables() {
+    fn migrations_reach_latest_with_all_tables() {
         let c = conn();
-        assert_eq!(db::current_version(&c).unwrap(), 10);
+        assert_eq!(db::current_version(&c).unwrap(), db::SCHEMA_VERSION);
         // decisions table exists and is usable
         repo::decisions::create(&c, "T", "gev", "why").unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
@@ -288,7 +288,7 @@ mod tests {
         assert!(gated.requires_approval);
 
         // nothing approved or pending yet
-        assert!(!repo::approvals::approved_for(&c, &step.id).unwrap());
+        assert!(!repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap());
         assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_none());
 
         // request an approval linked to the step
@@ -297,11 +297,11 @@ mod tests {
         ).unwrap();
         assert_eq!(ap.entity_id.as_deref(), Some(step.id.as_str()));
         assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_some());
-        assert!(!repo::approvals::approved_for(&c, &step.id).unwrap());
+        assert!(!repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap());
 
         // approving flips both queries
         repo::approvals::decide(&c, &ap.id, "approved", None).unwrap();
-        assert!(repo::approvals::approved_for(&c, &step.id).unwrap());
+        assert!(repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap());
         assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_none());
     }
 
@@ -329,13 +329,13 @@ mod tests {
         // rejected_for: a rejection with no approval blocks
         let r2 = repo::runs::create(&c, "r2", "").unwrap();
         let s = repo::runs::add_step(&c, &r2.id, "x", "").unwrap();
-        let rej = repo::approvals::create(&c, "x", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id)).unwrap();
+        let rej = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id)).unwrap();
         repo::approvals::decide(&c, &rej.id, "rejected", None).unwrap();
-        assert!(repo::approvals::rejected_for(&c, &s.id).unwrap());
+        assert!(repo::approvals::rejected_for(&c, &s.id, "run_step", "Execute run step").unwrap());
         // a later approval clears the rejected-block
-        let ok = repo::approvals::create(&c, "x", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id)).unwrap();
+        let ok = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id)).unwrap();
         repo::approvals::decide(&c, &ok.id, "approved", None).unwrap();
-        assert!(!repo::approvals::rejected_for(&c, &s.id).unwrap());
+        assert!(!repo::approvals::rejected_for(&c, &s.id, "run_step", "Execute run step").unwrap());
     }
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
         // other statuses are still fine
         assert!(repo::runs::set_step_status(&c, &step.id, "active").is_ok());
         // once approved, done succeeds
-        let ap = repo::approvals::create(&c, "x", "risky", "A2", "medium", "gev", Some("run_step"), Some(&step.id)).unwrap();
+        let ap = repo::approvals::create(&c, "Execute run step", "risky", "A2", "medium", "gev", Some("run_step"), Some(&step.id)).unwrap();
         repo::approvals::decide(&c, &ap.id, "approved", None).unwrap();
         assert!(repo::runs::set_step_status(&c, &step.id, "done").is_ok());
     }
@@ -506,7 +506,7 @@ mod tests {
         repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(), body: "first".into() }).unwrap();
         repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(), body: "second".into() }).unwrap();
 
-        let msgs = repo::chat::list_messages(&c, &conv.id).unwrap();
+        let msgs = repo::chat::list_messages(&c, &conv.id, None, None).unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].body, "first");
         assert_eq!(msgs[1].body, "second");
@@ -559,7 +559,7 @@ mod tests {
         // delete removes the conversation and cascades its messages away
         repo::chat::delete_conversation(&c, &conv.id).unwrap();
         assert_eq!(repo::chat::list_conversations(&c, None).unwrap().len(), 1);
-        assert_eq!(repo::chat::list_messages(&c, &conv.id).unwrap().len(), 0);
+        assert_eq!(repo::chat::list_messages(&c, &conv.id, None, None).unwrap().len(), 0);
         assert!(repo::chat::get_conversation(&c, &conv.id).is_err());
 
         // deleting/renaming an unknown conversation is a clean NotFound
@@ -574,8 +574,8 @@ mod tests {
         let after_first = repo::projects::list(&c).unwrap().len();
         assert!(after_first >= 2);
         assert!(repo::agents::list(&c).unwrap().len() >= 6);
-        assert!(repo::approvals::list(&c).unwrap().len() >= 2);
-        assert!(repo::notifications::list(&c).unwrap().len() >= 2);
+        assert!(repo::approvals::list(&c, None, None).unwrap().len() >= 2);
+        assert!(repo::notifications::list(&c, None, None).unwrap().len() >= 2);
         assert!(repo::decisions::list(&c).unwrap().len() >= 2);
         assert!(repo::chat::list_conversations(&c, None).unwrap().len() >= 2);
         assert!(repo::knowledge::list(&c).unwrap().len() >= 2);
@@ -598,7 +598,7 @@ mod tests {
     fn approval_decide_flow() {
         let c = conn();
         repo::seed(&c).unwrap();
-        let pending: Vec<_> = repo::approvals::list(&c).unwrap().into_iter().filter(|a| a.status == "pending").collect();
+        let pending: Vec<_> = repo::approvals::list(&c, None, None).unwrap().into_iter().filter(|a| a.status == "pending").collect();
         assert!(!pending.is_empty());
         let decided = repo::approvals::decide(&c, &pending[0].id, "approved", Some("ok")).unwrap();
         assert_eq!(decided.status, "approved");

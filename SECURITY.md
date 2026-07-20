@@ -68,4 +68,9 @@ _Last updated: 2026-07-19. Primary platform: Linux (Debian). Reflects 10 rounds 
 
 ## Reporting
 
-This is a personal project. Report security concerns to the owner (Gev) directly.
+This is a personal project maintained by the owner (Gev). Please report security issues **confidentially** — do not open a public issue for a vulnerability.
+
+- **Preferred:** use GitHub **Private Vulnerability Reporting** on this repository: go to the **Security** tab → **Report a vulnerability**. This opens a private advisory visible only to you and the maintainer.
+- If private reporting is unavailable, contact the owner directly through the private contact channel listed on the repository owner's GitHub profile.
+
+Please include reproduction steps and the affected component (webview, Rust host command, provider integration, etc.). Reports are reviewed on a best-effort basis; this is a single-maintainer project, so there is no formal SLA.

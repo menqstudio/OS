@@ -6,7 +6,8 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import type {
   ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
-  DirListing, FileContent, Integration, KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
+  DirListing, FileContent, Integration, KnowledgeNote, MemoryEntry, Message, MessageRole, Metric,
+  NewAutomation, NewEvent,
   NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
   RunStep, SearchResult, SecuritySummary, Task,
 } from '../domain/entities';
@@ -14,6 +15,20 @@ import type {
 /** True when running inside the Tauri desktop runtime. */
 export function hasBackend(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+// Message-role allowlist. Only 'agent' messages are ever rendered through the
+// markdown (HTML) sink; every other role coming over the IPC boundary — known
+// or not — is coerced to 'user', which the UI renders as plain text. This keeps
+// an unexpected role from flipping a message into the HTML renderer.
+const MARKDOWN_ROLES: ReadonlySet<string> = new Set(['agent']);
+
+function allowedRole(role: string): MessageRole {
+  return MARKDOWN_ROLES.has(role) ? 'agent' : 'user';
+}
+
+function normalizeMessage(m: Message): Message {
+  return { ...m, role: allowedRole(m.role) };
 }
 
 export const desktop = {
@@ -68,8 +83,11 @@ export const desktop = {
   createConversation: (kind: 'direct' | 'group', title: string) =>
     invoke<Conversation>('create_conversation', { kind, title }),
   listMessages: (conversationId: string) =>
-    invoke<Message[]>('list_messages', { conversationId }),
-  postMessage: (input: NewMessage) => invoke<Message>('post_message', { input }),
+    invoke<Message[]>('list_messages', { conversationId }).then((ms) => ms.map(normalizeMessage)),
+  postMessage: (input: NewMessage) =>
+    invoke<Message>('post_message', {
+      input: { ...input, role: allowedRole(input.role) },
+    }).then(normalizeMessage),
   deleteConversation: (id: string) => invoke<void>('delete_conversation', { id }),
   renameConversation: (id: string, title: string) =>
     invoke<Conversation>('rename_conversation', { id, title }),
@@ -136,13 +154,15 @@ export const desktop = {
   // ai (live agent replies)
   aiStatus: () => invoke<AiStatus>('ai_status'),
   replyInConversation: (conversationId: string, agent?: string) =>
-    invoke<Message>('reply_in_conversation', { conversationId, agent: agent ?? null }),
+    invoke<Message>('reply_in_conversation', { conversationId, agent: agent ?? null })
+      .then(normalizeMessage),
 
   // ai streaming: emits {type:'delta'|'done'|'error'} over a channel while the
   // agent produces text. Resolves when the stream ends.
   streamReply: (conversationId: string, onEvent: (e: StreamEvent) => void, agent?: string) => {
     const channel = new Channel<StreamEvent>();
-    channel.onmessage = onEvent;
+    channel.onmessage = (e) =>
+      onEvent(e.type === 'done' ? { ...e, message: normalizeMessage(e.message) } : e);
     return invoke<void>('stream_reply', { conversationId, agent: agent ?? null, onEvent: channel });
   },
 

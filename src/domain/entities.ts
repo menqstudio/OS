@@ -96,10 +96,15 @@ export interface Conversation {
   updatedAt: string;
 }
 
+// The only message roles the frontend recognises. Only 'agent' is rendered
+// through the markdown (HTML) sink; 'user' (and anything unknown, which the
+// desktop service coerces to 'user') is rendered as plain text.
+export type MessageRole = 'user' | 'agent';
+
 export interface Message {
   id: string;
   conversationId: string;
-  role: string;
+  role: MessageRole;
   author: string;
   body: string;
   createdAt: string;
@@ -107,7 +112,7 @@ export interface Message {
 
 export interface NewMessage {
   conversationId: string;
-  role: string;
+  role: MessageRole;
   author: string;
   body: string;
 }

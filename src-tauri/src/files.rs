@@ -1,10 +1,13 @@
 //! Filesystem workspace: browse a directory tree and view/edit text files
-//! through `std::fs` (no SQLite). Access is **confined to a single root** (the
-//! user's home by default, or `BROPS_FILES_ROOT`) — the security boundary
-//! between the untrusted webview and the real disk. Every path is canonicalized
-//! (resolving `..` and symlinks) and rejected if it escapes the root, so a
-//! compromised renderer cannot read or write arbitrary files. Editing is limited
-//! to existing regular files, bounded in size, and written atomically.
+//! through `std::fs` (no SQLite). Access is **confined to a single root** (a
+//! dedicated `~/BroPS` workspace by default, or `BROPS_FILES_ROOT`) — the
+//! security boundary between the untrusted webview and the real disk. Every
+//! path is canonicalized (resolving `..` and symlinks) and rejected if it
+//! escapes the root, so a compromised renderer cannot read or write arbitrary
+//! files. Editing is limited to existing regular files, bounded in size, and
+//! written atomically. Error strings that cross the IPC boundary are generic:
+//! canonical paths and raw io errors are logged internally only, so a
+//! compromised renderer cannot probe file existence or the disk layout.
 
 use serde::Serialize;
 use std::fs;
@@ -14,6 +17,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Largest file we will read into / write from the editor.
 const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Most directory entries a single listing will return. A huge directory would
+/// otherwise allocate proportional memory and block the IPC thread; past the
+/// cap the listing is cut short and flagged `truncated` so the UI can say so.
+const MAX_DIR_ENTRIES: usize = 10_000;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +39,9 @@ pub struct DirListing {
     pub path: String,
     pub parent: Option<String>,
     pub entries: Vec<DirEntry>,
+    /// True when the directory held more than [`MAX_DIR_ENTRIES`] children and
+    /// the listing was cut short.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,23 +57,79 @@ pub struct FileContent {
 
 // --- security: confine every path to one canonical root ---------------------
 
+/// The user's home directory: `HOME` where set (Unix, and respected everywhere),
+/// falling back to `USERPROFILE` so the default workspace resolves on Windows,
+/// where `HOME` is normally unset.
+fn home_dir() -> Option<PathBuf> {
+    if let Some(h) = std::env::var_os("HOME") {
+        if !h.is_empty() {
+            return Some(PathBuf::from(h));
+        }
+    }
+    if let Some(h) = std::env::var_os("USERPROFILE") {
+        if !h.is_empty() {
+            return Some(PathBuf::from(h));
+        }
+    }
+    None
+}
+
+/// Refuse a files root that resolves to a filesystem root (`/`, `C:\`) or to the
+/// home directory itself — either would put the whole disk/profile (SSH keys,
+/// browser data, shell rc) one `confine` check away, leaving only the incomplete
+/// `is_sensitive` denylist as a guard. `canon` must already be canonicalized;
+/// `home` (if known) is canonicalized here before comparing, so `\\?\`-prefix or
+/// symlink differences can't dodge the check. Fails closed: an unsafe root is an
+/// error, never silently widened or narrowed.
+fn reject_unsafe_root(canon: &Path, home: Option<&Path>) -> Result<(), String> {
+    if canon.parent().is_none() {
+        eprintln!(
+            "[brops] files: BROPS_FILES_ROOT resolves to a filesystem root ({}) — refused",
+            canon.display()
+        );
+        return Err("the configured files root is not allowed".to_string());
+    }
+    if let Some(home) = home {
+        if let Ok(home_canon) = fs::canonicalize(home) {
+            if canon == home_canon {
+                eprintln!(
+                    "[brops] files: BROPS_FILES_ROOT resolves to the home directory ({}) — refused",
+                    canon.display()
+                );
+                return Err("the configured files root is not allowed".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The one directory subtree the file commands may touch. To avoid granting the
 /// whole home directory (SSH/AWS keys, shell rc, tool configs) by default, this
 /// is a dedicated `~/BroPS` workspace unless `BROPS_FILES_ROOT` points somewhere
-/// narrower/specific. Returned canonicalized so containment compares real paths.
+/// narrower/specific — and an override is clamped by [`reject_unsafe_root`] so
+/// it can never be the filesystem root or the home directory itself. Returned
+/// canonicalized so containment compares real paths.
 fn files_root() -> Result<PathBuf, String> {
     let raw = match std::env::var("BROPS_FILES_ROOT") {
         Ok(v) if !v.trim().is_empty() => PathBuf::from(v),
         _ => {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .ok_or_else(|| "no files root (HOME unset, BROPS_FILES_ROOT unset)".to_string())?;
+            let home = home_dir().ok_or_else(|| {
+                eprintln!("[brops] files: no files root (HOME/USERPROFILE unset, BROPS_FILES_ROOT unset)");
+                "file workspace is not configured".to_string()
+            })?;
             let ws = home.join("BroPS");
             let _ = fs::create_dir_all(&ws); // so the default workspace can be browsed
             ws
         }
     };
-    fs::canonicalize(&raw).map_err(|e| format!("files root {}: {e}", raw.display()))
+    let canon = fs::canonicalize(&raw).map_err(|e| {
+        eprintln!("[brops] files: cannot resolve files root {}: {e}", raw.display());
+        "file workspace is unavailable".to_string()
+    })?;
+    // Applied to the default too (harmless — `~/BroPS` can never trip it), so the
+    // clamp cannot be bypassed by any code path.
+    reject_unsafe_root(&canon, home_dir().as_deref())?;
+    Ok(canon)
 }
 
 /// Defense-in-depth denylist: even inside the files root, never touch known
@@ -121,11 +188,18 @@ fn confine_in(root: &Path, raw: &str) -> Result<PathBuf, String> {
     if raw.is_empty() {
         return Ok(root.to_path_buf());
     }
-    let canon = fs::canonicalize(raw).map_err(|e| format!("{raw}: {e}"))?;
+    // One generic error for both "does not exist" and "not accessible" — a
+    // renderer must not be able to distinguish them (existence probing), and the
+    // raw io error / canonical path is logged internally only.
+    let canon = fs::canonicalize(raw).map_err(|e| {
+        eprintln!("[brops] files: cannot resolve {raw}: {e}");
+        "path not found or not accessible".to_string()
+    })?;
     // Component-wise containment (not string-prefix): "/home/gev2" is NOT inside
     // "/home/gev".
     if !canon.starts_with(root) {
-        return Err(format!("{}: outside the allowed files root", canon.display()));
+        eprintln!("[brops] files: {} is outside the allowed files root", canon.display());
+        return Err("path is outside the allowed workspace".to_string());
     }
     Ok(canon)
 }
@@ -135,7 +209,8 @@ fn confine_in(root: &Path, raw: &str) -> Result<PathBuf, String> {
 fn confine(raw: &str) -> Result<PathBuf, String> {
     let p = confine_in(&files_root()?, raw)?;
     if is_sensitive(&p) {
-        return Err(format!("{}: access to this sensitive path is blocked", p.display()));
+        eprintln!("[brops] files: sensitive path blocked: {}", p.display());
+        return Err("access to this path is blocked".to_string());
     }
     Ok(p)
 }
@@ -151,14 +226,21 @@ fn modified_ms(meta: &fs::Metadata) -> Option<String> {
 
 /// List a directory's immediate children: directories first, then files, each
 /// group sorted case-insensitively by name. Unreadable entries are skipped
-/// rather than failing the whole listing.
-pub fn read_listing(dir: &Path) -> std::io::Result<DirListing> {
+/// rather than failing the whole listing. At most `cap` entries are collected;
+/// past that the listing stops (bounded memory) and is flagged `truncated`.
+/// Split from [`read_listing`] so tests can exercise the cap cheaply.
+fn read_listing_capped(dir: &Path, cap: usize) -> std::io::Result<DirListing> {
     let mut entries: Vec<DirEntry> = Vec::new();
+    let mut truncated = false;
     for entry in fs::read_dir(dir)? {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
         };
+        if entries.len() >= cap {
+            truncated = true;
+            break;
+        }
         let path = entry.path();
         // symlink_metadata does NOT follow the link, so a symlink reports its own
         // (small) size/mtime and is_dir=false — it can't leak the target's dir
@@ -185,7 +267,13 @@ pub fn read_listing(dir: &Path) -> std::io::Result<DirListing> {
         path: dir.to_string_lossy().into_owned(),
         parent: dir.parent().map(|p| p.to_string_lossy().into_owned()),
         entries,
+        truncated,
     })
+}
+
+/// [`read_listing_capped`] with the production [`MAX_DIR_ENTRIES`] cap.
+pub fn read_listing(dir: &Path) -> std::io::Result<DirListing> {
+    read_listing_capped(dir, MAX_DIR_ENTRIES)
 }
 
 #[tauri::command]
@@ -195,9 +283,13 @@ pub fn list_dir(path: Option<String>) -> Result<DirListing, String> {
     // Enforce the sensitive-path denylist on listing too (not just read/write),
     // so a `.ssh`/`.aws` directory can't even be enumerated.
     if is_sensitive(&dir) {
-        return Err(format!("{}: access to this sensitive path is blocked", dir.display()));
+        eprintln!("[brops] files: sensitive path blocked in listing: {}", dir.display());
+        return Err("access to this path is blocked".to_string());
     }
-    let mut listing = read_listing(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut listing = read_listing(&dir).map_err(|e| {
+        eprintln!("[brops] files: cannot list {}: {e}", dir.display());
+        "cannot list directory".to_string()
+    })?;
     // Hide sensitive children so they can't be seen or clicked into.
     listing.entries.retain(|e| !is_sensitive(Path::new(&e.path)));
     // Never offer an "Up" that leaves the confinement root.
@@ -239,6 +331,13 @@ pub fn read_text(path: &Path) -> std::io::Result<FileContent> {
     }
 }
 
+/// Log an io failure with full detail internally and return the generic,
+/// probe-proof message the frontend is allowed to see (L-2a).
+fn fs_err(generic: &'static str, path: &Path, detail: &dyn std::fmt::Display) -> String {
+    eprintln!("[brops] files: {generic} ({}): {detail}", path.display());
+    generic.to_string()
+}
+
 /// Overwrite an existing regular file's text, atomically. Writes to a uniquely
 /// named, **exclusively created** (`O_EXCL`) sibling temp — so it can't follow or
 /// clobber a planted temp/symlink — fsyncs it, copies the **original file's
@@ -246,20 +345,30 @@ pub fn read_text(path: &Path) -> std::io::Result<FileContent> {
 /// target and fsyncs the directory. Refuses new files, non-regular targets, and
 /// content over the size cap, so a huge payload can't exhaust the disk and a
 /// partial write can never truncate the original.
+///
+/// Windows note (reduced guarantee): the owner-only `0o600` temp mode and the
+/// post-rename directory fsync are Unix-only. On Windows the temp file inherits
+/// the parent directory's ACL — private when the workspace lives under the user
+/// profile (the default `~/BroPS`), which is per-user by default — and there is
+/// no supported way to fsync a directory, so the rename itself is not flushed
+/// (the file *content* is still `sync_all`'d before the rename, so the target
+/// is never observed half-written; at worst a crash yields the old file).
 fn write_text(path: &Path, content: &str) -> Result<(), String> {
     use std::io::Write;
     if content.len() as u64 > MAX_EDIT_BYTES {
         return Err(format!("content exceeds the {MAX_EDIT_BYTES}-byte edit limit"));
     }
-    let meta = fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let meta = fs::symlink_metadata(path).map_err(|e| fs_err("cannot write file", path, &e))?;
     if !meta.file_type().is_file() {
-        return Err(format!("{}: not a regular file", path.display()));
+        return Err("not an editable file".to_string());
     }
-    let parent = path.parent().ok_or_else(|| format!("{}: no parent directory", path.display()))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| fs_err("cannot write file", path, &"no parent directory"))?;
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| format!("{}: invalid file name", path.display()))?;
+        .ok_or_else(|| fs_err("cannot write file", path, &"invalid file name"))?;
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let tmp = parent.join(format!(".{file_name}.{}.{nanos}.brops-tmp", std::process::id()));
 
@@ -274,11 +383,11 @@ fn write_text(path: &Path, content: &str) -> Result<(), String> {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    let mut f = opts.open(&tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let mut f = opts.open(&tmp).map_err(|e| fs_err("cannot write file", &tmp, &e))?;
     if let Err(e) = f.write_all(content.as_bytes()).and_then(|_| f.sync_all()) {
         drop(f);
         let _ = fs::remove_file(&tmp);
-        return Err(format!("{}: {e}", tmp.display()));
+        return Err(fs_err("cannot write file", &tmp, &e));
     }
     // Apply the original file's exact permissions so a 0600 secret stays 0600 (and
     // a 0644 file isn't needlessly tightened). A failure here aborts — never leave
@@ -286,14 +395,15 @@ fn write_text(path: &Path, content: &str) -> Result<(), String> {
     if let Err(e) = fs::set_permissions(&tmp, meta.permissions()) {
         drop(f);
         let _ = fs::remove_file(&tmp);
-        return Err(format!("{}: preserving permissions failed: {e}", tmp.display()));
+        return Err(fs_err("cannot write file", &tmp, &format!("preserving permissions failed: {e}")));
     }
     drop(f);
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
-        format!("{}: {e}", path.display())
+        fs_err("cannot write file", path, &e)
     })?;
     // Best-effort durability: fsync the directory so the rename survives a crash.
+    // Unix-only — Windows has no supported directory fsync (see the fn doc note).
     #[cfg(unix)]
     if let Ok(dir) = fs::File::open(parent) {
         let _ = dir.sync_all();
@@ -304,13 +414,14 @@ fn write_text(path: &Path, content: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn read_file(path: String) -> Result<FileContent, String> {
     let p = confine(&path)?;
-    read_text(&p).map_err(|e| format!("{path}: {e}"))
+    read_text(&p).map_err(|e| fs_err("cannot read file", &p, &e))
 }
 
 #[tauri::command]
 pub fn write_file(path: String, content: String) -> Result<(), String> {
     let p = confine(&path)?;
-    write_text(&p, &content).map_err(|e| format!("{path}: {e}"))
+    // write_text already returns generic, path-free messages (L-2a).
+    write_text(&p, &content)
 }
 
 #[cfg(test)]
@@ -358,6 +469,40 @@ mod tests {
         assert!(!link.is_dir, "a symlink to a dir must not be listed as a dir");
         assert!(link.size_bytes < 5000, "symlink must report its own size, not the target's");
 
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn listing_caps_entries_and_flags_truncation() {
+        let root = scratch("cap");
+        for i in 0..5 {
+            fs::write(root.join(format!("f{i}.txt")), b"x").unwrap();
+        }
+        // under the cap → complete listing, not truncated
+        let full = read_listing_capped(&root, 10).unwrap();
+        assert_eq!(full.entries.len(), 5);
+        assert!(!full.truncated);
+        // over the cap → cut short and flagged
+        let cut = read_listing_capped(&root, 3).unwrap();
+        assert_eq!(cut.entries.len(), 3);
+        assert!(cut.truncated, "an over-cap listing must be flagged truncated");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn files_root_clamp_rejects_fs_root_and_home() {
+        let base = scratch("rootclamp");
+        let canon = fs::canonicalize(&base).unwrap();
+        // a filesystem root ("/", "C:\") is refused
+        let fs_root = fs::canonicalize(if cfg!(windows) { "C:\\" } else { "/" }).unwrap();
+        assert!(reject_unsafe_root(&fs_root, None).is_err(), "a filesystem root must be refused");
+        // the home directory itself is refused (base standing in for $HOME)
+        assert!(reject_unsafe_root(&canon, Some(&base)).is_err(), "the home dir itself must be refused");
+        // a normal subdirectory is fine
+        assert!(reject_unsafe_root(&canon, None).is_ok());
+        let sub = base.join("ws");
+        fs::create_dir_all(&sub).unwrap();
+        assert!(reject_unsafe_root(&fs::canonicalize(&sub).unwrap(), Some(&base)).is_ok());
         let _ = fs::remove_dir_all(&base);
     }
 

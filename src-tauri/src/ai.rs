@@ -14,7 +14,10 @@
 //!   ANTHROPIC_API_KEY    – if set (and provider not forced), use Anthropic
 //!   BROPS_ANTHROPIC_MODEL– Anthropic model id (default: claude-sonnet-5)
 //!   BROPS_OLLAMA_MODEL   – Ollama model tag  (default: llama3.2)
-//!   BROPS_OLLAMA_URL     – Ollama base url   (default: http://localhost:11434)
+//!   BROPS_OLLAMA_URL     – Ollama base url   (default: http://localhost:11434;
+//!                          loopback + port 11434 + no path unless opted in)
+//!   BROPS_ALLOW_REMOTE_OLLAMA          – opt-in: non-loopback Ollama host (https only)
+//!   BROPS_ALLOW_OLLAMA_NONDEFAULT_PORT – opt-in: Ollama port other than 11434
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -23,6 +26,7 @@ use tokio::io::AsyncBufReadExt;
 const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-5";
 const DEFAULT_OLLAMA_MODEL: &str = "llama3.2";
 const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
+const DEFAULT_OLLAMA_PORT: u16 = 11434;
 const DEFAULT_CLAUDE_BIN: &str = "claude";
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -66,7 +70,11 @@ const MAX_MESSAGES: usize = 1000;
 /// Validate `BROPS_OLLAMA_URL` before we send a system prompt + conversation to
 /// it. Ollama is described as a LOCAL provider, so by default only loopback hosts
 /// are allowed; a remote host needs explicit opt-in (`BROPS_ALLOW_REMOTE_OLLAMA`)
-/// and HTTPS. Rejects embedded credentials, fragments, and non-http(s) schemes.
+/// and HTTPS. The port is pinned to Ollama's default (11434) unless
+/// `BROPS_ALLOW_OLLAMA_NONDEFAULT_PORT` is set, and the base URL must carry no
+/// path or query — so a permissive loopback URL can't quietly POST the full
+/// conversation to some *other* local service. Rejects embedded credentials,
+/// fragments, and non-http(s) schemes.
 fn validate_ollama_url(url: &str) -> Result<(), String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid BROPS_OLLAMA_URL: {e}"))?;
     let scheme = parsed.scheme();
@@ -78,6 +86,24 @@ fn validate_ollama_url(url: &str) -> Result<(), String> {
     }
     if parsed.fragment().is_some() {
         return Err("BROPS_OLLAMA_URL must not contain a fragment".to_string());
+    }
+    // A base URL with a path or query points at something that is not an Ollama
+    // root — we append fixed endpoints (`/api/chat`, `/api/tags`) ourselves.
+    if !(parsed.path().is_empty() || parsed.path() == "/") {
+        return Err("BROPS_OLLAMA_URL must not contain a path".to_string());
+    }
+    if parsed.query().is_some() {
+        return Err("BROPS_OLLAMA_URL must not contain a query".to_string());
+    }
+    // Pin the default Ollama port; another port needs explicit opt-in so the
+    // conversation can't be redirected to a different local service by a merely
+    // plausible-looking URL. Fails closed like every other opt-in flag.
+    if parsed.port_or_known_default() != Some(DEFAULT_OLLAMA_PORT)
+        && !env_bool("BROPS_ALLOW_OLLAMA_NONDEFAULT_PORT")
+    {
+        return Err(format!(
+            "BROPS_OLLAMA_URL must use port {DEFAULT_OLLAMA_PORT}; set BROPS_ALLOW_OLLAMA_NONDEFAULT_PORT=1 (or true) to allow another port"
+        ));
     }
     let host = parsed.host_str().unwrap_or("");
     // host_str keeps the brackets on an IPv6 literal ("[::1]") — strip them before
@@ -142,6 +168,71 @@ fn validate_input(system: &str, messages: &[ChatMsg]) -> Result<(), String> {
         return Err("conversation has no user message to reply to".to_string());
     }
     Ok(())
+}
+
+/// Outbound history budget: the FULL conversation (up to `MAX_CONVERSATION_BYTES`
+/// = 8 MiB) would otherwise be re-sent on every reply — ~quadratic metered spend
+/// over a conversation's life. Before dispatch the history is trimmed to the most
+/// recent turns that fit this budget (the system prompt is always sent whole).
+const HISTORY_BYTE_BUDGET: usize = 200 * 1024; // ~200 KiB ≈ 50k tokens
+
+/// Keep the newest suffix of `messages` that fits [`HISTORY_BYTE_BUDGET`].
+/// Always keeps at least the newest message (even if it alone exceeds the
+/// budget — per-message size is separately capped by `validate_input`), and
+/// never trims away the most recent *user* turn: the window is extended back to
+/// it if needed, so there is always a user message to reply to.
+fn trim_history(messages: &[ChatMsg]) -> &[ChatMsg] {
+    let mut start = messages.len();
+    let mut total = 0usize;
+    for i in (0..messages.len()).rev() {
+        let sz = messages[i].content.len().saturating_add(32); // + per-turn JSON overhead
+        if start < messages.len() && total.saturating_add(sz) > HISTORY_BYTE_BUDGET {
+            break; // budget reached (the newest message is always taken first)
+        }
+        total = total.saturating_add(sz);
+        start = i;
+    }
+    if !messages[start..].iter().any(|m| m.role == "user") {
+        if let Some(u) = messages[..start].iter().rposition(|m| m.role == "user") {
+            start = u;
+        }
+    }
+    &messages[start..]
+}
+
+/// How many generations may run at once. A looping/compromised frontend can
+/// otherwise stack unbounded concurrent provider calls (each metered / each a
+/// `claude` subprocess).
+const MAX_CONCURRENT_GENERATIONS: u32 = 2;
+
+static ACTIVE_GENERATIONS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// RAII slot in the generation limiter: acquired before dispatching to any
+/// provider, released on drop (every return path, including timeout/cancel).
+/// Fails fast with a clear error instead of queueing, so a stuck provider can't
+/// silently pile up waiters. (Plain atomics — no `tokio::sync` feature needed.)
+struct GenerationPermit;
+
+impl GenerationPermit {
+    fn acquire() -> Result<Self, String> {
+        use std::sync::atomic::Ordering;
+        let mut cur = ACTIVE_GENERATIONS.load(Ordering::Acquire);
+        loop {
+            if cur >= MAX_CONCURRENT_GENERATIONS {
+                return Err("too many AI replies are already in progress; try again in a moment".to_string());
+            }
+            match ACTIVE_GENERATIONS.compare_exchange(cur, cur + 1, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return Ok(GenerationPermit),
+                Err(now) => cur = now,
+            }
+        }
+    }
+}
+
+impl Drop for GenerationPermit {
+    fn drop(&mut self) {
+        ACTIVE_GENERATIONS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 /// One turn of a conversation. `role` is "user" or "assistant".
@@ -278,11 +369,15 @@ pub async fn status() -> AiStatus {
                 },
             }
         }
+        // No probe is issued here (a status poll must never spend metered tokens
+        // or ship the key anywhere on a timer), so readiness only means "a key is
+        // present" — the label says so explicitly instead of implying a verified
+        // key: a revoked/typo'd key surfaces on the first real send.
         Provider::Anthropic { model, .. } => AiStatus {
             provider: "anthropic".into(),
             model,
             ready: true,
-            detail: "Anthropic API key detected (ANTHROPIC_API_KEY) — metered usage.".into(),
+            detail: "Anthropic API key present (unverified) — checked on first request; metered usage.".into(),
         },
         Provider::Ollama { model, url } => {
             // Same URL restrictions as the send path — never even probe a
@@ -318,9 +413,14 @@ pub async fn status() -> AiStatus {
     }
 }
 
-/// Generate a single reply given a system prompt and prior turns.
+/// Generate a single reply given a system prompt and prior turns. The history is
+/// trimmed to [`HISTORY_BYTE_BUDGET`] before dispatch, and at most
+/// [`MAX_CONCURRENT_GENERATIONS`] generations run at once (the permit is held
+/// for the whole provider call and released on every return path).
 pub async fn generate(system: &str, messages: &[ChatMsg]) -> Result<String, String> {
     validate_input(system, messages)?;
+    let _permit = GenerationPermit::acquire()?;
+    let messages = trim_history(messages);
     match resolve() {
         Provider::ClaudeCli { bin } => claude_cli(&bin, system, messages).await,
         Provider::Anthropic { key, model } => anthropic(&key, &model, system, messages).await,
@@ -338,6 +438,8 @@ pub async fn generate_stream<F: FnMut(&str)>(
     mut on_delta: F,
 ) -> Result<String, String> {
     validate_input(system, messages)?;
+    let _permit = GenerationPermit::acquire()?;
+    let messages = trim_history(messages);
     match resolve() {
         Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta).await,
         Provider::Anthropic { key, model } => {
@@ -374,6 +476,12 @@ fn proc_nonce() -> u64 {
 /// marker file. Both must succeed — the marker is the cleanup invariant, so a
 /// failure aborts (the caller rolls back the directory) rather than leaving an
 /// un-cleanable sandbox.
+///
+/// Windows note (reduced guarantee): the explicit `0o700` chmod is Unix-only —
+/// on Windows the sandbox (and the 0600 system-prompt files inside it, see
+/// [`write_system_prompt_file`]) inherits `%TEMP%`'s ACL, which is per-user by
+/// default, so contents are still not readable by other local users; there is
+/// just no explicit tightening on top of that inherited ACL.
 fn finalize_sandbox(dir: &std::path::Path) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -393,6 +501,19 @@ fn finalize_sandbox(dir: &std::path::Path) -> Result<(), String> {
 /// symlink can never be reused to smuggle in config. Cached for the process.
 fn ai_sandbox_dir() -> Result<std::path::PathBuf, String> {
     if let Some(p) = AI_SANDBOX.get() {
+        // Self-heal: if our cached sandbox vanished (e.g. a sibling instance on an
+        // OS where pid liveness is unknown swept it via the age fallback, or the
+        // OS purged temp), recreate it exclusively rather than failing every AI
+        // reply until restart. `create_dir` (not `_all`) keeps the original
+        // no-preplanted-dir guarantee; a lost race to another thread healing the
+        // same path is fine — the marker/perms are (re)applied by the winner.
+        if !p.is_dir() {
+            match std::fs::create_dir(p) {
+                Ok(()) => finalize_sandbox(p)?,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(format!("AI sandbox: {e}")),
+            }
+        }
         return Ok(p.clone());
     }
     let base = std::env::temp_dir();
@@ -433,14 +554,42 @@ fn parse_sandbox_pid(name: &str) -> Option<u32> {
 }
 
 /// Whether the owning process is alive: `Some(true)`/`Some(false)` when we can
-/// tell (Linux `/proc/<pid>`), `None` when we can't (other OSes) so the caller
-/// falls back to the age heuristic.
+/// tell (Linux `/proc/<pid>`; Windows `tasklist`), `None` when we can't (other
+/// OSes, or an inconclusive check) so the caller falls back to the age
+/// heuristic. Uncertainty always leans toward "don't delete".
 fn pid_liveness(pid: u32) -> Option<bool> {
     #[cfg(target_os = "linux")]
     {
         Some(std::path::Path::new(&format!("/proc/{pid}")).exists())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        // `tasklist /FI "PID eq N" /FO CSV /NH` prints a CSV row (quoted fields,
+        // the PID among them) when the process exists; with no match it prints a
+        // locale-dependent INFO line containing no quoted fields. Only a clean,
+        // unambiguous "no rows at all" counts as dead — CSV rows that somehow
+        // don't include our PID, a failed spawn, or a non-zero exit all yield
+        // `None` so cleanup falls back to the (conservative) age rule instead of
+        // deleting a possibly-live sibling's sandbox.
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .stdin(std::process::Stdio::null())
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout);
+                if text.contains(&format!("\"{pid}\"")) {
+                    Some(true)
+                } else if text.contains('"') {
+                    None
+                } else {
+                    Some(false)
+                }
+            }
+            _ => None,
+        }
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = pid;
         None
@@ -525,7 +674,9 @@ fn cleanup_stale_sandboxes_in(
 
 /// Best-effort cleanup of stale AI sandboxes from previous runs. Call once at
 /// startup. Only touches our own marked `brops-ai-*` dirs whose owning process is
-/// no longer alive (Linux), falling back to a 1h age cutoff elsewhere.
+/// no longer alive (Linux and Windows), falling back to a 1h age cutoff where
+/// liveness is unknown. Even a wrong deletion is now recoverable: the owner
+/// self-heals a vanished sandbox on its next reply (see [`ai_sandbox_dir`]).
 pub fn cleanup_stale_sandboxes() {
     let stats = cleanup_stale_sandboxes_in(
         &std::env::temp_dir(),
@@ -1063,7 +1214,7 @@ mod tests {
 
     #[test]
     fn ollama_url_is_loopback_only_by_default() {
-        for good in ["http://localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434"] {
+        for good in ["http://localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434", "http://localhost:11434/"] {
             assert!(validate_ollama_url(good).is_ok(), "{good} should be allowed");
         }
         for bad in [
@@ -1072,9 +1223,56 @@ mod tests {
             "http://localhost:11434#frag",            // fragment
             "ftp://localhost:11434",                  // scheme
             "not a url",                               // unparseable
+            "http://localhost:8080",                  // non-default port, no opt-in
+            "http://localhost",                       // implicit port 80 ≠ 11434
+            "http://localhost:11434/v1",              // path — not an Ollama root
+            "http://localhost:11434?x=1",             // query
         ] {
             assert!(validate_ollama_url(bad).is_err(), "{bad} should be rejected");
         }
+    }
+
+    #[test]
+    fn trim_history_keeps_recent_turns_within_budget() {
+        let mk = |role: &str, n: usize| ChatMsg { role: role.into(), content: "a".repeat(n) };
+        // a small conversation passes through untouched
+        let small: Vec<ChatMsg> = (0..3).map(|_| mk("user", 10)).collect();
+        assert_eq!(trim_history(&small).len(), 3);
+        // 10 × 50 KiB turns → only the newest few fit the ~200 KiB budget
+        let msgs: Vec<ChatMsg> =
+            (0..10).map(|i| mk(if i % 2 == 0 { "user" } else { "assistant" }, 50 * 1024)).collect();
+        let kept = trim_history(&msgs);
+        assert!(kept.len() < msgs.len(), "an over-budget history must be trimmed");
+        assert!(kept.iter().map(|m| m.content.len()).sum::<usize>() <= HISTORY_BYTE_BUDGET);
+        // the newest message is always kept
+        assert!(std::ptr::eq(kept.last().unwrap(), msgs.last().unwrap()));
+        // even a single message larger than the budget is kept (per-message size
+        // is bounded separately by validate_input)
+        let huge = vec![mk("user", HISTORY_BYTE_BUDGET + 1)];
+        assert_eq!(trim_history(&huge).len(), 1);
+    }
+
+    #[test]
+    fn trim_history_never_drops_the_latest_user_turn() {
+        let big = "a".repeat(150 * 1024);
+        let msgs = vec![
+            ChatMsg { role: "user".into(), content: "the question".into() },
+            ChatMsg { role: "assistant".into(), content: big.clone() },
+            ChatMsg { role: "assistant".into(), content: big },
+        ];
+        let kept = trim_history(&msgs);
+        assert!(kept.iter().any(|m| m.role == "user"), "kept window must contain a user turn");
+    }
+
+    #[test]
+    fn generation_permits_are_bounded_and_released() {
+        let a = GenerationPermit::acquire().expect("first permit");
+        let b = GenerationPermit::acquire().expect("second permit");
+        assert!(GenerationPermit::acquire().is_err(), "a third concurrent generation must be refused");
+        drop(a);
+        let c = GenerationPermit::acquire().expect("a released slot is re-acquirable");
+        drop(b);
+        drop(c);
     }
 
     #[test]

@@ -86,6 +86,7 @@ pub fn run() {
             commands::create_conversation,
             commands::list_messages,
             commands::post_message,
+            commands::post_user_message,
             commands::delete_conversation,
             commands::rename_conversation,
             commands::list_knowledge,
@@ -120,6 +121,10 @@ pub fn run() {
             commands::stream_reply,
             commands::stream_ask,
             commands::stream_run_step,
+            // Filesystem surface (M-8): unlike the commands above, these are
+            // declared in the app manifest (build.rs) and therefore governed by
+            // explicit `allow-*` grants in capabilities/default.json — removing
+            // a grant disables the command for the window.
             files::list_dir,
             files::read_file,
             files::write_file,

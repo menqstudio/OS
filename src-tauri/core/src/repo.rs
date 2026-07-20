@@ -4,6 +4,42 @@ use crate::domain::*;
 use crate::{id, now};
 use rusqlite::{Connection, OptionalExtension, Row};
 
+/// Hard cap applied to list queries so no screen ever materializes an
+/// unbounded table (L-1a).
+const MAX_PAGE: u32 = 1000;
+/// Page size used when a paginated list is called without an explicit limit.
+const DEFAULT_PAGE: u32 = 500;
+
+/// Normalize caller-supplied pagination into bound SQL params: `limit` is
+/// clamped to `MAX_PAGE` and defaults to `DEFAULT_PAGE`; `offset` defaults to 0.
+fn page(limit: Option<u32>, offset: Option<u32>) -> (i64, i64) {
+    (
+        i64::from(limit.unwrap_or(DEFAULT_PAGE).min(MAX_PAGE)),
+        i64::from(offset.unwrap_or(0)),
+    )
+}
+
+/// Run `f` atomically. When the connection is in autocommit mode this opens a
+/// transaction (the `unchecked_transaction` pattern) and commits only after `f`
+/// succeeds — an error rolls everything back, so a mutation and its audit row
+/// land together or not at all (M-5). When the caller already holds a
+/// transaction (`seed`, `runs::advance` calling `set_status`), the work joins
+/// it instead of nesting a second BEGIN, and the outer transaction owns
+/// commit/rollback.
+fn atomic<T, F>(conn: &Connection, f: F) -> CoreResult<T>
+where
+    F: FnOnce(&Connection) -> CoreResult<T>,
+{
+    if conn.is_autocommit() {
+        let tx = conn.unchecked_transaction()?;
+        let out = f(&tx)?;
+        tx.commit()?;
+        Ok(out)
+    } else {
+        f(conn)
+    }
+}
+
 fn map_project(r: &Row) -> rusqlite::Result<Project> {
     Ok(Project {
         id: r.get("id")?,
@@ -44,12 +80,15 @@ pub mod projects {
         }
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO projects(id, workspace_id, name, description, status, priority, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'planned', ?5, ?6, ?6)",
-            rusqlite::params![id, input.workspace_id, input.name, input.description, input.priority, now],
-        )?;
-        super::audit::record(conn, "project.created", "gev", "project", &id)?;
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO projects(id, workspace_id, name, description, status, priority, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'planned', ?5, ?6, ?6)",
+                rusqlite::params![id, input.workspace_id, input.name, input.description, input.priority, now],
+            )?;
+            super::audit::record(tx, "project.created", "user", "gev", "project", &id)?;
+            Ok(())
+        })?;
         get(conn, &id)
     }
 
@@ -62,8 +101,8 @@ pub mod projects {
     }
 
     pub fn list(conn: &Connection) -> CoreResult<Vec<Project>> {
-        let mut stmt = conn.prepare("SELECT * FROM projects ORDER BY updated_at DESC")?;
-        let rows = stmt.query_map([], map_project)?;
+        let mut stmt = conn.prepare("SELECT * FROM projects ORDER BY updated_at DESC LIMIT ?1")?;
+        let rows = stmt.query_map([super::MAX_PAGE], map_project)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -71,14 +110,17 @@ pub mod projects {
         if !is_valid(status, PROJECT_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
-        let changed = conn.execute(
-            "UPDATE projects SET status = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![status, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "project.status_changed", "gev", "project", id)?;
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE projects SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![status, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "project.status_changed", "user", "gev", "project", id)?;
+            Ok(())
+        })?;
         get(conn, id)
     }
 
@@ -87,14 +129,17 @@ pub mod projects {
         if !is_valid(priority, PRIORITIES) {
             return Err(CoreError::Invalid { field: "priority", value: priority.to_string() });
         }
-        let changed = conn.execute(
-            "UPDATE projects SET name = ?1, description = ?2, priority = ?3, updated_at = ?4 WHERE id = ?5",
-            rusqlite::params![name, description, priority, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "project.updated", "gev", "project", id)?;
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE projects SET name = ?1, description = ?2, priority = ?3, updated_at = ?4 WHERE id = ?5",
+                rusqlite::params![name, description, priority, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "project.updated", "user", "gev", "project", id)?;
+            Ok(())
+        })?;
         get(conn, id)
     }
 }
@@ -108,12 +153,15 @@ pub mod tasks {
         }
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO tasks(id, project_id, title, description, status, priority, assigned_agent_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'inbox', ?5, ?6, ?7, ?7)",
-            rusqlite::params![id, input.project_id, input.title, input.description, input.priority, input.assigned_agent_id, now],
-        )?;
-        super::audit::record(conn, "task.created", "gev", "task", &id)?;
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO tasks(id, project_id, title, description, status, priority, assigned_agent_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'inbox', ?5, ?6, ?7, ?7)",
+                rusqlite::params![id, input.project_id, input.title, input.description, input.priority, input.assigned_agent_id, now],
+            )?;
+            super::audit::record(tx, "task.created", "user", "gev", "task", &id)?;
+            Ok(())
+        })?;
         get(conn, &id)
     }
 
@@ -142,8 +190,8 @@ pub mod tasks {
     /// All tasks, newest-updated first — used by the board view which groups by
     /// status client-side.
     pub fn list_all(conn: &Connection) -> CoreResult<Vec<Task>> {
-        let mut stmt = conn.prepare("SELECT * FROM tasks ORDER BY updated_at DESC")?;
-        let rows = stmt.query_map([], map_task)?;
+        let mut stmt = conn.prepare("SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?1")?;
+        let rows = stmt.query_map([super::MAX_PAGE], map_task)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -152,14 +200,17 @@ pub mod tasks {
         if !is_valid(priority, PRIORITIES) {
             return Err(CoreError::Invalid { field: "priority", value: priority.to_string() });
         }
-        let changed = conn.execute(
-            "UPDATE tasks SET title = ?1, description = ?2, priority = ?3, updated_at = ?4 WHERE id = ?5",
-            rusqlite::params![title, description, priority, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "task.updated", "gev", "task", id)?;
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE tasks SET title = ?1, description = ?2, priority = ?3, updated_at = ?4 WHERE id = ?5",
+                rusqlite::params![title, description, priority, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "task.updated", "user", "gev", "task", id)?;
+            Ok(())
+        })?;
         get(conn, id)
     }
 
@@ -168,14 +219,17 @@ pub mod tasks {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
         let completed = if status == "done" { Some(now()) } else { None };
-        let changed = conn.execute(
-            "UPDATE tasks SET status = ?1, completed_at = ?2, updated_at = ?3 WHERE id = ?4",
-            rusqlite::params![status, completed, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "task.status_changed", "gev", "task", id)?;
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE tasks SET status = ?1, completed_at = ?2, updated_at = ?3 WHERE id = ?4",
+                rusqlite::params![status, completed, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "task.status_changed", "user", "gev", "task", id)?;
+            Ok(())
+        })?;
         get(conn, id)
     }
 }
@@ -192,38 +246,50 @@ pub mod task_deps {
         if task_id == depends_on_id {
             return Err(CoreError::Invalid { field: "depends_on_id", value: "a task cannot depend on itself".into() });
         }
-        // both tasks must exist (clear error rather than a FK failure)
-        tasks::get(conn, task_id)?;
-        tasks::get(conn, depends_on_id)?;
-        // Adding task_id → depends_on_id closes a cycle iff depends_on_id can
-        // already reach task_id by following depends-on edges. Walk the graph.
-        let creates_cycle: bool = conn.query_row(
-            "WITH RECURSIVE reach(id) AS (
-                 SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1
-                 UNION
-                 SELECT d.depends_on_id FROM task_dependencies d JOIN reach r ON d.task_id = r.id
-             )
-             SELECT EXISTS(SELECT 1 FROM reach WHERE id = ?2)",
-            rusqlite::params![depends_on_id, task_id],
-            |r| r.get(0),
-        )?;
-        if creates_cycle {
-            return Err(CoreError::Invalid { field: "depends_on_id", value: "that would create a dependency cycle".into() });
-        }
-        conn.execute(
-            "INSERT OR IGNORE INTO task_dependencies(task_id, depends_on_id) VALUES (?1, ?2)",
-            rusqlite::params![task_id, depends_on_id],
-        )?;
-        super::audit::record(conn, "task.dependency_added", "gev", "task", task_id)?;
-        Ok(())
+        // Cycle check and insert run in one transaction so a concurrent add
+        // cannot slip a cycle in between them (L-3c).
+        super::atomic(conn, |tx| {
+            // both tasks must exist (clear error rather than a FK failure)
+            tasks::get(tx, task_id)?;
+            tasks::get(tx, depends_on_id)?;
+            // Adding task_id → depends_on_id closes a cycle iff depends_on_id can
+            // already reach task_id by following depends-on edges. Walk the graph.
+            let creates_cycle: bool = tx.query_row(
+                "WITH RECURSIVE reach(id) AS (
+                     SELECT depends_on_id FROM task_dependencies WHERE task_id = ?1
+                     UNION
+                     SELECT d.depends_on_id FROM task_dependencies d JOIN reach r ON d.task_id = r.id
+                 )
+                 SELECT EXISTS(SELECT 1 FROM reach WHERE id = ?2)",
+                rusqlite::params![depends_on_id, task_id],
+                |r| r.get(0),
+            )?;
+            if creates_cycle {
+                return Err(CoreError::Invalid { field: "depends_on_id", value: "that would create a dependency cycle".into() });
+            }
+            tx.execute(
+                "INSERT OR IGNORE INTO task_dependencies(task_id, depends_on_id) VALUES (?1, ?2)",
+                rusqlite::params![task_id, depends_on_id],
+            )?;
+            super::audit::record(tx, "task.dependency_added", "user", "gev", "task", task_id)?;
+            Ok(())
+        })
     }
 
+    /// Remove a dependency edge. Errors when the edge does not exist and audits
+    /// the removal — dropping a blocker is a sensitive graph mutation (L-3f).
     pub fn remove(conn: &Connection, task_id: &str, depends_on_id: &str) -> CoreResult<()> {
-        conn.execute(
-            "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_id = ?2",
-            rusqlite::params![task_id, depends_on_id],
-        )?;
-        Ok(())
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_id = ?2",
+                rusqlite::params![task_id, depends_on_id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(format!("dependency {task_id} -> {depends_on_id}")));
+            }
+            super::audit::record(tx, "task.dependency_removed", "user", "gev", "task", task_id)?;
+            Ok(())
+        })
     }
 
     /// The tasks that `task_id` depends on (its blockers), newest edge first.
@@ -241,17 +307,29 @@ pub mod task_deps {
 pub mod audit {
     use super::*;
 
+    /// The actor kinds an audit event may carry (L-4a).
+    pub const ACTOR_TYPES: &[&str] = &["user", "agent", "system"];
+
+    /// Record an audit event. `actor_type` is passed explicitly by trusted repo
+    /// code (never hardcoded `'user'`), so agent-originated events stay
+    /// distinguishable from human ones in `security::summary` (L-4a). Call
+    /// sites at the command layer must derive `actor_id` from trusted context,
+    /// not from the request body.
     pub fn record(
         conn: &Connection,
         event_type: &str,
+        actor_type: &str,
         actor_id: &str,
         entity_type: &str,
         entity_id: &str,
     ) -> CoreResult<()> {
+        if !is_valid(actor_type, ACTOR_TYPES) {
+            return Err(CoreError::Invalid { field: "actor_type", value: actor_type.to_string() });
+        }
         conn.execute(
             "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, created_at)
-             VALUES (?1, ?2, 'user', ?3, ?4, ?5, ?6)",
-            rusqlite::params![id(), event_type, actor_id, entity_type, entity_id, now()],
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![id(), event_type, actor_type, actor_id, entity_type, entity_id, now()],
         )?;
         Ok(())
     }
@@ -303,6 +381,12 @@ pub mod agents {
 pub mod approvals {
     use super::*;
 
+    /// The entity/action tuple an approval must carry to gate run-step
+    /// execution. `approved_for` matches the full tuple, so a grant minted for
+    /// another action can never unlock a step (M-2).
+    pub const RUN_STEP_ENTITY_TYPE: &str = "run_step";
+    pub const RUN_STEP_ACTION_TYPE: &str = "Execute run step";
+
     fn map(r: &Row) -> rusqlite::Result<Approval> {
         Ok(Approval {
             id: r.get("id")?,
@@ -320,9 +404,12 @@ pub mod approvals {
         })
     }
 
-    pub fn list(conn: &Connection) -> CoreResult<Vec<Approval>> {
-        let mut s = conn.prepare("SELECT * FROM approvals ORDER BY requested_at DESC")?;
-        let rows = s.query_map([], map)?;
+    /// A bounded page of approvals, newest request first. `limit` is clamped
+    /// to `MAX_PAGE` and defaults to `DEFAULT_PAGE`; `offset` defaults to 0.
+    pub fn list(conn: &Connection, limit: Option<u32>, offset: Option<u32>) -> CoreResult<Vec<Approval>> {
+        let (limit, offset) = super::page(limit, offset);
+        let mut s = conn.prepare("SELECT * FROM approvals ORDER BY requested_at DESC LIMIT ?1 OFFSET ?2")?;
+        let rows = s.query_map(rusqlite::params![limit, offset], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -339,34 +426,77 @@ pub mod approvals {
         entity_id: Option<&str>,
     ) -> CoreResult<Approval> {
         let id = id();
-        conn.execute(
-            "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, entity_type, entity_id, requested_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8, ?9)",
-            rusqlite::params![id, action_type, target, level, risk_level, requested_by, entity_type, entity_id, now()],
-        )?;
-        super::audit::record(conn, "approval.requested", requested_by, "approval", &id)?;
+        super::atomic(conn, |tx| {
+            // An approval may only point at an entity that actually exists — a
+            // grant minted against an arbitrary id must not be creatable (M-2).
+            if entity_type == Some(RUN_STEP_ENTITY_TYPE) {
+                if let Some(step_id) = entity_id {
+                    super::runs::get_step(tx, step_id)?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, entity_type, entity_id, requested_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8, ?9)",
+                rusqlite::params![id, action_type, target, level, risk_level, requested_by, entity_type, entity_id, now()],
+            )?;
+            super::audit::record(tx, "approval.requested", "user", requested_by, "approval", &id)?;
+            Ok(())
+        })?;
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id.clone()], map).map_err(not_found(&id))
     }
 
-    /// True when an approved approval exists for the given entity.
-    pub fn approved_for(conn: &Connection, entity_id: &str) -> CoreResult<bool> {
+    /// True when a decided, still-unconsumed approval exists for the full
+    /// gating tuple — entity id, entity type, AND action type (M-2). A grant
+    /// for a different action or entity kind never satisfies the gate.
+    pub fn approved_for(
+        conn: &Connection,
+        entity_id: &str,
+        entity_type: &str,
+        action_type: &str,
+    ) -> CoreResult<bool> {
         let n: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM approvals WHERE entity_id = ?1 AND status = 'approved'",
-            [entity_id],
+            "SELECT COUNT(*) FROM approvals
+               WHERE entity_id = ?1 AND entity_type = ?2 AND action_type = ?3
+                 AND status = 'approved' AND decided_at IS NOT NULL",
+            rusqlite::params![entity_id, entity_type, action_type],
             |r| r.get(0),
         )?;
         Ok(n > 0)
     }
 
-    /// True when a rejected approval exists for the entity and none is approved —
-    /// i.e. the entity is blocked by a rejection.
-    pub fn rejected_for(conn: &Connection, entity_id: &str) -> CoreResult<bool> {
-        if approved_for(conn, entity_id)? {
+    /// Consume the approved grant(s) for a gating tuple so a single approval
+    /// unlocks exactly one completion (M-2). Must run in the same transaction
+    /// as the write that completes the gated work.
+    pub fn consume_for(
+        conn: &Connection,
+        entity_id: &str,
+        entity_type: &str,
+        action_type: &str,
+    ) -> CoreResult<()> {
+        conn.execute(
+            "UPDATE approvals SET status = 'consumed'
+              WHERE entity_id = ?1 AND entity_type = ?2 AND action_type = ?3 AND status = 'approved'",
+            rusqlite::params![entity_id, entity_type, action_type],
+        )?;
+        Ok(())
+    }
+
+    /// True when a rejected approval exists for the gating tuple and none is
+    /// approved — i.e. the entity is blocked by a rejection.
+    pub fn rejected_for(
+        conn: &Connection,
+        entity_id: &str,
+        entity_type: &str,
+        action_type: &str,
+    ) -> CoreResult<bool> {
+        if approved_for(conn, entity_id, entity_type, action_type)? {
             return Ok(false);
         }
         let n: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM approvals WHERE entity_id = ?1 AND status = 'rejected'",
-            [entity_id],
+            "SELECT COUNT(*) FROM approvals
+               WHERE entity_id = ?1 AND entity_type = ?2 AND action_type = ?3
+                 AND status = 'rejected' AND decided_at IS NOT NULL",
+            rusqlite::params![entity_id, entity_type, action_type],
             |r| r.get(0),
         )?;
         Ok(n > 0)
@@ -388,14 +518,17 @@ pub mod approvals {
         if !is_valid(decision, APPROVAL_DECISIONS) {
             return Err(CoreError::Invalid { field: "decision", value: decision.to_string() });
         }
-        let changed = conn.execute(
-            "UPDATE approvals SET status = ?1, decision_note = ?2, decided_at = ?3 WHERE id = ?4 AND status = 'pending'",
-            rusqlite::params![decision, note, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(format!("pending approval {id}")));
-        }
-        super::audit::record(conn, "approval.decided", "gev", "approval", id)?;
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE approvals SET status = ?1, decision_note = ?2, decided_at = ?3 WHERE id = ?4 AND status = 'pending'",
+                rusqlite::params![decision, note, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(format!("pending approval {id}")));
+            }
+            super::audit::record(tx, "approval.decided", "user", "gev", "approval", id)?;
+            Ok(())
+        })?;
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
     }
 }
@@ -417,9 +550,12 @@ pub mod notifications {
         })
     }
 
-    pub fn list(conn: &Connection) -> CoreResult<Vec<Notification>> {
-        let mut s = conn.prepare("SELECT * FROM notifications ORDER BY created_at DESC")?;
-        let rows = s.query_map([], map)?;
+    /// A bounded page of notifications, newest first. `limit` is clamped to
+    /// `MAX_PAGE` and defaults to `DEFAULT_PAGE`; `offset` defaults to 0.
+    pub fn list(conn: &Connection, limit: Option<u32>, offset: Option<u32>) -> CoreResult<Vec<Notification>> {
+        let (limit, offset) = super::page(limit, offset);
+        let mut s = conn.prepare("SELECT * FROM notifications ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")?;
+        let rows = s.query_map(rusqlite::params![limit, offset], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -454,18 +590,21 @@ pub mod decisions {
     pub fn create(conn: &Connection, title: &str, owner: &str, rationale: &str) -> CoreResult<Decision> {
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO decisions(id, title, status, owner, rationale, created_at, updated_at)
-             VALUES (?1, ?2, 'proposed', ?3, ?4, ?5, ?5)",
-            rusqlite::params![id, title, owner, rationale, now],
-        )?;
-        super::audit::record(conn, "decision.created", "gev", "decision", &id)?;
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO decisions(id, title, status, owner, rationale, created_at, updated_at)
+                 VALUES (?1, ?2, 'proposed', ?3, ?4, ?5, ?5)",
+                rusqlite::params![id, title, owner, rationale, now],
+            )?;
+            super::audit::record(tx, "decision.created", "user", "gev", "decision", &id)?;
+            Ok(())
+        })?;
         conn.query_row("SELECT * FROM decisions WHERE id = ?1", [id.clone()], map).map_err(not_found(&id))
     }
 
     pub fn list(conn: &Connection) -> CoreResult<Vec<Decision>> {
-        let mut s = conn.prepare("SELECT * FROM decisions ORDER BY updated_at DESC")?;
-        let rows = s.query_map([], map)?;
+        let mut s = conn.prepare("SELECT * FROM decisions ORDER BY updated_at DESC LIMIT ?1")?;
+        let rows = s.query_map([super::MAX_PAGE], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 }
@@ -529,11 +668,14 @@ pub mod chat {
         }
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO conversations(id, kind, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-            rusqlite::params![id, kind, title, now],
-        )?;
-        super::audit::record(conn, "conversation.created", "gev", "conversation", &id)?;
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO conversations(id, kind, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+                rusqlite::params![id, kind, title, now],
+            )?;
+            super::audit::record(tx, "conversation.created", "user", "gev", "conversation", &id)?;
+            Ok(())
+        })?;
         get_conversation(conn, &id)
     }
 
@@ -545,26 +687,41 @@ pub mod chat {
     pub fn list_conversations(conn: &Connection, kind: Option<&str>) -> CoreResult<Vec<Conversation>> {
         match kind {
             Some(k) => {
-                let sql = format!("{CONVERSATION_SELECT} WHERE c.kind = ?1 GROUP BY c.id ORDER BY c.updated_at DESC");
+                let sql = format!("{CONVERSATION_SELECT} WHERE c.kind = ?1 GROUP BY c.id ORDER BY c.updated_at DESC LIMIT ?2");
                 let mut s = conn.prepare(&sql)?;
-                let rows = s.query_map([k], map_conversation)?;
+                let rows = s.query_map(rusqlite::params![k, super::MAX_PAGE], map_conversation)?;
                 Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
             }
             None => {
-                let sql = format!("{CONVERSATION_SELECT} GROUP BY c.id ORDER BY c.updated_at DESC");
+                let sql = format!("{CONVERSATION_SELECT} GROUP BY c.id ORDER BY c.updated_at DESC LIMIT ?1");
                 let mut s = conn.prepare(&sql)?;
-                let rows = s.query_map([], map_conversation)?;
+                let rows = s.query_map([super::MAX_PAGE], map_conversation)?;
                 Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
             }
         }
     }
 
-    pub fn list_messages(conn: &Connection, conversation_id: &str) -> CoreResult<Vec<Message>> {
+    /// A bounded page of messages in chronological order. The page is anchored
+    /// at the **newest** end: `offset` 0 returns the latest `limit` messages
+    /// (still oldest-first within the page) and larger offsets walk back
+    /// through history — so both the chat view and AI-history callers see the
+    /// most recent context by default (L-1a). `limit` is clamped to `MAX_PAGE`
+    /// and defaults to `DEFAULT_PAGE`.
+    pub fn list_messages(
+        conn: &Connection,
+        conversation_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> CoreResult<Vec<Message>> {
+        let (limit, offset) = super::page(limit, offset);
         let mut s = conn.prepare(
-            "SELECT * FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC, rowid ASC",
+            "SELECT * FROM messages WHERE conversation_id = ?1 \
+             ORDER BY created_at DESC, rowid DESC LIMIT ?2 OFFSET ?3",
         )?;
-        let rows = s.query_map([conversation_id], map_message)?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        let rows = s.query_map(rusqlite::params![conversation_id, limit, offset], map_message)?;
+        let mut msgs = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        msgs.reverse(); // newest page, presented oldest-first
+        Ok(msgs)
     }
 
     /// Append a message to a conversation and bump the conversation's activity
@@ -573,20 +730,28 @@ pub mod chat {
         if !is_valid(&input.role, MESSAGE_ROLES) {
             return Err(CoreError::Invalid { field: "role", value: input.role });
         }
-        // Fail cleanly if the conversation does not exist (FK would also reject).
-        get_conversation(conn, &input.conversation_id)?;
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO messages(id, conversation_id, role, author, body, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![id, input.conversation_id, input.role, input.author, input.body, now],
-        )?;
-        conn.execute(
-            "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
-            rusqlite::params![now, input.conversation_id],
-        )?;
-        super::audit::record(conn, "message.posted", &input.author, "conversation", &input.conversation_id)?;
+        // Message insert, conversation bump, and audit row commit atomically —
+        // a crash can no longer leave a message without its activity bump or
+        // audit trail (M-5).
+        super::atomic(conn, |tx| {
+            // Fail cleanly if the conversation does not exist (FK would also reject).
+            get_conversation(tx, &input.conversation_id)?;
+            tx.execute(
+                "INSERT INTO messages(id, conversation_id, role, author, body, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![id, input.conversation_id, input.role, input.author, input.body, now],
+            )?;
+            tx.execute(
+                "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![now, input.conversation_id],
+            )?;
+            // The message role doubles as the audit actor type: user messages
+            // audit as 'user', agent messages as 'agent' (L-4a).
+            super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
+            Ok(())
+        })?;
         conn.query_row("SELECT * FROM messages WHERE id = ?1", [id.clone()], map_message)
             .map_err(not_found(&id))
     }
@@ -594,25 +759,30 @@ pub mod chat {
     /// Delete a conversation and (via the FK cascade) all of its messages.
     /// Rejects an unknown conversation.
     pub fn delete_conversation(conn: &Connection, id: &str) -> CoreResult<()> {
-        let changed = conn.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "conversation.deleted", "gev", "conversation", id)?;
-        Ok(())
+        super::atomic(conn, |tx| {
+            let changed = tx.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "conversation.deleted", "user", "gev", "conversation", id)?;
+            Ok(())
+        })
     }
 
     /// Rename a conversation and bump its activity timestamp. Rejects an unknown
     /// conversation.
     pub fn rename_conversation(conn: &Connection, id: &str, title: &str) -> CoreResult<Conversation> {
-        let changed = conn.execute(
-            "UPDATE conversations SET title = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![title, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "conversation.renamed", "gev", "conversation", id)?;
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE conversations SET title = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![title, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "conversation.renamed", "user", "gev", "conversation", id)?;
+            Ok(())
+        })?;
         get_conversation(conn, id)
     }
 }
@@ -635,12 +805,15 @@ pub mod knowledge {
     pub fn create(conn: &Connection, input: NewKnowledgeNote) -> CoreResult<KnowledgeNote> {
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO knowledge_notes(id, title, body, source, tags, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            rusqlite::params![id, input.title, input.body, input.source, input.tags, now],
-        )?;
-        super::audit::record(conn, "knowledge.created", "gev", "knowledge_note", &id)?;
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO knowledge_notes(id, title, body, source, tags, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                rusqlite::params![id, input.title, input.body, input.source, input.tags, now],
+            )?;
+            super::audit::record(tx, "knowledge.created", "user", "gev", "knowledge_note", &id)?;
+            Ok(())
+        })?;
         get(conn, &id)
     }
 
@@ -650,8 +823,8 @@ pub mod knowledge {
     }
 
     pub fn list(conn: &Connection) -> CoreResult<Vec<KnowledgeNote>> {
-        let mut s = conn.prepare("SELECT * FROM knowledge_notes ORDER BY updated_at DESC")?;
-        let rows = s.query_map([], map)?;
+        let mut s = conn.prepare("SELECT * FROM knowledge_notes ORDER BY updated_at DESC LIMIT ?1")?;
+        let rows = s.query_map([super::MAX_PAGE], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -669,19 +842,21 @@ pub mod knowledge {
         let mut s = conn.prepare(
             "SELECT * FROM knowledge_notes \
              WHERE title LIKE ?1 ESCAPE '\\' OR body LIKE ?1 ESCAPE '\\' OR tags LIKE ?1 ESCAPE '\\' \
-             ORDER BY updated_at DESC",
+             ORDER BY updated_at DESC LIMIT ?2",
         )?;
-        let rows = s.query_map([like], map)?;
+        let rows = s.query_map(rusqlite::params![like, super::MAX_PAGE], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
-        let changed = conn.execute("DELETE FROM knowledge_notes WHERE id = ?1", [id])?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "knowledge.deleted", "gev", "knowledge_note", id)?;
-        Ok(())
+        super::atomic(conn, |tx| {
+            let changed = tx.execute("DELETE FROM knowledge_notes WHERE id = ?1", [id])?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "knowledge.deleted", "user", "gev", "knowledge_note", id)?;
+            Ok(())
+        })
     }
 }
 
@@ -706,12 +881,15 @@ pub mod memory {
         }
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO memory_entries(id, scope, kind, content, pinned, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)",
-            rusqlite::params![id, input.scope, input.kind, input.content, now],
-        )?;
-        super::audit::record(conn, "memory.created", "gev", "memory_entry", &id)?;
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO memory_entries(id, scope, kind, content, pinned, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)",
+                rusqlite::params![id, input.scope, input.kind, input.content, now],
+            )?;
+            super::audit::record(tx, "memory.created", "user", "gev", "memory_entry", &id)?;
+            Ok(())
+        })?;
         get(conn, &id)
     }
 
@@ -726,16 +904,16 @@ pub mod memory {
         match scope {
             Some(sc) => {
                 let mut s = conn.prepare(
-                    "SELECT * FROM memory_entries WHERE scope = ?1 ORDER BY pinned DESC, updated_at DESC",
+                    "SELECT * FROM memory_entries WHERE scope = ?1 ORDER BY pinned DESC, updated_at DESC LIMIT ?2",
                 )?;
-                let rows = s.query_map([sc], map)?;
+                let rows = s.query_map(rusqlite::params![sc, super::MAX_PAGE], map)?;
                 Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
             }
             None => {
                 let mut s = conn.prepare(
-                    "SELECT * FROM memory_entries ORDER BY pinned DESC, updated_at DESC",
+                    "SELECT * FROM memory_entries ORDER BY pinned DESC, updated_at DESC LIMIT ?1",
                 )?;
-                let rows = s.query_map([], map)?;
+                let rows = s.query_map([super::MAX_PAGE], map)?;
                 Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
             }
         }
@@ -753,12 +931,14 @@ pub mod memory {
     }
 
     pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
-        let changed = conn.execute("DELETE FROM memory_entries WHERE id = ?1", [id])?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "memory.deleted", "gev", "memory_entry", id)?;
-        Ok(())
+        super::atomic(conn, |tx| {
+            let changed = tx.execute("DELETE FROM memory_entries WHERE id = ?1", [id])?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "memory.deleted", "user", "gev", "memory_entry", id)?;
+            Ok(())
+        })
     }
 }
 
@@ -779,12 +959,15 @@ pub mod runs {
     pub fn create(conn: &Connection, intent: &str, plan: &str) -> CoreResult<Run> {
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO runs(id, intent, status, plan, created_at, updated_at)
-             VALUES (?1, ?2, 'drafted', ?3, ?4, ?4)",
-            rusqlite::params![id, intent, plan, now],
-        )?;
-        super::audit::record(conn, "run.created", "gev", "run", &id)?;
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO runs(id, intent, status, plan, created_at, updated_at)
+                 VALUES (?1, ?2, 'drafted', ?3, ?4, ?4)",
+                rusqlite::params![id, intent, plan, now],
+            )?;
+            super::audit::record(tx, "run.created", "user", "gev", "run", &id)?;
+            Ok(())
+        })?;
         get(conn, &id)
     }
 
@@ -793,8 +976,8 @@ pub mod runs {
     }
 
     pub fn list(conn: &Connection) -> CoreResult<Vec<Run>> {
-        let mut s = conn.prepare("SELECT * FROM runs ORDER BY updated_at DESC")?;
-        let rows = s.query_map([], map)?;
+        let mut s = conn.prepare("SELECT * FROM runs ORDER BY updated_at DESC LIMIT ?1")?;
+        let rows = s.query_map([super::MAX_PAGE], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -802,14 +985,17 @@ pub mod runs {
         if !is_valid(status, RUN_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
-        let changed = conn.execute(
-            "UPDATE runs SET status = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![status, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "run.status_changed", "gev", "run", id)?;
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE runs SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![status, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "run.status_changed", "user", "gev", "run", id)?;
+            Ok(())
+        })?;
         get(conn, id)
     }
 
@@ -865,33 +1051,60 @@ pub mod runs {
         Ok(pending)
     }
 
-    /// Record a produced result for a step and mark it done.
+    /// Record a produced result for a step and mark it done. Enforces the same
+    /// approval gate as `set_step_status` — a gated step can never be marked
+    /// done without a matching approval, whichever function sets it (M-3). The
+    /// gate read, the UPDATE, and the approval consumption run in one
+    /// transaction so the guarantee lives with the write.
     pub fn set_step_result(conn: &Connection, id: &str, result: &str) -> CoreResult<RunStep> {
-        let changed = conn.execute(
-            "UPDATE run_steps SET result = ?1, status = 'done', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![result, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "run_step.executed", "gev", "run_step", id)?;
+        super::atomic(conn, |tx| {
+            let step = get_step(tx, id)?;
+            if step.requires_approval {
+                if !super::approvals::approved_for(
+                    tx,
+                    id,
+                    super::approvals::RUN_STEP_ENTITY_TYPE,
+                    super::approvals::RUN_STEP_ACTION_TYPE,
+                )? {
+                    return Err(CoreError::Invalid {
+                        field: "status",
+                        value: "step requires approval before it can be completed".to_string(),
+                    });
+                }
+                // one grant unlocks one completion (M-2)
+                super::approvals::consume_for(
+                    tx,
+                    id,
+                    super::approvals::RUN_STEP_ENTITY_TYPE,
+                    super::approvals::RUN_STEP_ACTION_TYPE,
+                )?;
+            }
+            tx.execute(
+                "UPDATE run_steps SET result = ?1, status = 'done', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![result, now(), id],
+            )?;
+            super::audit::record(tx, "run_step.executed", "user", "gev", "run_step", id)?;
+            Ok(())
+        })?;
         get_step(conn, id)
     }
 
     pub fn add_step(conn: &Connection, run_id: &str, title: &str, detail: &str) -> CoreResult<RunStep> {
-        get(conn, run_id)?; // reject an unknown run before inserting
-        let position: i64 = conn.query_row(
-            "SELECT COALESCE(MAX(position), 0) + 1 FROM run_steps WHERE run_id = ?1",
-            [run_id],
-            |r| r.get(0),
-        )?;
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO run_steps(id, run_id, position, title, detail, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?6)",
-            rusqlite::params![id, run_id, position, title, detail, now],
-        )?;
+        super::atomic(conn, |tx| {
+            get(tx, run_id)?; // reject an unknown run before inserting
+            // Compute the next position inside the INSERT itself so two
+            // concurrent adds cannot read the same MAX and collide (L-3a; a
+            // UNIQUE(run_id, position) index backs this at the schema level).
+            tx.execute(
+                "INSERT INTO run_steps(id, run_id, position, title, detail, status, created_at, updated_at)
+                 SELECT ?1, ?2, COALESCE(MAX(position), 0) + 1, ?3, ?4, 'pending', ?5, ?5
+                   FROM run_steps WHERE run_id = ?2",
+                rusqlite::params![id, run_id, title, detail, now],
+            )?;
+            Ok(())
+        })?;
         get_step(conn, &id)
     }
 
@@ -909,90 +1122,140 @@ pub mod runs {
         if !is_valid(status, STEP_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
-        // Enforce the approval gate here too, not just in advance()/stream_run_step:
-        // a gated step can never be marked `done` without an approval, whichever
-        // command sets it.
-        if status == "done" {
-            let step = get_step(conn, id)?;
-            if step.requires_approval && !super::approvals::approved_for(conn, id)? {
-                return Err(CoreError::Invalid {
-                    field: "status",
-                    value: "step requires approval before it can be completed".to_string(),
-                });
+        super::atomic(conn, |tx| {
+            // Enforce the approval gate here too, not just in advance()/stream_run_step:
+            // a gated step can never be marked `done` without a matching approval,
+            // whichever command sets it. Gate read and UPDATE share one transaction.
+            if status == "done" {
+                let step = get_step(tx, id)?;
+                if step.requires_approval {
+                    if !super::approvals::approved_for(
+                        tx,
+                        id,
+                        super::approvals::RUN_STEP_ENTITY_TYPE,
+                        super::approvals::RUN_STEP_ACTION_TYPE,
+                    )? {
+                        return Err(CoreError::Invalid {
+                            field: "status",
+                            value: "step requires approval before it can be completed".to_string(),
+                        });
+                    }
+                    // one grant unlocks one completion (M-2)
+                    super::approvals::consume_for(
+                        tx,
+                        id,
+                        super::approvals::RUN_STEP_ENTITY_TYPE,
+                        super::approvals::RUN_STEP_ACTION_TYPE,
+                    )?;
+                }
             }
-        }
-        let changed = conn.execute(
-            "UPDATE run_steps SET status = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![status, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
+            let changed = tx.execute(
+                "UPDATE run_steps SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![status, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            Ok(())
+        })?;
         get_step(conn, id)
     }
 
     /// Advance a run's execution by one step: mark the active step done and
-    /// activate the next pending one. When no pending steps remain the run is
-    /// marked `succeeded`; the run moves to `running` on the first advance.
-    /// This models the lifecycle only — it never executes anything on the host.
+    /// activate the next pending one. When no pending steps remain the run
+    /// terminates: `failed` if any step failed, `succeeded` only when the work
+    /// actually completed (M-6); the run moves to `running` on the first
+    /// advance. This models the lifecycle only — it never executes anything on
+    /// the host.
     ///
     /// Rejects advancing a terminated run (succeeded/failed/cancelled) or a run
-    /// with no steps. All state changes commit atomically.
+    /// with no steps. All reads and state changes share one transaction.
     pub fn advance(conn: &Connection, run_id: &str) -> CoreResult<Run> {
-        let run = get(conn, run_id)?;
-        if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
-            return Err(CoreError::Invalid { field: "status", value: run.status });
-        }
-        let total_steps: i64 =
-            conn.query_row("SELECT COUNT(*) FROM run_steps WHERE run_id = ?1", [run_id], |r| r.get(0))?;
-        if total_steps == 0 {
-            return Err(CoreError::Invalid { field: "steps", value: "none".to_string() });
-        }
-
-        // A manual advance must not complete a gated step that isn't approved —
-        // that would bypass the approval. Execution goes through stream_run_step,
-        // which handles the gate (and only calls advance once the step is done).
-        if let Some(active) = conn
-            .query_row(
-                "SELECT * FROM run_steps WHERE run_id = ?1 AND status = 'active' ORDER BY position LIMIT 1",
-                [run_id],
-                map_step,
-            )
-            .optional()?
-        {
-            if active.requires_approval && !super::approvals::approved_for(conn, &active.id)? {
-                return Err(CoreError::Invalid { field: "approval", value: "required".to_string() });
+        super::atomic(conn, |tx| {
+            let run = get(tx, run_id)?;
+            if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
+                return Err(CoreError::Invalid { field: "status", value: run.status });
             }
-        }
+            let total_steps: i64 =
+                tx.query_row("SELECT COUNT(*) FROM run_steps WHERE run_id = ?1", [run_id], |r| r.get(0))?;
+            if total_steps == 0 {
+                return Err(CoreError::Invalid { field: "steps", value: "none".to_string() });
+            }
 
-        let now = now();
-        let tx = conn.unchecked_transaction()?;
-        tx.execute(
-            "UPDATE run_steps SET status = 'done', updated_at = ?1 WHERE run_id = ?2 AND status = 'active'",
-            rusqlite::params![now, run_id],
-        )?;
-        // Only QueryReturnedNoRows becomes None; any real error propagates.
-        let next: Option<String> = tx
-            .query_row(
-                "SELECT id FROM run_steps WHERE run_id = ?1 AND status = 'pending' ORDER BY position LIMIT 1",
-                [run_id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        match next {
-            Some(step_id) => {
-                tx.execute(
-                    "UPDATE run_steps SET status = 'active', updated_at = ?1 WHERE id = ?2",
-                    rusqlite::params![now, step_id],
-                )?;
-                if run.status != "running" {
-                    set_status(&tx, run_id, "running")?;
+            // A manual advance must not complete a gated step that isn't approved —
+            // that would bypass the approval. Execution goes through stream_run_step,
+            // which handles the gate (and only calls advance once the step is done).
+            let active = tx
+                .query_row(
+                    "SELECT * FROM run_steps WHERE run_id = ?1 AND status = 'active' ORDER BY position LIMIT 1",
+                    [run_id],
+                    map_step,
+                )
+                .optional()?;
+            if let Some(active) = &active {
+                if active.requires_approval
+                    && !super::approvals::approved_for(
+                        tx,
+                        &active.id,
+                        super::approvals::RUN_STEP_ENTITY_TYPE,
+                        super::approvals::RUN_STEP_ACTION_TYPE,
+                    )?
+                {
+                    return Err(CoreError::Invalid { field: "approval", value: "required".to_string() });
                 }
             }
-            None => set_status(&tx, run_id, "succeeded").map(|_| ())?,
-        }
-        super::audit::record(&tx, "run.advanced", "gev", "run", run_id)?;
-        tx.commit()?;
+
+            let now = now();
+            tx.execute(
+                "UPDATE run_steps SET status = 'done', updated_at = ?1 WHERE run_id = ?2 AND status = 'active'",
+                rusqlite::params![now, run_id],
+            )?;
+            // The grant that unlocked the just-completed gated step is spent
+            // in the same transaction (M-2).
+            if let Some(active) = &active {
+                if active.requires_approval {
+                    super::approvals::consume_for(
+                        tx,
+                        &active.id,
+                        super::approvals::RUN_STEP_ENTITY_TYPE,
+                        super::approvals::RUN_STEP_ACTION_TYPE,
+                    )?;
+                }
+            }
+            // Only QueryReturnedNoRows becomes None; any real error propagates.
+            let next: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM run_steps WHERE run_id = ?1 AND status = 'pending' ORDER BY position LIMIT 1",
+                    [run_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            match next {
+                Some(step_id) => {
+                    tx.execute(
+                        "UPDATE run_steps SET status = 'active', updated_at = ?1 WHERE id = ?2",
+                        rusqlite::params![now, step_id],
+                    )?;
+                    if run.status != "running" {
+                        set_status(tx, run_id, "running")?;
+                    }
+                }
+                None => {
+                    // No active or pending step remains — inspect outcomes
+                    // before stamping the terminal status: a run with failed
+                    // work must not report `succeeded` (M-6).
+                    let failed: i64 = tx.query_row(
+                        "SELECT COUNT(*) FROM run_steps WHERE run_id = ?1 AND status = 'failed'",
+                        [run_id],
+                        |r| r.get(0),
+                    )?;
+                    let terminal = if failed > 0 { "failed" } else { "succeeded" };
+                    set_status(tx, run_id, terminal)?;
+                }
+            }
+            super::audit::record(tx, "run.advanced", "user", "gev", "run", run_id)?;
+            Ok(())
+        })?;
         get(conn, run_id)
     }
 }
@@ -1016,12 +1279,15 @@ pub mod events {
     pub fn create(conn: &Connection, input: NewEvent) -> CoreResult<Event> {
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO events(id, title, kind, location, starts_at, ends_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-            rusqlite::params![id, input.title, input.kind, input.location, input.starts_at, input.ends_at, now],
-        )?;
-        super::audit::record(conn, "event.created", "gev", "event", &id)?;
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO events(id, title, kind, location, starts_at, ends_at, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                rusqlite::params![id, input.title, input.kind, input.location, input.starts_at, input.ends_at, now],
+            )?;
+            super::audit::record(tx, "event.created", "user", "gev", "event", &id)?;
+            Ok(())
+        })?;
         get(conn, &id)
     }
 
@@ -1030,18 +1296,20 @@ pub mod events {
     }
 
     pub fn list(conn: &Connection) -> CoreResult<Vec<Event>> {
-        let mut s = conn.prepare("SELECT * FROM events ORDER BY starts_at ASC")?;
-        let rows = s.query_map([], map)?;
+        let mut s = conn.prepare("SELECT * FROM events ORDER BY starts_at ASC LIMIT ?1")?;
+        let rows = s.query_map([super::MAX_PAGE], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
-        let changed = conn.execute("DELETE FROM events WHERE id = ?1", [id])?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "event.deleted", "gev", "event", id)?;
-        Ok(())
+        super::atomic(conn, |tx| {
+            let changed = tx.execute("DELETE FROM events WHERE id = ?1", [id])?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "event.deleted", "user", "gev", "event", id)?;
+            Ok(())
+        })
     }
 }
 
@@ -1063,12 +1331,15 @@ pub mod automations {
     pub fn create(conn: &Connection, input: NewAutomation) -> CoreResult<Automation> {
         let now = now();
         let id = id();
-        conn.execute(
-            "INSERT INTO automations(id, name, trigger, action, enabled, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
-            rusqlite::params![id, input.name, input.trigger, input.action, now],
-        )?;
-        super::audit::record(conn, "automation.created", "gev", "automation", &id)?;
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO automations(id, name, trigger, action, enabled, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
+                rusqlite::params![id, input.name, input.trigger, input.action, now],
+            )?;
+            super::audit::record(tx, "automation.created", "user", "gev", "automation", &id)?;
+            Ok(())
+        })?;
         get(conn, &id)
     }
 
@@ -1077,30 +1348,35 @@ pub mod automations {
     }
 
     pub fn list(conn: &Connection) -> CoreResult<Vec<Automation>> {
-        let mut s = conn.prepare("SELECT * FROM automations ORDER BY name")?;
-        let rows = s.query_map([], map)?;
+        let mut s = conn.prepare("SELECT * FROM automations ORDER BY name LIMIT ?1")?;
+        let rows = s.query_map([super::MAX_PAGE], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn set_enabled(conn: &Connection, id: &str, enabled: bool) -> CoreResult<Automation> {
-        let changed = conn.execute(
-            "UPDATE automations SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![enabled as i64, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "automation.toggled", "gev", "automation", id)?;
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE automations SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![enabled as i64, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "automation.toggled", "user", "gev", "automation", id)?;
+            Ok(())
+        })?;
         get(conn, id)
     }
 
     pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
-        let changed = conn.execute("DELETE FROM automations WHERE id = ?1", [id])?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "automation.deleted", "gev", "automation", id)?;
-        Ok(())
+        super::atomic(conn, |tx| {
+            let changed = tx.execute("DELETE FROM automations WHERE id = ?1", [id])?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "automation.deleted", "user", "gev", "automation", id)?;
+            Ok(())
+        })
     }
 }
 
@@ -1145,14 +1421,17 @@ pub mod integrations {
         if !is_valid(status, INTEGRATION_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
-        let changed = conn.execute(
-            "UPDATE integrations SET status = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![status, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
-        super::audit::record(conn, "integration.status_changed", "gev", "integration", id)?;
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE integrations SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![status, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "integration.status_changed", "user", "gev", "integration", id)?;
+            Ok(())
+        })?;
         get(conn, id)
     }
 }
@@ -1206,8 +1485,10 @@ pub mod security {
     pub fn summary(conn: &Connection) -> CoreResult<SecuritySummary> {
         let pending: i64 = conn.query_row(
             "SELECT COUNT(*) FROM approvals WHERE status = 'pending'", [], |r| r.get(0))?;
+        // 'consumed' grants were approved and then spent by a completed step
+        // (M-2) — they remain decided approvals for posture reporting.
         let decided: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM approvals WHERE status IN ('approved','rejected')", [], |r| r.get(0))?;
+            "SELECT COUNT(*) FROM approvals WHERE status IN ('approved','rejected','consumed')", [], |r| r.get(0))?;
         let audit: i64 = conn.query_row("SELECT COUNT(*) FROM audit_events", [], |r| r.get(0))?;
 
         let mut s = conn.prepare(
@@ -1406,87 +1687,91 @@ fn not_found(id: &str) -> impl Fn(rusqlite::Error) -> CoreError + '_ {
 
 /// Populate a fresh database with initial content so the app is demonstrable.
 /// Real rows inserted through the repositories — not a mock layer. Idempotent:
-/// runs only when there are no projects yet.
+/// runs only when there are no projects yet. The COUNT guard and every insert
+/// share one transaction, so a failure mid-seed rolls back entirely instead of
+/// locking in a partial seed forever (L-3b).
 pub fn seed(conn: &Connection) -> CoreResult<()> {
-    let existing: i64 = conn.query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))?;
-    if existing > 0 {
-        return Ok(());
-    }
+    atomic(conn, |conn| {
+        let existing: i64 = conn.query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))?;
+        if existing > 0 {
+            return Ok(());
+        }
 
-    let specialists = [
-        ("forge", "Forge", "Engineering", "claude-opus"),
-        ("mason", "Mason", "Architecture", "claude-opus"),
-        ("pixel", "Pixel", "Design", "claude-sonnet"),
-        ("probe", "Probe", "Testing", "claude-sonnet"),
-        ("shield", "Shield", "Security", "claude-opus"),
-        ("lezu", "Lezu", "Localization", "claude-sonnet"),
-    ];
-    for (slug, name, role, model) in specialists {
-        agents::create(conn, slug, name, role, model)?;
-    }
+        let specialists = [
+            ("forge", "Forge", "Engineering", "claude-opus"),
+            ("mason", "Mason", "Architecture", "claude-opus"),
+            ("pixel", "Pixel", "Design", "claude-sonnet"),
+            ("probe", "Probe", "Testing", "claude-sonnet"),
+            ("shield", "Shield", "Security", "claude-opus"),
+            ("lezu", "Lezu", "Localization", "claude-sonnet"),
+        ];
+        for (slug, name, role, model) in specialists {
+            agents::create(conn, slug, name, role, model)?;
+        }
 
-    let p1 = projects::create(conn, NewProject { name: "BroPS Desktop Foundation".into(), description: "React + Tauri app shell and core runtime.".into(), priority: "high".into(), workspace_id: None })?;
-    let p2 = projects::create(conn, NewProject { name: "Localization HY/EN/RU".into(), description: "Trilingual runtime parity.".into(), priority: "high".into(), workspace_id: None })?;
-    projects::set_status(conn, &p1.id, "active")?;
+        let p1 = projects::create(conn, NewProject { name: "BroPS Desktop Foundation".into(), description: "React + Tauri app shell and core runtime.".into(), priority: "high".into(), workspace_id: None })?;
+        let p2 = projects::create(conn, NewProject { name: "Localization HY/EN/RU".into(), description: "Trilingual runtime parity.".into(), priority: "high".into(), workspace_id: None })?;
+        projects::set_status(conn, &p1.id, "active")?;
 
-    tasks::create(conn, NewTask { project_id: Some(p1.id.clone()), title: "Implement app shell + routing".into(), description: "".into(), priority: "high".into(), assigned_agent_id: None })?;
-    let t2 = tasks::create(conn, NewTask { project_id: Some(p1.id.clone()), title: "Command palette (Ctrl/Cmd+K)".into(), description: "".into(), priority: "normal".into(), assigned_agent_id: None })?;
-    tasks::set_status(conn, &t2.id, "active")?;
-    tasks::create(conn, NewTask { project_id: Some(p2.id.clone()), title: "Russian dictionary parity".into(), description: "".into(), priority: "high".into(), assigned_agent_id: None })?;
+        tasks::create(conn, NewTask { project_id: Some(p1.id.clone()), title: "Implement app shell + routing".into(), description: "".into(), priority: "high".into(), assigned_agent_id: None })?;
+        let t2 = tasks::create(conn, NewTask { project_id: Some(p1.id.clone()), title: "Command palette (Ctrl/Cmd+K)".into(), description: "".into(), priority: "normal".into(), assigned_agent_id: None })?;
+        tasks::set_status(conn, &t2.id, "active")?;
+        tasks::create(conn, NewTask { project_id: Some(p2.id.clone()), title: "Russian dictionary parity".into(), description: "".into(), priority: "high".into(), assigned_agent_id: None })?;
 
-    conn.execute(
-        "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, requested_at)
-         VALUES (?1,'Send external email','vendor@example.com','A2','medium','pending','lezu',?2),
-                (?3,'Destructive DB migration','local database','A3','critical','pending','forge',?2)",
-        rusqlite::params![id(), now(), id()],
-    )?;
+        conn.execute(
+            "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, requested_at)
+             VALUES (?1,'Send external email','vendor@example.com','A2','medium','pending','lezu',?2),
+                    (?3,'Destructive DB migration','local database','A3','critical','pending','forge',?2)",
+            rusqlite::params![id(), now(), id()],
+        )?;
 
-    conn.execute(
-        "INSERT INTO notifications(id, type, severity, title, body, read_at, created_at)
-         VALUES (?1,'approval_required','warning','Approval required','A destructive migration awaits your decision.',NULL,?2),
-                (?3,'run_completed','success','Run completed','Blocker digest finished with evidence.',NULL,?2)",
-        rusqlite::params![id(), now(), id()],
-    )?;
+        conn.execute(
+            "INSERT INTO notifications(id, type, severity, title, body, read_at, created_at)
+             VALUES (?1,'approval_required','warning','Approval required','A destructive migration awaits your decision.',NULL,?2),
+                    (?3,'run_completed','success','Run completed','Blocker digest finished with evidence.',NULL,?2)",
+            rusqlite::params![id(), now(), id()],
+        )?;
 
-    decisions::create(conn, "Trilingual product scope (HY/EN/RU)", "gev", "Newest explicit decision supersedes bilingual wording (D-009).")?;
-    decisions::create(conn, "Foundation v1 is Locked", "gev", "Reviewed, canonicalized, Phase 1 UX added (D-010).")?;
+        decisions::create(conn, "Trilingual product scope (HY/EN/RU)", "gev", "Newest explicit decision supersedes bilingual wording (D-009).")?;
+        decisions::create(conn, "Foundation v1 is Locked", "gev", "Reviewed, canonicalized, Phase 1 UX added (D-010).")?;
 
-    let direct = chat::create_conversation(conn, "direct", "Bro")?;
-    chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "user".into(), author: "gev".into(), body: "Bro, where does the desktop build stand?".into() })?;
-    chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "agent".into(), author: "Bro".into(), body: "Data core is green and CRUD is wired to real SQLite. Chat is now persisted too.".into() })?;
+        let direct = chat::create_conversation(conn, "direct", "Bro")?;
+        chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "user".into(), author: "gev".into(), body: "Bro, where does the desktop build stand?".into() })?;
+        chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "agent".into(), author: "Bro".into(), body: "Data core is green and CRUD is wired to real SQLite. Chat is now persisted too.".into() })?;
 
-    let room = chat::create_conversation(conn, "group", "Foundation room")?;
-    chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Mason".into(), body: "Schema reached v3 — conversations and messages added.".into() })?;
-    chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Probe".into(), body: "Chat repository covered by unit tests.".into() })?;
+        let room = chat::create_conversation(conn, "group", "Foundation room")?;
+        chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Mason".into(), body: "Schema reached v3 — conversations and messages added.".into() })?;
+        chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Probe".into(), body: "Chat repository covered by unit tests.".into() })?;
 
-    knowledge::create(conn, NewKnowledgeNote { title: "Typed IPC boundary".into(), body: "React reaches SQLite only through #[tauri::command]s; no raw SQL crosses the boundary.".into(), source: "docs/architecture".into(), tags: "architecture,ipc".into() })?;
-    knowledge::create(conn, NewKnowledgeNote { title: "Forward-only migrations".into(), body: "Schema advances one numbered migration at a time; runner is idempotent.".into(), source: "src-tauri/core/db.rs".into(), tags: "sqlite,migrations".into() })?;
+        knowledge::create(conn, NewKnowledgeNote { title: "Typed IPC boundary".into(), body: "React reaches SQLite only through #[tauri::command]s; no raw SQL crosses the boundary.".into(), source: "docs/architecture".into(), tags: "architecture,ipc".into() })?;
+        knowledge::create(conn, NewKnowledgeNote { title: "Forward-only migrations".into(), body: "Schema advances one numbered migration at a time; runner is idempotent.".into(), source: "src-tauri/core/db.rs".into(), tags: "sqlite,migrations".into() })?;
 
-    let m = memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "Respond in Armenian; work only in menqstudio/BroPS.".into() })?;
-    memory::set_pinned(conn, &m.id, true)?;
-    memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "Foundation v1 is Locked (D-010).".into() })?;
+        let m = memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "Respond in Armenian; work only in menqstudio/BroPS.".into() })?;
+        memory::set_pinned(conn, &m.id, true)?;
+        memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "Foundation v1 is Locked (D-010).".into() })?;
 
-    let r1 = runs::create(conn, "Wire the remaining workspaces to the backend", "schema → repos → commands → UI")?;
-    runs::add_step(conn, &r1.id, "Design schema", "migration 0005")?;
-    runs::add_step(conn, &r1.id, "Write repositories", "")?;
-    let gated = runs::add_step(conn, &r1.id, "Register commands", "")?;
-    runs::set_step_requires_approval(conn, &gated.id, true)?; // demo: this step needs approval to run
-    runs::add_step(conn, &r1.id, "Build the screens", "")?;
-    runs::advance(conn, &r1.id)?; // moves the run to running with the first step active
-    runs::create(conn, "Draft the Phase 6 verification report", "")?;
+        let r1 = runs::create(conn, "Wire the remaining workspaces to the backend", "schema → repos → commands → UI")?;
+        runs::add_step(conn, &r1.id, "Design schema", "migration 0005")?;
+        runs::add_step(conn, &r1.id, "Write repositories", "")?;
+        let gated = runs::add_step(conn, &r1.id, "Register commands", "")?;
+        runs::set_step_requires_approval(conn, &gated.id, true)?; // demo: this step needs approval to run
+        runs::add_step(conn, &r1.id, "Build the screens", "")?;
+        runs::advance(conn, &r1.id)?; // moves the run to running with the first step active
+        runs::create(conn, "Draft the Phase 6 verification report", "")?;
 
-    let start = now();
-    events::create(conn, NewEvent { title: "Phase 5 review".into(), kind: "review".into(), location: "Desktop".into(), starts_at: start.clone(), ends_at: None })?;
-    events::create(conn, NewEvent { title: "Foundation sync".into(), kind: "meeting".into(), location: "Group Chat".into(), starts_at: start, ends_at: None })?;
+        let start = now();
+        events::create(conn, NewEvent { title: "Phase 5 review".into(), kind: "review".into(), location: "Desktop".into(), starts_at: start.clone(), ends_at: None })?;
+        events::create(conn, NewEvent { title: "Foundation sync".into(), kind: "meeting".into(), location: "Group Chat".into(), starts_at: start, ends_at: None })?;
 
-    let a1 = automations::create(conn, NewAutomation { name: "Notify on failed run".into(), trigger: "run.status = failed".into(), action: "create notification".into() })?;
-    let a2 = automations::create(conn, NewAutomation { name: "Auto-archive done projects".into(), trigger: "project.status = completed".into(), action: "set archived".into() })?;
-    automations::set_enabled(conn, &a2.id, false)?;
-    let _ = a1;
+        let a1 = automations::create(conn, NewAutomation { name: "Notify on failed run".into(), trigger: "run.status = failed".into(), action: "create notification".into() })?;
+        let a2 = automations::create(conn, NewAutomation { name: "Auto-archive done projects".into(), trigger: "project.status = completed".into(), action: "set archived".into() })?;
+        automations::set_enabled(conn, &a2.id, false)?;
+        let _ = a1;
 
-    let i1 = integrations::create(conn, "GitHub", "github")?;
-    integrations::set_status(conn, &i1.id, "connected")?;
-    integrations::create(conn, "Slack", "slack")?;
+        let i1 = integrations::create(conn, "GitHub", "github")?;
+        integrations::set_status(conn, &i1.id, "connected")?;
+        integrations::create(conn, "Slack", "slack")?;
 
-    Ok(())
+        Ok(())
+    })
 }

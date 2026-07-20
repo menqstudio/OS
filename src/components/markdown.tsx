@@ -10,24 +10,38 @@ function escapeHtml(s: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // Inline formatting. Input MUST already be HTML-escaped.
+//
+// Links and code spans are tokenized to opaque placeholders BEFORE the
+// bold/italic rules run, then substituted back at the end. That way no inline
+// rule can ever rewrite the inside of an href attribute value or a code span
+// (e.g. `**` inside a URL becoming a <strong> tag inside the attribute).
 function inline(s: string): string {
-  let out = s;
-  // links [text](http…) — href limited to http/https, text kept as-is (escaped)
-  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-    (_m, text, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`);
+  const tokens: string[] = [];
+  const stash = (html: string) => `\u0000${tokens.push(html) - 1}\u0000`;
+  // Reserve the placeholder delimiter: NUL never survives into the output.
+  let out = s.replace(/\u0000/g, '');
+  // links [text](http…) — href limited to http/https, text kept as-is (escaped).
+  // When the visible text differs from the destination, the real URL is
+  // disclosed next to it so link text can't misrepresent where it leads.
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, text, url) => {
+    const a = `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+    return stash(text === url ? a : `${a} <span class="muted">(${url})</span>`);
+  });
   // inline code
-  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+  out = out.replace(/`([^`]+)`/g, (_m, code) => stash(`<code>${code}</code>`));
   // bold then italic (bold first so ** isn't eaten by italic)
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
   // underscore italics only at word boundaries, so identifiers like
   // some_var_name and __init__ are left untouched.
   out = out.replace(/(^|\W)_([^_\n]+)_(?=\W|$)/g, '$1<em>$2</em>');
-  return out;
+  // substitute the stashed link/code HTML back in
+  return out.replace(/\u0000(\d+)\u0000/g, (_m, i) => tokens[Number(i)]);
 }
 
 /** Render a Markdown subset to a safe HTML string. */

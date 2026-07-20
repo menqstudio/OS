@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, Badge, Skeleton, ErrorState, EmptyState, Modal, Textarea } from '../components/ui';
+import { PageHeader, Panel, Button, Badge, Skeleton, ErrorState, EmptyState, Modal, Textarea, ConfirmDialog } from '../components/ui';
 import { useToast } from '../components/toast';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -28,6 +28,9 @@ function FileViewer({ entry, onClose }: { entry: DirEntry; onClose: () => void }
   const [original, setOriginal] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Overwriting an existing file is destructive, so — like deletes — it is
+  // gated behind an explicit confirmation step.
+  const [confirmingSave, setConfirmingSave] = useState(false);
 
   useEffect(() => {
     if (s.data) {
@@ -69,9 +72,24 @@ function FileViewer({ entry, onClose }: { entry: DirEntry; onClose: () => void }
       <div className="form-actions">
         <Button variant="ghost" onClick={onClose}>{t('files.close')}</Button>
         {editable && (
-          <Button onClick={save} disabled={saving || !dirty}>{t('files.save')}</Button>
+          <Button onClick={() => setConfirmingSave(true)} disabled={saving || !dirty}>
+            {t('files.save')}
+          </Button>
         )}
       </div>
+      {confirmingSave && (
+        <ConfirmDialog
+          title={t('files.save')}
+          message={entry.path}
+          confirmLabel={t('files.save')}
+          cancelLabel={t('action.cancel')}
+          onConfirm={() => {
+            setConfirmingSave(false);
+            save();
+          }}
+          onCancel={() => setConfirmingSave(false)}
+        />
+      )}
     </Modal>
   );
 }

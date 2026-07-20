@@ -1,11 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal capability set for the BroPS main window.",
+  "description": "Minimal capability set for the BroPS main window. The allow-* entries gate the app's own filesystem commands, declared via the app manifest in build.rs (M-8); removing an entry disables that command for this window.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:default",
-    "core:event:default"
+    "core:event:default",
+    "allow-list-dir",
+    "allow-read-file",
+    "allow-write-file"
   ]
 }
