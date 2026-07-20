@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Phase 0: each half builds and tests independently. A cross-integration
+# (bridge) smoke test is added in Phase 1.
+jobs:
+  cockpit-frontend:
+    name: Cockpit · frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  cockpit-core:
+    name: Cockpit · SQLite data core (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - name: Test the SQLite data core
+        run: cargo test -p brops-core --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  engine:
+    name: Engine · governance runtime (python)
+    runs-on: ubuntu-latest
+    env:
+      BRO_ENV: ci
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install engine CI dependencies
+        run: pip install --require-hashes -r requirements-ci.txt
+      - name: Run the engine test suite
+        run: python -m unittest discover -s tests
