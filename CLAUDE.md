@@ -11,6 +11,25 @@
 
 ---
 
+## ⛔ STARTUP LAW — mandatory, every session · ՊԱՐՏԱԴԻՐ, ամեն session
+
+**Before doing ANYTHING** (any tool call, any edit, any answer beyond a greeting), every chat — Claude *and* ChatGPT — must:
+
+1. **`git pull`** — get the latest state.
+2. **Read, IN FULL, every file in [`START_HERE.md`](./START_HERE.md):** `CLAUDE.md` → `PROJECT_STATE.md` → `TASKS.md` → `OWNERS.md` → `docs/ARCHITECTURE.md`.
+3. **Claim your task in `TASKS.md`** — never two agents on the same task.
+
+Only then start. **No exceptions.** When Gev says *"go read the repo / կարդա ՄԴները"* — that phrase **is** this law: read every file in `START_HERE.md` fully, pull, claim a task, then begin, **without waiting for any further explanation.**
+
+**Ամեն բան անելուց ԱՌԱՋ** (ցանկացած tool/edit/պատասխան), ամեն չատ — Claude *ու* ChatGPT — պիտի՝
+**1)** `git pull` · **2)** կարդա ԱՄԲՈՂՋՈՎ [`START_HERE.md`](./START_HERE.md)-ի բոլոր ֆայլերը (`CLAUDE.md` → `PROJECT_STATE.md` → `TASKS.md` → `OWNERS.md` → `docs/ARCHITECTURE.md`) · **3)** claim արա task-ը `TASKS.md`-ում։ Միայն հետո սկսի։ **Բացառություն չկա։** Երբ Gev-ը ասում ա *«գնա ռեպո կարդա ՄԴները»* — էդ բառը **հենց** այս օրենքն ա՝ կարդա `START_HERE.md`-ի ամեն ֆայլ ամբողջովին, pull արա, task claim արա, հետո սկսի, **առանց ավել բացատրություն սպասելու։**
+
+**Roles · Դերեր:** [`OWNERS.md`](./OWNERS.md) — 👑 Gev = Owner · 📐 ChatGPT = Architect/Auditor · 🔨 Claude = Builder.
+**Canonical files (read every session) · Canonical ֆայլեր:** `CLAUDE.md` · `PROJECT_STATE.md` · `TASKS.md` · `OWNERS.md`.
+**Work rule:** no direct `main`; every task = branch + PR (uses the PR template); merge only after the Owner approves.
+
+---
+
 # English
 
 > This file is the single source of truth for what this repo *is*, where it stands, how to
@@ -62,7 +81,9 @@ The engine CI leg fails **9 of ~615 tests** in the monorepo. **Root cause:** Bro
 - **B · Make Bro monorepo-aware** — allow `ROOT` to be a subdirectory of a registered worktree → true one-repo, but a deliberate, tested change to security code we just audited.
 - **C · Scope Phase-0 CI now** — run the ~606 independent tests, mark the 9 as documented Phase-1-deferred → honest green now; validate the full enforcement path after A/B is chosen.
 
-**Status:** Option **C is applied** — the engine CI leg is green. The 9 monorepo-coupled tests (`FullExecutionTransactionE2ETests`, `HookSubprocessTests`) skip-guard themselves when `engine/` is not a git checkout root, and **auto-re-enable under option A**. No runtime/security code was touched — only test guards. **A vs B remains the Phase-1 root-model decision — do not implement either without Gev's explicit go.**
+**Decision (standing):** **Option 1 — stay on subtree + C.** The engine CI leg is green; the 9 monorepo-coupled tests (`FullExecutionTransactionE2ETests`, `HookSubprocessTests`) skip-guard themselves when `engine/` is not a git checkout root. No runtime/security code touched — only test guards. Stability over architecture for now.
+
+**Verified finding (why not A alone):** making `engine/` a submodule does **not** fix the 9 tests — `git worktree list` reports a submodule's *git-dir* (`.git/modules/engine`), not its working dir (`engine/`), so Bro's `bro_repository_state.worktrees()` check still fails. A true native fix needs **Option 2**: engine as a submodule **plus** a targeted change to Bro's worktree check (use `git rev-parse --show-toplevel` instead of parsing `git worktree list`). That touches security-adjacent code and is deferred to a **separate audited task** (own branch/PR, Owner approval, must not destabilize). **Do not implement it inside a coordination/Phase-0 merge.**
 
 ## 4. How to work here — verify commands
 
@@ -166,7 +187,9 @@ Engine CI leg-ը **~615-ից 9 test fail ա** monorepo-ում։ **Root cause:** 
 - **B · Bro-ն monorepo-aware դարձնել** — `ROOT`-ը թույլ տալ որ լինի registered worktree-ի subdirectory → իսկական one-repo, բայց deliberate, tested փոփոխություն հենց նոր-audited security կոդում։
 - **C · Phase-0 CI scope** — հիմա run ~606-ը, 9-ը documented Phase-1-deferred → honest green հիմա; լրիվ enforcement path-ը validate ա A/B-ի ընտրությունից հետո։
 
-**Վիճակ:** Option **C կիրառված ա** — engine CI leg-ը green ա։ 9 monorepo-coupled test-երը (`FullExecutionTransactionE2ETests`, `HookSubprocessTests`) ինքնաբերաբար skip են, երբ `engine/`-ը git checkout root չէ, ու **A-ի տակ ինքնաբերաբար նորից կվազեն**։ Ոչ մի runtime/security կոդ չի դիպչել — միայն test guard-եր։ **A vs B մնում ա Phase-1 root-model որոշումը — մի իրականացրու առանց Gev-ի հստակ go-ի։**
+**Որոշում (գործող):** **Option 1 — մնում ենք subtree + C-ի վրա։** Engine CI leg-ը green ա; 9 monorepo-coupled test-երը (`FullExecutionTransactionE2ETests`, `HookSubprocessTests`) ինքնաբերաբար skip են, երբ `engine/`-ը git checkout root չէ։ Ոչ մի runtime/security կոդ չի դիպչել — միայն test guard-եր։ Հիմա կայունությունը architecture-ից առաջ։
+
+**Verified finding (ինչու ոչ A-ն միայնակ):** `engine/`-ը submodule դարձնելը **չի** ֆիքսում 9 test-ը — `git worktree list`-ը submodule-ի *git-dir-ն* ա վերադարձնում (`.git/modules/engine`), ոչ working dir-ը (`engine/`), ուրեմն Bro-ի `bro_repository_state.worktrees()` check-ը դեռ fail ա։ Իսկական native fix-ը պահանջում ա **Option 2**՝ engine submodule **+** targeted փոփոխություն Bro-ի worktree-check-ում (`git rev-parse --show-toplevel`՝ `git worktree list`-ի փոխարեն)։ Դա touch ա security-adjacent կոդ ու հետաձգված ա **առանձին audited task**-ի (own branch/PR, Owner approval, չդեստաբիլիզացնի)։ **Մի իրականացրու coordination/Phase-0 merge-ի ներսում։**
 
 ## 4. Ոնց աշխատել այստեղ — verify կոմանդներ
 
