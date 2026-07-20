@@ -1,17 +1,25 @@
 # OS Master Execution Roadmap · OS-ի գլխավոր կատարման ճանապարհ
 
-**Status: `Active — Canonical Execution Authority`**
-**Կարգավիճակ՝ `Active — Canonical Execution Authority` (ակտիվ, կանոնական կատարման իշխանություն)**
+**Status: `v1.0 · Canonical Execution Authority` — 🔒 Locked (Owner-declared 2026-07-20)**
+**Կարգավիճակ՝ `v1.0 · Canonical Execution Authority` — 🔒 Locked (Owner-declared 2026-07-20)**
 
 > This document is the **single execution source** for `menqstudio/OS`. When a Claude (or ChatGPT)
 > session is told *"go build the next thing"*, it opens this file, finds the current phase, and takes
 > the next **unchecked** task — without needing any chat context. When state changes, this file is
-> updated **in the same commit** as the change. It is *Active*, not *Locked*: only Phase 0 (Foundation)
-> is frozen; every other phase is executable now.
+> updated **in the same commit** as the change.
+>
+> **🔒 Locked ≠ frozen execution.** *Locked* means the **plan** is v1.0-canonical and **change-controlled**
+> (§I Change Control): the architecture, trust boundaries, security model, and execution order do not
+> change without Architect review + Owner approval *before* implementation. **Execution proceeds
+> normally** — phases run, task boxes get checked, `PROJECT_STATE.md` moves. Only Phase 0 (Foundation) is
+> *done*-locked. The Lock is ratified on Owner merge of this v1.0; edits after that follow §I.
 >
 > Սա `menqstudio/OS`-ի **միակ կատարման աղբյուրն** է։ Երբ session-ին ասում են «գնա կառուցիր հաջորդը»,
 > ինքը բացում է այս ֆայլը, գտնում ընթացիկ phase-ը, վերցնում հաջորդ **unchecked** task-ը՝ առանց chat
-> context-ի կարիքի։ Վիճակ փոխվելիս՝ այս ֆայլը թարմացվում է **նույն commit-ում**։ *Active* է, ոչ *Locked*.
+> context-ի կարիքի։ **🔒 Locked ≠ սառեցված execution.** *Locked* նշանակում է՝ **պլանը** v1.0-canonical է ու
+> **change-controlled** (§I)՝ architecture/trust boundary/security/execution order-ը չեն փոխվում առանց
+> Architect review + Owner approval-ի *մինչ* implementation-ը։ Execution-ը գնում է նորմալ։ Lock-ը
+> ratify է լինում Owner-ի merge-ով։
 
 ---
 
@@ -28,7 +36,8 @@
    the *Merge gate* is green, mark the phase ✅ in the roadmap table below.
 
 **Golden reading order for a cold-start session:** §B (rules) → §C (design system) → §D (page-spec
-template) → §E (dependency map) → your phase. That is the whole onboarding for *building*.
+template) → §E (dependency map) → §G (ownership) → §H (artifact registry) → §I (change control) → your
+phase. That is the whole onboarding for *building*.
 
 ### Phase status board · Phase-երի վիճակ
 | Phase | Name | Status |
@@ -249,6 +258,103 @@ adapter sets `receipt.verified=true` **only** after an injected verifier confirm
 evidence, and returns a non-null `result` **only** then. **No verified receipt ⇒ no result.** This
 invariant holds in every phase that executes AI work; later phases add surfaces and scope but never
 weaken it.
+
+---
+
+## G. Execution Ownership Matrix · Կատարման պատասխանատվության մատրից
+
+No task is ambiguous about who builds, who audits, and who must approve. **Accountable Owner is always
+Gev** (👑) — he alone approves and merges. The columns below assign the rest.
+
+**Roles:** 🔨 **Builder** = Claude (writes code/tests/docs). 📐 **Audit** = ChatGPT (Architect review /
+security audit / sign-off). ✅ **Human approval** = Gev (Owner) must approve before merge; 🛑 = Owner
+approval **and** an Architect security sign-off are **both** mandatory *before implementation*, not just
+before merge.
+
+### G.1 Per-phase ownership
+| Phase | Builder | Audit (ChatGPT) | Human approval (Gev) | Notes |
+|---|---|---|---|---|
+| 0 · Foundation | 🔨 | 📐 | ✅ | Done/locked. |
+| 1 · Bridge | 🔨 | 📐 (contract + no-engine-diff) | ✅ | Slice sign-off gates the build. |
+| 2 · Governance Sidecar | 🔨 | 📐 (mirror-never-decide) | ✅ | Read/request only. |
+| 3 · Desktop Integration | 🔨 | 📐 (fail-closed chat) | ✅ | Governed core loop. |
+| 4 · UI/UX System | 🔨 | 📐 (design + a11y) | ✅ | Token-drift/contrast gate. |
+| 5 · Memory & Knowledge | 🔨 | 📐 (governed research) | ✅ | Local-first. |
+| 6 · Multi-Agent | 🔨 | 📐 (no lease leakage) | ✅ | Per-agent receipts. |
+| 7 · Group Chat | 🔨 | 📐 (in-room governance) | ✅ | Per-turn verified. |
+| 8 · Automation | 🔨 | 📐 (no ungoverned fire) | ✅ | Unattended = governed. |
+| 9 · Integrations | 🔨 | 📐 (no desktop secret) | 🛑 | External boundary — security sign-off required. |
+| 10 · Production | 🔨 | 📐 (full-enforcement CI) | 🛑 | Signing/updater/T-005/O-1..O-5. |
+
+### G.2 Task-class overrides (apply in **every** phase)
+These override the per-phase row whenever a task falls into the class — regardless of which phase it sits in.
+| Task class | Builder | Audit | Approval | Rule |
+|---|---|---|---|---|
+| Any `engine/` security code (wall · leases · gates · signatures · control-plane · root model) | 🔨 (own audited branch) | 📐 **mandatory** | 🛑 **before implementation** | Never rushed, never parallelized (§E serialization rule). |
+| Trust-boundary / key / secret handling | 🔨 | 📐 **mandatory** | 🛑 | Desktop never holds keys/leases/secrets. |
+| Contract / schema change (`bridge/`, `contracts/`, engine schemas) | 🔨 | 📐 **mandatory** | ✅ | Versioned; consumers updated same PR. |
+| Execution-order / dependency-graph change (§E) | 🔨 (proposal) | 📐 **mandatory** | 🛑 | This is a §I Change-Control event. |
+| `git push` / `gh pr merge` / release | — | — | ✅ **Gev only** | The AI is blocked from push/merge by the classifier (§B.5). |
+| UI/copy/docs-only, no arch/security/order impact | 🔨 | 📐 (light) | ✅ | Normal PR flow. |
+
+---
+
+## H. Canonical Artifact Registry · Կանոնական աղբյուրների ռեգիստր
+
+The single answer to *"which file is the source of truth for X?"*. If two artifacts conflict, the one
+marked **Canonical** for that domain wins; a **Derived/Mirror** artifact must be regenerated, never
+hand-forked; a **Superseded** artifact is kept only for provenance.
+
+| Artifact | Domain / role | Status | Authority |
+|---|---|---|---|
+| `MASTER_EXECUTION_ROADMAP.md` | Execution plan (scope · sequence · per-phase spec) | **Canonical (v1.0, Locked)** | This document |
+| `CLAUDE.md` | The brain — identity · rules · environment | **Canonical** | Owner/Architect |
+| `brops-aios.html` | UI / interaction reference (22 pages · design tokens) | **Canonical UI Reference** | Owner |
+| `bridge/contracts/task-request.schema.json` · `bridge-result.schema.json` | Bridge request/result contract | **Canonical Contract** | Architect-approved |
+| `engine/runtime/bro_receipt.py` · `bro_execution_lease.py` · `bro_evidence.py` | Security truth — receipts · leases · evidence chain | **Canonical (engine)** | Engine (audited) |
+| `engine/schemas/verifier-receipt.schema.json` · `skill-receipt.schema.json` | Verifier / skill evidence schemas | **Canonical (engine)** | Engine (audited) |
+| `docs/ARCHITECTURE.md` | Design + resolved decisions | **Canonical (design)** | Architect |
+| `PROJECT_STATE.md` | Live status (who / where / blockers) | **Canonical (coordination, live)** | All, same-commit |
+| `TASKS.md` | Claim board | **Canonical (coordination, live)** | All, same-commit |
+| `OWNERS.md` | Roles | **Canonical** | Owner |
+| `contracts/` (shared home) | Deduped lease/approval/task-contract/mode-grant | **Target (Phase 3 begins → Phase 10 final)** | Architect-approved |
+| Design tokens table (§C.1) / `theme-tokens` (Phase 4) | Design token source | **Derived from `brops-aios.html`** | Regenerate, don't fork |
+| Old 4-phase framing (Scaffold · Bridge · Approval gate · Contracts) | Prior roadmap shape | **Superseded** by this v1.0 | Provenance only |
+
+**Rule:** a new source-of-truth artifact is added here **in the same PR** that introduces it. An artifact
+not in this registry is **not** authoritative.
+
+---
+
+## I. Change Control · Փոփոխության վերահսկում
+
+The roadmap is **Locked at v1.0**. That protects it from drifting mid-work — the exact failure the
+Architecture Freeze exists to stop (ten rounds of redesign, zero applied lines).
+
+**A change that touches any of these is a _controlled change_:**
+1. **Architecture** (component boundaries, the subprocess/sidecar model, data ownership).
+2. **Trust boundary** (who holds leases/keys/secrets; the conductor-never-holds-the-lease rule).
+3. **Security** (the wall, gates, signatures, verified-receipt invariant, fail-closed behavior).
+4. **Execution order** (the phase dependency graph §E, phase scope, or a phase's Merge gate).
+
+**Process for a controlled change (before implementation):**
+1. **Propose** — open a PR (or issue) describing the change and its blast radius; do **not** implement yet.
+2. **Audit** — 📐 ChatGPT reviews (security + architecture); for trust/security/engine items this is 🛑 mandatory.
+3. **Approve** — 👑 Gev approves the *change to the plan*.
+4. **Implement** — only then edit the roadmap + code, in-scope, on a branch, normal PR flow.
+5. **Record** — bump the roadmap version (v1.0 → v1.1 …) and note the change in §I.1 below.
+
+**Not controlled (normal flow, no pre-approval):** checking task boxes, updating `PROJECT_STATE.md`/status,
+fixing typos, clarifying copy, adding a page-spec detail that doesn't change scope/order/security. These
+still go through a PR and Owner merge, but need no §I proposal step.
+
+**Bypassing Change Control is itself a stop condition.** A session that finds it must edit architecture,
+trust, security, or order to make progress **stops** and raises a controlled-change proposal instead.
+
+### I.1 Version log
+| Version | Date | Change | Approved by |
+|---|---|---|---|
+| v1.0 | 2026-07-20 | Initial canonical execution source: 11 phases × 16 sections, per-page UI specs, verified-receipt spine, ownership matrix, artifact registry, change control. | 👑 Gev (on merge) |
 
 ---
 
@@ -1190,14 +1296,14 @@ enforcement CI cannot go green honestly → stop, do not hide it behind skips.
 
 # Appendix · Հավելված
 
-## G. Cross-document sync · Փաստաթղթերի համաժամեցում
+## J. Cross-document sync · Փաստաթղթերի համաժամեցում
 This roadmap is the **execution** authority; `CLAUDE.md` remains the **brain** (identity, rules, env).
 When they touch the same fact (phase list, current state), update **both in the same commit**. Precedence:
 for *scope & sequencing* this roadmap wins; for *rules & environment* `CLAUDE.md` wins; for *look & feel*
 `brops-aios.html` wins. `PROJECT_STATE.md` reflects the live "who's on what / where we are"; `TASKS.md`
 is the claim board. A phase task here should have a matching `TASKS.md` row when someone claims it.
 
-## H. Glossary · Բառարան
+## K. Glossary · Բառարան
 - **The wall / 🧱** — the engine's fail-closed enforcement hook (`bro_hook.py`) governing every tool call.
 - **Lease** — a scoped, single-use Ed25519-signed execution grant, issued **into a builder**, never held
   by the conductor (the desktop is a conductor).
@@ -1212,7 +1318,7 @@ is the claim board. A phase task here should have a matching `TASKS.md` row when
 - **O-1..O-5** — residual/deferred engine security items (bytecode-shadow, audit-head anchor, conductor
   session token, control-room actor, evidence high-water), closed in Phase 10.
 
-## I. Provenance · Ծագում
+## L. Provenance · Ծագում
 Built from: `brops-aios.html` (canonical UI, 22 pages + design tokens), `bridge/DESIGN.md` (APPROVED,
 slice-1 verified 8/8), `bridge/contracts/*.schema.json`, `engine/runtime/bro_receipt.py` +
 `bro_execution_lease.py` + `bro_evidence.py`, and the canonical docs (`CLAUDE.md`, `PROJECT_STATE.md`,

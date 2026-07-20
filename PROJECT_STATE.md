@@ -10,8 +10,10 @@
 ## 📍 Where we are · Որտեղ ենք
 
 - **Canonical execution source:** [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md) — status
-  `Active — Canonical Execution Authority`, **11 phases** fully expanded (16 sections each) with per-page
-  UI specs from `brops-aios.html`. A cold-start session takes the next unchecked task there.
+  `v1.0 · Canonical Execution Authority` 🔒 **Locked** (change-controlled per its §I), **11 phases** fully
+  expanded (16 sections each) with per-page UI specs from `brops-aios.html`, an Execution Ownership Matrix
+  (§G), a Canonical Artifact Registry (§H), and Change Control (§I). A cold-start session takes the next
+  unchecked task there. **Locked = plan change-controlled, not execution frozen** — building proceeds.
 - **Phase 0 — Foundation:** ✅ DONE (locked). OS monorepo assembled (`engine/` = Bro, `apps/desktop/` =
   BroPS, subtree history preserved), bilingual docs, unified CI.
 - **Engine CI:** ✅ green — the 9 monorepo-coupled tests skip-guard themselves (option **C**);
