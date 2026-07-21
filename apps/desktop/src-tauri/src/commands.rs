@@ -73,6 +73,53 @@ fn approval_origins() -> &'static Mutex<HashMap<String, String>> {
     ORIGINS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Max characters for a saved Ask-Bro conversation title (webview-supplied).
+const MAX_CONVERSATION_TITLE_CHARS: usize = 200;
+
+/// Cap on unsaved "Ask Bro" answers held server-side, so repeated asks without a
+/// save cannot grow the store without bound. When full, an arbitrary older entry
+/// is evicted (its only cost is that that answer must be re-asked to be saved).
+const MAX_PENDING_ANSWERS: usize = 32;
+
+/// A one-shot "Ask Bro" answer the SERVER generated, awaiting a save (P1-6). The
+/// webview never carries the agent body — only the opaque `result_id` handed to it
+/// when the stream finished — so a compromised renderer cannot persist agent text
+/// the server never produced; it can only ask to save an answer this session
+/// actually generated. In-memory only: an unsaved answer does not survive a
+/// restart (it is simply re-asked).
+struct PendingAnswer {
+    prompt: String,
+    answer: String,
+}
+
+fn pending_answers() -> &'static Mutex<HashMap<String, PendingAnswer>> {
+    static PENDING: OnceLock<Mutex<HashMap<String, PendingAnswer>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Stash a server-generated answer under a fresh opaque id and return that id.
+fn stash_pending_answer(prompt: String, answer: String) -> String {
+    let result_id = brops_core::id();
+    let mut pending = pending_answers().lock().unwrap_or_else(|p| p.into_inner());
+    if pending.len() >= MAX_PENDING_ANSWERS {
+        if let Some(k) = pending.keys().next().cloned() {
+            pending.remove(&k);
+        }
+    }
+    pending.insert(result_id.clone(), PendingAnswer { prompt, answer });
+    result_id
+}
+
+/// Atomically claim (remove) a pending answer by its opaque id. One-time: a second
+/// claim of the same id returns `None`, and an unknown id returns `None` — a
+/// compromised renderer can neither replay a save nor conjure a valid id.
+fn claim_pending_answer(result_id: &str) -> Option<PendingAnswer> {
+    pending_answers()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(result_id)
+}
+
 // --- projects ---
 
 #[tauri::command]
@@ -288,7 +335,10 @@ pub fn list_messages(state: State<AppState>, conversation_id: String) -> Result<
 /// Roles the webview may persist directly (L-4b). `system` stays server-only:
 /// the renderer can neither impersonate system messages nor widen the
 /// markdown-rendering sink beyond the allowlisted roles.
-const WEBVIEW_MESSAGE_ROLES: &[&str] = &["user", "agent"];
+// P1-6: the webview may post ONLY user messages. Agent/system messages are minted
+// exclusively server-side (the AI reply path, and the scoped `save_ask_to_chat`
+// command) — a compromised renderer cannot forge agent provenance via post_message.
+const WEBVIEW_MESSAGE_ROLES: &[&str] = &["user"];
 
 #[tauri::command]
 pub fn post_message(state: State<AppState>, input: NewMessage) -> Result<Message, String> {
@@ -307,6 +357,70 @@ pub fn post_message(state: State<AppState>, input: NewMessage) -> Result<Message
     };
     let conn = locked(&state)?;
     repo::chat::post_message(&conn, input).map_err(|e| e.to_string())
+}
+
+/// Persist a finished "Ask Bro" result (from `stream_ask`) as a new conversation.
+///
+/// The webview passes ONLY the opaque one-time `result_id` and a display `title` —
+/// never the message bodies. The user question and the agent answer are both taken
+/// from the server-held pending entry the id names, so a compromised renderer cannot
+/// mint an agent message with text the server never generated (P1-6). The id is
+/// consumed on use (one-time). The whole write is one transaction, so a failure
+/// never leaves a conversation with a partial message pair.
+///
+/// NOTE: this closes the role/body-forgery vector only. Binding a message to a
+/// verified per-turn governed receipt is Receipt Protocol v1's job (Wave 3, §I).
+#[tauri::command]
+pub fn save_ask_to_chat(
+    state: State<AppState>,
+    result_id: String,
+    title: String,
+) -> Result<Conversation, String> {
+    require_len("title", &title, MAX_CONVERSATION_TITLE_CHARS)?;
+    // Atomically claim the server-held answer (one-time). An unknown/replayed id is
+    // refused here — the webview cannot supply a body of its own.
+    let claimed = claim_pending_answer(&result_id)
+        .ok_or_else(|| "unknown or already-saved result id".to_string())?;
+
+    let result = (|| -> Result<Conversation, String> {
+        let conn = locked(&state)?;
+        // One transaction: conversation + both messages commit together or not at all.
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let conversation =
+            repo::chat::create_conversation(&tx, "direct", &title).map_err(|e| e.to_string())?;
+        repo::chat::post_message(
+            &tx,
+            NewMessage {
+                conversation_id: conversation.id.clone(),
+                role: "user".to_string(),
+                author: sanitize_author_or(None, "Gev"),
+                body: claimed.prompt.clone(),
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        repo::chat::post_message(
+            &tx,
+            NewMessage {
+                conversation_id: conversation.id.clone(),
+                role: "agent".to_string(),
+                author: "Bro".to_string(),
+                body: claimed.answer.clone(),
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(conversation)
+    })();
+
+    if result.is_err() {
+        // The write failed after the claim — put the answer back so it can be
+        // retried instead of being silently lost.
+        pending_answers()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(result_id, claimed);
+    }
+    result
 }
 
 /// L-4b: preferred write path for human chat input. The role is fixed to
@@ -477,6 +591,10 @@ pub enum StreamEvent {
     Delta { text: String },
     Done { message: Message },
     Error { message: String },
+    /// One-shot `stream_ask` finished: the full answer is held server-side under
+    /// this opaque one-time id. The webview passes it to `save_ask_to_chat` to
+    /// persist the pair — it never carries the agent body itself (P1-6).
+    Ready { result_id: String },
 }
 
 /// Streaming counterpart of `reply_in_conversation`: emits incremental `delta`
@@ -739,9 +857,11 @@ pub async fn stream_run_step(
     Ok(())
 }
 
-/// One-shot "Ask Bro": stream an answer to a single prompt WITHOUT a
-/// conversation or persistence. Deltas arrive on the channel; completion is
-/// signalled by the command returning (no `done` event, nothing is stored).
+/// One-shot "Ask Bro": stream an answer to a single prompt WITHOUT persisting a
+/// conversation. Deltas arrive on the channel; on success a `ready` event carries
+/// an opaque one-time id under which the full answer is held server-side, so
+/// `save_ask_to_chat` can persist the pair without the webview ever supplying the
+/// agent body (P1-6). On failure an `error` event is sent instead.
 #[tauri::command]
 pub async fn stream_ask(prompt: String, on_event: tauri::ipc::Channel<StreamEvent>) -> Result<(), String> {
     let prompt = prompt.trim().to_string();
@@ -750,14 +870,22 @@ pub async fn stream_ask(prompt: String, on_event: tauri::ipc::Channel<StreamEven
         return Ok(());
     }
     let system = "You are Bro, the top-level assistant in the BroPS desktop app for its owner, Gev. Answer the question concisely and helpfully. Do not claim to have taken actions you cannot actually take.".to_string();
-    let history = vec![crate::ai::ChatMsg { role: "user".to_string(), content: prompt }];
+    let history = vec![crate::ai::ChatMsg { role: "user".to_string(), content: prompt.clone() }];
     let ch = on_event.clone();
-    if let Err(e) = crate::ai::generate_stream(&system, &history, move |delta| {
+    match crate::ai::generate_stream(&system, &history, move |delta| {
         let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
     })
     .await
     {
-        let _ = on_event.send(StreamEvent::Error { message: e });
+        Ok(answer) => {
+            // Hold the SERVER-generated answer under an opaque one-time id; hand
+            // the webview only the id (never the body) for a later save.
+            let result_id = stash_pending_answer(prompt, answer);
+            let _ = on_event.send(StreamEvent::Ready { result_id });
+        }
+        Err(e) => {
+            let _ = on_event.send(StreamEvent::Error { message: e });
+        }
     }
     Ok(())
 }
@@ -880,4 +1008,40 @@ pub fn get_analytics(state: State<AppState>) -> Result<Vec<Metric>, String> {
 pub fn get_security_summary(state: State<AppState>) -> Result<SecuritySummary, String> {
     let conn = locked(&state)?;
     repo::security::summary(&conn).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // P1-6 regression guard: the webview `post_message` allowlist must NEVER admit
+    // `agent` (or any non-`user` role). Agent/system messages are minted server-side
+    // only — the AI reply path (`stream_reply`/`stream_run_step`) and the scoped
+    // `save_ask_to_chat` command. Re-adding a role here would let a compromised
+    // renderer forge agent provenance, so this test locks the invariant.
+    #[test]
+    fn webview_message_roles_are_user_only() {
+        assert_eq!(WEBVIEW_MESSAGE_ROLES, &["user"]);
+        assert!(!WEBVIEW_MESSAGE_ROLES.contains(&"agent"));
+        assert!(!WEBVIEW_MESSAGE_ROLES.contains(&"system"));
+    }
+
+    // P1-6, the alternate-mint seam: `save_ask_to_chat` never accepts an agent body.
+    // The only agent text it can persist is a server-generated answer named by an
+    // opaque id. This exercises that id path: an unknown id is refused, a stashed
+    // answer is returned verbatim exactly once, and a replay is refused.
+    #[test]
+    fn pending_answer_is_one_time_and_unknown_ids_are_refused() {
+        // A compromised renderer cannot conjure a valid id.
+        assert!(claim_pending_answer("nonexistent-forged-id").is_none());
+
+        // A server-generated answer round-trips through the opaque id unchanged.
+        let id = stash_pending_answer("what is 2+2?".to_string(), "4".to_string());
+        let first = claim_pending_answer(&id).expect("first claim returns the stashed answer");
+        assert_eq!(first.prompt, "what is 2+2?");
+        assert_eq!(first.answer, "4");
+
+        // One-time: the same id cannot be used to save the answer again.
+        assert!(claim_pending_answer(&id).is_none(), "second claim must be refused");
+    }
 }

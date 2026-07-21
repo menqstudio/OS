@@ -14,6 +14,9 @@ export function Home() {
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Opaque one-time id for the server-held answer (P1-6). The streamed `answer`
+  // above is for display only; saving uses this id, never the local text.
+  const [resultId, setResultId] = useState<string | null>(null);
 
   const ask = async () => {
     const prompt = q.trim();
@@ -21,9 +24,11 @@ export function Home() {
     setAsking(true);
     setAnswer('');
     setAskError(null);
+    setResultId(null);
     try {
       await desktop.streamAsk(prompt, (ev) => {
         if (ev.type === 'delta') setAnswer((prev) => prev + ev.text);
+        else if (ev.type === 'ready') setResultId(ev.resultId);
         else if (ev.type === 'error') setAskError(ev.message);
       });
     } catch (e: unknown) {
@@ -37,25 +42,16 @@ export function Home() {
   // the Chat screen. The question is captured before any await because the input
   // may change while the async work runs; the answer is read from state.
   const saveToChat = async () => {
-    if (saving || asking || !answer || askError) return;
+    if (saving || asking || !answer || askError || !resultId) return;
     const question = q.trim();
-    const savedAnswer = answer;
     const title = question ? question.slice(0, 48) : 'Ask Bro';
     setSaving(true);
     try {
-      const conversation = await desktop.createConversation('direct', title);
-      await desktop.postMessage({
-        conversationId: conversation.id,
-        role: 'user',
-        author: t('chat.you'),
-        body: question || title,
-      });
-      await desktop.postMessage({
-        conversationId: conversation.id,
-        role: 'agent',
-        author: 'Bro',
-        body: savedAnswer,
-      });
+      // P1-6: agent messages are minted server-side only. Pass just the one-time
+      // resultId + a display title — the server persists the held question+answer
+      // pair. The webview never carries the agent body.
+      await desktop.saveAskToChat(resultId, title);
+      setResultId(null);
       toast(t('toast.savedToChat'), 'success');
       setRoute('chat');
     } catch (e: unknown) {
@@ -93,7 +89,7 @@ export function Home() {
             {askError && <div className="chat-hint">⚠ {askError}</div>}
             {!asking && answer && !askError && (
               <div style={{ marginTop: 8 }}>
-                <Button small variant="ghost" onClick={saveToChat} disabled={saving}>
+                <Button small variant="ghost" onClick={saveToChat} disabled={saving || !resultId}>
                   {t('chat.saveToChat')}
                 </Button>
               </div>
