@@ -71,8 +71,12 @@ export function Settings() {
                       )}
                     </span>
                     <span className="row">
-                      <Badge tone={ai.data.governed ? 'success' : 'danger'}>
-                        {ai.data.governed ? t('settings.governed') : t('settings.ungoverned')}
+                      <Badge tone={ai.data.provider === 'none' ? 'warning' : ai.data.governed ? 'success' : 'danger'}>
+                        {ai.data.provider === 'none'
+                          ? t('settings.aiProviderNotConfigured')
+                          : ai.data.governed
+                            ? t('settings.governed')
+                            : t('settings.ungoverned')}
                       </Badge>
                       <Badge tone={ai.data.ready ? 'success' : 'warning'}>
                         {ai.data.ready ? t('settings.aiProviderReady') : t('settings.aiProviderNotReady')}

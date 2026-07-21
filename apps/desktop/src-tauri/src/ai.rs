@@ -375,13 +375,11 @@ fn resolve_provider(env: &ProviderEnv) -> Result<Provider, String> {
             if env.allow_governed {
                 Ok(governed())
             } else if env.allow_ungoverned {
-                // Development ungoverned default: a metered key means Anthropic,
-                // otherwise the local claude CLI. Reached ONLY under the explicit
-                // allow_ungoverned opt-in — never silently.
-                Ok(match key() {
-                    Some(k) => Provider::Anthropic { key: k, model: env.anthropic_model.clone() },
-                    None => claude_cli(),
-                })
+                // Development ungoverned DEFAULT is the LOCAL claude CLI only.
+                // Permission != selection: an ambient ANTHROPIC_API_KEY must NEVER
+                // silently select the remote metered provider — Anthropic requires an
+                // explicit BROPS_AI_PROVIDER=anthropic.
+                Ok(claude_cli())
             } else {
                 Err("no AI provider configured: set BROPS_AI_PROVIDER=governed-engine with BROPS_ALLOW_GOVERNED_ENGINE=1, or BROPS_ALLOW_UNGOVERNED=1 to use a development ungoverned provider".to_string())
             }
@@ -1704,11 +1702,12 @@ mod tests {
     }
 
     #[test]
-    fn default_with_allow_ungoverned_picks_anthropic_only_with_key() {
-        // key present → Anthropic
+    fn default_with_allow_ungoverned_is_claude_cli_never_ambient_anthropic() {
+        // Default (no forced provider) under the dev ungoverned opt-in resolves to the
+        // LOCAL claude CLI — even when an ANTHROPIC_API_KEY is present. Permission is
+        // not selection: Anthropic requires an explicit BROPS_AI_PROVIDER=anthropic.
         let env = ProviderEnv { allow_ungoverned: true, anthropic_key: Some("sk-test".into()), ..base_env() };
-        assert!(matches!(resolve_provider(&env), Ok(Provider::Anthropic { .. })));
-        // no key → the free local claude CLI (NEVER Anthropic-by-accident)
+        assert!(matches!(resolve_provider(&env), Ok(Provider::ClaudeCli { .. })));
         let env = ProviderEnv { allow_ungoverned: true, anthropic_key: None, ..base_env() };
         assert!(matches!(resolve_provider(&env), Ok(Provider::ClaudeCli { .. })));
     }
