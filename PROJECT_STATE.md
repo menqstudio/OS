@@ -26,8 +26,9 @@
 - **Phase 1 — Bridge:** 🔨 in progress — `bridge/DESIGN.md` **APPROVED**; slice 1 (contract + adapter +
   tests + **bridge CI leg**) **merged to `main`** (PR #3, HEAD `41cf4ff`, 10/10 canonical — receipt-must-
   VERIFY invariant landed) **and** slice 2 **transport** — desktop Rust `Provider::GovernedEngine` in
-  `ai.rs` (opt-in, default OFF) + governed sidecar wiring + chat receipt badge + Settings governed-provider
-  toggle — **merged** (PR #8). Slice 2 is **transport/infrastructure only**. **Still pending (not done):**
+  `ai.rs` (opt-in, default OFF) + governed sidecar wiring + chat receipt badge — **merged** (PR #8). *(The
+  Settings governed toggle shipped in PR #8 was **removed in Wave 1** — replaced by a read-only provider
+  status, PR #15.)* Slice 2 is **transport/infrastructure only**. **Still pending (not done):**
   the verify-seam (adapter → injected verifier), receipt-plumbing into the turn, one real governed
   round-trip end-to-end, and governed streaming.
 
@@ -44,7 +45,8 @@
 Follow [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md). Immediate open items:
 
 1. **Phase 1 remaining (post-transport)** — the slice-2 *transport* (sidecar + `Provider::GovernedEngine`
-   opt-in + chat receipt badge + Settings toggle) is **merged** (PR #8). Still to do: the verify-seam
+   opt-in + chat receipt badge) is **merged** (PR #8; the inert Settings toggle was removed in Wave 1,
+   replaced by a read-only provider status). Still to do: the verify-seam
    (adapter → injected verifier), receipt-plumbing into the turn, one real governed round-trip end-to-end,
    and governed streaming (see roadmap Phase 1 task checklist).
 2. **Phase 2 (Governance Sidecar)** — can start now (P1 contract exists): `approvals`/`decisions`/

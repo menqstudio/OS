@@ -31,7 +31,8 @@ const DEFAULT_CLAUDE_BIN: &str = "claude";
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 // Governed engine (opt-in, default OFF): the desktop shells out to the bridge
-// sidecar, which runs the turn behind the engine wall and returns a VERIFIED receipt.
+// sidecar, which runs the turn behind the engine wall. (Real signed-receipt
+// verification is pending — Receipt Protocol v1; the path is fail-closed until then.)
 const DEFAULT_GOVERNED_PYTHON: &str = "python";
 const DEFAULT_GOVERNED_SIDECAR: &str = "bridge/engine_sidecar.py";
 const GOVERNED_TASK_CLASS: &str = "standard-builder"; // engine bro_protected.STANDARD
@@ -469,7 +470,7 @@ pub async fn status() -> AiStatus {
                 detail: if ok {
                     format!("Local Claude Code (`{bin}`) is available — replies use your own login, no API key.")
                 } else {
-                    format!("`{bin}` not found or not logged in. Install/login to Claude Code, set BROPS_CLAUDE_BIN, or set ANTHROPIC_API_KEY.")
+                    format!("`{bin}` not found or not logged in. Install/login to Claude Code, set BROPS_CLAUDE_BIN, or pick another provider via BROPS_AI_PROVIDER (ungoverned providers need BROPS_ALLOW_UNGOVERNED=1).")
                 },
             }
         }
@@ -523,7 +524,7 @@ pub async fn status() -> AiStatus {
             // Real turns require operator provisioning (issuer key + trusted-key
             // registry + workspace binding); until then the sidecar fails closed.
             ready: false,
-            detail: "Governed engine (opt-in): every AI turn runs behind the engine wall and returns a VERIFIED signed receipt. Real turns need an operator-provisioned supervisor sidecar; until provisioned it fails closed. Self-test the plumbing with `python bridge/engine_sidecar.py --self-test`.".into(),
+            detail: "Governed engine (opt-in): AI turns run behind the engine wall. Real signed-receipt verification is still PENDING (Receipt Protocol v1) — the governed path is fail-closed until it lands, and real turns also need an operator-provisioned supervisor sidecar. Self-test the plumbing with `python bridge/engine_sidecar.py --self-test`.".into(),
         },
     }
 }
@@ -922,7 +923,7 @@ async fn claude_cli_stream<F: FnMut(&str)>(
         // (timeout, read error) — never leak a running `claude` process.
         .kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| {
-        format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN, or set ANTHROPIC_API_KEY.")
+        format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN, or pick another provider via BROPS_AI_PROVIDER (ungoverned providers need BROPS_ALLOW_UNGOVERNED=1).")
     })?;
 
     // Feed the transcript over stdin (never argv → not in /proc/<pid>/cmdline) on
@@ -1066,7 +1067,7 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| {
-        format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN to its path, or set ANTHROPIC_API_KEY.")
+        format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN to its path, or pick another provider via BROPS_AI_PROVIDER (ungoverned providers need BROPS_ALLOW_UNGOVERNED=1).")
     })?;
     // Feed the transcript to stdin (never argv → not in /proc/<pid>/cmdline) on a
     // background task that runs concurrently with the timeout-bounded wait — so a
