@@ -88,6 +88,10 @@ export const desktop = {
     invoke<Message>('post_message', {
       input: { ...input, role: allowedRole(input.role) },
     }).then(normalizeMessage),
+  // Agent messages are minted server-side only (P1-6): this scoped command saves a
+  // reviewed Ask-Bro result (user question + agent answer) into a new conversation.
+  saveAskToChat: (title: string, question: string, answer: string) =>
+    invoke<Conversation>('save_ask_to_chat', { title, question, answer }),
   deleteConversation: (id: string) => invoke<void>('delete_conversation', { id }),
   renameConversation: (id: string, title: string) =>
     invoke<Conversation>('rename_conversation', { id, title }),

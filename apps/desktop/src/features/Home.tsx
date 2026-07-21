@@ -43,19 +43,10 @@ export function Home() {
     const title = question ? question.slice(0, 48) : 'Ask Bro';
     setSaving(true);
     try {
-      const conversation = await desktop.createConversation('direct', title);
-      await desktop.postMessage({
-        conversationId: conversation.id,
-        role: 'user',
-        author: t('chat.you'),
-        body: question || title,
-      });
-      await desktop.postMessage({
-        conversationId: conversation.id,
-        role: 'agent',
-        author: 'Bro',
-        body: savedAnswer,
-      });
+      // P1-6: agent messages are minted server-side only. Persist the reviewed
+      // Ask-Bro pair via the scoped command instead of posting an 'agent' message
+      // from the webview.
+      await desktop.saveAskToChat(title, question || title, savedAnswer);
       toast(t('toast.savedToChat'), 'success');
       setRoute('chat');
     } catch (e: unknown) {

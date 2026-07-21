@@ -288,7 +288,10 @@ pub fn list_messages(state: State<AppState>, conversation_id: String) -> Result<
 /// Roles the webview may persist directly (L-4b). `system` stays server-only:
 /// the renderer can neither impersonate system messages nor widen the
 /// markdown-rendering sink beyond the allowlisted roles.
-const WEBVIEW_MESSAGE_ROLES: &[&str] = &["user", "agent"];
+// P1-6: the webview may post ONLY user messages. Agent/system messages are minted
+// exclusively server-side (the AI reply path, and the scoped `save_ask_to_chat`
+// command) — a compromised renderer cannot forge agent provenance via post_message.
+const WEBVIEW_MESSAGE_ROLES: &[&str] = &["user"];
 
 #[tauri::command]
 pub fn post_message(state: State<AppState>, input: NewMessage) -> Result<Message, String> {
@@ -307,6 +310,44 @@ pub fn post_message(state: State<AppState>, input: NewMessage) -> Result<Message
     };
     let conn = locked(&state)?;
     repo::chat::post_message(&conn, input).map_err(|e| e.to_string())
+}
+
+/// Persist a reviewed "Ask Bro" result to a new conversation. Because the webview
+/// can no longer mint agent messages via `post_message` (P1-6), this scoped command
+/// creates the user+agent pair SERVER-SIDE with fixed roles. NOTE: the answer body is
+/// a user-reviewed result, not a fresh governed turn — genuine per-turn provenance
+/// (signed-receipt binding) is Receipt Protocol v1's job, tracked separately.
+#[tauri::command]
+pub fn save_ask_to_chat(
+    state: State<AppState>,
+    title: String,
+    question: String,
+    answer: String,
+) -> Result<Conversation, String> {
+    let conn = locked(&state)?;
+    let conversation =
+        repo::chat::create_conversation(&conn, "direct", &title).map_err(|e| e.to_string())?;
+    repo::chat::post_message(
+        &conn,
+        NewMessage {
+            conversation_id: conversation.id.clone(),
+            role: "user".to_string(),
+            author: sanitize_author_or(None, "Gev"),
+            body: question,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    repo::chat::post_message(
+        &conn,
+        NewMessage {
+            conversation_id: conversation.id.clone(),
+            role: "agent".to_string(),
+            author: "Bro".to_string(),
+            body: answer,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conversation)
 }
 
 /// L-4b: preferred write path for human chat input. The role is fixed to
@@ -880,4 +921,21 @@ pub fn get_analytics(state: State<AppState>) -> Result<Vec<Metric>, String> {
 pub fn get_security_summary(state: State<AppState>) -> Result<SecuritySummary, String> {
     let conn = locked(&state)?;
     repo::security::summary(&conn).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // P1-6 regression guard: the webview `post_message` allowlist must NEVER admit
+    // `agent` (or any non-`user` role). Agent/system messages are minted server-side
+    // only — the AI reply path (`stream_reply`/`stream_run_step`) and the scoped
+    // `save_ask_to_chat` command. Re-adding a role here would let a compromised
+    // renderer forge agent provenance, so this test locks the invariant.
+    #[test]
+    fn webview_message_roles_are_user_only() {
+        assert_eq!(WEBVIEW_MESSAGE_ROLES, &["user"]);
+        assert!(!WEBVIEW_MESSAGE_ROLES.contains(&"agent"));
+        assert!(!WEBVIEW_MESSAGE_ROLES.contains(&"system"));
+    }
 }
