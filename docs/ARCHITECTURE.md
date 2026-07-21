@@ -44,9 +44,9 @@ Today (in `apps/desktop/`) the `ai.rs` layer spawns the `claude` CLI directly in
 
 ### What is NOT done yet (Phase 0 scope)
 
-- `bridge/` and `contracts/` are placeholders describing intent — no integration code yet.
-- The desktop still spawns `claude` directly; the engine still runs standalone.
-- Both halves build and test independently. This is intentional: Phase 0 assembles, it does not wire.
+- `contracts/` is a placeholder describing intent — no dedupe code yet.
+- The desktop no longer *only* spawns `claude` directly: **Phase 1** added an **opt-in governed provider** (`Provider::GovernedEngine` in `ai.rs`, default OFF, merged PR #8) that routes an AI turn through the engine sidecar. This is **transport only** — the direct `claude` path is still the default, and the verify-seam, receipt-plumbing, governed streaming, and a real end-to-end round-trip are still pending.
+- Both halves still build and test independently. Phase 0 assembled; Phase 1 has begun wiring (transport landed, governance of the turn not yet complete).
 
 ---
 
@@ -90,6 +90,6 @@ OS-ը **monorepo** ա, որ միավորում ա governance **engine**-ը (`eng
 
 ### Ինչ դեռ արված չէ (Phase 0-ի scope)
 
-- `bridge/` ու `contracts/`-ը placeholder են՝ intent-ը նկարագրող, ոչ integration կոդ։
-- Desktop-ը դեռ ուղիղ `claude` ա spawn անում; engine-ը դեռ standalone ա։
-- Երկու կեսն էլ independently build ու test են։ Սա միտումնավոր ա՝ Phase 0-ը հավաքում ա, ոչ wire անում։
+- `contracts/`-ը placeholder ա՝ intent-ը նկարագրող, ոչ dedupe կոդ։
+- Desktop-ը այլևս *միայն* ուղիղ `claude` չի spawn անում. **Phase 1**-ը ավելացրեց **opt-in governed provider** (`Provider::GovernedEngine` `ai.rs`-ում, default OFF, merged PR #8), որ AI turn-ը route ա անում engine sidecar-ով։ Սա **transport-only** ա — ուղիղ `claude` path-ը դեռ default ա, ու verify-seam-ը, receipt-plumbing-ը, governed streaming-ը ու իրական end-to-end round-trip-ը դեռ pending են։
+- Երկու կեսն էլ դեռ independently build ու test են։ Phase 0-ը հավաքեց; Phase 1-ը սկսել ա wire անել (transport-ը land ա, turn-ի governance-ը դեռ ամբողջական չէ)։

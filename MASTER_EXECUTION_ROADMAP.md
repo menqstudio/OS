@@ -44,7 +44,7 @@ phase. That is the whole onboarding for *building*.
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Foundation | ✅ **Locked (done)** |
-| 1 | Bridge | 🔨 **In progress** — slice 1 (contract + adapter + tests + bridge CI leg) **merged to `main`** (PR #3, `41cf4ff`, 10/10); desktop Rust wiring (`Provider::GovernedEngine`) + slices 2–3 open |
+| 1 | Bridge | 🔨 **In progress** — slice 1 (contract + adapter + tests + bridge CI leg) **merged** (PR #3, `41cf4ff`, 10/10); slice 2 **transport** (desktop `Provider::GovernedEngine` in `ai.rs` opt-in + sidecar wiring + chat receipt badge + Settings toggle) **merged** (PR #8); verify-seam · receipt-plumbing · streaming · real e2e still open |
 | 2 | Governance Sidecar | ⏳ Ready (P1 contract exists) |
 | 3 | Desktop Integration | ⏳ Blocked on P1 round-trip + P2 gate |
 | 4 | UI/UX System | ⏳ Blocked on P3 |
@@ -510,17 +510,17 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
 **Definition of Done.**
 - [x] `task-request` + `bridge-result` contracts defined and tested.
 - [x] Adapter (`engine_adapter.py`) built; slice-1 tests **10/10** (PR #3, commit `5be8d95`).
-- [ ] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **not yet implemented** (design only; slice 2).
-- [ ] One governed round-trip proven end-to-end (or documented manual smoke) — **slice 2**.
+- [x] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **transport shipped** (PR #8, slice 2).
+- [ ] One governed round-trip proven end-to-end (or documented manual smoke) — **still open** (verify-seam + receipt-plumbing).
 - [ ] Governed streaming path — **slice 3**.
 - [x] Bridge CI leg added and green (PR #3, merged to `main`).
-- [ ] Chat receipt badge + settings toggle shipped in the cockpit UI.
+- [x] Chat receipt badge + settings toggle shipped in the cockpit UI — **transport** (PR #8).
 
 **Task checklist.**
 - [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`).
 - [ ] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence.
 - [x] Bridge CI leg added to the unified workflow (PR #3, merged `41cf4ff`).
-- [ ] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider toggle (per UI/UX above).
+- [x] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider toggle (per UI/UX above) — **transport** (PR #8).
 - [ ] Slice 3 — governed streaming (deltas through the wall), receipt at end.
 - [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands.
 

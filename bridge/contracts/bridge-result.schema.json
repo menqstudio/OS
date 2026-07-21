@@ -28,5 +28,35 @@
       "description": "The governed-run receipt (from bro_supervisor.SupervisorResult), verified. Mandatory (with verified:true) alongside any result."
     },
     "error": { "type": ["string", "null"] }
-  }
+  },
+  "allOf": [
+    {
+      "comment": "ok:true REQUIRES a non-null string result AND a receipt object with verified:true.",
+      "if": {
+        "properties": { "ok": { "const": true } },
+        "required": ["ok"]
+      },
+      "then": {
+        "properties": {
+          "result": { "type": "string" },
+          "receipt": {
+            "type": "object",
+            "required": ["verified"],
+            "properties": { "verified": { "const": true } }
+          }
+        },
+        "required": ["result", "receipt"]
+      }
+    },
+    {
+      "comment": "ok:false NEVER carries a result: result must be null.",
+      "if": {
+        "properties": { "ok": { "const": false } },
+        "required": ["ok"]
+      },
+      "then": {
+        "properties": { "result": { "type": "null" } }
+      }
+    }
+  ]
 }
