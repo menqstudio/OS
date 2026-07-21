@@ -1,10 +1,11 @@
-# Wave 3 — Receipt Protocol v1 · DESIGN (rev 3, design-only)
+# Wave 3 — Receipt Protocol v1 · DESIGN (rev 4, design-only)
 
-> **Status:** DESIGN-ONLY. rev 3 closes the four normative points the Architect
-> required before Wave 3a implementation (canonicalization + exact output bytes;
-> complete verification checklist; atomic nonce-consume+persist with blocked evidence
-> kept off `messages`; manifest anti-rollback + normative 3a trust states). **No
-> product code** ships until this is Architect-GREEN. Builds on merged T-010 + T-011.
+> **Status:** DESIGN-ONLY. rev 4 closes the final protocol-sweep normative points:
+> the **signed-envelope wire format** + strict decode/parse rules; **tri-state**
+> storage/outcome (dev-untrusted renders+persists); **every signed field bound** in
+> the verification checklist; **manifest key `trust_class` + anti-rollback on
+> same-epoch-different-hash**. **No product code** ships until this is Architect-GREEN.
+> Builds on merged T-010 + T-011.
 
 ## 0. The defect (audit P0-2)
 
@@ -79,6 +80,26 @@ install_id, request_nonce, system_sha256, history_sha256, generation_config_sha2
 requested_at }`. The desktop builds this envelope when it issues the request, hashes it
 (JCS + SHA-256), and later requires the receipt's `request_sha256` to equal it.
 
+### 2.3 Wire format & strict decoding — Ratified (normative)
+The signature covers the **exact canonical bytes**, so those exact bytes travel on the
+wire (never a re-serialized object):
+```
+receipt.envelope_jcs_b64 = base64url( JCS(envelope) bytes )
+receipt.signature_b64    = base64url( Ed25519 signature )
+```
+The desktop MUST, in order:
+1. base64url-**decode** to the exact envelope bytes (enforce a **max size**, e.g. 64 KiB).
+2. **Strict-parse** the bytes as JSON with: **UTF-8 only, reject duplicate keys, reject
+   unknown fields, fixed field types**, required fields present, and each hash field a
+   lowercase 64-hex string.
+3. Require **`JCS(parsed) == decoded bytes`** — the received bytes are already canonical
+   (rejects a maliciously non-canonical encoding that a lax parser would accept).
+4. **Verify the signature over the decoded bytes** (not over a re-encode).
+5. **Store the decoded bytes unchanged** (§4).
+
+This closes JSON parser-differential attacks: two parsers must not be able to read the
+same bytes with different meaning.
+
 ## 3. Verification seam — desktop = final authority, fail-closed
 
 **The desktop verifier is the final authority; the Python adapter check is
@@ -100,7 +121,15 @@ each with an **expected-value comparison**, any failure → **Blocked**:
    **not revoked** (§5).
 7. `output_sha256` (§2.1) recomputed from the returned bytes == envelope; `system_sha256`
    / `history_sha256` == what the desktop sent.
-8. Any mismatch/absence → **Blocked**. "No verified signature ⇒ no result."
+8. **Every remaining signed field is bound**, not merely present:
+   - `containment_evidence_sha256` == the hash of the **stored/returned containment
+     evidence artifact** (the artifact is persisted, so the hash is semantically
+     auditable later — a bare hash with no artifact proves nothing).
+   - `executor_id` / `builder_id` are in the **expected/allowed** set for this install.
+   - `receipt_id` is **globally unique** (never seen before — durable check).
+   - `requested_at <= completed_at`, and both satisfy the **allowed freshness / clock-skew
+     window** (a stale or future-dated receipt is refused).
+9. Any mismatch/absence → **Blocked**. "No verified signature ⇒ no result."
 
 Pure and unit-testable: each binding has a negative test (bad signature, wrong key,
 out-of-window/revoked key, policy/config mismatch, replayed/absent nonce, wrong
@@ -110,27 +139,30 @@ workspace/install, output mismatch → Blocked; a fully-matching receipt → the
 
 > 0013 is T-011's `run_steps.execution_attempt_id`; the receipt migration is **0014**.
 
-**Accepted output and blocked evidence are stored separately:**
-- **`messages`** holds **only accepted (verified) output.** A blocked verification
-  never becomes an agent message.
+**Accepted output and blocked evidence are stored separately, tri-state:**
+- **`messages`** holds **accepted output** — both `trusted_verified` **and**
+  `development_untrusted` render **and** persist (they differ only in the badge, §6). A
+  `blocked` verification **never** becomes an agent message.
 - **`receipt_verification_attempts`** holds every attempt's evidence: the **exact
-  canonical envelope bytes** (as received, not a re-serialized object) + **signature**
-  + `key_id` + `outcome` (`verified`|`blocked`) + `verification_error` + `verified_at`
-  + a link to the resulting message when accepted. This is the auditable/re-verifiable
-  record.
+  canonical envelope bytes** (as decoded, not re-serialized) + **signature** + `key_id`
+  + **`outcome` (tri-state: `trusted_verified` | `development_untrusted` | `blocked`)** +
+  `verification_error` + `verified_at` + a link to the resulting message for the two
+  accepted outcomes. This is the auditable/re-verifiable record. The message's rendered
+  trust badge is derived from its attempt's `outcome`.
 
 **Atomic verify → consume → persist (one DB transaction):**
 ```
 BEGIN
-  verify the receipt (§3)
+  verify the receipt (§3) -> resolve outcome (trusted_verified | development_untrusted | blocked)
   consume the issued nonce (mark the desktop's one-time challenge spent)
   insert the receipt_verification_attempts row (envelope bytes + signature + outcome)
-  if verified: insert the agent message (linked to the attempt)
+  if outcome is ACCEPTED (trusted_verified OR development_untrusted):
+      insert the agent message (linked to the attempt; badge derived from outcome)
 COMMIT
 ```
-So a crash can neither persist a verified message without consuming its nonce, nor
-consume a nonce without persisting the verified message. A blocked attempt records
-evidence + error and **does not** insert a `messages` row.
+So a crash can neither persist an accepted message without consuming its nonce, nor
+consume a nonce without persisting the message. A `blocked` attempt records evidence +
+error and **does not** insert a `messages` row.
 
 ## 5. Keys, signed manifest & anti-rollback — Ratified
 
@@ -140,24 +172,33 @@ evidence + error and **does not** insert a `messages` row.
   unauthenticated TOFU, not a plain editable config. The **webview has no key-registry
   command.**
 - **Manifest fields:** top-level `manifest_version`, `manifest_epoch`, `issued_at`,
-  `expires_at`, root signature; per key: `key_id`, `public_key`, `supervisor_id`,
-  `workspace`/scope, `valid_from`/`valid_to`, `key_epoch`, revocation status.
-- **Anti-rollback:** a signed OLD manifest is still cryptographically valid and could
+  `expires_at`, root signature; **per key:** `key_id`, `public_key`, `supervisor_id`,
+  `workspace`/scope, `valid_from`/`valid_to`, `key_epoch`, revocation status, and — new —
+  **`trust_class: production | development`**, **`allowed_protocols`** (e.g.
+  `["brops.receipt.v1"]`), and **`allowed_audiences`/install scope**. A key's
+  `trust_class` is what decides `trusted_verified` vs `development_untrusted` (§6) — the
+  classification is **signed into the manifest**, not inferred.
+- **Anti-rollback:** a signed OLD manifest stays cryptographically valid and could
   re-introduce a revoked key. The desktop **durably records the highest accepted
-  `manifest_epoch`** and **refuses any manifest with a lower epoch** (and any past
-  `expires_at`). Revocation is therefore not undo-able by replaying an old manifest.
-- **Development key** may exist but drives only the `development_untrusted` state (§6) —
-  never "Verified".
+  `manifest_epoch` AND that manifest's hash**, and refuses a manifest when:
+  `epoch < highest_epoch`, **OR** `epoch == highest_epoch AND manifest_hash differs`,
+  **OR** `now > expires_at`. Persisting `(highest_epoch, manifest_hash)` is **atomic**.
+- **Wave 3a never hard-codes `trusted_verified`** — a missing/invalid/rolled-back
+  manifest yields `blocked` (or `development_untrusted` only for an explicit dev key in
+  dev mode), never a forced "Verified".
 
 ## 6. Trust states (3a) — Ratified (normative)
 
 The desktop resolves every governed reply to exactly one state:
 
-| State | Meaning |
-|---|---|
-| `trusted_verified` | Full signature + all §3 bindings pass under a **production** key. **Only reachable after Wave 3b** (isolated signer). The only state that renders "Verified". |
-| `development_untrusted` | Signature valid but under a **development** key, in explicit dev mode. Renders **Development / untrusted** — never "Verified". |
-| `blocked` | Missing / invalid / untrusted / policy-mismatched / replayed receipt. Not rendered, not persisted to `messages`; evidence goes to `receipt_verification_attempts`. |
+| State | Renders? | Persists to `messages`? | Badge |
+|---|---|---|---|
+| `trusted_verified` | yes | yes | **Verified** — full signature + all §3 bindings under a key whose manifest `trust_class == production`. **Only reachable after Wave 3b.** |
+| `development_untrusted` | yes | yes | **Development / untrusted** — signature + bindings pass but the key's `trust_class == development` (explicit dev mode). Never "Verified". |
+| `blocked` | no | **no** | none — missing/invalid/untrusted/policy-mismatched/replayed/rolled-back receipt. Evidence → `receipt_verification_attempts` only. |
+
+The state is decided by the signed `trust_class` of the verifying key (§5), not
+inferred by the desktop.
 
 **Wave 3a never yields `trusted_verified`** — it ships the verifier and the dev/blocked
 states; production "Verified" appears only once 3b's isolated signer + provisioned
@@ -209,6 +250,19 @@ display one verified chunk.** Per-delta hash-chain / Merkle receipts are deferre
 7. **Trust states** `trusted_verified` (only after 3b) / `development_untrusted` /
    `blocked` are normative; **3a never renders "Verified"**.
 8. **Migration 0014** stores the full envelope + signature + verified_at + error.
+9. **Wire format** = `envelope_jcs_b64` + `signature_b64`; strict decode (size cap,
+   duplicate-key + unknown-field rejection, fixed types, `JCS(parsed)==decoded bytes`,
+   verify over decoded bytes, store bytes unchanged) — no parser differentials (§2.3).
+10. **Tri-state** everywhere: both `trusted_verified` and `development_untrusted`
+    render **and** persist to `messages` (differ only in badge); `receipt_verification_
+    attempts.outcome` is the tri-state (§4).
+11. **All signed fields bound** — `containment_evidence_sha256` (== stored artifact
+    hash), `executor_id`/`builder_id` allowed, `receipt_id` globally unique,
+    `requested_at <= completed_at` + freshness/skew (§3.8).
+12. **Manifest key `trust_class` (production|development) + allowed_protocols/audiences**
+    are signed; anti-rollback also refuses `epoch == highest AND manifest_hash differs`;
+    `(highest_epoch, manifest_hash)` persisted atomically; 3a never hard-codes
+    `trusted_verified` (§5).
 
 **No product code is authored under this document.** Implementation begins only after
 Architect + Owner approval.
