@@ -1,202 +1,214 @@
-# Wave 3 — Receipt Protocol v1 · DESIGN (rev 2, design-only)
+# Wave 3 — Receipt Protocol v1 · DESIGN (rev 3, design-only)
 
-> **Status:** DESIGN-ONLY, revised to the Architect's ratified decisions (YELLOW →
-> direction approved with redlines). **No product code** ships under this document
-> until it is approved. Every "Decision" below is now **ratified** unless marked open.
-> Builds on the merged, bounded control plane: T-010 (capability boundary) + T-011
-> (durable approval + native confirmation + atomic execution claim).
+> **Status:** DESIGN-ONLY. rev 3 closes the four normative points the Architect
+> required before Wave 3a implementation (canonicalization + exact output bytes;
+> complete verification checklist; atomic nonce-consume+persist with blocked evidence
+> kept off `messages`; manifest anti-rollback + normative 3a trust states). **No
+> product code** ships until this is Architect-GREEN. Builds on merged T-010 + T-011.
 
 ## 0. The defect (audit P0-2)
 
-A governed turn returns a **self-asserted** receipt: the bridge-result carries
-`receipt.verified: bool`, and both the Python adapter and the desktop
-(`ai::interpret_bridge_result`) accept the reply when `ok && receipt.verified`. But
-`verified` is a field a process **sets** — a compromised sidecar can set it `true` and
-mint a forged "Verified" reply. **Even the desktop check is self-asserted today** (it
-trusts the boolean in the bridge-result). Wave 3 makes the receipt a **signature the
-desktop cryptographically verifies**, so an unforgeable "Verified" is the only way a
-governed reply renders.
+A governed turn returns a **self-asserted** receipt (`receipt.verified: bool`) that
+both the Python adapter and the desktop trust. A compromised sidecar can set it `true`.
+Wave 3 replaces the boolean with a **signature the desktop cryptographically verifies**
+against a pinned key, so an unforgeable "Verified" is the only way a governed reply
+renders.
 
 ## 1. Key custody — Ratified: **Option B-core**
 
-A signature is only as trustworthy as **who holds the signing key**. If the private
-key lives in the sidecar process, a compromised sidecar (P0-3) signs a forged receipt
-just as easily as it sets `verified: true` today — so crypto plumbing **alone** does
-not close P0-2. Therefore the trusted-signer boundary's **minimal core is pulled into
-Wave 3**, not deferred to Wave 5.
+Crypto plumbing alone does not close P0-2: if the private key is reachable by the
+sidecar (P0-3), a compromised sidecar signs a forged receipt as easily as it sets the
+boolean today. So the trusted-signer boundary's **minimal core is in Wave 3**.
 
-**Sequence (ratified):**
-- **Wave 3a** — protocol + **desktop verifier** (fail-closed). Verification is real,
-  but until 3b the governed path stays **opt-in + fail-closed** and the UI shows
-  **Development / untrusted**, never "Verified".
-- **Wave 3b** — **minimal isolated trusted signer** with real key custody (the private
-  key lives in a boundary the sidecar cannot reach). **Only after 3b does "Verified"
-  appear.**
+- **Wave 3a** — protocol + **desktop verifier** (fail-closed). UI shows
+  **development/untrusted**, never "Verified".
+- **Wave 3b** — **minimal isolated trusted signer** with real key custody (private key
+  unreachable by the sidecar). **Only after 3b does "Verified" render.**
 - **Wave 5** — full signer/supervisor hardening.
 
-**The trusted signer is NOT a generic `sign(arbitrary_bytes)` oracle.** It
-independently **validates** the supervisor outcome / policy / containment evidence and
-signs **only its own canonically-constructed receipt** for a run it recognizes as
-completed-and-contained. A signer that will sign any bytes handed to it is equivalent
-to the boolean.
+The signer is **not a generic `sign(arbitrary_bytes)` oracle**: it independently
+validates the supervisor outcome / policy / containment evidence and signs **only its
+own canonically-constructed receipt** for a run it recognizes as completed-and-contained.
 
-## 2. Receipt envelope (what gets signed)
+## 2. Canonicalization & the receipt envelope — Ratified (normative)
 
-A canonical envelope, **RFC 8785 (JSON Canonicalization Scheme)** or canonical CBOR —
-**not** merely "fixed JSON field order". Cross-language (Rust signer/verifier ↔ Python
-adapter) **byte equality is part of the specification**; the chosen canonicalization is
-normative and tested for identical bytes on both sides.
+- **Canonicalization = RFC 8785 (JSON Canonicalization Scheme, JCS).** Normative; the
+  Rust signer/verifier and the Python adapter MUST produce **byte-identical** canonical
+  bytes for the same envelope (cross-language byte-equality is tested).
+- `receipt_signature = Ed25519(private_key, JCS(envelope))`.
 
-Fields (all mandatory unless noted):
+Envelope fields (all mandatory unless noted):
 
 ```
-protocol            "brops.receipt.v1"          domain separation
-receipt_id                                       unique per receipt
-key_id                                            which signing key (manifest, §5)
-workspace_id / audience                           binds the receipt to this install
-request_nonce                                     DESKTOP-generated challenge (§3)
-request_sha256                                    hash of the exact governed request
-decision            completed | denied | uncontained   (only "completed" is a grant)
+protocol                 "brops.receipt.v1"     domain separation
+receipt_id                                        unique per receipt
+key_id                                             signing key (manifest, §5)
+workspace_id                                       the workspace
+install_id / audience                              THIS install (separate from workspace_id)
+request_nonce                                       DESKTOP-generated challenge (§3)
+request_sha256                                      JCS-hash of the canonical request envelope (§2.2)
+decision                 completed|denied|uncontained   (only "completed" is a grant)
 policy_id
 policy_version
-policy_bundle_sha256                              the exact policy bundle in force
-containment_evidence_sha256                       proof the run stayed contained
-generation_config_sha256                          provider/model/tools/limits
-system_sha256                                     exact system prompt behind the wall
-history_sha256                                    exact turn input behind the wall
-output_sha256                                     exact reply bytes (see §2.1)
-executor_id / builder_id                          who ran the turn
-supervisor_id                                     the signing supervisor identity
+policy_bundle_sha256                               the exact policy bundle in force
+containment_evidence_sha256                        proof the run stayed contained
+generation_config_sha256                           provider/model/tools/limits
+system_sha256                                       exact system prompt behind the wall
+history_sha256                                      exact turn input behind the wall
+output_sha256                                       SHA-256 of the exact reply bytes (§2.1)
+executor_id / builder_id                            who ran the turn
+supervisor_id                                       signing supervisor identity
 requested_at
 completed_at
 ```
-`receipt_signature = Ed25519(private_key, canonical(envelope))`. The bridge-result
-becomes `{ ok, result, receipt: { envelope, signature }, error }`; the boolean
-`receipt.verified` is **removed** — verification is a signature check, not a field.
+The boolean `receipt.verified` is **removed** — verification is a signature check.
+Policy binding + containment-evidence hash are **mandatory**: a signature without them
+proves only "some signer signed this output", not "produced under *this* policy and
+contained".
 
-**Policy binding + containment-evidence hash are mandatory.** Without them a valid
-signature proves only "some signer signed this output", not "this output was produced
-under *this* policy and stayed contained".
+### 2.1 Exact output bytes — Ratified (normative)
+`output_sha256 = SHA-256(exact UTF-8 result bytes)`. **No NFC normalization, no
+trimming, no line-ending rewrite, no transformation of any kind.** The **byte sequence
+that is hashed, rendered, and persisted is literally identical** — the output is
+treated as opaque bytes end-to-end.
 
-### 2.1 Exact output bytes (normative)
-The signed `output_sha256` MUST be the hash of the **exact byte sequence that is
-rendered and persisted** — no post-signature transformation. Define one rule: the
-output is **UTF-8, NFC-normalized, with trailing-whitespace trimmed** (final spec TBD
-in 3a), applied **before** hashing, rendering, and persistence, so the three are the
-same bytes.
+### 2.2 Canonical request envelope — Ratified
+`request_sha256` is the **JCS-hash of a defined canonical request envelope** (not a
+vague "exact governed request"): `{ protocol: "brops.request.v1", workspace_id,
+install_id, request_nonce, system_sha256, history_sha256, generation_config_sha256,
+requested_at }`. The desktop builds this envelope when it issues the request, hashes it
+(JCS + SHA-256), and later requires the receipt's `request_sha256` to equal it.
 
-## 3. Verification seam (desktop = final authority, fail-closed)
+## 3. Verification seam — desktop = final authority, fail-closed
 
-**The desktop verifier is the final authority; the Python adapter's check is
-defense-in-depth only.** Before returning any governed reply, the desktop MUST:
+**The desktop verifier is the final authority; the Python adapter check is
+defense-in-depth only.** Before returning any governed reply the desktop MUST verify —
+each with an **expected-value comparison**, any failure → **Blocked**:
 
-1. Parse `receipt.envelope` + `receipt.signature`.
-2. Verify Ed25519 against the **pinned public key** for `key_id` from the trusted key
-   manifest (§5) — never a key taken from the bridge-result.
-3. `protocol == "brops.receipt.v1"` and `decision == "completed"`.
-4. `request_nonce` equals the **one-time challenge this desktop generated** for this
-   turn and has not been consumed — stored in **durable one-time state** (a
-   signer-generated nonce does not prevent replay). `workspace_id`/audience match.
-5. Recompute `output_sha256` (per §2.1) from the returned `result` and require
-   equality — the signature must cover the exact rendered/persisted bytes.
-6. (Bind the turn) `system_sha256`/`history_sha256`/`request_sha256` match what the
-   desktop sent.
-7. Any failure → **Blocked**, never rendered, never persisted as an agent message.
-   "No verified signature ⇒ no result."
+1. `protocol == "brops.receipt.v1"`; Ed25519 signature valid over `JCS(envelope)`
+   against the **pinned public key** for `key_id` from the trusted manifest (§5).
+2. `decision == "completed"`.
+3. `request_nonce` == the one-time challenge THIS desktop issued for this turn, still
+   unconsumed (durable one-time state, §4); `request_sha256` == the desktop's canonical
+   request-envelope hash (§2.2).
+4. **Identity/scope bindings all match expected:** `workspace_id`, `install_id`/audience,
+   `supervisor_id`.
+5. **Policy/config bindings all match expected:** `policy_id`, `policy_version`,
+   `policy_bundle_sha256`, `generation_config_sha256`.
+6. **Key bindings:** the `key_id`'s manifest entry is in **scope**, inside its
+   **validity window** (`valid_from`/`valid_to`), at an accepted **key epoch**, and
+   **not revoked** (§5).
+7. `output_sha256` (§2.1) recomputed from the returned bytes == envelope; `system_sha256`
+   / `history_sha256` == what the desktop sent.
+8. Any mismatch/absence → **Blocked**. "No verified signature ⇒ no result."
 
-Pure and unit-testable: bad signature, wrong/absent `key_id`, `decision != completed`,
-output mismatch, replayed/absent nonce, wrong workspace → all Blocked; a valid receipt
-→ the reply.
+Pure and unit-testable: each binding has a negative test (bad signature, wrong key,
+out-of-window/revoked key, policy/config mismatch, replayed/absent nonce, wrong
+workspace/install, output mismatch → Blocked; a fully-matching receipt → the reply).
 
-## 4. Storage — migration **0014** (renumbered)
+## 4. Storage & atomicity — migration **0014** (normative)
 
-> 0013 is now T-011's `run_steps.execution_attempt_id`; the receipt migration is
-> **0014**.
+> 0013 is T-011's `run_steps.execution_attempt_id`; the receipt migration is **0014**.
 
-`messages` gains a **full auditable receipt record**, not just a status:
-`receipt_status` (`verified` | `blocked` | NULL), the **full signed envelope JSON**,
-the **signature**, `key_id`, `verified_at`, and `verification_error` (why a receipt was
-blocked). Storing the whole envelope + signature lets a receipt be **re-verified /
-audited later**. A DB trigger keeps `receipt_status` in the allowed set. The webview
-never writes a `verified` receipt (Wave 2a posture) — only the governed reply path
-does, after a real signature check.
+**Accepted output and blocked evidence are stored separately:**
+- **`messages`** holds **only accepted (verified) output.** A blocked verification
+  never becomes an agent message.
+- **`receipt_verification_attempts`** holds every attempt's evidence: the **exact
+  canonical envelope bytes** (as received, not a re-serialized object) + **signature**
+  + `key_id` + `outcome` (`verified`|`blocked`) + `verification_error` + `verified_at`
+  + a link to the resulting message when accepted. This is the auditable/re-verifiable
+  record.
 
-## 5. Keys, manifest & rotation — Ratified
+**Atomic verify → consume → persist (one DB transaction):**
+```
+BEGIN
+  verify the receipt (§3)
+  consume the issued nonce (mark the desktop's one-time challenge spent)
+  insert the receipt_verification_attempts row (envelope bytes + signature + outcome)
+  if verified: insert the agent message (linked to the attempt)
+COMMIT
+```
+So a crash can neither persist a verified message without consuming its nonce, nor
+consume a nonce without persisting the verified message. A blocked attempt records
+evidence + error and **does not** insert a `messages` row.
 
-- **Algorithm:** Ed25519 (`ed25519-dalek` in Rust, `pynacl`/`cryptography` in Python).
-- **Trust anchoring:** a **binary-pinned root trust anchor** + an **operator-provisioned
-  signed key manifest**. **Not** a universal leaf public key baked into the binary,
-  **not** unauthenticated first-run TOFU, **not** a plain editable config file.
-- **Signed manifest** contains, per key: `key_id`, `public_key`, `supervisor_id`,
-  `workspace`/scope, `valid_from` / `valid_to`, `key_epoch`, revocation status. The
-  desktop accepts the manifest **only** if it validates against the binary-pinned root
-  signature. The **webview has no command to change the key registry.**
-- **Development key** may exist but the UI must label it **Development / untrusted** —
+## 5. Keys, signed manifest & anti-rollback — Ratified
+
+- **Algorithm:** Ed25519 (`ed25519-dalek` / `pynacl`).
+- **Trust anchoring:** a **binary-pinned root trust anchor** validates an
+  **operator-provisioned signed key manifest**. Not a baked-in leaf key, not
+  unauthenticated TOFU, not a plain editable config. The **webview has no key-registry
+  command.**
+- **Manifest fields:** top-level `manifest_version`, `manifest_epoch`, `issued_at`,
+  `expires_at`, root signature; per key: `key_id`, `public_key`, `supervisor_id`,
+  `workspace`/scope, `valid_from`/`valid_to`, `key_epoch`, revocation status.
+- **Anti-rollback:** a signed OLD manifest is still cryptographically valid and could
+  re-introduce a revoked key. The desktop **durably records the highest accepted
+  `manifest_epoch`** and **refuses any manifest with a lower epoch** (and any past
+  `expires_at`). Revocation is therefore not undo-able by replaying an old manifest.
+- **Development key** may exist but drives only the `development_untrusted` state (§6) —
   never "Verified".
-- **Rotation/revocation** via `key_id`/`key_epoch` selection over the pinned manifest.
 
-## 6. Streaming — Ratified: sign-on-complete for v1
+## 6. Trust states (3a) — Ratified (normative)
 
-Sign the **final assembled output**, once, on completion. Until final signature
-verification, governed deltas:
-- MUST NOT render as trusted,
-- MUST NOT persist as an `agent` message,
-- MUST NOT receive a verified badge.
+The desktop resolves every governed reply to exactly one state:
 
-V1 flow: **buffer the whole governed output on the desktop → verify → display as a
-single verified chunk.** Per-delta hash-chain / Merkle receipts are deferred to a later
-version.
+| State | Meaning |
+|---|---|
+| `trusted_verified` | Full signature + all §3 bindings pass under a **production** key. **Only reachable after Wave 3b** (isolated signer). The only state that renders "Verified". |
+| `development_untrusted` | Signature valid but under a **development** key, in explicit dev mode. Renders **Development / untrusted** — never "Verified". |
+| `blocked` | Missing / invalid / untrusted / policy-mismatched / replayed receipt. Not rendered, not persisted to `messages`; evidence goes to `receipt_verification_attempts`. |
 
-## 7. Rollout
+**Wave 3a never yields `trusted_verified`** — it ships the verifier and the dev/blocked
+states; production "Verified" appears only once 3b's isolated signer + provisioned
+manifest exist.
 
-1. **This design (rev 2)** → Architect + Owner approval. **Gate.**
-2. **Wave 3a** — envelope + canonicalization spec + Ed25519 **desktop verifier**
-   (fail-closed) wired into `ai::interpret_bridge_result` (replacing the boolean) +
-   the Python adapter defense-in-depth check + migration 0014 + desktop-generated
-   nonce challenge & durable one-time state + receipt storage/UI. Governed path stays
-   opt-in; UI shows **Development / untrusted**. Negative-test matrix (§3).
-3. **Wave 3b** — minimal **isolated trusted signer** with real key custody (private key
-   unreachable by the sidecar) + the operator-provisioned signed key manifest + root
-   anchor. **Only now does "Verified" render.**
-4. **Wave 4** — supervisor hardening (P0-4). **Wave 5** — full signer/sidecar hardening.
+## 7. Streaming — Ratified: sign-on-complete (v1)
 
-## 8. Scope / non-goals
+Sign the **final assembled output** once, on completion. Until final verification,
+governed deltas MUST NOT render as trusted, MUST NOT persist as an `agent` message, and
+MUST NOT get a verified badge. V1 flow: **buffer the whole governed output → verify →
+display one verified chunk.** Per-delta hash-chain / Merkle receipts are deferred.
 
-- **In scope:** the signed envelope + canonicalization spec, Ed25519 sign (trusted
-  signer) + verify (desktop, final authority, fail-closed), policy + containment
-  binding, exact-output-bytes rule, desktop nonce challenge, migration 0014 (full
-  envelope + signature + verified_at + error), key manifest + root anchor, receipt
-  UI rebuild (supersedes PR #13 on this basis), non-streaming/sign-on-complete.
+## 8. Rollout
+
+1. **This design (rev 3)** → Architect + Owner **GREEN**. Gate.
+2. **Wave 3a** — JCS canonicalization + envelope (§2) + exact-output-bytes (§2.1) +
+   desktop verifier with the full checklist (§3) + migration 0014 + the atomic
+   verify→consume→persist transaction (§4) + `receipt_verification_attempts` +
+   desktop nonce challenge & durable one-time state + trust states (§6, dev/blocked
+   only) + receipt UI. Governed path opt-in; UI never "Verified". Negative-test matrix.
+3. **Wave 3b** — isolated trusted signer + signed manifest + root anchor + anti-rollback
+   (§5). Enables `trusted_verified` / production "Verified".
+4. **Wave 4** supervisor hardening · **Wave 5** full signer/sidecar hardening.
+
+## 9. Scope / non-goals
+
+- **In scope:** JCS envelope + exact-bytes spec, Ed25519 sign (trusted signer) + verify
+  (desktop, final authority, fail-closed) with the complete binding checklist, atomic
+  verify→consume→persist, split storage (accepted vs. attempts) with full envelope
+  bytes, desktop nonce challenge, migration 0014, signed manifest + root anchor +
+  anti-rollback, trust-state machine, sign-on-complete, receipt UI (supersedes PR #13).
 - **Out of scope:** per-delta streaming receipts; full supervisor/sidecar hardening
-  (Waves 4–5, though 3b brings the minimal key-custody core).
+  (Waves 4–5; 3b brings the minimal key-custody core).
 
-## 9. Ratified decisions (summary)
+## 10. Ratified normative decisions (summary)
 
-1. **Custody = Option B-core:** minimal trusted-signer boundary in Wave 3 (3a verifier
-   → 3b isolated signer → then "Verified"); the signer validates outcome/policy/
-   containment and signs only its own receipt — not a generic signing oracle.
-2. **Envelope** includes protocol, receipt_id, workspace/audience, desktop nonce,
-   request/system/history/output hashes, **policy_id/version/bundle hash**,
-   **containment_evidence_sha256**, generation_config hash, executor/builder/supervisor
-   ids, timestamps. **Canonicalization = RFC 8785 JCS or canonical CBOR**, byte-equal
-   across Rust/Python (normative + tested).
-3. **Provisioning** = binary-pinned root anchor + operator-provisioned signed manifest;
-   no webview key command; dev key labeled untrusted.
-4. **Streaming** = sign-on-complete; no trusted/persisted/badged deltas pre-verify.
-5. **Desktop verifier is the final authority**; the Python adapter check is
-   defense-in-depth. Nonce is **desktop-generated** + durable one-time.
-6. **Migration 0014** stores the full envelope + signature + verified_at + error for
-   re-verification.
-7. **Exact output bytes** are specified (UTF-8/NFC/trim) and hashed == rendered ==
-   persisted.
-
-## 10. Open questions
-
-- The exact output-normalization rule (§2.1) — confirm NFC + trailing-trim, or a
-  stricter canonical text form?
-- Canonicalization choice: **RFC 8785 JCS** (JSON, simpler tooling) vs **canonical
-  CBOR** (compact, fewer float/string ambiguities) — recommend JCS unless CBOR is
-  preferred for the signer.
+1. **Canonicalization = RFC 8785 JCS**, byte-equal Rust↔Python (tested).
+2. **`output_sha256 = SHA-256(exact UTF-8 bytes)`** — no NFC/trim/line-ending rewrite;
+   hashed == rendered == persisted, literally.
+3. **`request_sha256`** = JCS-hash of the defined canonical **request** envelope (§2.2).
+4. **Desktop verifier compares expected values** for every identity/policy/config/key
+   binding (§3); the desktop is the final authority, Python is defense-in-depth.
+5. **Nonce is desktop-generated + durable one-time**; verify→consume→persist is **one
+   transaction**; **blocked evidence never enters `messages`** (goes to
+   `receipt_verification_attempts`, storing exact envelope bytes + signature).
+6. **Signed manifest** with `manifest_epoch` + **anti-rollback** (durable highest
+   accepted epoch); binary-pinned root anchor; no webview key command; dev key drives
+   `development_untrusted`, not "Verified".
+7. **Trust states** `trusted_verified` (only after 3b) / `development_untrusted` /
+   `blocked` are normative; **3a never renders "Verified"**.
+8. **Migration 0014** stores the full envelope + signature + verified_at + error.
 
 **No product code is authored under this document.** Implementation begins only after
 Architect + Owner approval.
