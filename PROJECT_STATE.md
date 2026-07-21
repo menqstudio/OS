@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացум:** **Wave 3a slice 1 (protocol core) in Review** (T-014). Wave 3 Receipt Protocol v1 design **rev 4 APPROVED** (Architect + Owner GREEN) and merged to main (`35a6ab5`). Slice 1 ships the pure, I/O-free `brops-core::receipt`: RFC 8785 JCS canonicalization (§2/§2.2), wire format + strict decode (§2.3: 64 KiB cap, dup-key/unknown-field/non-string rejection, lowercase-64-hex, `JCS(parsed)==bytes`), **verify-only** Ed25519 via a two-phase type-state API (`parse_strict`→`key_id`→resolve→`verify`; never a `sign()` oracle, §1), the pure §3 binding subset, and the trust-state machine that **never yields `trusted_verified` in 3a** (§6). 26 pure unit tests (full negative matrix), clippy-clean. Stateful parts (one-time nonce, `receipt_id` uniqueness, manifest resolution/anti-rollback, freshness, migration 0014 + atomic verify→consume→persist, transport + UI) are slices 2/3 and Wave 3b. **Wave 2 (T-010 + T-011) complete.** (Wave 2a PR #16 `d85dcba`; Wave 1 PR #15 `15384cb`.)
+**Last updated · Վերջին թարմացум:** **Wave 3a slice 1 (protocol core) — PR #24, RED / merge-BLOCKED** (T-014). Wave 3 Receipt Protocol v1 design **rev 4 APPROVED** (Architect + Owner GREEN) and merged to main (`35a6ab5`). Slice 1 ships the pure, I/O-free `brops-core::receipt`: RFC 8785 JCS canonicalization (§2/§2.2), wire format + strict decode (§2.3: 64 KiB cap, dup-key/unknown-field/non-string rejection, lowercase-64-hex, `JCS(parsed)==bytes`), **verify-only** Ed25519 via a type-state chain (`parse_strict`→`key_id`→resolve→`verify`→`bind`→`resolve_3a`; never a `sign()` oracle, §1), the pure §3 binding subset, and the trust-state machine that **never yields `trusted_verified` in 3a** (§6). **Audit history:** HEAD `a873501` audited **RED / REQUEST CHANGES** (4 authority-API blockers: key_id↔key binding, trust type-state, `requested_at` binding, `Parsed` Debug leak); round-2 fixes pushed at **`aa4dc01`** address all four **in code** — **re-audit PENDING, no GREEN yet, do not merge**. 68 core tests (full negative matrix), clippy-clean, PR CI 7/7 (CI GREEN ≠ audit GREEN). Stateful parts (one-time nonce, `receipt_id` uniqueness, manifest resolution/anti-rollback, freshness, migration 0014 + atomic verify→consume→persist, transport + UI) are slices 2/3 and Wave 3b. **Wave 2 (T-010 + T-011) complete.** (Wave 2a PR #16 `d85dcba`; Wave 1 PR #15 `15384cb`.) **Exact handoff: [`NEXT_CHAT.md`](./NEXT_CHAT.md).**
 
 ---
 
@@ -36,7 +36,7 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | Wave 3a — Receipt Protocol v1 **slice 1 (protocol core)** (T-014); design rev 4 GREEN + merged | `feat/wave-3a-receipt-protocol` | 🔬 Review (self-audited, awaiting zero-trust) |
+| 🔨 Claude | Wave 3a — Receipt Protocol v1 **slice 1 (protocol core)** (T-014) — **PR #24** | `feat/wave-3a-receipt-protocol` @ `aa4dc01` | 🔴 **RED / merge-blocked** — `a873501` audited RED (4 blockers); round-2 fixes at `aa4dc01` **awaiting re-audit** |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 

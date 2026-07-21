@@ -55,8 +55,10 @@ The cockpit never spawns a model directly; it asks the engine, which issues a sc
 
 ### Roadmap
 
-- **Phase 0 — Scaffold** *(this step)* — monorepo assembled, both codebases in place with history, unified CI, bilingual docs. Both halves still build independently; nothing wired yet.
-- **Phase 1 — Bridge** — route the desktop's AI execution through the engine's supervisor/lease/wall.
+> This 4-step framing is a high-level intro; the **canonical plan is the 11-phase [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)**, and the **exact current state (branch/PR/blockers) is [`NEXT_CHAT.md`](./NEXT_CHAT.md)**.
+
+- **Phase 0 — Scaffold** ✅ **done** — monorepo assembled, both codebases in place with history, unified CI, bilingual docs.
+- **Phase 1 — Bridge** 🔨 **in progress** — the governed-engine transport is merged (opt-in provider + receipt badge); verify-seam · receipt-plumbing · streaming still open. A parallel **security-remediation track** (Waves 1–3a) is hardening the provider, capability boundary, durable approval, and the signed **Receipt Protocol v1**.
 - **Phase 2 — One approval gate** — the desktop defers to the engine's Ed25519 approval/lease system (single authoritative gate).
 - **Phase 3 — Contracts** — dedupe shared schemas into `contracts/` as the single source of truth.
 
@@ -108,8 +110,10 @@ Cockpit-ը երբեք ուղիղ model չի spawn անում. խնդրում ա 
 
 ### Roadmap
 
-- **Phase 0 — Scaffold** *(այս քայլը)* — monorepo հավաքված, երկու codebase-ը տեղում history-ով, միասնական CI, երկլեզու docs։ Երկու կեսն էլ դեռ independently build են; ոչ մի wiring։
-- **Phase 1 — Bridge** — desktop-ի AI execution-ը անցկացնել engine-ի supervisor/lease/wall-ով։
+> Այս 4-քայլ framing-ը ընդհանուր intro ա; **կանոնական պլանը՝ 11-phase [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)**, իսկ **ընթացիկ ճշգրիտ վիճակը (branch/PR/blockers)՝ [`NEXT_CHAT.md`](./NEXT_CHAT.md)**։
+
+- **Phase 0 — Scaffold** ✅ **արված** — monorepo հավաքված, երկու codebase-ը history-ով, միասնական CI, երկլեզու docs։
+- **Phase 1 — Bridge** 🔨 **ընթացքում** — governed-engine transport-ը merged ա (opt-in provider + receipt badge); verify-seam · receipt-plumbing · streaming բաց։ Զուգահեռ **security-remediation track** (Waves 1–3a) կարծրացնում ա provider-ը, capability boundary-ն, durable approval-ը, ու signed **Receipt Protocol v1**-ը։
 - **Phase 2 — Մեկ approval gate** — desktop-ը defer ա անում engine-ի Ed25519 approval/lease համակարգին (մեկ authoritative gate)։
 - **Phase 3 — Contracts** — shared schema-ները dedupe անել `contracts/`-ում՝ single source of truth։
 

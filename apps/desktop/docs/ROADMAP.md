@@ -52,10 +52,10 @@ Exit condition: complete clickable prototype with no dead-end primary flows.
 
 ## Phase 3 — Application foundation
 
-Status: Delivered (2026-07-19) — the desktop app runs on a real backend; the mock layer is gone. Schema at **v10**, `cargo test -p brops-core` GREEN (28 tests), CI green.
+Status: Delivered (2026-07-19) — the desktop app runs on a real backend; the mock layer is gone. Schema at **v13**, `cargo test -p brops-core` GREEN (**68 tests**), CI green. *(Schema/test counts have since grown with the OS-monorepo security-remediation waves — see the root [`NEXT_CHAT.md`](../../../NEXT_CHAT.md).)*
 
 - React + TypeScript frontend ✓ (Phase 2)
-- **SQLite data core** ✓ — `src-tauri/core` schema (10 migrations), typed repositories, 28 tests
+- **SQLite data core** ✓ — `src-tauri/core` schema (13 migrations), typed repositories, 68 tests
 - **Tauri desktop shell** ✓ — GUI binary builds and runs; typed IPC boundary (`src/services/desktop.ts`), no mock layer
 - Token-based design system ✓ · Trilingual (HY/EN/RU) runtime switching ✓
 - Concrete persisted schema ✓ — `docs/architecture/DATA_MODEL.md` + `docs/architecture/DATABASE_SCHEMA.md`

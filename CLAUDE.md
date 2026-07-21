@@ -16,7 +16,7 @@
 **Before doing ANYTHING** (any tool call, any edit, any answer beyond a greeting), every chat — Claude *and* ChatGPT — must:
 
 1. **`git pull`** — get the latest state.
-2. **Read, IN FULL, every file in [`START_HERE.md`](./START_HERE.md):** `CLAUDE.md` → `PROJECT_STATE.md` → `TASKS.md` → `OWNERS.md` → `docs/ARCHITECTURE.md`.
+2. **Read, IN FULL, every file in [`START_HERE.md`](./START_HERE.md):** `NEXT_CHAT.md` (exact current branch/PR/HEAD/blockers) → `CLAUDE.md` → `PROJECT_STATE.md` → `TASKS.md` → `OWNERS.md` → `docs/ARCHITECTURE.md`. (Machine-readable read order: [`config/canonical-read-manifest.json`](./config/canonical-read-manifest.json).)
 3. **Claim your task in `TASKS.md`** — never two agents on the same task.
 
 Only then start. **No exceptions.** When Gev says *"go read the repo / կարդա ՄԴները"* — that phrase **is** this law: read every file in `START_HERE.md` fully, pull, claim a task, then begin, **without waiting for any further explanation.**
@@ -25,8 +25,10 @@ Only then start. **No exceptions.** When Gev says *"go read the repo / կարդ�
 **1)** `git pull` · **2)** կարդա ԱՄԲՈՂՋՈՎ [`START_HERE.md`](./START_HERE.md)-ի բոլոր ֆայլերը (`CLAUDE.md` → `PROJECT_STATE.md` → `TASKS.md` → `OWNERS.md` → `docs/ARCHITECTURE.md`) · **3)** claim արա task-ը `TASKS.md`-ում։ Միայն հետո սկսի։ **Բացառություն չկա։** Երբ Gev-ը ասում ա *«գնա ռեպո կարդա ՄԴները»* — էդ բառը **հենց** այս օրենքն ա՝ կարդա `START_HERE.md`-ի ամեն ֆայլ ամբողջովին, pull արա, task claim արա, հետո սկսի, **առանց ավել բացատրություն սպասելու։**
 
 **Roles · Դերեր:** [`OWNERS.md`](./OWNERS.md) — 👑 Gev = Owner · 📐 ChatGPT = Architect/Auditor · 🔨 Claude = Builder.
-**Canonical files (read every session) · Canonical ֆայլեր:** `CLAUDE.md` · `PROJECT_STATE.md` · `TASKS.md` · `OWNERS.md`.
-**Work rule:** no direct `main`; every task = branch + PR (uses the PR template); merge only after the Owner approves.
+**Canonical files (read every session) · Canonical ֆայլեր:** `NEXT_CHAT.md` · `CLAUDE.md` · `PROJECT_STATE.md` · `TASKS.md` · `OWNERS.md`.
+**Work rule:** no direct `main`; every task = branch + PR (uses the PR template); merge only after the Owner approves. **A security PR also needs the Architect's zero-trust GREEN on the exact HEAD before merge — CI GREEN is not audit GREEN.**
+
+> **📍 Exact current state (branch, PR, HEAD, blockers, next action) lives in [`NEXT_CHAT.md`](./NEXT_CHAT.md).** This §3 roadmap is the durable product plan; the active **security-remediation track** (Waves 1–5, closing the Challenger Deep audit's P0/P1 findings) is tracked in `NEXT_CHAT.md` + `PROJECT_STATE.md` + `TASKS.md`. As of 2026-07-22: Wave 1 (T-012), Wave 2a (T-013), T-010, T-011 **merged**; Wave 3 design rev 4 **GREEN + merged**; **Wave 3a slice 1 (T-014) is in PR #24 — RED / merge-blocked, awaiting re-audit.**
 
 ---
 
@@ -113,7 +115,7 @@ Each half still builds independently in Phase 0. **Run each from the component's
 cd apps/desktop && npm ci && npm run build        # tsc --noEmit + vite build
 
 # Cockpit — Rust data core + app   ⚠️ RUN FROM PowerShell, NOT the Bash tool (see §5)
-cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 29 tests
+cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 68 tests (grows per security slice)
 cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml                       # app crate
 
 # Engine — Python governance runtime  (MUST set BRO_ENV=ci)
@@ -236,7 +238,7 @@ Engine CI leg-ը **~615-ից 9 test fail ա** monorepo-ում։ **Root cause:** 
 cd apps/desktop && npm ci && npm run build        # tsc --noEmit + vite build
 
 # Cockpit — Rust data core + app   ⚠️ RUN PowerShell-ից, ՈՉ Bash tool-ից (տես §5)
-cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 29 test
+cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 68 test (ամեն security slice-ով աճում ա)
 cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml                       # app crate
 
 # Engine — Python governance runtime  (ՊԱՐՏԱԴԻՐ՝ BRO_ENV=ci)

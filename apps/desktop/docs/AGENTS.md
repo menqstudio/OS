@@ -4,7 +4,7 @@
 - **Scope:** How to work in this repository. Product truth lives in the canonical docs below.
 - **Owner:** Gev.
 - **Related:** [README.md](../README.md), [PRINCIPLES.md](PRINCIPLES.md), [AI_RUNTIME.md](architecture/AI_RUNTIME.md), [DECISIONS.md](DECISIONS.md).
-- **Last updated:** 2026-07-19.
+- **Last updated:** 2026-07-22.
 
 Before substantive work, read in this order:
 
@@ -32,4 +32,6 @@ Before substantive work, read in this order:
 
 ## Current focus
 
-Foundation v1 is **Locked** (D-010). Phase 1 UX architecture is substantially delivered under `product/`. Next: complete remaining Phase 1 coverage, then the interactive prototype (Roadmap Phase 2).
+> **These are BroPS-desktop-internal working instructions.** The desktop app is fully built (real Tauri/SQLite backend; see [CHANGELOG.md](../CHANGELOG.md)); since the monorepo merge into `menqstudio/OS`, active work is the **OS-level security-remediation track**. For the exact current branch / PR / blockers / next action, read the **root** [`NEXT_CHAT.md`](../../../NEXT_CHAT.md) → `CLAUDE.md` → `PROJECT_STATE.md` → `TASKS.md` (the OS-root canon governs; this file is for desktop product/UX conventions).
+
+Historical: Foundation v1 is **Locked** (D-010); the Phase 1 UX architecture under `product/` was delivered and the app was built out through its internal phases.

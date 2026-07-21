@@ -3,9 +3,20 @@
 - **Purpose:** Record notable repository changes, most recent first.
 - **Scope:** Documentation and, later, released application changes. Future work is in [ROADMAP.md](docs/ROADMAP.md).
 - **Owner:** Gev.
-- **Last updated:** 2026-07-19.
+- **Last updated:** 2026-07-22.
 
-BroPS was intentionally recreated from zero; prior history is not part of this repository.
+BroPS was intentionally recreated from zero; prior history is not part of this repository. Since the monorepo merge into `menqstudio/OS`, cockpit changes also flow through the OS-level security-remediation waves; the exact live state (branch/PR/blockers) is the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).
+
+## 2026-07-22 — OS-monorepo security remediation (Waves 1–3a)
+
+Closing the Challenger Deep audit's P0/P1 findings, on top of the merged desktop app. Enforced model: [SECURITY.md](SECURITY.md). Schema is now **v13** (migrations through 0013); `cargo test -p brops-core` GREEN (**68 tests**). All merged security PRs passed independent zero-trust re-audits.
+
+- **Wave 1 — provider fail-closed** (T-012, PR #15 `15384cb`): no silent governed→ungoverned fallback; ungoverned only via `BROPS_ALLOW_UNGOVERNED=1`; honest 3-state provider status.
+- **Wave 2a — webview message provenance** (T-013, PR #16 `d85dcba`): `post_message` roles restricted to `["user"]`; server-held answer via one-time `result_id`.
+- **T-010 — Tauri capability boundary** (PR #19 `7d537c3`): deny-by-default manifest over all 65 commands; L2 hard-deletes denied; CI invariant `tools/check_capabilities.py`.
+- **T-011 — durable approval + native confirmation** (PR #20/#21, merge `7638a64`): migrations 0012/0013; restart-safe self-approval; native-only approval; nonce compare-and-consume; atomic pre-dispatch execution claim; crash recovery; enforced single-instance lock.
+- **Wave 3 — Receipt Protocol v1 design rev 4** (PR #23 `35a6ab5`): Ed25519 signed per-turn receipt, desktop = final verifier, fail-closed. Architect + Owner GREEN.
+- **Wave 3a slice 1 — receipt protocol core** (`brops-core::receipt`): RFC 8785 JCS, strict decode, verify-only `verify_strict`, type-state verify→bind→resolve chain, trust states (3a never "Verified"). **In review — PR #24, audit RED, NOT merged** (round-2 fixes at `aa4dc01` pending re-audit).
 
 ## 2026-07-19 — Security hardening (audit remediation)
 

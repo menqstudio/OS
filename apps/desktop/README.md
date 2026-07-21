@@ -13,7 +13,7 @@ Bro is the primary interface and coordinator. Specialist agents work inside expl
 ## Status — working desktop app (Phases 0–20)
 
 - Foundation v1: **Locked** (2026-07-19) — see decision D-010.
-- **Real backend, no mock layer.** React 19 + TypeScript + Vite frontend over a typed IPC boundary to a Tauri 2 + Rust host with SQLite (`rusqlite`, bundled). `cargo test -p brops-core` is GREEN (**28 tests**), schema **v10**, CI green.
+- **Real backend, no mock layer.** React 19 + TypeScript + Vite frontend over a typed IPC boundary to a Tauri 2 + Rust host with SQLite (`rusqlite`, bundled). `cargo test -p brops-core` is GREEN (**68 tests**), schema **v13**, CI green. *(Counts track the OS-monorepo security-remediation waves — current state in the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).)*
 - **Live AI** through the local `claude` CLI — Gev's own Claude Code subscription, free, no API key — with token-by-token streaming; Anthropic API key and Ollama are optional fallbacks.
 - **Shipped surfaces (all backed by real commands + SQLite):**
   - Streaming **Chat / Group Chat** — agent picker, `@mention`, delete/rename, live Markdown.
@@ -39,7 +39,7 @@ cargo build --release --manifest-path src-tauri/Cargo.toml
 
 # Verify
 npm run build                                                   # tsc --noEmit + vite
-cargo test -p brops-core --manifest-path src-tauri/Cargo.toml   # 28 tests
+cargo test -p brops-core --manifest-path src-tauri/Cargo.toml   # 68 tests
 ```
 
 AI uses the local `claude` binary by default. If it isn't on the app's `PATH`, set `BROPS_CLAUDE_BIN`; other knobs: `BROPS_AI_PROVIDER` (`claude` | `anthropic` | `ollama`), `ANTHROPIC_API_KEY`, `BROPS_CLAUDE_MODEL`. The SQLite database lives at `~/.local/share/studio.menq.brops/brops.db`.
