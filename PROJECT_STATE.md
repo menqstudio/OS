@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** Wave 2a — webview message provenance (audit P1-6), audit-round-1 fix: `stream_ask` holds the answer under an opaque one-time `result_id`, `save_ask_to_chat(result_id, title)` consumes it + writes the pair in one transaction (webview never carries an agent body), on `fix/webview-message-provenance`. (Wave 1 / P0-1 provider policy merged, PR #15 `15384cb`.)
+**Last updated · Վերջին թարմացում:** Wave 2a — webview message provenance (audit P1-6) **merged** (PR #16 `d85dcba`, zero-trust re-audit GREEN on HEAD `5703841`): webview posts user-only; agent bodies minted server-side; `save_ask_to_chat(result_id, title)` consumes a one-time server-held answer in one transaction. Next: Wave 2b (T-010 capability boundary + T-011 durable approval). (Wave 1 / P0-1 provider policy also merged, PR #15 `15384cb`.)
 
 ---
 
@@ -36,7 +36,7 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | Wave 2a webview message provenance (audit P1-6) | `fix/webview-message-provenance` | 🔎 in review |
+| 🔨 Claude | Wave 2a merged (P1-6) — next: Wave 2b (T-010 + T-011) | `main` | ✅ merged (PR #16) |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 
