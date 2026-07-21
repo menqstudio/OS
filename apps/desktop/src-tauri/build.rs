@@ -34,6 +34,7 @@ fn main() {
         "list_approvals",
         "decide_approval",
         "reject_approval",
+        "confirm_approval",
         // notifications
         "list_notifications",
         "mark_notification_read",

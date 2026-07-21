@@ -26,6 +26,7 @@
     "allow-list-approvals",
     "deny-decide-approval",
     "allow-reject-approval",
+    "allow-confirm-approval",
     "allow-list-notifications",
     "allow-mark-notification-read",
     "allow-list-decisions",

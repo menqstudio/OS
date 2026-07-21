@@ -83,6 +83,23 @@ camel! {
         pub entity_id: Option<String>,
         pub requested_at: String,
         pub decided_at: Option<String>,
+        // T-011 durable provenance (all nullable/backfill-safe). The internal
+        // enforcement tokens below are NEVER serialized to the webview — they are
+        // server-only integrity material (a leaked nonce/digest is needless attack
+        // surface in the untrusted renderer). The provenance fields (origin_principal,
+        // confirmed_*) are safe to display.
+        pub origin_principal: Option<String>,
+        #[serde(skip_serializing)]
+        pub origin_session_id: Option<String>,
+        #[serde(skip_serializing)]
+        pub request_digest: Option<String>,
+        #[serde(skip_serializing)]
+        pub nonce: Option<String>,
+        pub confirmed_at: Option<String>,
+        pub confirmed_by: Option<String>,
+        pub confirmation_method: Option<String>,
+        #[serde(skip_serializing)]
+        pub confirmation_digest: Option<String>,
     }
 
     pub struct Notification {

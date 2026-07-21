@@ -149,7 +149,7 @@ export const en = {
   'decisions.subtitle': 'Accepted choices with rationale',
   'approvals.subtitle': 'Protected actions await your authority',
   'approvals.decideFailed': 'Could not record the decision',
-  'approvals.approveNativePending': 'Approve requires native confirmation (arriving in T-011); you can reject here.',
+  'approvals.approveNativeHint': 'Approve opens a native confirmation dialog you must accept — the web UI cannot approve on its own.',
   'approvals.a3ConfirmTitle': 'Confirm destructive action',
   'approvals.a3ConfirmBody': 'This is an A3 (destructive) action. Approve it?',
   'activity.subtitle': 'Chronological event record',

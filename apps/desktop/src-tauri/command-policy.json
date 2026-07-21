@@ -18,6 +18,10 @@
       "tier": "R",
       "grant": "allow"
     },
+    "confirm_approval": {
+      "tier": "A",
+      "grant": "allow"
+    },
     "create_automation": {
       "tier": "X",
       "grant": "allow"

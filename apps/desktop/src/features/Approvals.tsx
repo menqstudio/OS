@@ -9,17 +9,19 @@ export function Approvals() {
   const toast = useToast();
   const state = useAsync(() => desktop.listApprovals());
 
-  // T-010: reject is the only decision the webview may make. Approve is not a
-  // webview command — generic decide_approval is capability-denied to this window,
-  // and an approve requires renderer-independent native confirmation (T-011).
+  const onError = (e: unknown) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    toast(`${t('approvals.decideFailed')}: ${msg}`, 'error');
+  };
+
+  // T-011: approve goes through a renderer-independent NATIVE confirmation dialog
+  // driven by Rust — the webview cannot forge it. Generic decide_approval stays
+  // capability-denied; reject is the separate fail-safe path (T-010).
+  const approve = (id: string) => {
+    desktop.confirmApproval(id).then(() => state.reload()).catch(onError);
+  };
   const reject = (id: string) => {
-    desktop
-      .rejectApproval(id)
-      .then(() => state.reload())
-      .catch((e: unknown) => {
-        const msg = e instanceof Error ? e.message : String(e);
-        toast(`${t('approvals.decideFailed')}: ${msg}`, 'error');
-      });
+    desktop.rejectApproval(id).then(() => state.reload()).catch(onError);
   };
 
   return (
@@ -57,7 +59,7 @@ export function Approvals() {
                   {a.status === 'pending' && (
                     <div className="stack">
                       <div className="row">
-                        <Button variant="primary" disabled title={t('approvals.approveNativePending')}>
+                        <Button variant="primary" onClick={() => approve(a.id)} title={t('approvals.approveNativeHint')}>
                           {t('action.approve')}
                         </Button>
                         <Button variant="danger" onClick={() => reject(a.id)}>
@@ -65,7 +67,7 @@ export function Approvals() {
                         </Button>
                       </div>
                       <div className="muted" style={{ fontSize: 12 }}>
-                        🔒 {t('approvals.approveNativePending')}
+                        🔒 {t('approvals.approveNativeHint')}
                       </div>
                     </div>
                   )}
