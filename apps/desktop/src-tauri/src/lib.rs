@@ -10,6 +10,27 @@ mod files;
 
 pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
+    // Held for the whole process lifetime so a second instance cannot run (T-011).
+    // Never read — dropping it releases the OS lock, so it lives inside AppState.
+    _instance_lock: std::fs::File,
+}
+
+/// T-011 single-instance enforcement. Acquire an EXCLUSIVE advisory lock on a lock
+/// file in the data dir BEFORE the database is opened or reconciliation runs. A
+/// second instance fails to acquire it and must abort — so it can never reach the
+/// startup reconciliation and mark the first (live) instance's execution abandoned.
+/// The returned handle must be kept alive for the process lifetime (held in AppState).
+fn acquire_instance_lock(dir: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use fs2::FileExt;
+    let path = dir.join("brops.instance.lock");
+    let file = std::fs::OpenOptions::new().create(true).write(true).truncate(false).open(&path)?;
+    file.try_lock_exclusive().map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            format!("another BroPS instance is already running (lock: {}): {e}", path.display()),
+        )
+    })?;
+    Ok(file)
 }
 
 /// Restrict the app data directory to the owner (0700). Called BEFORE the DB is
@@ -54,16 +75,21 @@ pub fn run() {
             // Owner-only (0700) BEFORE opening the DB, so conversation/memory/audit
             // data is never briefly world-readable. A failure aborts startup.
             secure_data_dir(&dir)?;
+            // T-011 single-instance: take the exclusive lock BEFORE opening the DB or
+            // reconciling — a second instance aborts here and never touches the first
+            // instance's live execution state.
+            let instance_lock = acquire_instance_lock(&dir)?;
             let db_path = dir.join("brops.db");
             let conn = brops_core::db::open(db_path.to_string_lossy().as_ref())?;
             brops_core::repo::seed(&conn)?;
             secure_db_files(&db_path)?; // 0600 on db + WAL + SHM
             // T-011 crash recovery: settle any step execution claimed by a previous
             // (crashed) session fail-closed, so a durable claim can never wedge a run.
+            // Safe under the single-instance lock above (no live foreign session).
             brops_core::repo::runs::reconcile_abandoned_executions(&conn, commands::process_session_id())?;
             // Sweep AI sandbox directories left by crashed/killed prior runs.
             ai::cleanup_stale_sandboxes();
-            app.manage(AppState { db: Mutex::new(conn) });
+            app.manage(AppState { db: Mutex::new(conn), _instance_lock: instance_lock });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -140,4 +166,26 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running BroPS");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::acquire_instance_lock;
+
+    // T-011 single-instance enforcement: the first holder takes the exclusive lock;
+    // a second acquisition on the same data dir is refused. A second app instance
+    // therefore aborts before it can open the DB or run reconciliation and invalidate
+    // the first (live) instance's execution.
+    #[test]
+    fn only_one_instance_can_hold_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = acquire_instance_lock(dir.path()).expect("first instance acquires the lock");
+        assert!(
+            acquire_instance_lock(dir.path()).is_err(),
+            "a second instance must be refused while the first holds the lock",
+        );
+        // Releasing the first lets a later instance acquire it.
+        drop(first);
+        assert!(acquire_instance_lock(dir.path()).is_ok());
+    }
 }

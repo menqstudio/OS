@@ -959,10 +959,10 @@ pub async fn stream_run_step(
     };
 
     // T-011 concurrency fix: atomically CLAIM the step for execution BEFORE calling
-    // the provider. This transitions the step active/pending -> executing and (for a
-    // gated step) consumes the native-confirmed grant now, so two concurrent calls
-    // cannot both reach the provider on one approval — the second claim fails here,
-    // before any spend. The returned attempt id gates completion/failure.
+    // the provider. This writes a one-time execution_attempt_id (the claim token; the
+    // status is unchanged) and, for a gated step, consumes the native-confirmed grant
+    // now, so two concurrent calls cannot both reach the provider on one approval —
+    // the second claim fails here, before any spend. The attempt id gates completion.
     let attempt = {
         let conn = locked(&state)?;
         match repo::runs::claim_step_for_execution(&conn, &step.id, process_session_id()) {

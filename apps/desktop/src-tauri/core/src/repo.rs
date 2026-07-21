@@ -1362,12 +1362,13 @@ pub mod runs {
 
     /// T-011: atomically CLAIM a runnable step for execution BEFORE the provider is
     /// called, so one approval starts exactly one execution. In one transaction it
-    /// refuses if the run already has a step mid-execution, transitions this step
-    /// active/pending -> `executing` under a fresh one-time `execution_attempt_id`
-    /// (a concurrent claim sees `executing` and fails), and — for a gated step —
-    /// verifies the native-confirmed grant and CONSUMES it now. A provider failure
-    /// therefore leaves no reusable grant; a retry needs a fresh approval. Returns the
-    /// attempt id the caller must present to complete/fail the step.
+    /// refuses if the run already has a step mid-execution, then claims this step by
+    /// writing a fresh one-time `execution_attempt_id` (+ owner session / start time)
+    /// under an `execution_attempt_id IS NULL` guard — the status is NOT changed, the
+    /// attempt-id is the claim token, and a concurrent claim writes 0 rows and fails —
+    /// and, for a gated step, verifies the native-confirmed grant and CONSUMES it now.
+    /// A provider failure therefore leaves no reusable grant; a retry needs a fresh
+    /// approval. Returns the attempt id the caller presents to complete/fail the step.
     pub fn claim_step_for_execution(conn: &Connection, id: &str, session_id: &str) -> CoreResult<String> {
         let attempt = crate::id();
         super::atomic(conn, |tx| {

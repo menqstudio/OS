@@ -27,9 +27,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 brops-core = { path = "core" }
+# T-011 single-instance enforcement: an exclusive advisory file lock held for the
+# process lifetime, so a second instance cannot open the DB / run reconciliation and
+# invalidate the first instance's live execution.
+fs2 = "0.4"
 # HTTP client for the AI provider layer (Ollama / Anthropic). rustls keeps it
 # off system OpenSSL for portable CI builds.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # Async subprocess for the local `claude` CLI provider (uses the user's own
 # Claude Code login — no separate API key).
 tokio = { version = "1", features = ["process", "rt", "io-util", "time"] }
+
+[dev-dependencies]
+tempfile = "3"
