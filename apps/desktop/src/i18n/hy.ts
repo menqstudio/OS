@@ -99,6 +99,7 @@ export const hy: Record<DictKey, string> = {
   'memory.unpin': 'Ապամրացնել',
   'memory.pinned': 'Ամրացված',
   'action.delete': 'Ջնջել',
+  'action.deleteDisabledSafety': 'Ջնջելը ժամանակավոր անջատված է անվտանգության համար — safe-delete / confirmation գալիս է T-011-ում։',
   'confirm.deleteTitle': 'Ջնջե՞լ այս տարրը։',
   'confirm.deleteBody': 'Այս գործողությունը հետ չի շրջվում։',
   'files.subtitle': 'Դիտիր լոկալ ֆայլային համակարգը',

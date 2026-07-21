@@ -32,6 +32,14 @@
   input bounds, or a fail-closed error).
 - **Gap closed in T-010:** `create_automation` free-text fields were unbounded at the
   command layer; `require_len` bounds added (action can reach execution).
+- **Tier L2 (hard-delete) denied, fail-closed:** `delete_conversation`,
+  `delete_knowledge`, `delete_memory`, `delete_event` are irreversible SQL deletes with
+  no undo (a conversation cascades its messages). They are **DENIED** to `main`
+  (`deny-*` in `capabilities/default.json`, `grant: "deny"`, `protection: "none"` in
+  `command-policy.json`) until they gain soft-delete+undo or T-011 native confirmation.
+  `check_capabilities.py` enforces that an L2 command may be `allow` only with a declared
+  `protection` of `soft-delete`/`native-confirm`. The UI delete buttons are disabled with
+  an explanatory note.
 - **Deferred (by design, not a T-010 gap):** cryptographic per-turn receipt binding
   (Wave 3); durable approval origin + native confirmation (T-011). Until T-011, the
   *approve* path is intentionally unavailable (fail-closed), reject remains.

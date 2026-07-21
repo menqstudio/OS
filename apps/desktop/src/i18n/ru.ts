@@ -99,6 +99,7 @@ export const ru: Record<DictKey, string> = {
   'memory.unpin': 'Открепить',
   'memory.pinned': 'Закреплено',
   'action.delete': 'Удалить',
+  'action.deleteDisabledSafety': 'Удаление временно отключено в целях безопасности — safe-delete / подтверждение появится в T-011.',
   'confirm.deleteTitle': 'Удалить этот элемент?',
   'confirm.deleteBody': 'Это действие нельзя отменить.',
   'files.subtitle': 'Обзор локальной файловой системы',

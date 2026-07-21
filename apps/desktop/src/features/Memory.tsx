@@ -106,7 +106,7 @@ export function Memory() {
                     <Button small variant="ghost" onClick={() => togglePin(m.id, !m.pinned)}>
                       {m.pinned ? t('memory.unpin') : t('memory.pin')}
                     </Button>
-                    <Button small variant="ghost" onClick={() => setPendingDelete(m.id)}>{t('action.delete')}</Button>
+                    <Button small variant="ghost" disabled title={t('action.deleteDisabledSafety')} onClick={() => setPendingDelete(m.id)}>{t('action.delete')}</Button>
                   </span>
                 </div>
               ))}

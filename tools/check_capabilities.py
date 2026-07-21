@@ -114,6 +114,11 @@ def check(root: pathlib.Path) -> list[str]:
             f"missing-from-caps={sorted(registered - grant_set)}"
         )
     valid_tiers = {"R", "L1", "L2", "A", "X"}
+    # An L2 (hard-delete) command may be granted to the window ONLY if it declares a
+    # real protection mode; otherwise it must be denied. Plain grant/policy parity does
+    # not capture this — an "allow" can be consistent yet unsafe (irreversible delete
+    # with no undo/confirmation).
+    safe_protection = {"soft-delete", "native-confirm"}
     for cmd, spec in sorted(policy.items()):
         tier = spec.get("tier")
         grant = spec.get("grant")
@@ -128,6 +133,12 @@ def check(root: pathlib.Path) -> list[str]:
         elif actual != grant:
             problems.append(
                 f"{cmd}: policy says {grant!r} but capabilities/default.json says {actual!r}"
+            )
+        if tier == "L2" and grant == "allow" and spec.get("protection") not in safe_protection:
+            problems.append(
+                f"{cmd}: L2 (hard-delete) may be 'allow' only with a declared protection of "
+                f"{sorted(safe_protection)} (plus a matching test); got "
+                f"{spec.get('protection')!r}. Until protected it must be 'deny'."
             )
 
     # 3) Design invariant: generic decide_approval must be DENIED to the window

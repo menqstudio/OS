@@ -97,6 +97,7 @@ export const en = {
   'memory.unpin': 'Unpin',
   'memory.pinned': 'Pinned',
   'action.delete': 'Delete',
+  'action.deleteDisabledSafety': 'Delete is temporarily disabled for safety — safe-delete / confirmation arrives in T-011.',
   'confirm.deleteTitle': 'Delete this item?',
   'confirm.deleteBody': 'This action cannot be undone.',
   'files.subtitle': 'Browse the local filesystem',

@@ -1,5 +1,5 @@
 {
-  "description": "T-010 capability-policy inventory (Wave 2b). The authoritative per-command tier + grant classification. tools/check_capabilities.py asserts this key set equals the generate_handler! set (src/lib.rs) and the AppManifest set (build.rs), and that each grant matches capabilities/default.json (allow-*/deny-*). Tiers: R read-only, L1 local reversible, L2 local destructive, A approval authority, X execution/spend. See docs/design/WAVE_2B_CAPABILITY_APPROVAL_DESIGN.md.",
+  "description": "T-010 capability-policy inventory (Wave 2b). Authoritative per-command tier + grant classification. tools/check_capabilities.py asserts this key set equals the generate_handler! set (src/lib.rs) and the AppManifest set (build.rs), and that each grant matches capabilities/default.json. Tiers: R read-only, L1 local reversible, L2 local destructive, A approval authority, X execution/spend. INVARIANT: an L2 (hard-delete) command may be 'allow' only with a declared 'protection' of 'soft-delete' or 'native-confirm' (plus a matching test); otherwise it must be 'deny' (protection 'none') and stays uninvokable from main until protected. See docs/design/WAVE_2B_CAPABILITY_APPROVAL_DESIGN.md.",
   "window": "main",
   "commands": {
     "add_run_step": {
@@ -64,19 +64,23 @@
     },
     "delete_conversation": {
       "tier": "L2",
-      "grant": "allow"
+      "grant": "deny",
+      "protection": "none"
     },
     "delete_event": {
       "tier": "L2",
-      "grant": "allow"
+      "grant": "deny",
+      "protection": "none"
     },
     "delete_knowledge": {
       "tier": "L2",
-      "grant": "allow"
+      "grant": "deny",
+      "protection": "none"
     },
     "delete_memory": {
       "tier": "L2",
-      "grant": "allow"
+      "grant": "deny",
+      "protection": "none"
     },
     "get_analytics": {
       "tier": "R",

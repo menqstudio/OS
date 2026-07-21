@@ -35,9 +35,22 @@ def _build_rs(cmds: list[str]) -> str:
     )
 
 
-def _policy(grants: dict[str, str]) -> str:
-    tier = {"decide_approval": "A", "reject_approval": "A"}
-    commands = {c: {"tier": tier.get(c, "R"), "grant": g} for c, g in grants.items()}
+def _tier(cmd: str) -> str:
+    if cmd in ("decide_approval", "reject_approval"):
+        return "A"
+    if cmd.startswith("delete_"):
+        return "L2"
+    return "R"
+
+
+def _policy(grants: dict[str, str], protection: dict[str, str] | None = None) -> str:
+    protection = protection or {}
+    commands = {}
+    for c, g in grants.items():
+        spec = {"tier": _tier(c), "grant": g}
+        if _tier(c) == "L2":
+            spec["protection"] = protection.get(c, "none")
+        commands[c] = spec
     return json.dumps({"window": "main", "commands": commands}, indent=2)
 
 
@@ -54,22 +67,30 @@ class CheckCapabilitiesTests(unittest.TestCase):
         self.addCleanup(d.cleanup)
         return pathlib.Path(d.name)
 
-    def _write(self, root: pathlib.Path, cmds: list[str], grants: dict[str, str]) -> None:
+    def _write(
+        self,
+        root: pathlib.Path,
+        cmds: list[str],
+        grants: dict[str, str],
+        protection: dict[str, str] | None = None,
+    ) -> None:
         base = root / cc.DESKTOP
         (base / "src").mkdir(parents=True, exist_ok=True)
         (base / "capabilities").mkdir(parents=True, exist_ok=True)
         (base / "src" / "lib.rs").write_text(_lib_rs(cmds), encoding="utf-8")
         (base / "build.rs").write_text(_build_rs(cmds), encoding="utf-8")
-        (base / "command-policy.json").write_text(_policy(grants), encoding="utf-8")
+        (base / "command-policy.json").write_text(_policy(grants, protection), encoding="utf-8")
         (base / "capabilities" / "default.json").write_text(_default_cap(grants), encoding="utf-8")
 
     def _consistent(self):
-        cmds = ["list_projects", "decide_approval", "reject_approval", "write_file"]
+        # delete_memory is an L2 hard-delete: denied by default (no protection mode).
+        cmds = ["list_projects", "decide_approval", "reject_approval", "write_file", "delete_memory"]
         grants = {
             "list_projects": "allow",
             "decide_approval": "deny",
             "reject_approval": "allow",
             "write_file": "allow",
+            "delete_memory": "deny",
         }
         return cmds, grants
 
@@ -118,6 +139,24 @@ class CheckCapabilitiesTests(unittest.TestCase):
         self._write(root, cmds, grants)
         problems = cc.check(root)
         self.assertTrue(any("reject_approval" in p for p in problems), problems)
+
+    def test_l2_allow_without_protection_fails(self):
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        grants = dict(grants)
+        grants["delete_memory"] = "allow"  # hard-delete granted with protection "none"
+        self._write(root, cmds, grants)
+        problems = cc.check(root)
+        self.assertTrue(any("delete_memory" in p and "L2" in p for p in problems), problems)
+
+    def test_l2_allow_with_declared_protection_is_green(self):
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        grants = dict(grants)
+        grants["delete_memory"] = "allow"
+        # A real protection mode makes the grant admissible.
+        self._write(root, cmds, grants, protection={"delete_memory": "soft-delete"})
+        self.assertEqual(cc.check(root), [])
 
 
 if __name__ == "__main__":
