@@ -1,5 +1,11 @@
 # Phase 2 — Governance Sidecar · Implementation Spec
 
+> ⚠️ **PROPOSAL — NOT EXECUTION AUTHORITY.** This spec is a *proposal* for review, not canonical.
+> It does NOT authorize execution. Its architecture / trust / contract decisions are **§I controlled
+> changes** requiring Architect audit + Owner approval before any build, and are **superseded where they
+> conflict with the Challenger-Deep audit** (round 1) — esp. the receipt/sidecar/provider findings.
+
+
 > Execution blueprint for `MASTER_EXECUTION_ROADMAP.md` §"Phase 2 — Governance Sidecar"
 > (roadmap lines 529–621). Grounded in the code as it stands on `main`. This is a build plan,
 > not a change to the plan — nothing here alters architecture, trust boundary, security, or

@@ -1,5 +1,11 @@
 # Phase 7 — Group Chat · Implementation Spec
 
+> ⚠️ **PROPOSAL — NOT EXECUTION AUTHORITY.** This spec is a *proposal* for review, not canonical.
+> It does NOT authorize execution. Its architecture / trust / contract decisions are **§I controlled
+> changes** requiring Architect audit + Owner approval before any build, and are **superseded where they
+> conflict with the Challenger-Deep audit** (round 1) — esp. the receipt/sidecar/provider findings.
+
+
 > Blueprint for a next session. Grounds `MASTER_EXECUTION_ROADMAP.md` §"Phase 7" in the real code.
 > Ships the collaboration hall (`group`) — a shared room where the owner and multiple agents
 > converse, hand off work, and reach consensus, **with every agent turn a governed, verified turn.**

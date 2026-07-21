@@ -1,5 +1,11 @@
 # Phase 10 — Production · Implementation Spec
 
+> ⚠️ **PROPOSAL — NOT EXECUTION AUTHORITY.** This spec is a *proposal* for review, not canonical.
+> It does NOT authorize execution. Its architecture / trust / contract decisions are **§I controlled
+> changes** requiring Architect audit + Owner approval before any build, and are **superseded where they
+> conflict with the Challenger-Deep audit** (round 1) — esp. the receipt/sidecar/provider findings.
+
+
 > Blueprint for a cold-start session. Grounds roadmap **Phase 10** (`MASTER_EXECUTION_ROADMAP.md`
 > L1215–1297) in the real code. Scope: signed + auto-updating Tauri build; the **T-005** native
 > worktree-check fix to retire the option-C CI skips and run the **full** enforcement path; **O-1..O-5**

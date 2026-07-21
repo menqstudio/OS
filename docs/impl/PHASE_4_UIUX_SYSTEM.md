@@ -1,5 +1,11 @@
 # Phase 4 — UI/UX System · Implementation Spec
 
+> ⚠️ **PROPOSAL — NOT EXECUTION AUTHORITY.** This spec is a *proposal* for review, not canonical.
+> It does NOT authorize execution. Its architecture / trust / contract decisions are **§I controlled
+> changes** requiring Architect audit + Owner approval before any build, and are **superseded where they
+> conflict with the Challenger-Deep audit** (round 1) — esp. the receipt/sidecar/provider findings.
+
+
 > Execution blueprint for `MASTER_EXECUTION_ROADMAP.md` §"Phase 4 — UI/UX System" (roadmap
 > lines 718–804). Grounded in the code as it stands on `main`. Read this together with
 > `docs/DESIGN_SYSTEM.md` (the current design-system reference) before starting. This is a

@@ -1,5 +1,11 @@
 # Phase 6 — Multi-Agent · Implementation Spec
 
+> ⚠️ **PROPOSAL — NOT EXECUTION AUTHORITY.** This spec is a *proposal* for review, not canonical.
+> It does NOT authorize execution. Its architecture / trust / contract decisions are **§I controlled
+> changes** requiring Architect audit + Owner approval before any build, and are **superseded where they
+> conflict with the Challenger-Deep audit** (round 1) — esp. the receipt/sidecar/provider findings.
+
+
 > Blueprint for a next session. Grounds `MASTER_EXECUTION_ROADMAP.md` §"Phase 6" in the real
 > code. **Governed change:** anything under §I of the roadmap (new engine `task_class`, trust
 > boundary) is a 🛑 Architect-audited change — this spec routes around engine edits wherever it

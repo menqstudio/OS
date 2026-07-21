@@ -1,5 +1,11 @@
 # Phase 5 — Memory & Knowledge · Implementation Spec
 
+> ⚠️ **PROPOSAL — NOT EXECUTION AUTHORITY.** This spec is a *proposal* for review, not canonical.
+> It does NOT authorize execution. Its architecture / trust / contract decisions are **§I controlled
+> changes** requiring Architect audit + Owner approval before any build, and are **superseded where they
+> conflict with the Challenger-Deep audit** (round 1) — esp. the receipt/sidecar/provider findings.
+
+
 > Execution blueprint for `MASTER_EXECUTION_ROADMAP.md` §"Phase 5 — Memory & Knowledge"
 > (roadmap lines 808–891). Grounded in the code on `main`. Read with `docs/DESIGN_SYSTEM.md`
 > (component/state rules) and `bridge/DESIGN.md` (governed transport) before starting. This is a
