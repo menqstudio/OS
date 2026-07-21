@@ -69,7 +69,7 @@ fn truncated(s: &str, max: usize) -> String {
 /// for audit only — the enforcement identity is the durable `origin_principal`
 /// persisted on the approval row, which (unlike the old in-memory origin map)
 /// survives a restart.
-fn process_session_id() -> &'static str {
+pub(crate) fn process_session_id() -> &'static str {
     static SESSION: OnceLock<String> = OnceLock::new();
     SESSION.get_or_init(brops_core::id)
 }
@@ -958,6 +958,22 @@ pub async fn stream_run_step(
         }
     };
 
+    // T-011 concurrency fix: atomically CLAIM the step for execution BEFORE calling
+    // the provider. This writes a one-time execution_attempt_id (the claim token; the
+    // status is unchanged) and, for a gated step, consumes the native-confirmed grant
+    // now, so two concurrent calls cannot both reach the provider on one approval —
+    // the second claim fails here, before any spend. The attempt id gates completion.
+    let attempt = {
+        let conn = locked(&state)?;
+        match repo::runs::claim_step_for_execution(&conn, &step.id, process_session_id()) {
+            Ok(a) => a,
+            Err(e) => {
+                let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
+                return Ok(());
+            }
+        }
+    };
+
     let system = "You are an execution agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. Produce the concrete result/output for the current step of a run. Be concise and practical; output only the deliverable for THIS step, not meta commentary.".to_string();
     // M-4: pass the run context as JSON so multi-line values cannot forge extra step
     // boundaries or instructions inside the prompt. T-011: build it from the ONE
@@ -993,11 +1009,12 @@ pub async fn stream_run_step(
                         return Ok(());
                     }
                 };
-                // Re-check under the re-acquired lock: while we streamed, the run
-                // may have been cancelled/finished, or this step may already have
-                // been executed by a concurrent run. Bail without a half-write.
+                // If the run was cancelled/finished while we streamed, fail this
+                // attempt (don't persist a result for a dead run). The grant stays
+                // consumed — a retry needs a fresh approval.
                 match repo::runs::get(&conn, &run_id) {
                     Ok(run) if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") => {
+                        let _ = repo::runs::fail_step_execution(&conn, &step.id, &attempt);
                         let _ = on_event.send(RunStepEvent::Error { message: format!("run is {}", run.status) });
                         return Ok(());
                     }
@@ -1007,21 +1024,10 @@ pub async fn stream_run_step(
                     }
                     _ => {}
                 }
-                match repo::runs::get_step(&conn, &step.id) {
-                    Ok(st) if st.status == "done" => {
-                        let _ = on_event.send(RunStepEvent::Done);
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-                // NOTE(cross-file, M-3): `set_step_result` now gates
-                // internally (approval/status checks in repo.rs); any gate
-                // failure surfaces here as an error event.
-                repo::runs::set_step_result(&conn, &step.id, &full)
+                // Complete under THIS claiming attempt — a stale/duplicate dispatch
+                // (different attempt) cannot persist. The gate was already enforced
+                // and the grant consumed at claim time.
+                repo::runs::complete_step_execution(&conn, &step.id, &attempt, &full)
                     .and_then(|_| repo::runs::advance(&conn, &run_id))
             };
             match outcome {
@@ -1034,6 +1040,11 @@ pub async fn stream_run_step(
             }
         }
         Err(e) => {
+            // Provider failed: fail this attempt. The grant consumed at claim is NOT
+            // restored (safest v1) — a retry requires a fresh approval.
+            if let Ok(conn) = locked(&state) {
+                let _ = repo::runs::fail_step_execution(&conn, &step.id, &attempt);
+            }
             let _ = on_event.send(RunStepEvent::Error { message: e });
         }
     }

@@ -192,6 +192,16 @@ camel! {
         pub requires_approval: bool,
         pub created_at: String,
         pub updated_at: String,
+        // T-011: one-time token written when the step is claimed for execution; only
+        // the claiming attempt may complete/fail it. The owner session + start time
+        // make the claim crash-recoverable (startup reconciliation). Server-only (not
+        // needed by the renderer).
+        #[serde(skip_serializing)]
+        pub execution_attempt_id: Option<String>,
+        #[serde(skip_serializing)]
+        pub execution_owner_session_id: Option<String>,
+        #[serde(skip_serializing)]
+        pub execution_started_at: Option<String>,
     }
 
     pub struct Event {
