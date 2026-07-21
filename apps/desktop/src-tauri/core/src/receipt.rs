@@ -15,15 +15,20 @@
 //!   * **Wire format & strict decode (§2.3)** — base64url -> exact bytes (size
 //!     capped) -> strict JSON parse (UTF-8 only, duplicate keys rejected, unknown
 //!     fields rejected, every value a string, hashes lowercase-64-hex) -> require
-//!     `JCS(parsed) == decoded bytes` (no parser differentials) -> **verify the
-//!     Ed25519 signature over the decoded bytes** -> keep the bytes unchanged.
-//!   * **Pure binding checks (§3)** — the subset of the verification checklist that
-//!     is a value comparison against expected inputs: protocol, `decision`, request
-//!     binding, identity/policy/config bindings, output-bytes rehash, allowed
-//!     executor/builder, and `requested_at <= completed_at`.
-//!   * **Trust-state machine (§6)** — maps the verifying key's signed `trust_class`
-//!     to a render state, and **refuses to yield `trusted_verified` in Wave 3a**
-//!     even if handed a production key (production rendering is gated until 3b).
+//!     `JCS(parsed) == decoded bytes` (no parser differentials) -> keep the bytes
+//!     unchanged.
+//!   * **A cryptographic type-state chain** — the only way to a render decision is
+//!     `parse_strict` -> [`Parsed`] (exposes ONLY `key_id`) -> resolve the manifest
+//!     key for that id -> [`Parsed::verify`] with a [`ResolvedManifestKey`] whose
+//!     `key_id` MUST equal the envelope's -> [`Verified`] (carries the manifest
+//!     `trust_class`) -> [`Verified::bind`] (§3 value bindings) -> [`BoundReceipt`]
+//!     -> [`BoundReceipt::resolve_3a`]. Each state can only be reached from the
+//!     previous, so no caller can name a trust state without a verified + bound
+//!     receipt, and the signed `trust_class` travels with it the whole way.
+//!   * **The Wave 3a trust gate** — [`BoundReceipt::resolve_3a`] **hard-codes**
+//!     "production key ⇒ `Blocked`". Wave 3a has no "allow production" switch to
+//!     flip; the production `trusted_verified` path is added only by an audited
+//!     change in Wave 3b (design §5/§6: "Wave 3a never yields `trusted_verified`").
 //!
 //! **Deliberately NOT here (stateful — slices 2/3, Wave 3b):** the one-time nonce
 //! consume, `receipt_id` global-uniqueness, key-manifest resolution + validity
@@ -36,6 +41,7 @@
 //! `sign(arbitrary_bytes)` oracle (design §1 — the trusted-signer boundary).
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
@@ -124,6 +130,8 @@ pub enum ReceiptError {
     BadDecisionDomain(String),
     #[error("wire: received bytes are not canonical (JCS(parsed) != bytes)")]
     NotCanonical,
+    #[error("crypto: envelope `key_id` `{claimed}` != resolved manifest key `{resolved}`")]
+    KeyIdMismatch { claimed: String, resolved: String },
     #[error("crypto: signature is {0} bytes, expected 64")]
     BadSignatureLength(usize),
     #[error("crypto: public key is {0} bytes, expected 32")]
@@ -146,130 +154,6 @@ pub enum ReceiptError {
     TimeOrder { requested: u64, completed: u64 },
 }
 
-/// A receipt whose wire bytes decoded strictly, canonicalized identically, and whose
-/// Ed25519 signature verified over those exact bytes. It still must pass [`Verified::bind`]
-/// (§3 value bindings) and, in later slices, the stateful checks (nonce/uniqueness/
-/// manifest/clock) before its output may render.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Verified {
-    fields: BTreeMap<String, String>,
-    /// The exact decoded envelope bytes — canonical, stored unchanged (§2.3 step 5).
-    canonical_bytes: Vec<u8>,
-    /// The verified 64-byte Ed25519 signature (persisted alongside the bytes, §4).
-    signature: [u8; 64],
-}
-
-impl Verified {
-    fn get(&self, field: &str) -> &str {
-        // Present by construction: `decode_and_verify` proved the full key set.
-        self.fields.get(field).map(String::as_str).unwrap_or("")
-    }
-
-    pub fn protocol(&self) -> &str { self.get("protocol") }
-    pub fn receipt_id(&self) -> &str { self.get("receipt_id") }
-    pub fn key_id(&self) -> &str { self.get("key_id") }
-    pub fn decision(&self) -> &str { self.get("decision") }
-    pub fn output_sha256(&self) -> &str { self.get("output_sha256") }
-    pub fn request_nonce(&self) -> &str { self.get("request_nonce") }
-    pub fn executor_id(&self) -> &str { self.get("executor_id") }
-    pub fn builder_id(&self) -> &str { self.get("builder_id") }
-
-    /// The canonical envelope bytes, exactly as decoded and verified. Persist these
-    /// unchanged (never a re-serialization) so the record stays re-verifiable (§4).
-    pub fn canonical_bytes(&self) -> &[u8] { &self.canonical_bytes }
-    /// The verified signature bytes, to persist alongside the envelope (§4).
-    pub fn signature(&self) -> &[u8; 64] { &self.signature }
-
-    fn ts(&self, field: &str) -> u64 {
-        // Validated as an all-ASCII-digit ms timestamp during decode.
-        self.get(field).parse::<u64>().unwrap_or(u64::MAX)
-    }
-}
-
-/// Everything the desktop already knows for this turn and requires the receipt to
-/// match, value-for-value (design §3). Borrowed — this is a pure comparison input.
-///
-/// `request_nonce` here is a *value* equality (the challenge the desktop issued);
-/// the *one-time consume* of that nonce is a stateful step performed in slice 2.
-#[derive(Debug, Clone, Copy)]
-pub struct Expected<'a> {
-    pub workspace_id: &'a str,
-    pub install_id: &'a str,
-    pub supervisor_id: &'a str,
-    pub request_nonce: &'a str,
-    pub request_sha256: &'a str,
-    pub policy_id: &'a str,
-    pub policy_version: &'a str,
-    pub policy_bundle_sha256: &'a str,
-    pub generation_config_sha256: &'a str,
-    pub system_sha256: &'a str,
-    pub history_sha256: &'a str,
-    pub containment_evidence_sha256: &'a str,
-    pub allowed_executors: &'a [&'a str],
-    pub allowed_builders: &'a [&'a str],
-}
-
-impl Verified {
-    /// The pure subset of the §3 verification checklist: every binding that is a
-    /// value comparison against what the desktop already knows, plus the output
-    /// re-hash and the intra-receipt time order. `output` is the exact reply bytes
-    /// (§2.1 — hashed as opaque bytes, no normalization). Any failure ⇒ **Blocked**.
-    ///
-    /// Not covered here (stateful, layered on in slice 2 / Wave 3b): one-time nonce
-    /// consume, `receipt_id` uniqueness, key-manifest resolution/validity/epoch/
-    /// revocation/anti-rollback, and wall-clock freshness/skew.
-    pub fn bind(&self, expected: &Expected, output: &[u8]) -> Result<(), ReceiptError> {
-        if self.protocol() != RECEIPT_PROTOCOL {
-            return Err(ReceiptError::Protocol(self.protocol().to_string()));
-        }
-        if self.decision() != DECISION_COMPLETED {
-            return Err(ReceiptError::NotCompleted(self.decision().to_string()));
-        }
-
-        // Identity / request / policy / config bindings — each an expected-value match.
-        let equals: &[(&'static str, &str)] = &[
-            ("workspace_id", expected.workspace_id),
-            ("install_id", expected.install_id),
-            ("supervisor_id", expected.supervisor_id),
-            ("request_nonce", expected.request_nonce),
-            ("request_sha256", expected.request_sha256),
-            ("policy_id", expected.policy_id),
-            ("policy_version", expected.policy_version),
-            ("policy_bundle_sha256", expected.policy_bundle_sha256),
-            ("generation_config_sha256", expected.generation_config_sha256),
-            ("system_sha256", expected.system_sha256),
-            ("history_sha256", expected.history_sha256),
-            ("containment_evidence_sha256", expected.containment_evidence_sha256),
-        ];
-        for (field, want) in equals {
-            if self.get(field) != *want {
-                return Err(ReceiptError::Mismatch { field });
-            }
-        }
-
-        // Executor / builder must be in the allowed set for this install (§3.8).
-        if !expected.allowed_executors.contains(&self.executor_id()) {
-            return Err(ReceiptError::NotAllowed("executor_id"));
-        }
-        if !expected.allowed_builders.contains(&self.builder_id()) {
-            return Err(ReceiptError::NotAllowed("builder_id"));
-        }
-
-        // Output binding: the returned bytes must hash to the signed output_sha256
-        // (§2.1, exact bytes). This is what makes the signature cover the reply.
-        if sha256_hex(output) != self.output_sha256() {
-            return Err(ReceiptError::OutputMismatch);
-        }
-
-        // Intra-receipt time order (the wall-clock freshness window is slice 2).
-        let (requested, completed) = (self.ts("requested_at"), self.ts("completed_at"));
-        if requested > completed {
-            return Err(ReceiptError::TimeOrder { requested, completed });
-        }
-        Ok(())
-    }
-}
-
 /// A verifying key's **signed** trust classification from the manifest (§5). It is
 /// what decides the render state — never inferred by the desktop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -281,7 +165,8 @@ pub enum TrustClass {
 /// The render state the desktop resolves every governed reply to (design §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustState {
-    /// Full "Verified" badge — only reachable once Wave 3b exists.
+    /// Full "Verified" badge. **Unreachable in Wave 3a** — only an audited Wave 3b
+    /// change (isolated signer + provisioned manifest) may produce it.
     TrustedVerified,
     /// Renders + persists, badged "Development / untrusted". Never "Verified".
     DevelopmentUntrusted,
@@ -289,18 +174,17 @@ pub enum TrustState {
     Blocked,
 }
 
-/// Map a verified receipt's signed key `trust_class` to a render state (§6).
-///
-/// `production_allowed` is the wave gate: **Wave 3a passes `false`**, so even a
-/// production-class key resolves to `Blocked` rather than rendering "Verified"
-/// (design §5/§6: "Wave 3a never yields `trusted_verified`"). Wave 3b flips it on
-/// once the isolated signer + provisioned manifest exist.
-pub fn resolve_trust_state(class: TrustClass, production_allowed: bool) -> TrustState {
-    match class {
-        TrustClass::Development => TrustState::DevelopmentUntrusted,
-        TrustClass::Production if production_allowed => TrustState::TrustedVerified,
-        TrustClass::Production => TrustState::Blocked,
-    }
+/// A verifying key resolved from the trusted signed manifest (§5): the `key_id` the
+/// manifest entry is filed under, its pinned Ed25519 `public_key`, and the signed
+/// `trust_class`. Binding these three together is what stops a
+/// production-`key_id` envelope from being verified against a development key: the
+/// id is checked, and the trust_class that later decides the badge comes from the
+/// SAME entry as the key that verified the signature.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedManifestKey<'a> {
+    pub key_id: &'a str,
+    pub public_key: &'a [u8],
+    pub trust_class: TrustClass,
 }
 
 /// SHA-256 of arbitrary bytes as a lowercase 64-hex string. The input is treated as
@@ -349,59 +233,32 @@ pub fn request_envelope_sha256(
     sha256_hex(&jcs_bytes(&map))
 }
 
-/// A flat `string -> string` JSON object parsed **strictly**: UTF-8 only (enforced
-/// by `serde_json::from_slice`), every value a JSON string, and **duplicate keys
-/// rejected** (serde's derived/`Map` parsing would silently keep the last one). This
-/// is the parser that closes JSON differentials (§2.3 step 2).
-struct StrictStringMap(BTreeMap<String, String>);
-
-impl<'de> Deserialize<'de> for StrictStringMap {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct V;
-        impl<'de> Visitor<'de> for V {
-            type Value = BTreeMap<String, String>;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a flat JSON object with string values")
-            }
-            fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut out = BTreeMap::new();
-                // `next_value::<String>` errors on any non-string value, so numbers,
-                // booleans, nulls, arrays and nested objects are all rejected here.
-                while let Some(key) = access.next_key::<String>()? {
-                    let value = access.next_value::<String>()?;
-                    if out.insert(key.clone(), value).is_some() {
-                        return Err(de::Error::custom(format!("__dup__{key}")));
-                    }
-                }
-                Ok(out)
-            }
-        }
-        deserializer.deserialize_map(V).map(StrictStringMap)
-    }
-}
-
-fn is_lower_hex64(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
+// ---------------------------------------------------------------------------
+// Type-state 1: Parsed — structurally valid + canonical, signature NOT checked.
+// ---------------------------------------------------------------------------
 
 /// A structurally-valid envelope whose bytes are proven canonical (design §2.3 steps
 /// 1–3) but whose signature is **not yet verified**. It is the type-state seam that
 /// lets the caller resolve the verifying key **by the envelope's own `key_id`** (§3.1
 /// — the key comes from the manifest entry for that id) before checking the signature.
 ///
-/// Only `key_id` is readable here; every other field is reachable only through
-/// [`Parsed::verify`]'s [`Verified`] result, so unverified envelope data can never be
-/// mistaken for verified data.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Only `key_id` is readable here; every other field is reachable only through the
+/// downstream [`Verified`] / [`BoundReceipt`] states, so unverified envelope data can
+/// never be mistaken for verified data. `Debug` is redacted for the same reason.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Parsed {
     fields: BTreeMap<String, String>,
     canonical_bytes: Vec<u8>,
+}
+
+impl fmt::Debug for Parsed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Only the fields legitimately readable pre-verification (design contract).
+        f.debug_struct("Parsed")
+            .field("key_id", &self.key_id())
+            .field("bytes_len", &self.canonical_bytes.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Parsed {
@@ -413,12 +270,27 @@ impl Parsed {
     }
 
     /// Verify the Ed25519 signature over the exact decoded bytes (§2.3 steps 4–5).
-    /// `public_key` MUST be the manifest key for [`Parsed::key_id`]; `signature_b64`
-    /// is the wire signature. On success the bytes are kept unchanged for storage.
-    pub fn verify(self, public_key: &[u8], signature_b64: &str) -> Result<Verified, ReceiptError> {
-        let key_bytes: [u8; 32] = public_key
+    ///
+    /// First requires `self.key_id() == resolved_key.key_id` — so the key that
+    /// verifies the signature is the manifest entry the envelope actually names, not
+    /// some other key a caller happened to pass. The resulting [`Verified`] carries
+    /// `resolved_key.trust_class`, so the badge decision later can only use the trust
+    /// class of the very key that verified this receipt.
+    pub fn verify(
+        self,
+        resolved_key: &ResolvedManifestKey,
+        signature_b64: &str,
+    ) -> Result<Verified, ReceiptError> {
+        if self.key_id() != resolved_key.key_id {
+            return Err(ReceiptError::KeyIdMismatch {
+                claimed: self.key_id().to_string(),
+                resolved: resolved_key.key_id.to_string(),
+            });
+        }
+        let key_bytes: [u8; 32] = resolved_key
+            .public_key
             .try_into()
-            .map_err(|_| ReceiptError::BadKeyLength(public_key.len()))?;
+            .map_err(|_| ReceiptError::BadKeyLength(resolved_key.public_key.len()))?;
         let verifying_key =
             VerifyingKey::from_bytes(&key_bytes).map_err(|_| ReceiptError::BadKey)?;
         // An Ed25519 signature base64url-encodes to 86 chars; cap the input before
@@ -444,8 +316,246 @@ impl Parsed {
             fields: self.fields,
             canonical_bytes: self.canonical_bytes,
             signature: sig_arr,
+            trust_class: resolved_key.trust_class,
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Type-state 2: Verified — signature checked, §3 value bindings NOT yet checked.
+// ---------------------------------------------------------------------------
+
+/// A receipt whose bytes decoded strictly, canonicalized identically, and whose
+/// Ed25519 signature verified over those exact bytes under the manifest key named by
+/// its own `key_id`. It still must pass [`Verified::bind`] (§3 value bindings) before
+/// its output may render. Carries the signed `trust_class` of the verifying key.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Verified {
+    fields: BTreeMap<String, String>,
+    canonical_bytes: Vec<u8>,
+    signature: [u8; 64],
+    trust_class: TrustClass,
+}
+
+impl fmt::Debug for Verified {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Verified")
+            .field("key_id", &field(&self.fields, "key_id"))
+            .field("receipt_id", &field(&self.fields, "receipt_id"))
+            .field("trust_class", &self.trust_class)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Everything the desktop already knows for this turn and requires the receipt to
+/// match, value-for-value (design §3). Borrowed — this is a pure comparison input.
+///
+/// `request_nonce` here is a *value* equality (the challenge the desktop issued);
+/// the *one-time consume* of that nonce is a stateful step performed in slice 2.
+/// `requested_at` is the desktop-issued request timestamp — the receipt's top-level
+/// `requested_at` must equal it exactly (§2.2/§3.8), so it can't drift from the value
+/// bound into `request_sha256` and mislead the later freshness check.
+#[derive(Debug, Clone, Copy)]
+pub struct Expected<'a> {
+    pub workspace_id: &'a str,
+    pub install_id: &'a str,
+    pub supervisor_id: &'a str,
+    pub request_nonce: &'a str,
+    pub request_sha256: &'a str,
+    pub requested_at: &'a str,
+    pub policy_id: &'a str,
+    pub policy_version: &'a str,
+    pub policy_bundle_sha256: &'a str,
+    pub generation_config_sha256: &'a str,
+    pub system_sha256: &'a str,
+    pub history_sha256: &'a str,
+    pub containment_evidence_sha256: &'a str,
+    pub allowed_executors: &'a [&'a str],
+    pub allowed_builders: &'a [&'a str],
+}
+
+fn field<'a>(fields: &'a BTreeMap<String, String>, name: &str) -> &'a str {
+    fields.get(name).map(String::as_str).unwrap_or("")
+}
+
+impl Verified {
+    /// The pure subset of the §3 verification checklist: every binding that is a
+    /// value comparison against what the desktop already knows, plus the output
+    /// re-hash and the intra-receipt time order. `output` is the exact reply bytes
+    /// (§2.1 — hashed as opaque bytes, no normalization). Any failure ⇒ **Blocked**.
+    ///
+    /// On success returns a [`BoundReceipt`], the only state from which a trust state
+    /// can be resolved — so the badge can never be decided without a verified AND
+    /// bound receipt.
+    ///
+    /// Not covered here (stateful, layered on in slice 2 / Wave 3b): one-time nonce
+    /// consume, `receipt_id` uniqueness, key-manifest validity/epoch/revocation/
+    /// anti-rollback, and wall-clock freshness/skew.
+    pub fn bind(self, expected: &Expected, output: &[u8]) -> Result<BoundReceipt, ReceiptError> {
+        let get = |name: &str| field(&self.fields, name);
+
+        if get("protocol") != RECEIPT_PROTOCOL {
+            return Err(ReceiptError::Protocol(get("protocol").to_string()));
+        }
+        if get("decision") != DECISION_COMPLETED {
+            return Err(ReceiptError::NotCompleted(get("decision").to_string()));
+        }
+
+        // Identity / request / policy / config bindings — each an expected-value
+        // match. `requested_at` is bound to the desktop-issued value (§3.8), not just
+        // ordered, so it cannot diverge from the value inside `request_sha256`.
+        let equals: &[(&'static str, &str)] = &[
+            ("workspace_id", expected.workspace_id),
+            ("install_id", expected.install_id),
+            ("supervisor_id", expected.supervisor_id),
+            ("request_nonce", expected.request_nonce),
+            ("request_sha256", expected.request_sha256),
+            ("requested_at", expected.requested_at),
+            ("policy_id", expected.policy_id),
+            ("policy_version", expected.policy_version),
+            ("policy_bundle_sha256", expected.policy_bundle_sha256),
+            ("generation_config_sha256", expected.generation_config_sha256),
+            ("system_sha256", expected.system_sha256),
+            ("history_sha256", expected.history_sha256),
+            ("containment_evidence_sha256", expected.containment_evidence_sha256),
+        ];
+        for (name, want) in equals {
+            if get(name) != *want {
+                return Err(ReceiptError::Mismatch { field: name });
+            }
+        }
+
+        // Executor / builder must be in the allowed set for this install (§3.8).
+        if !expected.allowed_executors.contains(&get("executor_id")) {
+            return Err(ReceiptError::NotAllowed("executor_id"));
+        }
+        if !expected.allowed_builders.contains(&get("builder_id")) {
+            return Err(ReceiptError::NotAllowed("builder_id"));
+        }
+
+        // Output binding: the returned bytes must hash to the signed output_sha256
+        // (§2.1, exact bytes). This is what makes the signature cover the reply.
+        if sha256_hex(output) != get("output_sha256") {
+            return Err(ReceiptError::OutputMismatch);
+        }
+
+        // Intra-receipt time order (the wall-clock freshness window is slice 2). Both
+        // fields were validated as ms integers during decode.
+        let requested = get("requested_at").parse::<u64>().unwrap_or(u64::MAX);
+        let completed = get("completed_at").parse::<u64>().unwrap_or(u64::MAX);
+        if requested > completed {
+            return Err(ReceiptError::TimeOrder { requested, completed });
+        }
+
+        Ok(BoundReceipt {
+            fields: self.fields,
+            canonical_bytes: self.canonical_bytes,
+            signature: self.signature,
+            trust_class: self.trust_class,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type-state 3: BoundReceipt — signature + all §3 pure bindings passed.
+// ---------------------------------------------------------------------------
+
+/// A receipt that verified AND passed every pure §3 binding. This is the only state
+/// from which a [`TrustState`] can be resolved, and it carries the signed
+/// `trust_class` of the verifying key plus the exact canonical bytes + signature to
+/// persist (slice 2, §4).
+#[derive(Clone, PartialEq, Eq)]
+pub struct BoundReceipt {
+    fields: BTreeMap<String, String>,
+    canonical_bytes: Vec<u8>,
+    signature: [u8; 64],
+    trust_class: TrustClass,
+}
+
+impl fmt::Debug for BoundReceipt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoundReceipt")
+            .field("key_id", &self.key_id())
+            .field("receipt_id", &self.receipt_id())
+            .field("trust_class", &self.trust_class)
+            .finish_non_exhaustive()
+    }
+}
+
+impl BoundReceipt {
+    /// Resolve the render state for **Wave 3a** (design §6). The gate is hard-coded:
+    /// a `development`-class key renders untrusted; a `production`-class key is
+    /// **Blocked** (Wave 3a never yields `trusted_verified`). There is no
+    /// "allow production" parameter to pass — the production path is added only by an
+    /// audited Wave 3b change that supersedes this method.
+    pub fn resolve_3a(&self) -> TrustState {
+        match self.trust_class {
+            TrustClass::Development => TrustState::DevelopmentUntrusted,
+            TrustClass::Production => TrustState::Blocked,
+        }
+    }
+
+    /// The signed `trust_class` of the key that verified this receipt.
+    pub fn trust_class(&self) -> TrustClass { self.trust_class }
+
+    /// The canonical envelope bytes, exactly as decoded and verified. Persist these
+    /// unchanged (never a re-serialization) so the record stays re-verifiable (§4).
+    pub fn canonical_bytes(&self) -> &[u8] { &self.canonical_bytes }
+    /// The verified signature bytes, to persist alongside the envelope (§4).
+    pub fn signature(&self) -> &[u8; 64] { &self.signature }
+
+    pub fn key_id(&self) -> &str { field(&self.fields, "key_id") }
+    pub fn receipt_id(&self) -> &str { field(&self.fields, "receipt_id") }
+    pub fn decision(&self) -> &str { field(&self.fields, "decision") }
+    pub fn output_sha256(&self) -> &str { field(&self.fields, "output_sha256") }
+    pub fn request_nonce(&self) -> &str { field(&self.fields, "request_nonce") }
+    pub fn requested_at(&self) -> &str { field(&self.fields, "requested_at") }
+    pub fn completed_at(&self) -> &str { field(&self.fields, "completed_at") }
+}
+
+// ---------------------------------------------------------------------------
+// Strict decode.
+// ---------------------------------------------------------------------------
+
+/// A flat `string -> string` JSON object parsed **strictly**: UTF-8 only (enforced
+/// by `serde_json::from_slice`), every value a JSON string, and **duplicate keys
+/// rejected** (serde's derived/`Map` parsing would silently keep the last one). This
+/// is the parser that closes JSON differentials (§2.3 step 2).
+struct StrictStringMap(BTreeMap<String, String>);
+
+impl<'de> Deserialize<'de> for StrictStringMap {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = BTreeMap<String, String>;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a flat JSON object with string values")
+            }
+            fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut out = BTreeMap::new();
+                // `next_value::<String>` errors on any non-string value, so numbers,
+                // booleans, nulls, arrays and nested objects are all rejected here.
+                while let Some(key) = access.next_key::<String>()? {
+                    let value = access.next_value::<String>()?;
+                    if out.insert(key.clone(), value).is_some() {
+                        return Err(de::Error::custom(format!("__dup__{key}")));
+                    }
+                }
+                Ok(out)
+            }
+        }
+        deserializer.deserialize_map(V).map(StrictStringMap)
+    }
+}
+
+fn is_lower_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Decode the wire form and strict-parse it into a canonical [`Parsed`] envelope
@@ -490,31 +600,30 @@ pub fn parse_strict(envelope_jcs_b64: &str) -> Result<Parsed, ReceiptError> {
             return Err(ReceiptError::UnknownField(key.clone()));
         }
     }
-    for field in RECEIPT_FIELDS {
-        if !map.contains_key(*field) {
-            return Err(ReceiptError::MissingField(field));
+    for f in RECEIPT_FIELDS {
+        if !map.contains_key(*f) {
+            return Err(ReceiptError::MissingField(f));
         }
     }
 
     // Per-field value shape. Every field is non-empty; hashes are lowercase 64-hex;
     // timestamps are millisecond integers; `decision` is in its fixed domain.
-    for (field, value) in &map {
+    for (name, value) in &map {
         if value.is_empty() {
             // `&'static str` for the error: recover the interned field name. Safe:
             // the unknown-field pass above proved every key is in RECEIPT_FIELDS.
-            let name = RECEIPT_FIELDS.iter().find(|f| **f == field).unwrap();
-            return Err(ReceiptError::EmptyField(name));
+            let interned = RECEIPT_FIELDS.iter().find(|f| **f == name).unwrap();
+            return Err(ReceiptError::EmptyField(interned));
         }
     }
-    for field in HASH_FIELDS {
-        if !is_lower_hex64(map.get(*field).unwrap()) {
-            return Err(ReceiptError::NotHex(field));
+    for f in HASH_FIELDS {
+        if !is_lower_hex64(map.get(*f).unwrap()) {
+            return Err(ReceiptError::NotHex(f));
         }
     }
-    for field in TIMESTAMP_FIELDS {
-        let v = map.get(*field).unwrap();
-        if v.parse::<u64>().is_err() {
-            return Err(ReceiptError::NotTimestamp(field));
+    for f in TIMESTAMP_FIELDS {
+        if map.get(*f).unwrap().parse::<u64>().is_err() {
+            return Err(ReceiptError::NotTimestamp(f));
         }
     }
     let decision = map.get("decision").unwrap();
@@ -532,17 +641,6 @@ pub fn parse_strict(envelope_jcs_b64: &str) -> Result<Parsed, ReceiptError> {
     Ok(Parsed { fields: map, canonical_bytes: bytes })
 }
 
-/// Convenience for callers that already hold the key: [`parse_strict`] followed by
-/// [`Parsed::verify`]. The real flow resolves the key by [`Parsed::key_id`] between
-/// the two, so tests use this and the desktop wiring uses the two-phase form.
-pub fn decode_and_verify(
-    envelope_jcs_b64: &str,
-    signature_b64: &str,
-    public_key: &[u8],
-) -> Result<Verified, ReceiptError> {
-    parse_strict(envelope_jcs_b64)?.verify(public_key, signature_b64)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -557,7 +655,7 @@ mod tests {
     }
 
     /// A fully-valid field map for a `completed` receipt. Tests mutate one field to
-    /// drive a single negative case.
+    /// drive a single negative case. `key_id` is always "key-dev-1".
     fn valid_fields() -> BTreeMap<String, String> {
         let h = |n: u8| -> String {
             let mut s = String::new();
@@ -597,10 +695,13 @@ mod tests {
     fn wire(map: &BTreeMap<String, String>, key: &SigningKey) -> (String, String) {
         let bytes = jcs_bytes(map);
         let sig = key.sign(&bytes);
-        (
-            URL_SAFE_NO_PAD.encode(&bytes),
-            URL_SAFE_NO_PAD.encode(sig.to_bytes()),
-        )
+        (URL_SAFE_NO_PAD.encode(&bytes), URL_SAFE_NO_PAD.encode(sig.to_bytes()))
+    }
+
+    /// The manifest key for the receipts in these tests (`key-dev-1`), with a chosen
+    /// trust class. Mirrors what slice 3b's manifest resolution will hand `verify`.
+    fn resolved<'a>(pk: &'a [u8], trust: TrustClass) -> ResolvedManifestKey<'a> {
+        ResolvedManifestKey { key_id: "key-dev-1", public_key: pk, trust_class: trust }
     }
 
     // Owned hex strings for the expected bindings — `Expected` borrows, and these
@@ -612,6 +713,7 @@ mod tests {
         generation: String,
         system: String,
         history: String,
+        wrong: String,
     }
     static EXP: std::sync::LazyLock<ExpHashes> = std::sync::LazyLock::new(|| ExpHashes {
         request: "11".repeat(32),
@@ -620,6 +722,7 @@ mod tests {
         generation: "44".repeat(32),
         system: "55".repeat(32),
         history: "66".repeat(32),
+        wrong: "00".repeat(32),
     });
 
     fn expected() -> Expected<'static> {
@@ -629,6 +732,7 @@ mod tests {
             supervisor_id: "sup-1",
             request_nonce: "nonce-xyz",
             request_sha256: &EXP.request,
+            requested_at: "1000",
             policy_id: "pol-1",
             policy_version: "1",
             policy_bundle_sha256: &EXP.bundle,
@@ -641,38 +745,75 @@ mod tests {
         }
     }
 
+    /// Full happy-path flow to a `BoundReceipt` under a chosen trust class.
+    fn bound_with(trust: TrustClass) -> BoundReceipt {
+        let key = signing_key(7);
+        let (env, sig) = wire(&valid_fields(), &key);
+        parse_strict(&env)
+            .unwrap()
+            .verify(&resolved(key.verifying_key().as_bytes(), trust), &sig)
+            .unwrap()
+            .bind(&expected(), OUTPUT)
+            .unwrap()
+    }
+
+    /// Test convenience: parse → verify with a development key for `key-dev-1`. The
+    /// real flow resolves the key by `key_id`; the dedicated key_id-mismatch test
+    /// covers that seam. Returns the `Verified` (bind is exercised separately).
+    fn decode_and_verify(env: &str, sig: &str, pk: &[u8]) -> Result<Verified, ReceiptError> {
+        parse_strict(env)?.verify(&resolved(pk, TrustClass::Development), sig)
+    }
+
     // ---- happy path -------------------------------------------------------
 
     #[test]
-    fn a_valid_receipt_verifies_and_binds() {
+    fn a_valid_receipt_verifies_binds_and_resolves_dev() {
         let key = signing_key(7);
         let (env, sig) = wire(&valid_fields(), &key);
-        let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
-        assert_eq!(v.decision(), "completed");
-        v.bind(&expected(), OUTPUT).unwrap();
+        let bound = parse_strict(&env)
+            .unwrap()
+            .verify(&resolved(key.verifying_key().as_bytes(), TrustClass::Development), &sig)
+            .unwrap()
+            .bind(&expected(), OUTPUT)
+            .unwrap();
+        assert_eq!(bound.decision(), "completed");
+        assert_eq!(bound.resolve_3a(), TrustState::DevelopmentUntrusted);
         // The stored bytes are exactly what was signed.
-        assert_eq!(v.canonical_bytes(), jcs_bytes(&valid_fields()).as_slice());
+        assert_eq!(bound.canonical_bytes(), jcs_bytes(&valid_fields()).as_slice());
+    }
+
+    // ---- key-id ↔ key binding (blocker 1) ---------------------------------
+
+    #[test]
+    fn key_id_is_readable_before_verification() {
+        let key = signing_key(7);
+        let (env, _sig) = wire(&valid_fields(), &key);
+        assert_eq!(parse_strict(&env).unwrap().key_id(), "key-dev-1");
+    }
+
+    #[test]
+    fn claimed_key_id_must_equal_resolved_key_id() {
+        // The envelope claims `key-dev-1`; a manifest key filed under a DIFFERENT id
+        // (even with the correct public key) must be refused before any signature
+        // check — a compromised wiring can't verify a prod-id envelope with a dev key.
+        let key = signing_key(7);
+        let (env, sig) = wire(&valid_fields(), &key);
+        let vk = key.verifying_key();
+        let wrong_id = ResolvedManifestKey {
+            key_id: "key-prod-9",
+            public_key: vk.as_bytes(),
+            trust_class: TrustClass::Development,
+        };
+        assert_eq!(
+            parse_strict(&env).unwrap().verify(&wrong_id, &sig),
+            Err(ReceiptError::KeyIdMismatch {
+                claimed: "key-dev-1".into(),
+                resolved: "key-prod-9".into(),
+            })
+        );
     }
 
     // ---- crypto -----------------------------------------------------------
-
-    #[test]
-    fn key_id_is_readable_before_verification_then_verify_binds() {
-        // The real flow: parse structurally, read key_id to resolve the manifest key,
-        // then verify. key_id is the ONLY field reachable pre-verification.
-        let key = signing_key(7);
-        let (env, sig) = wire(&valid_fields(), &key);
-        let parsed = parse_strict(&env).unwrap();
-        assert_eq!(parsed.key_id(), "key-dev-1");
-        // A wrong key resolved for that id fails the signature check.
-        assert_eq!(
-            parsed.clone().verify(signing_key(9).verifying_key().as_bytes(), &sig),
-            Err(ReceiptError::BadSignature)
-        );
-        // The right key verifies and then binds.
-        let v = parsed.verify(key.verifying_key().as_bytes(), &sig).unwrap();
-        v.bind(&expected(), OUTPUT).unwrap();
-    }
 
     #[test]
     fn wrong_key_is_rejected() {
@@ -699,11 +840,10 @@ mod tests {
     fn tampering_the_envelope_breaks_the_signature() {
         let key = signing_key(7);
         let mut fields = valid_fields();
-        let (env, sig) = wire(&fields, &key);
-        // Re-sign nothing; just flip a field and re-encode with the OLD signature.
+        let (_env, sig) = wire(&fields, &key);
+        // Flip a field and re-encode with the OLD signature.
         fields.insert("workspace_id".into(), "ws-evil".into());
         let forged_env = URL_SAFE_NO_PAD.encode(jcs_bytes(&fields));
-        let _ = env;
         assert_eq!(
             decode_and_verify(&forged_env, &sig, key.verifying_key().as_bytes()),
             Err(ReceiptError::BadSignature)
@@ -729,36 +869,20 @@ mod tests {
 
     #[test]
     fn non_base64_is_rejected() {
-        let key = signing_key(7);
-        let (_env, sig) = wire(&valid_fields(), &key);
-        assert_eq!(
-            decode_and_verify("not valid base64!!", &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::BadBase64)
-        );
+        assert_eq!(parse_strict("not valid base64!!"), Err(ReceiptError::BadBase64));
     }
 
     #[test]
     fn oversize_envelope_is_rejected_before_parsing() {
-        let key = signing_key(7);
         let big = URL_SAFE_NO_PAD.encode(vec![b'x'; MAX_ENVELOPE_BYTES + 1]);
-        let (_e, sig) = wire(&valid_fields(), &key);
-        assert!(matches!(
-            decode_and_verify(&big, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::TooLarge(_))
-        ));
+        assert!(matches!(parse_strict(&big), Err(ReceiptError::TooLarge(_))));
     }
 
     #[test]
     fn duplicate_key_is_rejected() {
-        let key = signing_key(7);
-        // Hand-craft canonical-ish bytes with a duplicate key (can't go through a map).
         let raw = br#"{"decision":"completed","decision":"denied"}"#;
         let env = URL_SAFE_NO_PAD.encode(raw);
-        let (_e, sig) = wire(&valid_fields(), &key);
-        assert_eq!(
-            decode_and_verify(&env, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::DuplicateKey("decision".into()))
-        );
+        assert_eq!(parse_strict(&env), Err(ReceiptError::DuplicateKey("decision".into())));
     }
 
     #[test]
@@ -766,11 +890,8 @@ mod tests {
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.insert("evil_extra".into(), "1".into());
-        let (env, sig) = wire(&fields, &key);
-        assert_eq!(
-            decode_and_verify(&env, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::UnknownField("evil_extra".into()))
-        );
+        let (env, _sig) = wire(&fields, &key);
+        assert_eq!(parse_strict(&env), Err(ReceiptError::UnknownField("evil_extra".into())));
     }
 
     #[test]
@@ -778,24 +899,15 @@ mod tests {
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.remove("supervisor_id");
-        let (env, sig) = wire(&fields, &key);
-        assert_eq!(
-            decode_and_verify(&env, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::MissingField("supervisor_id"))
-        );
+        let (env, _sig) = wire(&fields, &key);
+        assert_eq!(parse_strict(&env), Err(ReceiptError::MissingField("supervisor_id")));
     }
 
     #[test]
     fn non_string_value_is_rejected() {
-        // A JSON number where a string is required must not parse.
-        let key = signing_key(7);
         let raw = br#"{"decision":123}"#;
         let env = URL_SAFE_NO_PAD.encode(raw);
-        let (_e, sig) = wire(&valid_fields(), &key);
-        assert!(matches!(
-            decode_and_verify(&env, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::BadJson(_))
-        ));
+        assert!(matches!(parse_strict(&env), Err(ReceiptError::BadJson(_))));
     }
 
     #[test]
@@ -803,11 +915,8 @@ mod tests {
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.insert("receipt_id".into(), "".into());
-        let (env, sig) = wire(&fields, &key);
-        assert_eq!(
-            decode_and_verify(&env, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::EmptyField("receipt_id"))
-        );
+        let (env, _sig) = wire(&fields, &key);
+        assert_eq!(parse_strict(&env), Err(ReceiptError::EmptyField("receipt_id")));
     }
 
     #[test]
@@ -815,11 +924,8 @@ mod tests {
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.insert("output_sha256".into(), "ZZZ".into());
-        let (env, sig) = wire(&fields, &key);
-        assert_eq!(
-            decode_and_verify(&env, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::NotHex("output_sha256"))
-        );
+        let (env, _sig) = wire(&fields, &key);
+        assert_eq!(parse_strict(&env), Err(ReceiptError::NotHex("output_sha256")));
     }
 
     #[test]
@@ -827,11 +933,8 @@ mod tests {
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.insert("system_sha256".into(), "AB".repeat(32));
-        let (env, sig) = wire(&fields, &key);
-        assert_eq!(
-            decode_and_verify(&env, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::NotHex("system_sha256"))
-        );
+        let (env, _sig) = wire(&fields, &key);
+        assert_eq!(parse_strict(&env), Err(ReceiptError::NotHex("system_sha256")));
     }
 
     #[test]
@@ -839,11 +942,8 @@ mod tests {
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.insert("requested_at".into(), "not-a-number".into());
-        let (env, sig) = wire(&fields, &key);
-        assert_eq!(
-            decode_and_verify(&env, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::NotTimestamp("requested_at"))
-        );
+        let (env, _sig) = wire(&fields, &key);
+        assert_eq!(parse_strict(&env), Err(ReceiptError::NotTimestamp("requested_at")));
     }
 
     #[test]
@@ -851,64 +951,63 @@ mod tests {
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.insert("decision".into(), "totally-fine".into());
-        let (env, sig) = wire(&fields, &key);
-        assert_eq!(
-            decode_and_verify(&env, &sig, key.verifying_key().as_bytes()),
-            Err(ReceiptError::BadDecisionDomain("totally-fine".into()))
-        );
+        let (env, _sig) = wire(&fields, &key);
+        assert_eq!(parse_strict(&env), Err(ReceiptError::BadDecisionDomain("totally-fine".into())));
     }
 
     #[test]
     fn non_canonical_bytes_with_a_valid_signature_are_rejected() {
-        // Sign NON-canonical bytes (extra whitespace). The signature verifies over
+        // Sign NON-canonical bytes (extra whitespace). The signature would verify over
         // those exact bytes, but the parsed map re-canonicalizes differently — so the
-        // JCS(parsed)==bytes check must reject it (parser-differential defense).
-        let key = signing_key(7);
+        // JCS(parsed)==bytes check rejects it at parse time (parser-differential
+        // defense), before a key is even resolved.
         let canonical = jcs_bytes(&valid_fields());
         let mut noncanon = canonical.clone();
-        // Insert a space after the opening brace: still valid JSON, not canonical.
-        noncanon.insert(1, b' ');
-        let sig = key.sign(&noncanon);
+        noncanon.insert(1, b' '); // space after '{': valid JSON, not canonical
         let env = URL_SAFE_NO_PAD.encode(&noncanon);
-        let sig_b64 = URL_SAFE_NO_PAD.encode(sig.to_bytes());
-        assert_eq!(
-            decode_and_verify(&env, &sig_b64, key.verifying_key().as_bytes()),
-            Err(ReceiptError::NotCanonical)
-        );
+        assert_eq!(parse_strict(&env), Err(ReceiptError::NotCanonical));
     }
 
-    // ---- §3 pure bindings -------------------------------------------------
+    // ---- §3 pure bindings (blocker 3 + full matrix) -----------------------
 
     #[test]
-    fn each_identity_policy_config_mismatch_blocks() {
+    fn every_expected_value_mismatch_blocks() {
         let key = signing_key(7);
         let (env, sig) = wire(&valid_fields(), &key);
-        let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
 
-        // Every expected-value binding, mutated one at a time.
+        // Each expected-value binding, mutated one at a time — INCLUDING every hash
+        // field and the desktop-issued requested_at (blocker 3).
         #[allow(clippy::type_complexity)]
         let cases: &[(&str, fn(&mut Expected))] = &[
             ("workspace_id", |e| e.workspace_id = "ws-evil"),
             ("install_id", |e| e.install_id = "install-evil"),
             ("supervisor_id", |e| e.supervisor_id = "sup-evil"),
             ("request_nonce", |e| e.request_nonce = "nonce-evil"),
+            ("request_sha256", |e| e.request_sha256 = &EXP.wrong),
+            ("requested_at", |e| e.requested_at = "9999"),
             ("policy_id", |e| e.policy_id = "pol-evil"),
             ("policy_version", |e| e.policy_version = "9"),
+            ("policy_bundle_sha256", |e| e.policy_bundle_sha256 = &EXP.wrong),
+            ("generation_config_sha256", |e| e.generation_config_sha256 = &EXP.wrong),
+            ("system_sha256", |e| e.system_sha256 = &EXP.wrong),
+            ("history_sha256", |e| e.history_sha256 = &EXP.wrong),
+            ("containment_evidence_sha256", |e| e.containment_evidence_sha256 = &EXP.wrong),
         ];
-        for (field, mutate) in cases {
+        for (name, mutate) in cases {
+            // Fresh Verified per case (bind consumes it).
+            let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
             let mut exp = expected();
             mutate(&mut exp);
             assert_eq!(
                 v.bind(&exp, OUTPUT),
-                Err(ReceiptError::Mismatch { field }),
-                "mutating expected {field} must block"
+                Err(ReceiptError::Mismatch { field: name }),
+                "mutating expected {name} must block"
             );
         }
     }
 
     #[test]
     fn decision_must_be_completed_to_bind() {
-        // A syntactically valid `denied` receipt decodes but must not bind.
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.insert("decision".into(), "denied".into());
@@ -921,12 +1020,13 @@ mod tests {
     fn executor_and_builder_must_be_allowed() {
         let key = signing_key(7);
         let (env, sig) = wire(&valid_fields(), &key);
-        let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
 
+        let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
         let mut exp = expected();
         exp.allowed_executors = &["someone-else"];
         assert_eq!(v.bind(&exp, OUTPUT), Err(ReceiptError::NotAllowed("executor_id")));
 
+        let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
         let mut exp = expected();
         exp.allowed_builders = &["someone-else"];
         assert_eq!(v.bind(&exp, OUTPUT), Err(ReceiptError::NotAllowed("builder_id")));
@@ -934,36 +1034,38 @@ mod tests {
 
     #[test]
     fn requested_after_completed_is_rejected() {
+        // requested_at must still be <= completed_at. Move BOTH the receipt and the
+        // expected requested_at so the exact-match binding passes and the time-order
+        // check is what fires.
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.insert("requested_at".into(), "5000".into());
         fields.insert("completed_at".into(), "2000".into());
         let (env, sig) = wire(&fields, &key);
         let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
+        let mut exp = expected();
+        exp.requested_at = "5000";
         assert_eq!(
-            v.bind(&expected(), OUTPUT),
+            v.bind(&exp, OUTPUT),
             Err(ReceiptError::TimeOrder { requested: 5000, completed: 2000 })
         );
     }
 
-    // ---- trust state ------------------------------------------------------
+    // ---- trust state (blocker 2) -----------------------------------------
 
     #[test]
-    fn wave_3a_never_renders_verified_even_for_a_production_key() {
-        // production_allowed=false is the Wave 3a gate.
-        assert_eq!(
-            resolve_trust_state(TrustClass::Production, false),
-            TrustState::Blocked
-        );
-        assert_eq!(
-            resolve_trust_state(TrustClass::Development, false),
-            TrustState::DevelopmentUntrusted
-        );
-        // Wave 3b flips the gate on.
-        assert_eq!(
-            resolve_trust_state(TrustClass::Production, true),
-            TrustState::TrustedVerified
-        );
+    fn trust_state_is_only_reachable_from_a_bound_receipt() {
+        // Compile-time: `resolve_3a` exists only on BoundReceipt, and BoundReceipt is
+        // only produced by `Verified::bind`. This test exercises that path and pins
+        // the dev outcome; there is no standalone trust-state function to call.
+        assert_eq!(bound_with(TrustClass::Development).resolve_3a(), TrustState::DevelopmentUntrusted);
+    }
+
+    #[test]
+    fn wave_3a_blocks_a_production_key_it_never_renders_verified() {
+        // A production-class key that fully verifies AND binds still resolves to
+        // Blocked in 3a — there is no parameter to make it render "Verified".
+        assert_eq!(bound_with(TrustClass::Production).resolve_3a(), TrustState::Blocked);
     }
 
     // ---- canonicalization invariants -------------------------------------
@@ -978,12 +1080,11 @@ mod tests {
     }
 
     #[test]
-    fn request_envelope_hash_is_deterministic_and_order_independent() {
+    fn request_envelope_hash_is_deterministic_and_input_sensitive() {
         let a = request_envelope_sha256("ws", "in", "n", &"aa".repeat(32), &"bb".repeat(32), &"cc".repeat(32), "1000");
         let b = request_envelope_sha256("ws", "in", "n", &"aa".repeat(32), &"bb".repeat(32), &"cc".repeat(32), "1000");
         assert_eq!(a, b);
         assert!(is_lower_hex64(&a));
-        // A different input yields a different hash.
         let c = request_envelope_sha256("ws2", "in", "n", &"aa".repeat(32), &"bb".repeat(32), &"cc".repeat(32), "1000");
         assert_ne!(a, c);
     }
@@ -993,7 +1094,18 @@ mod tests {
         let mut m = BTreeMap::new();
         m.insert("b".to_string(), "x".to_string());
         m.insert("a".to_string(), "y\n\"z".to_string());
-        // sorted keys, no spaces, \n and \" short escapes, no escaped '/'.
         assert_eq!(jcs_bytes(&m), br#"{"a":"y\n\"z","b":"x"}"#);
+    }
+
+    #[test]
+    fn parsed_debug_does_not_leak_envelope_fields() {
+        // The pre-verification contract: only key_id (+ a byte length) is observable.
+        let key = signing_key(7);
+        let (env, _sig) = wire(&valid_fields(), &key);
+        let dbg = format!("{:?}", parse_strict(&env).unwrap());
+        assert!(dbg.contains("key-dev-1"), "key_id is allowed: {dbg}");
+        // A representative secret-ish binding must not appear.
+        assert!(!dbg.contains(&"55".repeat(32)), "system_sha256 leaked into Debug: {dbg}");
+        assert!(!dbg.contains("nonce-xyz"), "request_nonce leaked into Debug: {dbg}");
     }
 }
