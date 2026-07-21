@@ -25,10 +25,6 @@ interface AppState {
   setLang: (l: Lang) => void;
   paletteOpen: boolean;
   setPaletteOpen: (v: boolean) => void;
-  /** Opt-in preference for the governed engine provider (default OFF, experimental).
-   *  Live turn routing is enabled by the backend via env for now; this records intent. */
-  governedEngine: boolean;
-  setGovernedEngine: (v: boolean) => void;
   t: (key: DictKey) => string;
 }
 
@@ -58,7 +54,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => LS.get<Theme>('brops.theme', 'dark'));
   const [lang, setLangState] = useState<Lang>(() => LS.get<Lang>('brops.lang', 'en'));
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [governedEngine, setGovernedEngineState] = useState<boolean>(() => LS.get<boolean>('brops.governedEngine', false));
 
   // Plain navigation clears any pending focus so a later manual visit to the
   // same screen doesn't re-trigger a stale deep-link.
@@ -81,15 +76,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), []);
   const setLang = useCallback((l: Lang) => setLangState(l), []);
-  const setGovernedEngine = useCallback((v: boolean) => {
-    setGovernedEngineState(v);
-    LS.set('brops.governedEngine', v);
-  }, []);
   const t = useCallback((key: DictKey) => translate(lang, key), [lang]);
 
   const value = useMemo<AppState>(
-    () => ({ route, setRoute, focus, openEntity, clearFocus, theme, toggleTheme, lang, setLang, paletteOpen, setPaletteOpen, governedEngine, setGovernedEngine, t }),
-    [route, setRoute, focus, openEntity, clearFocus, theme, toggleTheme, lang, setLang, paletteOpen, governedEngine, setGovernedEngine, t],
+    () => ({ route, setRoute, focus, openEntity, clearFocus, theme, toggleTheme, lang, setLang, paletteOpen, setPaletteOpen, t }),
+    [route, setRoute, focus, openEntity, clearFocus, theme, toggleTheme, lang, setLang, paletteOpen, t],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -1,14 +1,21 @@
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button } from '../components/ui';
+import { PageHeader, Panel, Button, Badge, Skeleton, ErrorState } from '../components/ui';
 import { languageNames } from '../i18n';
+import { desktop, hasBackend } from '../services/desktop';
+import { useAsync } from '../hooks/useAsync';
 import type { Lang, Theme } from '../domain/enums';
 
 export function Settings() {
-  const { t, theme, toggleTheme, lang, setLang, governedEngine, setGovernedEngine } = useApp();
+  const { t, theme, toggleTheme, lang, setLang } = useApp();
 
   const selectTheme = (value: Theme) => {
     if (value !== theme) toggleTheme();
   };
+
+  // Read-only, HONEST view of the provider the backend actually resolved. The
+  // provider is chosen by the backend environment (fail-closed policy in ai.rs)
+  // — there is no client-side toggle that could route turns through the wall.
+  const ai = useAsync(() => desktop.aiStatus(), []);
 
   return (
     <>
@@ -38,23 +45,49 @@ export function Settings() {
               ))}
             </select>
           </div>
+        </div>
+      </Panel>
 
-          <div className="list-row">
-            <span>
-              {t('settings.governedEngine')}
-              <span className="muted" style={{ display: 'block', fontSize: 12, marginTop: 2, maxWidth: 420 }}>
-                {t('settings.governedEngineHint')}
-              </span>
-            </span>
-            <span className="row">
-              <Button variant={governedEngine ? 'primary' : 'default'} onClick={() => setGovernedEngine(true)}>
-                {t('settings.on')}
-              </Button>
-              <Button variant={!governedEngine ? 'primary' : 'default'} onClick={() => setGovernedEngine(false)}>
-                {t('settings.off')}
-              </Button>
-            </span>
-          </div>
+      <Panel title={t('settings.aiProvider')}>
+        <div className="stack">
+          <span className="muted" style={{ fontSize: 12, maxWidth: 480 }}>
+            {t('settings.aiProviderHint')}
+          </span>
+
+          {!hasBackend() && <span className="muted">{t('settings.aiProviderUnavailable')}</span>}
+          {hasBackend() && (
+            <>
+              {ai.loading && ai.data === null && <Skeleton rows={2} />}
+              {ai.error && <ErrorState message={ai.error} onRetry={ai.reload} />}
+              {ai.data && (
+                <>
+                  <div className="list-row">
+                    <span>
+                      {ai.data.provider}
+                      {ai.data.model && (
+                        <span className="muted" style={{ display: 'block', fontSize: 12, marginTop: 2 }}>
+                          {ai.data.model}
+                        </span>
+                      )}
+                    </span>
+                    <span className="row">
+                      <Badge tone={ai.data.governed ? 'success' : 'danger'}>
+                        {ai.data.governed ? t('settings.governed') : t('settings.ungoverned')}
+                      </Badge>
+                      <Badge tone={ai.data.ready ? 'success' : 'warning'}>
+                        {ai.data.ready ? t('settings.aiProviderReady') : t('settings.aiProviderNotReady')}
+                      </Badge>
+                    </span>
+                  </div>
+                  {ai.data.detail && (
+                    <span className="muted" style={{ fontSize: 12, maxWidth: 480 }}>
+                      {ai.data.detail}
+                    </span>
+                  )}
+                </>
+              )}
+            </>
+          )}
         </div>
       </Panel>
     </>

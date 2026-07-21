@@ -255,13 +255,37 @@ pub struct AiStatus {
     pub model: String,
     pub ready: bool,
     pub detail: String,
+    /// True ONLY for the governed engine (turns run behind the wall, verified
+    /// receipt). Every ungoverned provider — and every misconfiguration error —
+    /// is `false`, so the UI can never paint an ungoverned turn as governed.
+    pub governed: bool,
 }
 
+#[derive(Debug)]
 enum Provider {
     ClaudeCli { bin: String },
     Anthropic { key: String, model: String },
     Ollama { model: String, url: String },
     GovernedEngine { python: String, sidecar: String },
+}
+
+/// The environment inputs `resolve_provider` needs, snapshotted so the policy
+/// core is a PURE function (no `std::env` reads) and unit-testable without any
+/// env mutation. `resolve()` fills this from the process environment.
+struct ProviderEnv {
+    /// Lowercased `BROPS_AI_PROVIDER` (None/empty ⇒ default policy).
+    forced: Option<String>,
+    /// `BROPS_ALLOW_GOVERNED_ENGINE` — gates the governed engine.
+    allow_governed: bool,
+    /// `BROPS_ALLOW_UNGOVERNED` — development-only opt-in to any ungoverned provider.
+    allow_ungoverned: bool,
+    anthropic_key: Option<String>,
+    claude_bin: String,
+    anthropic_model: String,
+    ollama_model: String,
+    ollama_url: String,
+    governed_python: String,
+    governed_sidecar: String,
 }
 
 fn env_nonempty(key: &str) -> Option<String> {
@@ -291,48 +315,96 @@ fn env_bool(key: &str) -> bool {
     }
 }
 
-fn resolve() -> Provider {
-    let forced = env_nonempty("BROPS_AI_PROVIDER").map(|v| v.to_lowercase());
-    let claude_bin = env_nonempty("BROPS_CLAUDE_BIN").unwrap_or_else(|| DEFAULT_CLAUDE_BIN.to_string());
-    match forced.as_deref() {
-        Some("anthropic") => {
-            let key = env_nonempty("ANTHROPIC_API_KEY").unwrap_or_default();
-            return Provider::Anthropic {
-                key,
-                model: env_nonempty("BROPS_ANTHROPIC_MODEL").unwrap_or_else(|| DEFAULT_ANTHROPIC_MODEL.to_string()),
-            };
-        }
-        Some("ollama") => {
-            return Provider::Ollama {
-                model: env_nonempty("BROPS_OLLAMA_MODEL").unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string()),
-                url: env_nonempty("BROPS_OLLAMA_URL").unwrap_or_else(|| DEFAULT_OLLAMA_URL.to_string()),
-            };
-        }
-        Some("claude-cli") => return Provider::ClaudeCli { bin: claude_bin },
+/// FAIL-CLOSED provider policy (PURE — no env reads, unit-testable). Governed
+/// mode can never silently degrade to an ungoverned provider, and no
+/// misconfiguration ever picks a provider by accident: every ambiguous or
+/// disallowed configuration is a hard `Err` the caller surfaces to the user.
+///
+/// Rules (exhaustive):
+///   * `governed-engine` forced → GovernedEngine iff `allow_governed`, else Err.
+///   * `claude-cli` / `anthropic` / `ollama` forced (all UNGOVERNED) → Err unless
+///     `allow_ungoverned`; anthropic additionally requires a non-empty key.
+///   * any other non-empty forced string → Err (unknown provider).
+///   * nothing forced (default) → GovernedEngine iff `allow_governed`; else, iff
+///     `allow_ungoverned`, anthropic-if-key-else-claude-cli; else Err.
+///
+/// Never auto-selects Anthropic merely because ANTHROPIC_API_KEY is set — that
+/// only happens under an explicit `allow_ungoverned` development opt-in.
+fn resolve_provider(env: &ProviderEnv) -> Result<Provider, String> {
+    let key = || env.anthropic_key.clone().filter(|k| !k.is_empty());
+    let governed = || Provider::GovernedEngine {
+        python: env.governed_python.clone(),
+        sidecar: env.governed_sidecar.clone(),
+    };
+    let claude_cli = || Provider::ClaudeCli { bin: env.claude_bin.clone() };
+    let anthropic = || {
+        key()
+            .map(|k| Provider::Anthropic { key: k, model: env.anthropic_model.clone() })
+            .ok_or_else(|| "anthropic provider requires ANTHROPIC_API_KEY".to_string())
+    };
+
+    let forced = env.forced.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    match forced {
         Some("governed-engine") => {
-            // Opt-in AND gated: default OFF. Requires the explicit provider force
-            // *and* BROPS_ALLOW_GOVERNED_ENGINE=1 (mirrors BROPS_ALLOW_REMOTE_OLLAMA).
-            // Without the allow flag, fall through to the safe default rather than
-            // route AI turns through an unconfigured governed path.
-            if env_bool("BROPS_ALLOW_GOVERNED_ENGINE") {
-                return Provider::GovernedEngine {
-                    python: env_nonempty("BROPS_GOVERNED_PYTHON").unwrap_or_else(|| DEFAULT_GOVERNED_PYTHON.to_string()),
-                    sidecar: env_nonempty("BROPS_GOVERNED_SIDECAR").unwrap_or_else(|| DEFAULT_GOVERNED_SIDECAR.to_string()),
-                };
+            if env.allow_governed {
+                Ok(governed())
+            } else {
+                Err("BROPS_AI_PROVIDER=governed-engine requires BROPS_ALLOW_GOVERNED_ENGINE=1".to_string())
             }
-            eprintln!("[brops] WARN BROPS_AI_PROVIDER=governed-engine ignored: set BROPS_ALLOW_GOVERNED_ENGINE=1 to enable; falling back to the default provider");
         }
-        _ => {}
+        Some(name @ ("claude-cli" | "anthropic" | "ollama")) => {
+            if !env.allow_ungoverned {
+                return Err(format!(
+                    "ungoverned provider '{name}' requires BROPS_ALLOW_UNGOVERNED=1 (development only)"
+                ));
+            }
+            match name {
+                "claude-cli" => Ok(claude_cli()),
+                "ollama" => Ok(Provider::Ollama {
+                    model: env.ollama_model.clone(),
+                    url: env.ollama_url.clone(),
+                }),
+                "anthropic" => anthropic(),
+                _ => unreachable!(),
+            }
+        }
+        Some(other) => Err(format!(
+            "unknown BROPS_AI_PROVIDER '{other}' (expected: governed-engine | claude-cli | anthropic | ollama)"
+        )),
+        None => {
+            if env.allow_governed {
+                Ok(governed())
+            } else if env.allow_ungoverned {
+                // Development ungoverned default: a metered key means Anthropic,
+                // otherwise the local claude CLI. Reached ONLY under the explicit
+                // allow_ungoverned opt-in — never silently.
+                Ok(match key() {
+                    Some(k) => Provider::Anthropic { key: k, model: env.anthropic_model.clone() },
+                    None => claude_cli(),
+                })
+            } else {
+                Err("no AI provider configured: set BROPS_AI_PROVIDER=governed-engine with BROPS_ALLOW_GOVERNED_ENGINE=1, or BROPS_ALLOW_UNGOVERNED=1 to use a development ungoverned provider".to_string())
+            }
+        }
     }
-    // Auto: a metered key means the user opted into Anthropic; otherwise default
-    // to the local claude CLI (free via the user's own login).
-    if let Some(key) = env_nonempty("ANTHROPIC_API_KEY") {
-        return Provider::Anthropic {
-            key,
-            model: env_nonempty("BROPS_ANTHROPIC_MODEL").unwrap_or_else(|| DEFAULT_ANTHROPIC_MODEL.to_string()),
-        };
-    }
-    Provider::ClaudeCli { bin: claude_bin }
+}
+
+/// Thin env wrapper around [`resolve_provider`]: snapshot the process environment
+/// into a [`ProviderEnv`] and apply the pure fail-closed policy.
+fn resolve() -> Result<Provider, String> {
+    let env = ProviderEnv {
+        forced: env_nonempty("BROPS_AI_PROVIDER").map(|v| v.to_lowercase()),
+        allow_governed: env_bool("BROPS_ALLOW_GOVERNED_ENGINE"),
+        allow_ungoverned: env_bool("BROPS_ALLOW_UNGOVERNED"),
+        anthropic_key: env_nonempty("ANTHROPIC_API_KEY"),
+        claude_bin: env_nonempty("BROPS_CLAUDE_BIN").unwrap_or_else(|| DEFAULT_CLAUDE_BIN.to_string()),
+        anthropic_model: env_nonempty("BROPS_ANTHROPIC_MODEL").unwrap_or_else(|| DEFAULT_ANTHROPIC_MODEL.to_string()),
+        ollama_model: env_nonempty("BROPS_OLLAMA_MODEL").unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string()),
+        ollama_url: env_nonempty("BROPS_OLLAMA_URL").unwrap_or_else(|| DEFAULT_OLLAMA_URL.to_string()),
+        governed_python: env_nonempty("BROPS_GOVERNED_PYTHON").unwrap_or_else(|| DEFAULT_GOVERNED_PYTHON.to_string()),
+        governed_sidecar: env_nonempty("BROPS_GOVERNED_SIDECAR").unwrap_or_else(|| DEFAULT_GOVERNED_SIDECAR.to_string()),
+    };
+    resolve_provider(&env)
 }
 
 /// Readiness probe for the local `claude` CLI. Spawns `claude --version` with
@@ -374,13 +446,28 @@ async fn claude_version_ok(bin: &str) -> bool {
 
 /// Report the configured provider and a best-effort readiness check.
 pub async fn status() -> AiStatus {
-    match resolve() {
+    let provider = match resolve() {
+        Ok(p) => p,
+        // A misconfiguration is surfaced honestly as "no provider" — NOT silently
+        // healed into some ungoverned default.
+        Err(e) => {
+            return AiStatus {
+                provider: "none".into(),
+                model: String::new(),
+                ready: false,
+                detail: e,
+                governed: false,
+            }
+        }
+    };
+    match provider {
         Provider::ClaudeCli { bin } => {
             let ok = claude_version_ok(&bin).await;
             AiStatus {
                 provider: "claude-cli".into(),
                 model: env_nonempty("BROPS_CLAUDE_MODEL").unwrap_or_else(|| "claude (subscription)".into()),
                 ready: ok,
+                governed: false,
                 detail: if ok {
                     format!("Local Claude Code (`{bin}`) is available — replies use your own login, no API key.")
                 } else {
@@ -396,6 +483,7 @@ pub async fn status() -> AiStatus {
             provider: "anthropic".into(),
             model,
             ready: true,
+            governed: false,
             detail: "Anthropic API key present (unverified) — checked on first request; metered usage.".into(),
         },
         Provider::Ollama { model, url } => {
@@ -420,6 +508,7 @@ pub async fn status() -> AiStatus {
                 provider: "ollama".into(),
                 model,
                 ready: reachable,
+                governed: false,
                 detail: if !url_ok {
                     format!("BROPS_OLLAMA_URL not allowed ({url}) — must be a local host, or set BROPS_ALLOW_REMOTE_OLLAMA=1 with https.")
                 } else if reachable {
@@ -432,6 +521,7 @@ pub async fn status() -> AiStatus {
         Provider::GovernedEngine { python, sidecar } => AiStatus {
             provider: "governed-engine".into(),
             model: format!("{python} {sidecar}"),
+            governed: true,
             // Real turns require operator provisioning (issuer key + trusted-key
             // registry + workspace binding); until then the sidecar fails closed.
             ready: false,
@@ -448,7 +538,8 @@ pub async fn generate(system: &str, messages: &[ChatMsg]) -> Result<String, Stri
     validate_input(system, messages)?;
     let _permit = GenerationPermit::acquire()?;
     let messages = trim_history(messages);
-    match resolve() {
+    let provider = resolve()?;
+    match provider {
         Provider::ClaudeCli { bin } => claude_cli(&bin, system, messages).await,
         Provider::Anthropic { key, model } => anthropic(&key, &model, system, messages).await,
         Provider::Ollama { model, url } => ollama(&url, &model, system, messages).await,
@@ -468,7 +559,8 @@ pub async fn generate_stream<F: FnMut(&str)>(
     validate_input(system, messages)?;
     let _permit = GenerationPermit::acquire()?;
     let messages = trim_history(messages);
-    match resolve() {
+    let provider = resolve()?;
+    match provider {
         Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta).await,
         Provider::Anthropic { key, model } => {
             let full = anthropic(&key, &model, system, messages).await?;
@@ -1506,5 +1598,126 @@ mod tests {
     #[test]
     fn governed_task_ids_are_unique() {
         assert_ne!(governed_task_id(), governed_task_id());
+    }
+
+    // ---- Fail-closed provider policy (pure `resolve_provider`) --------------
+    // These need NO env mutation: the whole policy is a pure fn over ProviderEnv.
+
+    /// A neutral base env: nothing forced, nothing allowed, no key. On its own it
+    /// must be a hard error (no silent default). Tests tweak individual fields.
+    fn base_env() -> ProviderEnv {
+        ProviderEnv {
+            forced: None,
+            allow_governed: false,
+            allow_ungoverned: false,
+            anthropic_key: None,
+            claude_bin: "claude".into(),
+            anthropic_model: "claude-sonnet-5".into(),
+            ollama_model: "llama3.2".into(),
+            ollama_url: "http://localhost:11434".into(),
+            governed_python: "python".into(),
+            governed_sidecar: "bridge/engine_sidecar.py".into(),
+        }
+    }
+
+    #[test]
+    fn governed_forced_requires_allow_flag() {
+        // governed-engine + allow → Ok(GovernedEngine)
+        let env = ProviderEnv { forced: Some("governed-engine".into()), allow_governed: true, ..base_env() };
+        assert!(matches!(resolve_provider(&env), Ok(Provider::GovernedEngine { .. })));
+        // governed-engine WITHOUT the allow flag → hard error (never falls back)
+        let env = ProviderEnv { forced: Some("governed-engine".into()), allow_governed: false, ..base_env() };
+        let err = resolve_provider(&env).unwrap_err();
+        assert!(err.contains("BROPS_ALLOW_GOVERNED_ENGINE=1"), "{err}");
+    }
+
+    #[test]
+    fn each_ungoverned_forced_requires_allow_ungoverned() {
+        for name in ["claude-cli", "anthropic", "ollama"] {
+            let env = ProviderEnv { forced: Some(name.into()), allow_ungoverned: false, ..base_env() };
+            let err = resolve_provider(&env).unwrap_err();
+            assert!(err.contains("BROPS_ALLOW_UNGOVERNED=1"), "{name}: {err}");
+            assert!(err.contains(name), "{name}: {err}");
+        }
+    }
+
+    #[test]
+    fn ungoverned_forced_with_allow_resolves() {
+        // claude-cli
+        let env = ProviderEnv { forced: Some("claude-cli".into()), allow_ungoverned: true, ..base_env() };
+        assert!(matches!(resolve_provider(&env), Ok(Provider::ClaudeCli { .. })));
+        // ollama
+        let env = ProviderEnv { forced: Some("ollama".into()), allow_ungoverned: true, ..base_env() };
+        assert!(matches!(resolve_provider(&env), Ok(Provider::Ollama { .. })));
+        // anthropic WITH a key
+        let env = ProviderEnv {
+            forced: Some("anthropic".into()),
+            allow_ungoverned: true,
+            anthropic_key: Some("sk-test".into()),
+            ..base_env()
+        };
+        assert!(matches!(resolve_provider(&env), Ok(Provider::Anthropic { .. })));
+    }
+
+    #[test]
+    fn anthropic_forced_without_key_errors() {
+        // allowed but no key → require ANTHROPIC_API_KEY (empty key counts as none)
+        for key in [None, Some(String::new())] {
+            let env = ProviderEnv {
+                forced: Some("anthropic".into()),
+                allow_ungoverned: true,
+                anthropic_key: key,
+                ..base_env()
+            };
+            let err = resolve_provider(&env).unwrap_err();
+            assert!(err.contains("ANTHROPIC_API_KEY"), "{err}");
+        }
+    }
+
+    #[test]
+    fn unknown_forced_provider_errors() {
+        let env = ProviderEnv { forced: Some("gpt-9000".into()), allow_ungoverned: true, allow_governed: true, ..base_env() };
+        let err = resolve_provider(&env).unwrap_err();
+        assert!(err.contains("unknown BROPS_AI_PROVIDER"), "{err}");
+        assert!(err.contains("gpt-9000"), "{err}");
+    }
+
+    #[test]
+    fn default_no_config_is_a_hard_error() {
+        // The core invariant: nothing set ⇒ NO provider, not a silent ungoverned one.
+        let err = resolve_provider(&base_env()).unwrap_err();
+        assert!(err.contains("no AI provider configured"), "{err}");
+    }
+
+    #[test]
+    fn default_with_allow_governed_selects_governed_engine() {
+        let env = ProviderEnv { allow_governed: true, ..base_env() };
+        assert!(matches!(resolve_provider(&env), Ok(Provider::GovernedEngine { .. })));
+        // allow_governed wins even if ungoverned is also permitted and a key exists.
+        let env = ProviderEnv {
+            allow_governed: true,
+            allow_ungoverned: true,
+            anthropic_key: Some("sk-test".into()),
+            ..base_env()
+        };
+        assert!(matches!(resolve_provider(&env), Ok(Provider::GovernedEngine { .. })));
+    }
+
+    #[test]
+    fn default_with_allow_ungoverned_picks_anthropic_only_with_key() {
+        // key present → Anthropic
+        let env = ProviderEnv { allow_ungoverned: true, anthropic_key: Some("sk-test".into()), ..base_env() };
+        assert!(matches!(resolve_provider(&env), Ok(Provider::Anthropic { .. })));
+        // no key → the free local claude CLI (NEVER Anthropic-by-accident)
+        let env = ProviderEnv { allow_ungoverned: true, anthropic_key: None, ..base_env() };
+        assert!(matches!(resolve_provider(&env), Ok(Provider::ClaudeCli { .. })));
+    }
+
+    #[test]
+    fn a_bare_anthropic_key_never_silently_selects_anthropic() {
+        // The audited footgun: a key set but no allow flag must NOT auto-pick a
+        // metered ungoverned provider — it fails closed.
+        let env = ProviderEnv { anthropic_key: Some("sk-test".into()), ..base_env() };
+        assert!(resolve_provider(&env).is_err());
     }
 }

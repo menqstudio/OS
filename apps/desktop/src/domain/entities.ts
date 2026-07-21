@@ -168,6 +168,9 @@ export interface AiStatus {
   model: string;
   ready: boolean;
   detail: string;
+  /** True ONLY for the governed engine (turns behind the wall, verified receipt).
+   *  Every ungoverned provider and every misconfiguration is false. */
+  governed: boolean;
 }
 
 export interface RunStep {
