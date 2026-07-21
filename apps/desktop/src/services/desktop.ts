@@ -69,8 +69,8 @@ export const desktop = {
   // T-011: approve via renderer-independent native confirmation. This command drives
   // a native OS dialog from Rust; the webview cannot forge it and never sends a
   // "confirmed" flag. Generic decide_approval remains capability-denied.
-  confirmApproval: (id: string, note?: string) =>
-    invoke<Approval>('confirm_approval', { id, note: note ?? null }),
+  confirmApproval: (id: string) =>
+    invoke<Approval>('confirm_approval', { id }),
 
   // notifications
   listNotifications: () => invoke<Notification[]>('list_notifications'),

@@ -429,6 +429,58 @@ pub mod approvals {
         format!("{:x}", h.finalize())
     }
 
+    /// The SINGLE canonical description of what a run step will execute. Every
+    /// consumer derives from this one object so the confirmed payload, the request
+    /// digest, and the actual provider prompt cannot diverge (T-011 audit): the
+    /// native dialog shows `dialog_text()`, the digest binds every field, and the AI
+    /// execution prompt is `provider_json()` — all from `run_execution_scope`.
+    pub struct RunExecutionScope {
+        pub run_id: String,
+        pub intent: String,
+        pub plan: String,
+        pub step_id: String,
+        pub step_title: String,
+        pub step_detail: String,
+        pub requires_approval: bool,
+    }
+
+    impl RunExecutionScope {
+        /// The exact JSON payload sent to the provider (values are data, not
+        /// instructions). Includes `step_detail`, so a safety condition shown to the
+        /// confirmer actually reaches the agent.
+        pub fn provider_json(&self) -> serde_json::Value {
+            serde_json::json!({
+                "intent": self.intent,
+                "plan": self.plan,
+                "step": self.step_title,
+                "step_detail": self.step_detail,
+            })
+        }
+        /// Human-readable payload for the native confirmation dialog — the same
+        /// fields the digest binds and the prompt sends.
+        pub fn dialog_text(&self) -> String {
+            format!(
+                "Run intent:\n{}\n\nRun plan:\n{}\n\nStep:\n{}\n\nStep detail:\n{}",
+                self.intent, self.plan, self.step_title, self.step_detail
+            )
+        }
+    }
+
+    /// Load the canonical execution scope for a run step from current state.
+    pub fn run_execution_scope(conn: &Connection, step_id: &str) -> CoreResult<RunExecutionScope> {
+        let step = super::runs::get_step(conn, step_id)?;
+        let run = super::runs::get(conn, &step.run_id)?;
+        Ok(RunExecutionScope {
+            run_id: run.id,
+            intent: run.intent,
+            plan: run.plan,
+            step_id: step.id,
+            step_title: step.title,
+            step_detail: step.detail,
+            requires_approval: step.requires_approval,
+        })
+    }
+
     #[derive(serde::Serialize)]
     struct RunPart {
         run_id: String,
@@ -468,18 +520,19 @@ pub mod approvals {
     /// changed after the approval was raised, the digest differs and the decision is
     /// refused.
     pub fn request_digest(conn: &Connection, a: &Approval) -> CoreResult<String> {
+        // Derive from the ONE canonical scope, so the digest binds exactly what the
+        // dialog shows and the provider prompt sends.
         let run = if a.entity_type.as_deref() == Some(RUN_STEP_ENTITY_TYPE) {
             if let Some(step_id) = a.entity_id.as_deref() {
-                let step = super::runs::get_step(conn, step_id)?;
-                let run = super::runs::get(conn, &step.run_id)?;
+                let scope = run_execution_scope(conn, step_id)?;
                 Some(RunPart {
-                    run_id: run.id.clone(),
-                    run_intent_sha256: sha256_hex(&run.intent),
-                    run_plan_sha256: sha256_hex(&run.plan),
-                    step_id: step.id.clone(),
-                    step_title_sha256: sha256_hex(&step.title),
-                    step_detail_sha256: sha256_hex(&step.detail),
-                    requires_approval: step.requires_approval,
+                    run_id: scope.run_id.clone(),
+                    run_intent_sha256: sha256_hex(&scope.intent),
+                    run_plan_sha256: sha256_hex(&scope.plan),
+                    step_id: scope.step_id.clone(),
+                    step_title_sha256: sha256_hex(&scope.step_title),
+                    step_detail_sha256: sha256_hex(&scope.step_detail),
+                    requires_approval: scope.requires_approval,
                 })
             } else {
                 None
@@ -506,20 +559,15 @@ pub mod approvals {
     }
 
     /// The FULL execution payload the confirmer must see — the exact text that will
-    /// reach the AI provider (run intent + plan + step title + detail). Returned from
-    /// the SAME current state that `request_digest` hashes, so what the native dialog
-    /// shows and what the digest binds cannot diverge. `None` for non-run entities.
+    /// reach the AI provider. Derived from the SAME canonical scope the digest binds
+    /// and the provider prompt sends, so the three cannot diverge. `None` for non-run
+    /// entities.
     pub fn execution_payload(conn: &Connection, a: &Approval) -> CoreResult<Option<String>> {
         if a.entity_type.as_deref() != Some(RUN_STEP_ENTITY_TYPE) {
             return Ok(None);
         }
         let Some(step_id) = a.entity_id.as_deref() else { return Ok(None) };
-        let step = super::runs::get_step(conn, step_id)?;
-        let run = super::runs::get(conn, &step.run_id)?;
-        Ok(Some(format!(
-            "Run intent:\n{}\n\nRun plan:\n{}\n\nStep:\n{}\n\nStep detail:\n{}",
-            run.intent, run.plan, step.title, step.detail
-        )))
+        Ok(Some(run_execution_scope(conn, step_id)?.dialog_text()))
     }
 
     /// Bind the confirmation to the exact request + nonce + method, so the recorded

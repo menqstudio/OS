@@ -418,6 +418,22 @@ mod tests {
     }
 
     #[test]
+    fn t011_dialog_and_prompt_share_one_scope_including_detail() {
+        // The confirmed payload, the provider prompt, and the digest all derive from
+        // the SAME RunExecutionScope — step_detail (e.g. a safety condition) that the
+        // owner sees in the dialog MUST also reach the provider.
+        let c = conn();
+        let r = repo::runs::create(&c, "the-intent", "the-plan").unwrap();
+        let step = repo::runs::add_step(&c, &r.id, "the-title", "SAFETY: do not delete data").unwrap();
+        let scope = repo::approvals::run_execution_scope(&c, &step.id).unwrap();
+        let prompt = scope.provider_json().to_string();
+        assert!(prompt.contains("SAFETY: do not delete data"), "prompt must include step_detail: {prompt}");
+        assert!(prompt.contains("the-plan"), "prompt must include plan: {prompt}");
+        assert!(scope.dialog_text().contains("SAFETY: do not delete data"));
+        assert!(scope.dialog_text().contains("the-plan"));
+    }
+
+    #[test]
     fn t011_plan_change_after_raise_is_refused() {
         // A benign intent/title with a swapped PLAN must not pass — the plan is part
         // of the execution payload and is bound by the digest.
