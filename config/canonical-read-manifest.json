@@ -1,0 +1,18 @@
+{
+  "schema": 2,
+  "purpose": "menqstudio/OS root canonical startup read order. Every new session (Claude or ChatGPT) reads these IN ORDER, IN FULL, before acting. GitHub is the single source of truth; a textual 'I read it' is not evidence. Mirrors the human-facing START_HERE.md / CLAUDE.md startup law in machine-readable form. (The engine/ half has its own engine/config/canonical-read-manifest.json with engine-relative paths — that is a separate track.)",
+  "paths": [
+    "NEXT_CHAT.md",
+    "START_HERE.md",
+    "CLAUDE.md",
+    "PROJECT_STATE.md",
+    "TASKS.md",
+    "OWNERS.md",
+    "docs/ARCHITECTURE.md",
+    "MASTER_EXECUTION_ROADMAP.md",
+    "docs/design/WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md",
+    "apps/desktop/SECURITY.md"
+  ],
+  "current_state_pointer": "NEXT_CHAT.md",
+  "notes": "NEXT_CHAT.md holds the exact current branch/PR/HEAD/blockers/next-action and must be updated in the same commit as any state change. PROJECT_STATE.md and TASKS.md are the live coordination board. Do not add stale or nonexistent paths here."
+}

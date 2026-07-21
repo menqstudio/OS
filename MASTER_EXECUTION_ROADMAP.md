@@ -96,7 +96,7 @@ Run each from the component's directory; **verify before claiming green** (`CLAU
 cd apps/desktop && npm ci && npm run build        # tsc --noEmit + vite build
 
 # Cockpit — Rust data core + app   (⚠️ PowerShell, NOT the Bash tool)
-cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 29 tests
+cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 69 tests (grows per security slice)
 cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 # Engine — Python governance runtime  (MUST set BRO_ENV=ci)

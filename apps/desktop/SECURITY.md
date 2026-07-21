@@ -2,7 +2,17 @@
 
 BroPS is a **single-user local desktop app** (Tauri 2 + Rust + SQLite, React webview). The trust boundary that matters is **webview → Rust host**: the webview renders Markdown and other content, so the Rust command surface treats every argument from it as untrusted. This document describes the enforced protections and the known limitations.
 
-_Last updated: 2026-07-19. Primary platform: Linux (Debian). Reflects 10 rounds of security remediation._
+_Last updated: 2026-07-22. Primary platform: Linux (Debian); also built/tested on Windows. Reflects the original 10 rounds of BroPS remediation **plus** the OS-monorepo governed-execution hardening (Waves 1–3a). Live status: root [`NEXT_CHAT.md`](../../NEXT_CHAT.md)._
+
+## Governed-execution & approval hardening (OS monorepo — Waves 1–3a)
+
+Merged on top of the base model below, as part of closing the Challenger Deep audit's P0/P1 findings:
+
+- **Provider fail-closed (Wave 1 / T-012):** `resolve()` returns a `Result`; there is **no silent governed→ungoverned fallback**. Unknown/misconfigured provider or missing config is a hard error; ambient `ANTHROPIC_API_KEY` never auto-selects; ungoverned execution requires an explicit `BROPS_ALLOW_UNGOVERNED=1`.
+- **Webview message provenance (Wave 2a / T-013):** the `post_message` role allowlist is restricted to `["user"]` — a compromised renderer can no longer mint `agent` messages. A server-generated answer is held under a one-time `result_id` and persisted in one transaction; the webview never carries an agent body.
+- **Capability boundary (T-010):** every webview-reachable command is declared in the app manifest and **deny-by-default** in `capabilities/default.json`; the 4 L2 hard-delete commands are **denied** (fail-closed); a CI invariant (`tools/check_capabilities.py`) enforces registered == manifest == policy == grants and "L2 must be protected-or-denied".
+- **Durable approval + native confirmation (T-011):** approval origin/nonce/request-digest are **durable** (migrations 0012/0013); self-approval is refused by durable `origin_principal` even across restarts; the only approve path is a **renderer-independent native OS dialog**; nonce is compare-and-consumed; the confirmation binds a canonical `RunExecutionScope` digest; a **pre-dispatch execution claim** makes one grant start exactly one provider run; crash recovery reconciles abandoned claims fail-closed; a single-instance **advisory file lock** is taken before the DB opens.
+- **Receipt Protocol v1 (Wave 3, in progress):** a governed turn's self-asserted `receipt.verified: bool` is being replaced by an **Ed25519 signature the desktop verifies** against a pinned key (RFC 8785 JCS envelope, strict decode, `verify_strict`, fail-closed — "no verified signature ⇒ no result"). Slice-1 protocol core is in review (**PR #24, RED / not merged**); production "Verified" is gated until the isolated signer lands in Wave 3b. Design: [`../../docs/design/WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md`](../../docs/design/WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md).
 
 ## Threat model
 

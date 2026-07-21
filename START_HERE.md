@@ -14,11 +14,14 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 
 **2. Read these files IN FULL, in this order · Կարդա այս ֆայլերը ԱՄԲՈՂՋՈՎ, այս հերթով:**
 
-1. [`CLAUDE.md`](./CLAUDE.md) — the brain: what this is, how to work, the rules · ուղեղը
-2. [`PROJECT_STATE.md`](./PROJECT_STATE.md) — live status: where we are, who's on what, blockers · կենդանի վիճակ
-3. [`TASKS.md`](./TASKS.md) — the task board: **claim your task; never collide** · task board
-4. [`OWNERS.md`](./OWNERS.md) — who has which role · դերեր
-5. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — the design · ճարտարապետություն
+1. [`NEXT_CHAT.md`](./NEXT_CHAT.md) — **the definitive handoff: exact current branch / PR / HEAD / blockers / next action** · վերջնական handoff
+2. [`CLAUDE.md`](./CLAUDE.md) — the brain: what this is, how to work, the rules · ուղեղը
+3. [`PROJECT_STATE.md`](./PROJECT_STATE.md) — live status: where we are, who's on what, blockers · կենդանի վիճակ
+4. [`TASKS.md`](./TASKS.md) — the task board: **claim your task; never collide** · task board
+5. [`OWNERS.md`](./OWNERS.md) — who has which role · դերեր
+6. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — the design · ճարտարապետություն
+
+*(Machine-readable form of this read order: [`config/canonical-read-manifest.json`](./config/canonical-read-manifest.json).)*
 
 **3. Claim your task in `TASKS.md`** before touching anything · claim արա task-ը որևէ բանի դիպչելուց առաջ
 
@@ -26,7 +29,7 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 
 ---
 
-> If you read all 5 files fully + pulled + claimed a task, you are fully onboarded.
+> If you read all 6 files fully + pulled + claimed a task, you are fully onboarded.
 > Applies to **every agent — Claude and ChatGPT — every session.** No exceptions.
 >
 > Եթե 5-ն էլ ամբողջովին կարդացիր + pull արեցիր + task claim արեցիր՝ լրիվ onboarded ես։
