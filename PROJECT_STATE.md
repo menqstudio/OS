@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** T-008 — phase follow-ups (design-system doc · honest Settings · vitest tests)
+**Last updated · Վերջին թարմացում:** Phase 1 slice-2 governed **transport** merged (PR #8); T-007 (#9) + T-008 (#11) merged — coordination docs re-synced to `main`
 
 ---
 
@@ -25,14 +25,17 @@
   `OK (591 passed, 38 skipped, 0 failed)`.
 - **Phase 1 — Bridge:** 🔨 in progress — `bridge/DESIGN.md` **APPROVED**; slice 1 (contract + adapter +
   tests + **bridge CI leg**) **merged to `main`** (PR #3, HEAD `41cf4ff`, 10/10 canonical — receipt-must-
-  VERIFY invariant landed). **Not yet done (slice 2+):** desktop Rust `Provider::GovernedEngine` wiring in
-  `ai.rs`, governed round-trip, chat receipt badge, settings toggle, streaming.
+  VERIFY invariant landed) **and** slice 2 **transport** — desktop Rust `Provider::GovernedEngine` in
+  `ai.rs` (opt-in, default OFF) + governed sidecar wiring + chat receipt badge + Settings governed-provider
+  toggle — **merged** (PR #8). Slice 2 is **transport/infrastructure only**. **Still pending (not done):**
+  the verify-seam (adapter → injected verifier), receipt-plumbing into the turn, one real governed
+  round-trip end-to-end, and governed streaming.
 
 ## 👷 Who's working on what (NOW) · Ով ինչի վրա ա (ՀԻՄԱ)
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | T-008 phase follow-ups (design-system doc · honest Settings · vitest test framework) | `feat/phase-followups` | 🔎 in review |
+| 🔨 Claude | — idle (slice-2 transport merged PR #8); next: Phase-1 verify-seam · receipt-plumbing · streaming | — | ⏸️ idle |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 
@@ -40,8 +43,10 @@
 
 Follow [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md). Immediate open items:
 
-1. **Phase 1 slice 2** — prove one governed round-trip, add the bridge CI leg, ship the `chat` verified-
-   receipt badge + Settings governed-provider toggle (see roadmap Phase 1 task checklist). `feat/phase1-bridge`.
+1. **Phase 1 remaining (post-transport)** — the slice-2 *transport* (sidecar + `Provider::GovernedEngine`
+   opt-in + chat receipt badge + Settings toggle) is **merged** (PR #8). Still to do: the verify-seam
+   (adapter → injected verifier), receipt-plumbing into the turn, one real governed round-trip end-to-end,
+   and governed streaming (see roadmap Phase 1 task checklist).
 2. **Phase 2 (Governance Sidecar)** — can start now (P1 contract exists): `approvals`/`decisions`/
    `security`/`notifications` surfaces, mirror-never-decide.
 3. **T-005 — Option-2 (AUDITED, Phase 10)** — engine submodule + worktree-check native fix. Separate

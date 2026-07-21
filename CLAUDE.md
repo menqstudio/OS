@@ -81,7 +81,7 @@ Both halves arrived **already audited and fixed** (see §6). They were brought i
 | Phase | Goal | Status |
 |-------|------|--------|
 | **0 — Foundation** | monorepo assembled · bilingual docs · unified CI · history preserved | ✅ **DONE (locked)** |
-| **1 — Bridge** | route desktop AI exec through the engine supervisor/lease/wall (replace direct `claude` spawn in `ai.rs`) | 🔨 **In progress** — slice 1 verified **10/10** (PR #3, `5be8d95`); desktop Rust wiring + slices 2–3 open |
+| **1 — Bridge** | route desktop AI exec through the engine supervisor/lease/wall (replace direct `claude` spawn in `ai.rs`) | 🔨 **In progress** — slice 1 **merged** (PR #3, `5be8d95`, 10/10) + slice 2 **transport** merged (PR #8: `Provider::GovernedEngine` opt-in · receipt badge · Settings toggle); verify-seam · receipt-plumbing · streaming · real e2e open |
 | **2 — Governance Sidecar** | cockpit surfaces for approvals · decisions · evidence chain · signals (mirror, never decide) | ⏳ ready (P1 contract exists) |
 | **3 — Desktop Integration** | app shell + `home`/`chat`(governed)/`settings`; wire the core loop | ⏳ blocked on P1+P2 |
 | **4 — UI/UX System** | component library + theming + motion + a11y; `activity`/`analytics`/`library` | ⏳ blocked on P3 |
@@ -204,7 +204,7 @@ OS/
 | Phase | Նպատակ | Վիճակ |
 |-------|--------|-------|
 | **0 — Foundation** | monorepo հավաքված · երկլեզու docs · միասնական CI · history պահած | ✅ **DONE (locked)** |
-| **1 — Bridge** | desktop AI exec-ը engine-ի supervisor/lease/wall-ով (`ai.rs`-ի ուղիղ `claude` spawn-ը փոխարինել) | 🔨 **Ընթացքում** — slice 1 verified **10/10** (PR #3, `5be8d95`); desktop Rust wiring + slices 2–3 բաց |
+| **1 — Bridge** | desktop AI exec-ը engine-ի supervisor/lease/wall-ով (`ai.rs`-ի ուղիղ `claude` spawn-ը փոխարինել) | 🔨 **Ընթացքում** — slice 1 **merged** (PR #3, `5be8d95`, 10/10) + slice 2 **transport** merged (PR #8՝ `Provider::GovernedEngine` opt-in · receipt badge · Settings toggle); verify-seam · receipt-plumbing · streaming · real e2e բաց |
 | **2 — Governance Sidecar** | cockpit surface-եր՝ approvals · decisions · evidence chain · signals (mirror, ոչ decide) | ⏳ ready (P1 contract կա) |
 | **3 — Desktop Integration** | app shell + `home`/`chat`(governed)/`settings`; core loop-ը wire | ⏳ blocked P1+P2 |
 | **4 — UI/UX System** | component library + theming + motion + a11y; `activity`/`analytics`/`library` | ⏳ blocked P3 |

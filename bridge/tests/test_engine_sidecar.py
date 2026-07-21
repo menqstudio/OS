@@ -27,7 +27,7 @@ except Exception:  # pragma: no cover - jsonschema is a declared dep
         assert set(doc) == {"ok", "result", "receipt", "error"}
 
 
-_VALID = {"task_id": "t-0001", "task_class": "standard-build", "rationale": "reply"}
+_VALID = {"task_id": "t-0001", "task_class": "standard-builder", "rationale": "reply"}
 
 
 def _drive(request, argv=(), env=None):
@@ -101,7 +101,7 @@ class EngineSidecarTests(unittest.TestCase):
 
     def test_self_test_missing_required_field_fails_closed(self):
         # rationale missing -> adapter schema validation fails closed, no result.
-        doc = _drive({"task_id": "t", "task_class": "standard-build"}, argv=["--self-test"])
+        doc = _drive({"task_id": "t", "task_class": "standard-builder"}, argv=["--self-test"])
         self.assertFalse(doc["ok"])
         self.assertIsNone(doc["result"])
 
@@ -128,6 +128,51 @@ class EngineSidecarTests(unittest.TestCase):
             doc = _drive(req, argv=argv, env=env)
             if not doc["ok"]:
                 self.assertIsNone(doc["result"])
+
+
+try:
+    import jsonschema as _jsonschema
+except Exception:  # pragma: no cover - jsonschema is a declared dep
+    _jsonschema = None
+
+
+@unittest.skipUnless(_jsonschema is not None, "jsonschema not installed")
+class ResultSchemaInvariantTests(unittest.TestCase):
+    """The schema itself must ENFORCE ok:true => non-null result + verified receipt."""
+
+    _CONSISTENT_OK = {
+        "ok": True,
+        "result": "hello",
+        "receipt": {"task_id": "t", "status": "completed", "evidence": ["e"], "verified": True},
+        "error": None,
+    }
+    _CONSISTENT_FAIL = {"ok": False, "result": None, "receipt": None, "error": "denied"}
+
+    def _valid(self, doc):
+        return _jsonschema.Draft7Validator(_RESULT_SCHEMA).is_valid(doc)
+
+    def test_consistent_success_is_accepted(self):
+        self.assertTrue(self._valid(self._CONSISTENT_OK))
+
+    def test_consistent_failure_is_accepted(self):
+        self.assertTrue(self._valid(self._CONSISTENT_FAIL))
+
+    def test_ok_true_with_null_result_is_rejected(self):
+        bad = dict(self._CONSISTENT_OK, result=None)
+        self.assertFalse(self._valid(bad))
+
+    def test_ok_true_with_unverified_receipt_is_rejected(self):
+        bad = dict(self._CONSISTENT_OK,
+                   receipt=dict(self._CONSISTENT_OK["receipt"], verified=False))
+        self.assertFalse(self._valid(bad))
+
+    def test_ok_true_with_null_receipt_is_rejected(self):
+        bad = dict(self._CONSISTENT_OK, receipt=None)
+        self.assertFalse(self._valid(bad))
+
+    def test_ok_false_with_non_null_result_is_rejected(self):
+        bad = dict(self._CONSISTENT_FAIL, result="leaked output")
+        self.assertFalse(self._valid(bad))
 
 
 if __name__ == "__main__":

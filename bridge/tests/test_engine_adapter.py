@@ -20,7 +20,7 @@ def _outcome(task_id="t1", status="completed", exit_code=0, evidence=("ev-1",), 
     )
 
 
-VALID_REQUEST = {"task_id": "t1", "task_class": "standard-build", "rationale": "reply to user"}
+VALID_REQUEST = {"task_id": "t1", "task_class": "standard-builder", "rationale": "reply to user"}
 
 
 class RunGovernedTurnTests(unittest.TestCase):

@@ -39,6 +39,25 @@ jobs:
       - name: Test the SQLite data core
         run: cargo test -p brops-core --manifest-path apps/desktop/src-tauri/Cargo.toml
 
+  cockpit-host:
+    name: Cockpit · Tauri host (cargo check + ai tests)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf build-essential curl wget file libssl-dev libxdo-dev
+      - name: Compile the Tauri host crate
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Test the host crate (ai.rs governed/receipt unit tests)
+        run: cargo test -p brops --manifest-path apps/desktop/src-tauri/Cargo.toml
+
   engine:
     name: Engine · governance runtime (python)
     runs-on: ubuntu-latest
