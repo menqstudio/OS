@@ -17,34 +17,26 @@ function mount(onApi: (api: Api) => void) {
   );
 }
 
-describe('AppProvider — governedEngine preference (Slice 2 settings toggle)', () => {
+describe('AppProvider — theme & language preferences', () => {
   beforeEach(() => localStorage.clear());
 
-  it('defaults governedEngine to false (opt-in, default OFF)', () => {
+  it('defaults theme to dark', () => {
     let api!: Api;
     mount((a) => (api = a));
-    expect(api.governedEngine).toBe(false);
+    expect(api.theme).toBe('dark');
   });
 
-  it('persists governedEngine to localStorage when toggled on', () => {
+  it('persists language selection to localStorage', () => {
     let api!: Api;
     mount((a) => (api = a));
-    act(() => api.setGovernedEngine(true));
-    expect(localStorage.getItem('brops.governedEngine')).toBe('true');
-  });
-
-  it('reads a persisted governedEngine=true on mount', () => {
-    localStorage.setItem('brops.governedEngine', 'true');
-    let api!: Api;
-    mount((a) => (api = a));
-    expect(api.governedEngine).toBe(true);
-  });
-
-  it('keeps theme + language working alongside the new preference', () => {
-    let api!: Api;
-    mount((a) => (api = a));
-    expect(api.theme).toBe('dark'); // default theme
     act(() => api.setLang('hy'));
     expect(localStorage.getItem('brops.lang')).toBe('"hy"');
+  });
+
+  it('does not expose a governedEngine preference (provider is backend-resolved, fail-closed)', () => {
+    let api!: Api;
+    mount((a) => (api = a));
+    expect('governedEngine' in api).toBe(false);
+    expect('setGovernedEngine' in api).toBe(false);
   });
 });
