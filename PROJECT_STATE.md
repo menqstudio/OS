@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** Wave 2a — webview message provenance (audit P1-6): `WEBVIEW_MESSAGE_ROLES → ["user"]`, agent minted server-side only + scoped `save_ask_to_chat`, on `fix/webview-message-provenance`. (Wave 1 / P0-1 provider policy merged, PR #15 `15384cb`.)
+**Last updated · Վերջին թարմացում:** Wave 2a — webview message provenance (audit P1-6), audit-round-1 fix: `stream_ask` holds the answer under an opaque one-time `result_id`, `save_ask_to_chat(result_id, title)` consumes it + writes the pair in one transaction (webview never carries an agent body), on `fix/webview-message-provenance`. (Wave 1 / P0-1 provider policy merged, PR #15 `15384cb`.)
 
 ---
 

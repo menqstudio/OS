@@ -88,10 +88,11 @@ export const desktop = {
     invoke<Message>('post_message', {
       input: { ...input, role: allowedRole(input.role) },
     }).then(normalizeMessage),
-  // Agent messages are minted server-side only (P1-6): this scoped command saves a
-  // reviewed Ask-Bro result (user question + agent answer) into a new conversation.
-  saveAskToChat: (title: string, question: string, answer: string) =>
-    invoke<Conversation>('save_ask_to_chat', { title, question, answer }),
+  // Agent messages are minted server-side only (P1-6). The webview passes ONLY the
+  // opaque one-time resultId from a finished stream_ask (never the answer body); the
+  // server pulls the held question+answer and persists the pair.
+  saveAskToChat: (resultId: string, title: string) =>
+    invoke<Conversation>('save_ask_to_chat', { resultId, title }),
   deleteConversation: (id: string) => invoke<void>('delete_conversation', { id }),
   renameConversation: (id: string, title: string) =>
     invoke<Conversation>('rename_conversation', { id, title }),
@@ -181,7 +182,9 @@ export const desktop = {
 export type StreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'done'; message: Message }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  // stream_ask only: the full answer is held server-side under this one-time id.
+  | { type: 'ready'; resultId: string };
 
 export type RunStepEvent =
   | { type: 'delta'; text: string }
