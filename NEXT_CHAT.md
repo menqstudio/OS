@@ -38,18 +38,19 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 
 ## 3. Current work — exact pointers
 
-**Wave 3a slice 1 is DONE and merged.** The next task is **Wave 3a slice 2** (not yet started).
+**Wave 3a slice 1 is DONE and merged.** **Slice 2 is IMPLEMENTED and in Review** on `feat/wave-3a-receipt-storage` — **not merged**; it awaits the Architect's zero-trust GREEN on the pushed candidate HEAD, then Owner merge.
 
 | | |
 |---|---|
-| **Next task** | **Wave 3a slice 2 — receipt storage & atomicity** (migration 0014; see §7 for the exact first action) |
-| **Branch** | none yet — cut a fresh `feat/wave-3a-receipt-storage` from `main` and claim it in `TASKS.md` |
+| **Current task** | **Wave 3a slice 2 — receipt storage & atomicity** (T-015, §7). **IMPLEMENTED, in Review.** Migration **0014** (`SCHEMA_VERSION` 13→14) + `brops-core::receipt_store`: atomic `BEGIN IMMEDIATE` **verify→consume→persist**, `issue_challenge`, durable one-time nonce, `receipt_id` global uniqueness, freshness/skew on both timestamps; `ReceiptOutcome` has **no `TrustedVerified` variant** (production⇒Blocked, so 3a never renders "Verified"). Architect **YELLOW** fixes applied (capped pre-decode `wire_*` evidence; `message_id` real FK + message→attempt→ledger order + `ON DELETE CASCADE`; blocked *verdict* commits evidence while only a real SQLite failure `Err`+rollbacks; nonce consumed even when later blocked; two-timestamp freshness). |
+| **Branch** | **`feat/wave-3a-receipt-storage`** (cut off `main` @ `75a8d8f`; T-015 claimed). Push → PR → Architect zero-trust GREEN on the exact HEAD → Owner merge. |
+| **Verified** | `brops-core` = **78 tests** green (69 baseline + 9 slice-2 negative-matrix), clippy-clean; `tools/check_coordination.py` + `tools/check_capabilities.py` GREEN; app-workspace `cargo check` clean. |
 | **Just merged** | **T-014 / slice 1 — PR #24 MERGED.** Approved HEAD `c51031e`; squash **merge commit `6c920d0`** on `main`; final CI 7/7 GREEN; Architect **zero-trust GREEN**. |
-| **Slice-1 baseline** | `brops-core::receipt` — the pure protocol core (§5). `brops-core` = **69 tests** green, clippy-clean. |
 
-> **Status is now GREEN + merged for slice 1** — verify via `git log main` (`6c920d0`) and PR #24
-> (MERGED). The three RED audit rounds are **resolved audit history** (§6), not current blockers.
-> Slice 2 has **not** started; do not present any deferred item (§10) as implemented.
+> **Slice 1 is GREEN + merged** (`git log main` → `6c920d0`, PR #24 MERGED). **Slice 2 is implemented on
+> its branch and in zero-trust review — do NOT present it as merged/Done until the Architect GREENs the
+> pushed HEAD and the Owner merges.** The next task AFTER slice 2 merges is slice 3 (transport wiring +
+> receipt UI). The isolated signer + manifest + production "Verified" remain **Wave 3b** (§10).
 
 ## 4. Merged baseline (Done — verify via `git log main`)
 

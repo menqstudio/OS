@@ -202,6 +202,19 @@ pub struct ResolvedManifestKey<'a> {
     trust_class: TrustClass,
 }
 
+#[cfg(test)]
+impl<'a> ResolvedManifestKey<'a> {
+    /// Test-only fixture builder for in-crate callers OUTSIDE this module (e.g. the
+    /// `receipt_store` slice-2 transaction tests). It is `#[cfg(test)]`, so the
+    /// shipping crate still has **no public constructor** — the slice-1 guarantee
+    /// that only the validated Wave 3b manifest resolver may mint a resolved key
+    /// (private fields, no ctor) is intact. `receipt.rs`'s own tests keep building
+    /// fixtures via the private fields directly.
+    pub(crate) fn for_test(key_id: &'a str, public_key: &'a [u8], trust_class: TrustClass) -> Self {
+        Self { key_id, public_key, trust_class }
+    }
+}
+
 /// SHA-256 of arbitrary bytes as a lowercase 64-hex string. The input is treated as
 /// opaque bytes — no normalization (design §2.1).
 pub fn sha256_hex(bytes: &[u8]) -> String {
