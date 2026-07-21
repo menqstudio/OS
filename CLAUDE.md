@@ -28,7 +28,7 @@ Only then start. **No exceptions.** When Gev says *"go read the repo / կարդ�
 **Canonical files (read every session) · Canonical ֆայլեր:** `NEXT_CHAT.md` · `CLAUDE.md` · `PROJECT_STATE.md` · `TASKS.md` · `OWNERS.md`.
 **Work rule:** no direct `main`; every task = branch + PR (uses the PR template); merge only after the Owner approves. **A security PR also needs the Architect's zero-trust GREEN on the exact HEAD before merge — CI GREEN is not audit GREEN.**
 
-> **📍 Exact current state (branch, PR, HEAD, blockers, next action) lives in [`NEXT_CHAT.md`](./NEXT_CHAT.md).** This §3 roadmap is the durable product plan; the active **security-remediation track** (Waves 1–5, closing the Challenger Deep audit's P0/P1 findings) is tracked in `NEXT_CHAT.md` + `PROJECT_STATE.md` + `TASKS.md`. As of 2026-07-22: Wave 1 (T-012), Wave 2a (T-013), T-010, T-011 **merged**; Wave 3 design rev 4 **GREEN + merged**; **Wave 3a slice 1 (T-014) is in PR #24 — RED / merge-blocked, awaiting re-audit.**
+> **📍 Exact current state (branch, PR, HEAD, blockers, next action) lives in [`NEXT_CHAT.md`](./NEXT_CHAT.md).** This §3 roadmap is the durable product plan; the active **security-remediation track** (Waves 1–5, closing the Challenger Deep audit's P0/P1 findings) is tracked in `NEXT_CHAT.md` + `PROJECT_STATE.md` + `TASKS.md`. As of 2026-07-22: Wave 1 (T-012), Wave 2a (T-013), T-010, T-011 **merged**; Wave 3 design rev 4 **GREEN + merged**; **Wave 3a slice 1 (T-014) — protocol core — zero-trust GREEN + merged (PR #24, `6c920d0`)**; **next is Wave 3a slice 2 (receipt storage & atomicity, migration 0014) — not started.**
 
 ---
 
