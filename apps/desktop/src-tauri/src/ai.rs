@@ -264,6 +264,38 @@ enum Provider {
     GovernedEngine { python: String, sidecar: String },
 }
 
+/// The governed-turn receipt verdict — maps 1:1 to `Message.receipt`
+/// ('verified' | 'blocked'). Set ONLY by the governed provider; an ungoverned
+/// turn carries no tag (`None` on [`Generated`]).
+///
+/// SECURITY INVARIANT: `Verified` is produced **only** when
+/// [`interpret_bridge_result`] confirms `ok && receipt.verified`. A `Blocked`
+/// verdict never carries a result body presented as the answer — its text is the
+/// fail-closed reason, and the streaming path never emits it as assistant text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiptTag {
+    Verified,
+    Blocked,
+}
+
+impl ReceiptTag {
+    /// The persisted/`Message.receipt` string form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReceiptTag::Verified => "verified",
+            ReceiptTag::Blocked => "blocked",
+        }
+    }
+}
+
+/// A generated reply plus its governed-receipt verdict. `receipt` is `None` for
+/// the three ungoverned providers (no badge); `Some(_)` only on the governed path.
+/// On a `Blocked` verdict, `text` holds the fail-closed reason — NOT an answer.
+pub struct Generated {
+    pub text: String,
+    pub receipt: Option<ReceiptTag>,
+}
+
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
@@ -444,16 +476,24 @@ pub async fn status() -> AiStatus {
 /// trimmed to [`HISTORY_BYTE_BUDGET`] before dispatch, and at most
 /// [`MAX_CONCURRENT_GENERATIONS`] generations run at once (the permit is held
 /// for the whole provider call and released on every return path).
-pub async fn generate(system: &str, messages: &[ChatMsg]) -> Result<String, String> {
+pub async fn generate(system: &str, messages: &[ChatMsg]) -> Result<Generated, String> {
     validate_input(system, messages)?;
     let _permit = GenerationPermit::acquire()?;
     let messages = trim_history(messages);
+    // The three ungoverned providers return a bare body → `receipt: None` (no
+    // badge). Only the governed provider yields a receipt verdict.
     match resolve() {
-        Provider::ClaudeCli { bin } => claude_cli(&bin, system, messages).await,
-        Provider::Anthropic { key, model } => anthropic(&key, &model, system, messages).await,
-        Provider::Ollama { model, url } => ollama(&url, &model, system, messages).await,
+        Provider::ClaudeCli { bin } => ungoverned(claude_cli(&bin, system, messages).await),
+        Provider::Anthropic { key, model } => ungoverned(anthropic(&key, &model, system, messages).await),
+        Provider::Ollama { model, url } => ungoverned(ollama(&url, &model, system, messages).await),
         Provider::GovernedEngine { python, sidecar } => governed_engine(&python, &sidecar, system, messages).await,
     }
+}
+
+/// Wrap an ungoverned provider's `Result<String>` as a `Generated` with no
+/// receipt tag (ungoverned turns never carry a badge — contract).
+fn ungoverned(r: Result<String, String>) -> Result<Generated, String> {
+    r.map(|text| Generated { text, receipt: None })
 }
 
 /// Streaming generation: `on_delta` is called with each incremental text chunk
@@ -464,28 +504,34 @@ pub async fn generate_stream<F: FnMut(&str)>(
     system: &str,
     messages: &[ChatMsg],
     mut on_delta: F,
-) -> Result<String, String> {
+) -> Result<Generated, String> {
     validate_input(system, messages)?;
     let _permit = GenerationPermit::acquire()?;
     let messages = trim_history(messages);
     match resolve() {
-        Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta).await,
+        Provider::ClaudeCli { bin } => {
+            ungoverned(claude_cli_stream(&bin, system, messages, &mut on_delta).await)
+        }
         Provider::Anthropic { key, model } => {
             let full = anthropic(&key, &model, system, messages).await?;
             on_delta(&full);
-            Ok(full)
+            Ok(Generated { text: full, receipt: None })
         }
         Provider::Ollama { model, url } => {
             let full = ollama(&url, &model, system, messages).await?;
             on_delta(&full);
-            Ok(full)
+            Ok(Generated { text: full, receipt: None })
         }
         Provider::GovernedEngine { python, sidecar } => {
-            // The sidecar is request/response (not a token stream): run once, emit
-            // the whole verified reply as a single delta.
-            let full = governed_engine(&python, &sidecar, system, messages).await?;
-            on_delta(&full);
-            Ok(full)
+            // The sidecar is request/response (not a token stream): run once, then
+            // emit the whole reply as a single delta — but ONLY for a VERIFIED
+            // turn. A Blocked verdict's text is a fail-closed reason, never an
+            // answer, so it is NEVER streamed as assistant text (security invariant).
+            let gen = governed_engine(&python, &sidecar, system, messages).await?;
+            if matches!(gen.receipt, Some(ReceiptTag::Verified)) {
+                on_delta(&gen.text);
+            }
+            Ok(gen)
         }
     }
 }
@@ -1061,12 +1107,20 @@ fn governed_task_id() -> String {
     format!("t-{nanos:x}-{n:x}")
 }
 
-/// Enforce the verified-receipt-mandatory invariant on a parsed bridge-result:
-/// return the reply ONLY when `ok == true` AND `receipt.verified == true`;
-/// otherwise fail closed with the engine's reason. Never returns a partial or
-/// unverified result — the same guarantee the Python adapter makes, re-checked on
-/// the desktop so an unverified turn is never rendered. (Pure fn — unit-testable.)
-fn interpret_bridge_result(doc: &serde_json::Value) -> Result<String, String> {
+/// Enforce the verified-receipt-mandatory invariant on a parsed bridge-result
+/// and return the governed verdict:
+///
+///   - `Generated { receipt: Some(Verified), text: <result> }` **only** when
+///     `ok == true` AND `receipt.verified == true` AND the result is non-empty.
+///   - `Generated { receipt: Some(Blocked), text: <fail-closed reason> }`
+///     otherwise — a legible reason, NEVER the (unverified) result body.
+///
+/// This is the same verified-receipt-mandatory guarantee the Python adapter
+/// makes, re-checked on the desktop so an unverified turn is never rendered. The
+/// Blocked branch surfaces the reason so the UI can show an honest `blocked`
+/// state; the caller must never present the Blocked text as an answer.
+/// (Pure fn — unit-testable.)
+fn interpret_bridge_result(doc: &serde_json::Value) -> Generated {
     let ok = doc.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
     let verified = doc
         .get("receipt")
@@ -1074,19 +1128,26 @@ fn interpret_bridge_result(doc: &serde_json::Value) -> Result<String, String> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     if ok && verified {
-        doc.get("result")
+        if let Some(result) = doc
+            .get("result")
             .and_then(|r| r.as_str())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| "governed engine reported success but returned no result".to_string())
-    } else {
-        let reason = doc
-            .get("error")
-            .and_then(|e| e.as_str())
-            .filter(|s| !s.is_empty())
-            .unwrap_or("governed engine did not return a verified result");
-        Err(format!("governed engine fail-closed: {reason}"))
+        {
+            return Generated { text: result, receipt: Some(ReceiptTag::Verified) };
+        }
+        // Verified receipt but no usable body → fail closed (no answer to show).
+        return Generated {
+            text: "governed engine fail-closed: reported success but returned no result".to_string(),
+            receipt: Some(ReceiptTag::Blocked),
+        };
     }
+    let reason = doc
+        .get("error")
+        .and_then(|e| e.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("governed engine did not return a verified result");
+    Generated { text: format!("governed engine fail-closed: {reason}"), receipt: Some(ReceiptTag::Blocked) }
 }
 
 /// Governed-engine provider: shell out to the bridge sidecar, which runs the turn
@@ -1099,7 +1160,7 @@ async fn governed_engine(
     sidecar: &str,
     system: &str,
     messages: &[ChatMsg],
-) -> Result<String, String> {
+) -> Result<Generated, String> {
     let request = governed_request(system, messages);
     let mut cmd = tokio::process::Command::new(python);
     cmd.arg(sidecar)
@@ -1160,7 +1221,9 @@ async fn governed_engine(
     let stdout = String::from_utf8_lossy(&obuf);
     let doc: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("could not parse bridge-result ({e})"))?;
-    interpret_bridge_result(&doc)
+    // A parsed bridge-result always yields a verdict (Verified or Blocked); only
+    // genuine infrastructure failures above (spawn/timeout/crash/parse) are `Err`.
+    Ok(interpret_bridge_result(&doc))
 }
 
 async fn ollama(url: &str, model: &str, system: &str, messages: &[ChatMsg]) -> Result<String, String> {
@@ -1469,25 +1532,37 @@ mod tests {
             "ok": true, "result": "hi there", "error": null,
             "receipt": {"task_id": "t", "status": "completed", "evidence": ["e"], "verified": true}
         });
-        assert_eq!(interpret_bridge_result(&good).unwrap(), "hi there");
+        let gen = interpret_bridge_result(&good);
+        // The ONLY path that yields Verified: ok && receipt.verified && non-empty body.
+        assert_eq!(gen.receipt, Some(ReceiptTag::Verified));
+        assert_eq!(gen.text, "hi there");
     }
 
     #[test]
     fn governed_engine_is_fail_closed_without_a_verified_receipt() {
-        // ok:true but receipt.verified:false — the result must NOT leak.
+        // ok:true but receipt.verified:false — the result must NOT leak: the
+        // verdict is Blocked and the text is the fail-closed reason, not the body.
         let unverified = serde_json::json!({
             "ok": true, "result": "should-be-ignored", "error": null,
             "receipt": {"task_id": "t", "status": "completed", "evidence": [], "verified": false}
         });
-        assert!(interpret_bridge_result(&unverified).is_err());
-        // ok:false — engine error surfaced, no result.
+        let gen = interpret_bridge_result(&unverified);
+        assert_eq!(gen.receipt, Some(ReceiptTag::Blocked));
+        assert!(!gen.text.contains("should-be-ignored"), "an unverified body must never leak");
+        // ok:false — engine error surfaced as the Blocked reason, no result.
         let denied = serde_json::json!({
             "ok": false, "result": null, "receipt": null, "error": "denied: not authorized"
         });
-        assert!(interpret_bridge_result(&denied).unwrap_err().contains("denied"));
-        // receipt entirely absent — fail closed.
-        let no_receipt = serde_json::json!({"ok": true, "result": "x", "error": null});
-        assert!(interpret_bridge_result(&no_receipt).is_err());
+        let gen = interpret_bridge_result(&denied);
+        assert_eq!(gen.receipt, Some(ReceiptTag::Blocked));
+        assert!(gen.text.contains("denied"));
+        // receipt entirely absent — fail closed (Blocked): the Blocked text is a
+        // fail-closed reason, never the raw body, so no unverified turn is rendered.
+        let no_receipt = serde_json::json!({"ok": true, "result": "unverified-body", "error": null});
+        let gen = interpret_bridge_result(&no_receipt);
+        assert_eq!(gen.receipt, Some(ReceiptTag::Blocked));
+        assert!(gen.text.contains("fail-closed"), "Blocked text is a reason");
+        assert!(!gen.text.contains("unverified-body"), "no verified receipt ⇒ no rendered body");
     }
 
     #[test]

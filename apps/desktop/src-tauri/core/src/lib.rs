@@ -503,8 +503,8 @@ mod tests {
     fn chat_post_and_list_ordered() {
         let c = conn();
         let conv = repo::chat::create_conversation(&c, "group", "room").unwrap();
-        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(), body: "first".into() }).unwrap();
-        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(), body: "second".into() }).unwrap();
+        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(), body: "first".into(), receipt: None }).unwrap();
+        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(), body: "second".into(), receipt: None }).unwrap();
 
         let msgs = repo::chat::list_messages(&c, &conv.id, None, None).unwrap();
         assert_eq!(msgs.len(), 2);
@@ -518,14 +518,50 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_receipt_round_trips_and_domain_is_closed() {
+        let c = conn();
+        let conv = repo::chat::create_conversation(&c, "direct", "Bro").unwrap();
+        // A verified governed turn persists and restores its 'verified' tag.
+        let verified = repo::chat::post_message(&c, NewMessage {
+            conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(),
+            body: "governed reply".into(), receipt: Some("verified".into()),
+        }).unwrap();
+        assert_eq!(verified.receipt.as_deref(), Some("verified"));
+        // A blocked verdict likewise round-trips.
+        let blocked = repo::chat::post_message(&c, NewMessage {
+            conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(),
+            body: "".into(), receipt: Some("blocked".into()),
+        }).unwrap();
+        assert_eq!(blocked.receipt.as_deref(), Some("blocked"));
+        // An ungoverned turn carries no tag.
+        let plain = repo::chat::post_message(&c, NewMessage {
+            conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(),
+            body: "hi".into(), receipt: None,
+        }).unwrap();
+        assert_eq!(plain.receipt, None);
+        // The value domain is closed: anything outside verified|blocked|NULL is rejected.
+        assert!(matches!(
+            repo::chat::post_message(&c, NewMessage {
+                conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(),
+                body: "x".into(), receipt: Some("forged".into()),
+            }),
+            Err(CoreError::Invalid { field: "receipt", .. })
+        ));
+        // The tags survive a reload through list_messages (SELECT * maps the column).
+        let msgs = repo::chat::list_messages(&c, &conv.id, None, None).unwrap();
+        let tags: Vec<Option<&str>> = msgs.iter().map(|m| m.receipt.as_deref()).collect();
+        assert_eq!(tags, vec![Some("verified"), Some("blocked"), None]);
+    }
+
+    #[test]
     fn chat_rejects_bad_role_and_unknown_conversation() {
         let c = conn();
         let conv = repo::chat::create_conversation(&c, "direct", "Bro").unwrap();
         assert!(matches!(
-            repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "bogus".into(), author: "x".into(), body: "y".into() }),
+            repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "bogus".into(), author: "x".into(), body: "y".into(), receipt: None }),
             Err(CoreError::Invalid { field: "role", .. })
         ));
-        assert!(repo::chat::post_message(&c, NewMessage { conversation_id: "nope".into(), role: "user".into(), author: "x".into(), body: "y".into() }).is_err());
+        assert!(repo::chat::post_message(&c, NewMessage { conversation_id: "nope".into(), role: "user".into(), author: "x".into(), body: "y".into(), receipt: None }).is_err());
         assert!(repo::chat::create_conversation(&c, "bogus-kind", "x").is_err());
     }
 
@@ -544,8 +580,8 @@ mod tests {
     fn conversation_delete_and_rename() {
         let c = conn();
         let conv = repo::chat::create_conversation(&c, "group", "old title").unwrap();
-        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(), body: "hi".into() }).unwrap();
-        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(), body: "hello".into() }).unwrap();
+        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(), body: "hi".into(), receipt: None }).unwrap();
+        repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(), body: "hello".into(), receipt: None }).unwrap();
 
         // rename updates the stored title
         let renamed = repo::chat::rename_conversation(&c, &conv.id, "new title").unwrap();

@@ -298,12 +298,17 @@ pub fn post_message(state: State<AppState>, input: NewMessage) -> Result<Message
     if !WEBVIEW_MESSAGE_ROLES.contains(&input.role.as_str()) {
         return Err(format!("role not allowed from the webview: {}", input.role));
     }
-    let NewMessage { conversation_id, role, author, body } = input;
+    // Destructure without `receipt`: the tag is server-derived (from the engine
+    // verdict on the reply paths), NEVER client-supplied — a compromised webview
+    // must not be able to forge a 'verified' badge. Any receipt on the inbound
+    // payload is dropped here and forced to None (spec §7).
+    let NewMessage { conversation_id, role, author, body, receipt: _ } = input;
     let input = NewMessage {
         conversation_id,
         role,
         author: sanitize_author_or(Some(author), "Gev"),
         body,
+        receipt: None,
     };
     let conn = locked(&state)?;
     repo::chat::post_message(&conn, input).map_err(|e| e.to_string())
@@ -327,6 +332,9 @@ pub fn post_user_message(
             role: "user".to_string(),
             author: sanitize_author_or(author, "Gev"),
             body,
+            // A human turn is ungoverned and carries no receipt tag; the webview
+            // cannot supply one (spec §7).
+            receipt: None,
         },
     )
     .map_err(|e| e.to_string())
@@ -477,6 +485,11 @@ pub enum StreamEvent {
     Delta { text: String },
     Done { message: Message },
     Error { message: String },
+    /// Terminal event for a governed turn that failed closed: carries the
+    /// engine's fail-closed `reason` and NO result body. Distinct from `Error`
+    /// so the UI renders an honest `blocked` state, and distinct from `Done` so
+    /// no unverified body is ever persisted or shown (spec §7).
+    Blocked { reason: String },
 }
 
 /// Streaming counterpart of `reply_in_conversation`: emits incremental `delta`
@@ -516,7 +529,18 @@ pub async fn stream_reply(
     })
     .await;
     match result {
-        Ok(full) => {
+        Ok(gen) => {
+            // Fail-closed governed verdict: surface the reason as a terminal
+            // `blocked` event and persist NOTHING — a Blocked turn has no verified
+            // answer, so no body is ever stored or rendered (security invariant).
+            if matches!(gen.receipt, Some(crate::ai::ReceiptTag::Blocked)) {
+                let _ = on_event.send(StreamEvent::Blocked { reason: gen.text });
+                return Ok(());
+            }
+            // Verified governed turn → 'verified'; ungoverned turn → no tag. The
+            // tag is derived here from the engine verdict, never client-supplied.
+            let receipt = gen.receipt.map(|r| r.as_str().to_string());
+            let crate::ai::Generated { text: full, .. } = gen;
             // Persist the reply. Any failure here must still deliver a terminal
             // event so the streaming UI never stays stuck "thinking".
             let persisted = {
@@ -529,7 +553,7 @@ pub async fn stream_reply(
                 };
                 repo::chat::post_message(
                     &conn,
-                    NewMessage { conversation_id, role: "agent".to_string(), author, body: full },
+                    NewMessage { conversation_id, role: "agent".to_string(), author, body: full, receipt },
                 )
             };
             match persisted {
@@ -683,7 +707,14 @@ pub async fn stream_run_step(
     })
     .await
     {
-        Ok(full) => {
+        Ok(gen) => {
+            // A governed step that failed closed carries a reason, not a result —
+            // surface it as an error and never store the unverified text.
+            if matches!(gen.receipt, Some(crate::ai::ReceiptTag::Blocked)) {
+                let _ = on_event.send(RunStepEvent::Error { message: gen.text });
+                return Ok(());
+            }
+            let full = gen.text;
             let outcome = {
                 let conn = match locked(&state) {
                     Ok(c) => c,
@@ -752,12 +783,20 @@ pub async fn stream_ask(prompt: String, on_event: tauri::ipc::Channel<StreamEven
     let system = "You are Bro, the top-level assistant in the BroPS desktop app for its owner, Gev. Answer the question concisely and helpfully. Do not claim to have taken actions you cannot actually take.".to_string();
     let history = vec![crate::ai::ChatMsg { role: "user".to_string(), content: prompt }];
     let ch = on_event.clone();
-    if let Err(e) = crate::ai::generate_stream(&system, &history, move |delta| {
+    match crate::ai::generate_stream(&system, &history, move |delta| {
         let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
     })
     .await
     {
-        let _ = on_event.send(StreamEvent::Error { message: e });
+        // A governed one-shot that failed closed emitted no delta (the body is
+        // suppressed for a Blocked verdict); surface the fail-closed reason.
+        Ok(gen) if matches!(gen.receipt, Some(crate::ai::ReceiptTag::Blocked)) => {
+            let _ = on_event.send(StreamEvent::Blocked { reason: gen.text });
+        }
+        Ok(_) => {}
+        Err(e) => {
+            let _ = on_event.send(StreamEvent::Error { message: e });
+        }
     }
     Ok(())
 }
@@ -791,11 +830,18 @@ pub async fn reply_in_conversation(
     if history.is_empty() {
         return Err("nothing to reply to".to_string());
     }
-    let text = crate::ai::generate(&system, &history).await?;
+    let gen = crate::ai::generate(&system, &history).await?;
+    // Fail-closed governed verdict: no verified answer exists — return the
+    // reason as an error and persist nothing (no unverified body is ever stored).
+    if matches!(gen.receipt, Some(crate::ai::ReceiptTag::Blocked)) {
+        return Err(gen.text);
+    }
+    // Verified governed turn → 'verified'; ungoverned → no tag. Server-derived.
+    let receipt = gen.receipt.map(|r| r.as_str().to_string());
     let conn = locked(&state)?;
     repo::chat::post_message(
         &conn,
-        NewMessage { conversation_id, role: "agent".to_string(), author, body: text },
+        NewMessage { conversation_id, role: "agent".to_string(), author, body: gen.text, receipt },
     )
     .map_err(|e| e.to_string())
 }

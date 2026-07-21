@@ -11,6 +11,10 @@ pub const PRIORITIES: &[&str] = &["low", "normal", "high", "critical"];
 pub const APPROVAL_DECISIONS: &[&str] = &["approved", "rejected"];
 pub const CONVERSATION_KINDS: &[&str] = &["direct", "group"];
 pub const MESSAGE_ROLES: &[&str] = &["user", "agent", "system"];
+/// Closed value domain for a message's governed-turn receipt tag. A governed
+/// turn stores 'verified' (receipt verified) or 'blocked' (fail-closed); an
+/// ungoverned turn stores no tag (`None`). Server-derived, never client-supplied.
+pub const MESSAGE_RECEIPTS: &[&str] = &["verified", "blocked"];
 pub const MEMORY_KINDS: &[&str] = &["fact", "preference", "note", "reference"];
 pub const RUN_STATUSES: &[&str] = &[
     "drafted", "queued", "planning", "awaiting_approval", "running", "paused", "succeeded",
@@ -133,6 +137,9 @@ camel! {
         pub author: String,
         pub body: String,
         pub created_at: String,
+        /// Governed-turn receipt tag: 'verified' | 'blocked' | None (ungoverned).
+        /// Server-derived from the engine receipt; drives the chat verification badge.
+        pub receipt: Option<String>,
     }
 
     pub struct KnowledgeNote {
@@ -258,6 +265,13 @@ pub struct NewMessage {
     pub role: String,
     pub author: String,
     pub body: String,
+    /// Governed-turn receipt tag ('verified' | 'blocked' | None). Set ONLY by
+    /// server-side reply paths (stream_reply / reply_in_conversation) from the
+    /// engine verdict. The webview `post_message` / `post_user_message` commands
+    /// force this to None — the tag is never client-supplied (spec §7). Defaults
+    /// to None when absent from a deserialized payload.
+    #[serde(default)]
+    pub receipt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
