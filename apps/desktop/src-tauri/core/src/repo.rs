@@ -653,6 +653,7 @@ pub mod chat {
             author: r.get("author")?,
             body: r.get("body")?,
             created_at: r.get("created_at")?,
+            receipt: r.get("receipt")?,
         })
     }
 
@@ -730,6 +731,14 @@ pub mod chat {
         if !is_valid(&input.role, MESSAGE_ROLES) {
             return Err(CoreError::Invalid { field: "role", value: input.role });
         }
+        // Closed value domain for the receipt tag (mirrors the 0012 DB triggers):
+        // 'verified' | 'blocked' | None. Reject anything else at the write path so
+        // a bad tag never reaches the badge (the DB trigger is the backstop).
+        if let Some(r) = input.receipt.as_deref() {
+            if !is_valid(r, MESSAGE_RECEIPTS) {
+                return Err(CoreError::Invalid { field: "receipt", value: r.to_string() });
+            }
+        }
         let now = now();
         let id = id();
         // Message insert, conversation bump, and audit row commit atomically —
@@ -739,9 +748,9 @@ pub mod chat {
             // Fail cleanly if the conversation does not exist (FK would also reject).
             get_conversation(tx, &input.conversation_id)?;
             tx.execute(
-                "INSERT INTO messages(id, conversation_id, role, author, body, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![id, input.conversation_id, input.role, input.author, input.body, now],
+                "INSERT INTO messages(id, conversation_id, role, author, body, created_at, receipt)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![id, input.conversation_id, input.role, input.author, input.body, now, input.receipt],
             )?;
             tx.execute(
                 "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
@@ -1736,12 +1745,12 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
         decisions::create(conn, "Foundation v1 is Locked", "gev", "Reviewed, canonicalized, Phase 1 UX added (D-010).")?;
 
         let direct = chat::create_conversation(conn, "direct", "Bro")?;
-        chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "user".into(), author: "gev".into(), body: "Bro, where does the desktop build stand?".into() })?;
-        chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "agent".into(), author: "Bro".into(), body: "Data core is green and CRUD is wired to real SQLite. Chat is now persisted too.".into() })?;
+        chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "user".into(), author: "gev".into(), body: "Bro, where does the desktop build stand?".into(), receipt: None })?;
+        chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "agent".into(), author: "Bro".into(), body: "Data core is green and CRUD is wired to real SQLite. Chat is now persisted too.".into(), receipt: None })?;
 
         let room = chat::create_conversation(conn, "group", "Foundation room")?;
-        chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Mason".into(), body: "Schema reached v3 — conversations and messages added.".into() })?;
-        chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Probe".into(), body: "Chat repository covered by unit tests.".into() })?;
+        chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Mason".into(), body: "Schema reached v3 — conversations and messages added.".into(), receipt: None })?;
+        chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Probe".into(), body: "Chat repository covered by unit tests.".into(), receipt: None })?;
 
         knowledge::create(conn, NewKnowledgeNote { title: "Typed IPC boundary".into(), body: "React reaches SQLite only through #[tauri::command]s; no raw SQL crosses the boundary.".into(), source: "docs/architecture".into(), tags: "architecture,ipc".into() })?;
         knowledge::create(conn, NewKnowledgeNote { title: "Forward-only migrations".into(), body: "Schema advances one numbered migration at a time; runner is idempotent.".into(), source: "src-tauri/core/db.rs".into(), tags: "sqlite,migrations".into() })?;

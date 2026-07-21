@@ -42,6 +42,9 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [replyError, setReplyError] = useState<string | null>(null);
+  // A governed turn that failed closed: the engine's fail-closed reason, shown as
+  // an honest `blocked` state (never a body, never a generic error).
+  const [blocked, setBlocked] = useState<string | null>(null);
   // @mention autocomplete over agent display names.
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
@@ -107,6 +110,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     setBusy(true);
     setError(null);
     setReplyError(null);
+    setBlocked(null);
     try {
       const userMsg = await desktop.postMessage({ conversationId: conversation.id, role: 'user', author: t('chat.you'), body });
       setExtra((prev) => [...prev, userMsg]);
@@ -135,6 +139,9 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
           if (ev.type === 'delta') setStreamingText((prev) => prev + ev.text);
           else if (ev.type === 'done') setExtra((prev) => [...prev, ev.message]);
           else if (ev.type === 'error') { setReplyError(ev.message); failed = true; }
+          // Governed fail-closed: show the reason as a blocked state, not an
+          // error, and never render a body for this turn.
+          else if (ev.type === 'blocked') { setBlocked(ev.reason); failed = true; }
         }, who);
         if (failed) break; // don't replay the same provider error for every agent
       }
@@ -206,10 +213,20 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
         )}
       </div>
       {error && <div className="form-error">{error}</div>}
+      {blocked && (
+        <div className="chat-blocked" role="status" aria-live="polite" style={{ marginBottom: 8 }}>
+          <div className="chat-blocked-head">
+            <Badge tone="danger">{t('chat.blocked')}</Badge>
+            <strong>{t('chat.blockedTitle')}</strong>
+          </div>
+          <div className="chat-blocked-reason">{blocked}</div>
+          <div className="chat-blocked-next muted">{t('chat.blockedNext')}</div>
+        </div>
+      )}
       {replyError && (
         <div className="chat-hint" style={{ marginBottom: 8 }}>⚠ {t('chat.replyFailed')}: {replyError}</div>
       )}
-      {ai.data && !ai.data.ready && !replyError && (
+      {ai.data && !ai.data.ready && !replyError && !blocked && (
         <div className="chat-hint" style={{ marginBottom: 8 }}>⚠ {ai.data.detail}</div>
       )}
       <form

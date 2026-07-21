@@ -79,6 +79,8 @@ export const en = {
   'chat.saveToChat': 'Save to chat',
   'chat.verified': 'Verified',
   'chat.blocked': 'Blocked',
+  'chat.blockedTitle': 'Governed turn blocked',
+  'chat.blockedNext': 'The turn ran behind the engine wall but did not return a verified receipt, so no answer is shown. Provision the governance sidecar (or self-test it) and try again.',
 
   'projects.subtitle': 'Objective-centered work',
   'tasks.subtitle': 'Action system with evidence',

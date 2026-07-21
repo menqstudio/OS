@@ -177,7 +177,11 @@ export const desktop = {
 export type StreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'done'; message: Message }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  // A governed turn that failed closed: carries the engine's fail-closed reason
+  // and NO body. The UI shows an honest `blocked` state, not a generic error and
+  // never an unverified answer.
+  | { type: 'blocked'; reason: string };
 
 export type RunStepEvent =
   | { type: 'delta'; text: string }

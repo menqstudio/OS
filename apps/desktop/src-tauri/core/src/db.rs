@@ -15,7 +15,8 @@ const MIGRATION_0008: &str = include_str!("../schema/0008_approval_gating.sql");
 const MIGRATION_0009: &str = include_str!("../schema/0009_task_dependencies.sql");
 const MIGRATION_0010: &str = include_str!("../schema/0010_search_fts.sql");
 const MIGRATION_0011: &str = include_str!("../schema/0011_constraints.sql");
-pub const SCHEMA_VERSION: i64 = 11;
+const MIGRATION_0012: &str = include_str!("../schema/0012_message_receipt.sql");
+pub const SCHEMA_VERSION: i64 = 12;
 
 /// Open a database file with foreign keys and WAL enabled, and migrate it.
 pub fn open(path: &str) -> CoreResult<Connection> {
@@ -55,7 +56,7 @@ fn configure(conn: &Connection) -> CoreResult<()> {
 /// Each version's DDL and its `_migrations` ledger row commit in a single
 /// exclusive transaction, so a crash mid-migration rolls the whole version
 /// back and it re-applies cleanly on the next launch — non-idempotent
-/// statements (the `ALTER TABLE`s in 0007/0008) never re-run against a
+/// statements (the `ALTER TABLE`s in 0007/0008/0012) never re-run against a
 /// half-migrated database. `BEGIN IMMEDIATE` also serializes two processes
 /// racing the same migration.
 pub fn migrate(conn: &Connection) -> CoreResult<()> {
@@ -74,6 +75,7 @@ pub fn migrate(conn: &Connection) -> CoreResult<()> {
         (9, MIGRATION_0009),
         (10, MIGRATION_0010),
         (11, MIGRATION_0011),
+        (12, MIGRATION_0012),
     ] {
         if is_applied(conn, version)? {
             continue;
