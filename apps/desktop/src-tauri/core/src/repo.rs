@@ -1282,6 +1282,8 @@ pub mod runs {
             created_at: r.get("created_at")?,
             updated_at: r.get("updated_at")?,
             execution_attempt_id: r.get("execution_attempt_id")?,
+            execution_owner_session_id: r.get("execution_owner_session_id")?,
+            execution_started_at: r.get("execution_started_at")?,
         })
     }
 
@@ -1366,12 +1368,12 @@ pub mod runs {
     /// verifies the native-confirmed grant and CONSUMES it now. A provider failure
     /// therefore leaves no reusable grant; a retry needs a fresh approval. Returns the
     /// attempt id the caller must present to complete/fail the step.
-    pub fn claim_step_for_execution(conn: &Connection, id: &str) -> CoreResult<String> {
+    pub fn claim_step_for_execution(conn: &Connection, id: &str, session_id: &str) -> CoreResult<String> {
         let attempt = crate::id();
         super::atomic(conn, |tx| {
             let step = get_step(tx, id)?;
-            // At most one step per run may be in-flight (claimed but not yet
-            // done/failed) — no parallel steps.
+            // At most one step per run may be in-flight (claimed via
+            // `execution_attempt_id` but not yet done/failed) — no parallel steps.
             let mid: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM run_steps
                    WHERE run_id = ?1 AND id != ?2
@@ -1384,11 +1386,14 @@ pub mod runs {
             }
             // Claim: a runnable step with no attempt yet. The `execution_attempt_id IS
             // NULL` guard is the mutual exclusion — a second concurrent claim writes 0
-            // rows and is refused here, before any provider dispatch.
+            // rows and is refused here, before any provider dispatch. The owner session
+            // + start time make the claim crash-recoverable (see reconcile_*).
             let n = tx.execute(
-                "UPDATE run_steps SET execution_attempt_id = ?1, updated_at = ?2
-                   WHERE id = ?3 AND status IN ('active','pending') AND execution_attempt_id IS NULL",
-                rusqlite::params![attempt, now(), id],
+                "UPDATE run_steps
+                    SET execution_attempt_id = ?1, execution_owner_session_id = ?2,
+                        execution_started_at = ?3, updated_at = ?3
+                   WHERE id = ?4 AND status IN ('active','pending') AND execution_attempt_id IS NULL",
+                rusqlite::params![attempt, session_id, now(), id],
             )?;
             if n == 0 {
                 return Err(CoreError::Invalid { field: "status", value: "step is not runnable or already claimed for execution".into() });
@@ -1426,17 +1431,59 @@ pub mod runs {
 
     /// Fail a claimed execution -> `failed`. The grant consumed at claim is NOT
     /// restored — a retry needs a fresh approval (safest v1). Only the claiming
-    /// attempt on a still-runnable step may fail it.
+    /// attempt on a still-runnable step may fail it; a wrong/stale attempt is refused.
     pub fn fail_step_execution(conn: &Connection, id: &str, attempt: &str) -> CoreResult<RunStep> {
         super::atomic(conn, |tx| {
-            tx.execute(
+            let n = tx.execute(
                 "UPDATE run_steps SET status = 'failed', updated_at = ?1
                    WHERE id = ?2 AND execution_attempt_id = ?3 AND status IN ('active','pending')",
                 rusqlite::params![now(), id, attempt],
             )?;
+            if n == 0 {
+                return Err(CoreError::Invalid { field: "attempt", value: "stale or invalid execution attempt".into() });
+            }
             Ok(())
         })?;
         get_step(conn, id)
+    }
+
+    /// Startup reconciliation (T-011 crash recovery): a step claimed for execution by
+    /// a PREVIOUS/dead session (owner session != the current one) is settled
+    /// fail-closed — step -> `failed`, its run -> `failed`, `execution.abandoned`
+    /// audited. The consumed grant is NOT restored: a retry needs a fresh approval.
+    /// This unwedges a run whose process crashed mid-provider-call, where the durable
+    /// claim would otherwise block every new claim and `advance` forever.
+    ///
+    /// ASSUMES a single app instance: a claim owned by any other session is treated as
+    /// dead. Running multiple instances against one database would need single-instance
+    /// enforcement or session-liveness validation before enabling this.
+    pub fn reconcile_abandoned_executions(conn: &Connection, current_session_id: &str) -> CoreResult<u32> {
+        let mut reconciled = 0u32;
+        super::atomic(conn, |tx| {
+            let stale: Vec<(String, String)> = {
+                let mut s = tx.prepare(
+                    "SELECT id, run_id FROM run_steps
+                       WHERE execution_attempt_id IS NOT NULL AND status IN ('active','pending')
+                         AND (execution_owner_session_id IS NULL OR execution_owner_session_id != ?1)",
+                )?;
+                let rows = s.query_map([current_session_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for (step_id, run_id) in &stale {
+                tx.execute(
+                    "UPDATE run_steps SET status = 'failed', updated_at = ?1 WHERE id = ?2",
+                    rusqlite::params![now(), step_id],
+                )?;
+                tx.execute(
+                    "UPDATE runs SET status = 'failed', updated_at = ?1 WHERE id = ?2",
+                    rusqlite::params![now(), run_id],
+                )?;
+                super::audit::record(tx, "execution.abandoned", "system", "system", "run_step", step_id)?;
+                reconciled += 1;
+            }
+            Ok(())
+        })?;
+        Ok(reconciled)
     }
 
     pub fn add_step(conn: &Connection, run_id: &str, title: &str, detail: &str) -> CoreResult<RunStep> {

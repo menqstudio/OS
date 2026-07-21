@@ -6,4 +6,11 @@
 -- concurrent claim writes 0 rows and is refused before any provider dispatch). Only
 -- the claiming attempt may complete or fail that step, so a stale/duplicate dispatch
 -- cannot persist a result. Nullable / backfill-safe: pre-existing rows carry NULL.
+--
+-- `execution_owner_session_id` + `execution_started_at` make the durable claim
+-- crash-recoverable: at startup, a claim owned by a PREVIOUS (dead) session is
+-- reconciled fail-closed (step -> failed, run -> failed, grant stays consumed, audit
+-- `execution.abandoned`) so a process crash mid-provider-call cannot wedge the run.
 ALTER TABLE run_steps ADD COLUMN execution_attempt_id TEXT;
+ALTER TABLE run_steps ADD COLUMN execution_owner_session_id TEXT;
+ALTER TABLE run_steps ADD COLUMN execution_started_at TEXT;

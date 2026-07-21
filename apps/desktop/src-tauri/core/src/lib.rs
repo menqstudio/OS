@@ -467,7 +467,7 @@ mod tests {
         ).unwrap();
 
         // First claim wins: the step is now claimed (attempt id set), grant consumed.
-        let attempt = repo::runs::claim_step_for_execution(&c, &step.id).unwrap();
+        let attempt = repo::runs::claim_step_for_execution(&c, &step.id, "sess-A").unwrap();
         assert!(repo::runs::get_step(&c, &step.id).unwrap().execution_attempt_id.is_some());
         assert!(
             !repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap(),
@@ -476,7 +476,7 @@ mod tests {
 
         // Second concurrent claim is refused BEFORE any provider call.
         assert!(matches!(
-            repo::runs::claim_step_for_execution(&c, &step.id),
+            repo::runs::claim_step_for_execution(&c, &step.id, "sess-B"),
             Err(CoreError::Invalid { .. })
         ));
 
@@ -501,11 +501,51 @@ mod tests {
             &c, &ap.id, "native", "native:main", None,
             ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
         ).unwrap();
-        let attempt = repo::runs::claim_step_for_execution(&c, &step.id).unwrap();
+        let attempt = repo::runs::claim_step_for_execution(&c, &step.id, "sess-A").unwrap();
+        // A wrong/stale attempt cannot fail the step (strict attempt check).
+        assert!(repo::runs::fail_step_execution(&c, &step.id, "wrong-attempt").is_err());
         repo::runs::fail_step_execution(&c, &step.id, &attempt).unwrap();
         assert_eq!(repo::runs::get_step(&c, &step.id).unwrap().status, "failed");
         // The grant is NOT restored — a retry needs a fresh approval.
         assert!(!repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap());
+    }
+
+    #[test]
+    fn t011_crash_leaves_no_wedged_run_reconciled_fail_closed() {
+        // A claim by a session that then "crashes" (never completes/fails) must not
+        // wedge the run: a later session reconciles it fail-closed at startup.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t011crash.db");
+        let path = path.to_str().unwrap();
+        let (step_id, run_id) = {
+            let c1 = db::open(path).unwrap();
+            let r = repo::runs::create(&c1, "i", "p").unwrap();
+            let step = repo::runs::add_step(&c1, &r.id, "risky", "d").unwrap();
+            repo::runs::set_step_requires_approval(&c1, &step.id, true).unwrap();
+            let ap = repo::approvals::create(
+                &c1, "Execute run step", "risky", "A2", "medium", "gev",
+                Some("run_step"), Some(&step.id), "webview:main", "sess", &crate::id(),
+            ).unwrap();
+            repo::approvals::approve_confirmed(
+                &c1, &ap.id, "native", "native:main", None,
+                ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+            ).unwrap();
+            // Claim under session "dead-session", then drop the connection WITHOUT
+            // completing or failing — simulates a crash mid-provider-call.
+            repo::runs::claim_step_for_execution(&c1, &step.id, "dead-session").unwrap();
+            (step.id, r.id)
+        };
+        // A new session reopens and reconciles.
+        let c2 = db::open(path).unwrap();
+        let n = repo::runs::reconcile_abandoned_executions(&c2, "live-session").unwrap();
+        assert_eq!(n, 1, "the abandoned claim must be reconciled");
+        assert_eq!(repo::runs::get_step(&c2, &step_id).unwrap().status, "failed");
+        assert_eq!(repo::runs::get(&c2, &run_id).unwrap().status, "failed");
+        // Grant not restored; the run is no longer permanently mid-flight — a fresh
+        // claim on a NEW active step would work, and advance no longer sees in-flight.
+        assert!(!repo::approvals::approved_for(&c2, &step_id, "run_step", "Execute run step").unwrap());
+        // A second reconcile is a no-op (idempotent).
+        assert_eq!(repo::runs::reconcile_abandoned_executions(&c2, "live-session").unwrap(), 0);
     }
 
     #[test]

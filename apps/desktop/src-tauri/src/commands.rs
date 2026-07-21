@@ -69,7 +69,7 @@ fn truncated(s: &str, max: usize) -> String {
 /// for audit only — the enforcement identity is the durable `origin_principal`
 /// persisted on the approval row, which (unlike the old in-memory origin map)
 /// survives a restart.
-fn process_session_id() -> &'static str {
+pub(crate) fn process_session_id() -> &'static str {
     static SESSION: OnceLock<String> = OnceLock::new();
     SESSION.get_or_init(brops_core::id)
 }
@@ -965,7 +965,7 @@ pub async fn stream_run_step(
     // before any spend. The returned attempt id gates completion/failure.
     let attempt = {
         let conn = locked(&state)?;
-        match repo::runs::claim_step_for_execution(&conn, &step.id) {
+        match repo::runs::claim_step_for_execution(&conn, &step.id, process_session_id()) {
             Ok(a) => a,
             Err(e) => {
                 let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
