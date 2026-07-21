@@ -433,6 +433,10 @@ pub mod approvals {
     struct RunPart {
         run_id: String,
         run_intent_sha256: String,
+        // The full execution plan is part of the AI execution payload and is
+        // renderer-supplied at run creation — it MUST be bound, or a benign
+        // intent/title could hide a malicious plan from the confirmer.
+        run_plan_sha256: String,
         step_id: String,
         step_title_sha256: String,
         step_detail_sha256: String,
@@ -442,10 +446,12 @@ pub mod approvals {
     /// The canonical request envelope hashed into `request_digest` (T-011, design
     /// §6.3). Field order is fixed (struct order), and there are no maps, so
     /// `serde_json::to_string` is deterministic — the digest binds the decision to
-    /// the exact request. `target` (UI display text) is deliberately excluded.
+    /// the exact request AND the exact execution scope. `target` (UI display text)
+    /// is deliberately excluded.
     #[derive(serde::Serialize)]
     struct RequestEnvelope<'a> {
         schema_version: u32,
+        approval_id: &'a str,
         action_type: &'a str,
         entity_type: Option<&'a str>,
         entity_id: Option<&'a str>,
@@ -469,6 +475,7 @@ pub mod approvals {
                 Some(RunPart {
                     run_id: run.id.clone(),
                     run_intent_sha256: sha256_hex(&run.intent),
+                    run_plan_sha256: sha256_hex(&run.plan),
                     step_id: step.id.clone(),
                     step_title_sha256: sha256_hex(&step.title),
                     step_detail_sha256: sha256_hex(&step.detail),
@@ -482,6 +489,7 @@ pub mod approvals {
         };
         let envelope = RequestEnvelope {
             schema_version: 1,
+            approval_id: &a.id,
             action_type: &a.action_type,
             entity_type: a.entity_type.as_deref(),
             entity_id: a.entity_id.as_deref(),
@@ -495,6 +503,29 @@ pub mod approvals {
         let json = serde_json::to_string(&envelope)
             .map_err(|e| CoreError::Invalid { field: "request_envelope", value: e.to_string() })?;
         Ok(sha256_hex(&json))
+    }
+
+    /// The FULL execution payload the confirmer must see — the exact text that will
+    /// reach the AI provider (run intent + plan + step title + detail). Returned from
+    /// the SAME current state that `request_digest` hashes, so what the native dialog
+    /// shows and what the digest binds cannot diverge. `None` for non-run entities.
+    pub fn execution_payload(conn: &Connection, a: &Approval) -> CoreResult<Option<String>> {
+        if a.entity_type.as_deref() != Some(RUN_STEP_ENTITY_TYPE) {
+            return Ok(None);
+        }
+        let Some(step_id) = a.entity_id.as_deref() else { return Ok(None) };
+        let step = super::runs::get_step(conn, step_id)?;
+        let run = super::runs::get(conn, &step.run_id)?;
+        Ok(Some(format!(
+            "Run intent:\n{}\n\nRun plan:\n{}\n\nStep:\n{}\n\nStep detail:\n{}",
+            run.intent, run.plan, step.title, step.detail
+        )))
+    }
+
+    /// Bind the confirmation to the exact request + nonce + method, so the recorded
+    /// `confirmation_digest` provably matches the confirmed envelope.
+    fn confirmation_digest(request_digest: &str, nonce: &str, method: &str) -> String {
+        sha256_hex(&format!("{request_digest}:{nonce}:{method}"))
     }
 
     /// Create a pending approval, optionally linked to the entity that needs it.
@@ -558,6 +589,8 @@ pub mod approvals {
         confirmer_principal: &str,
         confirmed_by: &str,
         note: Option<&str>,
+        expected_nonce: &str,
+        expected_request_digest: &str,
     ) -> CoreResult<Approval> {
         super::atomic(conn, |tx| {
             let a: Approval = tx
@@ -566,6 +599,15 @@ pub mod approvals {
             if a.status != "pending" {
                 return Err(CoreError::NotFound(format!("pending approval {id}")));
             }
+            // Replay-safe: the nonce loaded before the dialog must still be the
+            // unspent nonce on the row now (a concurrent decision would have cleared
+            // or changed it). This is a real check, not just the status guard.
+            if a.nonce.as_deref() != Some(expected_nonce) {
+                return Err(CoreError::Invalid {
+                    field: "nonce",
+                    value: "approval nonce was spent or changed (replay)".into(),
+                });
+            }
             // Self-approval, restart-safe: compare the persisted principal.
             if a.origin_principal.as_deref() == Some(confirmer_principal) {
                 return Err(CoreError::Invalid {
@@ -573,19 +615,28 @@ pub mod approvals {
                     value: "the requesting principal cannot approve its own request".into(),
                 });
             }
-            // Digest recheck against current entity state (mutation-safe).
+            // The stored digest must equal the digest confirmed before the dialog…
+            if a.request_digest.as_deref() != Some(expected_request_digest) {
+                return Err(CoreError::Invalid {
+                    field: "request_digest",
+                    value: "approval changed since it was presented for confirmation".into(),
+                });
+            }
+            // …and both must equal a fresh recomputation from CURRENT entity state.
             let current = request_digest(tx, &a)?;
-            if a.request_digest.as_deref() != Some(current.as_str()) {
+            if current != expected_request_digest {
                 return Err(CoreError::Invalid {
                     field: "request_digest",
                     value: "the request changed since it was raised".into(),
                 });
             }
+            let conf_digest = confirmation_digest(&current, expected_nonce, "native");
             let changed = tx.execute(
                 "UPDATE approvals SET status = 'approved', decision_note = ?1, decided_at = ?2, \
                  confirmed_at = ?2, confirmed_by = ?3, confirmation_method = 'native', \
-                 confirmation_digest = ?4, nonce = NULL WHERE id = ?5 AND status = 'pending'",
-                rusqlite::params![note, now(), confirmed_by, current, id],
+                 confirmation_digest = ?4, nonce = NULL \
+                 WHERE id = ?5 AND status = 'pending' AND nonce = ?6",
+                rusqlite::params![note, now(), confirmed_by, conf_digest, id, expected_nonce],
             )?;
             if changed == 0 {
                 return Err(CoreError::NotFound(format!("pending approval {id}")));
@@ -605,10 +656,18 @@ pub mod approvals {
         entity_type: &str,
         action_type: &str,
     ) -> CoreResult<bool> {
+        // T-011: a grant is valid ONLY if it was recorded through the native
+        // confirmation path (`approve_confirmed`). Those markers — confirmed_at set,
+        // confirmation_method 'native', a confirmation_digest present, and the nonce
+        // consumed — are written together and only there; the reject-only `decide`
+        // path can never produce them. So the "native confirmation is the only
+        // approve path" invariant lives in this authority layer, not just the command.
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM approvals
                WHERE entity_id = ?1 AND entity_type = ?2 AND action_type = ?3
-                 AND status = 'approved' AND decided_at IS NOT NULL",
+                 AND status = 'approved' AND decided_at IS NOT NULL
+                 AND confirmed_at IS NOT NULL AND confirmation_method = 'native'
+                 AND confirmation_digest IS NOT NULL AND nonce IS NULL",
             rusqlite::params![entity_id, entity_type, action_type],
             |r| r.get(0),
         )?;
@@ -664,10 +723,20 @@ pub mod approvals {
             .optional()?)
     }
 
-    /// Decide a pending approval. `decision` must be "approved" or "rejected".
+    /// Reject-only decision path. **Approve does NOT go through here** (T-011): the
+    /// only way to reach `status = 'approved'` is `approve_confirmed`, which records
+    /// the native-confirmation markers that `approved_for` requires. `decide` refuses
+    /// `"approved"` at the authority layer so the invariant cannot be bypassed even if
+    /// a command were mis-wired. `decision` must be `"rejected"`.
     pub fn decide(conn: &Connection, id: &str, decision: &str, note: Option<&str>) -> CoreResult<Approval> {
         if !is_valid(decision, APPROVAL_DECISIONS) {
             return Err(CoreError::Invalid { field: "decision", value: decision.to_string() });
+        }
+        if decision == "approved" {
+            return Err(CoreError::Invalid {
+                field: "decision",
+                value: "approve requires native confirmation (approve_confirmed), not decide".into(),
+            });
         }
         super::atomic(conn, |tx| {
             let changed = tx.execute(

@@ -326,13 +326,53 @@ pub fn reject_approval(
     Ok(rejected)
 }
 
+/// At most ONE native confirmation dialog may be open at a time (design §9.1): a
+/// concurrent `confirm_approval` fails closed, so a compromised renderer cannot stack
+/// dialogs to cause click-confusion or a prompt-spam DoS. Released on drop (RAII).
+static CONFIRMATION_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+struct ConfirmationGuard;
+impl ConfirmationGuard {
+    fn acquire() -> Result<Self, String> {
+        use std::sync::atomic::Ordering;
+        CONFIRMATION_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ConfirmationGuard)
+            .map_err(|_| "another confirmation is already in progress".to_string())
+    }
+}
+impl Drop for ConfirmationGuard {
+    fn drop(&mut self) {
+        CONFIRMATION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Fixed-window rate limit for confirmation prompts (per webview label), mirroring
+/// the reject limiter — bounds prompt spam beyond the single-active guard.
+fn confirm_rate_limit(label: &str) -> Result<(), String> {
+    use std::time::Instant;
+    static HITS: OnceLock<Mutex<HashMap<String, Vec<Instant>>>> = OnceLock::new();
+    let map = HITS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = map.lock().unwrap_or_else(|p| p.into_inner());
+    let now = Instant::now();
+    let hits = map.entry(label.to_string()).or_default();
+    hits.retain(|t| now.duration_since(*t) < REJECT_WINDOW);
+    if hits.len() >= MAX_REJECTS_PER_WINDOW {
+        return Err("too many confirmation requests; slow down and retry shortly".to_string());
+    }
+    hits.push(now);
+    Ok(())
+}
+
 /// T-011 approve path — renderer-independent native confirmation. The generic
 /// `decide_approval` approve verb is denied to `main`; the ONLY way to approve is
 /// this command, which drives a **native** OS dialog from Rust (the webview cannot
-/// forge it) and only then records the decision. The DB lock is released while the
-/// human reads the dialog; on confirmation the repo re-checks status, nonce, the
-/// request digest (against current state) and the durable self-approval principal in
-/// one transaction. The webview never sends a "confirmed" flag.
+/// forge it) and only then records the decision. The dialog shows the FULL execution
+/// payload that will reach the provider, and the digest binds that same payload. The
+/// DB lock is released while the human reads the dialog; on confirmation the repo
+/// re-checks status, the exact nonce, and the stored+recomputed request digest against
+/// the confirmed one, plus the durable self-approval principal, in one transaction.
+/// The webview never sends a "confirmed" flag. Only one prompt runs at a time.
 #[tauri::command]
 pub async fn confirm_approval(
     state: State<'_, AppState>,
@@ -340,20 +380,34 @@ pub async fn confirm_approval(
     id: String,
     note: Option<String>,
 ) -> Result<Approval, String> {
-    // 1. Load canonical details + pre-check, then release the lock before the dialog.
-    let dialog_body = {
+    confirm_rate_limit(window.label())?;
+    // Fail closed on a concurrent confirmation; the guard clears when this returns.
+    let _guard = ConfirmationGuard::acquire()?;
+
+    // 1. Load canonical details + the FULL execution payload + the nonce/digest to
+    //    confirm against; release the lock before the dialog.
+    let (dialog_body, expected_nonce, expected_digest) = {
         let conn = locked(&state)?;
         let a = repo::approvals::get(&conn, &id).map_err(|e| e.to_string())?;
         if a.status != "pending" {
             return Err("approval is not pending".to_string());
         }
-        format!(
-            "Approve this privileged action?\n\nAction: {}\nRisk: {}\nLevel: {}\nTarget: {}",
-            a.action_type,
-            a.risk_level,
-            a.level,
-            truncated(&a.target, 300)
-        )
+        let nonce = a.nonce.clone().ok_or_else(|| "approval has no nonce".to_string())?;
+        let digest = a
+            .request_digest
+            .clone()
+            .ok_or_else(|| "approval has no request digest".to_string())?;
+        // Show exactly what will reach the provider (intent + plan + step title +
+        // detail) — the confirmer must not see a benign summary while a different
+        // payload executes. This comes from the SAME state the digest hashes.
+        let payload = repo::approvals::execution_payload(&conn, &a)
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| truncated(&a.target, 300));
+        let body = format!(
+            "Approve this privileged action?\n\nAction: {}\nRisk: {}\nLevel: {}\n\n{}",
+            a.action_type, a.risk_level, a.level, payload
+        );
+        (body, nonce, digest)
     };
     // 2. Native, renderer-independent confirmation. Run off the main thread so
     //    `blocking_show` does not deadlock the event loop.
@@ -375,13 +429,20 @@ pub async fn confirm_approval(
         return Err("approval was not confirmed".to_string());
     }
     // 3. Record atomically. The confirmer principal is the native authority —
-    //    distinct from any `webview:*` requester, so the durable self-approval check
-    //    passes for a genuine out-of-band confirmation and fails if a webview-origin
-    //    approval were ever confirmed as its own principal.
+    //    distinct from any `webview:*` requester. The repo re-verifies the nonce and
+    //    the confirmed digest against a fresh recomputation.
     let confirmed_by = format!("native:{}", window.label());
     let conn = locked(&state)?;
-    repo::approvals::approve_confirmed(&conn, &id, "native", &confirmed_by, note.as_deref())
-        .map_err(|e| e.to_string())
+    repo::approvals::approve_confirmed(
+        &conn,
+        &id,
+        "native",
+        &confirmed_by,
+        note.as_deref(),
+        &expected_nonce,
+        &expected_digest,
+    )
+    .map_err(|e| e.to_string())
 }
 
 // --- notifications ---
