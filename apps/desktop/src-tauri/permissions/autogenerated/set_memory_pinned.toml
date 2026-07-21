@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-memory-pinned"
+description = "Enables the set_memory_pinned command without any pre-configured scope."
+commands.allow = ["set_memory_pinned"]
+
+[[permission]]
+identifier = "deny-set-memory-pinned"
+description = "Denies the set_memory_pinned command without any pre-configured scope."
+commands.deny = ["set_memory_pinned"]

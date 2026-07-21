@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stream-run-step"
+description = "Enables the stream_run_step command without any pre-configured scope."
+commands.allow = ["stream_run_step"]
+
+[[permission]]
+identifier = "deny-stream-run-step"
+description = "Denies the stream_run_step command without any pre-configured scope."
+commands.deny = ["stream_run_step"]

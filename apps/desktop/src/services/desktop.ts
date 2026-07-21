@@ -62,8 +62,12 @@ export const desktop = {
 
   // approvals
   listApprovals: () => invoke<Approval[]>('list_approvals'),
-  decideApproval: (id: string, decision: 'approved' | 'rejected', note?: string) =>
-    invoke<Approval>('decide_approval', { id, decision, note: note ?? null }),
+  // T-010: the fail-safe reject path — a dedicated command so a compromised renderer
+  // cannot flip a decision argument to "approved". Approve is intentionally NOT a
+  // webview command: generic decide_approval is capability-denied to this window and
+  // an approve requires renderer-independent native confirmation (lands in T-011).
+  rejectApproval: (id: string, note?: string) =>
+    invoke<Approval>('reject_approval', { id, note: note ?? null }),
 
   // notifications
   listNotifications: () => invoke<Notification[]>('list_notifications'),

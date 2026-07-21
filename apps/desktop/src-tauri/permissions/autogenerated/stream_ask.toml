@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stream-ask"
+description = "Enables the stream_ask command without any pre-configured scope."
+commands.allow = ["stream_ask"]
+
+[[permission]]
+identifier = "deny-stream-ask"
+description = "Denies the stream_ask command without any pre-configured scope."
+commands.deny = ["stream_ask"]

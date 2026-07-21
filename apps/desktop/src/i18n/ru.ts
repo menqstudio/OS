@@ -150,6 +150,7 @@ export const ru: Record<DictKey, string> = {
   'decisions.subtitle': 'Принятые решения с обоснованием',
   'approvals.subtitle': 'Защищённые действия ждут вашего разрешения',
   'approvals.decideFailed': 'Не удалось записать решение',
+  'approvals.approveNativePending': 'Одобрение требует нативного подтверждения (появится в T-011); здесь можно только отклонить.',
   'approvals.a3ConfirmTitle': 'Подтвердите деструктивное действие',
   'approvals.a3ConfirmBody': 'Это действие уровня A3 (деструктивное). Одобрить?',
   'activity.subtitle': 'Хронологическая запись событий',

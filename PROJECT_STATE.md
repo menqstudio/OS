@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** Wave 2b **design-only** — joint T-010 (capability boundary) + T-011 (durable approval) design in [`docs/design/WAVE_2B_CAPABILITY_APPROVAL_DESIGN.md`](./docs/design/WAVE_2B_CAPABILITY_APPROVAL_DESIGN.md), on `design/wave-2b-capability-approval`. No product code until Architect audit + Owner approval; then T-010 → T-011 → Wave 3. (Wave 2a P1-6 merged PR #16 `d85dcba`; Wave 1 P0-1 merged PR #15 `15384cb`.)
+**Last updated · Վերջին թարմացում:** Wave 2b **T-010 implemented** (design Architect-APPROVED) — AppManifest → all 65 commands, deny-by-default capabilities, generic `decide_approval` denied to `main` + new `reject_approval` fail-safe command, in-body bounds, and a CI invariant (`tools/check_capabilities.py`: registered == manifest == policy == grants). On `feat/t-010-capability-boundary`. Approve is intentionally fail-closed until T-011 (native confirmation). Next: T-011 → Wave 3. (Wave 2a P1-6 merged PR #16 `d85dcba`; Wave 1 P0-1 merged PR #15 `15384cb`.)
 
 ---
 

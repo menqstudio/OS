@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-task-dependency"
+description = "Enables the add_task_dependency command without any pre-configured scope."
+commands.allow = ["add_task_dependency"]
+
+[[permission]]
+identifier = "deny-add-task-dependency"
+description = "Denies the add_task_dependency command without any pre-configured scope."
+commands.deny = ["add_task_dependency"]
