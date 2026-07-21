@@ -23,7 +23,8 @@
 | **T-005** | Option-2 feasibility (**AUDITED**): engine as submodule + targeted fix to Bro's worktree check (`git rev-parse --show-toplevel` instead of `git worktree list`). **Separate branch/PR, Owner approval, must not destabilize.** — roadmap Phase 10 | _unclaimed_ | Todo | — |
 | **T-006** | Master execution roadmap — expand `MASTER_EXECUTION_ROADMAP.md` into the canonical execution source (11 phases × 16 sections, per-page UI specs, docs sync) | 🔨 Claude | ✅ Done (merged) | `docs/master-execution-roadmap` → **PR #4 merged** (`c573c25`) |
 | **T-007** | Coordination-docs enforcement — CI gate (`tools/check_coordination.py`) + Stop-hook (`.claude/`) so the Startup Law / docs-sync is **enforced, not remembered** (fail-closed CI wall + fail-open Claude reminder) | 🔨 Claude | ✅ Done (merged) | **PR #9 merged** (`990a9ec`) |
-| **T-008** | Phase follow-ups — `docs/DESIGN_SYSTEM.md` (design-system reference) + honest Settings (drop prototype stubs) + frontend **test framework** (vitest + first tests) + CI test leg | 🔨 Claude | Review | `feat/phase-followups` |
+| **T-008** | Phase follow-ups — `docs/DESIGN_SYSTEM.md` (design-system reference) + honest Settings (drop prototype stubs) + frontend **test framework** (vitest + first tests) + CI test leg | 🔨 Claude | ✅ Done (merged) | **PR #11 merged** (`ae13fe2`) |
+| **T-009** | Phase 2–10 **implementation-spec blueprints** (`docs/impl/PHASE_2..10_*.md`, code-grounded: backend/IPC/data/UI-states/files/tests/security per phase) + design-system component tests (suite → 85). Blueprint everything so the audited build goes fast | 🔨 Claude | Review | `docs/phase-impl-specs` |
 
 ## How to claim · Ինչպես claim անել
 1. `git pull` and read this board. · `git pull` ու կարդա board-ը։

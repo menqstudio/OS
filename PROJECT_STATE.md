@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** T-008 — phase follow-ups (design-system doc · honest Settings · vitest tests)
+**Last updated · Վերջին թարմացում:** T-009 — Phase 2–10 impl-spec blueprints (`docs/impl/`) + design-system tests (85)
 
 ---
 
@@ -32,7 +32,7 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | T-008 phase follow-ups (design-system doc · honest Settings · vitest test framework) | `feat/phase-followups` | 🔎 in review |
+| 🔨 Claude | T-009 Phase 2–10 impl-spec blueprints (`docs/impl/`) + design-system tests | `docs/phase-impl-specs` | 🔎 in review |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 
