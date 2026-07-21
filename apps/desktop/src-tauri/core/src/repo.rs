@@ -1281,6 +1281,7 @@ pub mod runs {
             requires_approval: r.get::<_, i64>("requires_approval")? != 0,
             created_at: r.get("created_at")?,
             updated_at: r.get("updated_at")?,
+            execution_attempt_id: r.get("execution_attempt_id")?,
         })
     }
 
@@ -1352,6 +1353,87 @@ pub mod runs {
                 rusqlite::params![result, now(), id],
             )?;
             super::audit::record(tx, "run_step.executed", "user", "gev", "run_step", id)?;
+            Ok(())
+        })?;
+        get_step(conn, id)
+    }
+
+    /// T-011: atomically CLAIM a runnable step for execution BEFORE the provider is
+    /// called, so one approval starts exactly one execution. In one transaction it
+    /// refuses if the run already has a step mid-execution, transitions this step
+    /// active/pending -> `executing` under a fresh one-time `execution_attempt_id`
+    /// (a concurrent claim sees `executing` and fails), and — for a gated step —
+    /// verifies the native-confirmed grant and CONSUMES it now. A provider failure
+    /// therefore leaves no reusable grant; a retry needs a fresh approval. Returns the
+    /// attempt id the caller must present to complete/fail the step.
+    pub fn claim_step_for_execution(conn: &Connection, id: &str) -> CoreResult<String> {
+        let attempt = crate::id();
+        super::atomic(conn, |tx| {
+            let step = get_step(tx, id)?;
+            // At most one step per run may be in-flight (claimed but not yet
+            // done/failed) — no parallel steps.
+            let mid: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM run_steps
+                   WHERE run_id = ?1 AND id != ?2
+                     AND execution_attempt_id IS NOT NULL AND status IN ('active','pending')",
+                rusqlite::params![step.run_id, id],
+                |r| r.get(0),
+            )?;
+            if mid > 0 {
+                return Err(CoreError::Invalid { field: "status", value: "run already has a step mid-execution".into() });
+            }
+            // Claim: a runnable step with no attempt yet. The `execution_attempt_id IS
+            // NULL` guard is the mutual exclusion — a second concurrent claim writes 0
+            // rows and is refused here, before any provider dispatch.
+            let n = tx.execute(
+                "UPDATE run_steps SET execution_attempt_id = ?1, updated_at = ?2
+                   WHERE id = ?3 AND status IN ('active','pending') AND execution_attempt_id IS NULL",
+                rusqlite::params![attempt, now(), id],
+            )?;
+            if n == 0 {
+                return Err(CoreError::Invalid { field: "status", value: "step is not runnable or already claimed for execution".into() });
+            }
+            // Gated step: verify + consume the grant now, before dispatch (M-2).
+            if step.requires_approval {
+                if !super::approvals::approved_for(tx, id, super::approvals::RUN_STEP_ENTITY_TYPE, super::approvals::RUN_STEP_ACTION_TYPE)? {
+                    return Err(CoreError::Invalid { field: "approval", value: "required".into() });
+                }
+                super::approvals::consume_for(tx, id, super::approvals::RUN_STEP_ENTITY_TYPE, super::approvals::RUN_STEP_ACTION_TYPE)?;
+            }
+            Ok(())
+        })?;
+        Ok(attempt)
+    }
+
+    /// Complete a claimed execution -> `done`, storing the result. The grant was
+    /// already consumed at claim, so this does not re-gate; only the claiming attempt
+    /// (on a still-runnable step) may complete — a stale/duplicate dispatch fails.
+    pub fn complete_step_execution(conn: &Connection, id: &str, attempt: &str, result: &str) -> CoreResult<RunStep> {
+        super::atomic(conn, |tx| {
+            let n = tx.execute(
+                "UPDATE run_steps SET result = ?1, status = 'done', updated_at = ?2
+                   WHERE id = ?3 AND execution_attempt_id = ?4 AND status IN ('active','pending')",
+                rusqlite::params![result, now(), id, attempt],
+            )?;
+            if n == 0 {
+                return Err(CoreError::Invalid { field: "attempt", value: "stale or invalid execution attempt".into() });
+            }
+            super::audit::record(tx, "run_step.executed", "user", "gev", "run_step", id)?;
+            Ok(())
+        })?;
+        get_step(conn, id)
+    }
+
+    /// Fail a claimed execution -> `failed`. The grant consumed at claim is NOT
+    /// restored — a retry needs a fresh approval (safest v1). Only the claiming
+    /// attempt on a still-runnable step may fail it.
+    pub fn fail_step_execution(conn: &Connection, id: &str, attempt: &str) -> CoreResult<RunStep> {
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "UPDATE run_steps SET status = 'failed', updated_at = ?1
+                   WHERE id = ?2 AND execution_attempt_id = ?3 AND status IN ('active','pending')",
+                rusqlite::params![now(), id, attempt],
+            )?;
             Ok(())
         })?;
         get_step(conn, id)
@@ -1448,6 +1530,18 @@ pub mod runs {
                 tx.query_row("SELECT COUNT(*) FROM run_steps WHERE run_id = ?1", [run_id], |r| r.get(0))?;
             if total_steps == 0 {
                 return Err(CoreError::Invalid { field: "steps", value: "none".to_string() });
+            }
+            // T-011: a step claimed for execution is mid-flight — advancing past it
+            // would activate the next step in parallel. Refuse until it settles
+            // (complete_step_execution -> done, or fail_step_execution -> failed).
+            let executing: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM run_steps
+                   WHERE run_id = ?1 AND execution_attempt_id IS NOT NULL AND status IN ('active','pending')",
+                [run_id],
+                |r| r.get(0),
+            )?;
+            if executing > 0 {
+                return Err(CoreError::Invalid { field: "status", value: "a step is mid-execution".to_string() });
             }
 
             // A manual advance must not complete a gated step that isn't approved —

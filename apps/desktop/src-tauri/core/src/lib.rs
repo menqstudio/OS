@@ -449,6 +449,66 @@ mod tests {
     }
 
     #[test]
+    fn t011_execution_claim_is_exclusive_one_grant_one_execution() {
+        // The concurrency blocker: one native-confirmed grant must start exactly ONE
+        // provider execution. The claim (run before any provider call) is the seam —
+        // a second concurrent claim is refused, so only one dispatch can happen.
+        let c = conn();
+        let r = repo::runs::create(&c, "the-intent", "the-plan").unwrap();
+        let step = repo::runs::add_step(&c, &r.id, "risky", "detail").unwrap();
+        repo::runs::set_step_requires_approval(&c, &step.id, true).unwrap();
+        let ap = repo::approvals::create(
+            &c, "Execute run step", "risky", "A2", "medium", "gev",
+            Some("run_step"), Some(&step.id), "webview:main", "sess", &crate::id(),
+        ).unwrap();
+        repo::approvals::approve_confirmed(
+            &c, &ap.id, "native", "native:main", None,
+            ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+        ).unwrap();
+
+        // First claim wins: the step is now claimed (attempt id set), grant consumed.
+        let attempt = repo::runs::claim_step_for_execution(&c, &step.id).unwrap();
+        assert!(repo::runs::get_step(&c, &step.id).unwrap().execution_attempt_id.is_some());
+        assert!(
+            !repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap(),
+            "the grant must be consumed at claim, before dispatch"
+        );
+
+        // Second concurrent claim is refused BEFORE any provider call.
+        assert!(matches!(
+            repo::runs::claim_step_for_execution(&c, &step.id),
+            Err(CoreError::Invalid { .. })
+        ));
+
+        // Only the claiming attempt may complete; a stale/duplicate dispatch cannot.
+        assert!(repo::runs::complete_step_execution(&c, &step.id, "wrong-attempt", "x").is_err());
+        let done = repo::runs::complete_step_execution(&c, &step.id, &attempt, "output").unwrap();
+        assert_eq!(done.status, "done");
+        assert_eq!(done.result, "output");
+    }
+
+    #[test]
+    fn t011_provider_failure_does_not_restore_the_grant() {
+        let c = conn();
+        let r = repo::runs::create(&c, "i", "p").unwrap();
+        let step = repo::runs::add_step(&c, &r.id, "risky", "d").unwrap();
+        repo::runs::set_step_requires_approval(&c, &step.id, true).unwrap();
+        let ap = repo::approvals::create(
+            &c, "Execute run step", "risky", "A2", "medium", "gev",
+            Some("run_step"), Some(&step.id), "webview:main", "sess", &crate::id(),
+        ).unwrap();
+        repo::approvals::approve_confirmed(
+            &c, &ap.id, "native", "native:main", None,
+            ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+        ).unwrap();
+        let attempt = repo::runs::claim_step_for_execution(&c, &step.id).unwrap();
+        repo::runs::fail_step_execution(&c, &step.id, &attempt).unwrap();
+        assert_eq!(repo::runs::get_step(&c, &step.id).unwrap().status, "failed");
+        // The grant is NOT restored — a retry needs a fresh approval.
+        assert!(!repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap());
+    }
+
+    #[test]
     fn t011_plan_change_after_raise_is_refused() {
         // A benign intent/title with a swapped PLAN must not pass — the plan is part
         // of the execution payload and is bound by the digest.
