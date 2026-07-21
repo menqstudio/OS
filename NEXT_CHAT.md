@@ -38,21 +38,18 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 
 ## 3. Current work — exact pointers
 
+**Wave 3a slice 1 is DONE and merged.** The next task is **Wave 3a slice 2** (not yet started).
+
 | | |
 |---|---|
-| **Active task** | **T-014 — Wave 3a Receipt Protocol v1, slice 1 (pure protocol core)** |
-| **Branch** | `feat/wave-3a-receipt-protocol` |
-| **PR** | **#24** — OPEN, **merge-BLOCKED** |
-| **Latest code-fix HEAD** | `f5b6ffe` (round-3 fixes) — a docs commit may sit on top as the branch tip |
-| **Audit history** | `a873501` → RED (4 blockers); `aa4dc01` → RED (3 blockers); `f5b6ffe` → **round-3 fixes, RE-AUDIT PENDING** |
-| **CI on the PR** | 7/7 GREEN — *but CI GREEN ≠ security-audit GREEN* |
-| **Audit verdict** | **RED — merge-blocked.** Awaiting the Architect's zero-trust re-audit of `f5b6ffe`. |
+| **Next task** | **Wave 3a slice 2 — receipt storage & atomicity** (migration 0014; see §7 for the exact first action) |
+| **Branch** | none yet — cut a fresh `feat/wave-3a-receipt-storage` from `main` and claim it in `TASKS.md` |
+| **Just merged** | **T-014 / slice 1 — PR #24 MERGED.** Approved HEAD `c51031e`; squash **merge commit `6c920d0`** on `main`; final CI 7/7 GREEN; Architect **zero-trust GREEN**. |
+| **Slice-1 baseline** | `brops-core::receipt` — the pure protocol core (§5). `brops-core` = **69 tests** green, clippy-clean. |
 
-> **Honesty note (status accuracy):** **Round-2 and round-3 fixes are implemented; the re-audit
-> is PENDING; the audit verdict remains RED; merge is blocked.** Two rounds have been closed in
-> code — `aa4dc01` (the 4 round-1 blockers) and `f5b6ffe` (the 3 round-2 blockers, §6) — but
-> **neither has a GREEN verdict**. Treat every blocker as *addressed-pending-verification*, not
-> resolved. **Do not merge PR #24** until the Architect returns GREEN on the exact re-audited HEAD.
+> **Status is now GREEN + merged for slice 1** — verify via `git log main` (`6c920d0`) and PR #24
+> (MERGED). The three RED audit rounds are **resolved audit history** (§6), not current blockers.
+> Slice 2 has **not** started; do not present any deferred item (§10) as implemented.
 
 ## 4. Merged baseline (Done — verify via `git log main`)
 
@@ -61,6 +58,7 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 - **T-010 — Tauri capability boundary**, PR #19 (`7d537c3`): deny-by-default capability manifest over all 65 commands; the 4 L2 hard-delete commands DENIED; CI invariant `tools/check_capabilities.py`. Zero-trust GREEN.
 - **T-011 — durable approval + native confirmation**, PR #20/#21 (merge `7638a64`): migrations 0012 (approval provenance) + 0013 (execution claim). Restart-safe self-approval by durable `origin_principal`; native-only approval authority; nonce compare-and-consume; canonical `RunExecutionScope` digest; atomic pre-dispatch execution claim; crash-recovery reconciliation; strict attempt ownership; enforced single-instance file lock. Zero-trust GREEN through multiple rounds.
 - **Wave 3 Receipt Protocol v1 — design rev 4**, PR #23 (`35a6ab5`): Architect + Owner **GREEN**, merged. The design is the spec Wave 3a/3b implement.
+- **Wave 3a slice 1 — receipt protocol core** (T-014), PR #24 (approved HEAD `c51031e`, **merge commit `6c920d0`**): `brops-core::receipt` — the pure verifier core (§5). Zero-trust GREEN after three RED rounds (§6).
 - **Schema:** migrations through **0013**, `SCHEMA_VERSION = 13`. `brops-core` test suite: **69 tests** green.
 
 ## 5. Current slice — what IS implemented (PR #24)
@@ -75,9 +73,10 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 - **Verify-only in production**: the Ed25519 *signing* half is compiled solely under `#[cfg(test)]` — the desktop core is never a `sign(arbitrary_bytes)` oracle (design §1).
 - **69 core tests** (full negative-test matrix), clippy-clean.
 
-## 6. Zero-trust audit history — full text (verdict still RED, re-audit pending)
+## 6. Zero-trust audit history — RESOLVED (slice 1 is GREEN + merged)
 
-Two RED rounds have been closed **in code**; **neither has a GREEN verdict yet.**
+Three RED rounds were closed and independently re-audited; the final HEAD `c51031e` got
+**zero-trust GREEN** and merged (`6c920d0`). These are **resolved history, not current blockers.**
 
 **Round 1 — RED on `a873501` (4 blockers), addressed in `aa4dc01`:**
 1. **`key_id` not cryptographically bound to the passed key** → introduced `ResolvedManifestKey { key_id, public_key, trust_class }`; `verify` requires `parsed.key_id == resolved_key.key_id` before the signature (`KeyIdMismatch`); `Verified` carries that entry's `trust_class`; raw-key convenience is `#[cfg(test)]`-only.
@@ -90,14 +89,20 @@ Two RED rounds have been closed **in code**; **neither has a GREEN verdict yet.*
 2. **`TrustState::TrustedVerified` was directly constructible in shipping 3a code.** → *Addressed:* replaced `TrustState` with **`Wave3aTrustState { DevelopmentUntrusted, Blocked }`** — no `TrustedVerified` variant exists in 3a, so no code path can name a "Verified" state. The production state is a separate Wave 3b type.
 3. **`request_sha256` was a separate caller-supplied value** — a wiring bug could pair request A's hash with request B's components. → *Addressed:* introduced an `IssuedRequest` (the 7 request-envelope fields); `Expected` embeds it and drops `request_sha256`; `bind` **recomputes** the canonical hash via `IssuedRequest::request_sha256()` and compares the receipt's signed value to it.
 
-**Tests:** added the request-hash-recompute negative case; the mismatch matrix mutates every `IssuedRequest` component + policy/config field; trust-state tests use `Wave3aTrustState`. **69 core tests**, clippy-clean, PR CI 7/7 (CI GREEN ≠ audit GREEN).
+**Tests:** added the request-hash-recompute negative case; the mismatch matrix mutates every `IssuedRequest` component + policy/config field; trust-state tests use `Wave3aTrustState`. **69 core tests**, clippy-clean. **Final re-audit of `c51031e`: zero-trust GREEN → merged (`6c920d0`).**
 
-## 7. Exact next action
+## 7. Exact next action — Wave 3a slice 2 (receipt storage & atomicity)
 
-1. **Get the Architect's zero-trust re-audit verdict on `f5b6ffe`** (PR #24).
-   - **RED/YELLOW** → fix on `feat/wave-3a-receipt-protocol`, push, live-sync docs + PR body, re-request audit. Do **not** merge.
-   - **GREEN** → Owner merges PR #24; then post-merge: fetch the real merge commit, sync all canonical docs, flip T-014 → Done, point `NEXT_CHAT.md` at slice 2, verify all gates GREEN — **only then** is a new chat safe to open.
-2. **Slice 2 (after slice 1 is GREEN + merged)** — the stateful storage layer (design §3 stateful items + §4): migration **0014** (`receipt_verification_attempts` + durable one-time nonce state + `receipt_id` global-uniqueness), the **atomic verify → consume → persist** transaction, tri-state outcome storage (accepted → `messages`, blocked → attempts only), and wall-clock freshness/skew.
+Slice 1 is merged; slice 2 is **not started**. Implement design §3 (stateful items) + §4:
+
+1. **Claim it:** cut `feat/wave-3a-receipt-storage` from `main`; add a T-015 row in `TASKS.md` (In-Progress).
+2. **First concrete step — migration 0014** (`SCHEMA_VERSION` 13 → 14) in `apps/desktop/src-tauri/core/schema/0014_receipt_verification.sql`:
+   - `receipt_verification_attempts` (exact canonical envelope bytes + signature + `key_id` + tri-state `outcome` {`trusted_verified`|`development_untrusted`|`blocked`} + `verification_error` + `verified_at` + link to the resulting message for accepted outcomes),
+   - a durable **one-time nonce** table (issued → consumed) for the desktop challenge,
+   - a **`receipt_id` global-uniqueness** constraint.
+3. Then the **atomic verify → consume → persist** transaction (one DB tx): verify (via `brops-core::receipt`) → resolve `Wave3aTrustState` → consume the nonce → insert the attempt row → if accepted, insert the agent message (badge from outcome); a `blocked` attempt records evidence + error and never becomes a `messages` row.
+4. Then wall-clock **freshness/skew** on `requested_at`/`completed_at`, and the `receipt_id`-unseen durable check.
+5. Full negative-test matrix at the storage layer (replayed nonce, duplicate `receipt_id`, blocked-never-persists, crash-atomicity), then live-sync docs + open the PR for zero-trust audit. **Transport wiring + receipt UI are slice 3; the isolated signer + manifest + production "Verified" are Wave 3b** (§10).
 
 ## 8. Verify commands (Windows box)
 

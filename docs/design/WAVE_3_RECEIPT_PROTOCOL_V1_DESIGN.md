@@ -8,9 +8,11 @@
 > Builds on merged T-010 + T-011.
 >
 > **Implementation status (2026-07-22):** this design is **APPROVED + merged** (PR #23, `35a6ab5`).
-> **Slice 1 (protocol core, `brops-core::receipt`)** is in **PR #24 — audit RED, merge-blocked**;
-> two RED rounds closed in code (round-1 → `aa4dc01`, round-2 → `f5b6ffe`), **re-audit pending,
-> no GREEN yet**. Slices 2–3 + Wave 3b not started. Exact live state: root
+> **Slice 1 (protocol core, `brops-core::receipt`)** is **DONE + merged** — PR #24, zero-trust
+> GREEN (approved HEAD `c51031e`, merge commit `6c920d0`) after three RED rounds. **Slice 2**
+> (storage & atomicity: migration 0014, atomic verify→consume→persist, one-time nonce, freshness)
+> is the next task, **not started**; slice 3 (transport + UI) and Wave 3b (isolated signer +
+> manifest + production "Verified") follow. Exact live state: root
 > [`NEXT_CHAT.md`](../../NEXT_CHAT.md). This document remains the design spec.
 
 ## 0. The defect (audit P0-2)

@@ -16,7 +16,7 @@ Closing the Challenger Deep audit's P0/P1 findings, on top of the merged desktop
 - **T-010 — Tauri capability boundary** (PR #19 `7d537c3`): deny-by-default manifest over all 65 commands; L2 hard-deletes denied; CI invariant `tools/check_capabilities.py`.
 - **T-011 — durable approval + native confirmation** (PR #20/#21, merge `7638a64`): migrations 0012/0013; restart-safe self-approval; native-only approval; nonce compare-and-consume; atomic pre-dispatch execution claim; crash recovery; enforced single-instance lock.
 - **Wave 3 — Receipt Protocol v1 design rev 4** (PR #23 `35a6ab5`): Ed25519 signed per-turn receipt, desktop = final verifier, fail-closed. Architect + Owner GREEN.
-- **Wave 3a slice 1 — receipt protocol core** (`brops-core::receipt`): RFC 8785 JCS, strict decode, verify-only `verify_strict`, type-state `parse→verify→bind→resolve_3a` chain, `IssuedRequest` request-hash recompute, private-field `ResolvedManifestKey`, `Wave3aTrustState` (no "Verified" variant). **In review — PR #24, audit RED, NOT merged.** Two RED rounds closed in code (round-1 → `aa4dc01`; round-2 → `f5b6ffe`); **re-audit pending, no GREEN yet.**
+- **Wave 3a slice 1 — receipt protocol core** (`brops-core::receipt`), **PR #24 MERGED** (approved HEAD `c51031e`, merge commit `6c920d0`): RFC 8785 JCS, strict decode, verify-only `verify_strict`, type-state `parse→verify→bind→resolve_3a` chain, `IssuedRequest` request-hash recompute, private-field `ResolvedManifestKey`, `Wave3aTrustState` (no "Verified" variant). **Zero-trust GREEN** after three RED rounds (`a873501`/`aa4dc01`/`f5b6ffe`), CI 7/7 GREEN, 69 core tests. Slice 2 (storage/migration 0014) not started.
 
 ## 2026-07-19 — Security hardening (audit remediation)
 
