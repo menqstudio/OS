@@ -36,7 +36,7 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | Wave 3a — Receipt Protocol v1 **slice 1 (protocol core)** (T-014) — **PR #24 MERGED** | `main` @ `6c920d0` | ✅ **Done** — zero-trust GREEN (`c51031e`), merged. Next: slice 2 (storage), not started |
+| 🔨 Claude | Wave 3a — Receipt Protocol v1 **slice 2 (receipt storage & atomicity)** (T-015) — migration 0014 + atomic verify→consume→persist | `feat/wave-3a-receipt-storage` | 🔨 **In-Progress** — claimed off `main` @ `75a8d8f`; slice 1 (T-014) done+merged (`6c920d0`) |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 
