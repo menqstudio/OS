@@ -4,6 +4,7 @@
 
 pub mod db;
 pub mod domain;
+pub mod receipt;
 pub mod repo;
 
 pub use domain::{

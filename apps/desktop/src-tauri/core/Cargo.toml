@@ -16,6 +16,12 @@ uuid = { version = "1", features = ["v4"] }
 # T-011: SHA-256 for the canonical request-envelope digest that binds an approval
 # decision to the exact request it was raised for.
 sha2 = "0.10"
+# Wave 3a (Receipt Protocol v1): Ed25519 receipt verification (desktop = final
+# authority) + base64url wire decoding. `ed25519-dalek` is used VERIFY-ONLY in
+# production code — the signing half lives only behind `#[cfg(test)]`, so the
+# desktop core is never a `sign(arbitrary_bytes)` oracle (design §1).
+ed25519-dalek = "2"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
