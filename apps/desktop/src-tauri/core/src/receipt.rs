@@ -25,10 +25,21 @@
 //!     -> [`BoundReceipt::resolve_3a`]. Each state can only be reached from the
 //!     previous, so no caller can name a trust state without a verified + bound
 //!     receipt, and the signed `trust_class` travels with it the whole way.
-//!   * **The Wave 3a trust gate** — [`BoundReceipt::resolve_3a`] **hard-codes**
-//!     "production key ⇒ `Blocked`". Wave 3a has no "allow production" switch to
-//!     flip; the production `trusted_verified` path is added only by an audited
-//!     change in Wave 3b (design §5/§6: "Wave 3a never yields `trusted_verified`").
+//!   * **The Wave 3a trust gate** — [`BoundReceipt::resolve_3a`] returns a
+//!     [`Wave3aTrustState`], an enum that has **no `TrustedVerified` variant at all**:
+//!     Wave 3a code literally cannot name a "Verified" state. `development ⇒
+//!     DevelopmentUntrusted`, `production ⇒ Blocked`. The production render path is a
+//!     separate type introduced only by an audited Wave 3b change (design §5/§6:
+//!     "Wave 3a never yields `trusted_verified`").
+//!
+//! **Two anti-forgery properties worth calling out:**
+//!   * A [`ResolvedManifestKey`] has **private fields and no public constructor** —
+//!     only an in-crate validated signed-manifest resolver (Wave 3b) can mint one, so
+//!     a caller cannot pair an arbitrary `public_key`/`trust_class` with a `key_id`.
+//!   * `request_sha256` is **recomputed** inside [`Verified::bind`] from the very
+//!     [`IssuedRequest`] fields the desktop bound (§2.2), not accepted as a separate
+//!     expected value — so a wiring bug cannot pair one request's hash with another
+//!     request's timestamp / system / history.
 //!
 //! **Deliberately NOT here (stateful — slices 2/3, Wave 3b):** the one-time nonce
 //! consume, `receipt_id` global-uniqueness, key-manifest resolution + validity
@@ -162,12 +173,13 @@ pub enum TrustClass {
     Development,
 }
 
-/// The render state the desktop resolves every governed reply to (design §6).
+/// The render state Wave 3a resolves a governed reply to. **It has no
+/// `TrustedVerified` variant on purpose** — Wave 3a code cannot name a "Verified"
+/// state at all, so the invariant "Wave 3a never yields `trusted_verified`" holds
+/// across the *entire* surface, not just one method (design §6). The production
+/// render state is a separate type introduced only by an audited Wave 3b change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrustState {
-    /// Full "Verified" badge. **Unreachable in Wave 3a** — only an audited Wave 3b
-    /// change (isolated signer + provisioned manifest) may produce it.
-    TrustedVerified,
+pub enum Wave3aTrustState {
     /// Renders + persists, badged "Development / untrusted". Never "Verified".
     DevelopmentUntrusted,
     /// Never renders, never persists to `messages`; evidence only.
@@ -176,15 +188,18 @@ pub enum TrustState {
 
 /// A verifying key resolved from the trusted signed manifest (§5): the `key_id` the
 /// manifest entry is filed under, its pinned Ed25519 `public_key`, and the signed
-/// `trust_class`. Binding these three together is what stops a
-/// production-`key_id` envelope from being verified against a development key: the
-/// id is checked, and the trust_class that later decides the badge comes from the
-/// SAME entry as the key that verified the signature.
-#[derive(Debug, Clone, Copy)]
+/// `trust_class`.
+///
+/// **Fields are private and there is no public constructor.** Only an in-crate
+/// validated signed-manifest resolver (Wave 3b) may mint one, so a caller can never
+/// pair an arbitrary `public_key`/`trust_class` with a chosen `key_id` and thereby
+/// (e.g.) render a production receipt as development-untrusted. Until that resolver
+/// exists, only this crate's tests build fixtures via the private fields.
+#[derive(Clone, Copy)]
 pub struct ResolvedManifestKey<'a> {
-    pub key_id: &'a str,
-    pub public_key: &'a [u8],
-    pub trust_class: TrustClass,
+    key_id: &'a str,
+    public_key: &'a [u8],
+    trust_class: TrustClass,
 }
 
 /// SHA-256 of arbitrary bytes as a lowercase 64-hex string. The input is treated as
@@ -210,7 +225,9 @@ fn jcs_bytes(map: &BTreeMap<String, String>) -> Vec<u8> {
 
 /// SHA-256 (lowercase hex) of the canonical **request** envelope (design §2.2). The
 /// desktop builds this when it issues the governed request and later requires the
-/// receipt's `request_sha256` to equal it. Field set is fixed (§2.2).
+/// receipt's `request_sha256` to equal it. Field set is fixed (§2.2). Prefer
+/// [`IssuedRequest::request_sha256`] at call sites so the hash and the per-field
+/// bindings can never come from different values.
 #[allow(clippy::too_many_arguments)]
 pub fn request_envelope_sha256(
     workspace_id: &str,
@@ -231,6 +248,36 @@ pub fn request_envelope_sha256(
     map.insert("generation_config_sha256".to_string(), generation_config_sha256.to_string());
     map.insert("requested_at".to_string(), requested_at.to_string());
     sha256_hex(&jcs_bytes(&map))
+}
+
+/// The exact governed request the desktop issued (design §2.2). It is the **single
+/// source** of both the canonical `request_sha256` and the per-field bindings, so the
+/// two can never diverge — [`Verified::bind`] recomputes the hash from these very
+/// fields instead of trusting a separately-supplied hash.
+#[derive(Debug, Clone, Copy)]
+pub struct IssuedRequest<'a> {
+    pub workspace_id: &'a str,
+    pub install_id: &'a str,
+    pub request_nonce: &'a str,
+    pub system_sha256: &'a str,
+    pub history_sha256: &'a str,
+    pub generation_config_sha256: &'a str,
+    pub requested_at: &'a str,
+}
+
+impl IssuedRequest<'_> {
+    /// The canonical `request_sha256` (design §2.2) derived from these fields.
+    pub fn request_sha256(&self) -> String {
+        request_envelope_sha256(
+            self.workspace_id,
+            self.install_id,
+            self.request_nonce,
+            self.system_sha256,
+            self.history_sha256,
+            self.generation_config_sha256,
+            self.requested_at,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -273,9 +320,10 @@ impl Parsed {
     ///
     /// First requires `self.key_id() == resolved_key.key_id` — so the key that
     /// verifies the signature is the manifest entry the envelope actually names, not
-    /// some other key a caller happened to pass. The resulting [`Verified`] carries
-    /// `resolved_key.trust_class`, so the badge decision later can only use the trust
-    /// class of the very key that verified this receipt.
+    /// some other key. Because a [`ResolvedManifestKey`] can only be minted by the
+    /// validated manifest resolver, its `public_key` and `trust_class` are known to
+    /// belong to that same entry. The resulting [`Verified`] carries that
+    /// `trust_class`.
     pub fn verify(
         self,
         resolved_key: &ResolvedManifestKey,
@@ -350,25 +398,17 @@ impl fmt::Debug for Verified {
 /// Everything the desktop already knows for this turn and requires the receipt to
 /// match, value-for-value (design §3). Borrowed — this is a pure comparison input.
 ///
-/// `request_nonce` here is a *value* equality (the challenge the desktop issued);
-/// the *one-time consume* of that nonce is a stateful step performed in slice 2.
-/// `requested_at` is the desktop-issued request timestamp — the receipt's top-level
-/// `requested_at` must equal it exactly (§2.2/§3.8), so it can't drift from the value
-/// bound into `request_sha256` and mislead the later freshness check.
+/// The request half is a single [`IssuedRequest`]: [`Verified::bind`] recomputes
+/// `request_sha256` from it (never accepts a separate hash), so the receipt's
+/// `request_sha256` is bound to the exact same workspace/install/nonce/system/
+/// history/generation/timestamp values that are also checked field-by-field.
 #[derive(Debug, Clone, Copy)]
 pub struct Expected<'a> {
-    pub workspace_id: &'a str,
-    pub install_id: &'a str,
+    pub request: IssuedRequest<'a>,
     pub supervisor_id: &'a str,
-    pub request_nonce: &'a str,
-    pub request_sha256: &'a str,
-    pub requested_at: &'a str,
     pub policy_id: &'a str,
     pub policy_version: &'a str,
     pub policy_bundle_sha256: &'a str,
-    pub generation_config_sha256: &'a str,
-    pub system_sha256: &'a str,
-    pub history_sha256: &'a str,
     pub containment_evidence_sha256: &'a str,
     pub allowed_executors: &'a [&'a str],
     pub allowed_builders: &'a [&'a str],
@@ -401,28 +441,35 @@ impl Verified {
             return Err(ReceiptError::NotCompleted(get("decision").to_string()));
         }
 
-        // Identity / request / policy / config bindings — each an expected-value
-        // match. `requested_at` is bound to the desktop-issued value (§3.8), not just
-        // ordered, so it cannot diverge from the value inside `request_sha256`.
+        // Identity / request-component / policy / config bindings — each an
+        // expected-value match. The request fields all come from the single
+        // `IssuedRequest`, and `requested_at` is bound (not merely ordered).
+        let req = &expected.request;
         let equals: &[(&'static str, &str)] = &[
-            ("workspace_id", expected.workspace_id),
-            ("install_id", expected.install_id),
+            ("workspace_id", req.workspace_id),
+            ("install_id", req.install_id),
+            ("request_nonce", req.request_nonce),
+            ("system_sha256", req.system_sha256),
+            ("history_sha256", req.history_sha256),
+            ("generation_config_sha256", req.generation_config_sha256),
+            ("requested_at", req.requested_at),
             ("supervisor_id", expected.supervisor_id),
-            ("request_nonce", expected.request_nonce),
-            ("request_sha256", expected.request_sha256),
-            ("requested_at", expected.requested_at),
             ("policy_id", expected.policy_id),
             ("policy_version", expected.policy_version),
             ("policy_bundle_sha256", expected.policy_bundle_sha256),
-            ("generation_config_sha256", expected.generation_config_sha256),
-            ("system_sha256", expected.system_sha256),
-            ("history_sha256", expected.history_sha256),
             ("containment_evidence_sha256", expected.containment_evidence_sha256),
         ];
         for (name, want) in equals {
             if get(name) != *want {
                 return Err(ReceiptError::Mismatch { field: name });
             }
+        }
+
+        // `request_sha256` is RECOMPUTED from the same IssuedRequest fields (§2.2) and
+        // compared — never accepted as a separate expected value. So a wiring bug can
+        // never pair one request's hash with another request's components.
+        if get("request_sha256") != req.request_sha256() {
+            return Err(ReceiptError::Mismatch { field: "request_sha256" });
         }
 
         // Executor / builder must be in the allowed set for this install (§3.8).
@@ -461,7 +508,7 @@ impl Verified {
 // ---------------------------------------------------------------------------
 
 /// A receipt that verified AND passed every pure §3 binding. This is the only state
-/// from which a [`TrustState`] can be resolved, and it carries the signed
+/// from which a [`Wave3aTrustState`] can be resolved, and it carries the signed
 /// `trust_class` of the verifying key plus the exact canonical bytes + signature to
 /// persist (slice 2, §4).
 #[derive(Clone, PartialEq, Eq)]
@@ -483,15 +530,14 @@ impl fmt::Debug for BoundReceipt {
 }
 
 impl BoundReceipt {
-    /// Resolve the render state for **Wave 3a** (design §6). The gate is hard-coded:
-    /// a `development`-class key renders untrusted; a `production`-class key is
-    /// **Blocked** (Wave 3a never yields `trusted_verified`). There is no
-    /// "allow production" parameter to pass — the production path is added only by an
-    /// audited Wave 3b change that supersedes this method.
-    pub fn resolve_3a(&self) -> TrustState {
+    /// Resolve the render state for **Wave 3a** (design §6). Returns a
+    /// [`Wave3aTrustState`], which has no `TrustedVerified` variant: `development ⇒
+    /// DevelopmentUntrusted`, `production ⇒ Blocked`. Wave 3a therefore cannot render
+    /// "Verified" anywhere; the production path is an audited Wave 3b addition.
+    pub fn resolve_3a(&self) -> Wave3aTrustState {
         match self.trust_class {
-            TrustClass::Development => TrustState::DevelopmentUntrusted,
-            TrustClass::Production => TrustState::Blocked,
+            TrustClass::Development => Wave3aTrustState::DevelopmentUntrusted,
+            TrustClass::Production => Wave3aTrustState::Blocked,
         }
     }
 
@@ -654,16 +700,21 @@ mod tests {
         SigningKey::from_bytes(&[seed; 32])
     }
 
-    /// A fully-valid field map for a `completed` receipt. Tests mutate one field to
-    /// drive a single negative case. `key_id` is always "key-dev-1".
+    fn hx(n: u8) -> String {
+        let mut s = String::new();
+        for _ in 0..32 {
+            s.push_str(&format!("{n:02x}"));
+        }
+        s
+    }
+
+    /// A fully-valid field map for a `completed` receipt. `request_sha256` is the REAL
+    /// canonical hash of the request components, so `bind`'s recompute matches. Tests
+    /// mutate one field to drive a single negative case. `key_id` is always "key-dev-1".
     fn valid_fields() -> BTreeMap<String, String> {
-        let h = |n: u8| -> String {
-            let mut s = String::new();
-            for _ in 0..32 {
-                s.push_str(&format!("{n:02x}"));
-            }
-            s
-        };
+        let request_sha256 = request_envelope_sha256(
+            "ws-1", "install-1", "nonce-xyz", &hx(0x55), &hx(0x66), &hx(0x44), "1000",
+        );
         let mut m = BTreeMap::new();
         m.insert("protocol".into(), RECEIPT_PROTOCOL.into());
         m.insert("receipt_id".into(), "receipt-abc".into());
@@ -671,15 +722,15 @@ mod tests {
         m.insert("workspace_id".into(), "ws-1".into());
         m.insert("install_id".into(), "install-1".into());
         m.insert("request_nonce".into(), "nonce-xyz".into());
-        m.insert("request_sha256".into(), h(0x11));
+        m.insert("request_sha256".into(), request_sha256);
         m.insert("decision".into(), DECISION_COMPLETED.into());
         m.insert("policy_id".into(), "pol-1".into());
         m.insert("policy_version".into(), "1".into());
-        m.insert("policy_bundle_sha256".into(), h(0x22));
-        m.insert("containment_evidence_sha256".into(), h(0x33));
-        m.insert("generation_config_sha256".into(), h(0x44));
-        m.insert("system_sha256".into(), h(0x55));
-        m.insert("history_sha256".into(), h(0x66));
+        m.insert("policy_bundle_sha256".into(), hx(0x22));
+        m.insert("containment_evidence_sha256".into(), hx(0x33));
+        m.insert("generation_config_sha256".into(), hx(0x44));
+        m.insert("system_sha256".into(), hx(0x55));
+        m.insert("history_sha256".into(), hx(0x66));
         m.insert("output_sha256".into(), sha256_hex(OUTPUT));
         m.insert("executor_id".into(), "exec-1".into());
         m.insert("builder_id".into(), "build-1".into());
@@ -699,15 +750,14 @@ mod tests {
     }
 
     /// The manifest key for the receipts in these tests (`key-dev-1`), with a chosen
-    /// trust class. Mirrors what slice 3b's manifest resolution will hand `verify`.
-    fn resolved<'a>(pk: &'a [u8], trust: TrustClass) -> ResolvedManifestKey<'a> {
+    /// trust class. Only in-crate code (like this test module, via the private fields)
+    /// can build one; production goes through the Wave 3b manifest resolver.
+    fn resolved(pk: &[u8], trust: TrustClass) -> ResolvedManifestKey<'_> {
         ResolvedManifestKey { key_id: "key-dev-1", public_key: pk, trust_class: trust }
     }
 
-    // Owned hex strings for the expected bindings — `Expected` borrows, and these
-    // need a 'static home so `expected()` can hand out `Expected<'static>`.
+    // Owned hex strings for the expected bindings — `Expected`/`IssuedRequest` borrow.
     struct ExpHashes {
-        request: String,
         bundle: String,
         containment: String,
         generation: String,
@@ -716,7 +766,6 @@ mod tests {
         wrong: String,
     }
     static EXP: std::sync::LazyLock<ExpHashes> = std::sync::LazyLock::new(|| ExpHashes {
-        request: "11".repeat(32),
         bundle: "22".repeat(32),
         containment: "33".repeat(32),
         generation: "44".repeat(32),
@@ -727,18 +776,19 @@ mod tests {
 
     fn expected() -> Expected<'static> {
         Expected {
-            workspace_id: "ws-1",
-            install_id: "install-1",
+            request: IssuedRequest {
+                workspace_id: "ws-1",
+                install_id: "install-1",
+                request_nonce: "nonce-xyz",
+                system_sha256: &EXP.system,
+                history_sha256: &EXP.history,
+                generation_config_sha256: &EXP.generation,
+                requested_at: "1000",
+            },
             supervisor_id: "sup-1",
-            request_nonce: "nonce-xyz",
-            request_sha256: &EXP.request,
-            requested_at: "1000",
             policy_id: "pol-1",
             policy_version: "1",
             policy_bundle_sha256: &EXP.bundle,
-            generation_config_sha256: &EXP.generation,
-            system_sha256: &EXP.system,
-            history_sha256: &EXP.history,
             containment_evidence_sha256: &EXP.containment,
             allowed_executors: &["exec-1", "exec-2"],
             allowed_builders: &["build-1"],
@@ -777,7 +827,7 @@ mod tests {
             .bind(&expected(), OUTPUT)
             .unwrap();
         assert_eq!(bound.decision(), "completed");
-        assert_eq!(bound.resolve_3a(), TrustState::DevelopmentUntrusted);
+        assert_eq!(bound.resolve_3a(), Wave3aTrustState::DevelopmentUntrusted);
         // The stored bytes are exactly what was signed.
         assert_eq!(bound.canonical_bytes(), jcs_bytes(&valid_fields()).as_slice());
     }
@@ -968,29 +1018,29 @@ mod tests {
         assert_eq!(parse_strict(&env), Err(ReceiptError::NotCanonical));
     }
 
-    // ---- §3 pure bindings (blocker 3 + full matrix) -----------------------
+    // ---- §3 pure bindings + request-hash recompute (blocker 3) ------------
 
     #[test]
     fn every_expected_value_mismatch_blocks() {
         let key = signing_key(7);
         let (env, sig) = wire(&valid_fields(), &key);
 
-        // Each expected-value binding, mutated one at a time — INCLUDING every hash
-        // field and the desktop-issued requested_at (blocker 3).
+        // Each expected-value binding, mutated one at a time — every request component
+        // (from the IssuedRequest), the desktop-issued requested_at, and every policy/
+        // config field. (request_sha256 is no longer an input — it is recomputed.)
         #[allow(clippy::type_complexity)]
         let cases: &[(&str, fn(&mut Expected))] = &[
-            ("workspace_id", |e| e.workspace_id = "ws-evil"),
-            ("install_id", |e| e.install_id = "install-evil"),
+            ("workspace_id", |e| e.request.workspace_id = "ws-evil"),
+            ("install_id", |e| e.request.install_id = "install-evil"),
+            ("request_nonce", |e| e.request.request_nonce = "nonce-evil"),
+            ("system_sha256", |e| e.request.system_sha256 = &EXP.wrong),
+            ("history_sha256", |e| e.request.history_sha256 = &EXP.wrong),
+            ("generation_config_sha256", |e| e.request.generation_config_sha256 = &EXP.wrong),
+            ("requested_at", |e| e.request.requested_at = "9999"),
             ("supervisor_id", |e| e.supervisor_id = "sup-evil"),
-            ("request_nonce", |e| e.request_nonce = "nonce-evil"),
-            ("request_sha256", |e| e.request_sha256 = &EXP.wrong),
-            ("requested_at", |e| e.requested_at = "9999"),
             ("policy_id", |e| e.policy_id = "pol-evil"),
             ("policy_version", |e| e.policy_version = "9"),
             ("policy_bundle_sha256", |e| e.policy_bundle_sha256 = &EXP.wrong),
-            ("generation_config_sha256", |e| e.generation_config_sha256 = &EXP.wrong),
-            ("system_sha256", |e| e.system_sha256 = &EXP.wrong),
-            ("history_sha256", |e| e.history_sha256 = &EXP.wrong),
             ("containment_evidence_sha256", |e| e.containment_evidence_sha256 = &EXP.wrong),
         ];
         for (name, mutate) in cases {
@@ -1004,6 +1054,23 @@ mod tests {
                 "mutating expected {name} must block"
             );
         }
+    }
+
+    #[test]
+    fn request_sha256_must_equal_the_hash_recomputed_from_the_components() {
+        // Blocker 3: every request COMPONENT is correct, but the receipt's
+        // request_sha256 is a wrong (yet well-formed) hash. bind must recompute the
+        // canonical request hash from the IssuedRequest and reject the mismatch — a
+        // separate/forged hash can never diverge from the bound components.
+        let key = signing_key(7);
+        let mut fields = valid_fields();
+        fields.insert("request_sha256".into(), "99".repeat(32));
+        let (env, sig) = wire(&fields, &key);
+        let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
+        assert_eq!(
+            v.bind(&expected(), OUTPUT),
+            Err(ReceiptError::Mismatch { field: "request_sha256" })
+        );
     }
 
     #[test]
@@ -1035,16 +1102,20 @@ mod tests {
     #[test]
     fn requested_after_completed_is_rejected() {
         // requested_at must still be <= completed_at. Move BOTH the receipt and the
-        // expected requested_at so the exact-match binding passes and the time-order
-        // check is what fires.
+        // expected requested_at (and recompute the receipt's request hash) so the
+        // exact-match bindings pass and the time-order check is what fires.
         let key = signing_key(7);
         let mut fields = valid_fields();
         fields.insert("requested_at".into(), "5000".into());
         fields.insert("completed_at".into(), "2000".into());
+        fields.insert(
+            "request_sha256".into(),
+            request_envelope_sha256("ws-1", "install-1", "nonce-xyz", &hx(0x55), &hx(0x66), &hx(0x44), "5000"),
+        );
         let (env, sig) = wire(&fields, &key);
         let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
         let mut exp = expected();
-        exp.requested_at = "5000";
+        exp.request.requested_at = "5000";
         assert_eq!(
             v.bind(&exp, OUTPUT),
             Err(ReceiptError::TimeOrder { requested: 5000, completed: 2000 })
@@ -1056,16 +1127,19 @@ mod tests {
     #[test]
     fn trust_state_is_only_reachable_from_a_bound_receipt() {
         // Compile-time: `resolve_3a` exists only on BoundReceipt, and BoundReceipt is
-        // only produced by `Verified::bind`. This test exercises that path and pins
-        // the dev outcome; there is no standalone trust-state function to call.
-        assert_eq!(bound_with(TrustClass::Development).resolve_3a(), TrustState::DevelopmentUntrusted);
+        // only produced by `Verified::bind`. This test exercises that path.
+        assert_eq!(
+            bound_with(TrustClass::Development).resolve_3a(),
+            Wave3aTrustState::DevelopmentUntrusted
+        );
     }
 
     #[test]
-    fn wave_3a_blocks_a_production_key_it_never_renders_verified() {
-        // A production-class key that fully verifies AND binds still resolves to
-        // Blocked in 3a — there is no parameter to make it render "Verified".
-        assert_eq!(bound_with(TrustClass::Production).resolve_3a(), TrustState::Blocked);
+    fn wave_3a_blocks_a_production_key_and_has_no_verified_state() {
+        // A production-class key that fully verifies AND binds resolves to Blocked in
+        // 3a. `Wave3aTrustState` has no TrustedVerified variant, so no code path —
+        // resolve_3a or otherwise — can render "Verified" in Wave 3a.
+        assert_eq!(bound_with(TrustClass::Production).resolve_3a(), Wave3aTrustState::Blocked);
     }
 
     // ---- canonicalization invariants -------------------------------------
@@ -1087,6 +1161,13 @@ mod tests {
         assert!(is_lower_hex64(&a));
         let c = request_envelope_sha256("ws2", "in", "n", &"aa".repeat(32), &"bb".repeat(32), &"cc".repeat(32), "1000");
         assert_ne!(a, c);
+        // IssuedRequest derives the same hash.
+        let r = IssuedRequest {
+            workspace_id: "ws", install_id: "in", request_nonce: "n",
+            system_sha256: &"aa".repeat(32), history_sha256: &"bb".repeat(32),
+            generation_config_sha256: &"cc".repeat(32), requested_at: "1000",
+        };
+        assert_eq!(r.request_sha256(), a);
     }
 
     #[test]
@@ -1104,7 +1185,6 @@ mod tests {
         let (env, _sig) = wire(&valid_fields(), &key);
         let dbg = format!("{:?}", parse_strict(&env).unwrap());
         assert!(dbg.contains("key-dev-1"), "key_id is allowed: {dbg}");
-        // A representative secret-ish binding must not appear.
         assert!(!dbg.contains(&"55".repeat(32)), "system_sha256 leaked into Debug: {dbg}");
         assert!(!dbg.contains("nonce-xyz"), "request_nonce leaked into Debug: {dbg}");
     }
