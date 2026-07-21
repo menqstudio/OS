@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** Phase 1 slice-2 governed **transport** merged (PR #8); T-007 (#9) + T-008 (#11) merged — coordination docs re-synced to `main`
+**Last updated · Վերջին թարմացում:** Wave 1 — provider fail-closed policy (audit P0-1) on `fix/provider-policy-fail-closed` (PR #15)
 
 ---
 
@@ -35,7 +35,7 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | — idle (slice-2 transport merged PR #8); next: Phase-1 verify-seam · receipt-plumbing · streaming | — | ⏸️ idle |
+| 🔨 Claude | Wave 1 provider fail-closed policy (audit P0-1) | `fix/provider-policy-fail-closed` (PR #15) | 🔎 in review |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 
