@@ -1,0 +1,270 @@
+{
+  "description": "T-010 capability-policy inventory (Wave 2b). Authoritative per-command tier + grant classification. tools/check_capabilities.py asserts this key set equals the generate_handler! set (src/lib.rs) and the AppManifest set (build.rs), and that each grant matches capabilities/default.json. Tiers: R read-only, L1 local reversible, L2 local destructive, A approval authority, X execution/spend. INVARIANT: an L2 (hard-delete) command may be 'allow' only with a declared 'protection' of 'soft-delete' or 'native-confirm' (plus a matching test); otherwise it must be 'deny' (protection 'none') and stays uninvokable from main until protected. See docs/design/WAVE_2B_CAPABILITY_APPROVAL_DESIGN.md.",
+  "window": "main",
+  "commands": {
+    "add_run_step": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "add_task_dependency": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "advance_run": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "ai_status": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "create_automation": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "create_conversation": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "create_decision": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "create_event": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "create_knowledge": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "create_memory": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "create_project": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "create_run": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "create_task": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "decide_approval": {
+      "tier": "A",
+      "grant": "deny"
+    },
+    "delete_automation": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "delete_conversation": {
+      "tier": "L2",
+      "grant": "deny",
+      "protection": "none"
+    },
+    "delete_event": {
+      "tier": "L2",
+      "grant": "deny",
+      "protection": "none"
+    },
+    "delete_knowledge": {
+      "tier": "L2",
+      "grant": "deny",
+      "protection": "none"
+    },
+    "delete_memory": {
+      "tier": "L2",
+      "grant": "deny",
+      "protection": "none"
+    },
+    "get_analytics": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "get_security_summary": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_activity": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_agents": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_approvals": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_automations": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_conversations": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_decisions": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_dir": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "list_events": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_integrations": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_knowledge": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_memory": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_messages": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_notifications": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_projects": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_run_steps": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_runs": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_task_dependencies": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_tasks": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_tasks_by_project": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "list_tasks_by_status": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "mark_notification_read": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "post_message": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "post_user_message": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "read_file": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "reject_approval": {
+      "tier": "A",
+      "grant": "allow"
+    },
+    "remove_task_dependency": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "rename_conversation": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "reply_in_conversation": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "save_ask_to_chat": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "search_all": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "search_knowledge": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "set_automation_enabled": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "set_integration_status": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "set_memory_pinned": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "set_project_status": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "set_run_status": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "set_run_step_status": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "set_task_status": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "stream_ask": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "stream_reply": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "stream_run_step": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "update_project": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "update_task": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "write_file": {
+      "tier": "X",
+      "grant": "allow"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reply-in-conversation"
+description = "Enables the reply_in_conversation command without any pre-configured scope."
+commands.allow = ["reply_in_conversation"]
+
+[[permission]]
+identifier = "deny-reply-in-conversation"
+description = "Denies the reply_in_conversation command without any pre-configured scope."
+commands.deny = ["reply_in_conversation"]

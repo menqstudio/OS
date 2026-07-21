@@ -40,6 +40,11 @@ const MAX_RUN_INTENT_CHARS: usize = 2_000;
 const MAX_RUN_PLAN_CHARS: usize = 8_000;
 const MAX_STEP_TITLE_CHARS: usize = 300;
 const MAX_STEP_DETAIL_CHARS: usize = 4_000;
+// T-010 in-body bound: an automation's action can drive execution, so its
+// attacker-influenceable free text is bounded at write time (like runs, M-4).
+const MAX_AUTOMATION_NAME_CHARS: usize = 200;
+const MAX_AUTOMATION_TRIGGER_CHARS: usize = 500;
+const MAX_AUTOMATION_ACTION_CHARS: usize = 4_000;
 
 /// Reject a field longer than `max` characters (fail closed, no truncation).
 fn require_len(field: &str, value: &str, max: usize) -> Result<(), String> {
@@ -251,15 +256,17 @@ pub fn decide_approval(
     if decision != "approved" && decision != "rejected" {
         return Err(format!("unknown approval decision: {decision}"));
     }
+    // T-010: generic `decide_approval` is DENIED to the `main` window at the
+    // capability layer, and per the Wave-2b design an *approve* now requires
+    // renderer-independent native confirmation — which lands in T-011. Until then
+    // the approve path fails closed here too (defense in depth, in case a capability
+    // misconfig ever exposed this command); *reject* goes through `reject_approval`.
     if decision == "approved" {
-        let origins = approval_origins().lock().unwrap_or_else(|p| p.into_inner());
-        if origins.get(&id).is_some_and(|origin| origin == window.label()) {
-            return Err(
-                "this approval was requested by the same session; it cannot approve its own request \
-                 — out-of-band confirmation required"
-                    .to_string(),
-            );
-        }
+        return Err(
+            "approve requires renderer-independent native confirmation (T-011); \
+             not available yet — use reject_approval to reject"
+                .to_string(),
+        );
     }
     // Record a server-derived approver identity alongside any caller note.
     let approver = format!("webview:{}", window.label());
@@ -274,6 +281,57 @@ pub fn decide_approval(
     // A decided approval no longer needs its origin pin.
     approval_origins().lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
     Ok(decided)
+}
+
+/// Fixed-window rate limit for reject spam: at most `MAX_REJECTS_PER_WINDOW` per
+/// `REJECT_WINDOW`, keyed by webview label. In-memory (a restart resets it) — this
+/// only bounds automated spam, it is not a security boundary.
+const MAX_REJECTS_PER_WINDOW: usize = 20;
+const REJECT_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn reject_rate_limit(label: &str) -> Result<(), String> {
+    use std::time::Instant;
+    static HITS: OnceLock<Mutex<HashMap<String, Vec<Instant>>>> = OnceLock::new();
+    let map = HITS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = map.lock().unwrap_or_else(|p| p.into_inner());
+    let now = Instant::now();
+    let hits = map.entry(label.to_string()).or_default();
+    hits.retain(|t| now.duration_since(*t) < REJECT_WINDOW);
+    if hits.len() >= MAX_REJECTS_PER_WINDOW {
+        return Err("too many reject requests; slow down and retry shortly".to_string());
+    }
+    hits.push(now);
+    Ok(())
+}
+
+/// Fail-safe reject path (T-010, design §9.2). A **separate** command from
+/// `decide_approval` so a compromised renderer cannot flip a `"rejected"` argument
+/// into `"approved"` — the approve verb does not exist on this surface, and generic
+/// `decide_approval` is denied to `main`. Reject is pending-only + atomic + audited
+/// (repo layer) and rate-limited here to bound a reject-spam DoS. Reject grants no
+/// privilege (fail-safe direction), so it needs no native confirmation.
+#[tauri::command]
+pub fn reject_approval(
+    state: State<AppState>,
+    window: tauri::Window,
+    id: String,
+    note: Option<String>,
+) -> Result<Approval, String> {
+    reject_rate_limit(window.label())?;
+    // Server-derived rejecter identity alongside any caller note.
+    let rejecter = format!("webview:{}", window.label());
+    let note = match note.as_deref().map(str::trim) {
+        Some(n) if !n.is_empty() => format!("[rejected by {rejecter}] {}", truncated(n, 500)),
+        _ => format!("[rejected by {rejecter}]"),
+    };
+    let rejected = {
+        let conn = locked(&state)?;
+        // `decide` is pending-only (WHERE status = 'pending') + atomic + audited.
+        repo::approvals::decide(&conn, &id, "rejected", Some(&note)).map_err(|e| e.to_string())?
+    };
+    // A decided approval no longer needs its (legacy in-memory) origin pin.
+    approval_origins().lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+    Ok(rejected)
 }
 
 // --- notifications ---
@@ -958,6 +1016,9 @@ pub fn list_automations(state: State<AppState>) -> Result<Vec<Automation>, Strin
 
 #[tauri::command]
 pub fn create_automation(state: State<AppState>, input: NewAutomation) -> Result<Automation, String> {
+    require_len("name", &input.name, MAX_AUTOMATION_NAME_CHARS)?;
+    require_len("trigger", &input.trigger, MAX_AUTOMATION_TRIGGER_CHARS)?;
+    require_len("action", &input.action, MAX_AUTOMATION_ACTION_CHARS)?;
     let conn = locked(&state)?;
     repo::automations::create(&conn, input).map_err(|e| e.to_string())
 }
@@ -1043,5 +1104,30 @@ mod tests {
 
         // One-time: the same id cannot be used to save the answer again.
         assert!(claim_pending_answer(&id).is_none(), "second claim must be refused");
+    }
+
+    // T-010 in-body bound: an automation's action (which can drive execution) is
+    // length-capped at write time, never silently truncated.
+    #[test]
+    fn automation_action_length_is_bounded() {
+        let ok = "a".repeat(MAX_AUTOMATION_ACTION_CHARS);
+        assert!(require_len("action", &ok, MAX_AUTOMATION_ACTION_CHARS).is_ok());
+        let too_long = "a".repeat(MAX_AUTOMATION_ACTION_CHARS + 1);
+        assert!(require_len("action", &too_long, MAX_AUTOMATION_ACTION_CHARS).is_err());
+    }
+
+    // T-010: reject spam is rate-limited per webview label — up to the cap succeeds,
+    // the next is refused. (Uses a unique label so it is order-independent.)
+    #[test]
+    fn reject_rate_limit_bounds_spam() {
+        let label = "test-window-rate-limit";
+        for _ in 0..MAX_REJECTS_PER_WINDOW {
+            assert!(reject_rate_limit(label).is_ok());
+        }
+        assert!(
+            reject_rate_limit(label).is_err(),
+            "the {}-th reject in the window must be refused",
+            MAX_REJECTS_PER_WINDOW + 1
+        );
     }
 }

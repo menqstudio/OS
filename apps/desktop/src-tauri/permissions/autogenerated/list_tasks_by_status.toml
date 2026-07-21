@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-tasks-by-status"
+description = "Enables the list_tasks_by_status command without any pre-configured scope."
+commands.allow = ["list_tasks_by_status"]
+
+[[permission]]
+identifier = "deny-list-tasks-by-status"
+description = "Denies the list_tasks_by_status command without any pre-configured scope."
+commands.deny = ["list_tasks_by_status"]

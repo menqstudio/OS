@@ -247,7 +247,7 @@ export function Calendar() {
       <div className="row" style={{ gap: 12 }}>
         {e.location && <span className="muted">{e.location}</span>}
         <span className="muted">{when ?? t('calendar.undated')}</span>
-        <Button variant="ghost" small onClick={() => setPendingDelete(e.id)}>{t('action.delete')}</Button>
+        <Button variant="ghost" small disabled title={t('action.deleteDisabledSafety')} onClick={() => setPendingDelete(e.id)}>{t('action.delete')}</Button>
       </div>
     </div>
   );

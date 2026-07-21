@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stream-reply"
+description = "Enables the stream_reply command without any pre-configured scope."
+commands.allow = ["stream_reply"]
+
+[[permission]]
+identifier = "deny-stream-reply"
+description = "Denies the stream_reply command without any pre-configured scope."
+commands.deny = ["stream_reply"]

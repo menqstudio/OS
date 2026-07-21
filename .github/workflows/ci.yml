@@ -105,3 +105,20 @@ jobs:
       - name: Gate self-tests
         working-directory: tools
         run: python -m unittest test_check_coordination
+
+  capabilities:
+    name: Capability · inventory gate (T-010)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # Stdlib only. Fail-closed: registered (lib.rs) == AppManifest (build.rs) ==
+      # capability-policy inventory == capability grants (default.json). A command
+      # added in one place but not the others — or ungated — cannot merge.
+      - name: Capability inventory consistency gate
+        run: python tools/check_capabilities.py
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_capabilities

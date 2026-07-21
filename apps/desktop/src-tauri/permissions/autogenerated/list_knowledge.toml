@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-knowledge"
+description = "Enables the list_knowledge command without any pre-configured scope."
+commands.allow = ["list_knowledge"]
+
+[[permission]]
+identifier = "deny-list-knowledge"
+description = "Denies the list_knowledge command without any pre-configured scope."
+commands.deny = ["list_knowledge"]

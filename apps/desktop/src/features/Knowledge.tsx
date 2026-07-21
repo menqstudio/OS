@@ -125,7 +125,7 @@ export function Knowledge() {
                   <div className="panel">
                     <div className="between">
                       <div className="panel-title">{n.title}</div>
-                      <Button small variant="ghost" onClick={() => setPendingDelete(n.id)}>{t('action.delete')}</Button>
+                      <Button small variant="ghost" disabled title={t('action.deleteDisabledSafety')} onClick={() => setPendingDelete(n.id)}>{t('action.delete')}</Button>
                     </div>
                     {n.body && <div className="muted" style={{ marginTop: 6 }}>{n.body}</div>}
                     <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap' }}>

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-remove-task-dependency"
+description = "Enables the remove_task_dependency command without any pre-configured scope."
+commands.allow = ["remove_task_dependency"]
+
+[[permission]]
+identifier = "deny-remove-task-dependency"
+description = "Denies the remove_task_dependency command without any pre-configured scope."
+commands.deny = ["remove_task_dependency"]

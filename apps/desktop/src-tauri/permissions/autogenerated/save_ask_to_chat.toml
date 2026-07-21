@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-ask-to-chat"
+description = "Enables the save_ask_to_chat command without any pre-configured scope."
+commands.allow = ["save_ask_to_chat"]
+
+[[permission]]
+identifier = "deny-save-ask-to-chat"
+description = "Denies the save_ask_to_chat command without any pre-configured scope."
+commands.deny = ["save_ask_to_chat"]

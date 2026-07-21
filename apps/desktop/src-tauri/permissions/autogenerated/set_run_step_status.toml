@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-run-step-status"
+description = "Enables the set_run_step_status command without any pre-configured scope."
+commands.allow = ["set_run_step_status"]
+
+[[permission]]
+identifier = "deny-set-run-step-status"
+description = "Denies the set_run_step_status command without any pre-configured scope."
+commands.deny = ["set_run_step_status"]

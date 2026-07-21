@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-automation"
+description = "Enables the create_automation command without any pre-configured scope."
+commands.allow = ["create_automation"]
+
+[[permission]]
+identifier = "deny-create-automation"
+description = "Denies the create_automation command without any pre-configured scope."
+commands.deny = ["create_automation"]

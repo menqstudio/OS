@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-post-user-message"
+description = "Enables the post_user_message command without any pre-configured scope."
+commands.allow = ["post_user_message"]
+
+[[permission]]
+identifier = "deny-post-user-message"
+description = "Denies the post_user_message command without any pre-configured scope."
+commands.deny = ["post_user_message"]

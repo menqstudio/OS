@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-knowledge"
+description = "Enables the delete_knowledge command without any pre-configured scope."
+commands.allow = ["delete_knowledge"]
+
+[[permission]]
+identifier = "deny-delete-knowledge"
+description = "Denies the delete_knowledge command without any pre-configured scope."
+commands.deny = ["delete_knowledge"]

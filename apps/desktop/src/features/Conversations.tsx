@@ -441,8 +441,9 @@ export function Conversations({ kind }: { kind: Kind }) {
                         <button
                           type="button"
                           className="chat-item-action chat-item-action--danger"
-                          title={t('chat.deleteConversation')}
-                          aria-label={t('chat.deleteConversation')}
+                          disabled
+                          title={t('action.deleteDisabledSafety')}
+                          aria-label={t('action.deleteDisabledSafety')}
                           onClick={() => setDeleting(c)}
                         >🗑</button>
                       </div>
