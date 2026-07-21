@@ -10,8 +10,6 @@ export function Settings() {
     if (value !== theme) toggleTheme();
   };
 
-  const sections = ['Profile', 'AI providers', 'Permissions', 'Notifications', 'Storage', 'Backup', 'Security', 'Diagnostics'];
-
   return (
     <>
       <PageHeader title={t('nav.settings')} subtitle={t('settings.subtitle')} />
@@ -59,19 +57,6 @@ export function Settings() {
           </div>
         </div>
       </Panel>
-
-      <div style={{ marginTop: 16 }}>
-        <Panel title="Preferences">
-          <div className="stack">
-            {sections.map((s) => (
-              <div key={s} className="list-row">
-                <span>{s}</span>
-                <span className="muted">Prototype</span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </div>
     </>
   );
 }
