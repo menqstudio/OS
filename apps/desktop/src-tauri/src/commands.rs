@@ -65,17 +65,13 @@ fn truncated(s: &str, max: usize) -> String {
     }
 }
 
-/// Webview sessions (by window label) that programmatically created a pending
-/// approval, keyed by approval id (M-1). The session that requested an
-/// approval must never be the one that grants it, so `decide_approval` refuses
-/// to approve when the deciding window matches the recorded origin. In-memory
-/// only: after an app restart origins are unknown and this check cannot fire —
-/// the native-confirmation TODO in `decide_approval` closes that gap for good.
-fn approval_origins() -> &'static Mutex<HashMap<String, String>> {
-    static ORIGINS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-    // A poisoned lock only means a panic elsewhere; the map itself stays valid,
-    // so callers recover it with `unwrap_or_else(|p| p.into_inner())`.
-    ORIGINS.get_or_init(|| Mutex::new(HashMap::new()))
+/// A stable, forensic id for this process/app-run (T-011 `origin_session_id`). Used
+/// for audit only — the enforcement identity is the durable `origin_principal`
+/// persisted on the approval row, which (unlike the old in-memory origin map)
+/// survives a restart.
+fn process_session_id() -> &'static str {
+    static SESSION: OnceLock<String> = OnceLock::new();
+    SESSION.get_or_init(brops_core::id)
 }
 
 /// Max characters for a saved Ask-Bro conversation title (webview-supplied).
@@ -278,8 +274,6 @@ pub fn decide_approval(
         let conn = locked(&state)?;
         repo::approvals::decide(&conn, &id, &decision, Some(&note)).map_err(|e| e.to_string())?
     };
-    // A decided approval no longer needs its origin pin.
-    approval_origins().lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
     Ok(decided)
 }
 
@@ -329,9 +323,65 @@ pub fn reject_approval(
         // `decide` is pending-only (WHERE status = 'pending') + atomic + audited.
         repo::approvals::decide(&conn, &id, "rejected", Some(&note)).map_err(|e| e.to_string())?
     };
-    // A decided approval no longer needs its (legacy in-memory) origin pin.
-    approval_origins().lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
     Ok(rejected)
+}
+
+/// T-011 approve path — renderer-independent native confirmation. The generic
+/// `decide_approval` approve verb is denied to `main`; the ONLY way to approve is
+/// this command, which drives a **native** OS dialog from Rust (the webview cannot
+/// forge it) and only then records the decision. The DB lock is released while the
+/// human reads the dialog; on confirmation the repo re-checks status, nonce, the
+/// request digest (against current state) and the durable self-approval principal in
+/// one transaction. The webview never sends a "confirmed" flag.
+#[tauri::command]
+pub async fn confirm_approval(
+    state: State<'_, AppState>,
+    window: tauri::Window,
+    id: String,
+    note: Option<String>,
+) -> Result<Approval, String> {
+    // 1. Load canonical details + pre-check, then release the lock before the dialog.
+    let dialog_body = {
+        let conn = locked(&state)?;
+        let a = repo::approvals::get(&conn, &id).map_err(|e| e.to_string())?;
+        if a.status != "pending" {
+            return Err("approval is not pending".to_string());
+        }
+        format!(
+            "Approve this privileged action?\n\nAction: {}\nRisk: {}\nLevel: {}\nTarget: {}",
+            a.action_type,
+            a.risk_level,
+            a.level,
+            truncated(&a.target, 300)
+        )
+    };
+    // 2. Native, renderer-independent confirmation. Run off the main thread so
+    //    `blocking_show` does not deadlock the event loop.
+    let win = window.clone();
+    let confirmed = tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        win.dialog()
+            .message(dialog_body)
+            .title("Confirm privileged approval")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Approve".to_string(),
+                "Cancel".to_string(),
+            ))
+            .blocking_show()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if !confirmed {
+        return Err("approval was not confirmed".to_string());
+    }
+    // 3. Record atomically. The confirmer principal is the native authority —
+    //    distinct from any `webview:*` requester, so the durable self-approval check
+    //    passes for a genuine out-of-band confirmation and fails if a webview-origin
+    //    approval were ever confirmed as its own principal.
+    let confirmed_by = format!("native:{}", window.label());
+    let conn = locked(&state)?;
+    repo::approvals::approve_confirmed(&conn, &id, "native", &confirmed_by, note.as_deref())
+        .map_err(|e| e.to_string())
 }
 
 // --- notifications ---
@@ -801,6 +851,9 @@ pub async fn stream_run_step(
                         truncated(&s.title, 120),
                         truncated(&run.intent, 200)
                     );
+                    // T-011: persist the durable origin principal (stable, restart-safe
+                    // self-approval identity), a forensic session id, and a one-time
+                    // nonce; the request digest is bound at creation inside the repo.
                     let ap = repo::approvals::create(
                         &conn,
                         repo::approvals::RUN_STEP_ACTION_TYPE,
@@ -810,15 +863,12 @@ pub async fn stream_run_step(
                         "gev",
                         Some(repo::approvals::RUN_STEP_ENTITY_TYPE),
                         Some(&s.id),
+                        &format!("webview:{}", window.label()),
+                        process_session_id(),
+                        &brops_core::id(),
                     )
                     .map_err(|e| e.to_string())?;
                     let _ = repo::runs::set_status(&conn, &run_id, "awaiting_approval");
-                    // M-1: pin the approval to the webview session that
-                    // created it so that session cannot also approve it.
-                    approval_origins()
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .insert(ap.id.clone(), window.label().to_string());
                     Gate::Pending(ap.id)
                 }
             }

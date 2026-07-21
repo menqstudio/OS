@@ -294,6 +294,7 @@ mod tests {
         // request an approval linked to the step
         let ap = repo::approvals::create(
             &c, "Execute run step", "risky step", "A2", "medium", "gev", Some("run_step"), Some(&step.id),
+            "webview:test", "sess-test", &crate::id(),
         ).unwrap();
         assert_eq!(ap.entity_id.as_deref(), Some(step.id.as_str()));
         assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_some());
@@ -322,18 +323,18 @@ mod tests {
         ));
 
         // approve it -> advance now proceeds
-        let ap = repo::approvals::create(&c, "Execute run step", "two", "A2", "medium", "gev", Some("run_step"), Some(&s2.id)).unwrap();
+        let ap = repo::approvals::create(&c, "Execute run step", "two", "A2", "medium", "gev", Some("run_step"), Some(&s2.id), "webview:test", "sess-test", &crate::id()).unwrap();
         repo::approvals::decide(&c, &ap.id, "approved", None).unwrap();
         assert!(repo::runs::advance(&c, &r.id).is_ok());
 
         // rejected_for: a rejection with no approval blocks
         let r2 = repo::runs::create(&c, "r2", "").unwrap();
         let s = repo::runs::add_step(&c, &r2.id, "x", "").unwrap();
-        let rej = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id)).unwrap();
+        let rej = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id), "webview:test", "sess-test", &crate::id()).unwrap();
         repo::approvals::decide(&c, &rej.id, "rejected", None).unwrap();
         assert!(repo::approvals::rejected_for(&c, &s.id, "run_step", "Execute run step").unwrap());
         // a later approval clears the rejected-block
-        let ok = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id)).unwrap();
+        let ok = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id), "webview:test", "sess-test", &crate::id()).unwrap();
         repo::approvals::decide(&c, &ok.id, "approved", None).unwrap();
         assert!(!repo::approvals::rejected_for(&c, &s.id, "run_step", "Execute run step").unwrap());
     }
@@ -352,9 +353,66 @@ mod tests {
         // other statuses are still fine
         assert!(repo::runs::set_step_status(&c, &step.id, "active").is_ok());
         // once approved, done succeeds
-        let ap = repo::approvals::create(&c, "Execute run step", "risky", "A2", "medium", "gev", Some("run_step"), Some(&step.id)).unwrap();
+        let ap = repo::approvals::create(&c, "Execute run step", "risky", "A2", "medium", "gev", Some("run_step"), Some(&step.id), "webview:test", "sess-test", &crate::id()).unwrap();
         repo::approvals::decide(&c, &ap.id, "approved", None).unwrap();
         assert!(repo::runs::set_step_status(&c, &step.id, "done").is_ok());
+    }
+
+    // T-011: a pending approval carries its durable origin_principal + a request
+    // digest bound to the current entity state.
+    fn t011_pending(c: &rusqlite::Connection) -> (String, String) {
+        let r = repo::runs::create(c, "gated", "").unwrap();
+        let step = repo::runs::add_step(c, &r.id, "risky", "detail").unwrap();
+        repo::runs::set_step_requires_approval(c, &step.id, true).unwrap();
+        let ap = repo::approvals::create(
+            c, "Execute run step", "risky", "A2", "medium", "gev",
+            Some("run_step"), Some(&step.id), "webview:main", "sess-1", &crate::id(),
+        ).unwrap();
+        assert_eq!(ap.origin_principal.as_deref(), Some("webview:main"));
+        assert!(ap.request_digest.is_some());
+        (step.id, ap.id)
+    }
+
+    #[test]
+    fn t011_self_approval_by_durable_principal_is_refused_but_native_confirms() {
+        // Restart-safe: the origin_principal read here comes from the DB row, not
+        // process memory — so this holds across a restart.
+        let c = conn();
+        let (_step, ap_id) = t011_pending(&c);
+        // Approving while claiming the SAME principal that requested it is refused.
+        assert!(matches!(
+            repo::approvals::approve_confirmed(&c, &ap_id, "webview:main", "native:main", None),
+            Err(CoreError::Invalid { field: "approver", .. })
+        ));
+        // The renderer-independent native confirmation is a DISTINCT principal.
+        let ok = repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None).unwrap();
+        assert_eq!(ok.status, "approved");
+        assert_eq!(ok.confirmation_method.as_deref(), Some("native"));
+        assert!(ok.confirmed_at.is_some());
+    }
+
+    #[test]
+    fn t011_approve_confirmed_is_replay_safe() {
+        let c = conn();
+        let (_step, ap_id) = t011_pending(&c);
+        repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None).unwrap();
+        // A second decision on the now-non-pending approval is refused.
+        assert!(matches!(
+            repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None),
+            Err(CoreError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn t011_request_mutation_after_raise_is_refused() {
+        let c = conn();
+        let (step_id, ap_id) = t011_pending(&c);
+        // Mutate the underlying step AFTER the approval was raised.
+        c.execute("UPDATE run_steps SET title = 'tampered' WHERE id = ?1", [&step_id]).unwrap();
+        assert!(matches!(
+            repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None),
+            Err(CoreError::Invalid { field: "request_digest", .. })
+        ));
     }
 
     #[test]

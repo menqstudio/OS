@@ -151,7 +151,7 @@ export const hy: Record<DictKey, string> = {
   'decisions.subtitle': 'Հիմնավորմամբ ընդունված ընտրություններ',
   'approvals.subtitle': 'Պաշտպանված գործողությունները սպասում են ձեր հաստատմանը',
   'approvals.decideFailed': 'Չհաջողվեց գրանցել որոշումը',
-  'approvals.approveNativePending': 'Հաստատումը պահանջում է native confirmation (գալիս է T-011-ում)․ այստեղ կարող եք միայն մերժել։',
+  'approvals.approveNativeHint': 'Հաստատումը բացում է native confirmation պատուհան, որը պիտի ընդունեք — web UI-ն ինքնուրույն չի կարող հաստատել։',
   'approvals.a3ConfirmTitle': 'Հաստատիր կործանարար գործողությունը',
   'approvals.a3ConfirmBody': 'Սա A3 (կործանարար) գործողություն է։ Հաստատե՞լ։',
   'activity.subtitle': 'Ժամանակագրական իրադարձությունների գրառում',

@@ -83,6 +83,15 @@ camel! {
         pub entity_id: Option<String>,
         pub requested_at: String,
         pub decided_at: Option<String>,
+        // T-011 durable provenance (all nullable/backfill-safe).
+        pub origin_principal: Option<String>,
+        pub origin_session_id: Option<String>,
+        pub request_digest: Option<String>,
+        pub nonce: Option<String>,
+        pub confirmed_at: Option<String>,
+        pub confirmed_by: Option<String>,
+        pub confirmation_method: Option<String>,
+        pub confirmation_digest: Option<String>,
     }
 
     pub struct Notification {

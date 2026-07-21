@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-confirm-approval"
+description = "Enables the confirm_approval command without any pre-configured scope."
+commands.allow = ["confirm_approval"]
+
+[[permission]]
+identifier = "deny-confirm-approval"
+description = "Denies the confirm_approval command without any pre-configured scope."
+commands.deny = ["confirm_approval"]

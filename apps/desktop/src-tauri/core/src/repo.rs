@@ -401,6 +401,14 @@ pub mod approvals {
             entity_id: r.get("entity_id")?,
             requested_at: r.get("requested_at")?,
             decided_at: r.get("decided_at")?,
+            origin_principal: r.get("origin_principal")?,
+            origin_session_id: r.get("origin_session_id")?,
+            request_digest: r.get("request_digest")?,
+            nonce: r.get("nonce")?,
+            confirmed_at: r.get("confirmed_at")?,
+            confirmed_by: r.get("confirmed_by")?,
+            confirmation_method: r.get("confirmation_method")?,
+            confirmation_digest: r.get("confirmation_digest")?,
         })
     }
 
@@ -413,7 +421,87 @@ pub mod approvals {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// SHA-256 of `s`, lowercase hex.
+    pub fn sha256_hex(s: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(s.as_bytes());
+        format!("{:x}", h.finalize())
+    }
+
+    #[derive(serde::Serialize)]
+    struct RunPart {
+        run_id: String,
+        run_intent_sha256: String,
+        step_id: String,
+        step_title_sha256: String,
+        step_detail_sha256: String,
+        requires_approval: bool,
+    }
+
+    /// The canonical request envelope hashed into `request_digest` (T-011, design
+    /// §6.3). Field order is fixed (struct order), and there are no maps, so
+    /// `serde_json::to_string` is deterministic — the digest binds the decision to
+    /// the exact request. `target` (UI display text) is deliberately excluded.
+    #[derive(serde::Serialize)]
+    struct RequestEnvelope<'a> {
+        schema_version: u32,
+        action_type: &'a str,
+        entity_type: Option<&'a str>,
+        entity_id: Option<&'a str>,
+        risk_level: &'a str,
+        approval_level: &'a str,
+        requested_by: &'a str,
+        origin_principal: Option<&'a str>,
+        requested_at: &'a str,
+        run: Option<RunPart>,
+    }
+
+    /// Recompute the request digest for `a` from the CURRENT entity state. Used at
+    /// creation (to store) and at decision (to compare) — if the underlying run/step
+    /// changed after the approval was raised, the digest differs and the decision is
+    /// refused.
+    pub fn request_digest(conn: &Connection, a: &Approval) -> CoreResult<String> {
+        let run = if a.entity_type.as_deref() == Some(RUN_STEP_ENTITY_TYPE) {
+            if let Some(step_id) = a.entity_id.as_deref() {
+                let step = super::runs::get_step(conn, step_id)?;
+                let run = super::runs::get(conn, &step.run_id)?;
+                Some(RunPart {
+                    run_id: run.id.clone(),
+                    run_intent_sha256: sha256_hex(&run.intent),
+                    step_id: step.id.clone(),
+                    step_title_sha256: sha256_hex(&step.title),
+                    step_detail_sha256: sha256_hex(&step.detail),
+                    requires_approval: step.requires_approval,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let envelope = RequestEnvelope {
+            schema_version: 1,
+            action_type: &a.action_type,
+            entity_type: a.entity_type.as_deref(),
+            entity_id: a.entity_id.as_deref(),
+            risk_level: &a.risk_level,
+            approval_level: &a.level,
+            requested_by: &a.requested_by,
+            origin_principal: a.origin_principal.as_deref(),
+            requested_at: &a.requested_at,
+            run,
+        };
+        let json = serde_json::to_string(&envelope)
+            .map_err(|e| CoreError::Invalid { field: "request_envelope", value: e.to_string() })?;
+        Ok(sha256_hex(&json))
+    }
+
     /// Create a pending approval, optionally linked to the entity that needs it.
+    /// T-011: the caller supplies the durable `origin_principal` (stable enforcement
+    /// identity, restart-safe), a forensic `origin_session_id`, and a one-time
+    /// `nonce`; the `request_digest` is computed from the just-created state and
+    /// stored so a later decision can detect a mutated request.
     #[allow(clippy::too_many_arguments)]
     pub fn create(
         conn: &Connection,
@@ -424,6 +512,9 @@ pub mod approvals {
         requested_by: &str,
         entity_type: Option<&str>,
         entity_id: Option<&str>,
+        origin_principal: &str,
+        origin_session_id: &str,
+        nonce: &str,
     ) -> CoreResult<Approval> {
         let id = id();
         super::atomic(conn, |tx| {
@@ -435,14 +526,74 @@ pub mod approvals {
                 }
             }
             tx.execute(
-                "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, entity_type, entity_id, requested_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8, ?9)",
-                rusqlite::params![id, action_type, target, level, risk_level, requested_by, entity_type, entity_id, now()],
+                "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, entity_type, entity_id, requested_at, origin_principal, origin_session_id, nonce)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                rusqlite::params![id, action_type, target, level, risk_level, requested_by, entity_type, entity_id, now(), origin_principal, origin_session_id, nonce],
             )?;
+            // Bind the digest to the request, in the same transaction.
+            let created: Approval = tx.query_row("SELECT * FROM approvals WHERE id = ?1", [id.clone()], map)?;
+            let digest = request_digest(tx, &created)?;
+            tx.execute("UPDATE approvals SET request_digest = ?1 WHERE id = ?2", rusqlite::params![digest, id])?;
             super::audit::record(tx, "approval.requested", "user", requested_by, "approval", &id)?;
             Ok(())
         })?;
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id.clone()], map).map_err(not_found(&id))
+    }
+
+    /// Fetch a single approval by id.
+    pub fn get(conn: &Connection, id: &str) -> CoreResult<Approval> {
+        conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
+    }
+
+    /// T-011 approve: record a native-confirmed approval. In ONE atomic transaction
+    /// it enforces pending-only (replay-safe), refuses self-approval by the durable
+    /// `origin_principal` (restart-safe — read from the DB, not process memory), and
+    /// rechecks the `request_digest` against the CURRENT entity state (a request that
+    /// changed after it was raised is refused). The caller performs the
+    /// renderer-independent native confirmation BEFORE calling this; the nonce is
+    /// consumed here. Only *approve* flows through this path — reject is separate.
+    pub fn approve_confirmed(
+        conn: &Connection,
+        id: &str,
+        confirmer_principal: &str,
+        confirmed_by: &str,
+        note: Option<&str>,
+    ) -> CoreResult<Approval> {
+        super::atomic(conn, |tx| {
+            let a: Approval = tx
+                .query_row("SELECT * FROM approvals WHERE id = ?1", [id], map)
+                .map_err(|_| CoreError::NotFound(format!("pending approval {id}")))?;
+            if a.status != "pending" {
+                return Err(CoreError::NotFound(format!("pending approval {id}")));
+            }
+            // Self-approval, restart-safe: compare the persisted principal.
+            if a.origin_principal.as_deref() == Some(confirmer_principal) {
+                return Err(CoreError::Invalid {
+                    field: "approver",
+                    value: "the requesting principal cannot approve its own request".into(),
+                });
+            }
+            // Digest recheck against current entity state (mutation-safe).
+            let current = request_digest(tx, &a)?;
+            if a.request_digest.as_deref() != Some(current.as_str()) {
+                return Err(CoreError::Invalid {
+                    field: "request_digest",
+                    value: "the request changed since it was raised".into(),
+                });
+            }
+            let changed = tx.execute(
+                "UPDATE approvals SET status = 'approved', decision_note = ?1, decided_at = ?2, \
+                 confirmed_at = ?2, confirmed_by = ?3, confirmation_method = 'native', \
+                 confirmation_digest = ?4, nonce = NULL WHERE id = ?5 AND status = 'pending'",
+                rusqlite::params![note, now(), confirmed_by, current, id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(format!("pending approval {id}")));
+            }
+            super::audit::record(tx, "approval.decided", "user", confirmed_by, "approval", id)?;
+            Ok(())
+        })?;
+        conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
     }
 
     /// True when a decided, still-unconsumed approval exists for the full

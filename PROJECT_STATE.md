@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացում:** Wave 2b **T-010 merged** (PR #19 `7d537c3`, zero-trust GREEN) — capability boundary: all 65 commands manifest-gated, deny-by-default, 4 L2 hard-deletes denied fail-closed, `reject_approval` fail-safe path, CI invariant. **T-011 in progress** (`feat/t-011-durable-approval`): migration 0012 durable approval origin/digest/nonce + restart-safe self-approval + renderer-independent native confirmation (re-enables approve). Then Wave 3. (Wave 2a PR #16 `d85dcba`; Wave 1 PR #15 `15384cb`.)
+**Last updated · Վերջին թարմացում:** Wave 2b **T-011 implemented** (`feat/t-011-durable-approval`, T-010 merged PR #19 `7d537c3`) — migration 0012 durable approval provenance (`origin_principal`/`origin_session_id`/`request_digest`/`nonce`/confirmation cols), canonical-JSON envelope SHA-256 digest, restart-safe self-approval, and a renderer-independent **native confirmation** dialog (`confirm_approval`) that is the only approve path — approve re-enabled, in-memory `approval_origins` removed. Then Wave 3 (Receipt Protocol v1). (Wave 2a PR #16 `d85dcba`; Wave 1 PR #15 `15384cb`.)
 
 ---
 
@@ -36,7 +36,7 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | Wave 2b **T-011** — durable approval + native confirmation (T-010 merged) | `feat/t-011-durable-approval` | 🔨 in progress |
+| 🔨 Claude | Wave 2b **T-011** — durable approval + native confirmation (T-010 merged) | `feat/t-011-durable-approval` | 🔎 in review |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 

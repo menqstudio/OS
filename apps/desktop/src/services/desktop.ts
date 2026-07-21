@@ -63,11 +63,14 @@ export const desktop = {
   // approvals
   listApprovals: () => invoke<Approval[]>('list_approvals'),
   // T-010: the fail-safe reject path — a dedicated command so a compromised renderer
-  // cannot flip a decision argument to "approved". Approve is intentionally NOT a
-  // webview command: generic decide_approval is capability-denied to this window and
-  // an approve requires renderer-independent native confirmation (lands in T-011).
+  // cannot flip a decision argument to "approved".
   rejectApproval: (id: string, note?: string) =>
     invoke<Approval>('reject_approval', { id, note: note ?? null }),
+  // T-011: approve via renderer-independent native confirmation. This command drives
+  // a native OS dialog from Rust; the webview cannot forge it and never sends a
+  // "confirmed" flag. Generic decide_approval remains capability-denied.
+  confirmApproval: (id: string, note?: string) =>
+    invoke<Approval>('confirm_approval', { id, note: note ?? null }),
 
   // notifications
   listNotifications: () => invoke<Notification[]>('list_notifications'),

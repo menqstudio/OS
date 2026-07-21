@@ -45,6 +45,9 @@ fn secure_db_files(_db_path: &std::path::Path) -> std::io::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // T-011: renderer-independent native confirmation dialog for privileged
+        // approvals (driven from Rust in `confirm_approval`).
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -78,6 +81,7 @@ pub fn run() {
             commands::list_approvals,
             commands::decide_approval,
             commands::reject_approval,
+            commands::confirm_approval,
             commands::list_notifications,
             commands::mark_notification_read,
             commands::list_decisions,
