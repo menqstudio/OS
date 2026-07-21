@@ -213,7 +213,7 @@ display one verified chunk.** Per-delta hash-chain / Merkle receipts are deferre
 
 ## 8. Rollout
 
-1. **This design (rev 3)** → Architect + Owner **GREEN**. Gate.
+1. **This design (rev 4)** → Architect + Owner **GREEN**. Gate.
 2. **Wave 3a** — JCS canonicalization + envelope (§2) + exact-output-bytes (§2.1) +
    desktop verifier with the full checklist (§3) + migration 0014 + the atomic
    verify→consume→persist transaction (§4) + `receipt_verification_attempts` +
