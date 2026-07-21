@@ -434,6 +434,21 @@ mod tests {
     }
 
     #[test]
+    fn t011_internal_tokens_are_not_serialized_to_the_webview() {
+        // The nonce and integrity digests are server-only; they must never reach the
+        // untrusted renderer via a command response (e.g. list_approvals).
+        let c = conn();
+        let (_s, ap_id, _n, _d) = t011_pending(&c);
+        let ap = repo::approvals::get(&c, &ap_id).unwrap();
+        let json = serde_json::to_string(&ap).unwrap();
+        for leaked in ["nonce", "requestDigest", "confirmationDigest", "originSessionId"] {
+            assert!(!json.contains(leaked), "internal token `{leaked}` must not be serialized: {json}");
+        }
+        // Safe provenance IS still exposed for display.
+        assert!(json.contains("originPrincipal"));
+    }
+
+    #[test]
     fn t011_plan_change_after_raise_is_refused() {
         // A benign intent/title with a swapped PLAN must not pass — the plan is part
         // of the execution payload and is bound by the digest.
