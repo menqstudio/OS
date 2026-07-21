@@ -115,7 +115,7 @@ Each half still builds independently in Phase 0. **Run each from the component's
 cd apps/desktop && npm ci && npm run build        # tsc --noEmit + vite build
 
 # Cockpit — Rust data core + app   ⚠️ RUN FROM PowerShell, NOT the Bash tool (see §5)
-cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 68 tests (grows per security slice)
+cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 69 tests (grows per security slice)
 cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml                       # app crate
 
 # Engine — Python governance runtime  (MUST set BRO_ENV=ci)
@@ -238,7 +238,7 @@ Engine CI leg-ը **~615-ից 9 test fail ա** monorepo-ում։ **Root cause:** 
 cd apps/desktop && npm ci && npm run build        # tsc --noEmit + vite build
 
 # Cockpit — Rust data core + app   ⚠️ RUN PowerShell-ից, ՈՉ Bash tool-ից (տես §5)
-cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 68 test (ամեն security slice-ով աճում ա)
+cargo test  -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 69 test (ամեն security slice-ով աճում ա)
 cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml                       # app crate
 
 # Engine — Python governance runtime  (ՊԱՐՏԱԴԻՐ՝ BRO_ENV=ci)

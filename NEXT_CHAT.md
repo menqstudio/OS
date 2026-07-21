@@ -43,14 +43,15 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 | **Active task** | **T-014 — Wave 3a Receipt Protocol v1, slice 1 (pure protocol core)** |
 | **Branch** | `feat/wave-3a-receipt-protocol` |
 | **PR** | **#24** — OPEN, **merge-BLOCKED** |
-| **Branch HEAD** | `aa4dc01` (round-2 fixes) |
-| **Last *audited* HEAD** | `a873501` — verdict **RED / REQUEST CHANGES** |
+| **Latest code-fix HEAD** | `f5b6ffe` (round-3 fixes) — a docs commit may sit on top as the branch tip |
+| **Audit history** | `a873501` → RED (4 blockers); `aa4dc01` → RED (3 blockers); `f5b6ffe` → **round-3 fixes, RE-AUDIT PENDING** |
 | **CI on the PR** | 7/7 GREEN — *but CI GREEN ≠ security-audit GREEN* |
-| **Merge status** | **BLOCKED — awaiting the Architect's zero-trust re-audit of `aa4dc01`** |
+| **Audit verdict** | **RED — merge-blocked.** Awaiting the Architect's zero-trust re-audit of `f5b6ffe`. |
 
-> **Honesty note:** `a873501` was audited **RED** (4 authority-API blockers, below). `aa4dc01`
-> was pushed to address all four **in code**, but it has **not yet been re-audited** — there is
-> **no GREEN verdict** on `aa4dc01`. Treat the blockers as *addressed-pending-verification*, not
+> **Honesty note (status accuracy):** **Round-2 and round-3 fixes are implemented; the re-audit
+> is PENDING; the audit verdict remains RED; merge is blocked.** Two rounds have been closed in
+> code — `aa4dc01` (the 4 round-1 blockers) and `f5b6ffe` (the 3 round-2 blockers, §6) — but
+> **neither has a GREEN verdict**. Treat every blocker as *addressed-pending-verification*, not
 > resolved. **Do not merge PR #24** until the Architect returns GREEN on the exact re-audited HEAD.
 
 ## 4. Merged baseline (Done — verify via `git log main`)
@@ -60,7 +61,7 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 - **T-010 — Tauri capability boundary**, PR #19 (`7d537c3`): deny-by-default capability manifest over all 65 commands; the 4 L2 hard-delete commands DENIED; CI invariant `tools/check_capabilities.py`. Zero-trust GREEN.
 - **T-011 — durable approval + native confirmation**, PR #20/#21 (merge `7638a64`): migrations 0012 (approval provenance) + 0013 (execution claim). Restart-safe self-approval by durable `origin_principal`; native-only approval authority; nonce compare-and-consume; canonical `RunExecutionScope` digest; atomic pre-dispatch execution claim; crash-recovery reconciliation; strict attempt ownership; enforced single-instance file lock. Zero-trust GREEN through multiple rounds.
 - **Wave 3 Receipt Protocol v1 — design rev 4**, PR #23 (`35a6ab5`): Architect + Owner **GREEN**, merged. The design is the spec Wave 3a/3b implement.
-- **Schema:** migrations through **0013**, `SCHEMA_VERSION = 13`. `brops-core` test suite: **68 tests** green.
+- **Schema:** migrations through **0013**, `SCHEMA_VERSION = 13`. `brops-core` test suite: **69 tests** green.
 
 ## 5. Current slice — what IS implemented (PR #24)
 
@@ -68,35 +69,41 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 
 - RFC 8785 (JCS) canonicalization for the receipt + canonical **request** envelope (§2, §2.2).
 - Wire format + strict decode (§2.3): base64url → exact bytes (**64 KiB cap**), UTF-8, **duplicate-key** + **unknown-field** + **non-string-value** rejection, fixed field set/types, lowercase-64-hex hashes, numeric timestamps, `decision` domain, and **`JCS(parsed) == decoded bytes`** (parser-differential defense).
-- **Verify-only** Ed25519 (`verify_strict`) over the decoded bytes, via a **type-state chain**: `parse_strict → Parsed` (exposes only `key_id`) → resolve the manifest key → `verify(&ResolvedManifestKey, sig)` (enforces `parsed.key_id == resolved_key.key_id`) → `Verified` (carries the signed `trust_class`) → `bind(&Expected, output)` → `BoundReceipt` → `resolve_3a()`.
-- The pure §3 binding subset: protocol, `decision == completed`, identity/policy/config **expected-value** matches, `requested_at` **exact** desktop-issued binding, allowed executor/builder, output-bytes re-hash (§2.1).
-- Trust-state machine (§6): `resolve_3a()` **hard-codes** `production ⇒ Blocked` — Wave 3a **never** yields `trusted_verified`.
+- **Verify-only** Ed25519 (`verify_strict`) over the decoded bytes, via a **type-state chain**: `parse_strict → Parsed` (exposes only `key_id`) → resolve the manifest key → `verify(&ResolvedManifestKey, sig)` (enforces `parsed.key_id == resolved_key.key_id`) → `Verified` (carries the signed `trust_class`) → `bind(&Expected, output)` → `BoundReceipt` → `resolve_3a()`. `ResolvedManifestKey` has **private fields + no public constructor** (only an in-crate validated resolver mints one).
+- The pure §3 binding subset: protocol, `decision == completed`, identity/policy/config **expected-value** matches, allowed executor/builder, output-bytes re-hash (§2.1). The request half is a single `IssuedRequest` from which `bind` **recomputes** `request_sha256` (never a separate supplied hash), so hash and per-field bindings can't diverge.
+- Trust-state gate (§6): `resolve_3a()` returns a **`Wave3aTrustState { DevelopmentUntrusted, Blocked }`** — a type with **no `TrustedVerified` variant**, so Wave 3a code cannot name a "Verified" state anywhere; `production ⇒ Blocked`.
 - **Verify-only in production**: the Ed25519 *signing* half is compiled solely under `#[cfg(test)]` — the desktop core is never a `sign(arbitrary_bytes)` oracle (design §1).
-- **68 core tests** (full negative-test matrix), clippy-clean.
+- **69 core tests** (full negative-test matrix), clippy-clean.
 
-## 6. Current zero-trust blockers (from the RED on `a873501`) — full text
+## 6. Zero-trust audit history — full text (verdict still RED, re-audit pending)
 
-All four were addressed in `aa4dc01`; each still needs the Architect's re-audit to confirm.
+Two RED rounds have been closed **in code**; **neither has a GREEN verdict yet.**
 
-1. **`key_id` not cryptographically bound to the passed key.** `Parsed::verify()` took a raw public key and did not enforce that the key + trust class come from the manifest entry for the envelope's claimed `key_id`. → *Addressed in `aa4dc01`:* introduced `ResolvedManifestKey { key_id, public_key, trust_class }`; `verify` requires `parsed.key_id == resolved_key.key_id` before the signature check (`KeyIdMismatch`); `Verified` carries that entry's `trust_class`; the raw-key convenience is now `#[cfg(test)]`-only.
-2. **Trust state not bound to a verified+bound receipt.** A standalone public `resolve_trust_state(class, production_allowed)` could be called without verification/binding, and its caller-controlled bool let 3a emit `TrustedVerified`. → *Addressed:* removed it; trust state is reachable only via `BoundReceipt::resolve_3a()`, which hard-codes `production ⇒ Blocked` (no switch); the `trusted_verified` path is deferred to an audited Wave 3b change.
-3. **`requested_at` not bound to the desktop request timestamp.** Only `requested_at <= completed_at` was checked; the receipt's `requested_at` could diverge from the value hashed into `request_sha256`. → *Addressed:* added `Expected.requested_at` with exact-equality binding (§3.8); `completed_at` stays signer-produced under the time-order check.
-4. **Contract leak — `Parsed` derived `Debug`** printed private fields, contradicting "only `key_id` readable pre-verification". → *Addressed:* redacted manual `Debug` on `Parsed`/`Verified`/`BoundReceipt` (ids + byte length only); a test asserts no binding value leaks.
+**Round 1 — RED on `a873501` (4 blockers), addressed in `aa4dc01`:**
+1. **`key_id` not cryptographically bound to the passed key** → introduced `ResolvedManifestKey { key_id, public_key, trust_class }`; `verify` requires `parsed.key_id == resolved_key.key_id` before the signature (`KeyIdMismatch`); `Verified` carries that entry's `trust_class`; raw-key convenience is `#[cfg(test)]`-only.
+2. **Trust state not bound to a verified+bound receipt** (standalone `resolve_trust_state(class, production_allowed)`) → removed it; trust state reachable only via `BoundReceipt::resolve_3a()`.
+3. **`requested_at` not bound to the desktop request timestamp** → exact-equality binding added.
+4. **`Parsed` derived `Debug` leaked private fields** → redacted manual `Debug` on `Parsed`/`Verified`/`BoundReceipt`.
 
-**Test corrections required by the RED (done in `aa4dc01`):** the mismatch matrix now covers all 13 expected-value bindings (every hash field + `requested_at`); added tests for claimed-`key_id` ≠ resolved-`key_id`, production key ⇒ `Blocked`, trust resolution reachable only from `BoundReceipt`, and Debug redaction.
+**Round 2 — RED on `aa4dc01` (3 blockers), addressed in `f5b6ffe`:**
+1. **`ResolvedManifestKey` was forgeable** — public fields let any caller pair an arbitrary `public_key`/`trust_class` with a chosen `key_id`. → *Addressed:* fields are now **private with no public constructor**; only an in-crate validated signed-manifest resolver (Wave 3b) can mint one; tests use the same-crate private fields.
+2. **`TrustState::TrustedVerified` was directly constructible in shipping 3a code.** → *Addressed:* replaced `TrustState` with **`Wave3aTrustState { DevelopmentUntrusted, Blocked }`** — no `TrustedVerified` variant exists in 3a, so no code path can name a "Verified" state. The production state is a separate Wave 3b type.
+3. **`request_sha256` was a separate caller-supplied value** — a wiring bug could pair request A's hash with request B's components. → *Addressed:* introduced an `IssuedRequest` (the 7 request-envelope fields); `Expected` embeds it and drops `request_sha256`; `bind` **recomputes** the canonical hash via `IssuedRequest::request_sha256()` and compares the receipt's signed value to it.
+
+**Tests:** added the request-hash-recompute negative case; the mismatch matrix mutates every `IssuedRequest` component + policy/config field; trust-state tests use `Wave3aTrustState`. **69 core tests**, clippy-clean, PR CI 7/7 (CI GREEN ≠ audit GREEN).
 
 ## 7. Exact next action
 
-1. **Get the Architect's re-audit verdict on `aa4dc01`** (PR #24).
-   - **RED/YELLOW** → fix on `feat/wave-3a-receipt-protocol`, push, re-request audit. Do **not** merge.
-   - **GREEN** → Owner merges PR #24; flip T-014 → Done in `TASKS.md` + `PROJECT_STATE.md` (same commit); then start **slice 2**.
+1. **Get the Architect's zero-trust re-audit verdict on `f5b6ffe`** (PR #24).
+   - **RED/YELLOW** → fix on `feat/wave-3a-receipt-protocol`, push, live-sync docs + PR body, re-request audit. Do **not** merge.
+   - **GREEN** → Owner merges PR #24; then post-merge: fetch the real merge commit, sync all canonical docs, flip T-014 → Done, point `NEXT_CHAT.md` at slice 2, verify all gates GREEN — **only then** is a new chat safe to open.
 2. **Slice 2 (after slice 1 is GREEN + merged)** — the stateful storage layer (design §3 stateful items + §4): migration **0014** (`receipt_verification_attempts` + durable one-time nonce state + `receipt_id` global-uniqueness), the **atomic verify → consume → persist** transaction, tri-state outcome storage (accepted → `messages`, blocked → attempts only), and wall-clock freshness/skew.
 
 ## 8. Verify commands (Windows box)
 
 ```bash
 # Rust data core (⚠ run cargo from PowerShell, NOT the Bash tool — see CLAUDE.md §5)
-cargo test -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 68 tests
+cargo test -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 69 tests
 cargo clippy -p brops-core --all-targets                                          # clippy-clean
 
 # Coordination-docs gate (fails closed on stale coordination)

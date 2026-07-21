@@ -17,7 +17,7 @@
 The data core is built and tested — projects/tasks CRUD, foreign-key enforcement, status validation, migration idempotency, and audit recording:
 
 ```bash
-cargo test -p brops-core     # 68 tests, GREEN
+cargo test -p brops-core     # 69 tests, GREEN
 ```
 
 ## Build prerequisites (host GUI)
