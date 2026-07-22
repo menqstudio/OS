@@ -25,3 +25,8 @@ base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
+# `hooks` (commit-hook binding) is used ONLY by a #[cfg(test)] test that
+# deterministically forces a COMMIT failure to prove the atomic transaction rolls
+# back explicitly. Declared here so the feature is dev/test-only and never enabled
+# for the shipping library build (Wave 3a slice 2 audit hardening).
+rusqlite = { version = "0.32", features = ["hooks"] }

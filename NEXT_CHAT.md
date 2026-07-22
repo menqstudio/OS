@@ -38,18 +38,20 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 
 ## 3. Current work — exact pointers
 
-**Wave 3a slice 1 is DONE and merged.** The next task is **Wave 3a slice 2** (not yet started).
+**Wave 3a slice 1 is DONE and merged.** **Slice 2 is IMPLEMENTED and in Review** on `feat/wave-3a-receipt-storage` — **not merged**; it awaits the Architect's zero-trust GREEN on the pushed candidate HEAD, then Owner merge.
 
 | | |
 |---|---|
-| **Next task** | **Wave 3a slice 2 — receipt storage & atomicity** (migration 0014; see §7 for the exact first action) |
-| **Branch** | none yet — cut a fresh `feat/wave-3a-receipt-storage` from `main` and claim it in `TASKS.md` |
+| **Current task** | **Wave 3a slice 2 — receipt storage & atomicity** (T-015, §7). **IMPLEMENTED, in Review.** Migration **0014** (`SCHEMA_VERSION` 13→14) + `brops-core::receipt_store`: atomic `BEGIN IMMEDIATE` **verify→consume→persist**, `issue_challenge`, durable one-time nonce, `receipt_id` global uniqueness, freshness/skew on both timestamps; `ReceiptOutcome` has **no `TrustedVerified` variant** (production⇒Blocked, so 3a never renders "Verified"). Architect **YELLOW + RED×2** fixes applied (capped pre-decode `wire_*` evidence; `message_id` real FK + message→attempt→ledger order + **`ON DELETE RESTRICT`** so a delete with governed evidence is refused; blocked *verdict* commits evidence while only a real SQLite failure `Err`+rollbacks; nonce consumed even when later blocked; two-timestamp freshness; `issue_challenge` takes one `IssuedRequest`; real threaded race test). See the **Audit** row for the full R1/R2 detail. |
+| **Branch** | **`feat/wave-3a-receipt-storage`** (cut off `main` @ `75a8d8f`; T-015 claimed). Push → PR → Architect zero-trust GREEN on the exact HEAD → Owner merge. |
+| **Audit** | **Round 1 RED** (4, on `24869eb`) + **Round 2 RED** (3+hardening, on `c266417`) — both **RESOLVED**. R1: challenge `request_sha256` NOT-NULL+hex compared in-tx; staged decoded evidence (envelope+signature+key_id+receipt_id) on bad-sig/bind-fail; nested-tx reject + explicit COMMIT-failure rollback. R2: (1) `issue_challenge(conn, conversation_id, &IssuedRequest, now_ms)` derives nonce+hash from one `IssuedRequest` (no split-authority seam); (2) `message_id` `ON DELETE RESTRICT` + full accepted⇔message CHECK → deleting a conversation/message with governed evidence is **refused** (output bytes stay re-hashable in `messages.body`); (3) concurrency test is now a **real threaded race** (tempfile + 2 threads + `Barrier`, one accept / one block / both attempts recorded); hardening: `rusqlite` `hooks` → dev-dependencies. Awaiting **re-audit on the new pushed HEAD**. |
+| **Verified** | `brops-core` = **83 tests** green (69 baseline + 14 slice-2 negative-matrix), clippy-clean; `tools/check_coordination.py` + `tools/check_capabilities.py` GREEN; app-workspace `cargo check` clean. |
 | **Just merged** | **T-014 / slice 1 — PR #24 MERGED.** Approved HEAD `c51031e`; squash **merge commit `6c920d0`** on `main`; final CI 7/7 GREEN; Architect **zero-trust GREEN**. |
-| **Slice-1 baseline** | `brops-core::receipt` — the pure protocol core (§5). `brops-core` = **69 tests** green, clippy-clean. |
 
-> **Status is now GREEN + merged for slice 1** — verify via `git log main` (`6c920d0`) and PR #24
-> (MERGED). The three RED audit rounds are **resolved audit history** (§6), not current blockers.
-> Slice 2 has **not** started; do not present any deferred item (§10) as implemented.
+> **Slice 1 is GREEN + merged** (`git log main` → `6c920d0`, PR #24 MERGED). **Slice 2 is implemented on
+> its branch and in zero-trust review — do NOT present it as merged/Done until the Architect GREENs the
+> pushed HEAD and the Owner merges.** The next task AFTER slice 2 merges is slice 3 (transport wiring +
+> receipt UI). The isolated signer + manifest + production "Verified" remain **Wave 3b** (§10).
 
 ## 4. Merged baseline (Done — verify via `git log main`)
 
@@ -91,9 +93,11 @@ Three RED rounds were closed and independently re-audited; the final HEAD `c5103
 
 **Tests:** added the request-hash-recompute negative case; the mismatch matrix mutates every `IssuedRequest` component + policy/config field; trust-state tests use `Wave3aTrustState`. **69 core tests**, clippy-clean. **Final re-audit of `c51031e`: zero-trust GREEN → merged (`6c920d0`).**
 
-## 7. Exact next action — Wave 3a slice 2 (receipt storage & atomicity)
+## 7. Wave 3a slice 2 (receipt storage & atomicity) — the plan it followed
 
-Slice 1 is merged; slice 2 is **not started**. Implement design §3 (stateful items) + §4:
+> **Status: IMPLEMENTED and in Review** on `feat/wave-3a-receipt-storage` (PR #26), awaiting
+> re-audit on the pushed HEAD + Owner merge (see §3). The steps below are the design §3 (stateful
+> items) + §4 plan the implementation followed; they are retained as the spec, not open work.
 
 1. **Claim it:** cut `feat/wave-3a-receipt-storage` from `main`; add a T-015 row in `TASKS.md` (In-Progress).
 2. **First concrete step — migration 0014** (`SCHEMA_VERSION` 13 → 14) in `apps/desktop/src-tauri/core/schema/0014_receipt_verification.sql`:
