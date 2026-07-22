@@ -20,7 +20,7 @@
 
 use crate::domain::{CoreError, CoreResult};
 use crate::receipt::{
-    self, Expected, ResolvedManifestKey, Wave3aTrustState, MAX_ENVELOPE_BYTES,
+    self, Expected, IssuedRequest, ResolvedManifestKey, Wave3aTrustState, MAX_ENVELOPE_BYTES,
 };
 use crate::{id, NewMessage};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -98,18 +98,30 @@ pub enum ReceiptOutcome {
 
 /// Record a fresh desktop challenge (the issuing half of the one-time nonce). The
 /// desktop calls this when it issues a governed request; the returned receipt must
-/// later carry this exact `nonce`, still unconsumed. Inserted `consumed_at = NULL`.
+/// later carry this exact nonce, still unconsumed. Inserted `consumed_at = NULL`.
+///
+/// Takes the single [`IssuedRequest`] and derives BOTH the stored `nonce` and
+/// `request_sha256` from it — never a separate caller-supplied nonce/hash pair. This
+/// closes the split-authority seam (audit round 2): a wiring bug cannot pair one
+/// request's nonce with another request's hash, exactly as [`IssuedRequest::
+/// request_sha256`] recomputes rather than trusting a supplied hash in slice 1. The
+/// same `IssuedRequest` (inside `Expected`) is what the verifier later recomputes and
+/// compares against, so issuance and verification share one source of truth.
 pub fn issue_challenge(
     conn: &Connection,
-    nonce: &str,
     conversation_id: &str,
-    request_sha256: &str,
+    request: &IssuedRequest,
     now_ms: u64,
 ) -> CoreResult<()> {
     conn.execute(
         "INSERT INTO receipt_challenges(nonce, conversation_id, request_sha256, issued_at, consumed_at)
          VALUES (?1, ?2, ?3, ?4, NULL)",
-        rusqlite::params![nonce, conversation_id, request_sha256, now_ms.to_string()],
+        rusqlite::params![
+            request.request_nonce,
+            conversation_id,
+            request.request_sha256(),
+            now_ms.to_string()
+        ],
     )?;
     Ok(())
 }
@@ -704,17 +716,21 @@ mod tests {
             )
         }
 
+        fn issued(&self) -> IssuedRequest<'_> {
+            IssuedRequest {
+                workspace_id: "ws-1",
+                install_id: "install-1",
+                request_nonce: &self.nonce,
+                system_sha256: &self.system,
+                history_sha256: &self.history,
+                generation_config_sha256: &self.generation,
+                requested_at: &self.requested,
+            }
+        }
+
         fn expected(&self) -> Expected<'_> {
             Expected {
-                request: IssuedRequest {
-                    workspace_id: "ws-1",
-                    install_id: "install-1",
-                    request_nonce: &self.nonce,
-                    system_sha256: &self.system,
-                    history_sha256: &self.history,
-                    generation_config_sha256: &self.generation,
-                    requested_at: &self.requested,
-                },
+                request: self.issued(),
                 supervisor_id: "sup-1",
                 policy_id: "pol-1",
                 policy_version: "1",
@@ -733,7 +749,7 @@ mod tests {
     /// Create a conversation + issue the matching challenge; return the conv id.
     fn seed_turn(conn: &Connection, fx: &Fx, now: u64) -> String {
         let conv = crate::repo::chat::create_conversation(conn, "direct", "governed").unwrap();
-        issue_challenge(conn, &fx.nonce, &conv.id, &fx.request_sha256(), now).unwrap();
+        issue_challenge(conn, &conv.id, &fx.issued(), now).unwrap();
         conv.id
     }
 
@@ -930,7 +946,7 @@ mod tests {
         // Stale: completed_at far older than max_age.
         let fx = Fx::new(now, "nonce-stale");
         let conv = crate::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
-        issue_challenge(&conn, &fx.nonce, &conv.id, &fx.request_sha256(), now).unwrap();
+        issue_challenge(&conn, &conv.id, &fx.issued(), now).unwrap();
         let (env, sig) = fx.wire_of(&fx.fields("receipt-stale"));
         // Move "now" forward well beyond max_age (300s) so the receipt is stale.
         let later = now + 10_000_000;
@@ -946,7 +962,7 @@ mod tests {
         let now2 = 5_000_000u64;
         let fut = Fx::new(now2 + 10_000_000, "nonce-future"); // timestamps far ahead of now2
         let conv2 = crate::repo::chat::create_conversation(&conn, "direct", "c2").unwrap();
-        issue_challenge(&conn, &fut.nonce, &conv2.id, &fut.request_sha256(), now2).unwrap();
+        issue_challenge(&conn, &conv2.id, &fut.issued(), now2).unwrap();
         let (e2, s2) = fut.wire_of(&fut.fields("receipt-future"));
         let out2 = verify_and_record_receipt(&conn, &turn(&fut, &e2, &s2, now2, TrustClass::Development)).unwrap();
         assert!(matches!(out2, ReceiptOutcome::Blocked { .. }), "future must block: {out2:?}");
@@ -1035,25 +1051,30 @@ mod tests {
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen"), 0);
     }
 
-    // ---- blocker 1: challenge request_sha256 binding ----------------------
+    // ---- blocker 1: challenge bound to the exact request envelope ---------
 
     #[test]
-    fn challenge_request_sha256_mismatch_is_blocked() {
+    fn challenge_bound_to_a_different_request_envelope_is_blocked() {
         let conn = db();
         let now = 1_000_000u64;
-        let fx = Fx::new(now, "nonce-A");
-        // Issue the challenge with a DIFFERENT (but valid lowercase-64-hex)
-        // request_sha256 than the Expected/receipt will compute — same nonce.
-        let conv = crate::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
-        let wrong_hash = "0".repeat(64);
-        assert_ne!(wrong_hash, fx.request_sha256());
-        issue_challenge(&conn, &fx.nonce, &conv.id, &wrong_hash, now).unwrap();
-        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+        // Two turns sharing the SAME nonce but a different request envelope (system
+        // hash) — so their request_sha256 differ. The challenge is issued from A's
+        // IssuedRequest; verification runs against B's receipt+Expected. Because
+        // issue_challenge derives nonce AND hash from one IssuedRequest, this mismatch
+        // can only arise from genuinely different envelopes, not a split-authority bug.
+        let fx_a = Fx::new(now, "nonce-A");
+        let mut fx_b = Fx::new(now, "nonce-A");
+        fx_b.system = hx(0x77); // changes B's request_sha256 and its receipt/Expected
+        assert_ne!(fx_a.request_sha256(), fx_b.request_sha256());
 
-        // The receipt itself is perfectly valid, but the durable challenge was bound
-        // to a different request envelope -> blocked.
-        let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
-        assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "challenge request_sha256 mismatch must block: {out:?}");
+        let conv = crate::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        issue_challenge(&conn, &conv.id, &fx_a.issued(), now).unwrap();
+
+        // B's receipt is internally valid (binds to B's Expected), but the durable
+        // challenge was issued for A's request envelope -> blocked.
+        let (env, sig) = fx_b.wire_of(&fx_b.fields("receipt-1"));
+        let out = verify_and_record_receipt(&conn, &turn(&fx_b, &env, &sig, now, TrustClass::Development)).unwrap();
+        assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "challenge/request-envelope mismatch must block: {out:?}");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen"), 0, "no ledger insert on a blocked mismatch");
         // The challenge is still consumed (one shot spent).
@@ -1063,39 +1084,42 @@ mod tests {
         assert!(consumed.is_some());
     }
 
-    // ---- blocker 3: accepted evidence survives deletion -------------------
+    // ---- blocker 2: accepted evidence stays fully re-verifiable -----------
 
     #[test]
-    fn accepted_evidence_survives_conversation_deletion() {
+    fn conversation_deletion_is_refused_when_governed_evidence_exists() {
         let conn = db();
         let now = 1_000_000u64;
         let fx = Fx::new(now, "nonce-A");
         let conv_id = seed_turn(&conn, &fx, now);
         let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
         let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
-        let attempt_id = match out {
-            ReceiptOutcome::DevelopmentUntrusted { attempt_id, .. } => attempt_id,
+        let (message_id, attempt_id) = match out {
+            ReceiptOutcome::DevelopmentUntrusted { message_id, attempt_id } => (message_id, attempt_id),
             other => panic!("expected DevelopmentUntrusted, got {other:?}"),
         };
 
-        // Delete the whole conversation (messages cascade-delete).
-        crate::repo::chat::delete_conversation(&conn, &conv_id).unwrap();
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0, "message was deleted");
+        // Deleting the conversation would strand the accepted attempt from the message
+        // holding its exact output bytes; ON DELETE RESTRICT REFUSES it, so the
+        // evidence stays fully re-verifiable (output_sha256 can still be recomputed
+        // from messages.body).
+        let res = crate::repo::chat::delete_conversation(&conn, &conv_id);
+        assert!(res.is_err(), "deleting a conversation with governed evidence must be refused");
 
-        // Evidence SURVIVES: the attempt row is intact, its exact envelope bytes +
-        // outcome are retained, and only the convenience message link is nulled.
-        let (outcome, env_present, msg): (String, bool, Option<String>) = conn
+        // Everything is intact: the output message, the attempt link, the ledger.
+        let body: String = conn
+            .query_row("SELECT body FROM messages WHERE id = ?1", [&message_id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(body.as_bytes(), OUTPUT, "exact output bytes remain re-hashable");
+        let (outcome, linked): (String, String) = conn
             .query_row(
-                "SELECT outcome, envelope_jcs IS NOT NULL, message_id
-                 FROM receipt_verification_attempts WHERE id = ?1",
+                "SELECT outcome, message_id FROM receipt_verification_attempts WHERE id = ?1",
                 [&attempt_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
         assert_eq!(outcome, "development_untrusted");
-        assert!(env_present, "accepted envelope evidence must survive deletion");
-        assert!(msg.is_none(), "message link is SET NULL after deletion, evidence kept");
-        // Replay protection preserved: the receipt_id stays recorded.
+        assert_eq!(linked, message_id, "accepted attempt still links its output message");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen WHERE receipt_id = 'receipt-1'"), 1);
     }
 
@@ -1126,26 +1150,68 @@ mod tests {
     }
 
     #[test]
-    fn two_connections_accept_the_same_nonce_only_once() {
-        // A shared-cache in-memory DB so two independent connections see one database.
-        let uri = "file:brops_recv_conc_nonce?mode=memory&cache=shared";
-        let c1 = crate::db::open(uri).unwrap();
-        let c2 = crate::db::open(uri).unwrap(); // keep both open so the shared DB lives
+    fn concurrent_verifications_of_one_nonce_accept_exactly_once() {
+        use std::sync::Barrier;
+
+        // A real file-backed DB and two threads that hit verification SIMULTANEOUSLY
+        // (a Barrier releases both at once), so two BEGIN IMMEDIATE writers genuinely
+        // contend — not a sequential two-connection stand-in.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("race.sqlite").to_str().unwrap().to_string();
+
         let now = 1_000_000u64;
         let fx = Fx::new(now, "nonce-A");
-        let conv = crate::repo::chat::create_conversation(&c1, "direct", "c").unwrap();
-        issue_challenge(&c1, &fx.nonce, &conv.id, &fx.request_sha256(), now).unwrap();
+        // Seed the shared DB (conversation + one challenge), then drop the connection.
+        {
+            let seed = crate::db::open(&path).unwrap();
+            let conv = crate::repo::chat::create_conversation(&seed, "direct", "c").unwrap();
+            issue_challenge(&seed, &conv.id, &fx.issued(), now).unwrap();
+        }
 
-        // c1 accepts.
-        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
-        let o1 = verify_and_record_receipt(&c1, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
-        assert!(matches!(o1, ReceiptOutcome::DevelopmentUntrusted { .. }));
-
-        // c2 — a DIFFERENT connection — tries the SAME nonce (fresh receipt_id).
+        // Two distinct receipts for the SAME nonce.
+        let (env1, sig1) = fx.wire_of(&fx.fields("receipt-1"));
         let (env2, sig2) = fx.wire_of(&fx.fields("receipt-2"));
-        let o2 = verify_and_record_receipt(&c2, &turn(&fx, &env2, &sig2, now, TrustClass::Development)).unwrap();
-        assert!(matches!(o2, ReceiptOutcome::Blocked { .. }), "the same nonce from another connection must block: {o2:?}");
-        assert_eq!(count(&c1, "SELECT COUNT(*) FROM messages"), 1, "exactly one accept across connections");
+        let t1 = turn(&fx, &env1, &sig1, now, TrustClass::Development);
+        let t2 = turn(&fx, &env2, &sig2, now, TrustClass::Development);
+
+        let barrier = Barrier::new(2);
+        let (r1, r2) = std::thread::scope(|s| {
+            let h1 = s.spawn(|| {
+                let c = crate::db::open(&path).unwrap();
+                barrier.wait();
+                verify_and_record_receipt(&c, &t1)
+            });
+            let h2 = s.spawn(|| {
+                let c = crate::db::open(&path).unwrap();
+                barrier.wait();
+                verify_and_record_receipt(&c, &t2)
+            });
+            (h1.join().unwrap(), h2.join().unwrap())
+        });
+
+        // Neither lost its forensic attempt to SQLITE_BUSY: both returned a *verdict*,
+        // not a DB error (busy_timeout serializes the two BEGIN IMMEDIATE writers).
+        let r1 = r1.expect("thread 1 must return a verdict, not a DB error");
+        let r2 = r2.expect("thread 2 must return a verdict, not a DB error");
+        let accepts = [&r1, &r2]
+            .iter()
+            .filter(|o| matches!(o, ReceiptOutcome::DevelopmentUntrusted { .. }))
+            .count();
+        let blocks = [&r1, &r2]
+            .iter()
+            .filter(|o| matches!(o, ReceiptOutcome::Blocked { .. }))
+            .count();
+        assert_eq!(accepts, 1, "exactly one concurrent accept: {r1:?} {r2:?}");
+        assert_eq!(blocks, 1, "exactly one concurrent block: {r1:?} {r2:?}");
+
+        // Durable state: one message, one ledger row, and BOTH attempts recorded
+        // (accepted + blocked) — no forensic attempt dropped.
+        let check = crate::db::open(&path).unwrap();
+        assert_eq!(count(&check, "SELECT COUNT(*) FROM messages"), 1);
+        assert_eq!(count(&check, "SELECT COUNT(*) FROM receipt_ids_seen"), 1);
+        assert_eq!(count(&check, "SELECT COUNT(*) FROM receipt_verification_attempts"), 2, "both forensic attempts recorded");
+        assert_eq!(count(&check, "SELECT COUNT(*) FROM receipt_verification_attempts WHERE outcome = 'development_untrusted'"), 1);
+        assert_eq!(count(&check, "SELECT COUNT(*) FROM receipt_verification_attempts WHERE outcome = 'blocked'"), 1);
     }
 
     #[test]

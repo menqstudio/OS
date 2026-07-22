@@ -82,24 +82,25 @@ CREATE TABLE IF NOT EXISTS receipt_verification_attempts (
     -- The challenge this attempt targeted. NULL when the attempt referenced no valid
     -- challenge. No FK: evidence must survive a challenge-row cascade delete.
     nonce                 TEXT,
-    -- The accepted agent message; NULL for blocked. Real FK -> an accepted attempt
-    -- can never point to a non-existent message at INSERT time. ON DELETE SET NULL
-    -- (NOT CASCADE): deleting a message/conversation must NOT erase the accepted
-    -- forensic evidence (audit round: CASCADE would delete the attempt with its
-    -- message). The attempt row and its exact envelope+signature+outcome are RETAINED;
-    -- only this convenience link nulls. receipt_ids_seen is untouched, so deleting a
-    -- message never re-opens replay of its receipt.
-    message_id            TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    -- The accepted agent message; NULL for blocked. Real FK with ON DELETE RESTRICT:
+    -- the accepted output's EXACT bytes live in messages.body (design §4 — accepted
+    -- output is stored in `messages`, the attempt links to it), so the attempt is only
+    -- FULLY re-verifiable while that message exists. RESTRICT therefore REFUSES to
+    -- delete a message/conversation that still has governed receipt evidence, rather
+    -- than orphaning the attempt from its output (audit round 2: SET NULL kept the row
+    -- but lost the re-hashable output). A product soft-delete/retention policy is the
+    -- future path to removal; slice 2 fails closed and preserves evidence.
+    message_id            TEXT REFERENCES messages(id) ON DELETE RESTRICT,
     verified_at           TEXT NOT NULL,
-    -- Security-critical invariant, enforced at the DB layer: a `blocked` attempt
-    -- NEVER links a message (so blocked content can never render). We deliberately do
-    -- NOT add an `accepted => message_id NOT NULL` CHECK: message_id is ON DELETE SET
-    -- NULL, so after a message deletion an accepted row legitimately carries a NULL
-    -- link while retaining its evidence, and SQLite re-checks CHECKs on that SET-NULL
-    -- cascade. The accepted<->message link is instead guaranteed at INSERT by the FK
-    -- + the message->attempt->ledger insert order (and a test). This weaker CHECK is
-    -- cascade-safe: SET-NULL on an accepted row keeps `outcome != 'blocked'` true.
-    CHECK (outcome != 'blocked' OR message_id IS NULL)
+    -- Full accepted<->message / blocked<->no-message invariant (design §4), enforced
+    -- at the DB layer: a `blocked` attempt NEVER links a message, and an accepted
+    -- attempt ALWAYS links exactly one. This is cascade-safe under ON DELETE RESTRICT:
+    -- a message deletion that would strand an accepted attempt is REFUSED (never a
+    -- SET-NULL update), so the CHECK is never re-evaluated into a violation.
+    CHECK (
+        (outcome = 'blocked' AND message_id IS NULL)
+        OR (outcome IN ('trusted_verified', 'development_untrusted') AND message_id IS NOT NULL)
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_receipt_attempts_receipt_id
