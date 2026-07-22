@@ -913,6 +913,17 @@ pub mod chat {
         })
     }
 
+    /// SQL projection (Wave 3a slice 3): a message's trust-badge receipt = the outcome
+    /// of its accepted verification attempt (`development_untrusted` | `trusted_verified`),
+    /// else NULL. A `blocked` verdict has no message, so it never appears here. Every
+    /// message SELECT that feeds `map_message` must include this `AS receipt` column and
+    /// alias the `messages` table `m`.
+    const MESSAGE_RECEIPT_PROJECTION: &str = "(SELECT a.outcome \
+         FROM receipt_verification_attempts a \
+         WHERE a.message_id = m.id \
+           AND a.outcome IN ('development_untrusted', 'trusted_verified') \
+         LIMIT 1)";
+
     fn map_message(r: &Row) -> rusqlite::Result<Message> {
         Ok(Message {
             id: r.get("id")?,
@@ -921,6 +932,7 @@ pub mod chat {
             author: r.get("author")?,
             body: r.get("body")?,
             created_at: r.get("created_at")?,
+            receipt: r.get("receipt")?,
         })
     }
 
@@ -982,10 +994,12 @@ pub mod chat {
         offset: Option<u32>,
     ) -> CoreResult<Vec<Message>> {
         let (limit, offset) = super::page(limit, offset);
-        let mut s = conn.prepare(
-            "SELECT * FROM messages WHERE conversation_id = ?1 \
-             ORDER BY created_at DESC, rowid DESC LIMIT ?2 OFFSET ?3",
-        )?;
+        let sql = format!(
+            "SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m \
+             WHERE m.conversation_id = ?1 \
+             ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?2 OFFSET ?3"
+        );
+        let mut s = conn.prepare(&sql)?;
         let rows = s.query_map(rusqlite::params![conversation_id, limit, offset], map_message)?;
         let mut msgs = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         msgs.reverse(); // newest page, presented oldest-first
@@ -1020,7 +1034,8 @@ pub mod chat {
             super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
             Ok(())
         })?;
-        conn.query_row("SELECT * FROM messages WHERE id = ?1", [id.clone()], map_message)
+        let sql = format!("SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m WHERE m.id = ?1");
+        conn.query_row(&sql, [id.clone()], map_message)
             .map_err(not_found(&id))
     }
 

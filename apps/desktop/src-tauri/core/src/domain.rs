@@ -150,6 +150,11 @@ camel! {
         pub author: String,
         pub body: String,
         pub created_at: String,
+        // Server-derived trust badge (Wave 3a slice 3): the outcome of this message's
+        // accepted receipt-verification attempt — `development_untrusted` or (Wave 3b)
+        // `trusted_verified`, else `None`. Read-only projection; never webview-set. A
+        // `blocked` verdict has no message, so it never appears here.
+        pub receipt: Option<String>,
     }
 
     pub struct KnowledgeNote {

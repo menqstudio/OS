@@ -69,11 +69,14 @@ pub struct ReceiptWire<'a> {
 #[derive(Clone, Copy)]
 pub struct GovernedTurn<'a> {
     pub wire: ReceiptWire<'a>,
-    /// The verifying key resolved from the trusted manifest. In slice 2 this is an
-    /// input (test fixtures mint it via the `#[cfg(test)]` builder); the live
-    /// validated manifest resolver is Wave 3b. `ResolvedManifestKey` keeps its
-    /// no-public-constructor guarantee.
-    pub resolved_key: ResolvedManifestKey<'a>,
+    /// The verifying key resolved from the trusted manifest, or **`None`** when no
+    /// trusted key is available. In **Wave 3a there is no manifest resolver**, so the
+    /// transport always passes `None` and every governed turn is **Blocked**
+    /// (fail-closed) — the `None` arm records blocked evidence and posts no message,
+    /// in the same transaction. Wave 3b's validated resolver supplies `Some(key)`,
+    /// re-enabling the verify pipeline. `ResolvedManifestKey` keeps its
+    /// no-public-constructor guarantee (only `#[cfg(test)]`/Wave-3b code mints one).
+    pub resolved_key: Option<ResolvedManifestKey<'a>>,
     pub expected: Expected<'a>,
     /// The exact reply bytes (design §2.1, hashed as opaque bytes).
     pub output: &'a [u8],
@@ -139,6 +142,50 @@ pub fn verify_and_record_receipt(
     in_immediate_tx(conn, |tx| record(tx, turn))
 }
 
+/// Resolves the pinned verifying key for a receipt's `key_id` from the trusted signed
+/// manifest. This is the seam Wave 3b fills; **Wave 3a ships only the fail-closed
+/// [`NoTrustedManifest`]** (always `None`), so no governed reply can render "Verified"
+/// or even "dev/untrusted" until a real manifest exists. `Ok(None)` = no trusted key.
+pub trait ManifestKeyResolver {
+    fn resolve<'a>(&'a self, key_id: &str) -> CoreResult<Option<ResolvedManifestKey<'a>>>;
+}
+
+/// Wave 3a: there is no signed key manifest, so every key resolves to `None` and every
+/// governed turn is Blocked (fail-closed). Wave 3b replaces this with a resolver that
+/// validates an operator-provisioned signed manifest against the pinned root anchor.
+pub struct NoTrustedManifest;
+
+impl ManifestKeyResolver for NoTrustedManifest {
+    fn resolve<'a>(&'a self, _key_id: &str) -> CoreResult<Option<ResolvedManifestKey<'a>>> {
+        Ok(None)
+    }
+}
+
+/// Transport entry point: resolve the verifying key by the receipt's own `key_id` via
+/// `resolver`, then verify + record atomically. A malformed receipt (no parseable
+/// `key_id`) or an unresolved key both yield the fail-closed **Blocked** path. In
+/// Wave 3a the caller passes [`NoTrustedManifest`], so every governed turn Blocks.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_verify_and_record<'a, R: ManifestKeyResolver>(
+    conn: &Connection,
+    resolver: &'a R,
+    wire: ReceiptWire<'a>,
+    expected: Expected<'a>,
+    output: &'a [u8],
+    now_ms: u64,
+    freshness: FreshnessWindow,
+) -> CoreResult<ReceiptOutcome> {
+    // The key is resolved by the receipt's OWN claimed key_id; a parse failure means
+    // there is nothing to resolve → None → fail-closed Blocked (the receipt is still
+    // recorded as blocked evidence inside `record`).
+    let resolved_key = match receipt::parse_strict(wire.envelope_jcs_b64) {
+        Ok(parsed) => resolver.resolve(parsed.key_id())?,
+        Err(_) => None,
+    };
+    let turn = GovernedTurn { wire, resolved_key, expected, output, now_ms, freshness };
+    verify_and_record_receipt(conn, &turn)
+}
+
 /// The transaction body. `tx` is an open connection inside `BEGIN IMMEDIATE`.
 fn record(tx: &Connection, turn: &GovernedTurn) -> CoreResult<ReceiptOutcome> {
     let stamp = turn.now_ms.to_string();
@@ -168,8 +215,38 @@ fn record(tx: &Connection, turn: &GovernedTurn) -> CoreResult<ReceiptOutcome> {
         }
     };
 
+    // --- Fail-closed when no trusted key (Wave 3a has no manifest resolver) ------
+    // Without a key the receipt cannot be verified, so the turn is Blocked. We still
+    // parse best-effort for evidence and record a blocked attempt (no message). The
+    // nonce was already consumed above (a governed turn gets one shot at its
+    // challenge). Wave 3b supplies `Some(key)` and this arm is never taken.
+    let key = match turn.resolved_key {
+        Some(k) => k,
+        None => {
+            let ev = parse_for_evidence(&turn.wire);
+            let error = "no trusted key manifest (Wave 3b) — receipt not verifiable".to_string();
+            let attempt_id = insert_attempt(
+                tx,
+                &AttemptRow {
+                    wire_env: &wire_env,
+                    wire_sig: &wire_sig,
+                    receipt_id: ev.receipt_id.as_deref(),
+                    key_id: ev.key_id.as_deref(),
+                    envelope_jcs: ev.envelope_jcs.as_deref(),
+                    signature: ev.signature.as_deref(),
+                    outcome: "blocked",
+                    error: Some(&error),
+                    nonce: Some(want_nonce),
+                    message_id: None,
+                    stamp: &stamp,
+                },
+            )?;
+            return Ok(ReceiptOutcome::Blocked { attempt_id, error });
+        }
+    };
+
     // --- Pure core pipeline: parse → verify → bind ------------------------------
-    let core = run_core(turn);
+    let core = run_core(turn, &key);
 
     // --- Decide the verdict + gather evidence -----------------------------------
     match core {
@@ -348,7 +425,7 @@ struct FailedEvidence {
 /// carries only the error; a post-parse failure (bad signature or bind mismatch)
 /// carries the exact canonical envelope bytes, the decoded 64-byte signature (when
 /// decodable), `key_id`, and `receipt_id`.
-fn run_core(turn: &GovernedTurn) -> CoreVerdict {
+fn run_core(turn: &GovernedTurn, key: &ResolvedManifestKey) -> CoreVerdict {
     let parsed = match receipt::parse_strict(turn.wire.envelope_jcs_b64) {
         Ok(p) => p,
         // Bytes are not a valid canonical envelope — never present them as canonical
@@ -378,13 +455,42 @@ fn run_core(turn: &GovernedTurn) -> CoreVerdict {
         })
     };
 
-    let verified = match parsed.verify(&turn.resolved_key, turn.wire.signature_b64) {
+    let verified = match parsed.verify(key, turn.wire.signature_b64) {
         Ok(v) => v,
         Err(e) => return fail(e.to_string()),
     };
     match verified.bind(&turn.expected, turn.output) {
         Ok(b) => CoreVerdict::Bound(b),
         Err(e) => fail(e.to_string()),
+    }
+}
+
+/// Decoded evidence fields for a receipt, populated only when strict parse succeeds.
+#[derive(Default)]
+struct WireEvidence {
+    envelope_jcs: Option<Vec<u8>>,
+    signature: Option<Vec<u8>>,
+    key_id: Option<String>,
+    receipt_id: Option<String>,
+}
+
+/// Best-effort evidence for a receipt we will NOT verify (the fail-closed no-key
+/// path): if it parses strictly we keep the exact canonical envelope bytes, decoded
+/// signature, `key_id`, and `receipt_id`; otherwise only the raw wire (stored by the
+/// caller) survives. No verification is performed here.
+fn parse_for_evidence(wire: &ReceiptWire) -> WireEvidence {
+    match receipt::parse_strict(wire.envelope_jcs_b64) {
+        Ok(parsed) => {
+            let envelope_jcs = decode_envelope(wire.envelope_jcs_b64);
+            let receipt_id = envelope_jcs.as_deref().and_then(extract_receipt_id);
+            WireEvidence {
+                signature: decode_signature(wire.signature_b64),
+                envelope_jcs,
+                key_id: Some(parsed.key_id().to_string()),
+                receipt_id,
+            }
+        }
+        Err(_) => WireEvidence::default(),
     }
 }
 
@@ -762,7 +868,7 @@ mod tests {
     ) -> GovernedTurn<'a> {
         GovernedTurn {
             wire: ReceiptWire { envelope_jcs_b64: env, signature_b64: sig },
-            resolved_key: fx.key_for(trust),
+            resolved_key: Some(fx.key_for(trust)),
             expected: fx.expected(),
             output: OUTPUT,
             now_ms: now,
@@ -1234,6 +1340,95 @@ mod tests {
             .unwrap();
         assert!(consumed.is_none(), "commit-failure rollback must undo the nonce consume");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_verification_attempts"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
+    }
+
+    // ---- slice 3 foundation: fail-closed no-trusted-key path --------------
+
+    #[test]
+    fn no_trusted_key_is_blocked_no_message_records_evidence_and_consumes_nonce() {
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+
+        // An otherwise-perfect receipt, but NO trusted key is available (Wave 3a).
+        let mut t = turn(&fx, &env, &sig, now, TrustClass::Development);
+        t.resolved_key = None;
+        let out = verify_and_record_receipt(&conn, &t).unwrap();
+
+        let attempt_id = match out {
+            ReceiptOutcome::Blocked { attempt_id, error } => {
+                assert!(error.contains("no trusted key"), "reason: {error}");
+                attempt_id
+            }
+            other => panic!("expected Blocked (no key), got {other:?}"),
+        };
+        // No message rendered; evidence recorded (parse succeeded → envelope kept).
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen"), 0);
+        let (outcome, env_present, msg): (String, bool, Option<String>) = conn
+            .query_row(
+                "SELECT outcome, envelope_jcs IS NOT NULL, message_id
+                 FROM receipt_verification_attempts WHERE id = ?1",
+                [&attempt_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(outcome, "blocked");
+        assert!(env_present, "no-key blocked attempt still keeps parsed envelope evidence");
+        assert!(msg.is_none());
+        // The challenge is still consumed (one shot spent even fail-closed).
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-A'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_some());
+    }
+
+    #[test]
+    fn accepted_message_carries_the_receipt_projection() {
+        // S3: a message from an accepted turn projects receipt = its attempt outcome.
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        let conv_id = seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+        let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
+        assert!(matches!(out, ReceiptOutcome::DevelopmentUntrusted { .. }));
+
+        let msgs = crate::repo::chat::list_messages(&conn, &conv_id, None, None).unwrap();
+        let agent = msgs.iter().find(|m| m.role == "agent").expect("agent message");
+        assert_eq!(agent.receipt.as_deref(), Some("development_untrusted"));
+        // A plain (non-governed) user message has no receipt badge.
+        let user = crate::repo::chat::post_message(
+            &conn,
+            NewMessage { conversation_id: conv_id.clone(), role: "user".into(), author: "gev".into(), body: "hi".into() },
+        )
+        .unwrap();
+        assert_eq!(user.receipt, None);
+    }
+
+    #[test]
+    fn resolve_verify_and_record_with_no_trusted_manifest_blocks() {
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+
+        // The Wave 3a transport entry: resolve via NoTrustedManifest -> None -> Blocked.
+        let out = resolve_verify_and_record(
+            &conn,
+            &NoTrustedManifest,
+            ReceiptWire { envelope_jcs_b64: &env, signature_b64: &sig },
+            fx.expected(),
+            OUTPUT,
+            now,
+            FreshnessWindow::DEFAULT,
+        )
+        .unwrap();
+        assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "3a resolver must block: {out:?}");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
     }
 }
