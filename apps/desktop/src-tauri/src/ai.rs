@@ -1659,6 +1659,64 @@ mod tests {
         assert_ne!(governed_task_id(), governed_task_id());
     }
 
+    #[test]
+    fn governed_e2e_unsigned_bridge_result_blocks_persists_no_message_and_closes_nonce() {
+        // Desktop-side end-to-end for the strict-3a governed path: a completed but
+        // UNSIGNED bridge result (what the 3a sidecar returns) -> interpret_bridge_result
+        // -> verify via brops-core with NO trusted key -> Blocked, evidence recorded,
+        // NO agent message, and the one-time nonce terminally consumed.
+        use brops_core::receipt::{sha256_hex, Expected, IssuedRequest};
+        let conn = brops_core::db::open_in_memory().unwrap();
+        let conv = brops_core::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        let now_ms = 1_000_000u64;
+        let requested_at = now_ms.to_string();
+        let (sys_h, hist_h, gen_h) = (sha256_hex(b"sys"), sha256_hex(b"hist"), sha256_hex(b"gen"));
+        let issued = IssuedRequest {
+            workspace_id: "ws", install_id: "in", request_nonce: "nonce-e2e",
+            system_sha256: &sys_h, history_sha256: &hist_h,
+            generation_config_sha256: &gen_h, requested_at: &requested_at,
+        };
+        brops_core::receipt_store::issue_challenge(&conn, &conv.id, &issued, now_ms).unwrap();
+
+        // A completed, unsigned bridge-result (self-test / no-signer shape).
+        let doc = serde_json::json!({
+            "ok": true, "result": "governed reply", "error": null,
+            "receipt": {"task_id":"t","status":"completed","evidence":["e"],
+                        "envelope_jcs_b64": null, "signature_b64": null}
+        });
+        let reply = interpret_bridge_result(&doc).unwrap();
+        let output = reply.reply.clone().into_bytes();
+        let placeholder = "00".repeat(32);
+        let expected = Expected {
+            request: issued, supervisor_id: "sup", policy_id: "pol", policy_version: "1",
+            policy_bundle_sha256: &placeholder, containment_evidence_sha256: &placeholder,
+            allowed_executors: &[], allowed_builders: &[],
+        };
+        let turn = brops_core::receipt_store::GovernedTurn {
+            wire: brops_core::receipt_store::ReceiptWire {
+                envelope_jcs_b64: &reply.envelope_jcs_b64,
+                signature_b64: &reply.signature_b64,
+            },
+            expected,
+            output: &output,
+            now_ms,
+            freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
+        };
+        let outcome = brops_core::receipt_store::verify_and_record_receipt(
+            &conn,
+            &brops_core::receipt_store::NoTrustedManifest,
+            &turn,
+        )
+        .unwrap();
+        assert!(matches!(outcome, brops_core::receipt_store::ReceiptOutcome::Blocked { .. }));
+        let msgs: i64 = conn.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0)).unwrap();
+        assert_eq!(msgs, 0, "a Blocked governed turn persists NO agent message");
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-e2e'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_some(), "the one-time nonce is terminally consumed");
+    }
+
     // ---- Fail-closed provider policy (pure `resolve_provider`) --------------
     // These need NO env mutation: the whole policy is a pure fn over ProviderEnv.
 

@@ -1184,6 +1184,19 @@ mod tests {
     }
 
     #[test]
+    fn request_envelope_jcs_matches_python_cross_language_parity() {
+        // Cross-language parity (design §2, §10.1): Rust's canonical request-envelope
+        // hash MUST byte-equal Python's JCS (json.dumps sort_keys, compact separators)
+        // for the same envelope. `bridge/tests/test_jcs_parity.py` asserts the SAME
+        // hex from Python — if either side's canonicalization drifts, both break.
+        let hash = request_envelope_sha256(
+            "ws-1", "install-1", "nonce-xyz",
+            &"55".repeat(32), &"66".repeat(32), &"44".repeat(32), "1000",
+        );
+        assert_eq!(hash, "e6b54c0426e36d869d0451dbc68480c87f053bcea52f3fff52ba9cd10723f31b");
+    }
+
+    #[test]
     fn jcs_is_sorted_compact_and_minimally_escaped() {
         let mut m = BTreeMap::new();
         m.insert("b".to_string(), "x".to_string());
