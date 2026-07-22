@@ -762,11 +762,29 @@ pub enum StreamEvent {
     Delta { text: String },
     Done { message: Message },
     Error { message: String },
+    /// A governed turn was **Blocked** by desktop receipt verification (Wave 3a: every
+    /// governed turn, since no trusted key exists yet). It produced NO agent message —
+    /// the UI shows a transient turn-level notice, never a persisted reply. `reason` is
+    /// the machine verdict (e.g. "no trusted key manifest (Wave 3b)").
+    Blocked { reason: String },
     /// One-shot `stream_ask` finished: the full answer is held server-side under
     /// this opaque one-time id. The webview passes it to `save_ask_to_chat` to
     /// persist the pair — it never carries the agent body itself (P1-6).
     Ready { result_id: String },
 }
+
+// Wave 3a strict-3a identity/policy placeholders for the governed request envelope.
+// They ride into the durable challenge (so Wave 3b can bind them for real) but are
+// only COMPARED in the Trusted/Bound verification path — which never runs under
+// `NoTrustedManifest`, where every governed turn is Blocked before any binding check.
+const GOVERNED_WORKSPACE_ID: &str = "brops-local-workspace";
+const GOVERNED_INSTALL_ID: &str = "brops-local-install";
+const GOVERNED_SUPERVISOR_ID: &str = "brops-local-supervisor";
+const GOVERNED_POLICY_ID: &str = "brops.governed.v1";
+const GOVERNED_POLICY_VERSION: &str = "1";
+const GOVERNED_GENERATION_CONFIG: &str = "brops.governed-engine.sidecar.v1";
+const GOVERNED_PLACEHOLDER_HASH: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Streaming counterpart of `reply_in_conversation`: emits incremental `delta`
 /// events as the agent produces text, then a `done` event carrying the
@@ -799,6 +817,130 @@ pub async fn stream_reply(
         let _ = on_event.send(StreamEvent::Error { message: "nothing to reply to".into() });
         return Ok(());
     }
+
+    // --- Governed turn: buffered, DESKTOP-verified, never streamed (design §3, §7) ---
+    // The desktop issues a one-time nonce challenge, runs the turn behind the wall,
+    // then verifies the signed receipt via brops-core::receipt_store. In Wave 3a there
+    // is no trusted key, so every governed turn Blocks (a turn-level notice, NO agent
+    // message). The accepted path — which receipt_store persists itself (no double-post
+    // here) — is reachable only once Wave 3b provisions a trusted key.
+    if crate::ai::provider_is_governed().unwrap_or(false) {
+        let now_ms: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let nonce = brops_core::id();
+        let requested_at = now_ms.to_string();
+        let system_sha256 = brops_core::receipt::sha256_hex(system.as_bytes());
+        let history_blob: String = history
+            .iter()
+            .map(|m| format!("{}\u{0}{}\u{1}", m.role, m.content))
+            .collect();
+        let history_sha256 = brops_core::receipt::sha256_hex(history_blob.as_bytes());
+        let generation_config_sha256 =
+            brops_core::receipt::sha256_hex(GOVERNED_GENERATION_CONFIG.as_bytes());
+        let issued = brops_core::receipt::IssuedRequest {
+            workspace_id: GOVERNED_WORKSPACE_ID,
+            install_id: GOVERNED_INSTALL_ID,
+            request_nonce: &nonce,
+            system_sha256: &system_sha256,
+            history_sha256: &history_sha256,
+            generation_config_sha256: &generation_config_sha256,
+            requested_at: &requested_at,
+        };
+
+        // Issue the one-time challenge BEFORE running the turn.
+        {
+            let conn = match locked(&state) {
+                Ok(c) => c,
+                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+            };
+            if let Err(e) =
+                brops_core::receipt_store::issue_challenge(&conn, &conversation_id, &issued, now_ms)
+            {
+                let _ = on_event.send(StreamEvent::Error { message: e.to_string() });
+                return Ok(());
+            }
+        }
+
+        // Run the turn (buffered; no DB lock held across the async sidecar call).
+        let governed = crate::ai::governed_turn(&system, &history).await;
+        // A transport failure yields an EMPTY wire, which drives a Blocked verdict that
+        // CONSUMES the nonce in the same tx — the challenge is terminally closed and can
+        // never be reused (no dangling nonce after a provider failure).
+        let (env, sig, output): (String, String, Vec<u8>) = match &governed {
+            Ok(r) => (r.envelope_jcs_b64.clone(), r.signature_b64.clone(), r.reply.clone().into_bytes()),
+            Err(_) => (String::new(), String::new(), Vec::new()),
+        };
+        let expected = brops_core::receipt::Expected {
+            request: issued,
+            supervisor_id: GOVERNED_SUPERVISOR_ID,
+            policy_id: GOVERNED_POLICY_ID,
+            policy_version: GOVERNED_POLICY_VERSION,
+            policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
+            containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
+            allowed_executors: &[],
+            allowed_builders: &[],
+        };
+        let turn = brops_core::receipt_store::GovernedTurn {
+            wire: brops_core::receipt_store::ReceiptWire {
+                envelope_jcs_b64: &env,
+                signature_b64: &sig,
+            },
+            expected,
+            output: &output,
+            now_ms,
+            freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
+        };
+        let outcome = {
+            let conn = match locked(&state) {
+                Ok(c) => c,
+                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+            };
+            brops_core::receipt_store::verify_and_record_receipt(
+                &conn,
+                &brops_core::receipt_store::NoTrustedManifest,
+                &turn,
+            )
+        };
+        match outcome {
+            // Accepted (Wave 3b only): receipt_store ALREADY posted the agent message —
+            // do NOT double-post; just deliver it.
+            Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrusted { message_id, .. }) => {
+                let msg = {
+                    let conn = match locked(&state) {
+                        Ok(c) => c,
+                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+                    };
+                    repo::chat::list_messages(&conn, &conversation_id, None, None)
+                        .ok()
+                        .and_then(|ms| ms.into_iter().find(|m| m.id == message_id))
+                };
+                match msg {
+                    Some(message) => { let _ = on_event.send(StreamEvent::Done { message }); }
+                    None => {
+                        let _ = on_event.send(StreamEvent::Error {
+                            message: "verified governed message could not be read back".into(),
+                        });
+                    }
+                }
+            }
+            // Blocked (every Wave 3a governed turn): a turn-level notice, NO message.
+            Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => {
+                let reason = match governed {
+                    Err(transport) => transport,
+                    Ok(_) => error,
+                };
+                let _ = on_event.send(StreamEvent::Blocked { reason });
+            }
+            Err(e) => {
+                let _ = on_event.send(StreamEvent::Error { message: e.to_string() });
+            }
+        }
+        return Ok(());
+    }
+
+    // --- Ungoverned turn: streamed as before (UNCHANGED) ---
     let ch = on_event.clone();
     let result = crate::ai::generate_stream(&system, &history, move |delta| {
         let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });

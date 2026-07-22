@@ -81,6 +81,7 @@ export const hy: Record<DictKey, string> = {
   'chat.saveToChat': 'Պահել զրույցում',
   'chat.receiptVerified': 'Ստուգված',
   'chat.receiptDev': 'Dev / չվստահված',
+  'chat.governedBlocked': 'Governed պատասխանը արգելափակված է (չստուգված)',
 
   'projects.subtitle': 'Նպատակակենտրոն աշխատանք',
   'tasks.subtitle': 'Ապացույցներով գործողությունների համակարգ',

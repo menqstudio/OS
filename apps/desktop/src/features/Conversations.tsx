@@ -148,6 +148,9 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
           if (ev.type === 'delta') setStreamingText((prev) => prev + ev.text);
           else if (ev.type === 'done') setExtra((prev) => [...prev, ev.message]);
           else if (ev.type === 'error') { setReplyError(ev.message); failed = true; }
+          // Governed turn Blocked by desktop receipt verification: a transient
+          // turn-level notice, NO persisted agent message (Wave 3a Blocks every turn).
+          else if (ev.type === 'blocked') { setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`); failed = true; }
         }, who);
         if (failed) break; // don't replay the same provider error for every agent
       }

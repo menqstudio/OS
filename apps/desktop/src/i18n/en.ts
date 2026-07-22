@@ -79,6 +79,7 @@ export const en = {
   'chat.saveToChat': 'Save to chat',
   'chat.receiptVerified': 'Verified',
   'chat.receiptDev': 'Dev / untrusted',
+  'chat.governedBlocked': 'Governed reply blocked (unverified)',
 
   'projects.subtitle': 'Objective-centered work',
   'tasks.subtitle': 'Action system with evidence',

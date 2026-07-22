@@ -81,6 +81,7 @@ export const ru: Record<DictKey, string> = {
   'chat.saveToChat': 'Сохранить в чат',
   'chat.receiptVerified': 'Проверено',
   'chat.receiptDev': 'Dev / не доверенный',
+  'chat.governedBlocked': 'Управляемый ответ заблокирован (не проверен)',
 
   'projects.subtitle': 'Работа, ориентированная на цель',
   'tasks.subtitle': 'Система действий с доказательствами',

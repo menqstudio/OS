@@ -542,7 +542,37 @@ pub async fn generate(system: &str, messages: &[ChatMsg]) -> Result<String, Stri
         Provider::ClaudeCli { bin } => claude_cli(&bin, system, messages).await,
         Provider::Anthropic { key, model } => anthropic(&key, &model, system, messages).await,
         Provider::Ollama { model, url } => ollama(&url, &model, system, messages).await,
-        Provider::GovernedEngine { python, sidecar } => governed_engine(&python, &sidecar, system, messages).await,
+        // A governed turn is not a plain string completion: the desktop must verify
+        // its signed receipt. That runs through `governed_turn` (called by the command
+        // layer, which owns the DB for the nonce challenge + verification).
+        Provider::GovernedEngine { .. } => {
+            Err("governed turns must run through the verified governed_turn path".to_string())
+        }
+    }
+}
+
+/// Whether the resolved provider is the governed engine — so the command layer routes
+/// the turn through the verified [`governed_turn`] path instead of the streaming one.
+pub fn provider_is_governed() -> Result<bool, String> {
+    Ok(matches!(resolve()?, Provider::GovernedEngine { .. }))
+}
+
+/// Run one governed AI turn and return its raw materials for desktop verification
+/// (design §3; §7 sign-on-complete). The whole reply is **buffered — never streamed**,
+/// because nothing may render until the desktop verifies the signed receipt. This
+/// function only runs the sidecar and returns the reply + signed wire; the caller
+/// (command layer) issues the desktop nonce challenge and verifies via
+/// `brops-core::receipt_store`. Errors if the resolved provider is not the governed
+/// engine.
+pub async fn governed_turn(system: &str, messages: &[ChatMsg]) -> Result<GovernedReply, String> {
+    validate_input(system, messages)?;
+    let _permit = GenerationPermit::acquire()?;
+    let messages = trim_history(messages);
+    match resolve()? {
+        Provider::GovernedEngine { python, sidecar } => {
+            governed_engine(&python, &sidecar, system, messages).await
+        }
+        _ => Err("governed_turn requires the governed engine provider".to_string()),
     }
 }
 
@@ -571,12 +601,12 @@ pub async fn generate_stream<F: FnMut(&str)>(
             on_delta(&full);
             Ok(full)
         }
-        Provider::GovernedEngine { python, sidecar } => {
-            // The sidecar is request/response (not a token stream): run once, emit
-            // the whole verified reply as a single delta.
-            let full = governed_engine(&python, &sidecar, system, messages).await?;
-            on_delta(&full);
-            Ok(full)
+        Provider::GovernedEngine { .. } => {
+            // A governed turn is NOT streamed: the desktop must buffer the whole reply
+            // and verify its signed receipt before rendering anything. That path lives
+            // in the command layer (it owns the DB for the nonce challenge +
+            // verification) and calls `governed_turn`. Reaching here is a wiring error.
+            Err("governed turns must run through the verified governed_turn path".to_string())
         }
     }
 }
@@ -1152,32 +1182,51 @@ fn governed_task_id() -> String {
     format!("t-{nanos:x}-{n:x}")
 }
 
-/// Enforce the verified-receipt-mandatory invariant on a parsed bridge-result:
-/// return the reply ONLY when `ok == true` AND `receipt.verified == true`;
-/// otherwise fail closed with the engine's reason. Never returns a partial or
-/// unverified result — the same guarantee the Python adapter makes, re-checked on
-/// the desktop so an unverified turn is never rendered. (Pure fn — unit-testable.)
-fn interpret_bridge_result(doc: &serde_json::Value) -> Result<String, String> {
+/// The raw materials of a governed turn, for the DESKTOP to verify (design §3): the
+/// exact reply bytes plus the receipt's signed wire (`envelope_jcs_b64` +
+/// `signature_b64`). The desktop — not this layer, and never a bridge boolean —
+/// decides trust by verifying the Ed25519 signature via `brops-core::receipt_store`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GovernedReply {
+    pub reply: String,
+    pub envelope_jcs_b64: String,
+    pub signature_b64: String,
+}
+
+/// Parse a bridge-result into a [`GovernedReply`]. A completed run (`ok == true`)
+/// yields the reply + the receipt's signed wire (empty strings when the engine
+/// produced no signed receipt — the desktop then Blocks). A failure (`ok == false`)
+/// fails closed with the engine's reason. This layer makes NO trust decision — there
+/// is no `verified` boolean. (Pure fn — unit-testable.)
+fn interpret_bridge_result(doc: &serde_json::Value) -> Result<GovernedReply, String> {
     let ok = doc.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-    let verified = doc
-        .get("receipt")
-        .and_then(|r| r.get("verified"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if ok && verified {
-        doc.get("result")
-            .and_then(|r| r.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| "governed engine reported success but returned no result".to_string())
-    } else {
+    if !ok {
         let reason = doc
             .get("error")
             .and_then(|e| e.as_str())
             .filter(|s| !s.is_empty())
-            .unwrap_or("governed engine did not return a verified result");
-        Err(format!("governed engine fail-closed: {reason}"))
+            .unwrap_or("governed engine returned no result");
+        return Err(format!("governed engine fail-closed: {reason}"));
     }
+    let reply = doc
+        .get("result")
+        .and_then(|r| r.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "governed engine reported success but returned no result".to_string())?;
+    // The signed wire the desktop verifies; absent/null ⇒ empty ⇒ the desktop Blocks.
+    let wire = |field: &str| {
+        doc.get("receipt")
+            .and_then(|r| r.get(field))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    Ok(GovernedReply {
+        reply,
+        envelope_jcs_b64: wire("envelope_jcs_b64"),
+        signature_b64: wire("signature_b64"),
+    })
 }
 
 /// Governed-engine provider: shell out to the bridge sidecar, which runs the turn
@@ -1190,7 +1239,7 @@ async fn governed_engine(
     sidecar: &str,
     system: &str,
     messages: &[ChatMsg],
-) -> Result<String, String> {
+) -> Result<GovernedReply, String> {
     let request = governed_request(system, messages);
     let mut cmd = tokio::process::Command::new(python);
     cmd.arg(sidecar)
@@ -1555,30 +1604,41 @@ mod tests {
     }
 
     #[test]
-    fn governed_engine_accepts_only_verified_results() {
+    fn interpret_bridge_result_extracts_reply_and_signed_wire() {
         let good = serde_json::json!({
             "ok": true, "result": "hi there", "error": null,
-            "receipt": {"task_id": "t", "status": "completed", "evidence": ["e"], "verified": true}
+            "receipt": {"task_id": "t", "status": "completed", "evidence": ["e"],
+                        "envelope_jcs_b64": "env==", "signature_b64": "sig=="}
         });
-        assert_eq!(interpret_bridge_result(&good).unwrap(), "hi there");
+        let r = interpret_bridge_result(&good).unwrap();
+        assert_eq!(r.reply, "hi there");
+        assert_eq!(r.envelope_jcs_b64, "env==");
+        assert_eq!(r.signature_b64, "sig==");
     }
 
     #[test]
-    fn governed_engine_is_fail_closed_without_a_verified_receipt() {
-        // ok:true but receipt.verified:false — the result must NOT leak.
-        let unverified = serde_json::json!({
-            "ok": true, "result": "should-be-ignored", "error": null,
-            "receipt": {"task_id": "t", "status": "completed", "evidence": [], "verified": false}
-        });
-        assert!(interpret_bridge_result(&unverified).is_err());
+    fn interpret_bridge_result_is_fail_closed_and_a_verified_bool_never_bypasses() {
         // ok:false — engine error surfaced, no result.
         let denied = serde_json::json!({
             "ok": false, "result": null, "receipt": null, "error": "denied: not authorized"
         });
         assert!(interpret_bridge_result(&denied).unwrap_err().contains("denied"));
-        // receipt entirely absent — fail closed.
-        let no_receipt = serde_json::json!({"ok": true, "result": "x", "error": null});
-        assert!(interpret_bridge_result(&no_receipt).is_err());
+        // ok:true but empty result — fail closed.
+        let no_result = serde_json::json!({"ok": true, "result": "", "error": null,
+            "receipt": {"task_id":"t","status":"completed","evidence":["e"],
+                        "envelope_jcs_b64": null, "signature_b64": null}});
+        assert!(interpret_bridge_result(&no_result).is_err());
+        // A self-asserted `verified: true` must NOT bypass anything: this layer never
+        // reads it. With no signed wire, the reply is carried with EMPTY wire, and the
+        // desktop verifier Blocks it (empty envelope → parse failure → Blocked).
+        let claims_verified_but_unsigned = serde_json::json!({
+            "ok": true, "result": "should-be-blocked-by-the-desktop", "error": null,
+            "receipt": {"task_id":"t","status":"completed","evidence":["e"],
+                        "verified": true, "envelope_jcs_b64": null, "signature_b64": null}
+        });
+        let r = interpret_bridge_result(&claims_verified_but_unsigned).unwrap();
+        assert_eq!(r.envelope_jcs_b64, "", "no trust from a bare verified bool");
+        assert_eq!(r.signature_b64, "");
     }
 
     #[test]
