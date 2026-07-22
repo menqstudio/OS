@@ -44,9 +44,13 @@ def _receipt_of(outcome: Any) -> Receipt:
         "status": getattr(outcome, "status", None),
         "exit_code": getattr(outcome, "exit_code", None),
         "evidence": list(getattr(outcome, "evidence", ()) or ()),
-        # A receipt is a receipt only once it VERIFIES. Default false; set true by
-        # run_governed_turn ONLY after the injected verifier confirms the evidence.
-        "verified": False,
+        # The SIGNED receipt material the DESKTOP verifies (design §3): the exact
+        # canonical envelope bytes (base64url) and the Ed25519 signature over them.
+        # `None` when the engine produced no signed receipt (Wave 3a has no isolated
+        # signer) — the desktop then Blocks. There is NO self-asserted `verified`
+        # boolean; trust is the desktop's signature check, never a bridge claim.
+        "envelope_jcs_b64": getattr(outcome, "receipt_envelope_jcs_b64", None),
+        "signature_b64": getattr(outcome, "receipt_signature_b64", None),
     }
 
 
@@ -54,10 +58,16 @@ def run_governed_turn(
     request: Request,
     *,
     run_task: Callable[[Request], Any],
-    verify_receipt: Callable[[Any], bool],
     read_result: Callable[[Any], str],
 ) -> Result:
     """Run one desktop AI turn as a governed engine task.
+
+    The adapter holds no keys and makes NO trust decision: it packages the run's
+    SIGNED receipt material (`envelope_jcs_b64` + `signature_b64`) for the DESKTOP,
+    which is the final authority and cryptographically verifies the signature
+    (design §3). There is no `verify_receipt` callable and no self-asserted
+    `verified` boolean — an unsigned/missing receipt is simply carried through, and
+    the desktop Blocks it.
 
     Parameters
     ----------
@@ -66,13 +76,8 @@ def run_governed_turn(
     run_task : callable(request_dict) -> SupervisorResult
         The engine supervisor, already bound to the sidecar's operator
         provisioning (keys, registry, workspace binding, repo, builder command).
-    verify_receipt : callable(SupervisorResult) -> bool
-        Confirms the run's evidence is a genuine SIGNED/verified receipt. The
-        adapter holds no keys, so it delegates verification to the engine
-        (wired in the sidecar). A result is NEVER returned for an outcome that
-        does not verify — "receipt mandatory" means "verified receipt mandatory".
     read_result : callable(SupervisorResult) -> str
-        Reads the builder's captured output after a COMPLETED, verified run.
+        Reads the builder's captured output after a COMPLETED run.
 
     Returns
     -------
@@ -109,21 +114,10 @@ def run_governed_turn(
             "completed run produced no evidence — refusing an unreceipted result",
         )
 
-    # A receipt is only a receipt if it VERIFIES. The adapter holds no keys, so it
-    # delegates to the injected verifier (wired to the engine's evidence/signature
-    # verification in the sidecar). Fail-closed on a failed or erroring verification.
-    try:
-        verified = bool(verify_receipt(outcome))
-    except Exception as exc:  # noqa: BLE001 — fail closed
-        return _fail(receipt["task_id"] or task_id, f"receipt verification error: {exc}", receipt=receipt)
-    receipt["verified"] = verified
-    if not verified:
-        return _fail(
-            receipt["task_id"] or task_id,
-            "run evidence did not verify — refusing an unverified receipt",
-            receipt=receipt,
-        )
-
+    # NO trust decision here: the adapter carries the receipt's signed material
+    # (envelope_jcs_b64 + signature_b64, possibly None) and lets the DESKTOP verify
+    # the signature. An unsigned/missing receipt is not a bridge failure — the desktop
+    # Blocks it. (design §3 — desktop is the final authority; Python is transport.)
     try:
         result = read_result(outcome)
     except Exception as exc:  # noqa: BLE001

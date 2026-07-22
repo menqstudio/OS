@@ -1,7 +1,10 @@
-"""Unit tests for the bridge engine adapter (T-003, slice 1).
+"""Unit tests for the bridge engine adapter (T-003 + Wave 3a slice 3).
 
-The engine supervisor is dependency-injected (no real keys/leases/wall needed),
-so these tests pin the two invariants that matter: fail-closed, receipt-mandatory.
+The engine supervisor is dependency-injected (no real keys/leases/wall needed).
+Trust is now a DESKTOP signature check (design §3), so the adapter makes NO trust
+decision: it carries the run's SIGNED receipt material and is otherwise fail-closed.
+These tests pin: fail-closed, receipt-mandatory, signed-material-carried, and that
+there is NO self-asserted `verified` field the desktop could be fooled into trusting.
 """
 import sys
 import pathlib
@@ -13,10 +16,13 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import engine_adapter  # noqa: E402
 
 
-def _outcome(task_id="t1", status="completed", exit_code=0, evidence=("ev-1",), message=""):
+def _outcome(task_id="t1", status="completed", exit_code=0, evidence=("ev-1",),
+             message="", envelope_jcs_b64=None, signature_b64=None):
     return types.SimpleNamespace(
         task_id=task_id, status=status, exit_code=exit_code,
         evidence=tuple(evidence), message=message,
+        receipt_envelope_jcs_b64=envelope_jcs_b64,
+        receipt_signature_b64=signature_b64,
     )
 
 
@@ -24,37 +30,33 @@ VALID_REQUEST = {"task_id": "t1", "task_class": "standard-builder", "rationale":
 
 
 class RunGovernedTurnTests(unittest.TestCase):
-    def _run(self, *, run_task, verify_receipt=lambda o: True, read_result=lambda o: "hello", request=None):
+    def _run(self, *, run_task, read_result=lambda o: "hello", request=None):
         return engine_adapter.run_governed_turn(
             request if request is not None else dict(VALID_REQUEST),
-            run_task=run_task, verify_receipt=verify_receipt, read_result=read_result,
+            run_task=run_task, read_result=read_result,
         )
 
-    def test_completed_verified_returns_result_and_receipt(self):
-        res = self._run(run_task=lambda r: _outcome())
+    def test_completed_carries_signed_material_and_no_verified_field(self):
+        res = self._run(run_task=lambda r: _outcome(envelope_jcs_b64="env==", signature_b64="sig=="))
         self.assertTrue(res["ok"])
         self.assertEqual(res["result"], "hello")
-        self.assertIsNotNone(res["receipt"])
         self.assertEqual(res["receipt"]["status"], "completed")
         self.assertEqual(res["receipt"]["evidence"], ["ev-1"])
-        self.assertTrue(res["receipt"]["verified"])   # a result implies a VERIFIED receipt
+        # The signed material the DESKTOP verifies is carried through verbatim.
+        self.assertEqual(res["receipt"]["envelope_jcs_b64"], "env==")
+        self.assertEqual(res["receipt"]["signature_b64"], "sig==")
+        # There is NO self-asserted trust boolean — trust is a desktop signature check.
+        self.assertNotIn("verified", res["receipt"])
         self.assertIsNone(res["error"])
 
-    def test_unverified_receipt_is_fail_closed(self):
-        # Completed + evidence, but the evidence does NOT verify -> no result.
-        res = self._run(run_task=lambda r: _outcome(), verify_receipt=lambda o: False)
-        self.assertFalse(res["ok"])
-        self.assertIsNone(res["result"])              # <-- never a result without a verified receipt
-        self.assertFalse(res["receipt"]["verified"])
-        self.assertIn("did not verify", res["error"])
-
-    def test_verification_exception_is_fail_closed(self):
-        def boom(_o):
-            raise RuntimeError("verifier unreachable")
-        res = self._run(run_task=lambda r: _outcome(), verify_receipt=boom)
-        self.assertFalse(res["ok"])
-        self.assertIsNone(res["result"])
-        self.assertIn("verification error", res["error"])
+    def test_unsigned_completed_run_returns_ok_with_null_wire_no_trust_claim(self):
+        # Wave 3a has no isolated signer -> no signature. The bridge does NOT assert
+        # trust; it carries a null wire and the DESKTOP Blocks it (verified elsewhere).
+        res = self._run(run_task=lambda r: _outcome())  # envelope/signature default None
+        self.assertTrue(res["ok"])
+        self.assertIsNone(res["receipt"]["envelope_jcs_b64"])
+        self.assertIsNone(res["receipt"]["signature_b64"])
+        self.assertNotIn("verified", res["receipt"])
 
     def test_denied_run_is_fail_closed_no_result(self):
         res = self._run(run_task=lambda r: _outcome(status="denied", evidence=(), message="not authorized"))
@@ -107,13 +109,18 @@ class RunGovernedTurnTests(unittest.TestCase):
             lambda: self._run(run_task=lambda r: _outcome(status="denied", evidence=())),
             lambda: self._run(run_task=lambda r: _outcome(status="uncontained", evidence=("e",))),
             lambda: self._run(run_task=lambda r: _outcome(evidence=())),
-            lambda: self._run(run_task=lambda r: _outcome(), verify_receipt=lambda o: False),
             lambda: self._run(run_task=lambda r: (_ for _ in ()).throw(RuntimeError("x"))),
         ]
         for run in cases:
             res = run()
             self.assertFalse(res["ok"])
             self.assertIsNone(res["result"])
+
+    def test_no_verified_field_anywhere_even_on_failure(self):
+        # The removed authority must not resurface in any receipt the adapter emits.
+        res = self._run(run_task=lambda r: _outcome(status="denied", evidence=("e",)))
+        self.assertIsNotNone(res["receipt"])
+        self.assertNotIn("verified", res["receipt"])
 
 
 if __name__ == "__main__":

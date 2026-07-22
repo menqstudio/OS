@@ -4,33 +4,34 @@
 The desktop is a *conductor*: it never holds a lease, a key, or the engine. It
 writes ONE `bridge.task-request` JSON to this sidecar's **stdin** and reads ONE
 `bridge.result` JSON from **stdout**. The sidecar hosts
-`bridge.engine_adapter.run_governed_turn`, injecting the three engine-side
-callables (`run_task` / `verify_receipt` / `read_result`). The adapter enforces the
-product-wide invariant: **a result is returned ONLY with a receipt whose evidence
-VERIFIES (`verified=true`); every failure is fail-closed (`result=null`).**
+`bridge.engine_adapter.run_governed_turn`, injecting the engine-side callables
+(`run_task` / `read_result`). The adapter makes NO trust decision: it carries the
+run's SIGNED receipt material (`envelope_jcs_b64` + `signature_b64`) for the DESKTOP,
+which is the final authority and verifies the signature (design §3). Every failure
+is still fail-closed (`result=null`); there is no self-asserted `verified` boolean.
 
 Modes
 -----
 * ``--self-test`` (CLI flag ONLY — never an env var) — inject canned callables (no
-  engine, no provisioning). Proves the stdin->stdout->bridge-result path end to end,
-  including the ``verified=true`` happy path. Used by CI + unit tests.
-  **Never for real use** (it fabricates a passing verifier); the desktop never passes
-  it and strips any fake flag from the child env, so production cannot reach it.
+  engine, no provisioning). Proves the stdin->stdout->bridge-result path end to end.
+  The canned receipt carries NO signature, so the desktop Blocks it — the self-test
+  exercises transport, never a trust bypass. Used by CI + unit tests. **Never for
+  real use**; the desktop never passes it and strips any fake flag from the child
+  env, so production cannot reach it.
 * real (default) — wire the engine. Requires operator-provisioned state on disk
   (issuer key, trusted-key registry, signed workspace binding, builder command),
   supplied via env: ``BRO_KEYDIR``, ``BRO_REGISTRY_ROOT``, ``BRO_BINDING``,
   ``BRO_REPOSITORY_ROOT``, ``BRO_BUILDER_COMMAND``. Absent provisioning -> fail
   closed.
 
-SECURITY — the verify seam is deliberately NOT wired here yet
-------------------------------------------------------------
-Deciding that a `SupervisorResult` carries a *genuine signed, verified* receipt is
-security-critical (a wrong verifier would let an unverified turn masquerade as
-verified). That wiring (engine-delegated receipt verification + result extraction)
-is a **🛑 Architect-audited follow-up** per the roadmap's §G/§I. Until it lands,
-real mode **fails closed** rather than risk emitting an unverified result. The
-sidecar's contract, provisioning checks, and fail-closed plumbing are complete and
-tested now; only the audited verifier swap remains.
+SECURITY — the isolated signer is deliberately NOT wired here yet
+----------------------------------------------------------------
+Trust is now a DESKTOP signature check, so the sidecar no longer decides
+verification. But the engine's isolated trusted SIGNER (which mints the signed
+receipt the desktop verifies) is **Wave 3b** — until it lands, real mode has no
+signed receipt to return, so it **fails closed** rather than emit an unsigned one.
+The sidecar's contract, provisioning checks, and fail-closed plumbing are complete
+and tested now; only the audited signer swap remains.
 """
 from __future__ import annotations
 
@@ -84,10 +85,6 @@ def _fake_run_task(request: dict) -> _FakeOutcome:
     )
 
 
-def _fake_verify(outcome: Any) -> bool:  # noqa: ARG001 — canned pass, self-test only
-    return True
-
-
 def _fake_read(outcome: Any) -> str:
     return getattr(outcome, "_text", "")
 
@@ -97,24 +94,25 @@ def _fake_read(outcome: Any) -> str:
 # --------------------------------------------------------------------------- #
 def _real_callables(
     request: dict,
-) -> tuple[Callable[[dict], Any], Callable[[Any], bool], Callable[[Any], str]]:
+) -> tuple[Callable[[dict], Any], Callable[[Any], str]]:
     """Return the engine-bound callables, or raise RuntimeError with a fail-closed
     reason. Two gates, both fail-closed:
 
     1. provisioning — every `_PROVISION_ENV` var must be present (operator step);
-    2. verify seam — engine-delegated receipt verification is Architect-audited and
-       not yet wired, so real mode refuses to emit an unverified result.
+    2. signer seam — the engine's isolated trusted SIGNER (which mints the signed
+       receipt the desktop verifies) is Wave 3b; until it lands, real mode has no
+       signed receipt to return, so it fails closed rather than emit an unsigned one.
     """
     missing = [k for k in _PROVISION_ENV if not os.environ.get(k, "").strip()]
     if missing:
         raise RuntimeError(
             "governed engine not provisioned: missing " + ", ".join(missing)
         )
-    # Provisioning is present, but trusting a receipt as VERIFIED is the security
-    # crux (see module SECURITY note). Refuse rather than guess.
+    # Provisioning is present, but the isolated trusted signer that mints the signed
+    # receipt is Wave 3b (see module SECURITY note). No signer -> no signed receipt.
     raise RuntimeError(
-        "governed engine real-mode receipt verification is pending Architect audit "
-        "(Phase 1 slice 2 security seam); refusing to emit an unverified result"
+        "governed engine real-mode signed receipt is pending the Wave 3b isolated "
+        "signer; refusing to emit an unsigned result"
     )
 
 
@@ -150,15 +148,13 @@ def run(argv: list[str], stdin, stdout) -> int:
             result = run_governed_turn(
                 request,
                 run_task=_fake_run_task,
-                verify_receipt=_fake_verify,
                 read_result=_fake_read,
             )
         else:
-            run_task, verify_receipt, read_result = _real_callables(request)
+            run_task, read_result = _real_callables(request)
             result = run_governed_turn(
                 request,
                 run_task=run_task,
-                verify_receipt=verify_receipt,
                 read_result=read_result,
             )
     except Exception as exc:  # noqa: BLE001 — fail closed, never leak a partial result
