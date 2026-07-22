@@ -36,7 +36,7 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | Wave 3a — Receipt Protocol v1 **slice 2 (receipt storage & atomicity)** (T-015) — **DONE, MERGED** | `main` @ `9b214e5` | ✅ **Done** — PR #26, approved HEAD `64c2372`, squash merge `9b214e5`; zero-trust GREEN after YELLOW + 2 RED rounds; 7/7 CI. **Next: slice 3 (transport + UI, T-016) — not started** |
+| 🔨 Claude | Wave 3a — Receipt Protocol v1 **slice 3 (transport wiring + receipt trust UI)** (T-016) | `feat/wave-3a-transport-ui` (off `main` @ `cbb920b`) | 🔨 **In-Progress** — **scope: fail-closed-only strict 3a** (no key resolver ⇒ every governed turn Blocked; accept path test-proven). Building foundation seams (D1 `Option<key>` + resolver, `Message.receipt` projection, bridge receipt contract), then disjoint fan-out. Slice 2 (T-015) done+merged (`9b214e5`) |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 
