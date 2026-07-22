@@ -108,10 +108,11 @@ export interface Message {
   author: string;
   body: string;
   createdAt: string;
-  /** Governed-engine turns carry a verified signed receipt. 'verified' shows the
-   *  mint receipt badge; 'blocked' the danger badge; absent for ungoverned turns.
-   *  Populated by the backend once receipt-plumbing lands (Phase 1 slice 2+). */
-  receipt?: 'verified' | 'blocked' | null;
+  /** Server-derived receipt trust badge for a governed turn (read-only; never
+   *  webview-set). 'development_untrusted' → amber dev/untrusted badge; 'trusted_verified'
+   *  → green "Verified" badge (Wave 3b only); absent/null → no badge (ungoverned, or a
+   *  blocked governed turn — which produces no message, so it never shows here). */
+  receipt?: 'development_untrusted' | 'trusted_verified' | null;
 }
 
 export interface NewMessage {

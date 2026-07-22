@@ -8,6 +8,19 @@ import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Markdown } from '../components/markdown';
 import type { Conversation, Message } from '../domain/entities';
+import type { Tone } from '../domain/enums';
+
+/** Map a message's server-derived receipt outcome to its trust badge, or `null` for
+ *  no badge. `development_untrusted` → amber dev badge; `trusted_verified` → green
+ *  "Verified" (Wave 3b only); anything else → no badge. A blocked governed turn
+ *  produces no message, so it never reaches here. Pure — unit-tested. */
+export function receiptBadge(
+  receipt: Message['receipt'],
+): { tone: Tone; key: 'chat.receiptVerified' | 'chat.receiptDev' } | null {
+  if (receipt === 'trusted_verified') return { tone: 'success', key: 'chat.receiptVerified' };
+  if (receipt === 'development_untrusted') return { tone: 'warning', key: 'chat.receiptDev' };
+  return null;
+}
 
 type Kind = 'direct' | 'group';
 
@@ -173,24 +186,23 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
         )}
         {allMessages.length > 0 && (
           <div className="stack">
-            {allMessages.map((m) => (
-              <div key={m.id} className={`chat-msg chat-msg--${m.role === 'user' ? 'mine' : 'other'}`}>
-                <Avatar name={m.author} />
-                <div className="chat-bubble">
-                  <div className="chat-author">
-                    {m.author}
-                    {m.role === 'agent' && m.receipt && (
-                      <Badge tone={m.receipt === 'verified' ? 'success' : 'danger'}>
-                        {t(m.receipt === 'verified' ? 'chat.verified' : 'chat.blocked')}
-                      </Badge>
-                    )}
+            {allMessages.map((m) => {
+              const badge = m.role === 'agent' ? receiptBadge(m.receipt) : null;
+              return (
+                <div key={m.id} className={`chat-msg chat-msg--${m.role === 'user' ? 'mine' : 'other'}`}>
+                  <Avatar name={m.author} />
+                  <div className="chat-bubble">
+                    <div className="chat-author">
+                      {m.author}
+                      {badge && <Badge tone={badge.tone}>{t(badge.key)}</Badge>}
+                    </div>
+                    {m.role === 'user'
+                      ? <div className="md-plain">{m.body}</div>
+                      : <Markdown text={m.body} />}
                   </div>
-                  {m.role === 'user'
-                    ? <div className="md-plain">{m.body}</div>
-                    : <Markdown text={m.body} />}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
         {thinking && (

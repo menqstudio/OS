@@ -79,8 +79,8 @@ export const hy: Record<DictKey, string> = {
   'chat.deleteConversation': 'Ջնջել զրույցը',
   'chat.deleteConfirm': 'Այս զրույցը և բոլոր հաղորդագրությունները մշտապես կջնջվեն։',
   'chat.saveToChat': 'Պահել զրույցում',
-  'chat.verified': 'Ստուգված',
-  'chat.blocked': 'Արգելափակված',
+  'chat.receiptVerified': 'Ստուգված',
+  'chat.receiptDev': 'Dev / չվստահված',
 
   'projects.subtitle': 'Նպատակակենտրոն աշխատանք',
   'tasks.subtitle': 'Ապացույցներով գործողությունների համակարգ',
