@@ -38,7 +38,7 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 
 ## 3. Current work — exact pointers
 
-**Wave 3a slices 1 AND 2 are DONE and merged.** **Slice 3 (transport wiring + receipt trust UI, T-016) is IMPLEMENTED and in Review** on `feat/wave-3a-transport-ui` (PR #28, candidate `7ad70fe`) — the desktop now CALLS the merged verifier on a real governed turn (fail-closed strict 3a: every governed turn Blocks until Wave 3b provisions a key). **Not merged**; awaiting the Architect's zero-trust GREEN on `7ad70fe`, then Owner merge. core 87 · host 39 · bridge 28 py · frontend 6 tests green; clippy-clean; coordination + capabilities GREEN. After it merges, the next work is **Wave 3b** (isolated signer + provisioned manifest + production "Verified").
+**Wave 3a slices 1 AND 2 are DONE and merged.** **Slice 3 (transport wiring + receipt trust UI, T-016) is IMPLEMENTED and in Review** on `feat/wave-3a-transport-ui` (PR #28) — the desktop now CALLS the merged verifier on a real governed turn (fail-closed strict 3a: every governed turn Blocks until Wave 3b provisions a key). **Audit round 1 (RED, 5 blockers + hardening) RESOLVED — candidate `0573010`** (challenge context reaches the signer; exact output bytes; collision-safe history hash; fresh verify clock; real transport-failure evidence; fail-closed provider-resolve). **Not merged**; awaiting the Architect's re-audit on `0573010`, then Owner merge. core 88 · host 41 · bridge 28 py · frontend 6 tests green; clippy-clean; coordination + capabilities GREEN. After it merges, the next work is **Wave 3b** (isolated signer + provisioned manifest + production "Verified").
 
 | | |
 |---|---|
