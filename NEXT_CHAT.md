@@ -38,20 +38,19 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 
 ## 3. Current work — exact pointers
 
-**Wave 3a slice 1 is DONE and merged.** **Slice 2 is IMPLEMENTED and in Review** on `feat/wave-3a-receipt-storage` — **not merged**; it awaits the Architect's zero-trust GREEN on the pushed candidate HEAD, then Owner merge.
+**Wave 3a slices 1 AND 2 are DONE and merged.** The next task is **Wave 3a slice 3 — transport wiring + receipt trust UI** (not started).
 
 | | |
 |---|---|
-| **Current task** | **Wave 3a slice 2 — receipt storage & atomicity** (T-015, §7). **IMPLEMENTED, in Review.** Migration **0014** (`SCHEMA_VERSION` 13→14) + `brops-core::receipt_store`: atomic `BEGIN IMMEDIATE` **verify→consume→persist**, `issue_challenge`, durable one-time nonce, `receipt_id` global uniqueness, freshness/skew on both timestamps; `ReceiptOutcome` has **no `TrustedVerified` variant** (production⇒Blocked, so 3a never renders "Verified"). Architect **YELLOW + RED×2** fixes applied (capped pre-decode `wire_*` evidence; `message_id` real FK + message→attempt→ledger order + **`ON DELETE RESTRICT`** so a delete with governed evidence is refused; blocked *verdict* commits evidence while only a real SQLite failure `Err`+rollbacks; nonce consumed even when later blocked; two-timestamp freshness; `issue_challenge` takes one `IssuedRequest`; real threaded race test). See the **Audit** row for the full R1/R2 detail. |
-| **Branch** | **`feat/wave-3a-receipt-storage`** (cut off `main` @ `75a8d8f`; T-015 claimed). Push → PR → Architect zero-trust GREEN on the exact HEAD → Owner merge. |
-| **Audit** | **Round 1 RED** (4, on `24869eb`) + **Round 2 RED** (3+hardening, on `c266417`) — both **RESOLVED**. R1: challenge `request_sha256` NOT-NULL+hex compared in-tx; staged decoded evidence (envelope+signature+key_id+receipt_id) on bad-sig/bind-fail; nested-tx reject + explicit COMMIT-failure rollback. R2: (1) `issue_challenge(conn, conversation_id, &IssuedRequest, now_ms)` derives nonce+hash from one `IssuedRequest` (no split-authority seam); (2) `message_id` `ON DELETE RESTRICT` + full accepted⇔message CHECK → deleting a conversation/message with governed evidence is **refused** (output bytes stay re-hashable in `messages.body`); (3) concurrency test is now a **real threaded race** (tempfile + 2 threads + `Barrier`, one accept / one block / both attempts recorded); hardening: `rusqlite` `hooks` → dev-dependencies. Awaiting **re-audit on the new pushed HEAD**. |
-| **Verified** | `brops-core` = **83 tests** green (69 baseline + 14 slice-2 negative-matrix), clippy-clean; `tools/check_coordination.py` + `tools/check_capabilities.py` GREEN; app-workspace `cargo check` clean. |
-| **Just merged** | **T-014 / slice 1 — PR #24 MERGED.** Approved HEAD `c51031e`; squash **merge commit `6c920d0`** on `main`; final CI 7/7 GREEN; Architect **zero-trust GREEN**. |
+| **Next task** | **Wave 3a slice 3 — transport wiring + receipt trust UI** (design §3 verify-seam, §6 badges, §7 sign-on-complete). This is the layer that finally makes the desktop CALL the merged verifier on a real governed turn: issue the desktop nonce/challenge when a governed request is sent (`receipt_store::issue_challenge`), route the turn's returned receipt through `receipt_store::verify_and_record_receipt` (adapter → injected verifier, desktop = final authority), buffer governed output and sign-on-complete, persist via the atomic tx, and render **dev/blocked** trust badges in chat (never "Verified"). One real governed round-trip end-to-end. **Not started** — cut a fresh branch from `main` @ `9b214e5` and claim **T-016** in `TASKS.md`. |
+| **Branch** | none yet — cut e.g. `feat/wave-3a-transport-ui` from `main` @ `9b214e5`. |
+| **Just merged** | **T-015 / slice 2 — PR #26 MERGED.** Approved HEAD `64c2372`; squash **merge commit `9b214e5`** on `main`; final CI 7/7 GREEN; Architect **zero-trust GREEN** after a YELLOW + two RED rounds (full history in the T-015 row of `TASKS.md`). Shipped migration **0014** + `brops-core::receipt_store` (atomic `BEGIN IMMEDIATE` verify→consume→persist, durable one-time nonce, `receipt_id` global uniqueness, two-timestamp freshness/skew, `ON DELETE RESTRICT` evidence that survives deletion by refusing it, `ReceiptOutcome` with **no `TrustedVerified` variant**). |
+| **Baseline** | `brops-core` = **83 tests** green, clippy-clean; migrations through **0014**, `SCHEMA_VERSION = 14`; `tools/check_coordination.py` + `tools/check_capabilities.py` GREEN. |
 
-> **Slice 1 is GREEN + merged** (`git log main` → `6c920d0`, PR #24 MERGED). **Slice 2 is implemented on
-> its branch and in zero-trust review — do NOT present it as merged/Done until the Architect GREENs the
-> pushed HEAD and the Owner merges.** The next task AFTER slice 2 merges is slice 3 (transport wiring +
-> receipt UI). The isolated signer + manifest + production "Verified" remain **Wave 3b** (§10).
+> **Slices 1 + 2 are GREEN + merged** (`git log main` → `6c920d0`, `9b214e5`). **Slice 3 has not started.**
+> It is the transport/UI layer that wires the desktop to CALL the merged verifier on a real governed turn;
+> the isolated signer + manifest + production "Verified" remain **Wave 3b** (§10). Do not present slice 3
+> (or any Wave 3b item) as implemented.
 
 ## 4. Merged baseline (Done — verify via `git log main`)
 
@@ -61,11 +60,12 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 - **T-011 — durable approval + native confirmation**, PR #20/#21 (merge `7638a64`): migrations 0012 (approval provenance) + 0013 (execution claim). Restart-safe self-approval by durable `origin_principal`; native-only approval authority; nonce compare-and-consume; canonical `RunExecutionScope` digest; atomic pre-dispatch execution claim; crash-recovery reconciliation; strict attempt ownership; enforced single-instance file lock. Zero-trust GREEN through multiple rounds.
 - **Wave 3 Receipt Protocol v1 — design rev 4**, PR #23 (`35a6ab5`): Architect + Owner **GREEN**, merged. The design is the spec Wave 3a/3b implement.
 - **Wave 3a slice 1 — receipt protocol core** (T-014), PR #24 (approved HEAD `c51031e`, **merge commit `6c920d0`**): `brops-core::receipt` — the pure verifier core (§5). Zero-trust GREEN after three RED rounds (§6).
-- **Schema:** migrations through **0013**, `SCHEMA_VERSION = 13`. `brops-core` test suite: **69 tests** green.
+- **Wave 3a slice 2 — receipt storage & atomicity** (T-015), PR #26 (approved HEAD `64c2372`, **merge commit `9b214e5`**): migration **0014** + `brops-core::receipt_store` — the durable, atomic `verify→consume→persist` layer on the slice-1 core (`issue_challenge`, one-time nonce, `receipt_id` uniqueness, freshness/skew, `ON DELETE RESTRICT` evidence, tri-state outcome with no "Verified"). Zero-trust GREEN after a YELLOW + two RED rounds (see the T-015 row in `TASKS.md`).
+- **Schema:** migrations through **0014**, `SCHEMA_VERSION = 14`. `brops-core` test suite: **83 tests** green.
 
-## 5. Current slice — what IS implemented (PR #24)
+## 5. What IS implemented — slice 1 (PR #24) + slice 2 (PR #26)
 
-`brops-core::receipt` — the **pure, I/O-free protocol core** (design §2, §2.3, and the pure subset of §3, §6):
+**Slice 1 — `brops-core::receipt`** — the **pure, I/O-free protocol core** (design §2, §2.3, and the pure subset of §3, §6):
 
 - RFC 8785 (JCS) canonicalization for the receipt + canonical **request** envelope (§2, §2.2).
 - Wire format + strict decode (§2.3): base64url → exact bytes (**64 KiB cap**), UTF-8, **duplicate-key** + **unknown-field** + **non-string-value** rejection, fixed field set/types, lowercase-64-hex hashes, numeric timestamps, `decision` domain, and **`JCS(parsed) == decoded bytes`** (parser-differential defense).
@@ -73,9 +73,15 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 - The pure §3 binding subset: protocol, `decision == completed`, identity/policy/config **expected-value** matches, allowed executor/builder, output-bytes re-hash (§2.1). The request half is a single `IssuedRequest` from which `bind` **recomputes** `request_sha256` (never a separate supplied hash), so hash and per-field bindings can't diverge.
 - Trust-state gate (§6): `resolve_3a()` returns a **`Wave3aTrustState { DevelopmentUntrusted, Blocked }`** — a type with **no `TrustedVerified` variant**, so Wave 3a code cannot name a "Verified" state anywhere; `production ⇒ Blocked`.
 - **Verify-only in production**: the Ed25519 *signing* half is compiled solely under `#[cfg(test)]` — the desktop core is never a `sign(arbitrary_bytes)` oracle (design §1).
-- **69 core tests** (full negative-test matrix), clippy-clean.
 
-## 6. Zero-trust audit history — RESOLVED (slice 1 is GREEN + merged)
+**Slice 2 — `brops-core::receipt_store`** — the durable, atomic storage layer (design §3 stateful subset + §4), merged in PR #26:
+
+- **Migration 0014** (`SCHEMA_VERSION` 14): `receipt_challenges` (durable one-time nonce; `request_sha256` NOT-NULL+hex, compared in-tx to `expected.request.request_sha256()`), `receipt_verification_attempts` (capped raw `wire_*` + decoded envelope/signature + tri-state `outcome`; `message_id` real FK **`ON DELETE RESTRICT`** with the full accepted⇔message / blocked⇔no-message CHECK), `receipt_ids_seen` (accepted-only uniqueness ledger).
+- **`verify_and_record_receipt`** — one `BEGIN IMMEDIATE` **verify → consume → persist**: consume the desktop nonce, run the slice-1 pipeline, apply the stateful gates (`receipt_id` unseen, two-timestamp freshness/skew), then persist. A **blocked verdict commits its evidence**; only a real SQLite failure returns `Err` (with an explicit rollback); a **nested (non-owning) transaction is rejected**. `issue_challenge(conn, conversation_id, &IssuedRequest, now_ms)` derives nonce+hash from one source.
+- **`ReceiptOutcome`** has **no `TrustedVerified` variant** (production ⇒ `Blocked`); deleting a conversation/message with governed evidence is **refused** so the output stays re-verifiable. Verified by a **real two-thread `Barrier` race** (one accept + one block, both evidence rows).
+- **83 core tests** total (slice 1 + slice 2 negative-matrix), clippy-clean.
+
+## 6. Zero-trust audit history — RESOLVED (slices 1 + 2 are GREEN + merged)
 
 Three RED rounds were closed and independently re-audited; the final HEAD `c51031e` got
 **zero-trust GREEN** and merged (`6c920d0`). These are **resolved history, not current blockers.**
@@ -93,11 +99,11 @@ Three RED rounds were closed and independently re-audited; the final HEAD `c5103
 
 **Tests:** added the request-hash-recompute negative case; the mismatch matrix mutates every `IssuedRequest` component + policy/config field; trust-state tests use `Wave3aTrustState`. **69 core tests**, clippy-clean. **Final re-audit of `c51031e`: zero-trust GREEN → merged (`6c920d0`).**
 
-## 7. Wave 3a slice 2 (receipt storage & atomicity) — the plan it followed
+## 7. Wave 3a slice 2 (receipt storage & atomicity) — DONE, merged (the followed plan)
 
-> **Status: IMPLEMENTED and in Review** on `feat/wave-3a-receipt-storage` (PR #26), awaiting
-> re-audit on the pushed HEAD + Owner merge (see §3). The steps below are the design §3 (stateful
-> items) + §4 plan the implementation followed; they are retained as the spec, not open work.
+> **Status: DONE and merged** — PR #26, squash **merge commit `9b214e5`** on `main`, zero-trust GREEN.
+> The steps below are the design §3 (stateful items) + §4 plan the implementation followed; they are
+> retained as the spec/record. The next task is **slice 3** (transport + UI), see §3.
 
 1. **Claim it:** cut `feat/wave-3a-receipt-storage` from `main`; add a T-015 row in `TASKS.md` (In-Progress).
 2. **First concrete step — migration 0014** (`SCHEMA_VERSION` 13 → 14) in `apps/desktop/src-tauri/core/schema/0014_receipt_verification.sql`:
@@ -112,7 +118,7 @@ Three RED rounds were closed and independently re-audited; the final HEAD `c5103
 
 ```bash
 # Rust data core (⚠ run cargo from PowerShell, NOT the Bash tool — see CLAUDE.md §5)
-cargo test -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 69 tests
+cargo test -p brops-core --manifest-path apps/desktop/src-tauri/core/Cargo.toml   # 83 tests
 cargo clippy -p brops-core --all-targets                                          # clippy-clean
 
 # Coordination-docs gate (fails closed on stale coordination)
@@ -137,15 +143,12 @@ CI (`.github/workflows/ci.yml`) triggers on `push → main` and on `pull_request
 
 ## 10. Deferred — NOT yet implemented (do not claim as done)
 
-Slice 1 deliberately defers these to slice 2 / slice 3 / Wave 3b:
+Slices 1 + 2 are merged (durable nonce issue/consume, `receipt_id` uniqueness, wall-clock
+freshness/skew, migration 0014, atomic verify→consume→persist, `receipt_verification_attempts` — all
+**done**, §5). Still deferred to **slice 3** / **Wave 3b**:
 
-- durable nonce **issue/consume**; `receipt_id` global uniqueness
-- manifest **loading + signature verification**; key validity window / epoch / revocation; manifest **anti-rollback**
-- wall-clock **freshness/skew**
-- **migration 0014**; **atomic verify → consume → persist**; `receipt_verification_attempts`
-- desktop **transport wiring** (governed turn calls the verifier; sign-on-complete buffering); Python bridge changes; JCS **cross-language parity** test
-- frontend **receipt trust UI** (dev/blocked badges)
-- **Wave 3b** — isolated trusted signer + provisioned signed manifest + root anchor; only 3b enables production **`trusted_verified`** ("Verified")
+- **slice 3** — desktop **transport wiring** (the governed turn issues the challenge and calls the merged verifier; sign-on-complete buffering); Python bridge changes; JCS **cross-language parity** test; frontend **receipt trust UI** (dev/blocked badges); one real governed round-trip e2e
+- **Wave 3b** — manifest **loading + signature verification**; key validity window / epoch / revocation; manifest **anti-rollback**; isolated trusted signer + provisioned signed manifest + root anchor; only 3b enables production **`trusted_verified`** ("Verified")
 
 Beyond Wave 3: Wave 4 (supervisor hardening, engine P0-4), Wave 5 (trusted sidecar, P0-3), production CI/release (P0-6), then the product roadmap phases (`MASTER_EXECUTION_ROADMAP.md`).
 
