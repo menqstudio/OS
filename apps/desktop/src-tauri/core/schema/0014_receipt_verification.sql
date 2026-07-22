@@ -30,10 +30,15 @@ CREATE TABLE IF NOT EXISTS receipt_challenges (
     -- The conversation the governed turn belongs to; the accepted agent message is
     -- posted here. Scoped + cascades if the conversation is deleted.
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    -- The canonical request-envelope hash (design §2.2) issued with this challenge,
-    -- for defense-in-depth cross-check. The core `bind()` already recomputes and
-    -- binds request_sha256 from the IssuedRequest; this is belt-and-suspenders.
-    request_sha256  TEXT,
+    -- The canonical request-envelope hash (design §2.2) the desktop committed to when
+    -- it issued THIS challenge. NOT NULL + lowercase-64-hex. The atomic transaction
+    -- loads it and requires it to equal `expected.request.request_sha256()` before it
+    -- can accept, so the durable challenge is bound to the exact request envelope (not
+    -- merely to the nonce + conversation). Combined with the core `bind()` recompute
+    -- (receipt.request_sha256 == expected...), challenge, Expected, and receipt all
+    -- agree on the request envelope.
+    request_sha256  TEXT NOT NULL
+        CHECK (length(request_sha256) = 64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'),
     issued_at       TEXT NOT NULL,
     -- NULL = unspent. Set exactly once by the atomic consume
     -- (UPDATE ... WHERE nonce = ? AND consumed_at IS NULL); 0 rows affected => the
@@ -78,23 +83,23 @@ CREATE TABLE IF NOT EXISTS receipt_verification_attempts (
     -- challenge. No FK: evidence must survive a challenge-row cascade delete.
     nonce                 TEXT,
     -- The accepted agent message; NULL for blocked. Real FK -> an accepted attempt
-    -- can never point to a non-existent message. ON DELETE CASCADE (not SET NULL):
-    -- SQLite re-checks CHECK constraints on a SET-NULL cascade, which would violate
-    -- the accepted<->message invariant when a message is deleted; CASCADE deletes the
-    -- accepted evidence together with the message it attests to instead. Blocked
-    -- evidence (message_id NULL) is never touched by this cascade. The receipt_id
-    -- stays in receipt_ids_seen regardless, so deleting a message never re-opens
-    -- replay of its receipt.
-    message_id            TEXT REFERENCES messages(id) ON DELETE CASCADE,
+    -- can never point to a non-existent message at INSERT time. ON DELETE SET NULL
+    -- (NOT CASCADE): deleting a message/conversation must NOT erase the accepted
+    -- forensic evidence (audit round: CASCADE would delete the attempt with its
+    -- message). The attempt row and its exact envelope+signature+outcome are RETAINED;
+    -- only this convenience link nulls. receipt_ids_seen is untouched, so deleting a
+    -- message never re-opens replay of its receipt.
+    message_id            TEXT REFERENCES messages(id) ON DELETE SET NULL,
     verified_at           TEXT NOT NULL,
-    -- Schema-level enforcement of the accepted<->message / blocked<->no-message
-    -- invariants (design §4). Safe under the FK cascade above: message deletion
-    -- DELETEs the accepted row rather than UPDATE-ing message_id to NULL, so this
-    -- CHECK is never re-evaluated into a violation.
-    CHECK (
-        (outcome = 'blocked' AND message_id IS NULL)
-        OR (outcome IN ('trusted_verified', 'development_untrusted') AND message_id IS NOT NULL)
-    )
+    -- Security-critical invariant, enforced at the DB layer: a `blocked` attempt
+    -- NEVER links a message (so blocked content can never render). We deliberately do
+    -- NOT add an `accepted => message_id NOT NULL` CHECK: message_id is ON DELETE SET
+    -- NULL, so after a message deletion an accepted row legitimately carries a NULL
+    -- link while retaining its evidence, and SQLite re-checks CHECKs on that SET-NULL
+    -- cascade. The accepted<->message link is instead guaranteed at INSERT by the FK
+    -- + the message->attempt->ledger insert order (and a test). This weaker CHECK is
+    -- cascade-safe: SET-NULL on an accepted row keeps `outcome != 'blocked'` true.
+    CHECK (outcome != 'blocked' OR message_id IS NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_receipt_attempts_receipt_id

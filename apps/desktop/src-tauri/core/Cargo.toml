@@ -8,7 +8,10 @@ description = "BroPS local data core: SQLite schema, migrations, and repositorie
 path = "src/lib.rs"
 
 [dependencies]
-rusqlite = { version = "0.32", features = ["bundled"] }
+# `hooks` exposes the commit-hook binding used ONLY by a #[cfg(test)] test that
+# deterministically forces a COMMIT failure to prove the atomic transaction rolls
+# back explicitly (Wave 3a slice 2 audit). No new crates; verify-path unaffected.
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"

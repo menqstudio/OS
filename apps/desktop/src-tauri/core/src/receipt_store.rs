@@ -18,12 +18,14 @@
 //! - Wave 3a never yields `trusted_verified`: a production-class key resolves to
 //!   `Blocked` here, so [`ReceiptOutcome`] has no "Verified" variant.
 
-use crate::domain::CoreResult;
+use crate::domain::{CoreError, CoreResult};
 use crate::receipt::{
     self, Expected, ResolvedManifestKey, Wave3aTrustState, MAX_ENVELOPE_BYTES,
 };
 use crate::{id, NewMessage};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rusqlite::{Connection, OptionalExtension};
+use std::collections::BTreeMap;
 
 /// Max characters of raw wire stored as evidence, so the attempts table cannot be
 /// turned into a storage-DoS vector (Architect fix 1). These match the core protocol
@@ -139,14 +141,14 @@ fn record(tx: &Connection, turn: &GovernedTurn) -> CoreResult<ReceiptOutcome> {
     let want_nonce = turn.expected.request.request_nonce;
     let nonce_state = match load_challenge(tx, want_nonce)? {
         None => NonceState::Missing,
-        Some((_, Some(_consumed))) => NonceState::Replay,
-        Some((conversation_id, None)) => {
+        Some((_, Some(_consumed), _)) => NonceState::Replay,
+        Some((conversation_id, None, request_sha256)) => {
             let affected = tx.execute(
                 "UPDATE receipt_challenges SET consumed_at = ?1 WHERE nonce = ?2 AND consumed_at IS NULL",
                 rusqlite::params![stamp, want_nonce],
             )?;
             if affected == 1 {
-                NonceState::Consumed { conversation_id }
+                NonceState::Consumed { conversation_id, request_sha256 }
             } else {
                 // Lost a race to consume — treat as replay.
                 NonceState::Replay
@@ -159,26 +161,29 @@ fn record(tx: &Connection, turn: &GovernedTurn) -> CoreResult<ReceiptOutcome> {
 
     // --- Decide the verdict + gather evidence -----------------------------------
     match core {
-        // Failed before/at parse/verify/bind: limited evidence (wire always, key_id
-        // when we got past parse). No decoded bytes / receipt_id.
-        CoreVerdict::Failed { key_id, error } => {
+        // Failed at parse / verify / bind. Evidence is staged to what was validated
+        // (design §4 — attempts is an auditable/re-verifiable record): pre-parse
+        // failure => raw wire only; parsed + bad signature / verified + bind failure
+        // => exact canonical envelope bytes + decoded 64-byte signature (+ key_id /
+        // receipt_id when readable).
+        CoreVerdict::Failed(ev) => {
             let attempt_id = insert_attempt(
                 tx,
                 &AttemptRow {
                     wire_env: &wire_env,
                     wire_sig: &wire_sig,
-                    receipt_id: None,
-                    key_id: key_id.as_deref(),
-                    envelope_jcs: None,
-                    signature: None,
+                    receipt_id: ev.receipt_id.as_deref(),
+                    key_id: ev.key_id.as_deref(),
+                    envelope_jcs: ev.envelope_jcs.as_deref(),
+                    signature: ev.signature.as_deref(),
                     outcome: "blocked",
-                    error: Some(&error),
+                    error: Some(&ev.error),
                     nonce: Some(want_nonce),
                     message_id: None,
                     stamp: &stamp,
                 },
             )?;
-            Ok(ReceiptOutcome::Blocked { attempt_id, error })
+            Ok(ReceiptOutcome::Blocked { attempt_id, error: ev.error })
         }
 
         // Signature + all pure §3 bindings passed. Now the stateful gates decide
@@ -191,6 +196,12 @@ fn record(tx: &Connection, turn: &GovernedTurn) -> CoreResult<ReceiptOutcome> {
 
             let block_reason: Option<String> = if !nonce_state.is_consumed() {
                 Some(nonce_state.block_reason().to_string())
+            } else if nonce_state.issued_request_sha256()
+                != Some(turn.expected.request.request_sha256().as_str())
+            {
+                // The durable challenge was issued for a different request envelope
+                // than the Expected the desktop is verifying against (§2.2 binding).
+                Some("challenge request_sha256 does not match the expected request envelope".to_string())
             } else if matches!(bound.resolve_3a(), Wave3aTrustState::Blocked) {
                 // production trust_class ⇒ Blocked in Wave 3a (never "Verified").
                 Some("production trust_class is not renderable in Wave 3a".to_string())
@@ -305,26 +316,97 @@ fn record(tx: &Connection, turn: &GovernedTurn) -> CoreResult<ReceiptOutcome> {
 enum CoreVerdict {
     /// Signature + all pure §3 bindings passed.
     Bound(receipt::BoundReceipt),
-    /// Failed at parse / verify / bind. `key_id` is known only once parse succeeded.
-    Failed { key_id: Option<String>, error: String },
+    /// Failed at parse / verify / bind, with whatever evidence was validated.
+    Failed(FailedEvidence),
 }
 
-/// Run `parse_strict → verify → bind`, capturing `key_id` for evidence the moment it
-/// becomes readable (after parse, before `parsed` is consumed by `verify`).
+/// Evidence gathered for a blocked (non-`Bound`) attempt, staged by how far the core
+/// pipeline got before failing (design §4). `envelope_jcs` / `signature` /
+/// `receipt_id` are populated only once strict parse succeeded (so we present exact
+/// canonical bytes, never a re-serialization of garbage).
+struct FailedEvidence {
+    error: String,
+    envelope_jcs: Option<Vec<u8>>,
+    signature: Option<Vec<u8>>,
+    key_id: Option<String>,
+    receipt_id: Option<String>,
+}
+
+/// Run `parse_strict → verify → bind`. On failure, stage evidence: pre-parse failure
+/// carries only the error; a post-parse failure (bad signature or bind mismatch)
+/// carries the exact canonical envelope bytes, the decoded 64-byte signature (when
+/// decodable), `key_id`, and `receipt_id`.
 fn run_core(turn: &GovernedTurn) -> CoreVerdict {
     let parsed = match receipt::parse_strict(turn.wire.envelope_jcs_b64) {
         Ok(p) => p,
-        Err(e) => return CoreVerdict::Failed { key_id: None, error: e.to_string() },
+        // Bytes are not a valid canonical envelope — never present them as canonical
+        // evidence; the raw wire (stored by the caller) is the record of what arrived.
+        Err(e) => {
+            return CoreVerdict::Failed(FailedEvidence {
+                error: e.to_string(),
+                envelope_jcs: None,
+                signature: None,
+                key_id: None,
+                receipt_id: None,
+            })
+        }
     };
+    // parse_strict succeeded => the wire decodes to exactly these canonical bytes.
     let key_id = parsed.key_id().to_string();
+    let envelope_jcs = decode_envelope(turn.wire.envelope_jcs_b64);
+    let signature = decode_signature(turn.wire.signature_b64);
+    let receipt_id = envelope_jcs.as_deref().and_then(extract_receipt_id);
+    let fail = |error: String| {
+        CoreVerdict::Failed(FailedEvidence {
+            error,
+            envelope_jcs: envelope_jcs.clone(),
+            signature: signature.clone(),
+            key_id: Some(key_id.clone()),
+            receipt_id: receipt_id.clone(),
+        })
+    };
+
     let verified = match parsed.verify(&turn.resolved_key, turn.wire.signature_b64) {
         Ok(v) => v,
-        Err(e) => return CoreVerdict::Failed { key_id: Some(key_id), error: e.to_string() },
+        Err(e) => return fail(e.to_string()),
     };
     match verified.bind(&turn.expected, turn.output) {
         Ok(b) => CoreVerdict::Bound(b),
-        Err(e) => CoreVerdict::Failed { key_id: Some(key_id), error: e.to_string() },
+        Err(e) => fail(e.to_string()),
     }
+}
+
+/// Base64url-decode the envelope wire to its exact bytes, within the protocol caps.
+/// `None` when the input is over-cap or not valid base64url.
+fn decode_envelope(b64: &str) -> Option<Vec<u8>> {
+    if b64.len() > MAX_WIRE_ENVELOPE_B64 {
+        return None;
+    }
+    URL_SAFE_NO_PAD
+        .decode(b64.as_bytes())
+        .ok()
+        .filter(|b| b.len() <= MAX_ENVELOPE_BYTES)
+}
+
+/// Base64url-decode the signature wire; `Some` only when it is exactly 64 bytes.
+fn decode_signature(b64: &str) -> Option<Vec<u8>> {
+    if b64.len() > MAX_WIRE_SIGNATURE_B64 {
+        return None;
+    }
+    URL_SAFE_NO_PAD
+        .decode(b64.as_bytes())
+        .ok()
+        .filter(|b| b.len() == 64)
+}
+
+/// Read `receipt_id` from already-decoded canonical bytes for the evidence row. This
+/// is evidence-gathering only (no security decision rides on it — those already
+/// happened in `parse_strict`/`verify`/`bind`), so a lenient re-parse is acceptable.
+fn extract_receipt_id(bytes: &[u8]) -> Option<String> {
+    serde_json::from_slice::<BTreeMap<String, String>>(bytes)
+        .ok()?
+        .get("receipt_id")
+        .cloned()
 }
 
 /// The state of the desktop challenge for this turn.
@@ -333,8 +415,10 @@ enum NonceState {
     Missing,
     /// The challenge was already consumed (a replay), or a race lost the consume.
     Replay,
-    /// A valid, unconsumed challenge that we consumed now.
-    Consumed { conversation_id: String },
+    /// A valid, unconsumed challenge that we consumed now. Carries the conversation to
+    /// post the accepted message into and the `request_sha256` the challenge was
+    /// durably issued with (bound against the Expected before any accept).
+    Consumed { conversation_id: String, request_sha256: String },
 }
 
 impl NonceState {
@@ -343,7 +427,14 @@ impl NonceState {
     }
     fn conversation_id(&self) -> Option<String> {
         match self {
-            NonceState::Consumed { conversation_id } => Some(conversation_id.clone()),
+            NonceState::Consumed { conversation_id, .. } => Some(conversation_id.clone()),
+            _ => None,
+        }
+    }
+    /// The `request_sha256` this challenge was issued with (only when consumed).
+    fn issued_request_sha256(&self) -> Option<&str> {
+        match self {
+            NonceState::Consumed { request_sha256, .. } => Some(request_sha256),
             _ => None,
         }
     }
@@ -356,15 +447,21 @@ impl NonceState {
     }
 }
 
-/// `(conversation_id, consumed_at)` for the challenge, or `None` if unknown.
+/// `(conversation_id, consumed_at, request_sha256)` for the challenge, or `None`.
 fn load_challenge(
     conn: &Connection,
     nonce: &str,
-) -> CoreResult<Option<(String, Option<String>)>> {
+) -> CoreResult<Option<(String, Option<String>, String)>> {
     conn.query_row(
-        "SELECT conversation_id, consumed_at FROM receipt_challenges WHERE nonce = ?1",
+        "SELECT conversation_id, consumed_at, request_sha256 FROM receipt_challenges WHERE nonce = ?1",
         [nonce],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        },
     )
     .optional()
     .map_err(Into::into)
@@ -467,37 +564,52 @@ fn cap(s: &str, max_bytes: usize) -> String {
     s[..end].to_string()
 }
 
-/// Run `f` inside a `BEGIN IMMEDIATE` transaction (write lock taken up front, so two
-/// concurrent verifications cannot interleave a read-then-consume). Commits on `Ok`,
-/// rolls back on `Err`. If already inside a transaction, just runs `f` (composes).
+/// Run `f` inside a transaction this function **owns**: `BEGIN IMMEDIATE` (write lock
+/// taken up front, so two connections cannot interleave a read-then-consume), COMMIT
+/// on `Ok`, ROLLBACK on `Err`.
+///
+/// The public entry point MUST own its transaction — the atomicity contract (a blocked
+/// *verdict* commits its evidence; only a real failure rolls back) cannot hold if an
+/// outer transaction could later roll the work back. So a nested invocation (the
+/// connection is already in a transaction) is **rejected**, not silently degraded.
+///
+/// A COMMIT that itself fails (e.g. busy, or a commit hook vetoing) triggers an
+/// explicit ROLLBACK attempt and returns the error.
 fn in_immediate_tx<T>(
     conn: &Connection,
     f: impl FnOnce(&Connection) -> CoreResult<T>,
 ) -> CoreResult<T> {
-    if conn.is_autocommit() {
-        conn.execute_batch("BEGIN IMMEDIATE;")?;
-        match f(conn) {
-            Ok(v) => {
-                conn.execute_batch("COMMIT;")?;
-                Ok(v)
-            }
+    if !conn.is_autocommit() {
+        return Err(CoreError::Invalid {
+            field: "connection",
+            value: "verify_and_record_receipt must own its transaction; it was called \
+                    inside an open transaction"
+                .to_string(),
+        });
+    }
+    conn.execute_batch("BEGIN IMMEDIATE;")?;
+    match f(conn) {
+        Ok(v) => match conn.execute_batch("COMMIT;") {
+            Ok(()) => Ok(v),
             Err(e) => {
+                // COMMIT failed — make the rollback explicit rather than leaving the
+                // transaction state to chance, and surface the error.
                 let _ = conn.execute_batch("ROLLBACK;");
-                Err(e)
+                Err(e.into())
             }
+        },
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK;");
+            Err(e)
         }
-    } else {
-        f(conn)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::*; // brings the module's URL_SAFE_NO_PAD / Engine / BTreeMap into scope
     use crate::receipt::{sha256_hex, IssuedRequest, TrustClass};
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use ed25519_dalek::{Signer as _, SigningKey};
-    use std::collections::BTreeMap;
 
     const OUTPUT: &[u8] = b"the exact governed reply bytes";
 
@@ -770,6 +882,25 @@ mod tests {
             .unwrap();
         assert_eq!(outcome, "blocked");
         assert!(msg.is_none(), "blocked attempt must not link a message");
+        // Blocker 2: a bad-signature failure got past strict-parse, so the exact
+        // canonical envelope bytes + decoded signature + receipt_id are RETAINED as
+        // re-verifiable evidence (not discarded).
+        let (env_present, sig_present, rid): (bool, bool, Option<String>) = conn
+            .query_row(
+                "SELECT envelope_jcs IS NOT NULL, signature IS NOT NULL, receipt_id
+                 FROM receipt_verification_attempts WHERE id = ?1",
+                [&attempt_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert!(env_present, "decoded envelope evidence must be retained on bad-sig");
+        assert!(sig_present, "decoded signature evidence must be retained on bad-sig");
+        assert_eq!(rid.as_deref(), Some("receipt-1"));
+        // And the stored envelope bytes are exactly the signed canonical bytes.
+        let stored: Vec<u8> = conn
+            .query_row("SELECT envelope_jcs FROM receipt_verification_attempts WHERE id = ?1", [&attempt_id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stored, serde_json::to_vec(&fx.fields("receipt-1")).unwrap());
     }
 
     #[test]
@@ -902,5 +1033,141 @@ mod tests {
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_verification_attempts"), 0);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen"), 0);
+    }
+
+    // ---- blocker 1: challenge request_sha256 binding ----------------------
+
+    #[test]
+    fn challenge_request_sha256_mismatch_is_blocked() {
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        // Issue the challenge with a DIFFERENT (but valid lowercase-64-hex)
+        // request_sha256 than the Expected/receipt will compute — same nonce.
+        let conv = crate::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        let wrong_hash = "0".repeat(64);
+        assert_ne!(wrong_hash, fx.request_sha256());
+        issue_challenge(&conn, &fx.nonce, &conv.id, &wrong_hash, now).unwrap();
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+
+        // The receipt itself is perfectly valid, but the durable challenge was bound
+        // to a different request envelope -> blocked.
+        let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
+        assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "challenge request_sha256 mismatch must block: {out:?}");
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen"), 0, "no ledger insert on a blocked mismatch");
+        // The challenge is still consumed (one shot spent).
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-A'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_some());
+    }
+
+    // ---- blocker 3: accepted evidence survives deletion -------------------
+
+    #[test]
+    fn accepted_evidence_survives_conversation_deletion() {
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        let conv_id = seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+        let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
+        let attempt_id = match out {
+            ReceiptOutcome::DevelopmentUntrusted { attempt_id, .. } => attempt_id,
+            other => panic!("expected DevelopmentUntrusted, got {other:?}"),
+        };
+
+        // Delete the whole conversation (messages cascade-delete).
+        crate::repo::chat::delete_conversation(&conn, &conv_id).unwrap();
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0, "message was deleted");
+
+        // Evidence SURVIVES: the attempt row is intact, its exact envelope bytes +
+        // outcome are retained, and only the convenience message link is nulled.
+        let (outcome, env_present, msg): (String, bool, Option<String>) = conn
+            .query_row(
+                "SELECT outcome, envelope_jcs IS NOT NULL, message_id
+                 FROM receipt_verification_attempts WHERE id = ?1",
+                [&attempt_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(outcome, "development_untrusted");
+        assert!(env_present, "accepted envelope evidence must survive deletion");
+        assert!(msg.is_none(), "message link is SET NULL after deletion, evidence kept");
+        // Replay protection preserved: the receipt_id stays recorded.
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen WHERE receipt_id = 'receipt-1'"), 1);
+    }
+
+    // ---- blocker 4: transaction ownership --------------------------------
+
+    #[test]
+    fn nested_transaction_is_rejected() {
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+
+        // Open an OUTER transaction, then call the entry point: it must refuse rather
+        // than run without owning its own BEGIN IMMEDIATE (where an outer rollback
+        // could erase committed-by-contract evidence).
+        conn.execute_batch("BEGIN;").unwrap();
+        let res = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development));
+        assert!(res.is_err(), "a nested invocation must be rejected, not silently degraded");
+        conn.execute_batch("ROLLBACK;").unwrap();
+
+        // Nothing was written; the nonce is untouched.
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-A'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_none());
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_verification_attempts"), 0);
+    }
+
+    #[test]
+    fn two_connections_accept_the_same_nonce_only_once() {
+        // A shared-cache in-memory DB so two independent connections see one database.
+        let uri = "file:brops_recv_conc_nonce?mode=memory&cache=shared";
+        let c1 = crate::db::open(uri).unwrap();
+        let c2 = crate::db::open(uri).unwrap(); // keep both open so the shared DB lives
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        let conv = crate::repo::chat::create_conversation(&c1, "direct", "c").unwrap();
+        issue_challenge(&c1, &fx.nonce, &conv.id, &fx.request_sha256(), now).unwrap();
+
+        // c1 accepts.
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+        let o1 = verify_and_record_receipt(&c1, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
+        assert!(matches!(o1, ReceiptOutcome::DevelopmentUntrusted { .. }));
+
+        // c2 — a DIFFERENT connection — tries the SAME nonce (fresh receipt_id).
+        let (env2, sig2) = fx.wire_of(&fx.fields("receipt-2"));
+        let o2 = verify_and_record_receipt(&c2, &turn(&fx, &env2, &sig2, now, TrustClass::Development)).unwrap();
+        assert!(matches!(o2, ReceiptOutcome::Blocked { .. }), "the same nonce from another connection must block: {o2:?}");
+        assert_eq!(count(&c1, "SELECT COUNT(*) FROM messages"), 1, "exactly one accept across connections");
+    }
+
+    #[test]
+    fn commit_failure_rolls_back_and_errors() {
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+
+        // A commit hook returning true converts the COMMIT into a failure.
+        conn.commit_hook(Some(|| true));
+        let res = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development));
+        conn.commit_hook(None::<fn() -> bool>); // clear it before assertions/cleanup
+
+        assert!(res.is_err(), "a failed COMMIT must surface as Err, not a verdict");
+        // The explicit rollback left nothing behind.
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-A'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_none(), "commit-failure rollback must undo the nonce consume");
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_verification_attempts"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
     }
 }
