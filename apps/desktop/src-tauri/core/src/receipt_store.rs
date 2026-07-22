@@ -139,6 +139,48 @@ pub fn verify_and_record_receipt(
     in_immediate_tx(conn, |tx| record(tx, authority, turn))
 }
 
+/// Record a **pre-verification terminal block**: used when there is NO receipt to
+/// verify (e.g. the governed transport failed *after* the challenge was issued). In
+/// one transaction it consumes the one-time nonce and records a `blocked` attempt
+/// carrying the **real** `reason` — never a fabricated empty receipt — so the durable
+/// forensic record matches the user-facing reason, and the challenge can never be
+/// reused. It writes no `messages` row. Distinct from [`verify_and_record_receipt`],
+/// which is for an actual (possibly malformed) receipt.
+pub fn record_pre_verification_block(
+    conn: &Connection,
+    request_nonce: &str,
+    reason: &str,
+    now_ms: u64,
+) -> CoreResult<ReceiptOutcome> {
+    in_immediate_tx(conn, |tx| {
+        let stamp = now_ms.to_string();
+        // Spend the challenge if it exists and is unconsumed (one shot, even on failure).
+        if let Some((_, None, _)) = load_challenge(tx, request_nonce)? {
+            tx.execute(
+                "UPDATE receipt_challenges SET consumed_at = ?1 WHERE nonce = ?2 AND consumed_at IS NULL",
+                rusqlite::params![stamp, request_nonce],
+            )?;
+        }
+        let attempt_id = insert_attempt(
+            tx,
+            &AttemptRow {
+                wire_env: "",
+                wire_sig: "",
+                receipt_id: None,
+                key_id: None,
+                envelope_jcs: None,
+                signature: None,
+                outcome: "blocked",
+                error: Some(reason),
+                nonce: Some(request_nonce),
+                message_id: None,
+                stamp: &stamp,
+            },
+        )?;
+        Ok(ReceiptOutcome::Blocked { attempt_id, error: reason.to_string() })
+    })
+}
+
 /// The result of asking the trusted-key authority to resolve a receipt's `key_id`.
 /// It is deliberately **not** an `Option`: "no trusted key" is an *explicit*
 /// fail-closed verdict (`Unavailable`), so a caller can never silently treat a missing
@@ -1413,5 +1455,39 @@ mod tests {
             .unwrap();
         assert!(env_present, "unknown-key blocked attempt keeps decoded envelope evidence");
         assert_eq!(key_id.as_deref(), Some("key-dev-1"));
+    }
+
+    #[test]
+    fn pre_verification_block_records_the_real_reason_and_consumes_the_nonce() {
+        // Transport failed after the challenge issued: record the REAL reason (not a
+        // fabricated parse/base64 failure), consume the nonce, write no message.
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        seed_turn(&conn, &fx, now);
+        let out = record_pre_verification_block(&conn, "nonce-A", "governed engine sidecar timed out", now).unwrap();
+        let attempt_id = match out {
+            ReceiptOutcome::Blocked { attempt_id, error } => {
+                assert!(error.contains("timed out"), "reason: {error}");
+                attempt_id
+            }
+            other => panic!("expected Blocked, got {other:?}"),
+        };
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
+        let (outcome, err, env_null): (String, Option<String>, bool) = conn
+            .query_row(
+                "SELECT outcome, verification_error, envelope_jcs IS NULL
+                 FROM receipt_verification_attempts WHERE id = ?1",
+                [&attempt_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(outcome, "blocked");
+        assert_eq!(err.as_deref(), Some("governed engine sidecar timed out"));
+        assert!(env_null, "no fabricated receipt wire is stored");
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-A'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_some(), "the nonce is terminally consumed");
     }
 }

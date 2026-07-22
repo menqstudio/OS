@@ -26,7 +26,15 @@ def _outcome(task_id="t1", status="completed", exit_code=0, evidence=("ev-1",),
     )
 
 
-VALID_REQUEST = {"task_id": "t1", "task_class": "standard-builder", "rationale": "reply to user"}
+_REQUEST_ENVELOPE = {
+    "protocol": "brops.request.v1", "workspace_id": "ws", "install_id": "in",
+    "request_nonce": "nonce-1", "system_sha256": "aa" * 32, "history_sha256": "bb" * 32,
+    "generation_config_sha256": "cc" * 32, "requested_at": "1000",
+}
+VALID_REQUEST = {
+    "task_id": "t1", "task_class": "standard-builder", "rationale": "reply to user",
+    "request": dict(_REQUEST_ENVELOPE),
+}
 
 
 class RunGovernedTurnTests(unittest.TestCase):

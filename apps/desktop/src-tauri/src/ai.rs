@@ -564,13 +564,17 @@ pub fn provider_is_governed() -> Result<bool, String> {
 /// (command layer) issues the desktop nonce challenge and verifies via
 /// `brops-core::receipt_store`. Errors if the resolved provider is not the governed
 /// engine.
-pub async fn governed_turn(system: &str, messages: &[ChatMsg]) -> Result<GovernedReply, String> {
+pub async fn governed_turn(
+    system: &str,
+    messages: &[ChatMsg],
+    ctx: &GovernedRequestContext,
+) -> Result<GovernedReply, String> {
     validate_input(system, messages)?;
     let _permit = GenerationPermit::acquire()?;
     let messages = trim_history(messages);
     match resolve()? {
         Provider::GovernedEngine { python, sidecar } => {
-            governed_engine(&python, &sidecar, system, messages).await
+            governed_engine(&python, &sidecar, system, messages, ctx).await
         }
         _ => Err("governed_turn requires the governed engine provider".to_string()),
     }
@@ -1157,7 +1161,43 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
 /// Build a `bridge.task-request` JSON for one governed AI turn. Carries no lease,
 /// key, or environment (the sidecar/engine own those); the system prompt +
 /// conversation travel as `rationale`, JSON-escaped so content can't forge structure.
-fn governed_request(system: &str, messages: &[ChatMsg]) -> String {
+/// The canonical governed-request context (design §2.2), built ONCE by the command
+/// layer and used — from this single immutable source — for THREE things that must
+/// never drift: (1) issuing the durable one-time nonce challenge; (2) riding inside
+/// the bridge task-request so the supervisor/signer sees the exact nonce + request
+/// hashes and can mint a receipt that satisfies the desktop's `request_nonce` /
+/// `request_sha256` bindings; (3) the desktop's `Expected` request envelope at verify
+/// time. Owned strings so the three uses cannot diverge.
+#[derive(Debug, Clone)]
+pub struct GovernedRequestContext {
+    pub workspace_id: String,
+    pub install_id: String,
+    pub request_nonce: String,
+    pub system_sha256: String,
+    pub history_sha256: String,
+    pub generation_config_sha256: String,
+    pub requested_at: String,
+}
+
+/// Collision-safe canonical hash of the turn's history (design §2.2): sha256 over
+/// JCS `[{content, role}, ...]`. It hashes a JSON STRUCTURE, never a delimiter concat
+/// — so user content can never forge a different message array into the same bytes
+/// (which a `role\0content\1` join could). `serde_json` of a `Vec<BTreeMap>` emits
+/// sorted keys + compact separators, i.e. JCS for this ASCII-keyed string shape.
+pub fn governed_history_sha256(messages: &[ChatMsg]) -> String {
+    let arr: Vec<std::collections::BTreeMap<&str, &str>> = messages
+        .iter()
+        .map(|m| {
+            let mut o = std::collections::BTreeMap::new();
+            o.insert("role", m.role.as_str());
+            o.insert("content", m.content.as_str());
+            o
+        })
+        .collect();
+    brops_core::receipt::sha256_hex(&serde_json::to_vec(&arr).unwrap_or_default())
+}
+
+fn governed_request(system: &str, messages: &[ChatMsg], ctx: &GovernedRequestContext) -> String {
     let rationale = format!(
         "{system}\n\n{}\n\nReply to the latest user message.",
         transcript(messages)
@@ -1166,6 +1206,18 @@ fn governed_request(system: &str, messages: &[ChatMsg]) -> String {
         "task_id": governed_task_id(),
         "task_class": GOVERNED_TASK_CLASS,
         "rationale": rationale,
+        // The canonical request envelope (design §2.2) — the desktop nonce + request
+        // hashes travel to the supervisor/signer, so a Wave 3b receipt can bind them.
+        "request": {
+            "protocol": "brops.request.v1",
+            "workspace_id": ctx.workspace_id,
+            "install_id": ctx.install_id,
+            "request_nonce": ctx.request_nonce,
+            "system_sha256": ctx.system_sha256,
+            "history_sha256": ctx.history_sha256,
+            "generation_config_sha256": ctx.generation_config_sha256,
+            "requested_at": ctx.requested_at,
+        },
     })
     .to_string()
 }
@@ -1208,11 +1260,14 @@ fn interpret_bridge_result(doc: &serde_json::Value) -> Result<GovernedReply, Str
             .unwrap_or("governed engine returned no result");
         return Err(format!("governed engine fail-closed: {reason}"));
     }
+    // EXACT bytes (design §2.1): NO trim / normalization / transformation. The bytes
+    // hashed (output_sha256), rendered, and persisted must be literally identical, so
+    // the reply is taken verbatim; only a truly empty result is rejected.
     let reply = doc
         .get("result")
         .and_then(|r| r.as_str())
-        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
         .ok_or_else(|| "governed engine reported success but returned no result".to_string())?;
     // The signed wire the desktop verifies; absent/null ⇒ empty ⇒ the desktop Blocks.
     let wire = |field: &str| {
@@ -1239,8 +1294,9 @@ async fn governed_engine(
     sidecar: &str,
     system: &str,
     messages: &[ChatMsg],
+    ctx: &GovernedRequestContext,
 ) -> Result<GovernedReply, String> {
-    let request = governed_request(system, messages);
+    let request = governed_request(system, messages, ctx);
     let mut cmd = tokio::process::Command::new(python);
     cmd.arg(sidecar)
         // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
@@ -1617,6 +1673,19 @@ mod tests {
     }
 
     #[test]
+    fn interpret_bridge_result_preserves_the_exact_reply_bytes() {
+        // design §2.1: no trim / normalization. Leading/trailing spaces + newlines are
+        // part of the signed output and must survive verbatim.
+        let raw = "  hello \n world\t\n";
+        let doc = serde_json::json!({
+            "ok": true, "result": raw, "error": null,
+            "receipt": {"task_id":"t","status":"completed","evidence":["e"],
+                        "envelope_jcs_b64":"env==","signature_b64":"sig=="}
+        });
+        assert_eq!(interpret_bridge_result(&doc).unwrap().reply, raw);
+    }
+
+    #[test]
     fn interpret_bridge_result_is_fail_closed_and_a_verified_bool_never_bypasses() {
         // ok:false — engine error surfaced, no result.
         let denied = serde_json::json!({
@@ -1644,10 +1713,20 @@ mod tests {
     #[test]
     fn governed_request_is_a_valid_lease_free_task_request() {
         let msgs = vec![ChatMsg { role: "user".into(), content: "hello world".into() }];
-        let req: serde_json::Value = serde_json::from_str(&governed_request("sys", &msgs)).unwrap();
+        let ctx = GovernedRequestContext {
+            workspace_id: "ws".into(), install_id: "in".into(), request_nonce: "nonce-1".into(),
+            system_sha256: "aa".repeat(32), history_sha256: "bb".repeat(32),
+            generation_config_sha256: "cc".repeat(32), requested_at: "1000".into(),
+        };
+        let req: serde_json::Value = serde_json::from_str(&governed_request("sys", &msgs, &ctx)).unwrap();
         assert_eq!(req["task_class"], GOVERNED_TASK_CLASS);
         assert!(req["task_id"].as_str().unwrap().starts_with("t-"));
         assert!(req["rationale"].as_str().unwrap().contains("hello world"));
+        // The canonical request envelope reaches the supervisor/signer (P0-1): the
+        // desktop nonce + request hashes travel in the request.
+        assert_eq!(req["request"]["request_nonce"], "nonce-1");
+        assert_eq!(req["request"]["system_sha256"], "aa".repeat(32));
+        assert_eq!(req["request"]["protocol"], "brops.request.v1");
         // Carries NO lease / key / environment — the conductor never holds them.
         for forbidden in ["lease", "key", "env", "issuer", "protected_scope"] {
             assert!(req.get(forbidden).is_none(), "request must not carry {forbidden}");
@@ -1657,6 +1736,19 @@ mod tests {
     #[test]
     fn governed_task_ids_are_unique() {
         assert_ne!(governed_task_id(), governed_task_id());
+    }
+
+    #[test]
+    fn governed_history_hash_is_collision_safe() {
+        // Under a naive `role\0content\1` concat these two DIFFERENT histories collide
+        // (the single message's content embeds the delimiters). JCS keeps them distinct.
+        let a = vec![ChatMsg { role: "user".into(), content: "x\u{1}user\u{0}y".into() }];
+        let b = vec![
+            ChatMsg { role: "user".into(), content: "x".into() },
+            ChatMsg { role: "user".into(), content: "y".into() },
+        ];
+        assert_ne!(governed_history_sha256(&a), governed_history_sha256(&b));
+        assert!(brops_core::receipt::sha256_hex(b"") != governed_history_sha256(&a)); // sanity
     }
 
     #[test]

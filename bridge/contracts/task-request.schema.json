@@ -4,11 +4,28 @@
   "description": "What the desktop cockpit asks the engine sidecar to run as a governed task. Carries no lease, no key, no environment (mirrors bro_supervisor.TaskRequest).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["task_id", "task_class", "rationale"],
+  "required": ["task_id", "task_class", "rationale", "request"],
   "properties": {
     "task_id": { "type": "string", "minLength": 1 },
     "task_class": { "type": "string", "minLength": 1 },
     "rationale": { "type": "string", "minLength": 1 },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "workspace_id", "install_id", "request_nonce",
+                   "system_sha256", "history_sha256", "generation_config_sha256", "requested_at"],
+      "properties": {
+        "protocol": { "type": "string", "minLength": 1 },
+        "workspace_id": { "type": "string", "minLength": 1 },
+        "install_id": { "type": "string", "minLength": 1 },
+        "request_nonce": { "type": "string", "minLength": 1 },
+        "system_sha256": { "type": "string" },
+        "history_sha256": { "type": "string" },
+        "generation_config_sha256": { "type": "string" },
+        "requested_at": { "type": "string", "minLength": 1 }
+      },
+      "description": "Canonical request envelope (design §2.2): the desktop nonce + request hashes the supervisor/signer binds a receipt to, so a Wave 3b receipt can satisfy the desktop's request_nonce / request_sha256 bindings. Carries no lease/key/environment."
+    },
     "protected_scope": {
       "type": "array",
       "items": { "type": "string" },
