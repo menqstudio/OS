@@ -1,4 +1,4 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 5)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 6)
 
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. Builds on
 > the Architect-GREEN Wave 3b design ([`WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](./WAVE_3B_ISOLATED_SIGNER_DESIGN.md))
@@ -33,6 +33,8 @@
 > **rev 4** closes the design RED on rev 3: **P0-1** one non-contradictory executor lifecycle owner — the supervisor launches the recorder runner; the recorder starts the executor under a different UID via a **narrow privileged launcher** (setuid-only, holds no key) and owns the pidfd/cgroup + teardown, so signing-capability and setuid-capability live in separate principals (§1, §2); **P1-2** the evidence-head floor is keyed **per (install, task/chain)**, not per-install (§6); **P1-3** the supervisor request carries the **exact** system/history/generation_config bytes + challenge, and the supervisor recomputes the three hashes and refuses on mismatch before reserving/executing (§2.5); **P1-4** a normative `brops.governed-turn-containment.v1` artifact binds run/attempt/lease/runner + cgroup + the measured `contained`, hashed into a containment-confirmed evidence event and cross-bound by the verifier (§3.6).
 >
 > **rev 5** closes the design RED on rev 4: **P0-1** the request challenge is **desktop-native-host authenticated** (signed `brops.governed-turn-challenge.v1` over the FULL envelope incl. `workspace_id`/`install_id`, pinned key, replay-refused) — a compromised sidecar cannot forge a self-consistent request (§2.5); **P0-2** ONE ownership flow — the **recorder** publishes output+containment and signs the receipt over those handles; the **supervisor** imports its own artifacts, verifies by handle, and signs the record; store write is recorder/supervisor only (§4); **P1-3** large inputs use a **bounded authenticated ingress** to supervisor-owned staging (handles, not inline megabytes) (§2.5); **P1-4** schemas de-dangled — `receipt_id` added to the receipt, `runner_id` to the record, containment enum closed + `cgroup_id`/`process_group_id` explicit, §8 uses the dedicated `verify_governed_turn_receipt` (§3, §3.5, §3.6, §8); **P1-5** the head fields (`task_id`/`evidence_head_sequence`/`evidence_final_event_hash`) are authenticated through sign-request→attestation→sign-result→bridge→desktop verify tx (§6); **P1-6** the launcher TCB is frozen (fixed caller/target UID, digest-pinned root-owned executable, sanitized env/argv/FDs/groups, cap-drop) + Windows broker/restricted-token equivalent or Windows fail-closed until implemented (§2).
+>
+> **rev 6** closes the narrow design RED on rev 5: **P0-1** the challenge is signed by a **dedicated `desktop-challenge-authority` principal/SID** (not the same-login sidecar principal) that is NOT a `sign(payload)` oracle — it takes a protected pending-challenge ID, reads the bytes from its own authoritative store, signs once; sidecar key-read/ptrace/oracle denials are machine-proven; key rotation/revocation via `challenge_key_id` (§2.5); **P0-2** the signed challenge now binds `run_id`/`task_id` + context identities (the supervisor request is `{challenge}` alone), so an unused challenge cannot be redirected to another run (§2.5); **P0-3** the input-delivery order is fixed — import inputs BEFORE execution, launch the recorder with read-only input FD(s), executor gets exact bytes on a read-only FD (§2.5, §4); **P1-4** ONE frozen ingress mechanism — chunked authenticated upload to supervisor-owned staging with frozen chunk/artifact/total caps, sequence/dup rules, O_EXCL, hash/size verify, atomic commit, expiry/quota/crash (§2.5); **P1-5** the signed challenge is stored content-addressed and the record binds `challenge_handle`/`challenge_key_id`/`issued_at`/`expires_at`/`request_sha256` so the provider independently re-verifies it (§3, §5).
 
 ## 1. The governed AI turn IS a `bro_supervisor`-owned supervised execution
 
@@ -143,49 +145,89 @@ The desktop **never** supplies `execution_attempt_id`; and the request is **auth
 by the desktop native host** (P0-1) and carries large inputs as **handles**, not inline
 bytes (P1-3).
 
-**Desktop-authenticated challenge (P0-1).** The sidecar is a compromised-in-scope
-transport; a self-consistent recompute is NOT authenticity (a compromised sidecar could
-alter the bytes AND the hashes AND the nonce together). So the **desktop native host**
-(the Tauri host, the same principal that mints the Wave-3a one-time challenge) signs the
-challenge with a **native-host challenge key** whose public key the supervisor **pins**
-(operator-provisioned). The full canonical envelope — including `workspace_id` +
-`install_id`, which the locked `request_sha256` formula requires (§2.2 of the base design)
-— is what is signed:
+**Dedicated challenge-authority principal (P0-1) — NOT a payload oracle.** The sidecar is
+compromised-in-scope (same login user); a challenge key held as an ordinary file/process
+by that same principal is not a trust boundary. So the challenge is signed by a
+**dedicated `desktop-challenge-authority`** — its own OS **service principal / SID** (or a
+hardware/app-scoped key), distinct from the sidecar:
+- its private key lives in an owner-only store the sidecar identity is **denied read +
+  list** on; the sidecar **cannot `ptrace`/inspect** the authority process (distinct
+  UID/SID + `ptrace_scope`);
+- it is **not a `sign(payload)` oracle** — it accepts only a **protected pending-challenge
+  ID**, reads the challenge bytes from **its own authoritative pending-challenge store**
+  (which the desktop populated when it minted the Wave-3a one-time challenge), and **signs
+  once** (marking the pending id consumed); it never signs caller-supplied bytes;
+- **key id / rotation / revocation:** the challenge is signed under a `challenge_key_id`;
+  the supervisor pins the current + a rotation window of challenge public keys (operator
+  manifest, like the receipt keys, 3b-2), and a revoked `challenge_key_id` is refused;
+- the sidecar's key-read/list, `ptrace`, and no-oracle denials are **machine-proven** in
+  the Linux `engine-isolation` job.
+
+**Signed challenge binds the FULL context incl. run/task (P0-2).** A challenge missing
+`run_id`/`task_id` could be redirected to a different run on first use. The signed payload
+therefore includes the run + record context identities — no caller-supplied unsigned
+identity ever reaches the terminal record:
 
 ```jsonc
-// brops.governed-turn-challenge.v1 (signed by the desktop native-host challenge key)
+// brops.governed-turn-challenge.v1 (signed by the desktop-challenge-authority)
 { "payload": {
     "protocol": "brops.request.v1",
-    "workspace_id": "…", "install_id": "…", "request_nonce": "…",
+    "challenge_key_id": "<string>",
+    "run_id": "<string>", "task_id": "<string>",
+    "workspace_id": "…", "install_id": "…", "supervisor_id": "…",
+    "request_nonce": "…",
     "system_sha256": "<64hex>", "history_sha256": "<64hex>",
-    "generation_config_sha256": "<64hex>", "requested_at": "<ms>" },
-  "sig": "<b64url Ed25519 over JCS(payload), native-host challenge key>" }
+    "generation_config_sha256": "<64hex>", "requested_at": "<ms>",
+    "issued_at": "<ms>", "expires_at": "<ms>" },
+  "sig": "<b64url Ed25519 over JCS(payload), challenge key>" }
 ```
 
-**Bounded ingress (P1-3).** The large inputs (`system`, `history`, `generation_config`)
-are NOT inlined — they exceed the 256 KiB IPC frame the base design locks (history alone
-may reach 8 MiB). The desktop **uploads** them to a **supervisor-owned staging store**
-over a **bounded, authenticated ingress** (chunked authenticated upload / sealed
-FD-handle / supervisor-owned import) — never a single unbounded JSON. Each upload is
-content-addressed; the staging handle IS the input's sha256 (`system_sha256`, etc.). The
-supervisor-service request frame is small: `{run_id, challenge}` (the challenge's
-`*_sha256` fields ARE the staging handles).
+The supervisor-service request is `{challenge}` alone — `run_id`/`task_id` come from INSIDE
+the signature, not a bare sidecar field.
 
-**Flow (P0-1, P1-3, P1-5) — verify → import → recompute → reserve → execute:**
-1. the supervisor **verifies the challenge signature** against the pinned native-host key,
-   and **refuses a replayed/expired `request_nonce`** (checked against a durable one-time
-   ledger) — **before** any attempt reservation;
-2. it reads the three inputs from staging **by handle**, confirming `sha256(bytes) ==
-   handle`, and **recomputes the FULL `request_sha256`** over the complete canonical
-   envelope (`protocol, workspace_id, install_id, request_nonce, system_sha256,
-   history_sha256, generation_config_sha256, requested_at`), refusing on any mismatch;
-3. it **atomically reserves/generates** `execution_attempt_id` (durable, one-time — a
-   `run_id` cannot yield two live racing attempts);
-4. the executor runs on the **verified exact bytes**; the attempt id + the verified
-   request hashes are **bound into** the signed governed-turn-record + the execution
-   receipt;
-5. the caller **cannot choose an arbitrary pre-existing attempt** — the supervisor owns
-   the attempt namespace and returns `{execution_attempt_id, governed-result}`.
+**Bounded ingress — ONE frozen mechanism (P1-4).** Linux production uses a **chunked
+authenticated upload to the supervisor-owned staging store** (Windows real-mode is
+fail-closed until its broker lands, §2). Frozen parameters:
+- each upload chunk is a length-prefixed frame **≤ 256 KiB** (the base IPC cap); per
+  artifact **≤ 8 MiB**; total per request **≤ 10 MiB** (system ≤256 KiB + history ≤8 MiB +
+  generation_config ≤64 KiB, matching the Wave-3a request ceilings);
+- chunks carry a **strictly-increasing sequence**; a duplicate or out-of-order sequence
+  **aborts** the upload (fail-closed); the upload is **bound to the signed challenge**
+  (`request_nonce` + `challenge_key_id`) and a per-session id — a chunk for another
+  session/challenge is refused;
+- the supervisor writes to a temp file via **`O_EXCL`**, streaming with the size cap;
+  on the final chunk it **verifies size + sha256**, and **atomically commits** under the
+  digest name (create-if-absent; an existing identical digest is idempotent success);
+- the digest is the input's `*_sha256` handle; an incomplete upload leaves only the temp
+  file, swept on **expiry** (`expires_at`) or crash; a per-install **quota** bounds staging
+  disk; an upload whose committed handle does not match the signed challenge's `*_sha256`
+  is refused.
+
+The staging store is supervisor-owned (0700); the sidecar/executor have no read there.
+
+**Flow (P0-1..P0-3, P1-3, P1-5) — the frozen order (see §4 for the full sign/publish order):**
+1. **Verify the signed challenge** against the pinned `challenge_key_id` (not revoked);
+   refuse an expired challenge (`now > expires_at`) or a replayed/consumed `request_nonce`
+   (durable one-time ledger) — **before** any attempt reservation. `run_id`/`task_id` +
+   all context identities are taken from INSIDE the signature.
+2. **Import the input artifacts BEFORE execution** — read `system`/`history`/
+   `generation_config` from staging **by handle** (confirming `sha256(bytes) == handle`),
+   publish them into the protected store, and **recompute the FULL `request_sha256`** over
+   the complete canonical envelope (`protocol, workspace_id, install_id, request_nonce,
+   system_sha256, history_sha256, generation_config_sha256, requested_at`); refuse on any
+   mismatch.
+3. **Reserve the attempt + issue the lease** — atomically reserve/generate a one-time
+   `execution_attempt_id` (a `run_id` cannot yield two live racing attempts) and
+   `issue_lease` for it.
+4. **Launch the recorder with the immutable input handles + read-only input FD(s)**; the
+   recorder's launcher (§2) preserves ONLY the fixed input FD(s) + the output FD, so the
+   **executor receives the exact verified bytes** on a read-only input FD and returns its
+   exact output on the output FD — the executor never reads the store or the keys.
+5. **Recorder publishes output + containment and signs** the receipt/evidence over those
+   handles; **supervisor verifies by handle and signs** the terminal record (§4). The
+   attempt id + verified request hashes + the challenge context are bound INTO the signed
+   record; a caller cannot choose an arbitrary pre-existing attempt. The supervisor returns
+   `{execution_attempt_id, governed-result}`.
 
 ## 3. `brops.governed-turn-record.v1` — the ONLY signing authority (exact signed schema)
 
@@ -207,6 +249,14 @@ to the protected state dir as `<run_id>__<execution_attempt_id>.json`.
     "request_nonce": "<string>",
     "system_sha256": "<64hex>", "history_sha256": "<64hex>",
     "generation_config_sha256": "<64hex>", "requested_at": "<ms>",
+    "request_sha256": "<64hex>",           // == sha256(JCS(canonical request envelope))
+    // desktop-authenticated challenge binding (P1-5): so LiveRunStateProvider can
+    // INDEPENDENTLY re-verify the request fields came from a signed desktop challenge —
+    // it fetches the signed challenge doc by handle, verifies its signature under
+    // challenge_key_id (pinned), and cross-checks the envelope + request_sha256.
+    "challenge_handle": "<64hex>",         // content-addressed store handle of {payload,sig}
+    "challenge_key_id": "<string>",
+    "challenge_issued_at": "<ms>", "challenge_expires_at": "<ms>",
     // output binding (the exact reply bytes; equals the receipt's transcript/stdout hash)
     "output_sha256": "<64hex>",
     // policy binding
@@ -302,19 +352,22 @@ Ownership is split by principal and the publication order is fixed so that whoev
 an artifact is whoever PRODUCED + published its bytes (nobody signs handles they did not
 publish):
 
-1. **Recorder captures + publishes what IT owns.** The recorder reads the executor's exact
-   reply bytes (binary, §2) and measures `contained` at teardown; it **atomically publishes
-   the `output` bytes and the `brops.governed-turn-containment.v1` artifact** (§3.6) to the
-   protected content-addressed store (§4.0 atomic publish) — obtaining `output_handle` +
-   `containment_evidence_sha256`.
-2. **Recorder signs over those handles.** It signs the
+1. **Supervisor imports the INPUTS first (before execution).** After verifying the signed
+   challenge (§2.5), from staging it **atomically publishes** `system`/`history`/
+   `generation_config` (+ the `policy_bundle` it holds) into the protected store — the
+   inputs exist as content-addressed handles *before* anything runs. The supervisor never
+   publishes output/containment (the recorder owns those).
+2. **Reserve attempt + issue lease**, then **launch the recorder** handing it the immutable
+   input handles + **read-only input FD(s)** (via the launcher, §2), so the executor
+   receives the exact verified bytes on a read-only FD and returns output on the output FD
+   (it reads neither the store nor the keys).
+3. **Recorder captures + publishes what IT owns + signs over those handles.** The recorder
+   reads the executor's exact reply bytes (binary, §2), measures `contained` at teardown,
+   **atomically publishes** the `output` bytes + the `brops.governed-turn-containment.v1`
+   artifact (§3.6) → `output_handle` + `containment_evidence_sha256`, and signs the
    `brops.governed-turn-execution-receipt.v1` (§3.5, over `output_handle`) + the
-   containment-confirmed evidence event + head (evidence-recorder key) — so the receipt's
-   `output_handle` refers to bytes the recorder itself published (no forward reference).
-3. **Supervisor imports what IT owns.** From the authenticated request staging (§2.5) the
-   supervisor **atomically publishes** the `system`/`history`/`generation_config` and the
-   `policy_bundle` it holds into the protected store (it re-verified their hashes in §2.5).
-   The supervisor never publishes the output/containment (the recorder owns those).
+   containment-confirmed evidence event + head (evidence-recorder key) — so every handle it
+   signs refers to bytes it itself published (no forward reference).
 4. **Supervisor verifies the recorder's chain by handle.** `verify_artifact` the lease;
    `verify_governed_turn_receipt` (§3.5 — reads `output` from the store by handle,
    re-hashes, checks exit 0 + `contained` + run/attempt/lease); `load_head` +
@@ -322,7 +375,7 @@ publish):
    record.
 5. **Supervisor constructs + signs the terminal record** with the **dedicated
    governed-turn-recorder** key (§8), binding every handle/id/hash from the VERIFIED
-   artifacts (never a caller input).
+   artifacts + the signed challenge (§5) — never a caller input.
 6. **Atomic write, idempotent create-if-absent (P1-4):** temp file in the state dir →
    `fsync` → **`os.link` / `O_CREAT|O_EXCL`** into `<run_id>__<execution_attempt_id>.json`
    (create-if-absent, never a clobbering rename). On `EEXIST`: read + **byte-compare**;
@@ -333,9 +386,10 @@ containment) and the **supervisor** (its imported artifacts); the **executor** a
 **sidecar** have **no write** (and no read of keys). Both service principals are in the
 shared store group (as 3b-1A), but the executor/sidecar principals are not.
 
-**Ordering guarantees:** every artifact's bytes exist in the store before anything
-references them; each signer signed only handles it published (1→2 recorder, 3→5
-supervisor); the record is signed before it is visible (5 before 6); a crash before step 6
+**Ordering guarantees:** the INPUTS exist in the store before execution (step 1 before
+step 2), so the executor runs on already-published verified bytes; each signer signs only
+handles it published (recorder step 3; supervisor its inputs in step 1 + the record in
+step 5); the record is signed before it is visible (5 before 6); a crash before step 6
 leaves **no** record (the turn is unattestable ⇒ the desktop Blocks); a crash after leaves
 a complete, signed, re-verifiable record. Create-if-absent + byte-compare makes a re-run
 idempotent and a divergent overwrite impossible.
@@ -347,7 +401,7 @@ idempotent and a divergent overwrite impossible.
 
 | Field | Bound to |
 |---|---|
-| `request_nonce`, `system_sha256`, `history_sha256`, `generation_config_sha256`, `requested_at` | the desktop-issued canonical request envelope (the challenge); the signer recomputes `request_sha256` from these |
+| `request_nonce`, `system_sha256`, `history_sha256`, `generation_config_sha256`, `requested_at`, `request_sha256` | independently re-verified: fetch the signed challenge by `challenge_handle`, verify its `sig` under the pinned `challenge_key_id` (§2.5), confirm `now` is within `challenge_issued_at`/`challenge_expires_at`, and that its `run_id`/`task_id`/`workspace_id`/`install_id`/`request_nonce`/`*_sha256`/`requested_at` equal the record's + `request_sha256 == sha256(JCS(envelope))` |
 | `execution_attempt_id`, `run_id` | the requested handle |
 | `lease_id`, `lease_nonce` | the verified execution-lease (`verify_artifact` + `validate_execution_lease`) |
 | `policy_id`, `policy_version`, `policy_bundle_sha256` | the operator-authorized policy (the signer re-checks bundle digest, P1-7) |
