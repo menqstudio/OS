@@ -26,6 +26,7 @@ is never the sidecar/desktop login identity's to read. This module reuses the sa
 
 from __future__ import annotations
 
+import errno
 import os
 import pathlib
 import stat
@@ -36,6 +37,24 @@ from brops_canonical import sha256_hex
 
 class EvidenceStoreError(Exception):
     """A publish/read integrity failure — always fail-closed."""
+
+
+# errnos that mean "this volume can't hardlink" (fall back to O_EXCL create), as opposed
+# to a real I/O failure that must propagate. EEXIST is handled separately (idempotent).
+_HARDLINK_UNSUPPORTED = frozenset(
+    e for e in (
+        getattr(errno, "EPERM", None),
+        getattr(errno, "EXDEV", None),
+        getattr(errno, "EMLINK", None),
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+        getattr(errno, "EACCES", None),
+    ) if e is not None
+)
+
+
+def _hardlink_unsupported(exc: OSError) -> bool:
+    return os.name == "nt" or exc.errno in _HARDLINK_UNSUPPORTED
 
 
 def _harden_dir(directory: pathlib.Path) -> pathlib.Path:
@@ -105,31 +124,57 @@ class EvidenceStore:
             handle = sha256_hex(written)
             target = self._path(handle)
 
-            # 4. atomic exclusive publish. os.link is atomic + fails EEXIST if the digest
-            # is already present (idempotent success after a content re-check).
-            try:
-                os.link(tmp, target)
-            except FileExistsError:
-                existing = target.read_bytes()
-                if sha256_hex(existing) != handle:
-                    raise EvidenceStoreError(
-                        f"content-address collision at {handle}: stored bytes differ"
-                    )
-            except (OSError, NotImplementedError):
-                # Filesystems without hardlink support (e.g. some Windows setups): fall
-                # back to a not-exists guard, then atomic replace. Content-addressing
-                # keeps this safe — identical digest ⇒ identical bytes.
-                if not target.exists():
-                    os.replace(tmp, target)
-                    tmp_consumed = True
+            # 4. atomic exclusive publish via a real create-if-absent primitive — NEVER a
+            # check-then-act race (P1-5). `os.link` is atomic: it creates `target` iff it
+            # does not exist, and raises EEXIST otherwise. EEXIST is the ONLY "already
+            # published" signal (idempotent, content re-checked); every OTHER OSError is a
+            # real failure and propagates — never conflated with EEXIST. A concurrent
+            # publisher of the same bytes always loses the link race to EEXIST, so there is
+            # exactly one target and it is never overwritten.
+            tmp_consumed = self._atomic_publish(tmp, target, data, handle)
         finally:
-            if not tmp_consumed:
+            if not tmp_consumed and tmp.exists():
                 try:
                     tmp.unlink()
                 except FileNotFoundError:
                     pass
         _fsync_dir(self.root)
         return handle
+
+    def _atomic_publish(self, tmp: pathlib.Path, target: pathlib.Path, data: bytes, handle: str) -> bool:
+        """Create `target` exactly once from the fsync'd temp. Returns True if `tmp` was
+        consumed (must not be unlinked by the caller). Idempotent on EEXIST."""
+        try:
+            os.link(tmp, target)  # atomic create-if-absent (POSIX + NTFS)
+            return False  # tmp still present; caller unlinks it
+        except FileExistsError:
+            self._verify_idempotent(target, handle)
+            return False
+        except OSError as exc:
+            # Distinguish "hardlinks unsupported here" (fall back) from a real error.
+            if not _hardlink_unsupported(exc):
+                raise
+        # Hardlink-unsupported fallback (e.g. some Windows / FAT volumes): atomically
+        # CREATE the target itself with O_EXCL — still create-if-absent, no clobber, no
+        # check-then-act. A crash mid-write leaves a partial target, which `read()`
+        # rejects (sha mismatch) — fail-closed, never a silent bad artifact.
+        try:
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            self._verify_idempotent(target, handle)
+            return False
+        with os.fdopen(fd, "wb") as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        return False
+
+    def _verify_idempotent(self, target: pathlib.Path, handle: str) -> None:
+        """An already-present digest must content-address to `handle` (a content-address
+        collision — astronomically improbable, or a corrupted store — is fail-closed)."""
+        existing = target.read_bytes()
+        if sha256_hex(existing) != handle:
+            raise EvidenceStoreError(f"content-address collision at {handle}: stored bytes differ")
 
     def has(self, handle: str) -> bool:
         return self._path(handle).exists()

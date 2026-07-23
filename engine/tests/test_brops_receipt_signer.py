@@ -114,6 +114,36 @@ class EvidenceStoreTests(unittest.TestCase):
         with self.assertRaises(EvidenceStoreError):
             self.store.read(h)
 
+    def test_concurrent_publishers_of_same_bytes_do_not_race(self):
+        # Two threads publish identical bytes simultaneously (P1-5): the atomic
+        # create-if-absent means exactly one file exists, both get the same handle, and
+        # neither overwrites the other or errors.
+        import threading
+
+        data = b"concurrent-artifact-bytes"
+        barrier = threading.Barrier(8)
+        results, errors = [], []
+
+        def worker():
+            try:
+                barrier.wait()
+                results.append(self.store.publish(data))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(errors, [])
+        self.assertEqual(set(results), {bc.sha256_hex(data)})
+        # exactly one published file (plus no leftover temp files)
+        names = [p.name for p in pathlib.Path(self.dir).iterdir()]
+        self.assertEqual(names, [bc.sha256_hex(data)])
+        self.assertEqual(self.store.read(bc.sha256_hex(data)), data)
+
 
 class SignerEndToEndTests(unittest.TestCase):
     def setUp(self):
