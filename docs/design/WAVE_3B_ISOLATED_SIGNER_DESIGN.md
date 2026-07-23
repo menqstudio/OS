@@ -1,4 +1,4 @@
-# Wave 3b — Isolated Signer + Signed Manifest + Production "Verified" · DESIGN (rev 3, design-only)
+# Wave 3b — Isolated Signer + Signed Manifest + Production "Verified" · DESIGN (rev 4, design-only)
 
 > **Status: DESIGN-ONLY.** No product code ships under this document until it is
 > **Architect-GREEN + Owner-approved**. This is the **3b-0** deliverable (design PR).
@@ -10,14 +10,24 @@
 > - **rev 2** (`9801489`) — closed rev-1's 4 P0 (dedicated OS principal, authenticated
 >   evidence chain, context-aware resolver, concrete schemas). Architect design **RED**:
 >   2 P0 + 3 P1 residual.
-> - **rev 3** (this) — closes rev-2's residuals: **P0-1** the evidence-production API is
->   not an oracle and the topology is single (§1.3); **P0-2** containment (and every
+> - **rev 3** (`fa1b8cb`) — closed rev-2's residuals: **P0-1** the evidence-production API
+>   is not an oracle and the topology is single (§1.3); **P0-2** containment (and every
 >   large input) binds to **real artifact bytes** via a content-addressed protected
 >   store (§1.3–1.4, §4); **P1-3** one fixed IPC frame cap — large inputs are
 >   **artifact handles**, never inline (§1.9, §4.1); **P1-4** the resolver query is
 >   sourced from the **trusted `Expected`/turn**, never the unsigned receipt (§1.7);
 >   **P1-5** durable manifest snapshot persisted atomically with the floor + semantic
->   uniqueness (§1.6, §4.3).
+>   uniqueness (§1.6, §4.3). Architect design **YELLOW** (architecture approved; 5
+>   contract redlines).
+> - **rev 4** (this) — closes rev-3's 5 contract redlines: **P1-1** normative
+>   per-artifact canonical-bytes table matching the merged desktop formulas + all-formula
+>   parity (§4.0a); **P1-2** the nonce schema now matches the merged `brops_core::id()`
+>   UUIDv4 string, not `hex(32B)` (§4.1); **P1-3** the durable forensic-attestation
+>   record — `sign-result` carries the attestation + run IDs, with a defined durable
+>   store, and the containment bridge-transport field is exact (§4.2); **P1-4** the
+>   supervisor process split / service / ACL / IPC is reclassified **BUILD** (not REUSE)
+>   with 4 same-user-isolation acceptance tests (§3, §5); **P1-5** the protected-store
+>   atomic publish algorithm (§4.0).
 >
 > **Հայերեն:** Սա design-only ա։ Private-key custody-ն հենց trust boundary-ն ա։ Product
 > code չի land-ում մինչև Architect-GREEN + Owner։
@@ -295,15 +305,26 @@ signature**, a structured `refused{reason}` — never a partial/unsigned success
   `broctl.py::sign_payload`.
 - Root-anchor + anti-rollback-floor pattern (engine registry) — template to mirror.
 - Private-key custody discipline — `broctl._require_private_key_dir` / `_write_key`.
-- **The external supervisor** (Wave 3a) as the attesting principal + its lease/terminal-
-  state/evidence-chain — extended to build `brops.run-attestation.v1` from `{run_id,
+- **The supervisor's lease / terminal-state / evidence-chain LOGIC** — `engine/tools/
+  bro_supervisor.py` already implements leases, execution receipts, and the evidence
+  chain (with tests). That **logic** is reused to build the evidence from `{run_id,
   attempt_id}`.
 - The Rust verify pipeline + `ReceiptKeyAuthority`/`KeyResolution` seam + the atomic tx +
   `receipt_verification_attempts` (migration 0014).
 - Bridge transport — `run_governed_turn`, `_receipt_of`, the structured `system`+`history`
   contract, the provisioning gate.
 
-**BUILD (net-new):**
+**BUILD (net-new) — including the supervisor as a live separate principal (P1-4):**
+
+> **Not a REUSE assumption.** In the current live path the desktop spawns
+> `engine_sidecar.py` **directly** and the sidecar's real-mode callables are
+> `RuntimeError` fail-closed (`engine_sidecar.py::_real_callables`) pending this wave;
+> `bro_supervisor.py` exists only as engine **logic/tests**, **not** as a running
+> separate-OS-principal service in the governed path. Therefore the supervisor **process
+> split, service/unit installation, dedicated identity + ACLs, the content-addressed
+> store, and the sidecar→supervisor + supervisor→signer IPC are all BUILD scope for
+> 3b-1** — they are machine-proven only when 3b-1's tests pass, never assumed.
+
 - **(a)** the **isolated `brops.receipt.v1` signer** — dedicated process/principal
   (§1.1), own key class/store (§1.2), verifies the supervisor attestation + reads store
   artifacts by handle (§1.3), sign-on-complete; emits base64url-JCS envelope + base64url
@@ -319,8 +340,10 @@ signature**, a structured `refused{reason}` — never a partial/unsigned success
   `ReceiptKeyAuthority` (§1.7), consulted **in-tx**, query sourced from `Expected`,
   returns a scope-bound `ResolvedManifestKey`. Swaps `NoTrustedManifest` at `ai.rs` +
   `commands.rs`.
-- **(d)** **JCS receipt-envelope parity** — extend the parity test to the full 21-field
-  receipt envelope across the Python signer ↔ `receipt.rs`.
+- **(d)** **All-formula JCS parity** — extend the parity test beyond the request envelope
+  to **every §4.0a artifact formula** (`system`/`history`/`output`/`generation_config`/
+  `containment_evidence`/`policy_bundle`) **and** the full 21-field receipt envelope,
+  across the Python signer ↔ `receipt.rs`.
 
 ## 4. Normative interface definitions (the artifacts 3b-0 LOCKS)
 
@@ -337,6 +360,38 @@ signature**, a structured `refused{reason}` — never a partial/unsigned success
 - **Access:** readable by the supervisor + signer identities; **not** the sidecar/desktop
   login identity for the raw store (the desktop receives only what it must persist, §4.2).
 - The signer reads bytes **by handle** and refuses unless `sha256(bytes) == handle`.
+- **Atomic publish algorithm (normative — P1-5).** The supervisor publishes an artifact
+  by: (1) write to a **temporary file** in the same filesystem/dir (private, `O_EXCL`);
+  (2) **`flush` + `fsync`** the file (and `fsync` the directory after the rename);
+  (3) **verify size + recompute `sha256`** over the written bytes to get the digest;
+  (4) **atomic exclusive publish** — rename into place under the **digest name**
+  (`<sha256>`), treating an existing identical digest as success (idempotent) and any
+  other collision as an error; (5) **only after publish success** does the supervisor
+  build/attest the evidence that references the handle; (6) the artifact is **not
+  deleted** until the receipt flow reaches terminal completion **and** a defined
+  retention policy elapses. This removes the signer's partial-read / TOCTOU window: a
+  handle only ever names fully-written, fsync'd, digest-verified bytes.
+
+### 4.0a Artifact canonical-byte formulas (normative — P1-1, MUST match merged desktop)
+
+The signer derives each receipt `*_sha256` by hashing the **exact canonical bytes** of
+the named artifact; the store handle equals that same `sha256`. The formulas below are
+**pinned to the already-merged Wave-3a desktop code** — the signer MUST reproduce them
+byte-for-byte or the desktop `bind` against `Expected` fails ⇒ Blocked.
+
+| Artifact | Canonical bytes (exact) | Merged desktop source |
+|---|---|---|
+| `system` | **raw UTF-8 bytes** of the system string (no normalization) | `ai.rs` `sha256_hex(system.as_bytes())` |
+| `history` | **compact JSON** of `[{ "content":…, "role":… }, …]` — one object per turn, **keys lexicographically ordered** (`content` before `role`), no whitespace (JCS-equivalent for this shape) | `ai.rs::governed_history_sha256` (`BTreeMap{role,content}` → `serde_json::to_vec`) |
+| `output` | **exact UTF-8 reply bytes**, unmodified — no trim/normalization | `ai.rs` `interpret_bridge_result` (no `trim()`) |
+| `generation_config` | **raw canonical bytes** of the generation-config string, matching the desktop's exact `GENERATION_CONFIG` serialization | `ai.rs` `sha256_hex(generation_config.as_bytes())` |
+| `containment_evidence` | **exact JCS bytes** of the containment-evidence object the supervisor produces (strict canonical JSON; defined once and frozen in 3b-1) | net-new (3b-1) |
+| `policy_bundle` | **exact bytes** of the operator-provisioned policy bundle as loaded (byte-identical to what the desktop pins as `policy_bundle_sha256`) | net-new (3b-1) |
+
+**Parity (P1-1):** the 3b-1 Python-signer ↔ Rust-desktop parity suite MUST cover **every
+formula above** (not only the final 21-field receipt envelope) — one cross-language
+fixture per artifact asserting identical `sha256`, including a Unicode/emoji/embedded-NUL
+history case and an empty-history case.
 
 ### 4.1 `brops.sign-request.v1` (supervisor → signer)
 
@@ -353,7 +408,7 @@ Frame ≤256 KiB. `evidence` carries **handles, never inline bytes**.
 | Field | Type | Cap | Kind |
 |---|---|---|---|
 | `run_id`, `execution_attempt_id`, `lease_id` | string | 128 each | authoritative (forensic binding) |
-| `request_nonce` | hex(32B) | 64 | authoritative |
+| `request_nonce` | **opaque string ≤128** (the merged `brops_core::id()` UUIDv4 hyphenated form — **not** `hex(32B)`; P1-2) | 128 | authoritative |
 | `receipt_id` | string | 128 | authoritative (idempotency, §4.2) |
 | `decision` | `"completed"` | — | authoritative |
 | `workspace_id`, `install_id`, `supervisor_id`, `executor_id`, `builder_id` | string | 128 each | authoritative |
@@ -376,7 +431,13 @@ Frame ≤64 KiB. Tagged union — exactly one of:
   "receipt_id":"<echoed>",
   "envelope_jcs_b64":"<base64url JCS(21-field brops.receipt.v1)>",
   "signature_b64":"<base64url Ed25519(64B) over the exact JCS bytes>",
-  "key_id":"<receipt signing key id>" }
+  "key_id":"<receipt signing key id>",
+  // --- durable forensic-attestation record (P1-3): the signer echoes what it verified,
+  // so the receipt<->run proof survives past runtime ---
+  "attestation_evidence_jcs_b64":"<base64url JCS(evidence) the signer verified>",
+  "attestation_signature_b64":"<base64url Ed25519(64B) supervisor attestation>",
+  "supervisor_attestation_key_id":"<pinned supervisor attestation key id>",
+  "run_id":"<echoed>", "execution_attempt_id":"<echoed>", "lease_id":"<echoed>" }
 
 { "protocol":"brops.sign-result.v1", "status":"refused",
   "receipt_id":"<echoed if parseable>",
@@ -385,15 +446,28 @@ Frame ≤64 KiB. Tagged union — exactly one of:
             identity_denied | timestamp_invalid | oversize | malformed" }   // ≤512B
 ```
 
-- **Desktop persistence for audit:** the supervisor relays the receipt wire to the
-  desktop; the containment artifact bytes (≤64 KiB) accompany the bridge result so the
-  desktop persists them in the attempt evidence and re-checks `sha256 ==
-  containment_evidence_sha256` — audit does not depend on the engine store.
+- **Durable forensic storage (P1-3).** The forensic fields above are persisted with the
+  attempt so a later auditor can re-verify **receipt ↔ run** without the runtime. 3b-2
+  migration adds either columns on `receipt_verification_attempts` or a linked
+  `receipt_attestations(attempt_id FK ON DELETE RESTRICT, attestation_evidence_jcs BLOB,
+  attestation_signature BLOB, supervisor_attestation_key_id TEXT, run_id TEXT,
+  execution_attempt_id TEXT, lease_id TEXT)`. The desktop **re-verifies the attestation
+  signature** (against the pinned/manifest-listed supervisor attestation key) at persist
+  time and Blocks on failure — the attestation is recorded **only** when it verifies.
+  The `sign-result` frame carrying these stays within the §4.2 **64 KiB** cap because
+  `attestation_evidence_jcs` holds only handles + small fields (never inline artifacts).
+- **Desktop persistence of containment bytes — exact transport (P1-3).** The containment
+  artifact bytes do **not** ride the signer's 64 KiB `sign-result` frame. They travel on
+  the **bridge result** as a dedicated field `receipt.containment_evidence_b64`
+  (base64url of the exact containment bytes), **capped at 64 KiB there**; the desktop
+  decodes it, re-checks `sha256 == containment_evidence_sha256`, and persists it in the
+  attempt evidence, so audit does not depend on the engine store. (`bridge-result.schema.json`
+  gains this field in 3b-1.)
 - **Replay / idempotency:** `request_nonce` (turn) and `receipt_id` (global) are
   compare-and-consumed in migration 0014's durable ledgers; a re-asked `receipt_id` MAY
   re-emit an identical (deterministic-JCS) envelope or refuse `duplicate` — the desktop
   rejects the second at consume time. `status:"signed"` REQUIRES both `envelope_jcs_b64`
-  and `signature_b64`; anything else ⇒ malformed ⇒ Blocked.
+  and `signature_b64` (and the forensic fields); anything else ⇒ malformed ⇒ Blocked.
 
 ### 4.3 Manifest + root anchor + durable state
 
@@ -454,12 +528,23 @@ it never accepts a caller-supplied evidence object or arbitrary bytes to attest/
 
 - **3b-0 — Design PR (this doc).** **Architect GREEN mandatory** before any 3b code.
 - **3b-1 — Isolated signer + supervisor evidence/attestation + content-addressed store +
-  21-field JCS parity.** Signer process/principal + `brops.sign-request/result.v1`; the
-  supervisor builds evidence from `{run_id, attempt_id}` + writes/reads the store; the
-  sidecar relays. **Still `NoTrustedManifest`** → **no production "Verified"**. **STOP:**
-  3b-1 must NOT change `NoTrustedManifest` and must NOT expose "Verified".
-- **3b-2 — Desktop manifest / root / anti-rollback / durable snapshot.** Loader, migration
-  (`manifest_current` + `manifest_floor`), semantic + negative matrix (rolled-back epoch,
+  all-formula JCS parity.** Signer process/principal + `brops.sign-request/result.v1`;
+  the supervisor (now a live separate principal — BUILD, §3) builds evidence from
+  `{run_id, attempt_id}` + writes/reads the store via the §4.0 atomic publish; the
+  sidecar relays. **Parity (P1-1):** cross-language fixtures for **every §4.0a formula**
+  (`system`, `history`, `output`, `generation_config`, `containment_evidence`,
+  `policy_bundle`) **and** the 21-field receipt envelope. **Same-login-user isolation
+  acceptance tests (P1-4), all MUST pass** — a process running as the sidecar/desktop
+  login user **cannot**: (1) connect to the signer socket/pipe; (2) read the supervisor
+  attestation key or the receipt-signing key; (3) read or write the protected store;
+  (4) get the supervisor to sign/attest **caller-supplied** evidence (only
+  `{run_id, attempt_id}` is accepted). **Still `NoTrustedManifest`** → **no production
+  "Verified"**. **STOP:** 3b-1 must NOT change `NoTrustedManifest` and must NOT expose
+  "Verified".
+- **3b-2 — Desktop manifest / root / anti-rollback / durable snapshot + forensic record.**
+  Loader, migration (`manifest_current` + `manifest_floor` + the §4.2 forensic-attestation
+  storage), desktop re-verify of the supervisor attestation at persist time, semantic +
+  negative matrix (rolled-back epoch,
   same-epoch different-hash, expired, bad root sig, unknown `root_key_id`, duplicate/
   conflicting key_id, wildcard scope, revoked/out-of-window/out-of-scope key,
   crash-between-floor-and-bytes).
