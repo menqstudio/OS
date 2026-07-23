@@ -1,5 +1,9 @@
 # Wave 3b-1 re-scope — implementation map (3b-1A + 3b-1B)
 
+> **STATUS (2026-07-24):** **3b-1A is Architect Code GREEN** (@ `dffd164`, CI #108 8/8);
+> **3b-1B is design-lock RED** (addendum rev 6 proposed, not GREEN, **no code**). See
+> `NEXT_CHAT.md` §3 for the authoritative current state, STOP gates, and next action.
+>
 > Owner-directed re-scope after the 2nd code-audit RED (PR #31). The isolated-signer /
 > custody work is real but the P0-1/P0-3 chain is not yet an authoritative end-to-end.
 > This map identifies the existing execution functions and fixes the **exact** atomic

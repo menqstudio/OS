@@ -1,5 +1,15 @@
 # Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 6)
 
+> **STATUS: ❌ DESIGN RED — NOT Architect-GREEN. 3b-1B code has NOT started.** rev 6 is the
+> implementer's **proposed** closure of the rev-5 design RED; it is **awaiting Architect
+> design review**. The five findings the Architect raised on rev 5 (challenge-authority
+> custody, challenge↔context binding, exact executor-input delivery, one normative bounded
+> ingress, durable authenticated-challenge evidence) are addressed *in the proposal below*
+> but remain **OPEN until the Architect returns design-GREEN** — see `NEXT_CHAT.md` §3.3.
+> Do not treat any part of this document as ratified until that GREEN. STOP gates:
+> `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31 not
+> merged.
+>
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. Builds on
 > the Architect-GREEN Wave 3b design ([`WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](./WAVE_3B_ISOLATED_SIGNER_DESIGN.md))
 > and the 3b-1 re-scope map ([`WAVE_3B1_EXECUTION_BINDING_MAP.md`](./WAVE_3B1_EXECUTION_BINDING_MAP.md)).
