@@ -66,14 +66,13 @@ pub struct ReceiptWire<'a> {
 ///
 /// No `Debug`: it carries a [`ResolvedManifestKey`], which deliberately has no `Debug`
 /// (it holds key material and keeps a minimal slice-1 surface).
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct GovernedTurn<'a> {
+    /// The receipt exactly as received (unresolved). The verify transaction strict-
+    /// parses it, reads its own `key_id`, and asks the [`ReceiptKeyAuthority`] to
+    /// resolve a pinned key — the desktop never carries a pre-resolved key, so no
+    /// caller can slip a fabricated one past the verifier.
     pub wire: ReceiptWire<'a>,
-    /// The verifying key resolved from the trusted manifest. In slice 2 this is an
-    /// input (test fixtures mint it via the `#[cfg(test)]` builder); the live
-    /// validated manifest resolver is Wave 3b. `ResolvedManifestKey` keeps its
-    /// no-public-constructor guarantee.
-    pub resolved_key: ResolvedManifestKey<'a>,
     pub expected: Expected<'a>,
     /// The exact reply bytes (design §2.1, hashed as opaque bytes).
     pub output: &'a [u8],
@@ -134,13 +133,122 @@ pub fn issue_challenge(
 /// a would-be evidence row is never half-written.
 pub fn verify_and_record_receipt(
     conn: &Connection,
+    authority: &impl ReceiptKeyAuthority,
     turn: &GovernedTurn,
 ) -> CoreResult<ReceiptOutcome> {
-    in_immediate_tx(conn, |tx| record(tx, turn))
+    in_immediate_tx(conn, |tx| record(tx, authority, turn))
+}
+
+/// Max bytes of a free-text reason we let into durable evidence / the UI, so a
+/// hostile or runaway error string can never bloat SQLite or the renderer.
+pub const MAX_REASON_BYTES: usize = 8 * 1024;
+
+/// Bound a free-text failure reason to [`MAX_REASON_BYTES`], UTF-8-safely. A reason
+/// within budget is returned verbatim; a longer one is truncated on a char boundary
+/// and annotated `\n[truncated; sha256=<full-hash>; original_bytes=<n>]` so the full
+/// original stays auditable (by hash) without storing it. Callers pass the SAME bounded
+/// value to the durable record AND the UI, so `verification_error == Blocked.reason`.
+pub fn bounded_reason(reason: &str) -> String {
+    if reason.len() <= MAX_REASON_BYTES {
+        return reason.to_string();
+    }
+    let marker = format!(
+        "\n[truncated; sha256={}; original_bytes={}]",
+        crate::receipt::sha256_hex(reason.as_bytes()),
+        reason.len()
+    );
+    // Reserve room for the marker; truncate the visible prefix on a char boundary.
+    let mut end = MAX_REASON_BYTES.saturating_sub(marker.len());
+    while end > 0 && !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &reason[..end], marker)
+}
+
+/// Record a **pre-verification terminal block**: used when there is NO receipt to
+/// verify (e.g. the governed transport failed *after* the challenge was issued). In
+/// one transaction it consumes the one-time nonce and records a `blocked` attempt
+/// carrying the **real** `reason` — never a fabricated empty receipt — so the durable
+/// forensic record matches the user-facing reason, and the challenge can never be
+/// reused. It writes no `messages` row. Distinct from [`verify_and_record_receipt`],
+/// which is for an actual (possibly malformed) receipt.
+pub fn record_pre_verification_block(
+    conn: &Connection,
+    request_nonce: &str,
+    reason: &str,
+    now_ms: u64,
+) -> CoreResult<ReceiptOutcome> {
+    in_immediate_tx(conn, |tx| {
+        let stamp = now_ms.to_string();
+        // Spend the challenge if it exists and is unconsumed (one shot, even on failure).
+        if let Some((_, None, _)) = load_challenge(tx, request_nonce)? {
+            tx.execute(
+                "UPDATE receipt_challenges SET consumed_at = ?1 WHERE nonce = ?2 AND consumed_at IS NULL",
+                rusqlite::params![stamp, request_nonce],
+            )?;
+        }
+        let attempt_id = insert_attempt(
+            tx,
+            &AttemptRow {
+                wire_env: "",
+                wire_sig: "",
+                receipt_id: None,
+                key_id: None,
+                envelope_jcs: None,
+                signature: None,
+                outcome: "blocked",
+                error: Some(reason),
+                nonce: Some(request_nonce),
+                message_id: None,
+                stamp: &stamp,
+            },
+        )?;
+        Ok(ReceiptOutcome::Blocked { attempt_id, error: reason.to_string() })
+    })
+}
+
+/// The result of asking the trusted-key authority to resolve a receipt's `key_id`.
+/// It is deliberately **not** an `Option`: "no trusted key" is an *explicit*
+/// fail-closed verdict (`Unavailable`), so a caller can never silently treat a missing
+/// key as anything but Blocked, and no code path can mint a fake key.
+pub enum KeyResolution<'a> {
+    /// A pinned verifying key from a validated trusted manifest (only a real resolver
+    /// — Wave 3b — or an in-crate test authority produces this).
+    Trusted(ResolvedManifestKey<'a>),
+    /// No trusted key backs this `key_id` → the governed turn is Blocked. Carries a
+    /// machine reason recorded in the evidence row.
+    Unavailable(&'static str),
+}
+
+/// The desktop's trusted-key authority (design §3, §5): given a receipt's `key_id`,
+/// return the pinned verifying key from a **validated** signed manifest, or an explicit
+/// [`KeyResolution::Unavailable`]. It is consulted **inside** the verify transaction,
+/// so the no-key outcome consumes the nonce and records Blocked evidence atomically.
+/// Wave 3a ships only [`NoTrustedManifest`]; Wave 3b implements the same seam over an
+/// operator-provisioned manifest validated against the pinned root anchor.
+pub trait ReceiptKeyAuthority {
+    fn resolve<'a>(&'a self, key_id: &str) -> CoreResult<KeyResolution<'a>>;
+}
+
+/// Wave 3a: there is no signed key manifest, so **every** `key_id` resolves to
+/// `Unavailable` and every governed turn is Blocked (fail-closed). It never fabricates
+/// a [`ResolvedManifestKey`].
+pub struct NoTrustedManifest;
+
+impl ReceiptKeyAuthority for NoTrustedManifest {
+    fn resolve<'a>(&'a self, _key_id: &str) -> CoreResult<KeyResolution<'a>> {
+        Ok(KeyResolution::Unavailable(
+            "no trusted key manifest (Wave 3b) — receipt not verifiable",
+        ))
+    }
 }
 
 /// The transaction body. `tx` is an open connection inside `BEGIN IMMEDIATE`.
-fn record(tx: &Connection, turn: &GovernedTurn) -> CoreResult<ReceiptOutcome> {
+fn record(
+    tx: &Connection,
+    authority: &impl ReceiptKeyAuthority,
+    turn: &GovernedTurn,
+) -> CoreResult<ReceiptOutcome> {
     let stamp = turn.now_ms.to_string();
     let wire_env = cap(turn.wire.envelope_jcs_b64, MAX_WIRE_ENVELOPE_B64);
     let wire_sig = cap(turn.wire.signature_b64, MAX_WIRE_SIGNATURE_B64);
@@ -168,8 +276,11 @@ fn record(tx: &Connection, turn: &GovernedTurn) -> CoreResult<ReceiptOutcome> {
         }
     };
 
-    // --- Pure core pipeline: parse → verify → bind ------------------------------
-    let core = run_core(turn);
+    // --- Verify: parse → resolve key via the authority → verify → bind ----------
+    // The authority is consulted INSIDE this transaction, so "no trusted key" and any
+    // parse/verify/bind failure all land as a Blocked verdict in the same tx that
+    // consumed the nonce. A real DB error from the authority propagates (rollback).
+    let core = run_core(turn, authority)?;
 
     // --- Decide the verdict + gather evidence -----------------------------------
     match core {
@@ -344,23 +455,28 @@ struct FailedEvidence {
     receipt_id: Option<String>,
 }
 
-/// Run `parse_strict → verify → bind`. On failure, stage evidence: pre-parse failure
-/// carries only the error; a post-parse failure (bad signature or bind mismatch)
-/// carries the exact canonical envelope bytes, the decoded 64-byte signature (when
-/// decodable), `key_id`, and `receipt_id`.
-fn run_core(turn: &GovernedTurn) -> CoreVerdict {
+/// Run `parse_strict → resolve key (authority) → verify → bind`. The trusted-key
+/// authority is consulted HERE (inside the caller's transaction): `Unavailable` is a
+/// Failed verdict carrying its reason; only a real DB error from the authority
+/// propagates as `Err`. On any failure stage evidence — a pre-parse failure carries
+/// only the error; once parse succeeds we keep the exact canonical envelope bytes +
+/// decoded 64-byte signature + `key_id` + `receipt_id`.
+fn run_core(
+    turn: &GovernedTurn,
+    authority: &impl ReceiptKeyAuthority,
+) -> CoreResult<CoreVerdict> {
     let parsed = match receipt::parse_strict(turn.wire.envelope_jcs_b64) {
         Ok(p) => p,
         // Bytes are not a valid canonical envelope — never present them as canonical
         // evidence; the raw wire (stored by the caller) is the record of what arrived.
         Err(e) => {
-            return CoreVerdict::Failed(FailedEvidence {
+            return Ok(CoreVerdict::Failed(FailedEvidence {
                 error: e.to_string(),
                 envelope_jcs: None,
                 signature: None,
                 key_id: None,
                 receipt_id: None,
-            })
+            }))
         }
     };
     // parse_strict succeeded => the wire decodes to exactly these canonical bytes.
@@ -378,14 +494,21 @@ fn run_core(turn: &GovernedTurn) -> CoreVerdict {
         })
     };
 
-    let verified = match parsed.verify(&turn.resolved_key, turn.wire.signature_b64) {
-        Ok(v) => v,
-        Err(e) => return fail(e.to_string()),
+    // Resolve the pinned key by the receipt's OWN key_id. No trusted key (Wave 3a) or
+    // an unknown key_id ⇒ Blocked, with the decoded evidence above.
+    let key = match authority.resolve(&key_id)? {
+        KeyResolution::Trusted(k) => k,
+        KeyResolution::Unavailable(reason) => return Ok(fail(reason.to_string())),
     };
-    match verified.bind(&turn.expected, turn.output) {
+
+    let verified = match parsed.verify(&key, turn.wire.signature_b64) {
+        Ok(v) => v,
+        Err(e) => return Ok(fail(e.to_string())),
+    };
+    Ok(match verified.bind(&turn.expected, turn.output) {
         Ok(b) => CoreVerdict::Bound(b),
         Err(e) => fail(e.to_string()),
-    }
+    })
 }
 
 /// Base64url-decode the envelope wire to its exact bytes, within the protocol caps.
@@ -744,6 +867,30 @@ mod tests {
         fn key_for(&self, trust: TrustClass) -> ResolvedManifestKey<'_> {
             ResolvedManifestKey::for_test("key-dev-1", &self.pk, trust)
         }
+
+        /// A trusted-key authority that serves this fixture's key for `key-dev-1` and
+        /// reports `Unavailable` for any other `key_id` — so both the accept path and
+        /// the unknown-key_id → Blocked path are exercisable. Stands in for Wave 3b's
+        /// validated manifest resolver.
+        fn authority(&self, trust: TrustClass) -> TestAuthority<'_> {
+            TestAuthority { key_id: "key-dev-1", key: self.key_for(trust) }
+        }
+    }
+
+    /// In-crate test authority (never ships): the ONLY thing that produces a
+    /// `KeyResolution::Trusted`, via the `#[cfg(test)]` key builder.
+    struct TestAuthority<'a> {
+        key_id: &'a str,
+        key: ResolvedManifestKey<'a>,
+    }
+    impl ReceiptKeyAuthority for TestAuthority<'_> {
+        fn resolve<'a>(&'a self, key_id: &str) -> CoreResult<KeyResolution<'a>> {
+            if key_id == self.key_id {
+                Ok(KeyResolution::Trusted(self.key))
+            } else {
+                Ok(KeyResolution::Unavailable("unknown key_id (test authority)"))
+            }
+        }
     }
 
     /// Create a conversation + issue the matching challenge; return the conv id.
@@ -753,21 +900,26 @@ mod tests {
         conv.id
     }
 
-    fn turn<'a>(
-        fx: &'a Fx,
-        env: &'a str,
-        sig: &'a str,
-        now: u64,
-        trust: TrustClass,
-    ) -> GovernedTurn<'a> {
+    fn turn<'a>(fx: &'a Fx, env: &'a str, sig: &'a str, now: u64) -> GovernedTurn<'a> {
         GovernedTurn {
             wire: ReceiptWire { envelope_jcs_b64: env, signature_b64: sig },
-            resolved_key: fx.key_for(trust),
             expected: fx.expected(),
             output: OUTPUT,
             now_ms: now,
             freshness: FreshnessWindow::DEFAULT,
         }
+    }
+
+    /// Verify a governed turn via the fixture's trusted-key authority (accept path).
+    fn vrec(
+        conn: &Connection,
+        fx: &Fx,
+        env: &str,
+        sig: &str,
+        now: u64,
+        trust: TrustClass,
+    ) -> CoreResult<ReceiptOutcome> {
+        verify_and_record_receipt(conn, &fx.authority(trust), &turn(fx, env, sig, now))
     }
 
     fn count(conn: &Connection, sql: &str) -> i64 {
@@ -784,7 +936,7 @@ mod tests {
         seed_turn(&conn, &fx, now);
         let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
 
-        let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
+        let out = vrec(&conn, &fx, &env, &sig, now, TrustClass::Development).unwrap();
 
         let (message_id, attempt_id) = match out {
             ReceiptOutcome::DevelopmentUntrusted { message_id, attempt_id } => (message_id, attempt_id),
@@ -829,10 +981,10 @@ mod tests {
         let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
 
         // First call accepts.
-        verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
+        vrec(&conn, &fx, &env, &sig, now, TrustClass::Development).unwrap();
         // Second call with a *fresh* receipt_id but the SAME (now-consumed) challenge.
         let (env2, sig2) = fx.wire_of(&fx.fields("receipt-2"));
-        let out = verify_and_record_receipt(&conn, &turn(&fx, &env2, &sig2, now, TrustClass::Development)).unwrap();
+        let out = vrec(&conn, &fx, &env2, &sig2, now, TrustClass::Development).unwrap();
 
         assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "replay must block: {out:?}");
         // Exactly one message, one accepted attempt; the replay left blocked evidence.
@@ -851,13 +1003,13 @@ mod tests {
         let fx1 = Fx::new(now, "nonce-A");
         seed_turn(&conn, &fx1, now);
         let (e1, s1) = fx1.wire_of(&fx1.fields("receipt-1"));
-        verify_and_record_receipt(&conn, &turn(&fx1, &e1, &s1, now, TrustClass::Development)).unwrap();
+        vrec(&conn, &fx1, &e1, &s1, now, TrustClass::Development).unwrap();
 
         // Turn 2: different (valid) challenge, but reuses receipt-1.
         let fx2 = Fx::new(now, "nonce-B");
         seed_turn(&conn, &fx2, now);
         let (e2, s2) = fx2.wire_of(&fx2.fields("receipt-1"));
-        let out = verify_and_record_receipt(&conn, &turn(&fx2, &e2, &s2, now, TrustClass::Development)).unwrap();
+        let out = vrec(&conn, &fx2, &e2, &s2, now, TrustClass::Development).unwrap();
 
         assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "dup receipt_id must block: {out:?}");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 1);
@@ -882,7 +1034,7 @@ mod tests {
         let bad = fx.key.sign(b"not the envelope");
         let bad_sig = URL_SAFE_NO_PAD.encode(bad.to_bytes());
 
-        let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &bad_sig, now, TrustClass::Development)).unwrap();
+        let out = vrec(&conn, &fx, &env, &bad_sig, now, TrustClass::Development).unwrap();
 
         let attempt_id = match out {
             ReceiptOutcome::Blocked { attempt_id, .. } => attempt_id,
@@ -928,7 +1080,7 @@ mod tests {
         let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
 
         // A perfectly valid receipt under a PRODUCTION key still blocks in 3a.
-        let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Production)).unwrap();
+        let out = vrec(&conn, &fx, &env, &sig, now, TrustClass::Production).unwrap();
 
         assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "3a never renders production 'Verified': {out:?}");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
@@ -948,13 +1100,11 @@ mod tests {
         let conv = crate::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
         issue_challenge(&conn, &conv.id, &fx.issued(), now).unwrap();
         let (env, sig) = fx.wire_of(&fx.fields("receipt-stale"));
-        // Move "now" forward well beyond max_age (300s) so the receipt is stale.
+        // Move "now" forward well beyond max_age (300s) so the receipt is stale
+        // (the challenge was issued at `now`; freshness uses the turn's now_ms = later).
         let later = now + 10_000_000;
-        let mut t = turn(&fx, &env, &sig, later, TrustClass::Development);
-        // But re-issue the challenge under the later look-up? nonce lookup is by value,
-        // already issued above; freshness uses t.now_ms = later.
-        t.now_ms = later;
-        let out = verify_and_record_receipt(&conn, &t).unwrap();
+        let t = turn(&fx, &env, &sig, later);
+        let out = verify_and_record_receipt(&conn, &fx.authority(TrustClass::Development), &t).unwrap();
         assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "stale must block: {out:?}");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
 
@@ -964,7 +1114,7 @@ mod tests {
         let conv2 = crate::repo::chat::create_conversation(&conn, "direct", "c2").unwrap();
         issue_challenge(&conn, &conv2.id, &fut.issued(), now2).unwrap();
         let (e2, s2) = fut.wire_of(&fut.fields("receipt-future"));
-        let out2 = verify_and_record_receipt(&conn, &turn(&fut, &e2, &s2, now2, TrustClass::Development)).unwrap();
+        let out2 = vrec(&conn, &fut, &e2, &s2, now2, TrustClass::Development).unwrap();
         assert!(matches!(out2, ReceiptOutcome::Blocked { .. }), "future must block: {out2:?}");
     }
 
@@ -977,7 +1127,7 @@ mod tests {
         let fx = Fx::new(now, "nonce-never-issued");
         // No seed_turn: the challenge was never issued.
         let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
-        let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
+        let out = vrec(&conn, &fx, &env, &sig, now, TrustClass::Development).unwrap();
         assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "missing challenge must block: {out:?}");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_challenges"), 0);
@@ -994,7 +1144,7 @@ mod tests {
 
         // Oversized, non-base64 garbage well beyond the protocol cap.
         let garbage = "!".repeat(MAX_WIRE_ENVELOPE_B64 + 5_000);
-        let out = verify_and_record_receipt(&conn, &turn(&fx, &garbage, "sig", now, TrustClass::Development)).unwrap();
+        let out = vrec(&conn, &fx, &garbage, "sig", now, TrustClass::Development).unwrap();
 
         let attempt_id = match out {
             ReceiptOutcome::Blocked { attempt_id, .. } => attempt_id,
@@ -1038,7 +1188,7 @@ mod tests {
         .unwrap();
         let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
 
-        let res = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development));
+        let res = vrec(&conn, &fx, &env, &sig, now, TrustClass::Development);
         assert!(res.is_err(), "a real internal failure must return Err, not a verdict");
 
         // Full rollback: nonce NOT consumed, no attempt, no message, no ledger.
@@ -1073,7 +1223,7 @@ mod tests {
         // B's receipt is internally valid (binds to B's Expected), but the durable
         // challenge was issued for A's request envelope -> blocked.
         let (env, sig) = fx_b.wire_of(&fx_b.fields("receipt-1"));
-        let out = verify_and_record_receipt(&conn, &turn(&fx_b, &env, &sig, now, TrustClass::Development)).unwrap();
+        let out = vrec(&conn, &fx_b, &env, &sig, now, TrustClass::Development).unwrap();
         assert!(matches!(out, ReceiptOutcome::Blocked { .. }), "challenge/request-envelope mismatch must block: {out:?}");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen"), 0, "no ledger insert on a blocked mismatch");
@@ -1093,7 +1243,7 @@ mod tests {
         let fx = Fx::new(now, "nonce-A");
         let conv_id = seed_turn(&conn, &fx, now);
         let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
-        let out = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development)).unwrap();
+        let out = vrec(&conn, &fx, &env, &sig, now, TrustClass::Development).unwrap();
         let (message_id, attempt_id) = match out {
             ReceiptOutcome::DevelopmentUntrusted { message_id, attempt_id } => (message_id, attempt_id),
             other => panic!("expected DevelopmentUntrusted, got {other:?}"),
@@ -1137,7 +1287,7 @@ mod tests {
         // than run without owning its own BEGIN IMMEDIATE (where an outer rollback
         // could erase committed-by-contract evidence).
         conn.execute_batch("BEGIN;").unwrap();
-        let res = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development));
+        let res = vrec(&conn, &fx, &env, &sig, now, TrustClass::Development);
         assert!(res.is_err(), "a nested invocation must be rejected, not silently degraded");
         conn.execute_batch("ROLLBACK;").unwrap();
 
@@ -1171,20 +1321,21 @@ mod tests {
         // Two distinct receipts for the SAME nonce.
         let (env1, sig1) = fx.wire_of(&fx.fields("receipt-1"));
         let (env2, sig2) = fx.wire_of(&fx.fields("receipt-2"));
-        let t1 = turn(&fx, &env1, &sig1, now, TrustClass::Development);
-        let t2 = turn(&fx, &env2, &sig2, now, TrustClass::Development);
+        let t1 = turn(&fx, &env1, &sig1, now);
+        let t2 = turn(&fx, &env2, &sig2, now);
+        let authority = fx.authority(TrustClass::Development);
 
         let barrier = Barrier::new(2);
         let (r1, r2) = std::thread::scope(|s| {
             let h1 = s.spawn(|| {
                 let c = crate::db::open(&path).unwrap();
                 barrier.wait();
-                verify_and_record_receipt(&c, &t1)
+                verify_and_record_receipt(&c, &authority, &t1)
             });
             let h2 = s.spawn(|| {
                 let c = crate::db::open(&path).unwrap();
                 barrier.wait();
-                verify_and_record_receipt(&c, &t2)
+                verify_and_record_receipt(&c, &authority, &t2)
             });
             (h1.join().unwrap(), h2.join().unwrap())
         });
@@ -1224,7 +1375,7 @@ mod tests {
 
         // A commit hook returning true converts the COMMIT into a failure.
         conn.commit_hook(Some(|| true));
-        let res = verify_and_record_receipt(&conn, &turn(&fx, &env, &sig, now, TrustClass::Development));
+        let res = vrec(&conn, &fx, &env, &sig, now, TrustClass::Development);
         conn.commit_hook(None::<fn() -> bool>); // clear it before assertions/cleanup
 
         assert!(res.is_err(), "a failed COMMIT must surface as Err, not a verdict");
@@ -1235,5 +1386,151 @@ mod tests {
         assert!(consumed.is_none(), "commit-failure rollback must undo the nonce consume");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_verification_attempts"), 0);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
+    }
+
+    // ---- slice 3 foundation: fail-closed no-trusted-key path --------------
+
+    #[test]
+    fn no_trusted_key_is_blocked_no_message_records_evidence_and_consumes_nonce() {
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+
+        // An otherwise-perfect receipt, but the desktop authority has NO trusted key.
+        let out = verify_and_record_receipt(&conn, &NoTrustedManifest, &turn(&fx, &env, &sig, now)).unwrap();
+
+        let attempt_id = match out {
+            ReceiptOutcome::Blocked { attempt_id, error } => {
+                assert!(error.contains("no trusted key"), "reason: {error}");
+                attempt_id
+            }
+            other => panic!("expected Blocked (no key), got {other:?}"),
+        };
+        // No message rendered; evidence recorded (parse succeeded → envelope kept).
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen"), 0);
+        let (outcome, env_present, msg): (String, bool, Option<String>) = conn
+            .query_row(
+                "SELECT outcome, envelope_jcs IS NOT NULL, message_id
+                 FROM receipt_verification_attempts WHERE id = ?1",
+                [&attempt_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(outcome, "blocked");
+        assert!(env_present, "no-key blocked attempt still keeps parsed envelope evidence");
+        assert!(msg.is_none());
+        // The challenge is still consumed (one shot spent even fail-closed).
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-A'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_some());
+    }
+
+    #[test]
+    fn accepted_message_carries_the_receipt_projection() {
+        // S3: a message from an accepted turn projects receipt = its attempt outcome.
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        let conv_id = seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+        let out = vrec(&conn, &fx, &env, &sig, now, TrustClass::Development).unwrap();
+        assert!(matches!(out, ReceiptOutcome::DevelopmentUntrusted { .. }));
+
+        let msgs = crate::repo::chat::list_messages(&conn, &conv_id, None, None).unwrap();
+        let agent = msgs.iter().find(|m| m.role == "agent").expect("agent message");
+        assert_eq!(agent.receipt.as_deref(), Some("development_untrusted"));
+        // A plain (non-governed) user message has no receipt badge.
+        let user = crate::repo::chat::post_message(
+            &conn,
+            NewMessage { conversation_id: conv_id.clone(), role: "user".into(), author: "gev".into(), body: "hi".into() },
+        )
+        .unwrap();
+        assert_eq!(user.receipt, None);
+    }
+
+    #[test]
+    fn unknown_key_id_is_blocked_with_decoded_evidence() {
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+
+        // An authority that serves a DIFFERENT key_id → this receipt's `key-dev-1` is
+        // unknown → Blocked, but the decoded evidence (parse succeeded) is retained.
+        let authority = TestAuthority { key_id: "some-other-key", key: fx.key_for(TrustClass::Development) };
+        let out = verify_and_record_receipt(&conn, &authority, &turn(&fx, &env, &sig, now)).unwrap();
+        let attempt_id = match out {
+            ReceiptOutcome::Blocked { attempt_id, error } => {
+                assert!(error.contains("unknown key_id"), "reason: {error}");
+                attempt_id
+            }
+            other => panic!("expected Blocked (unknown key_id), got {other:?}"),
+        };
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
+        let (env_present, key_id): (bool, Option<String>) = conn
+            .query_row(
+                "SELECT envelope_jcs IS NOT NULL, key_id FROM receipt_verification_attempts WHERE id = ?1",
+                [&attempt_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(env_present, "unknown-key blocked attempt keeps decoded envelope evidence");
+        assert_eq!(key_id.as_deref(), Some("key-dev-1"));
+    }
+
+    #[test]
+    fn pre_verification_block_records_the_real_reason_and_consumes_the_nonce() {
+        // Transport failed after the challenge issued: record the REAL reason (not a
+        // fabricated parse/base64 failure), consume the nonce, write no message.
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        seed_turn(&conn, &fx, now);
+        let out = record_pre_verification_block(&conn, "nonce-A", "governed engine sidecar timed out", now).unwrap();
+        let attempt_id = match out {
+            ReceiptOutcome::Blocked { attempt_id, error } => {
+                assert!(error.contains("timed out"), "reason: {error}");
+                attempt_id
+            }
+            other => panic!("expected Blocked, got {other:?}"),
+        };
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0);
+        let (outcome, err, env_null): (String, Option<String>, bool) = conn
+            .query_row(
+                "SELECT outcome, verification_error, envelope_jcs IS NULL
+                 FROM receipt_verification_attempts WHERE id = ?1",
+                [&attempt_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(outcome, "blocked");
+        assert_eq!(err.as_deref(), Some("governed engine sidecar timed out"));
+        assert!(env_null, "no fabricated receipt wire is stored");
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-A'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_some(), "the nonce is terminally consumed");
+    }
+
+    #[test]
+    fn bounded_reason_caps_a_hostile_multi_megabyte_error_utf8_safely() {
+        let short = "sidecar timed out";
+        assert_eq!(bounded_reason(short), short, "within budget → verbatim");
+
+        // A multi-megabyte reason ending in a multi-byte char (so a naive byte cut
+        // would split it) must be capped on a char boundary, tagged with the full hash.
+        let huge = format!("{}é", "A".repeat(5_000_000));
+        let out = bounded_reason(&huge);
+        assert!(out.len() <= MAX_REASON_BYTES, "bounded to <= 8 KiB, got {}", out.len());
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok(), "still valid UTF-8");
+        assert!(out.contains("[truncated; sha256="), "carries the truncation marker");
+        assert!(out.contains(&format!("original_bytes={}", huge.len())));
+        // The full original is recoverable by hash but never stored inline.
+        assert!(out.contains(&crate::receipt::sha256_hex(huge.as_bytes())));
     }
 }

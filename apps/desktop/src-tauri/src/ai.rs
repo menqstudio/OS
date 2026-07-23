@@ -542,7 +542,38 @@ pub async fn generate(system: &str, messages: &[ChatMsg]) -> Result<String, Stri
         Provider::ClaudeCli { bin } => claude_cli(&bin, system, messages).await,
         Provider::Anthropic { key, model } => anthropic(&key, &model, system, messages).await,
         Provider::Ollama { model, url } => ollama(&url, &model, system, messages).await,
-        Provider::GovernedEngine { python, sidecar } => governed_engine(&python, &sidecar, system, messages).await,
+        // A governed turn is not a plain string completion: the desktop must verify
+        // its signed receipt. That runs through `governed_turn` (called by the command
+        // layer, which owns the DB for the nonce challenge + verification).
+        Provider::GovernedEngine { .. } => {
+            Err("governed turns must run through the verified governed_turn path".to_string())
+        }
+    }
+}
+
+/// Whether the resolved provider is the governed engine — so the command layer routes
+/// the turn through the verified [`governed_turn`] path instead of the streaming one.
+pub fn provider_is_governed() -> Result<bool, String> {
+    Ok(matches!(resolve()?, Provider::GovernedEngine { .. }))
+}
+
+/// Run one governed AI turn and return its raw materials for desktop verification
+/// (design §3; §7 sign-on-complete). The whole reply is **buffered — never streamed**,
+/// because nothing may render until the desktop verifies the signed receipt. This
+/// function only runs the sidecar and returns the reply + signed wire; the caller
+/// (command layer) issues the desktop nonce challenge and verifies via
+/// `brops-core::receipt_store`. Errors if the resolved provider is not the governed
+/// engine.
+pub async fn governed_turn(prepared: &PreparedGovernedTurn) -> Result<GovernedReply, String> {
+    // Input was already validated + trimmed once in `prepare_governed_turn`; this runs
+    // the EXACT prepared data (no second trim/hash that could diverge from what was
+    // hashed into the challenge).
+    let _permit = GenerationPermit::acquire()?;
+    match resolve()? {
+        Provider::GovernedEngine { python, sidecar } => {
+            governed_engine(&python, &sidecar, prepared).await
+        }
+        _ => Err("governed_turn requires the governed engine provider".to_string()),
     }
 }
 
@@ -571,12 +602,12 @@ pub async fn generate_stream<F: FnMut(&str)>(
             on_delta(&full);
             Ok(full)
         }
-        Provider::GovernedEngine { python, sidecar } => {
-            // The sidecar is request/response (not a token stream): run once, emit
-            // the whole verified reply as a single delta.
-            let full = governed_engine(&python, &sidecar, system, messages).await?;
-            on_delta(&full);
-            Ok(full)
+        Provider::GovernedEngine { .. } => {
+            // A governed turn is NOT streamed: the desktop must buffer the whole reply
+            // and verify its signed receipt before rendering anything. That path lives
+            // in the command layer (it owns the DB for the nonce challenge +
+            // verification) and calls `governed_turn`. Reaching here is a wiring error.
+            Err("governed turns must run through the verified governed_turn path".to_string())
         }
     }
 }
@@ -1127,15 +1158,120 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
 /// Build a `bridge.task-request` JSON for one governed AI turn. Carries no lease,
 /// key, or environment (the sidecar/engine own those); the system prompt +
 /// conversation travel as `rationale`, JSON-escaped so content can't forge structure.
-fn governed_request(system: &str, messages: &[ChatMsg]) -> String {
+/// The canonical governed-request context (design §2.2), built ONCE by the command
+/// layer and used — from this single immutable source — for THREE things that must
+/// never drift: (1) issuing the durable one-time nonce challenge; (2) riding inside
+/// the bridge task-request so the supervisor/signer sees the exact nonce + request
+/// hashes and can mint a receipt that satisfies the desktop's `request_nonce` /
+/// `request_sha256` bindings; (3) the desktop's `Expected` request envelope at verify
+/// time. Owned strings so the three uses cannot diverge.
+#[derive(Debug, Clone)]
+pub struct GovernedRequestContext {
+    pub workspace_id: String,
+    pub install_id: String,
+    pub request_nonce: String,
+    pub system_sha256: String,
+    pub history_sha256: String,
+    pub generation_config_sha256: String,
+    pub requested_at: String,
+}
+
+/// Collision-safe canonical hash of the turn's history (design §2.2): sha256 over
+/// JCS `[{content, role}, ...]`. It hashes a JSON STRUCTURE, never a delimiter concat
+/// — so user content can never forge a different message array into the same bytes
+/// (which a `role\0content\1` join could). `serde_json` of a `Vec<BTreeMap>` emits
+/// sorted keys + compact separators, i.e. JCS for this ASCII-keyed string shape.
+pub fn governed_history_sha256(messages: &[ChatMsg]) -> String {
+    let arr: Vec<std::collections::BTreeMap<&str, &str>> = messages
+        .iter()
+        .map(|m| {
+            let mut o = std::collections::BTreeMap::new();
+            o.insert("role", m.role.as_str());
+            o.insert("content", m.content.as_str());
+            o
+        })
+        .collect();
+    brops_core::receipt::sha256_hex(&serde_json::to_vec(&arr).unwrap_or_default())
+}
+
+/// A governed turn prepared ONCE so the exact input is the single source of truth
+/// (audit R2 P0). The history is trimmed here, and everything downstream derives from
+/// this same prepared data: `system_sha256` from `system`, `history_sha256` from the
+/// trimmed `history`, the [`GovernedRequestContext`], the bridge request (structured
+/// `system` + `history`), the durable challenge, and the desktop `Expected`. Nothing
+/// re-trims or re-hashes a different input afterwards, so what is sent, what is hashed,
+/// and what is verified can never diverge.
+#[derive(Debug, Clone)]
+pub struct PreparedGovernedTurn {
+    pub system: String,
+    /// The exact canonical trimmed history that is sent AND hashed.
+    pub history: Vec<ChatMsg>,
+    pub context: GovernedRequestContext,
+}
+
+/// Prepare a governed turn: validate, trim the history exactly once, and hash the
+/// exact `system` + trimmed `history` into the canonical [`GovernedRequestContext`].
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_governed_turn(
+    system: &str,
+    messages: &[ChatMsg],
+    now_ms: u64,
+    workspace_id: &str,
+    install_id: &str,
+    generation_config: &str,
+) -> Result<PreparedGovernedTurn, String> {
+    validate_input(system, messages)?;
+    let history: Vec<ChatMsg> = trim_history(messages).to_vec();
+    let context = GovernedRequestContext {
+        workspace_id: workspace_id.to_string(),
+        install_id: install_id.to_string(),
+        request_nonce: brops_core::id(),
+        system_sha256: brops_core::receipt::sha256_hex(system.as_bytes()),
+        history_sha256: governed_history_sha256(&history),
+        generation_config_sha256: brops_core::receipt::sha256_hex(generation_config.as_bytes()),
+        requested_at: now_ms.to_string(),
+    };
+    Ok(PreparedGovernedTurn { system: system.to_string(), history, context })
+}
+
+fn governed_request(prepared: &PreparedGovernedTurn) -> String {
+    let ctx = &prepared.context;
+    // `system` + structured `history` are the EXECUTION / SIGNING authority (audit R2
+    // P0-2): the supervisor/executor works from them, and the Wave 3b signer recomputes
+    // system_sha256 / history_sha256 from THESE exact structured fields — it never
+    // trusts the incoming hash claims in `request`. `rationale` is a derived,
+    // human-readable convenience only, with no authority.
     let rationale = format!(
-        "{system}\n\n{}\n\nReply to the latest user message.",
-        transcript(messages)
+        "{}\n\n{}\n\nReply to the latest user message.",
+        prepared.system,
+        transcript(&prepared.history)
     );
+    let history: Vec<serde_json::Value> = prepared
+        .history
+        .iter()
+        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+        .collect();
     serde_json::json!({
         "task_id": governed_task_id(),
         "task_class": GOVERNED_TASK_CLASS,
         "rationale": rationale,
+        // Exact structured input — the authority the executor/signer works from.
+        "system": prepared.system,
+        "history": history,
+        // The canonical request envelope (design §2.2): the desktop nonce + request
+        // hashes travel to the supervisor/signer so a Wave 3b receipt can bind them.
+        // The signer RECOMPUTES these hashes from `system`/`history`, never trusting
+        // them as input evidence.
+        "request": {
+            "protocol": "brops.request.v1",
+            "workspace_id": ctx.workspace_id,
+            "install_id": ctx.install_id,
+            "request_nonce": ctx.request_nonce,
+            "system_sha256": ctx.system_sha256,
+            "history_sha256": ctx.history_sha256,
+            "generation_config_sha256": ctx.generation_config_sha256,
+            "requested_at": ctx.requested_at,
+        },
     })
     .to_string()
 }
@@ -1152,32 +1288,54 @@ fn governed_task_id() -> String {
     format!("t-{nanos:x}-{n:x}")
 }
 
-/// Enforce the verified-receipt-mandatory invariant on a parsed bridge-result:
-/// return the reply ONLY when `ok == true` AND `receipt.verified == true`;
-/// otherwise fail closed with the engine's reason. Never returns a partial or
-/// unverified result — the same guarantee the Python adapter makes, re-checked on
-/// the desktop so an unverified turn is never rendered. (Pure fn — unit-testable.)
-fn interpret_bridge_result(doc: &serde_json::Value) -> Result<String, String> {
+/// The raw materials of a governed turn, for the DESKTOP to verify (design §3): the
+/// exact reply bytes plus the receipt's signed wire (`envelope_jcs_b64` +
+/// `signature_b64`). The desktop — not this layer, and never a bridge boolean —
+/// decides trust by verifying the Ed25519 signature via `brops-core::receipt_store`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GovernedReply {
+    pub reply: String,
+    pub envelope_jcs_b64: String,
+    pub signature_b64: String,
+}
+
+/// Parse a bridge-result into a [`GovernedReply`]. A completed run (`ok == true`)
+/// yields the reply + the receipt's signed wire (empty strings when the engine
+/// produced no signed receipt — the desktop then Blocks). A failure (`ok == false`)
+/// fails closed with the engine's reason. This layer makes NO trust decision — there
+/// is no `verified` boolean. (Pure fn — unit-testable.)
+fn interpret_bridge_result(doc: &serde_json::Value) -> Result<GovernedReply, String> {
     let ok = doc.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-    let verified = doc
-        .get("receipt")
-        .and_then(|r| r.get("verified"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if ok && verified {
-        doc.get("result")
-            .and_then(|r| r.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| "governed engine reported success but returned no result".to_string())
-    } else {
+    if !ok {
         let reason = doc
             .get("error")
             .and_then(|e| e.as_str())
             .filter(|s| !s.is_empty())
-            .unwrap_or("governed engine did not return a verified result");
-        Err(format!("governed engine fail-closed: {reason}"))
+            .unwrap_or("governed engine returned no result");
+        return Err(format!("governed engine fail-closed: {reason}"));
     }
+    // EXACT bytes (design §2.1): NO trim / normalization / transformation. The bytes
+    // hashed (output_sha256), rendered, and persisted must be literally identical, so
+    // the reply is taken verbatim; only a truly empty result is rejected.
+    let reply = doc
+        .get("result")
+        .and_then(|r| r.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "governed engine reported success but returned no result".to_string())?;
+    // The signed wire the desktop verifies; absent/null ⇒ empty ⇒ the desktop Blocks.
+    let wire = |field: &str| {
+        doc.get("receipt")
+            .and_then(|r| r.get(field))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    Ok(GovernedReply {
+        reply,
+        envelope_jcs_b64: wire("envelope_jcs_b64"),
+        signature_b64: wire("signature_b64"),
+    })
 }
 
 /// Governed-engine provider: shell out to the bridge sidecar, which runs the turn
@@ -1188,10 +1346,9 @@ fn interpret_bridge_result(doc: &serde_json::Value) -> Result<String, String> {
 async fn governed_engine(
     python: &str,
     sidecar: &str,
-    system: &str,
-    messages: &[ChatMsg],
-) -> Result<String, String> {
-    let request = governed_request(system, messages);
+    prepared: &PreparedGovernedTurn,
+) -> Result<GovernedReply, String> {
+    let request = governed_request(prepared);
     let mut cmd = tokio::process::Command::new(python);
     cmd.arg(sidecar)
         // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
@@ -1555,39 +1712,73 @@ mod tests {
     }
 
     #[test]
-    fn governed_engine_accepts_only_verified_results() {
+    fn interpret_bridge_result_extracts_reply_and_signed_wire() {
         let good = serde_json::json!({
             "ok": true, "result": "hi there", "error": null,
-            "receipt": {"task_id": "t", "status": "completed", "evidence": ["e"], "verified": true}
+            "receipt": {"task_id": "t", "status": "completed", "evidence": ["e"],
+                        "envelope_jcs_b64": "env==", "signature_b64": "sig=="}
         });
-        assert_eq!(interpret_bridge_result(&good).unwrap(), "hi there");
+        let r = interpret_bridge_result(&good).unwrap();
+        assert_eq!(r.reply, "hi there");
+        assert_eq!(r.envelope_jcs_b64, "env==");
+        assert_eq!(r.signature_b64, "sig==");
     }
 
     #[test]
-    fn governed_engine_is_fail_closed_without_a_verified_receipt() {
-        // ok:true but receipt.verified:false — the result must NOT leak.
-        let unverified = serde_json::json!({
-            "ok": true, "result": "should-be-ignored", "error": null,
-            "receipt": {"task_id": "t", "status": "completed", "evidence": [], "verified": false}
+    fn interpret_bridge_result_preserves_the_exact_reply_bytes() {
+        // design §2.1: no trim / normalization. Leading/trailing spaces + newlines are
+        // part of the signed output and must survive verbatim.
+        let raw = "  hello \n world\t\n";
+        let doc = serde_json::json!({
+            "ok": true, "result": raw, "error": null,
+            "receipt": {"task_id":"t","status":"completed","evidence":["e"],
+                        "envelope_jcs_b64":"env==","signature_b64":"sig=="}
         });
-        assert!(interpret_bridge_result(&unverified).is_err());
+        assert_eq!(interpret_bridge_result(&doc).unwrap().reply, raw);
+    }
+
+    #[test]
+    fn interpret_bridge_result_is_fail_closed_and_a_verified_bool_never_bypasses() {
         // ok:false — engine error surfaced, no result.
         let denied = serde_json::json!({
             "ok": false, "result": null, "receipt": null, "error": "denied: not authorized"
         });
         assert!(interpret_bridge_result(&denied).unwrap_err().contains("denied"));
-        // receipt entirely absent — fail closed.
-        let no_receipt = serde_json::json!({"ok": true, "result": "x", "error": null});
-        assert!(interpret_bridge_result(&no_receipt).is_err());
+        // ok:true but empty result — fail closed.
+        let no_result = serde_json::json!({"ok": true, "result": "", "error": null,
+            "receipt": {"task_id":"t","status":"completed","evidence":["e"],
+                        "envelope_jcs_b64": null, "signature_b64": null}});
+        assert!(interpret_bridge_result(&no_result).is_err());
+        // A self-asserted `verified: true` must NOT bypass anything: this layer never
+        // reads it. With no signed wire, the reply is carried with EMPTY wire, and the
+        // desktop verifier Blocks it (empty envelope → parse failure → Blocked).
+        let claims_verified_but_unsigned = serde_json::json!({
+            "ok": true, "result": "should-be-blocked-by-the-desktop", "error": null,
+            "receipt": {"task_id":"t","status":"completed","evidence":["e"],
+                        "verified": true, "envelope_jcs_b64": null, "signature_b64": null}
+        });
+        let r = interpret_bridge_result(&claims_verified_but_unsigned).unwrap();
+        assert_eq!(r.envelope_jcs_b64, "", "no trust from a bare verified bool");
+        assert_eq!(r.signature_b64, "");
     }
 
     #[test]
-    fn governed_request_is_a_valid_lease_free_task_request() {
+    fn governed_request_carries_structured_input_and_the_canonical_envelope() {
         let msgs = vec![ChatMsg { role: "user".into(), content: "hello world".into() }];
-        let req: serde_json::Value = serde_json::from_str(&governed_request("sys", &msgs)).unwrap();
+        let prepared = prepare_governed_turn("sys", &msgs, 1000, "ws", "in", "gen-cfg").unwrap();
+        let req: serde_json::Value = serde_json::from_str(&governed_request(&prepared)).unwrap();
         assert_eq!(req["task_class"], GOVERNED_TASK_CLASS);
         assert!(req["task_id"].as_str().unwrap().starts_with("t-"));
-        assert!(req["rationale"].as_str().unwrap().contains("hello world"));
+        // Exact STRUCTURED input is the execution/signing authority (P0-2), not rationale.
+        assert_eq!(req["system"], "sys");
+        assert_eq!(req["history"][0]["role"], "user");
+        assert_eq!(req["history"][0]["content"], "hello world");
+        // The request envelope's hashes match the structured fields (the signer
+        // RECOMPUTES + compares; it never trusts these claims).
+        assert_eq!(req["request"]["request_nonce"], prepared.context.request_nonce);
+        assert_eq!(req["request"]["system_sha256"], brops_core::receipt::sha256_hex(b"sys"));
+        assert_eq!(req["request"]["history_sha256"], governed_history_sha256(&prepared.history));
+        assert_eq!(req["request"]["protocol"], "brops.request.v1");
         // Carries NO lease / key / environment — the conductor never holds them.
         for forbidden in ["lease", "key", "env", "issuer", "protected_scope"] {
             assert!(req.get(forbidden).is_none(), "request must not carry {forbidden}");
@@ -1595,8 +1786,119 @@ mod tests {
     }
 
     #[test]
+    fn prepared_turn_hashes_the_exact_sent_trimmed_history_not_the_full_one() {
+        // Over-budget history (10 × 50 KiB) so trim_history drops the oldest; the
+        // latest must remain a user turn.
+        let mut msgs: Vec<ChatMsg> = (0..9)
+            .map(|i| ChatMsg {
+                role: if i % 2 == 0 { "user" } else { "assistant" }.to_string(),
+                content: "x".repeat(50 * 1024),
+            })
+            .collect();
+        msgs.push(ChatMsg { role: "user".into(), content: "the latest question".into() });
+        let full = msgs.clone();
+
+        let prepared = prepare_governed_turn("sys", &msgs, 1000, "ws", "in", "gen").unwrap();
+        assert!(prepared.history.len() < full.len(), "history was actually trimmed");
+
+        let req: serde_json::Value = serde_json::from_str(&governed_request(&prepared)).unwrap();
+        let sent: Vec<ChatMsg> = req["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| ChatMsg {
+                role: m["role"].as_str().unwrap().to_string(),
+                content: m["content"].as_str().unwrap().to_string(),
+            })
+            .collect();
+        let pairs = |v: &[ChatMsg]| -> Vec<(String, String)> {
+            v.iter().map(|m| (m.role.clone(), m.content.clone())).collect()
+        };
+        // 1. The actual SENT history == the prepared trimmed history.
+        assert_eq!(pairs(&sent), pairs(&prepared.history));
+        // 2. The request's history_sha256 == hash(SENT history).
+        assert_eq!(req["request"]["history_sha256"], governed_history_sha256(&sent));
+        // 3. hash(sent) != hash(full) — it is NOT the untrimmed history.
+        assert_ne!(governed_history_sha256(&sent), governed_history_sha256(&full));
+        // 4. The latest user message is preserved.
+        assert_eq!(sent.last().unwrap().content, "the latest question");
+        assert_eq!(sent.last().unwrap().role, "user");
+    }
+
+    #[test]
     fn governed_task_ids_are_unique() {
         assert_ne!(governed_task_id(), governed_task_id());
+    }
+
+    #[test]
+    fn governed_history_hash_is_collision_safe() {
+        // Under a naive `role\0content\1` concat these two DIFFERENT histories collide
+        // (the single message's content embeds the delimiters). JCS keeps them distinct.
+        let a = vec![ChatMsg { role: "user".into(), content: "x\u{1}user\u{0}y".into() }];
+        let b = vec![
+            ChatMsg { role: "user".into(), content: "x".into() },
+            ChatMsg { role: "user".into(), content: "y".into() },
+        ];
+        assert_ne!(governed_history_sha256(&a), governed_history_sha256(&b));
+        assert!(brops_core::receipt::sha256_hex(b"") != governed_history_sha256(&a)); // sanity
+    }
+
+    #[test]
+    fn governed_e2e_unsigned_bridge_result_blocks_persists_no_message_and_closes_nonce() {
+        // Desktop-side end-to-end for the strict-3a governed path: a completed but
+        // UNSIGNED bridge result (what the 3a sidecar returns) -> interpret_bridge_result
+        // -> verify via brops-core with NO trusted key -> Blocked, evidence recorded,
+        // NO agent message, and the one-time nonce terminally consumed.
+        use brops_core::receipt::{sha256_hex, Expected, IssuedRequest};
+        let conn = brops_core::db::open_in_memory().unwrap();
+        let conv = brops_core::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        let now_ms = 1_000_000u64;
+        let requested_at = now_ms.to_string();
+        let (sys_h, hist_h, gen_h) = (sha256_hex(b"sys"), sha256_hex(b"hist"), sha256_hex(b"gen"));
+        let issued = IssuedRequest {
+            workspace_id: "ws", install_id: "in", request_nonce: "nonce-e2e",
+            system_sha256: &sys_h, history_sha256: &hist_h,
+            generation_config_sha256: &gen_h, requested_at: &requested_at,
+        };
+        brops_core::receipt_store::issue_challenge(&conn, &conv.id, &issued, now_ms).unwrap();
+
+        // A completed, unsigned bridge-result (self-test / no-signer shape).
+        let doc = serde_json::json!({
+            "ok": true, "result": "governed reply", "error": null,
+            "receipt": {"task_id":"t","status":"completed","evidence":["e"],
+                        "envelope_jcs_b64": null, "signature_b64": null}
+        });
+        let reply = interpret_bridge_result(&doc).unwrap();
+        let output = reply.reply.clone().into_bytes();
+        let placeholder = "00".repeat(32);
+        let expected = Expected {
+            request: issued, supervisor_id: "sup", policy_id: "pol", policy_version: "1",
+            policy_bundle_sha256: &placeholder, containment_evidence_sha256: &placeholder,
+            allowed_executors: &[], allowed_builders: &[],
+        };
+        let turn = brops_core::receipt_store::GovernedTurn {
+            wire: brops_core::receipt_store::ReceiptWire {
+                envelope_jcs_b64: &reply.envelope_jcs_b64,
+                signature_b64: &reply.signature_b64,
+            },
+            expected,
+            output: &output,
+            now_ms,
+            freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
+        };
+        let outcome = brops_core::receipt_store::verify_and_record_receipt(
+            &conn,
+            &brops_core::receipt_store::NoTrustedManifest,
+            &turn,
+        )
+        .unwrap();
+        assert!(matches!(outcome, brops_core::receipt_store::ReceiptOutcome::Blocked { .. }));
+        let msgs: i64 = conn.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0)).unwrap();
+        assert_eq!(msgs, 0, "a Blocked governed turn persists NO agent message");
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-e2e'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_some(), "the one-time nonce is terminally consumed");
     }
 
     // ---- Fail-closed provider policy (pure `resolve_provider`) --------------

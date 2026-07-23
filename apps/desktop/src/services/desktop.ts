@@ -190,6 +190,10 @@ export type StreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'done'; message: Message }
   | { type: 'error'; message: string }
+  // A governed turn was Blocked by desktop receipt verification: NO agent message was
+  // produced (Wave 3a Blocks every governed turn). The UI shows a transient turn-level
+  // notice, never a persisted reply. `reason` is the machine verdict.
+  | { type: 'blocked'; reason: string }
   // stream_ask only: the full answer is held server-side under this one-time id.
   | { type: 'ready'; resultId: string };
 

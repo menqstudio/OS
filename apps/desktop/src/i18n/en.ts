@@ -77,8 +77,9 @@ export const en = {
   'chat.deleteConversation': 'Delete conversation',
   'chat.deleteConfirm': 'This conversation and all of its messages will be permanently deleted.',
   'chat.saveToChat': 'Save to chat',
-  'chat.verified': 'Verified',
-  'chat.blocked': 'Blocked',
+  'chat.receiptVerified': 'Verified',
+  'chat.receiptDev': 'Dev / untrusted',
+  'chat.governedBlocked': 'Governed reply blocked (unverified)',
 
   'projects.subtitle': 'Objective-centered work',
   'tasks.subtitle': 'Action system with evidence',

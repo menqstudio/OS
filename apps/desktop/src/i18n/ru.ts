@@ -79,8 +79,9 @@ export const ru: Record<DictKey, string> = {
   'chat.deleteConversation': 'Удалить разговор',
   'chat.deleteConfirm': 'Этот разговор и все его сообщения будут удалены безвозвратно.',
   'chat.saveToChat': 'Сохранить в чат',
-  'chat.verified': 'Проверено',
-  'chat.blocked': 'Заблокировано',
+  'chat.receiptVerified': 'Проверено',
+  'chat.receiptDev': 'Dev / не доверенный',
+  'chat.governedBlocked': 'Управляемый ответ заблокирован (не проверен)',
 
   'projects.subtitle': 'Работа, ориентированная на цель',
   'tasks.subtitle': 'Система действий с доказательствами',

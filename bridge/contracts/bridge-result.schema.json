@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bridge.result",
-  "description": "What the sidecar returns to the desktop. Fail-closed + VERIFIED-receipt-mandatory: `result` is non-null ONLY when `ok` is true and a `receipt` with `verified: true` is present; a failure never carries a result. `verified` is set by the adapter only after an injected verifier confirms the run's signed evidence.",
+  "description": "What the sidecar returns to the desktop. The DESKTOP is the final receipt authority (design §3): it cryptographically verifies the receipt's Ed25519 signature over the canonical envelope against a pinned key — so this payload carries the SIGNED receipt material (`envelope_jcs_b64` + `signature_b64`) and NEVER a self-asserted `verified` boolean. Fail-closed: `result` is non-null ONLY when `ok` is true (a completed, evidenced run); a failure never carries a result. A missing/empty signature means the desktop Blocks — it does not mean the bridge asserts trust.",
   "type": "object",
   "additionalProperties": false,
   "required": ["ok", "result", "receipt", "error"],
@@ -9,42 +9,39 @@
     "ok": { "type": "boolean" },
     "result": {
       "type": ["string", "null"],
-      "description": "The AI turn's output. Non-null iff ok=true."
+      "description": "The AI turn's output. Non-null iff ok=true. The desktop still only RENDERS it if the receipt's signature verifies."
     },
     "receipt": {
       "type": ["object", "null"],
       "additionalProperties": false,
-      "required": ["task_id", "status", "evidence", "verified"],
+      "required": ["task_id", "status", "evidence", "envelope_jcs_b64", "signature_b64"],
       "properties": {
         "task_id": { "type": "string" },
         "status": { "type": "string" },
         "exit_code": { "type": ["integer", "null"] },
         "evidence": { "type": "array", "items": { "type": "string" } },
-        "verified": {
-          "type": "boolean",
-          "description": "True only after the injected verifier confirmed the run's signed evidence. `ok: true` REQUIRES `verified: true`; the adapter never returns a result otherwise."
+        "envelope_jcs_b64": {
+          "type": ["string", "null"],
+          "description": "base64url(JCS(receipt envelope)) — the exact canonical bytes the desktop verifies the signature over. `null` when the engine produced no signed receipt (e.g. Wave 3a has no isolated signer) → the desktop Blocks."
+        },
+        "signature_b64": {
+          "type": ["string", "null"],
+          "description": "base64url(Ed25519 signature) over `envelope_jcs_b64`. `null` when unsigned → the desktop Blocks. The bridge NEVER asserts this is valid; the desktop verifies it."
         }
       },
-      "description": "The governed-run receipt (from bro_supervisor.SupervisorResult), verified. Mandatory (with verified:true) alongside any result."
+      "description": "The governed-run receipt (from bro_supervisor.SupervisorResult). Carries the signed material for the DESKTOP to verify. There is no `verified` field — trust is a desktop signature check, never a bridge boolean."
     },
     "error": { "type": ["string", "null"] }
   },
   "allOf": [
     {
-      "comment": "ok:true REQUIRES a non-null string result AND a receipt object with verified:true.",
+      "comment": "ok:true REQUIRES a non-null string result AND a receipt object (which carries the signed material the desktop verifies).",
       "if": {
         "properties": { "ok": { "const": true } },
         "required": ["ok"]
       },
       "then": {
-        "properties": {
-          "result": { "type": "string" },
-          "receipt": {
-            "type": "object",
-            "required": ["verified"],
-            "properties": { "verified": { "const": true } }
-          }
-        },
+        "properties": { "result": { "type": "string" }, "receipt": { "type": "object" } },
         "required": ["result", "receipt"]
       }
     },

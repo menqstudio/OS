@@ -1,8 +1,9 @@
 """Tests for bridge/engine_sidecar.py — the stdin->stdout process entry.
 
 Pins the sidecar contract: it always emits a schema-shaped bridge-result, the
-self-test mode proves the verified=true happy path, and every real-mode / error
-path is fail-closed (result is null). No engine, no provisioning required.
+self-test mode proves the transport round-trip (carrying the receipt material for the
+DESKTOP to verify — the sidecar asserts NO trust), and every real-mode / error path
+is fail-closed (result is null). No engine, no provisioning required.
 """
 from __future__ import annotations
 
@@ -27,7 +28,16 @@ except Exception:  # pragma: no cover - jsonschema is a declared dep
         assert set(doc) == {"ok", "result", "receipt", "error"}
 
 
-_VALID = {"task_id": "t-0001", "task_class": "standard-builder", "rationale": "reply"}
+_VALID = {
+    "task_id": "t-0001", "task_class": "standard-builder", "rationale": "reply",
+    "system": "you are a specialist",
+    "history": [{"role": "user", "content": "hello"}],
+    "request": {
+        "protocol": "brops.request.v1", "workspace_id": "ws", "install_id": "in",
+        "request_nonce": "nonce-1", "system_sha256": "aa" * 32, "history_sha256": "bb" * 32,
+        "generation_config_sha256": "cc" * 32, "requested_at": "1000",
+    },
+}
 
 
 def _drive(request, argv=(), env=None):
@@ -67,21 +77,24 @@ class EngineSidecarTests(unittest.TestCase):
             if v is not None:
                 os.environ[k] = v
 
-    def test_self_test_mode_emits_verified_result(self):
+    def test_self_test_mode_round_trip_carries_receipt_and_asserts_no_trust(self):
         doc = _drive(_VALID, argv=["--self-test"])
         self.assertTrue(doc["ok"])
         self.assertIsInstance(doc["result"], str)
         self.assertTrue(doc["result"])  # non-empty
         self.assertIsNone(doc["error"])
         self.assertIsNotNone(doc["receipt"])
-        self.assertTrue(doc["receipt"]["verified"])
         self.assertEqual(doc["receipt"]["status"], "completed")
+        # The self-test carries NO signature (no signer) and NO `verified` boolean —
+        # the desktop would Block it. The round-trip is proven, not a trust bypass.
+        self.assertIsNone(doc["receipt"]["signature_b64"])
+        self.assertNotIn("verified", doc["receipt"])
 
     def test_env_var_does_NOT_activate_fake(self):
         # SECURITY (Architect merge-blocker): fake mode is --self-test (CLI) ONLY.
-        # A production launch inherits its parent env; an env-activated fake verifier
-        # there would fabricate a "verified" result. Setting the env var WITHOUT the
-        # flag must reach real mode and fail closed — never a fake verified receipt.
+        # A production launch inherits its parent env; an env-activated self-test there
+        # would emit a canned result. Setting the env var WITHOUT the flag must reach
+        # real mode and fail closed — never a fabricated result.
         doc = _drive(_VALID, env={"BRIDGE_SIDECAR_FAKE": "1"})
         self.assertFalse(doc["ok"])
         self.assertIsNone(doc["result"])
@@ -111,12 +124,12 @@ class EngineSidecarTests(unittest.TestCase):
         self.assertIsNone(doc["result"])
         self.assertIn("not provisioned", doc["error"])
 
-    def test_real_mode_provisioned_but_unaudited_fails_closed(self):
+    def test_real_mode_provisioned_but_no_signer_fails_closed(self):
         env = {k: "x" for k in engine_sidecar._PROVISION_ENV}
         doc = _drive(_VALID, env=env)
         self.assertFalse(doc["ok"])
         self.assertIsNone(doc["result"])
-        self.assertIn("pending Architect audit", doc["error"])
+        self.assertIn("signer", doc["error"])
 
     def test_result_never_carries_result_on_any_failure(self):
         # Sweep: every non-happy path has result is None.
@@ -138,12 +151,16 @@ except Exception:  # pragma: no cover - jsonschema is a declared dep
 
 @unittest.skipUnless(_jsonschema is not None, "jsonschema not installed")
 class ResultSchemaInvariantTests(unittest.TestCase):
-    """The schema itself must ENFORCE ok:true => non-null result + verified receipt."""
+    """The schema ENFORCES ok:true => non-null result + a receipt carrying the signed
+    material (envelope_jcs_b64 + signature_b64) — and NEVER a `verified` boolean."""
 
     _CONSISTENT_OK = {
         "ok": True,
         "result": "hello",
-        "receipt": {"task_id": "t", "status": "completed", "evidence": ["e"], "verified": True},
+        "receipt": {
+            "task_id": "t", "status": "completed", "evidence": ["e"],
+            "envelope_jcs_b64": "env==", "signature_b64": "sig==",
+        },
         "error": None,
     }
     _CONSISTENT_FAIL = {"ok": False, "result": None, "receipt": None, "error": "denied"}
@@ -154,6 +171,13 @@ class ResultSchemaInvariantTests(unittest.TestCase):
     def test_consistent_success_is_accepted(self):
         self.assertTrue(self._valid(self._CONSISTENT_OK))
 
+    def test_unsigned_success_is_accepted_desktop_blocks_it(self):
+        # An unsigned receipt (null wire) is a VALID payload — the desktop, not the
+        # schema, is the authority that Blocks it.
+        ok = dict(self._CONSISTENT_OK,
+                  receipt=dict(self._CONSISTENT_OK["receipt"], envelope_jcs_b64=None, signature_b64=None))
+        self.assertTrue(self._valid(ok))
+
     def test_consistent_failure_is_accepted(self):
         self.assertTrue(self._valid(self._CONSISTENT_FAIL))
 
@@ -161,10 +185,16 @@ class ResultSchemaInvariantTests(unittest.TestCase):
         bad = dict(self._CONSISTENT_OK, result=None)
         self.assertFalse(self._valid(bad))
 
-    def test_ok_true_with_unverified_receipt_is_rejected(self):
+    def test_receipt_with_a_verified_field_is_rejected(self):
+        # The removed self-asserted authority must not be smuggled back in.
         bad = dict(self._CONSISTENT_OK,
-                   receipt=dict(self._CONSISTENT_OK["receipt"], verified=False))
+                   receipt=dict(self._CONSISTENT_OK["receipt"], verified=True))
         self.assertFalse(self._valid(bad))
+
+    def test_receipt_missing_signed_material_field_is_rejected(self):
+        r = dict(self._CONSISTENT_OK["receipt"])
+        del r["signature_b64"]
+        self.assertFalse(self._valid(dict(self._CONSISTENT_OK, receipt=r)))
 
     def test_ok_true_with_null_receipt_is_rejected(self):
         bad = dict(self._CONSISTENT_OK, receipt=None)
