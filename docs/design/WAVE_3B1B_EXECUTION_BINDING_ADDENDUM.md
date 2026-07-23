@@ -1,4 +1,4 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 3)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 4)
 
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. Builds on
 > the Architect-GREEN Wave 3b design ([`WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](./WAVE_3B_ISOLATED_SIGNER_DESIGN.md))
@@ -29,72 +29,80 @@
 > normative `brops.governed-turn-execution-receipt.v1` schema + dedicated verifier replaces
 > the generic CRLF-normalizing receipt (§3.5, §4); crash-recovery wording aligned to
 > create-if-absent (§6).
+>
+> **rev 4** closes the design RED on rev 3: **P0-1** one non-contradictory executor lifecycle owner — the supervisor launches the recorder runner; the recorder starts the executor under a different UID via a **narrow privileged launcher** (setuid-only, holds no key) and owns the pidfd/cgroup + teardown, so signing-capability and setuid-capability live in separate principals (§1, §2); **P1-2** the evidence-head floor is keyed **per (install, task/chain)**, not per-install (§6); **P1-3** the supervisor request carries the **exact** system/history/generation_config bytes + challenge, and the supervisor recomputes the three hashes and refuses on mismatch before reserving/executing (§2.5); **P1-4** a normative `brops.governed-turn-containment.v1` artifact binds run/attempt/lease/runner + cgroup + the measured `contained`, hashed into a containment-confirmed evidence event and cross-bound by the verifier (§3.6).
 
 ## 1. The governed AI turn IS a `bro_supervisor`-owned supervised execution
 
 Today the governed AI turn (desktop `system`/`history` → model reply) runs in the sidecar
-and is NOT lease-owned or receipted. 3b-1B moves it under the existing supervisor:
+and is NOT lease-owned or receipted. 3b-1B moves it under the existing supervisor, with a
+**single, non-contradictory lifecycle owner** (P0-1):
 
-- The **supervisor** (`bro_supervisor.run_task` path) **issues an execution-lease**
-  (`issue_lease`, issuer authority) for the turn and **spawns the governed-turn executor
-  as a contained builder** (`spawn_builder` — its own process group, the lease injected
-  into the child env only, timeout + `contained` enforcement). The turn is `COMPLETED`
-  only under the existing rule: `not timed_out AND contained AND exit_code == 0`.
-- The supervisor **observes** the run; it does not itself invoke the model. It owns the
-  lease, the containment verdict, and the terminal-record signing.
+- The **supervisor** (`bro_supervisor.run_task` path) **issues the execution-lease**
+  (`issue_lease`, issuer authority) and **launches the evidence-recorder runner** (under
+  the recorder UID). The supervisor owns the lease + signs the governed-turn-record; it
+  does **not** itself spawn the model executor or measure containment.
+- The **evidence-recorder runner** owns the executor lifecycle + containment: it starts
+  the model executor (via the narrow privileged launcher, §2) under the *executor* UID,
+  owns its `pidfd`/cgroup + the output pipe, and performs the teardown + firsthand
+  `contained` measurement (reusing `bro_supervisor`'s group-stop machinery). The turn is
+  `COMPLETED` only under the existing rule: `not timed_out AND contained AND exit_code == 0`.
 
-No new executor is invented: the governed-turn executor is the `builder_command` for this
-run, spawned + contained exactly as any builder.
+No new executor is invented: the model executor is the `builder_command` for this run,
+spawned + contained exactly as any builder — but under the runner (§2 topology), not the
+supervisor.
 
 ## 2. Key-custody topology + EXACT output bytes (P0-1, P0-2)
 
 **Topology (P0-1) — the contained model executor holds NO signing key:**
 
 ```
-supervisor  (owns the lease; signs the governed-turn-record via the dedicated
-             governed-turn-recorder key, §8)
-  → dedicated EVIDENCE-RECORDER RUNNER  (separate OS identity; holds the
-        evidence-recorder key; signs the execution receipt + evidence chain)
-      → CONTAINED MODEL EXECUTOR  (a builder under spawn_builder; own process
-            group; NO signing key or key path in its env/tree)
-      ← the executor returns the EXACT reply bytes only
-  ← the runner returns the signed execution receipt + evidence head
+supervisor  (recorder-launcher UID; owns the lease; signs the governed-turn-record
+             via the dedicated governed-turn-recorder key, §8)
+  → EVIDENCE-RECORDER RUNNER   (dedicated recorder UID; holds the evidence-recorder
+        key; signs the execution receipt + evidence chain; owns the executor's
+        pidfd/cgroup + output pipe + teardown measurement)
+      → NARROW PRIVILEGED LAUNCHER   (a tiny setuid helper: its ONLY job is to drop to
+            the executor UID + exec the model executor in a fresh cgroup/process group;
+            holds NO signing key; no other capability)
+          → CONTAINED MODEL EXECUTOR   (executor UID; NO signing key/path in its env or
+                tree; writes ONLY its reply bytes to the recorder's output pipe)
+      ← recorder reads the exact reply bytes, measures `contained` at teardown
+  ← the runner returns the signed governed-turn execution receipt + evidence head
 ```
 
-The model executor is `spawn_builder`-contained and is handed only the lease + the
-desktop `system`/`history`; it **never** receives the evidence-recorder (or any signing)
-private key or path. Signing the receipt/evidence is the **evidence-recorder runner** — a
-separate OS identity (the existing engine boundary: the receipt runner holds the evidence
-key, not the builder). This matches the current engine security model rather than handing
-a builder the forgery-capable evidence key.
+**Why a launcher (P0-1):** a dedicated recorder UID cannot itself `setuid` to a different
+executor UID without a privileged capability. Rather than give the recorder `CAP_SETUID`
+(broad forgery/impersonation power **and** it holds the evidence key), the recorder
+`exec`s a **narrow privileged launcher** whose sole function is `setuid(executor) + exec`
+in a fresh cgroup/process group. The launcher holds **no signing key** and does nothing
+else; the recorder keeps ownership of the child's `pidfd`/cgroup + the output pipe (so it
+still measures containment firsthand), while the *signing capability* and the *setuid
+capability* live in **separate** principals. Neither the executor nor the launcher can
+read a signing key.
 
 **Principal separation is an OS-identity boundary, LOCKED (P0-1) — a process group is NOT
 custody:**
-- the **evidence-recorder runner** runs under its own **dedicated service UID/principal**
-  (holds the evidence-recorder key in an owner-only dir);
-- the **model executor** runs under a **different unprivileged sandbox UID/principal**;
-- the executor principal is **denied read + list** on the recorder's key directory, and
+- the **evidence-recorder runner** runs under its **dedicated recorder UID** (holds the
+  evidence-recorder key in an owner-only dir; is NOT privileged/`CAP_SETUID`);
+- the **model executor** runs under a **different unprivileged executor UID**;
+- the executor principal is **denied read + list** on the recorder key directory and
   **cannot `ptrace`/debug** the recorder process (distinct UID + `ptrace_scope`/no shared
-  debug rights) — so it can neither read the key file nor the recorder's process memory;
-- the runner→executor channel is an **explicit output pipe** (the executor writes only its
-  reply bytes to a fixed handle the runner reads); the executor never touches the store or
-  the keys.
+  debug rights) — it can read neither the key file nor the recorder's process memory;
+- the runner→executor channel is the recorder-owned **output pipe** (the executor writes
+  only its reply bytes to a fixed handle the recorder reads); the executor never touches
+  the store or the keys;
 - **Machine-tested:** the Linux `engine-isolation` job extends to prove the executor
   principal cannot read the recorder key dir nor `ptrace` the recorder (same dedicated-user
   pattern already used for the signer/supervisor denials).
 
 **Authoritative containment verdict (P0-2) — no `sign(caller_claim)` oracle.** The final
-`contained` verdict is known only after process-group teardown, and the runner must not
-simply sign a supervisor-supplied JSON claim. LOCKED option: **the evidence-recorder
-runner is itself the execution + containment observer** — it spawns the model executor as
-its child process group, performs the teardown/containment measurement (reusing
-`bro_supervisor`'s group-stop machinery), and thus *measures* `contained` firsthand before
-signing the containment evidence event + receipt. The supervisor owns the lease and the
-governed-turn-record; the runner owns the measured containment. Neither signs an unmeasured
-caller claim. (If a future split is needed, the alternative is a supervisor→runner
-**cryptographically-authenticated measured outcome** bound to the exact
-attempt/lease/process-group id — never plain JSON — but rev 3 locks the runner-as-observer
-option.)
+`contained` verdict is known only after teardown; the runner never signs a supervisor
+JSON claim. Because the **recorder owns the executor's `pidfd`/cgroup** (via the launcher
+above), it performs the teardown/containment measurement itself and *measures* `contained`
+firsthand before signing the containment artifact (§3.6) + the execution receipt. The
+supervisor owns the lease + the governed-turn-record; the recorder owns the measured
+containment; the launcher owns only the `setuid`. No principal signs an unmeasured claim.
 
 **Exact output bytes (P0-2) — a byte-for-byte contract:** the governed-turn runner
 1. captures the executor's reply from **stdout in BINARY mode** (`text=False`),
@@ -111,22 +119,39 @@ normalization drift.
 
 ## 2.5 Execution-attempt ownership (P1-5) — the SUPERVISOR reserves it
 
-The desktop **never** supplies `execution_attempt_id`. The final contract:
+The desktop **never** supplies `execution_attempt_id`, but it MUST supply the **exact
+execution bytes** the executor runs on (the executor needs `system`/`history`/
+`generation_config`, not just hashes). Locked supervisor-service request schema
+(`brops.governed-turn-request.v1`):
 
-1. the desktop issues the governed **request challenge** (nonce + `request_sha256`) + the
-   `run_id`/`task_id` (its own turn identity); it carries **no** attempt id (the bridge
-   `task-request` has no such field — 3b-1A reverted it);
+```jsonc
+{ "protocol": "brops.governed-turn-request.v1",
+  "run_id": "<string>",
+  "system": "<exact system prompt bytes>",
+  "history": [ { "role": "…", "content": "…" }, … ],
+  "generation_config": "<exact generation-config bytes>",
+  "request": {                       // the desktop's canonical request envelope (challenge)
+    "request_nonce": "<string>", "system_sha256": "<64hex>", "history_sha256": "<64hex>",
+    "generation_config_sha256": "<64hex>", "requested_at": "<ms>" } }
+```
+
+Flow (P1-3, P1-5):
+1. **Recompute-and-bind first.** Before reserving an attempt or executing, the supervisor
+   **recomputes** `system_sha256`/`history_sha256`/`generation_config_sha256` from the
+   exact `system`/`history`/`generation_config` bytes (the §4.0a formulas) and **refuses**
+   if any differs from the `request` envelope — the challenge is bound to the exact bytes,
+   never trusted.
 2. the **supervisor atomically reserves/generates** `execution_attempt_id` for that
-   `run_id` (a durable, one-time reservation — a `run_id` cannot yield two live attempts
-   racing);
-3. the reserved `execution_attempt_id` is **returned** to the caller AND **bound into**
-   the signed governed-turn-record + the execution receipt;
-4. the sidecar (and any caller) **cannot choose an arbitrary pre-existing attempt** — it
-   only relays the challenge + `run_id`; the supervisor owns the attempt namespace.
+   `run_id` (durable, one-time — a `run_id` cannot yield two live attempts racing);
+3. the executor runs on the **verified exact bytes**; the reserved `execution_attempt_id`
+   + the verified request hashes are **bound into** the signed governed-turn-record + the
+   execution receipt;
+4. the caller **cannot choose an arbitrary pre-existing attempt** — the supervisor owns
+   the attempt namespace and returns `{execution_attempt_id, governed-result}`.
 
 This removes the 3b-1A/3b-1B contradiction (the sidecar was requiring a desktop-supplied
-attempt). The supervisor-service protocol becomes `{run_id, request-challenge}` → reserve
-→ execute → sign → return `{execution_attempt_id, governed-result}`.
+attempt): the desktop sends the exact bytes + challenge + `run_id`; the supervisor
+verifies, reserves, executes, signs, and returns the attempt id.
 
 ## 3. `brops.governed-turn-record.v1` — the ONLY signing authority (exact signed schema)
 
@@ -202,6 +227,32 @@ receipt with a byte-for-byte output contract, signed by the **evidence-recorder 
   and `contained is True`, require the run/attempt/lease ids to match, and require
   `output_sha256 == SHA256(output_bytes) == output_handle`. Any deviation is fail-closed.
 
+## 3.6 `brops.governed-turn-containment.v1` — attempt-bound containment (P1-4)
+
+The existing evidence event binds only `task_id`/`event_type`/`agent_id`/`payload_hash` —
+NOT the attempt or lease, so a containment event from another attempt could be cited. 3b-1B
+defines an explicit **containment artifact** the recorder produces from its firsthand
+teardown measurement (§2), publishes to the content-addressed store, and records as a
+**containment-confirmed evidence event** whose `payload_hash` is over this artifact:
+
+```jsonc
+{ "artifact_type": "brops.governed-turn-containment.v1",
+  "run_id": "<string>", "execution_attempt_id": "<string>", "lease_id": "<string>",
+  "runner_id": "<string>", "process_group_id": "<string>",   // or cgroup id
+  "contained": true, "teardown_outcome": "<enum: contained|orphan-quarantined|…>",
+  "measured_at": "<ms>" }
+```
+
+- **Canonical bytes:** `JCS(artifact)`; `containment_evidence_sha256 = SHA256(JCS(artifact))`
+  is the store handle and the value in the governed-turn-record.
+- **Evidence binding:** the recorder writes a **containment-confirmed** evidence event
+  whose `payload_hash == containment_evidence_sha256`, chained + head-anchored as usual.
+- **Verifier cross-bind:** `LiveRunStateProvider` requires the containment artifact's
+  `run_id`/`execution_attempt_id`/`lease_id`/`runner_id` to **equal** the
+  governed-turn-record's, `contained == true`, and the referenced evidence event's
+  `payload_hash` to equal `containment_evidence_sha256` — so a containment measurement from
+  a different attempt/lease can never be substituted.
+
 ## 4. Atomic write / sign / publish order (fail-closed, no partial)
 
 The supervisor, on a `COMPLETED` + verified turn, performs strictly in order:
@@ -241,7 +292,7 @@ re-run idempotent and a divergent overwrite impossible.
 | `execution_attempt_id`, `run_id` | the requested handle |
 | `lease_id`, `lease_nonce` | the verified execution-lease (`verify_artifact` + `validate_execution_lease`) |
 | `policy_id`, `policy_version`, `policy_bundle_sha256` | the operator-authorized policy (the signer re-checks bundle digest, P1-7) |
-| `containment_evidence_sha256` + `containment_event_id` | a signed evidence-chain event whose payload hash equals it |
+| `containment_evidence_sha256` + `containment_event_id` | the `brops.governed-turn-containment.v1` artifact (§3.6) whose `run_id`/`execution_attempt_id`/`lease_id`/`runner_id` equal the record's + `contained==true`, recorded as a containment-confirmed evidence event whose `payload_hash == containment_evidence_sha256` |
 | `receipt_id`, `output_sha256` | the verified governed-turn execution receipt (§3.5): receipt/attempt/lease ids match; the exact output bytes re-hash to `output_sha256 == output_handle` (binary, no normalization) |
 | `evidence_final_event_hash`, `evidence_head_sequence` | the verified evidence head, with the sequence **≥ a durable per-install high-water mark** (anti-rollback) |
 
@@ -254,10 +305,14 @@ The `RunState` is built from the **verified signed record** only.
   (`receipt_id` global uniqueness). The signed record's `request_nonce` must equal the
   desktop challenge.
 - **Evidence-head rollback floor — owner + transaction (P1-6, LOCKED):**
-  - **Authority:** a durable per-install high-water mark row in the desktop's SQLite
-    (`brops-core`), `evidence_head_floor(install_id PK, highest_sequence, final_event_hash)`
-    — the DESKTOP is the anti-rollback authority (it is the verifier of record), not a
-    loose engine-side file.
+  - **Authority + scope (P1-2):** a durable high-water mark **per evidence chain** in the
+    desktop's SQLite (`brops-core`) —
+    `evidence_head_floor(install_id, task_id, highest_sequence, final_event_hash,
+    PRIMARY KEY (install_id, task_id))` (equivalently keyed by the chain's immutable
+    `chain_id`). The floor is **per (install, task/chain)**, NOT per-install: each task is a
+    separate evidence chain whose `head_sequence` restarts, so an install-wide row would
+    wrongly flag task B's sequence 1 as a rollback of task A's sequence 5. The DESKTOP is
+    the anti-rollback authority (the verifier of record), not a loose engine-side file.
   - **Who updates:** the **desktop verify transaction** reads + checks + advances the floor
     **inside the same `BEGIN IMMEDIATE` transaction** that consumes the nonce and persists
     the attempt (the Wave-3a `verify_and_record_receipt` tx) — so acceptance and the floor
