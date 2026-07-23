@@ -1,19 +1,26 @@
-# Wave 3b — Isolated Signer + Signed Manifest + Production "Verified" · DESIGN (rev 2, design-only)
+# Wave 3b — Isolated Signer + Signed Manifest + Production "Verified" · DESIGN (rev 3, design-only)
 
 > **Status: DESIGN-ONLY.** No product code ships under this document until it is
 > **Architect-GREEN + Owner-approved**. This is the **3b-0** deliverable (design PR).
 > Builds on Wave 3a (slices 1–3, merged: `6c920d0`, `9b214e5`, `8a580028`) and on the
 > ratified Wave 3 design ([`WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md`](./WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md) §1 Option B-core, §5).
 >
-> **rev 2** closes the four Architect design blockers on rev 1 (PR #30, RED @ `6a6882e`):
-> **P0-1** dedicated OS security principal (§1.1–1.2), **P0-2** an authenticated run-
-> evidence chain — recompute is not authenticity (§1.3), **P0-3** a context-aware
-> resolver + anti-rollback transaction semantics (§1.7), **P0-4** normative interface
-> schemas (§4).
+> **Revision history.**
+> - **rev 1** (`6a6882e`) — first boundaries. Architect design **RED** (PR #30): 4 P0.
+> - **rev 2** (`9801489`) — closed rev-1's 4 P0 (dedicated OS principal, authenticated
+>   evidence chain, context-aware resolver, concrete schemas). Architect design **RED**:
+>   2 P0 + 3 P1 residual.
+> - **rev 3** (this) — closes rev-2's residuals: **P0-1** the evidence-production API is
+>   not an oracle and the topology is single (§1.3); **P0-2** containment (and every
+>   large input) binds to **real artifact bytes** via a content-addressed protected
+>   store (§1.3–1.4, §4); **P1-3** one fixed IPC frame cap — large inputs are
+>   **artifact handles**, never inline (§1.9, §4.1); **P1-4** the resolver query is
+>   sourced from the **trusted `Expected`/turn**, never the unsigned receipt (§1.7);
+>   **P1-5** durable manifest snapshot persisted atomically with the floor + semantic
+>   uniqueness (§1.6, §4.3).
 >
-> **Հայերեն:** Սա design-only ա։ Product code չի land-ում մինչև Architect-GREEN + Owner։
-> Private-key custody-ն հենց trust boundary-ն ա; engine perimeter-ը audited ա — deliberate,
-> tested, չշտապեցված։
+> **Հայերեն:** Սա design-only ա։ Private-key custody-ն հենց trust boundary-ն ա։ Product
+> code չի land-ում մինչև Architect-GREEN + Owner։
 
 ## 0. The gap this closes
 
@@ -29,138 +36,122 @@ render. Wave 3b provides the missing trusted-key chain:
    `ResolvedManifestKey` — so a **production**-class key finally renders "Verified".
 
 **Crux:** this is not a wiring task. **The private-key custody boundary is the trust
-boundary.** The whole point of the receipt is defeated if a compromised sidecar can
-sign, if the signer will sign attacker-chosen bytes, or if the signer will sign
-**attacker-fabricated run evidence** that merely happens to be self-consistent.
+boundary.** The receipt is defeated if a compromised sidecar can sign, if the signer
+will sign attacker-chosen bytes, if the **evidence producer** will attest attacker-
+chosen facts, or if a hashed *reference* stands in for a real, audit-able artifact.
 
 ## 1. Ratified boundaries (the decisions this PR must LOCK)
 
-### 1.1 Process boundary — separate process AND separate OS security principal
+### 1.1 Process boundary — separate process, dedicated OS principal, single topology
 
-Rev 1 required a separate process with a `0700` key dir. **That is insufficient**: if
-the signer and a compromised sidecar run under the **same OS user (Windows user / Unix
-UID)**, `0700` gives no isolation — a sidecar RCE with that account's rights can read
-the key file, rewrite the signer executable/config, or obtain a process/debug handle to
-the running signer. The boundary must therefore be an **OS security principal boundary**,
-normatively:
-
-- The receipt signer is a **separate OS process** **running under a dedicated OS
-  account / service identity** distinct from the account that runs the sidecar and the
-  desktop. It is **not** a module/function of the sidecar (`bridge/engine_sidecar.py`)
-  or the supervisor.
+- The receipt signer is a **separate OS process** running under a **dedicated OS account
+  / service identity** distinct from the sidecar and the desktop. It is **not** a
+  module/function of the sidecar or the supervisor.
 - The receipt-signing **key files** are ACL'd to the **signer identity only**; the
-  sidecar and desktop identities are **denied read and list** on the key directory.
-- The **signer binary and its config** are **non-writable** by the sidecar/desktop
-  identity (so an RCE cannot swap the signer or point it at a foreign key).
-- **Linux:** dedicated service **UID** (own systemd unit / user), key dir owned `0700`
-  by that UID, and **`ptrace`/process-inspection isolation** from the sidecar UID
-  (e.g. `ptrace_scope`, no shared debug rights, distinct cgroup/namespace where
-  available).
-- **Windows:** dedicated **service identity** (own service SID / virtual account),
-  **private-key ACL** granting only that SID, and **process + named-pipe ACLs** that
-  deny the sidecar/desktop SID `PROCESS_VM_READ` / debug / pipe-connect beyond the
-  defined endpoint.
-- **Transport is local IPC only** — a **Unix domain socket** (Linux) or **named pipe**
-  (Windows), ACL'd to the signer + its authenticated caller (§1.3). **Never TCP** (no
-  loopback socket a co-located process could also bind/connect without the ACL gate).
-- The **operator** provisions + launches the signer under its dedicated identity
-  independently of the sidecar; the sidecar cannot start it with attacker-controlled
-  state.
+  sidecar and desktop identities are **denied read and list**. The **signer binary and
+  its config** are **non-writable** by the sidecar/desktop identity.
+- **Linux:** dedicated service **UID** (own systemd unit), `0700` key dir owned by that
+  UID, `ptrace`/process-inspection isolation from the sidecar UID. **Windows:**
+  dedicated **service SID / virtual account**, private-key ACL to that SID only, and
+  process + named-pipe ACLs denying the sidecar/desktop SID `PROCESS_VM_READ`/debug/
+  pipe-connect beyond the defined endpoint.
+- **Single topology (resolves the rev-2 contradiction — P0-1):** the signer's **only
+  connecting peer is the supervisor**, over a **direct local IPC** endpoint (Unix domain
+  socket / named pipe) whose ACL admits **only the supervisor identity**. **The sidecar
+  never connects to the signer.** The sidecar is transport for two things only: it
+  *triggers* the supervised run (carrying the desktop's request) and it *relays the
+  final receipt wire* back to the desktop. It is **never** in the sign path.
+- The **operator** provisions + launches the signer under its dedicated identity; the
+  sidecar cannot start it with attacker-controlled state.
 
-**Threat scope (stated, per Architect):** a **sidecar RCE running under the same
-desktop *login* user is IN SCOPE** — it must not yield a forged receipt; the dedicated
-signer principal + ACLs above are what defeat it. **Local administrator / root / kernel
-compromise is explicitly OUT OF SCOPE** (an attacker who is already `root`/`SYSTEM` or
-in the TCB can read any key regardless of custody). This scope is copied into §2 and
-into `apps/desktop/SECURITY.md` when 3b lands.
+**Threat scope (stated):** a **sidecar RCE running as the same desktop login user is IN
+SCOPE**; **local administrator / root / `SYSTEM` / kernel compromise is OUT OF SCOPE**
+(already in the TCB). Copied to §2 and to `apps/desktop/SECURITY.md` when 3b lands.
 
 ### 1.2 Key custody — the receipt-signing key is unreachable by the sidecar
 
 - The receipt signer has its **own key class/store**, distinct from the engine's
-  existing `issuer` / `evidence-recorder` / `builder` keys.
+  `issuer` / `evidence-recorder` / `builder` keys.
 - The receipt-signing **private key** lives in a directory reachable **only by the
-  signer identity** — owner-only, `0700`, born outside the repo, keys `O_EXCL 0600`
-  (reuse the `broctl._require_private_key_dir` / `_write_key` custody discipline, but in
-  a **separate store owned by the signer principal**, ACL'd per §1.1).
-- The sidecar's (and supervisor's) **environment and process tree carry NO path or
-  handle** to the receipt-signing private key. **`BRO_KEYDIR` sharing for the receipt
-  key is forbidden** — `BRO_KEYDIR` (which the sidecar reads for `issuer.json` etc.)
-  must never contain the receipt-signing key.
-- The signer **signs** with the receipt private key; only the **desktop verifier**
-  holds the corresponding **public** key (via the manifest, §1.6) and **verifies** with
-  it. (rev 1 mis-stated this as "the signer verifies with it".)
+  signer identity** (owner-only `0700`, born outside the repo, keys `O_EXCL 0600`, ACL'd
+  per §1.1). The sidecar/supervisor **environment and process tree carry NO path or
+  handle** to it. **`BRO_KEYDIR` sharing for the receipt key is forbidden.**
+- The signer **signs** with the receipt private key; only the **desktop verifier** holds
+  the corresponding **public** key (via the manifest, §1.6) and **verifies** with it.
 
-### 1.3 Authenticity of the run evidence — recompute is NOT authenticity (P0-2)
+### 1.3 Evidence authenticity — the supervisor BUILDS evidence; nothing signs caller bytes (P0-1, P0-2)
 
-Rev 1 said the signer "recomputes every hash" from the structured evidence. **Recompute
-alone proves only internal self-consistency, not authenticity.** The sidecar is the
-process nearest the signer; a **compromised sidecar can fabricate a fully self-
-consistent fake run** — correct nonce, `decision=completed`, a fake containment
-artifact, chosen identities, and matching hashes — and recompute would pass. So the
-"sidecar can only DoS" claim is only true once evidence **authenticity** is anchored to
-a principal the sidecar cannot impersonate. **Locked chain (option 1 + option 3):**
+Recompute proves self-consistency, not authenticity, and a compromised sidecar can
+fabricate a self-consistent fake run. The authenticity anchor is therefore the
+**supervisor** (the external `bro_supervisor` from Wave 3a — a separate OS principal that
+holds the lease/enforcement wall), locked as follows:
 
-- The **supervisor** — the external `bro_supervisor` process introduced in Wave 3a (a
-  **separate OS principal** that issues execution leases and is the enforcement wall) —
-  is the **trusted evidence producer** and the signer's **only authenticated caller**.
-- The run-evidence message is a **supervisor attestation**: the supervisor signs the
-  canonical structured run evidence with a **supervisor attestation key** that is (a)
-  **distinct** from the receipt-signing key, (b) held **only** by the supervisor
-  principal under §1.2-class custody, and (c) **unreachable by the sidecar**.
-- The signer **pins the supervisor attestation public key** (in signer-owned config,
-  non-writable by the sidecar per §1.1) and, **before anything else, verifies the
-  attestation signature**. An unauthenticated message, a bad attestation signature, or a
-  message whose authenticated origin is the sidecar ⇒ **refused** (§1.5).
-- The **sidecar is transport only**: it may relay the supervisor's attested evidence to
-  the signer and relay the signer's result back, but **its own claims are never
-  authoritative**. The signer treats **every authority field** (`decision`, policy,
-  identities, timestamps, containment, the input hashes) as authoritative **only because
-  it is inside the supervisor-attested payload** — never because it arrived over IPC.
-- **Recompute is defense-in-depth on top of authenticity, not a substitute for it:**
-  after verifying the attestation, the signer still recomputes the hashes from the
-  attested structured inputs (catching a producer bug or a truncation in transit) and
-  **constructs** the receipt envelope itself. Authenticity rests on the attestation;
-  correctness rests on the recompute; **both** are required.
+- **No attestation oracle anywhere.** There is **no** `sign_payload(bytes)`,
+  `attest(evidence)`, or any endpoint — on the signer **or the supervisor** — that
+  signs/attests **caller-supplied** structured evidence. Moving an oracle from the signer
+  into the supervisor is explicitly forbidden.
+- **The supervisor constructs the evidence itself.** Its receipt-evidence endpoint
+  accepts **only a `{run_id, execution_attempt_id}` handle** (no evidence object). From
+  those it reads its **own internal terminal run state** and independently gathers the
+  authoritative facts, verifying: a valid **lease** for that attempt, a **terminal
+  `completed` status**, the **policy bundle** in force, the **containment artifact**, and
+  the **evidence-chain head** for the attempt. Any check failing ⇒ it produces **no
+  evidence** (structured refusal).
+- **Large inputs and containment are real, content-addressed artifacts, not
+  references-to-hash (P0-2, P1-3).** During the run the supervisor writes each large
+  artifact — `system`, `history`, `output`, `containment_evidence`, the policy bundle —
+  into a **protected, append-only, content-addressed evidence store** (see §1.9/§4.1).
+  A **handle** is the artifact's `sha256` over its **exact bytes**; content-addressing
+  makes tampering detectable. The evidence the supervisor builds carries **handles**, not
+  inline megabytes. Hashing a bare reference string is **forbidden** — a handle is only
+  valid if the store holds bytes whose `sha256` equals it.
+- **Direct authenticated channel + forensic attestation.** The supervisor calls the
+  signer over the §1.1 direct ACL'd IPC (so the signer's authenticated caller **is** the
+  supervisor by OS ACL) **and** signs `JCS(evidence)` with a **supervisor attestation
+  key** (own custody per §1.2, unreachable by the sidecar) — carried into the receipt
+  record for durable **forensic non-repudiation**. The signer verifies the attestation
+  before acting; an unauthenticated caller or bad attestation ⇒ refused. The attested
+  payload includes the **`run_id` / `execution_attempt_id` / `lease_id`** for forensic
+  binding.
+- **Recompute is defense-in-depth on top.** The signer reads each artifact from the
+  store **by handle**, confirms `sha256(bytes) == handle`, and derives every `*_sha256`
+  from those exact bytes — catching a producer bug or store corruption. Authenticity
+  rests on the supervisor build + attestation; correctness on the recompute; **both**
+  are required.
 
-*(If the supervisor and the evidence producer are ever separated further in a later
-wave, the invariant that must hold is unchanged: the signer's authenticated caller is a
-principal the sidecar cannot impersonate, and no sidecar-supplied field is authority.)*
+### 1.4 Narrow IPC — the signer is NOT an oracle, and neither is the supervisor
 
-### 1.4 Narrow IPC — the signer is NOT a `sign(arbitrary_bytes)` oracle
-
-- The signer accepts **only** the defined, structured, **supervisor-attested**
-  "run-evidence" message (§1.3, §4.1) — **never** arbitrary bytes, **never** a
-  prepared/ready-made envelope, **never** hash claims to trust.
-- Given the attested evidence, the signer **independently validates** the run and
-  **recomputes every hash** (`system_sha256`, `history_sha256`, `output_sha256`,
-  `request_sha256`, `containment_evidence_sha256`, `generation_config_sha256`, …) from
-  the **exact structured inputs**.
+- The signer accepts **only** the defined, supervisor-attested `brops.sign-request.v1`
+  (§4.1) delivered over the §1.1 channel — **never** arbitrary bytes, a prepared
+  envelope, or hash claims to trust. It reads large inputs from the store **by handle**
+  and recomputes.
+- The supervisor exposes **only** `{run_id, execution_attempt_id}` (§4.4) — it never
+  accepts a caller's evidence object.
 - The signer **constructs the canonical `brops.receipt.v1` envelope itself** (JCS over
-  the 21 `RECEIPT_FIELDS`) and signs the **exact canonical bytes**. It signs **only its
-  own canonically-constructed receipt** for a run it recognizes as **completed and
-  contained** (design §1). This closes the confused-deputy threat.
-- The IPC is one-shot request/response (attested evidence in → receipt-or-refusal out),
-  size-capped and strict-parsed both directions (§1.9, §4).
+  the 21 `RECEIPT_FIELDS`) and signs the **exact canonical bytes** — only its own
+  canonically-constructed receipt for a run it independently validated. This closes the
+  confused-deputy threat on both processes.
+- Both IPC legs are one-shot request/response, size-capped, strict-parsed (§1.9, §4).
 
 ### 1.5 Authorization checklist — the signer's independent gate
 
-Before emitting a signature, the signer MUST verify ALL of (any failure ⇒ **no
-signature**, a structured `refused` with a reason — never a partial/unsigned success):
+Before emitting a signature the signer MUST verify ALL of (any failure ⇒ **no
+signature**, a structured `refused{reason}` — never a partial/unsigned success):
 
-0. **Attestation authenticity (§1.3)** — the message carries a valid supervisor
-   attestation over the exact evidence payload, verified against the pinned supervisor
-   attestation public key; the authenticated caller is the supervisor, not the sidecar.
-1. `decision == completed` — the run terminated COMPLETED and contained.
-2. **Nonce / request binding** — the run's `request_nonce` + `request_sha256` match the
-   desktop-issued challenge context (recomputed from the exact `system`/`history`/
-   `generation_config` hashes + `workspace_id`/`install_id` + `requested_at`).
-3. **Exact input hashes** — `system_sha256`, `history_sha256` recomputed from the
-   **structured** `system` + `history[]` (the Wave-3a R2 authority); `output_sha256`
-   recomputed from the exact reply bytes.
+0. **Attestation authenticity** — valid supervisor attestation over `JCS(evidence)`
+   against the pinned supervisor attestation key; caller is the supervisor (OS ACL).
+1. **Run binding** — `run_id` / `execution_attempt_id` / `lease_id` present and internally
+   consistent; `decision == completed`.
+2. **Nonce / request binding** — `request_nonce` + `request_sha256` match the desktop
+   challenge context (recomputed from the `system`/`history`/`generation_config` hashes +
+   `workspace_id`/`install_id` + `requested_at`).
+3. **Artifact handles** — for `system`, `history`, `output`, `containment_evidence`: read
+   the store bytes by handle and confirm `sha256(bytes) == handle`; derive the receipt's
+   `*_sha256` from those exact bytes.
 4. **Policy / config** — `policy_id`, `policy_version`, `policy_bundle_sha256`,
    `generation_config_sha256` in force.
-5. **Containment** — the containment-evidence artifact is present and its
-   `containment_evidence_sha256` matches.
+5. **Containment** — the containment artifact exists in the store and its handle equals
+   `containment_evidence_sha256`.
 6. **Identity** — `executor_id` / `builder_id` / `supervisor_id` in the allowed set.
 7. **Timestamps** — `requested_at <= completed_at`, both sane (no future/rollback).
 
@@ -169,321 +160,329 @@ signature**, a structured `refused` with a reason — never a partial/unsigned s
 - A **signed key manifest** (operator-provisioned) validated against a **binary-pinned
   root trust anchor** compiled into the Rust desktop binary — not a baked-in leaf key,
   not TOFU, not a plain editable config. **No webview key command.**
-- Top-level fields: `manifest_version`, `manifest_epoch`, `issued_at`, `expires_at`,
-  root signature. **Per key:** `key_id`, `public_key`, `supervisor_id`,
-  `workspace`/scope, `valid_from`/`valid_to`, `key_epoch`, revocation status, and — the
-  render authority — **`trust_class: production | development`**, **`allowed_protocols`**
-  (e.g. `["brops.receipt.v1"]`), **`allowed_audiences`/install scope**. A key's
-  `trust_class` (signed into the manifest, never inferred) decides `trusted_verified`
-  vs `development_untrusted`.
+- Signed payload fields (§4.3): `manifest_protocol`, `manifest_version`, `manifest_epoch`,
+  **`root_key_id`** (selects the pinned root — see below), `issued_at`, `expires_at`, and
+  `keys[]`. **Per key:** `key_id`, `public_key`, `trust_class: production | development`
+  (the render authority, signed in — never inferred), `allowed_protocols`
+  (e.g. `["brops.receipt.v1"]`), `workspace`/scope, `allowed_audiences`/install scope,
+  `supervisor_id`, `valid_from`/`valid_to`, `key_epoch`, `revoked`.
+- **Root selection with multiple pinned roots:** if the binary pins more than one root
+  key, the manifest's **`root_key_id` is inside the signed payload**; the desktop selects
+  that pinned root and verifies `root_sig` against it, refusing if `root_key_id` is not
+  in the pinned set. (A forger cannot name a different pinned root without also producing
+  that root's signature.)
+- **Semantic validation (reject, not just parse — P1-5):** duplicate `key_id`; the same
+  `key_id` with a different `public_key` or `trust_class`; `issued_at > expires_at`;
+  `valid_from > valid_to`; **ambiguous/wildcard scopes** (workspace/audience must be
+  explicit — no `"*"`).
 - **Anti-rollback (normative):** the desktop durably records the **highest accepted
-  `manifest_epoch` AND that manifest's hash**, and refuses a manifest when
+  `manifest_epoch` AND that manifest's hash** and refuses a manifest when
   `epoch < highest_epoch`, **OR** `epoch == highest_epoch AND manifest_hash differs`,
-  **OR** `now > expires_at`. The read/check/update of this floor has defined transaction
-  semantics — see §1.7 and §4.3.
-- **Template to mirror (REUSE):** the engine already implements exactly this shape for
-  its registry — `bro_signature.resolve_operator_root_pin` (binary/owner-pinned root),
-  `resolve_registry_floor` (anti-rollback floor: sha256-digest pin or integer version),
-  `load_trusted_keys` (root-signed registry). The desktop manifest mirrors this pattern
-  in Rust.
+  **OR** `now > expires_at`. Read/check/update semantics + **durable snapshot** in §1.7,
+  §4.3.
+- **Template to mirror (REUSE):** the engine already implements this shape —
+  `bro_signature.resolve_operator_root_pin`, `resolve_registry_floor`,
+  `load_trusted_keys`. The desktop manifest mirrors it in Rust.
 
-### 1.7 Resolver contract — context-aware + transactional (P0-3)
+### 1.7 Resolver contract — query source, scope binding, durable snapshot (P1-4, P1-5)
 
-Rev 1's seam (`ResolvedManifestKey{key_id, public_key, trust_class}`, authority keyed by
-`key_id` alone) **cannot enforce the manifest's scope** (workspace/install/supervisor/
-protocol) or verification-time validity/revocation. Locked replacement:
+- **Context-aware query, sourced from the TRUSTED `Expected`/turn — never the unsigned
+  receipt (P1-4).** The pre-verification type-state deliberately exposes only `key_id`
+  from the parsed (unsigned) receipt; every **other** query field comes from the desktop-
+  trusted turn context, normatively:
 
-- **Context-aware query.** The authority is consulted with the full verification
-  context, not a bare `key_id`:
+  ```
+  key_id        = parsed.key_id()                     // the only unsigned-sourced field
+  protocol      = RECEIPT_PROTOCOL                     // constant "brops.receipt.v1"
+  workspace_id  = turn.expected.request.workspace_id   // trusted
+  install_id    = turn.expected.request.install_id     // trusted
+  supervisor_id = turn.expected.supervisor_id          // trusted
+  now_ms        = turn.now_ms                           // trusted
+  ```
+
+  The verified receipt is then **`bind`ed to the same `Expected`** (Wave-3a type-state),
+  so no unsigned field is ever trusted and the existing chain is preserved.
 
   ```rust
   struct KeyResolutionQuery<'a> {
-      key_id:        &'a str,
-      protocol:      &'a str,   // e.g. "brops.receipt.v1"
-      workspace_id:  &'a str,
-      install_id:    &'a str,
-      supervisor_id: &'a str,
-      now_ms:        u64,
+      key_id: &'a str, protocol: &'a str,
+      workspace_id: &'a str, install_id: &'a str, supervisor_id: &'a str,
+      now_ms: u64,
   }
-
   trait ReceiptKeyAuthority {
-      fn resolve(&self, q: &KeyResolutionQuery, tx: &Transaction)
-          -> KeyResolution;    // Trusted(ResolvedManifestKey) | Unavailable(&'static str)
+      fn resolve(&self, q: &KeyResolutionQuery, tx: &Transaction) -> KeyResolution;
   }
   ```
 
-- **Constraint enforcement.** The resolver **validates every manifest constraint
-  against the query** — `allowed_protocols` ∋ `protocol`, `workspace`/scope matches
-  `workspace_id`, audience/install matches `install_id`, `supervisor_id` matches,
-  `valid_from <= now_ms <= valid_to`, key **not revoked**, manifest not expired. Any
-  miss ⇒ `Unavailable(reason)`. The returned **`ResolvedManifestKey` is extended** to
-  carry the **bound scopes** (`workspace`, `install`, `supervisor`, `protocol`,
-  `valid_from`/`valid_to`, `key_epoch`, `trust_class`) so downstream `verify` **must**
-  bind them (a resolved key cannot be used outside the scope it was resolved for). No
-  bare public key escapes without its scope.
-- **Anti-rollback transaction semantics (normative).** Manifest acceptance is a
-  **two-phase** design:
-  1. **Acceptance (rare, operator-triggered):** load + root-verify the manifest, then in
-     **one `BEGIN IMMEDIATE` transaction** read `(highest_epoch, manifest_hash)`, apply
-     the §1.6 rule, and — if accepted — update the floor **atomically** in the **same
-     transaction**. On success the manifest is cached as an **immutable in-memory
-     snapshot** keyed by `(manifest_epoch, manifest_hash)`.
+- **Constraint enforcement + scope binding.** The resolver validates every manifest
+  constraint against `q` (`allowed_protocols ∋ protocol`, workspace/audience/supervisor
+  match, `valid_from <= now_ms <= valid_to`, not revoked, manifest not expired). Any miss
+  ⇒ `Unavailable(reason)`. `ResolvedManifestKey` is extended to carry the **bound scopes**
+  (`workspace`, `install`, `supervisor`, `protocol`, `valid_from`/`valid_to`,
+  `key_epoch`, `trust_class`); downstream `verify`/`bind` **must** bind them — no bare key
+  escapes its scope. Fields stay private, no public ctor outside `brops-core`.
+
+- **Durable snapshot + anti-rollback transaction (P1-5).** Manifest acceptance is
+  two-phase:
+  1. **Acceptance (operator-triggered):** load + root-verify + semantically validate the
+     manifest, then in **one `BEGIN IMMEDIATE` transaction** persist **atomically**
+     (§4.3): the **exact canonical payload bytes**, `root_sig`, `root_key_id`,
+     `manifest_epoch`, `manifest_hash`, `accepted_at`, and the floor
+     `(highest_epoch, manifest_hash)` — all in the **same transaction**, so a floor bump
+     can **never** outlive the manifest bytes (no permanent fail-closed after a crash).
+     The in-memory snapshot is derived from the durable row.
   2. **Per-turn resolution:** `resolve(q, tx)` runs **inside the existing Wave-3a
-     verify→consume→persist `BEGIN IMMEDIATE` transaction** (`tx` is that transaction).
-     It validates `q` against the **immutable accepted snapshot** and **re-reads the
-     durable floor in `tx`** to confirm the snapshot's `(epoch, hash)` still equals the
-     accepted floor (defeating a concurrent acceptance / rollback between turns). A
-     mismatch ⇒ `Unavailable`. Thus verification-time trust decisions and the anti-
-     rollback floor are read **in the same transaction that consumes the nonce and
-     persists the attempt** — never a separate uncoordinated read.
-- **Concurrency/crash:** floor writes are single-writer under `BEGIN IMMEDIATE`; a crash
-  mid-acceptance leaves the prior floor intact (no partial update); the snapshot is
-  rebuilt from the durable manifest + floor on restart.
+     verify→consume→persist `BEGIN IMMEDIATE` transaction**, validates `q` against the
+     snapshot, and **re-reads the durable floor + manifest row in `tx`** to confirm the
+     snapshot still matches (defeating a concurrent acceptance/rollback). Mismatch ⇒
+     `Unavailable`.
+  - **Crash/restart:** the snapshot is rebuilt from the durable manifest row + floor; a
+    crash mid-acceptance (before COMMIT) leaves both the floor and the bytes at their
+    prior consistent state.
 
 ### 1.8 Failure model — fail-closed everywhere
 
-- Signer **unavailable / crash / timeout / malformed response / key unavailable /
-  attestation-invalid** ⇒ **Blocked** (via `receipt_store::record_pre_verification_block`
-  with the **real**, `bounded_reason`-capped reason) — **never** a fallback, **never** an
-  unsigned success.
-- Manifest **missing / invalid / rolled-back / expired / out-of-scope for the query** ⇒
-  **Blocked** (or `development_untrusted` only for an explicit **development**-class key
-  in dev mode) — **never** a forced "Verified".
+- Signer/supervisor **unavailable / crash / timeout / malformed / key unavailable /
+  attestation-invalid / handle-not-in-store** ⇒ **Blocked** (via
+  `receipt_store::record_pre_verification_block`, `bounded_reason`-capped) — **never** a
+  fallback, **never** an unsigned success.
+- Manifest **missing / invalid / rolled-back / expired / out-of-scope for the query /
+  semantically-invalid** ⇒ **Blocked** (or `development_untrusted` only for an explicit
+  **development**-class key in dev mode) — **never** a forced "Verified".
 - A signature that verifies but whose key's `trust_class` is not `production` ⇒
-  `development_untrusted` (renders, badged dev), never "Verified".
+  `development_untrusted`, never "Verified".
 
 ### 1.9 Protocol limits
 
-- **IPC size caps** both directions; **strict parsing** (duplicate-key + unknown-field
-  rejection, fixed types) mirroring the receipt wire strict-decode (§2.3 of Wave 3).
-  Exact per-field caps in §4.
-- **Domain separation** — distinct protocol tags for the receipt envelope
-  (`brops.receipt.v1`), the request envelope (`brops.request.v1`), the supervisor
-  **attestation** (`brops.run-attestation.v1`), and the **IPC message types**
-  (`brops.sign-request.v1` / `brops.sign-result.v1`).
-- **`receipt_id` global uniqueness** — already durable (`receipt_ids_seen`, migration
-  0014); a replayed `receipt_id` ⇒ Blocked. The one-time **nonce** (already durable)
-  governs replay of a whole turn. Signer idempotency in §4.2.
+- **One fixed whole-frame cap (P1-3).** Every IPC message (both directions, both legs)
+  is length-prefixed and capped at a **fixed 256 KiB frame**. **No inline large
+  payloads:** `system`, `history`, `output`, `containment_evidence`, and the policy
+  bundle travel **only as content-addressed handles**; the signer reads exact bytes from
+  the protected store. The rev-2 "operator raises the cap" language is removed. The
+  Wave-3a request-side ceilings (system ≤256 KiB, message ≤1 MiB, total ≤8 MiB) apply to
+  the **stored artifacts**, checked at store-read time.
+- **Strict parsing** — duplicate-key + unknown-field rejection, fixed types, no NaN/Inf,
+  mirroring the receipt wire strict-decode.
+- **Domain separation** — distinct tags: receipt `brops.receipt.v1`, request
+  `brops.request.v1`, supervisor attestation `brops.run-attestation.v1`, IPC
+  `brops.sign-request.v1` / `brops.sign-result.v1`, evidence request
+  `brops.evidence-request.v1`, manifest `brops.key-manifest.v1`.
+- **`receipt_id` global uniqueness** — durable (`receipt_ids_seen`, migration 0014);
+  replay ⇒ Blocked. The one-time **nonce** governs whole-turn replay.
 
 ## 2. Threat model (what each boundary defeats)
 
-**Scope:** a **compromised sidecar running as the same desktop login user is IN SCOPE**;
-**local admin / root / `SYSTEM` / kernel compromise is OUT OF SCOPE** (already in the TCB).
+**Scope:** a **compromised sidecar as the same desktop login user is IN SCOPE**;
+**local admin / root / `SYSTEM` / kernel is OUT OF SCOPE**.
 
 | Threat | Defeated by |
 |---|---|
-| **Compromised sidecar** signs a forged receipt | separate signer **process + dedicated OS principal** with key ACL'd to the signer identity only, sidecar denied read/list, signer binary/config non-writable, local-IPC-only (§1.1–1.2) |
-| **Compromised sidecar fabricates self-consistent fake run evidence** | the signer only accepts **supervisor-attested** evidence verified against a pinned attestation key the sidecar cannot reach; sidecar-origin/unauthenticated ⇒ refused (§1.3). Recompute confirms consistency but is **not** relied on for authenticity |
-| **Compromised sidecar as transport** (relays/tampers) | its claims are non-authoritative; tampering breaks the attestation signature or a recomputed hash ⇒ refused; worst case is **DoS ⇒ Blocked** (§1.3, §1.8) |
-| **Malicious desktop request** (tampered system/history/hashes) | the signer recomputes every hash from the **attested** structured evidence + binds the nonce (§1.4–1.5); mismatch ⇒ refused |
-| **Stolen OLD manifest** re-introduces a revoked key | anti-rollback on `(highest_epoch, manifest_hash)`, read/checked/updated transactionally (§1.6–1.7) refuses it |
-| **Out-of-scope key use** (a key valid for workspace/install/protocol A used for B) | context-aware `KeyResolutionQuery` + mandatory scope binding on `ResolvedManifestKey` (§1.7) |
-| **Signer confused-deputy** (asked to sign arbitrary/prepared bytes) | the signer never signs arbitrary bytes / prepared envelopes / hash claims — only its own canonically-constructed receipt for an **attested** run it independently validated (§1.4) |
-| **Key-file substitution** | dedicated-principal ACL custody (§1.1–1.2) + the manifest's signed `public_key` must match the signing key; a substituted key's receipts fail the manifest key binding + signature check |
+| **Compromised sidecar** signs a forged receipt | separate signer **process + dedicated OS principal**, key ACL'd to the signer only, sidecar denied read/list + non-writable binary/config, **signer's only peer is the supervisor** (sidecar never connects) (§1.1–1.2) |
+| **Sidecar feeds fake self-consistent evidence** | nothing signs caller-supplied evidence; the **supervisor builds evidence from its own terminal run state** keyed by `{run_id, attempt_id}` (§1.3); a fabricated run has no lease/terminal state ⇒ no evidence |
+| **Oracle moved into the supervisor** (`attest(caller_evidence)`) | explicitly forbidden — the supervisor endpoint accepts only `{run_id, attempt_id}`, never an evidence object (§1.3–1.4) |
+| **Reference-instead-of-artifact** (hash a bare ref) | handles are **content addresses**; a handle is valid only if the store holds bytes whose `sha256` equals it; the signer reads and re-hashes the exact bytes (§1.3, §1.5) |
+| **Sidecar as transport tampers** | its claims are non-authoritative; tampering breaks the attestation or a re-hashed handle ⇒ refused; worst case **DoS ⇒ Blocked** (§1.3, §1.8) |
+| **Malicious desktop request** (tampered system/history) | the signer derives hashes from the **stored** artifacts and the desktop **binds** to its own `Expected`; a mismatch ⇒ Blocked (§1.5, §1.7) |
+| **Stolen OLD manifest** re-introduces a revoked key | anti-rollback on `(highest_epoch, manifest_hash)`, read/checked/updated **transactionally** with the durable snapshot (§1.6–1.7) |
+| **Out-of-scope key use** | context-aware `KeyResolutionQuery` sourced from trusted `Expected` + mandatory scope binding (§1.7) |
+| **Crash between floor bump and manifest persist** | floor + exact manifest bytes persisted in **one transaction** (§1.7, §4.3) — no permanent fail-closed |
+| **Signer confused-deputy** | signs only its own canonically-constructed receipt for an attested, independently-validated run (§1.4) |
 
-## 3. Reuse vs build (from the engine-surface map)
+## 3. Reuse vs build
 
 **REUSE (exists, unchanged):**
-- Ed25519 primitives + JCS `canonical_bytes` (identical formula to Rust) —
-  `engine/runtime/bro_signature.py`, `engine/tools/broctl.py::sign_payload`.
-- Root-anchor + anti-rollback-floor pattern (engine registry) — a proven template to
-  mirror for the desktop manifest.
-- Private-key custody discipline — `broctl._require_private_key_dir` / `_write_key`; the
-  verify/sign process split.
-- **The external supervisor** (Wave 3a) as the attesting principal + its lease/receipt
-  path — extended to emit the `brops.run-attestation.v1` payload (§1.3).
-- The whole Rust verify pipeline + `ReceiptKeyAuthority` / `KeyResolution` seam + the
-  atomic tx + `receipt_verification_attempts` (migration 0014).
-- Bridge transport — `run_governed_turn`, `_receipt_of` (already reads
-  `receipt_envelope_jcs_b64` / `signature_b64`), the structured `system`+`history`
+- Ed25519 + JCS `canonical_bytes` — `engine/runtime/bro_signature.py`,
+  `broctl.py::sign_payload`.
+- Root-anchor + anti-rollback-floor pattern (engine registry) — template to mirror.
+- Private-key custody discipline — `broctl._require_private_key_dir` / `_write_key`.
+- **The external supervisor** (Wave 3a) as the attesting principal + its lease/terminal-
+  state/evidence-chain — extended to build `brops.run-attestation.v1` from `{run_id,
+  attempt_id}`.
+- The Rust verify pipeline + `ReceiptKeyAuthority`/`KeyResolution` seam + the atomic tx +
+  `receipt_verification_attempts` (migration 0014).
+- Bridge transport — `run_governed_turn`, `_receipt_of`, the structured `system`+`history`
   contract, the provisioning gate.
 
 **BUILD (net-new):**
-- **(a)** the **isolated `brops.receipt.v1` signer** — dedicated process + OS principal
-  (§1.1), own key class/store (§1.2), **verifies the supervisor attestation** (§1.3),
-  invoked sign-on-complete; emits base64url-JCS envelope + base64url detached Ed25519
-  signature (**not** the engine's hex `{payload, signature}` wrapper). Replaces the
-  `RuntimeError` in `engine_sidecar._real_callables`; extends the supervisor to attest.
-- **(a′)** the **supervisor attestation** — the supervisor signs the run-evidence
-  payload (`brops.run-attestation.v1`) with its own attestation key; the sidecar relays,
-  never mints.
-- **(b)** the **desktop signed key manifest + binary-pinned root anchor + anti-rollback**
-  — manifest schema/fields, a pinned root anchor in the Rust binary, and a durable
-  `(highest_epoch, manifest_hash)` table + transactional anti-rollback (§1.7).
-- **(c)** the **desktop manifest resolver** (Rust, in-crate `brops-core`) — a type
-  implementing the context-aware `ReceiptKeyAuthority` (§1.7), consulted **inside** the
-  verify tx, returning a scope-bound `ResolvedManifestKey`. Swaps `NoTrustedManifest` at
-  `ai.rs` + `commands.rs`.
-- **(d)** **JCS receipt-envelope parity** — extend the parity test (currently
-  request-only) to the full 21-field receipt envelope across the new Python signer ↔
-  `receipt.rs` (the canonicalization formula is already shared, so this pins/verifies —
-  not new crypto).
+- **(a)** the **isolated `brops.receipt.v1` signer** — dedicated process/principal
+  (§1.1), own key class/store (§1.2), verifies the supervisor attestation + reads store
+  artifacts by handle (§1.3), sign-on-complete; emits base64url-JCS envelope + base64url
+  detached Ed25519 signature (not the engine's hex `{payload, signature}` wrapper).
+- **(a′)** the **supervisor evidence-production + attestation** — `{run_id, attempt_id}`
+  → validate lease/terminal/policy/containment/chain-head → build evidence with handles
+  → attest → call the signer directly. The **content-addressed protected evidence store**
+  it writes to and the signer reads from.
+- **(b)** the **desktop signed key manifest + binary-pinned root anchor + anti-rollback +
+  durable snapshot** — schema, pinned root(s) with `root_key_id` selection, semantic
+  validation, migration for the durable manifest row + floor, atomic acceptance.
+- **(c)** the **desktop manifest resolver** (Rust, in-crate `brops-core`) — context-aware
+  `ReceiptKeyAuthority` (§1.7), consulted **in-tx**, query sourced from `Expected`,
+  returns a scope-bound `ResolvedManifestKey`. Swaps `NoTrustedManifest` at `ai.rs` +
+  `commands.rs`.
+- **(d)** **JCS receipt-envelope parity** — extend the parity test to the full 21-field
+  receipt envelope across the Python signer ↔ `receipt.rs`.
 
 ## 4. Normative interface definitions (the artifacts 3b-0 LOCKS)
 
-> All JSON is **UTF-8**, **strict** (duplicate keys rejected, **unknown keys rejected**,
-> fixed types, no NaN/Inf). All hashes are **lowercase hex sha256**. All keys/signatures
-> are **base64url, no padding**, Ed25519 (32-byte key, 64-byte signature). Byte caps are
-> hard; overflow ⇒ refused/parse-error. **Framing:** one length-prefixed message per
-> request and per response (`u32` big-endian length + body), over the §1.1 local socket/
-> pipe; the whole message is capped (below).
+> JSON is **UTF-8**, **strict** (duplicate keys rejected, **unknown keys rejected**,
+> fixed types, no NaN/Inf). Hashes/handles are **lowercase hex sha256**. Keys/signatures
+> are **base64url, no padding**, Ed25519 (32-byte key, 64-byte sig). **Framing:** one
+> length-prefixed message (`u32` big-endian length + body) over the §1.1 channel;
+> **whole frame ≤ 256 KiB** (fixed). No inline large payloads — see the handle model.
 
-### 4.1 `brops.run-attestation.v1` → `brops.sign-request.v1` (caller → signer)
+### 4.0 Protected evidence store (content-addressed)
 
-The signer's **input**. Envelope cap **256 KiB**. Fields:
+- **Append-only**, integrity by construction: an artifact's **handle** is `sha256(bytes)`
+  (lowercase hex). Immutable once written; a handle can never map to different bytes.
+- **Access:** readable by the supervisor + signer identities; **not** the sidecar/desktop
+  login identity for the raw store (the desktop receives only what it must persist, §4.2).
+- The signer reads bytes **by handle** and refuses unless `sha256(bytes) == handle`.
 
-| Field | Type | Required | Authoritative? | Cap |
-|---|---|---|---|---|
-| `protocol` | `"brops.sign-request.v1"` const | yes | — | — |
-| `attestation` | object (below) | yes | **yes (authenticity root)** | — |
-| `evidence` | object (below) | yes | authoritative **iff** covered by `attestation.sig` | 200 KiB |
+### 4.1 `brops.sign-request.v1` (supervisor → signer)
 
-`attestation`:
+Frame ≤256 KiB. `evidence` carries **handles, never inline bytes**.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `attestation_protocol` | `"brops.run-attestation.v1"` const | yes | domain tag |
-| `supervisor_key_id` | string ≤128 | yes | must equal the signer-pinned attestation key id |
-| `sig` | base64url Ed25519(64B) | yes | **detached, over `JCS(evidence)`** (canonical bytes of the `evidence` object) |
+| `protocol` | `"brops.sign-request.v1"` const | yes | — |
+| `attestation` | `{ attestation_protocol:"brops.run-attestation.v1", supervisor_key_id:str≤128, sig:b64url(64B) }` | yes | `sig` = detached Ed25519 over `JCS(evidence)` |
+| `evidence` | object (below) | yes | authoritative iff covered by `attestation.sig` |
 
-`evidence` (the authoritative run facts — authoritative **only** because `attestation.sig`
-covers them; caps per field):
+`evidence` fields (all small; large inputs are handles):
 
-| Field | Type | Cap | Authoritative / Derived |
+| Field | Type | Cap | Kind |
 |---|---|---|---|
-| `request_nonce` | hex (32B) | 64 | authoritative |
-| `receipt_id` | string | 128 | authoritative (idempotency key, §4.2) |
-| `decision` | `"completed"` \| `"blocked"` | — | authoritative |
+| `run_id`, `execution_attempt_id`, `lease_id` | string | 128 each | authoritative (forensic binding) |
+| `request_nonce` | hex(32B) | 64 | authoritative |
+| `receipt_id` | string | 128 | authoritative (idempotency, §4.2) |
+| `decision` | `"completed"` | — | authoritative |
 | `workspace_id`, `install_id`, `supervisor_id`, `executor_id`, `builder_id` | string | 128 each | authoritative |
-| `policy_id`, `policy_version`, `policy_bundle_sha256` | string / hex | 128 / 64 | authoritative |
-| `generation_config` | object | 16 KiB | authoritative; signer recomputes `generation_config_sha256` |
-| `system` | string | 256 KiB\* | authoritative input; signer recomputes `system_sha256` |
-| `history` | array of `{role,content}` | 8 MiB\* | authoritative input; signer recomputes `history_sha256` (JCS array) |
-| `output` | string (exact reply bytes) | 8 MiB\* | authoritative input; signer recomputes `output_sha256` |
-| `containment_evidence` | object/ref | 64 KiB | authoritative; signer recomputes `containment_evidence_sha256` |
+| `policy_id`, `policy_version` | string | 128 each | authoritative |
+| `policy_bundle_handle` | hex sha256 | 64 | handle → store bytes; = `policy_bundle_sha256` |
+| `generation_config_handle` | hex sha256 | 64 | handle; signer derives `generation_config_sha256` |
+| `system_handle`, `history_handle`, `output_handle` | hex sha256 | 64 each | handle; signer derives `system_sha256`/`history_sha256`/`output_sha256` |
+| `containment_evidence_handle` | hex sha256 | 64 | handle; signer derives `containment_evidence_sha256` |
 | `requested_at`, `completed_at` | u64 ms | — | authoritative |
-| *any `*_sha256` claim* | — | — | **DERIVED — signer ignores incoming, recomputes** |
 
-\* The three large inputs share the **overall 200 KiB `evidence` cap** unless the
-operator raises the message cap; the Wave-3a request-side caps (system ≤256 KiB, message
-≤1 MiB, total ≤8 MiB) remain the ceiling and are re-checked here. **All `*_sha256`
-fields are DERIVED**: if present in the message they are **ignored and recomputed**; a
-mismatch between a supplied claim and the recomputed value ⇒ refused.
+No `*_sha256` value is accepted inline — every hash is **derived** by the signer from the
+store bytes named by the corresponding handle (`sha256(bytes) == handle`, else refused).
 
-### 4.2 `brops.sign-result.v1` (signer → caller)
+### 4.2 `brops.sign-result.v1` (signer → supervisor → [relayed] desktop)
 
-Result cap **64 KiB**. A **tagged union** — exactly one of:
+Frame ≤64 KiB. Tagged union — exactly one of:
 
 ```jsonc
-// success
-{ "protocol": "brops.sign-result.v1", "status": "signed",
-  "receipt_id": "<echoed>",
-  "envelope_jcs_b64": "<base64url JCS(21-field brops.receipt.v1)>",
-  "signature_b64":   "<base64url Ed25519(64B) over the exact JCS bytes>",
-  "key_id": "<receipt signing key id>" }
-// refusal — NO signature, ever
-{ "protocol": "brops.sign-result.v1", "status": "refused",
-  "receipt_id": "<echoed if parseable>",
-  "reason": "<bounded, ≤512B, enum-tagged: attestation_invalid | not_completed |
-              nonce_mismatch | hash_mismatch | policy_mismatch | containment_missing |
-              identity_denied | timestamp_invalid | oversize | malformed>" }
+{ "protocol":"brops.sign-result.v1", "status":"signed",
+  "receipt_id":"<echoed>",
+  "envelope_jcs_b64":"<base64url JCS(21-field brops.receipt.v1)>",
+  "signature_b64":"<base64url Ed25519(64B) over the exact JCS bytes>",
+  "key_id":"<receipt signing key id>" }
+
+{ "protocol":"brops.sign-result.v1", "status":"refused",
+  "receipt_id":"<echoed if parseable>",
+  "reason":"attestation_invalid | not_completed | run_binding_invalid | nonce_mismatch |
+            handle_missing | hash_mismatch | policy_mismatch | containment_missing |
+            identity_denied | timestamp_invalid | oversize | malformed" }   // ≤512B
 ```
 
-- **Replay / idempotency:** the signer is **stateless per request** but the desktop
-  enforces one-time semantics — `request_nonce` (turn) and `receipt_id` (global) are
-  compare-and-consumed in migration 0014's durable ledgers. A signer that is asked twice
-  for the same `receipt_id` MAY re-emit an **identical** envelope (deterministic JCS) or
-  refuse `duplicate`; the desktop rejects the second **at consume time** regardless. No
-  partial/streamed result — one atomic response.
-- **No unsigned success**: `status:"signed"` REQUIRES both `envelope_jcs_b64` and
-  `signature_b64`; anything else parses as malformed ⇒ Blocked.
+- **Desktop persistence for audit:** the supervisor relays the receipt wire to the
+  desktop; the containment artifact bytes (≤64 KiB) accompany the bridge result so the
+  desktop persists them in the attempt evidence and re-checks `sha256 ==
+  containment_evidence_sha256` — audit does not depend on the engine store.
+- **Replay / idempotency:** `request_nonce` (turn) and `receipt_id` (global) are
+  compare-and-consumed in migration 0014's durable ledgers; a re-asked `receipt_id` MAY
+  re-emit an identical (deterministic-JCS) envelope or refuse `duplicate` — the desktop
+  rejects the second at consume time. `status:"signed"` REQUIRES both `envelope_jcs_b64`
+  and `signature_b64`; anything else ⇒ malformed ⇒ Blocked.
 
-### 4.3 Manifest + root anchor + anti-rollback
-
-**Manifest payload** (`brops.key-manifest.v1`), signed shape:
+### 4.3 Manifest + root anchor + durable state
 
 ```jsonc
-{ "payload": {                     // the signed bytes = JCS(payload)
-    "manifest_protocol": "brops.key-manifest.v1",
-    "manifest_version": 1,
-    "manifest_epoch":   <u64>,     // monotonic; anti-rollback dimension
-    "issued_at": <u64 ms>, "expires_at": <u64 ms>,
-    "keys": [ {
-        "key_id": "<string ≤128>",
-        "public_key": "<base64url Ed25519 32B>",
-        "trust_class": "production" | "development",
-        "allowed_protocols": ["brops.receipt.v1"],
-        "workspace": "<scope>", "allowed_audiences": ["<install scope>"],
-        "supervisor_id": "<string>",
-        "valid_from": <u64 ms>, "valid_to": <u64 ms>,
-        "key_epoch": <u64>, "revoked": <bool>
-    } ]
-  },
-  "root_sig": "<base64url Ed25519(64B) = detached signature over JCS(payload)>"
-}
+{ "payload": {                       // signed bytes = JCS(payload)
+    "manifest_protocol":"brops.key-manifest.v1", "manifest_version":1,
+    "manifest_epoch":<u64>, "root_key_id":"<pinned root selector>",
+    "issued_at":<u64 ms>, "expires_at":<u64 ms>,
+    "keys":[ { "key_id":"<≤128>", "public_key":"<b64url 32B>",
+               "trust_class":"production"|"development",
+               "allowed_protocols":["brops.receipt.v1"],
+               "workspace":"<explicit scope>", "allowed_audiences":["<explicit>"],
+               "supervisor_id":"<str>", "valid_from":<u64 ms>, "valid_to":<u64 ms>,
+               "key_epoch":<u64>, "revoked":<bool> } ] },
+  "root_sig":"<b64url Ed25519(64B) detached over JCS(payload)>" }
 ```
 
-- **Signed bytes are explicit:** `root_sig` is a **detached Ed25519 signature over
-  `JCS(payload)`** (the canonical bytes of the `payload` object **without** the
-  `root_sig` field). Duplicate/unknown keys anywhere ⇒ reject. Encodings: keys/sigs
-  base64url-no-pad, times u64 ms.
-- **Root anchor (binary-pinned):** the acceptable **root public key(s)** are compiled
-  into the desktop binary (mirroring `resolve_operator_root_pin`) — not read from a
-  config file. `manifest_hash := sha256(JCS(payload))`.
-- **Anti-rollback state** (new durable table, migration 001X):
-  `manifest_floor(id INTEGER PRIMARY KEY CHECK(id=1), highest_epoch INTEGER NOT NULL,
-  manifest_hash TEXT NOT NULL)`. **Acceptance algorithm** (one `BEGIN IMMEDIATE` tx):
-  1. verify `root_sig` against a pinned root key; else reject.
-  2. reject if `now > expires_at`.
-  3. read `manifest_floor`; **reject** if `manifest_epoch < highest_epoch`, or
-     `== highest_epoch AND manifest_hash != stored hash`.
-  4. else `UPDATE manifest_floor SET highest_epoch, manifest_hash` and COMMIT; cache the
-     immutable snapshot keyed by `(manifest_epoch, manifest_hash)`.
-  Concurrency: single-writer under `BEGIN IMMEDIATE`; crash before COMMIT ⇒ floor
-  unchanged. **Per-turn** `resolve` re-reads `manifest_floor` inside the verify tx and
-  confirms it still matches the cached snapshot (§1.7).
+- **Signed bytes explicit:** `root_sig` is a detached Ed25519 signature over `JCS(payload)`
+  (payload **without** `root_sig`). `manifest_hash := sha256(JCS(payload))`.
+- **Root:** pinned root public key(s) compiled into the binary; `root_key_id` (in the
+  signed payload) selects which; reject if not pinned. base64url-no-pad keys/sigs, u64 ms.
+- **Semantic rejects (§1.6):** duplicate `key_id`; same `key_id` different
+  `public_key`/`trust_class`; `issued_at > expires_at`; `valid_from > valid_to`; wildcard
+  scope.
+- **Durable state** (new migration 001X), written **atomically in the acceptance tx**:
+  `manifest_current(id INTEGER PK CHECK(id=1), payload_bytes BLOB NOT NULL, root_sig TEXT
+  NOT NULL, root_key_id TEXT NOT NULL, manifest_epoch INTEGER NOT NULL, manifest_hash TEXT
+  NOT NULL, accepted_at INTEGER NOT NULL)` and
+  `manifest_floor(id INTEGER PK CHECK(id=1), highest_epoch INTEGER NOT NULL, manifest_hash
+  TEXT NOT NULL)`.
+- **Acceptance algorithm** (one `BEGIN IMMEDIATE` tx): (1) verify `root_sig` against the
+  pinned root named by `root_key_id`, else reject; (2) semantic-validate, else reject;
+  (3) reject if `now > expires_at`; (4) read floor, reject if `epoch < highest_epoch` or
+  (`== highest_epoch` and `manifest_hash` differs); (5) else `UPSERT manifest_current` +
+  `UPDATE manifest_floor` and COMMIT; derive the snapshot. Single-writer; a crash before
+  COMMIT leaves both rows at the prior consistent state.
 
-### 4.4 Resolver contract (Rust)
+### 4.4 `brops.evidence-request.v1` (sidecar/desktop trigger → supervisor)
 
-The `KeyResolutionQuery` + `ReceiptKeyAuthority::resolve(&self, &KeyResolutionQuery,
-&Transaction) -> KeyResolution` signature of §1.7; `ResolvedManifestKey` extended with
-scope fields (`workspace`, `install`/audience, `supervisor`, `protocol`, `valid_from`,
-`valid_to`, `key_epoch`, `trust_class`) and still no public ctor outside `brops-core`
-(the resolver lives in-crate or the crate adds a manifest-module constructor). The verify
-pipeline **binds** the resolved scopes and refuses if the receipt's context differs.
+The supervisor's **only** receipt-evidence input — accepts a handle, never evidence:
+
+```jsonc
+{ "protocol":"brops.evidence-request.v1",
+  "run_id":"<≤128>", "execution_attempt_id":"<≤128>" }
+```
+
+The supervisor builds evidence from its internal terminal state for that attempt (§1.3);
+it never accepts a caller-supplied evidence object or arbitrary bytes to attest/sign.
+
+### 4.5 Resolver contract (Rust)
+
+`KeyResolutionQuery` + `resolve(&self, &KeyResolutionQuery, &Transaction) -> KeyResolution`
+(§1.7); query fields sourced from the trusted `Expected`/turn per the §1.7 mapping;
+`ResolvedManifestKey` extended with scope fields, private, no public ctor outside
+`brops-core`; the verify pipeline binds the resolved scopes and refuses on mismatch.
 
 ## 5. Slicing (implementation follows Architect GREEN on this doc)
 
-- **3b-0 — Design PR (this doc).** Custody principal + authenticity chain + IPC +
-  manifest/resolver contracts. **Architect GREEN mandatory** before any 3b
-  implementation.
-- **3b-1 — Isolated signer + supervisor attestation + 21-field JCS parity.** The signer
-  process/principal + `brops.sign-request/result.v1`; the supervisor emits
-  `brops.run-attestation.v1`; the sidecar relays. **Still `NoTrustedManifest`** → **no
-  production "Verified"**. **STOP CONDITION:** 3b-1 must NOT change `NoTrustedManifest`
-  and must NOT expose "Verified" in the UI.
-- **3b-2 — Desktop manifest / root / anti-rollback.** Loader, migration/durable floor,
-  full negative matrix (rolled-back epoch, same-epoch different-hash, expired, bad root
-  signature, revoked/out-of-window/out-of-scope key).
+- **3b-0 — Design PR (this doc).** **Architect GREEN mandatory** before any 3b code.
+- **3b-1 — Isolated signer + supervisor evidence/attestation + content-addressed store +
+  21-field JCS parity.** Signer process/principal + `brops.sign-request/result.v1`; the
+  supervisor builds evidence from `{run_id, attempt_id}` + writes/reads the store; the
+  sidecar relays. **Still `NoTrustedManifest`** → **no production "Verified"**. **STOP:**
+  3b-1 must NOT change `NoTrustedManifest` and must NOT expose "Verified".
+- **3b-2 — Desktop manifest / root / anti-rollback / durable snapshot.** Loader, migration
+  (`manifest_current` + `manifest_floor`), semantic + negative matrix (rolled-back epoch,
+  same-epoch different-hash, expired, bad root sig, unknown `root_key_id`, duplicate/
+  conflicting key_id, wildcard scope, revoked/out-of-window/out-of-scope key,
+  crash-between-floor-and-bytes).
 - **3b-3 — Resolver integration + real e2e.** Context-aware `ReceiptKeyAuthority` swap
-  (consulted in-tx), production key path, the **first `trusted_verified`**. **Merge only
-  after exact-head zero-trust GREEN.**
+  (in-tx, query from `Expected`), production key path, the **first `trusted_verified`**.
+  **Merge only after exact-head zero-trust GREEN.**
 
 ## 6. Global stop condition — "Verified" opens only when the whole chain is GREEN
 
 **No `trusted_verified` ("Verified") renders, and `NoTrustedManifest` is not swapped,
-until the ENTIRE chain — isolated signer (dedicated principal) + supervisor attestation
-+ signed manifest + binary-pinned root anchor + anti-rollback + context-aware resolver —
-is GREEN.** Any partial landing (e.g. 3b-1 alone) keeps every governed turn Blocked.
-"Verified" is a single, chain-complete event.
+until the ENTIRE chain — isolated signer (dedicated principal) + supervisor evidence/
+attestation + content-addressed store + signed manifest + binary-pinned root + anti-
+rollback + durable snapshot + context-aware resolver — is GREEN.** Any partial landing
+keeps every governed turn Blocked. "Verified" is a single, chain-complete event.
 
 ## 7. Non-goals (this design)
 
 - Full supervisor/sidecar hardening (Waves 4–5) — 3b brings only the **minimal** key-
-  custody core plus the authenticity anchor it depends on.
+  custody core + the authenticity anchor + the content-addressed store it depends on.
 - Per-delta streaming receipts (deferred; sign-on-complete only, Wave 3 §7).
-- Rotating the engine's existing key classes — the receipt signer is an **additional**
-  key class, not a change to issuer/evidence/builder custody.
+- Rotating the engine's existing key classes — the receipt signer + the supervisor
+  attestation key are **additional** classes, not changes to issuer/evidence/builder
+  custody.
 
 **No product code is authored under this document. Implementation begins only after
 Architect + Owner approval of the boundaries in §1 and the schemas in §4.**
