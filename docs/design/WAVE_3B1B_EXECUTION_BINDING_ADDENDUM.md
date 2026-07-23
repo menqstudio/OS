@@ -1,33 +1,33 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 9)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 10)
 
 > **STATUS: ❌ DESIGN RED — NOT Architect-GREEN. 3b-1B code has NOT started.** The Architect
-> reviewed **rev 8** (at exact HEAD `59a7f044af69951fb72aa0434b289392c4f61104`, with
-> exact-head CI **#112** fully GREEN — **CI GREEN ≠ design GREEN**) and returned **Design RED**
-> with **1 P0 + 3 P1 schema/atomicity blockers** (rev 8 correctly closed the pending-store
-> direct-tampering boundary and the input-FD framing/size contradiction; four narrower
-> contracts remained). **rev 9 (this document)** is the implementer's **proposed** closure of
-> those four — it is **awaiting Architect design review** and is **NOT ratified**. The
-> rev-8 → rev-9 blockers were: **P0-1** `challenge_accepted_at` was bound only in prose, not
-> through exact **signed schemas** (the strict `execution-lease` and `brops.sign-request.v1`
-> don't define it) → a versioned **`brops.governed-turn-lease.v1`** + a sign-request
-> evidence extension carry it, with a frozen field-type/signed-byte formula, `issue_lease` /
-> `validate_execution_lease` contract, a **byte-equality chain** across challenge → lease →
-> attestation → sign-result → bridge → record, and mismatch/replay/clock negative tests
-> (§2.6); **P1-2** the registry handle hashed only `JCS(payload)`, violating the
-> protected-store law that a handle == `SHA256(exact stored bytes)` → **`registry_hash =
-> SHA256(JCS(payload))`** (fork/epoch identity) is now split from **`challenge_registry_handle
-> = SHA256(JCS({payload, root_sig}))`** (exact stored document), and the record binds the
-> exact-document handle (§2.5, §3, §5); **P1-3** snapshot publication and floor advance were
-> separable (a floor advance then a missing snapshot could brick recovery) → ONE
-> crash-consistent sequence (verify → create-if-absent publish + `fsync` file & dir → durable
-> floor tx persisting epoch/hash/handle/root → never expose a floor whose snapshot is
-> absent/mismatched → crash-recovery at every cut point) (§2.5); **P1-4** historical
-> verification only checked key *presence* → it now repeats the **complete key-validity
-> predicate as of `challenge_accepted_at`** (exists once, schema, `key_epoch`, `valid_from ≤
-> challenge_accepted_at ≤ valid_to`, `revoked_at` null-or-after, `sig` under that exact
-> snapshot key, root sig + exact-document handle) (§2.5, §5). **These four remain OPEN until
-> the Architect returns design-GREEN** — see `NEXT_CHAT.md` §3.3. Do not treat any part of this
-> document as ratified until that GREEN. STOP gates: `NoTrustedManifest` unchanged, no
+> reviewed **rev 9** (at exact HEAD `cb821ed3ae27c7d7ed16d4f6104a7be0458cf254`, with
+> exact-head CI **#113** fully GREEN — **CI GREEN ≠ design GREEN**) and returned **Design RED**
+> with the final **1 P0 + 1 P1 blockers**. **rev 10 (this document)** is the implementer's
+> **proposed** closure of those two — it is **awaiting Architect design review** and is
+> **NOT ratified**. The rev-9 → rev-10 blockers were: **P0** the signed challenge was
+> **not atomically consumed at the supervisor** — the real `request_nonce`
+> compare-and-consume lived in the *desktop* verify tx (after execution), leaving a
+> supervisor-side replay window where a compromised sidecar could resubmit one valid
+> challenge and cause **duplicate model/tool execution** → **§2.7** freezes a single atomic
+> supervisor acceptance transaction (durable acceptance ledger CAS `UNSEEN → ACCEPTED` keyed
+> by `(install_id, request_nonce, challenge_handle)`, fused with attempt reservation +
+> `challenge_accepted_at` stamp + governed-turn-lease issue; idempotent retry returns only the
+> same attempt; conflicting binding refused; crash-recovery + concurrent/sequential-replay
+> negative tests); **P1** `brops.governed-turn-lease.v1` was described as a prose "superset"
+> with field names that **conflicted with the strict base lease** (`lease_nonce` vs `nonce`,
+> `issued_at` vs `issued_at_epoch`), and the equality chain wrongly claimed
+> `challenge_accepted_at` equals a field inside the signed challenge (impossible — the
+> supervisor stamps it *after* signing) → **§2.6** now gives the **exact normative schema**
+> (correct base field names, required/allowed keys, caps, unknown-field/dup-key rejection,
+> JCS signed-byte formula, `ARTIFACT_AUTHORITY`, `issue_governed_turn_lease` /
+> `validate_governed_turn_lease` contracts, exact sign-request/sign-result/bridge/record
+> extensions) and **removes the impossible equality**: `challenge_accepted_at` is byte-equal
+> across the **supervisor-authoritative** chain only (lease → attestation → sign-result →
+> bridge → record), and the lease binds back to the challenge via
+> `challenge_handle`/`challenge_key_id`/registry fields + context ids. **These two remain OPEN
+> until the Architect returns design-GREEN** — see `NEXT_CHAT.md` §3.3. Do not treat any part
+> of this document as ratified until that GREEN. STOP gates: `NoTrustedManifest` unchanged, no
 > production "Verified", 3b-2/3b-3 not started, PR #31 not merged.
 >
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. Builds on
@@ -71,6 +71,8 @@
 > **rev 8** closes the deeper-consistency design RED on rev 7 (2 P0 + 2 P1): **P0-1** "trusted desktop database" is not a real boundary between two same-UID Linux processes (a same-login sidecar RCE could edit the SQLite/store file directly) — the pending-challenge store is now **owned by a dedicated challenge-authority principal/UID** (`0700`, sidecar UID has no r/w/list), rows are created **only over an `SO_PEERCRED` channel admitting a UID distinct from the sidecar** (fail-closed where a platform can't separate the UIDs), and Linux CI proves the **direct file/DB-mutation** denial in addition to the API-insert denial (§2.5); **P0-2** the historical timestamp predicate used the wrong field (`issued_at ≤ requested_at` can never hold — `requested_at` precedes `issued_at`) — a **supervisor-stamped `challenge_accepted_at`** (bound to lease + record + attestation) is now the checked field: acceptance and re-verification require `requested_at ≤ challenge_accepted_at` and `issued_at ≤ challenge_accepted_at ≤ expires_at`, revocation as of `challenge_accepted_at` (§2.5 step 3, §3, §5); **P1-3** the challenge-key registry gains a **full durable trust contract** — normative top-level `brops.challenge-key-registry.v1` (schema + `registry_epoch`/`registry_hash`/`root_key_id`, JCS wire, same-epoch/different-hash rejection, durable anti-rollback floor, accepted-snapshot publication), with `challenge_registry_handle`/`challenge_registry_epoch`/`challenge_registry_root_key_id` **bound into the record** and re-verified from the stored snapshot so rotation never breaks a historical record (§2.5, §3, §4, §5); **P1-4** the input-FD framing/size contradiction is removed — FDs `3`/`4`/`5` are **read-only regular-file descriptors to the exact content-addressed bytes** (no u32 length prefix; the 256 KiB frame belongs only to the IPC/ingress path), launcher-validated (regular file, `O_RDONLY`, offset 0, per-artifact size ceiling incl. history ≤ 8 MiB, store-owned inode), read to EOF (§2).
 >
 > **rev 9** closes the schema/atomicity design RED on rev 8 (1 P0 + 3 P1; rev 8 was reviewed at HEAD `59a7f04`, exact-head CI #112 GREEN — CI GREEN ≠ design GREEN): **P0-1** `challenge_accepted_at` is now **machine-bound through exact signed schemas**, not prose — a versioned **`brops.governed-turn-lease.v1`** (superset of the strict base lease) carries it, the **`brops.sign-request.v1`** governed-turn attestation evidence + **`brops.sign-result.v1`** relay + bridge result carry it, with a frozen field-type/signed-byte formula, `issue_lease`/`validate_execution_lease` contract, a **byte-equality chain** challenge → lease → attestation → sign-result → bridge → record, refusal on any mismatch, and replay/backdating/expiry/clock-boundary negative tests (§2.6, §3, §5); **P1-2** the registry digest is split to obey the protected-store law — **`registry_hash = SHA256(JCS(payload))`** (fork/epoch identity, anti-rollback) vs **`challenge_registry_handle = SHA256(JCS({payload, root_sig}))`** (exact stored document bytes); the record binds the exact-document handle + `challenge_registry_hash`, and re-verification fetches the full doc by handle, re-hashes it, verifies `root_sig` over `JCS(payload)`, then recomputes `registry_hash` (§2.5, §3, §4, §5); **P1-3** snapshot publication + floor advance are ONE **crash-consistent** recoverable sequence (verify → create-if-absent publish + `fsync` file & dir → durable floor tx persisting `(epoch, registry_hash, handle, root_key_id)` → a floor is never usable unless its snapshot exists + re-hashes → crash-recovery at every cut point → same-epoch/different-hash + divergent-handle refused), so a floor advance with a missing snapshot is impossible (§2.5); **P1-4** historical verification repeats the **complete key-validity predicate as of `challenge_accepted_at`** (key present exactly once, `public_key` schema valid, `key_epoch` accepted, `valid_from ≤ challenge_accepted_at ≤ valid_to`, `revoked_at IS NULL OR > challenge_accepted_at`, challenge `sig` valid under that exact snapshot key, root sig + exact-document handle valid) — presence alone is insufficient (§2.5, §5).
+>
+> **rev 10** closes the final design RED on rev 9 (1 P0 + 1 P1; rev 9 was reviewed at HEAD `cb821ed`, exact-head CI #113 GREEN — CI GREEN ≠ design GREEN): **P0** the signed challenge is now **atomically consumed at the supervisor** — **§2.7** freezes a single acceptance transaction over a durable supervisor **acceptance ledger** (CAS `UNSEEN → ACCEPTED` keyed by `(install_id, request_nonce, challenge_handle)`) **fused** with attempt reservation + `challenge_accepted_at` stamp + `issue_governed_turn_lease`, so a compromised sidecar cannot resubmit one valid challenge for **duplicate execution**; a replay returns only the same attempt's idempotent result, a conflicting run/task/challenge binding is refused, crash-recovery is defined at every cut point, and concurrent/sequential-replay + crash-retry + conflicting-binding negative tests are required (desktop nonce consumption still governs final **receipt** acceptance, but is not a substitute for supervisor-side **execution** replay prevention); **P1** `brops.governed-turn-lease.v1` is now an **EXACT normative schema** (§2.6) — correct base field names matching the ratified lease (`nonce` not `lease_nonce`, `issued_at_epoch`/`expires_at_epoch` not `issued_at`/`expires_at`), full required/allowed key set, type/size caps, unknown-field + duplicate-key rejection, JCS signed-byte formula, `ARTIFACT_AUTHORITY` mapping, `issue_governed_turn_lease` / `validate_governed_turn_lease` contracts (separate from the base `validate_execution_lease`), and exact `brops.sign-request.v1` / `brops.sign-result.v1` / bridge-result / `brops.governed-turn-record.v1` extensions; the **impossible** claim that `challenge_accepted_at` equals a field inside the signed desktop challenge is **removed** — it is byte-equal across the **supervisor-authoritative** chain only (lease → attestation → sign-result → bridge → record), and the lease binds back to the challenge via `challenge_handle`/`challenge_key_id`/`challenge_registry_*` + context identities (§2.6, §5).
 
 ## 1. The governed AI turn IS a `bro_supervisor`-owned supervised execution
 
@@ -392,22 +394,27 @@ fail-closed until its broker lands, §2). Frozen parameters:
 
 The staging store is supervisor-owned (0700); the sidecar/executor have no read there.
 
-**Flow (P0-1..P0-3, P1-3, P1-5) — the frozen order (see §4 for the full sign/publish order):**
+**Flow (P0-1..P0-3, P1-3, P1-5) — the frozen order (see §4 for the full sign/publish order,
+and §2.7 for the atomic acceptance transaction that fuses steps 1 + 3):**
 1. **Verify the signed challenge** against the `challenge_key_id` resolved from the
-   root-signed challenge-key registry (not revoked as of now); refuse an expired challenge
-   (`now > expires_at`) or a replayed/consumed `request_nonce` (durable one-time ledger) —
-   **before** any attempt reservation. `run_id`/`task_id` + all context identities are taken
-   from INSIDE the signature.
+   root-signed challenge-key registry (not revoked as of acceptance); refuse an expired
+   challenge or a replayed/consumed challenge — but the replay check is the **atomic
+   supervisor `UNSEEN → ACCEPTED` compare-and-consume of §2.7**, keyed by `(install_id,
+   request_nonce, challenge_handle)`, **fused with the attempt reservation** (step 3), not a
+   separate "check then reserve". `run_id`/`task_id` + all context identities are taken from
+   INSIDE the signature.
 2. **Import the input artifacts BEFORE execution** — read `system`/`history`/
    `generation_config` from staging **by handle** (confirming `sha256(bytes) == handle`),
    publish them into the protected store, and **recompute the FULL `request_sha256`** over
    the complete canonical envelope (`protocol, workspace_id, install_id, request_nonce,
    system_sha256, history_sha256, generation_config_sha256, requested_at`); refuse on any
    mismatch.
-3. **Reserve the attempt + issue the lease + STAMP `challenge_accepted_at` (P0-2).**
-   Atomically reserve/generate a one-time `execution_attempt_id` (a `run_id` cannot yield two
-   live racing attempts) and `issue_lease` for it. The supervisor stamps its own trusted
-   clock as **`challenge_accepted_at`** (the attempt-reservation instant) and enforces the
+3. **Atomic acceptance (§2.7): CAS-consume the challenge + reserve the attempt + STAMP
+   `challenge_accepted_at` + issue the lease, in ONE transaction (P0, P0-2).** The winning
+   `UNSEEN → ACCEPTED` CAS reserves a one-time `execution_attempt_id` (a `run_id` cannot yield
+   two live racing attempts; a replay returns only the same attempt's idempotent result), and
+   `issue_governed_turn_lease` (§2.6) signs the `brops.governed-turn-lease.v1`. The supervisor
+   stamps its own trusted clock as **`challenge_accepted_at`** and enforces the
    **acceptance-time window on THIS field, not on `requested_at`** — because `requested_at`
    is a *desktop* stamp from BEFORE the authority stamped `issued_at`, so the normal timeline
    is `requested_at < issued_at < challenge_accepted_at` and a naive `issued_at ≤
@@ -429,49 +436,152 @@ The staging store is supervisor-owned (0700); the sidecar/executor have no read 
    record; a caller cannot choose an arbitrary pre-existing attempt. The supervisor returns
    `{execution_attempt_id, governed-result}`.
 
-## 2.6 `challenge_accepted_at` is MACHINE-bound through exact signed schemas (P0-1)
+## 2.6 EXACT versioned governed-turn lease + relay schemas (P1) — `challenge_accepted_at` machine-bound
 
-A prose assertion that `challenge_accepted_at` is "bound into the lease / attestation /
-record" is **insufficient** — it must ride the **exact signed artifacts + transport
-schemas** so it is a chain-authenticated acceptance instant, not a terminal-record writer's
-unilateral claim. The ratified base `execution-lease` and `brops.sign-request.v1` evidence
-are **strict exact-key** schemas that do not define it (a bare new key would be rejected as
-"unexpected"), so 3b-1B freezes a **versioned governed-turn variant** of each rather than
-mutating the ratified artifacts:
+A prose "superset" is **insufficient**; `challenge_accepted_at` must ride **exact, strict
+signed schemas** so it is a chain-authenticated acceptance instant, not a record-writer's
+claim. The ratified base `execution-lease` is a **strict exact-key** artifact (its keys are
+`schema, lease_id, nonce, task_id, agent_id, session_id, repository, branch, worktree,
+head_sha, tree_identity, allowed_capabilities, issued_at_epoch, expires_at_epoch,
+max_tool_calls, task_class, protected_scope, control_plane_digest, workspace_id` + injected
+`artifact_type`/`key_id`; any extra key is rejected), so 3b-1B freezes a **new artifact
+type** with its OWN strict schema rather than mutating the ratified lease.
 
-1. **Versioned governed-turn lease — `brops.governed-turn-lease.v1`.** A new artifact type
-   (not an ad-hoc field on `execution-lease`): a superset carrying the base lease fields
-   (`lease_id`, `lease_nonce`, `run_id`, `execution_attempt_id`, `task_id`, identities,
-   `issued_at`, `expires_at`) **plus** `challenge_accepted_at` and the challenge/registry
-   bindings (`challenge_handle`, `challenge_key_id`, `challenge_registry_handle`,
-   `challenge_registry_hash`, `challenge_registry_epoch`). `ARTIFACT_AUTHORITY[...]` = the
-   lease issuer; signed bytes = detached Ed25519 over `JCS(payload)`.
-2. **Field type + signed-byte formula.** `challenge_accepted_at` is an **integer epoch ms**
-   (`> 0`), stamped from the **supervisor's trusted clock** at attempt reservation (§2.5
-   step 3); it is a **`payload` field**, so it is covered by the lease/record/attestation
-   signatures verbatim (no derived encoding).
-3. **`issue_lease` / `validate_execution_lease` contract.** `issue_lease` (governed-turn
-   variant) stamps `challenge_accepted_at`, enforces `requested_at ≤ challenge_accepted_at`
-   and `issued_at ≤ challenge_accepted_at ≤ expires_at` at signing time, and signs the
-   `brops.governed-turn-lease.v1`. `validate_execution_lease` (governed-turn variant)
-   `verify_artifact`s it and returns the value; a lease missing/!int `challenge_accepted_at`
-   is refused.
-4. **Exact equality binding across the whole chain (all must be byte-equal).**
-   `challenge_accepted_at` appears in, and is cross-checked equal across: **(a)** the accepted
-   challenge context; **(b)** `brops.governed-turn-lease.v1`; **(c)** the supervisor
-   attestation carried in **`brops.sign-request.v1`** evidence (the sign-request governed-turn
-   evidence gains `challenge_accepted_at` + the registry-snapshot bindings); **(d)** the
-   **`brops.sign-result.v1`** forensic relay; **(e)** the **bridge result**; **(f)**
-   `brops.governed-turn-record.v1` (§3). The signer and `LiveRunStateProvider` **refuse** if
-   any two differ.
-5. **Refusal on mismatch (fail-closed):** any missing field, type error, or cross-artifact
-   inequality Blocks — the record is never signed / never accepted.
-6. **Negative tests (normative for the 3b-1B implementation):** a lease whose
-   `challenge_accepted_at` disagrees with the record; a **backdated** `challenge_accepted_at`
-   (`< issued_at` or `< requested_at`); an **expired** one (`> expires_at`);
-   **clock-boundary** equality cases (`== issued_at`, `== expires_at`); a **replayed** lease
-   from another attempt; and a sign-request/sign-result/bridge value that disagrees with the
-   lease — each must Block.
+**`brops.governed-turn-lease.v1` (exact, normative — NOT a field bolted onto `execution-lease`):**
+
+```jsonc
+{ "payload": {
+    "artifact_type": "brops.governed-turn-lease.v1",  // injected by the signer + echoed
+    "key_id": "<lease-issuer key id>",                 // injected by the signer + echoed
+    "schema": 1,                                        // integer, == 1
+    // --- base execution-lease fields (SAME NAMES as the ratified lease) ---
+    "lease_id": "<string ≤128>",
+    "nonce": "<string, 16..128>",                       // the LEASE nonce (NOT lease_nonce)
+    "task_id": "<string ≤128>", "agent_id": "<string ≤128>", "session_id": "<string ≤128>",
+    "repository": "<string>", "branch": "<string>", "worktree": "<string>",
+    "head_sha": "<40|64 hex>", "tree_identity": "<string>",
+    "allowed_capabilities": ["<cap>", "..."],           // array of strings, deduped/sorted
+    "issued_at_epoch": <int>,                           // integer epoch (NOT issued_at)
+    "expires_at_epoch": <int>,                          // integer epoch (NOT expires_at)
+    "max_tool_calls": <int>, "task_class": "<string>", "protected_scope": "<string>",
+    "control_plane_digest": "<64hex>", "workspace_id": "<string ≤128>",
+    // --- governed-turn additions ---
+    "run_id": "<string ≤128>", "execution_attempt_id": "<string ≤128>",
+    "install_id": "<string ≤128>", "supervisor_id": "<string ≤128>",
+    "challenge_accepted_at": <int>,                     // integer epoch ms > 0, supervisor-stamped
+    "request_nonce": "<string ≤128>",                   // the DESKTOP challenge nonce (== the challenge's)
+    // --- binding back to the signed desktop challenge (NOT via challenge_accepted_at) ---
+    "challenge_handle": "<64hex>", "challenge_key_id": "<string ≤128>",
+    "challenge_registry_handle": "<64hex>", "challenge_registry_hash": "<64hex>",
+    "challenge_registry_epoch": <int>, "challenge_registry_root_key_id": "<string ≤128>"
+  },
+  "signature": "<detached Ed25519 over JCS(payload)>" }
+```
+
+- **Strict decode:** exact required-key set (the keys above; `artifact_type`/`key_id`
+  injected), **unknown-field rejection**, **duplicate-key rejection**, UTF-8 strings,
+  numeric `schema`/`*_epoch`/`challenge_accepted_at`/`challenge_registry_epoch`/
+  `max_tool_calls`, lowercase-hex for `*_handle`/`*_hash`/`control_plane_digest`. `schema`
+  must be `1`; `nonce` length 16..128.
+- **Signed-byte formula:** detached Ed25519 over **`JCS(payload)`** (the same canonicalizer
+  as every engine artifact). `challenge_accepted_at` is a `payload` field, covered verbatim.
+- **Authority mapping:** `ARTIFACT_AUTHORITY["brops.governed-turn-lease.v1"] = the lease
+  issuer` (the supervisor's lease-issuing authority — the same issuer as `execution-lease`,
+  a distinct key from the recorder/signer); `verify_artifact` refuses any other signer.
+- **`issue_governed_turn_lease` contract:** the **supervisor** is the sole issuer; it is
+  called **inside the atomic acceptance transaction (§2.7)** with the already-CAS-accepted
+  challenge, the reserved `execution_attempt_id`, the stamped `challenge_accepted_at`, and
+  the resolved registry bindings; it enforces at signing time `requested_at ≤
+  challenge_accepted_at` and `issued_at_epoch ≤ challenge_accepted_at ≤ expires_at_epoch`,
+  and signs. (`requested_at` comes from the verified challenge, §2.5.)
+- **`validate_governed_turn_lease` contract:** `verify_artifact` (issuer authority) →
+  strict-decode the exact key set → return the fields; a lease with a missing/extra key, a
+  non-int `challenge_accepted_at`, `schema != 1`, or a bad `nonce` length is **refused**.
+  This is a **separate** validator from the base `validate_execution_lease` (which would
+  reject the governed-turn keys as "unexpected").
+
+**Frozen relay extensions (exact) — the governed-turn variants carry the same additions so
+the acceptance instant + challenge/registry bindings are supervisor-attested end to end:**
+- **`brops.sign-request.v1` attested evidence** gains `challenge_accepted_at`, `request_nonce`,
+  `run_id`, `execution_attempt_id`, `challenge_handle`, `challenge_key_id`,
+  `challenge_registry_handle`, `challenge_registry_hash`, `challenge_registry_epoch`,
+  `challenge_registry_root_key_id` (so the supervisor `brops.run-attestation.v1` signs them
+  via `JCS(evidence)`);
+- **`brops.sign-result.v1`** echoes the same fields into the forensic record;
+- **bridge-result `receipt`** relays the same fields;
+- **`brops.governed-turn-record.v1`** (§3) carries them as the terminal authority.
+
+**Equality binding — the CORRECTED chain (P1).** `challenge_accepted_at` is stamped by the
+supervisor **after** the desktop signed the challenge, so it is **NOT** and **cannot** be a
+field of the signed challenge — the earlier "equal to the accepted challenge context" claim
+was impossible and is removed. `challenge_accepted_at` must be **byte-equal** across the
+**supervisor-authoritative** chain only:
+`brops.governed-turn-lease.v1` → `brops.sign-request.v1` attestation →
+`brops.sign-result.v1` → bridge result → `brops.governed-turn-record.v1`. Any inequality
+Blocks. The lease/record instead bind **back to the signed desktop challenge** through
+`challenge_handle` / `challenge_key_id` / `challenge_registry_handle` /
+`challenge_registry_hash` / `challenge_registry_epoch` + the context identities
+(`run_id`/`task_id`/`request_nonce`/`workspace_id`/`install_id`) — the challenge's own
+authenticated fields, re-verified per §5.
+
+**Refusal + negative tests (normative):** any missing/extra field, type error, or
+cross-artifact `challenge_accepted_at` inequality Blocks (record never signed / never
+accepted). Tests: a lease whose `challenge_accepted_at` disagrees with the record/attestation/
+sign-result/bridge; a **backdated** value (`< issued_at_epoch` or `< requested_at`); an
+**expired** value (`> expires_at_epoch`); **clock-boundary** cases (`== issued_at_epoch`,
+`== expires_at_epoch`); a **replayed** lease from another attempt; a governed-turn lease
+with an unknown/missing key or `schema != 1`; and a lease presented to the **base**
+`validate_execution_lease` (must reject) — each must Block.
+
+## 2.7 Supervisor-side ATOMIC challenge consumption — execution replay prevention (P0)
+
+The desktop's one-time `request_nonce` is compare-and-consumed in the **desktop** verify
+transaction — but that happens **after** execution. On its own that leaves a
+**supervisor-side replay window**: a compromised sidecar (in scope) could hand the **same
+valid signed challenge** to the supervisor several times before the first result reaches the
+desktop, and each acceptance would **execute the model/tool again** (side effects), even
+though the desktop later persists only one. Checking "nonce not yet consumed" and *then*
+reserving the attempt as separate steps does not close this — the check and the reservation
+must be **one atomic compare-and-consume on the supervisor**.
+
+**Supervisor acceptance ledger + one atomic acceptance transaction (LOCKED).** The
+supervisor owns a **durable acceptance ledger** (its own protected state, `0700`, not
+sidecar-writable) and performs acceptance as a single transaction:
+
+1. **Strictly verify** the signed challenge and the bound registry snapshot (§2.5) — root
+   sig, exact-document handle, key-validity predicate.
+2. **Check** expiry / revocation as of the about-to-be-stamped acceptance instant, and the
+   request bindings (`request_sha256`, context identities).
+3. **Atomically CAS** a durable ledger row keyed by **at least `(install_id, request_nonce,
+   challenge_handle)`**: `UNSEEN → ACCEPTED`. If the row already exists, this is a **replay**
+   — do not proceed to a new reservation (step 4); go to step 5.
+4. **In the SAME transaction** (only on a winning `UNSEEN → ACCEPTED` CAS): reserve a
+   one-time `execution_attempt_id`, **stamp `challenge_accepted_at`** (supervisor clock),
+   bind `run_id`/`task_id` + context, and **issue (or durably prepare) the
+   `brops.governed-turn-lease.v1`** (§2.6). The ledger row records
+   `execution_attempt_id` + `challenge_accepted_at` + the run/task binding. Commit is the
+   atomic unit — the accept, the attempt, the stamp and the lease are one durable fact.
+5. **Idempotent retry / conflict:** a second request for the same
+   `(install_id, request_nonce, challenge_handle)` **MUST NOT** create another attempt; it
+   may return **only** the same attempt's idempotent pending/completed status/result. Any
+   request that reuses the nonce/challenge with a **different** `run_id`/`task_id`/challenge
+   binding is a conflict and is **refused** (fail-closed).
+6. **Crash recovery at every cut point:** a crash **before** the CAS commit leaves the row
+   `UNSEEN` (or absent) ⇒ a clean retry reserves normally; a crash **after** the CAS commit
+   leaves `ACCEPTED` + the reserved attempt ⇒ a retry is idempotent (step 5) and never
+   double-reserves; a crash **between** lease issue and the terminal record still leaves the
+   turn unattestable ⇒ the desktop Blocks (§4/§6), and the same challenge cannot start a
+   *new* execution because the ledger already holds `ACCEPTED` for that attempt.
+7. **Negative tests (normative):** concurrent duplicate submissions of one challenge (exactly
+   one `ACCEPTED` + one attempt; the loser gets the idempotent result, never a 2nd
+   execution); sequential replay after completion (idempotent completed result, no
+   re-execution); crash-then-retry at each cut point; and a conflicting run/task/challenge
+   binding on replay (refused).
+
+**Relationship to the desktop nonce (unchanged):** the desktop's `request_nonce`
+compare-and-consume in `verify_and_record_receipt` is still required for **final receipt
+acceptance** (whole-turn replay + `receipt_id` uniqueness, §6) — but it is **not** a
+substitute for this supervisor-side **execution** replay prevention. Both hold.
 
 ## 3. `brops.governed-turn-record.v1` — the ONLY signing authority (exact signed schema)
 
@@ -673,9 +783,9 @@ idempotent and a divergent overwrite impossible.
 |---|---|
 | `request_nonce`, `system_sha256`, `history_sha256`, `generation_config_sha256`, `requested_at`, `request_sha256`, `challenge_accepted_at` | independently re-verified: fetch the signed challenge by `challenge_handle`, verify its `sig` under the challenge key resolved from the **bound registry snapshot** (row below), apply the **temporal + revocation semantics below (P0-2/P1-5)** against the record's `challenge_accepted_at` — NOT a wall-clock `now ∈ window` check — and confirm its `run_id`/`task_id`/`workspace_id`/`install_id`/`request_nonce`/`*_sha256`/`requested_at` equal the record's + `request_sha256 == sha256(JCS(envelope))` |
 | `challenge_registry_handle`, `challenge_registry_hash`, `challenge_registry_epoch`, `challenge_registry_root_key_id` | fetch the **exact signed registry document** by `challenge_registry_handle`, **re-hash the full stored document** (`SHA256(JCS({payload,root_sig})) == challenge_registry_handle`), verify its `root_sig` over `JCS(payload)` under the pinned `challenge_registry_root_key_id`, **recompute `registry_hash = SHA256(JCS(payload)) == challenge_registry_hash`**, confirm `registry_epoch == challenge_registry_epoch`, then apply the **full key-validity predicate as of `challenge_accepted_at`** (§2.5 P1-4): `challenge_key_id` present exactly once, key/`public_key` schema valid, `key_epoch` accepted, `valid_from ≤ challenge_accepted_at ≤ valid_to`, `revoked_at IS NULL OR revoked_at > challenge_accepted_at`, and the challenge `sig` valid **under that exact snapshot key** — mere presence is insufficient |
-| `challenge_accepted_at` (equality chain, P0-1) | **byte-equal** across the accepted challenge context, `brops.governed-turn-lease.v1`, the `brops.sign-request.v1` attestation evidence, the `brops.sign-result.v1` relay, the bridge result, and the record (§2.6); any inequality Blocks |
+| `challenge_accepted_at` (equality chain, P1) | supervisor-stamped, so **NOT** a field of the signed challenge — **byte-equal** across the **supervisor-authoritative** chain only: `brops.governed-turn-lease.v1` → `brops.sign-request.v1` attestation → `brops.sign-result.v1` relay → bridge result → the record (§2.6); any inequality Blocks. The link to the desktop challenge is via `challenge_handle`/`challenge_key_id`/registry fields + context ids, not via `challenge_accepted_at` |
 | `execution_attempt_id`, `run_id` | the requested handle |
-| `lease_id`, `lease_nonce`, `challenge_accepted_at` | the verified **`brops.governed-turn-lease.v1`** (`verify_artifact` + governed-turn `validate_execution_lease`, §2.6); the lease's `challenge_accepted_at` must equal the record's |
+| `lease_id`, `lease_nonce`, `challenge_accepted_at` | the verified **`brops.governed-turn-lease.v1`** (`verify_artifact` + **`validate_governed_turn_lease`**, §2.6 — the exact-key governed-turn validator, NOT the base `validate_execution_lease`); the record's `lease_id` == the lease's `lease_id` and the record's `lease_nonce` == the lease's **`nonce`** field (the record disambiguates it from `request_nonce`); the lease's `challenge_accepted_at` + challenge/registry bindings must equal the record's |
 | `policy_id`, `policy_version`, `policy_bundle_sha256` | the operator-authorized policy (the signer re-checks bundle digest, P1-7) |
 | `containment_evidence_sha256` + `containment_event_id` | the `brops.governed-turn-containment.v1` artifact (§3.6) whose `run_id`/`execution_attempt_id`/`lease_id`/`runner_id` equal the record's + `contained==true`, recorded as a containment-confirmed evidence event whose `payload_hash == containment_evidence_sha256` |
 | `receipt_id`, `output_sha256` | the verified governed-turn execution receipt (§3.5): receipt/attempt/lease ids match; the exact output bytes re-hash to `output_sha256 == output_handle` (binary, no normalization) |

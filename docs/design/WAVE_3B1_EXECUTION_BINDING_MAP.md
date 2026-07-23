@@ -1,10 +1,10 @@
 # Wave 3b-1 re-scope — implementation map (3b-1A + 3b-1B)
 
 > **STATUS (2026-07-24):** **3b-1A is Architect Code GREEN** (@ `dffd164`; exact-head CI
-> **#112** 8/8 GREEN); **3b-1B is design-lock RED** — the Architect returned Design RED on
-> addendum **rev 8** (@ `59a7f04`; 1 P0 + 3 P1 schema/atomicity blockers; CI GREEN ≠ design
-> GREEN); **rev 9 is the proposed closure, not yet GREEN, no code**. See `NEXT_CHAT.md` §3
-> for the authoritative current state, STOP gates, and next action.
+> **#113** 8/8 GREEN); **3b-1B is design-lock RED** — the Architect returned Design RED on
+> addendum **rev 9** (@ `cb821ed`; final 1 P0 + 1 P1 replay/schema blockers; CI GREEN ≠
+> design GREEN); **rev 10 is the proposed closure, not yet GREEN, no code**. See
+> `NEXT_CHAT.md` §3 for the authoritative current state, STOP gates, and next action.
 >
 > Owner-directed re-scope after the 2nd code-audit RED (PR #31). The isolated-signer /
 > custody work is real but the P0-1/P0-3 chain is not yet an authoritative end-to-end.
