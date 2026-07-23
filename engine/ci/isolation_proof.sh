@@ -2,11 +2,23 @@
 # Wave 3b-1 — machine-prove the four same-login-user isolation denials (design §1.1;
 # audit P0-1). Runs on Linux CI with passwordless sudo. Creates two dedicated service
 # principals, provisions their keys/store/sockets, starts the real signer + supervisor
-# services AS those principals, then runs the prover AS the login (attacker) user and
-# requires all four attacks to be denied. No skip/placeholder.
+# services AS those principals, runs a positive supervisor->signer signed round-trip, and
+# then runs the prover AS the login (attacker) user requiring all four attacks to be
+# denied. No skip/placeholder.
 set -euo pipefail
 
-ENGINE="$(cd "$(dirname "$0")/.." && pwd)"
+ENGINE_SRC="$(cd "$(dirname "$0")/.." && pwd)"
+# The full path to the deps-bearing python (sudo -u resets PATH, so `python3` alone would
+# resolve to /usr/bin/python3 WITHOUT the pip-installed cryptography).
+PYBIN="$(command -v python3)"
+# Copy the engine to a WORLD-READABLE location: the dedicated service users cannot
+# traverse the runner's home ($GITHUB_WORKSPACE under /home/runner), so they could not
+# read the source there.
+WORK="$(mktemp -d /tmp/brops-eng.XXXXXX)"; chmod 755 "$WORK"
+ENGINE="$WORK/engine"
+cp -r "$ENGINE_SRC" "$ENGINE"
+chmod -R a+rX "$ENGINE"
+
 export BRO_ENV=ci
 export PYTHONPATH="$ENGINE/runtime:$ENGINE/tools"
 
@@ -23,7 +35,7 @@ mkdir -p "$B"/{signerkeys,attkeys,store,state,registry/config,signer-sock,sup-so
 
 # 1) Generate keys + a signed registry + a VALID signed run record (as the login user,
 #    before we tighten ownership).
-python3 "$ENGINE/ci/gen_isolation_fixture.py" "$B"
+"$PYBIN" "$ENGINE/ci/gen_isolation_fixture.py" "$B"
 ATT_PUB="$(cat "$B/att-pub")"
 OP_PIN="$(cat "$B/operator-pin")"
 POLICY_SHA="$(cat "$B/policy-bundle-sha")"
@@ -36,6 +48,7 @@ POLICY_SHA="$(cat "$B/policy-bundle-sha")"
 sudo chown -R brops-signer:brops-signer "$B/signerkeys";     sudo chmod 700 "$B/signerkeys"
 sudo chown -R brops-supervisor:brops-supervisor "$B/attkeys"; sudo chmod 700 "$B/attkeys"
 sudo chown -R brops-supervisor:brops-store "$B/store";       sudo chmod 2770 "$B/store"
+sudo chmod -R g+r "$B/store"  # the evidence artifacts written before chown stay group-readable
 sudo chown -R brops-supervisor:brops-supervisor "$B/state" "$B/registry"; sudo chmod -R 750 "$B/state" "$B/registry"
 sudo chown brops-signer:brops-signer "$B/signer-sock";       sudo chmod 755 "$B/signer-sock"
 sudo chown brops-supervisor:brops-supervisor "$B/sup-sock";  sudo chmod 755 "$B/sup-sock"
@@ -55,7 +68,7 @@ sudo -u brops-signer env \
   BROPS_ALLOWED_SUPERVISOR_IDS="sup-1" BROPS_EXPECTED_POLICY_ID="policy-1" \
   BROPS_EXPECTED_POLICY_VERSION="1" BROPS_EXPECTED_POLICY_BUNDLE_SHA256="$POLICY_SHA" \
   BROPS_SIGNER_SOCKET="$SIGNER_SOCK" BROPS_ALLOWED_PEER_UIDS="$SUPUID" \
-  python3 "$ENGINE/tools/brops_signer_service.py" &
+  "$PYBIN" "$ENGINE/tools/brops_signer_service.py" &
 SIGNER_PID=$!
 
 # 4) Start the SUPERVISOR service AS brops-supervisor; it admits ONLY the login UID
@@ -67,7 +80,7 @@ sudo -u brops-supervisor env \
   BROPS_SUPERVISOR_ATTESTATION_KEYDIR="$B/attkeys" \
   BROPS_EVIDENCE_STORE_DIR="$B/store" BROPS_RUNSTATE_DIR="$B/state" \
   BROPS_REGISTRY_ROOT="$B/registry" BROPS_REQUIRED_CAPABILITIES="EXECUTE_CODE" \
-  python3 "$ENGINE/tools/brops_supervisor_service.py" &
+  "$PYBIN" "$ENGINE/tools/brops_supervisor_service.py" &
 SUP_PID=$!
 
 cleanup() { sudo kill "$SIGNER_PID" "$SUP_PID" 2>/dev/null || true; }
@@ -84,7 +97,7 @@ done
 # 6) POSITIVE CONTROL (before the denials): a real allowed login->supervisor->signer
 #    signed round-trip. This proves the signing path is ALIVE, so the denial checks
 #    below are real denials, not a dead path silently "passing".
-BROPS_POS_SOCK="$SUP_SOCK" python3 - "$ENGINE" <<'PY'
+BROPS_POS_SOCK="$SUP_SOCK" "$PYBIN" - "$ENGINE" <<'PY'
 import sys, pathlib, os
 engine = sys.argv[1]
 sys.path.insert(0, str(pathlib.Path(engine) / "runtime"))
@@ -107,4 +120,4 @@ BROPS_SIGNER_SOCKET="$SIGNER_SOCK" BROPS_SUPERVISOR_SOCKET="$SUP_SOCK" \
 BROPS_PROVE_SIGNER_KEY="$B/signerkeys/brops-receipt-signer.json" \
 BROPS_PROVE_ATTESTATION_KEY="$B/attkeys/brops-supervisor-attestation.json" \
 BROPS_PROVE_STORE_DIR="$B/store" \
-python3 "$ENGINE/tools/brops_isolation_prover.py"
+"$PYBIN" "$ENGINE/tools/brops_isolation_prover.py"

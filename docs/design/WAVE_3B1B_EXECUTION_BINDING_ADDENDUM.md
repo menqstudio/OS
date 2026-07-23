@@ -1,4 +1,4 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 2)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 3)
 
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. Builds on
 > the Architect-GREEN Wave 3b design ([`WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](./WAVE_3B_ISOLATED_SIGNER_DESIGN.md))
@@ -19,6 +19,16 @@
 > **P1-5** the **supervisor** atomically reserves/generates `execution_attempt_id` (the
 > desktop never supplies it) (§2.5); **P1-6** the evidence-head anti-rollback floor's
 > owner + transaction semantics are locked (§6).
+>
+> **rev 3** closes the design RED on rev 2: **P0-1** recorder runner + model executor are
+> **different OS principals** (dedicated UIDs, ptrace/key-dir denial, explicit output
+> channel), machine-tested in Linux CI (§2); **P0-2** the recorder runner is itself the
+> execution + containment **observer** (measures `contained` at teardown — no
+> `sign(caller_claim)` oracle) (§2); **P1-3** §3 now signs with the dedicated
+> `governed-turn-recorder` — no evidence-recorder alternative remains (§3, §8); **P1-4** a
+> normative `brops.governed-turn-execution-receipt.v1` schema + dedicated verifier replaces
+> the generic CRLF-normalizing receipt (§3.5, §4); crash-recovery wording aligned to
+> create-if-absent (§6).
 
 ## 1. The governed AI turn IS a `bro_supervisor`-owned supervised execution
 
@@ -58,6 +68,34 @@ separate OS identity (the existing engine boundary: the receipt runner holds the
 key, not the builder). This matches the current engine security model rather than handing
 a builder the forgery-capable evidence key.
 
+**Principal separation is an OS-identity boundary, LOCKED (P0-1) — a process group is NOT
+custody:**
+- the **evidence-recorder runner** runs under its own **dedicated service UID/principal**
+  (holds the evidence-recorder key in an owner-only dir);
+- the **model executor** runs under a **different unprivileged sandbox UID/principal**;
+- the executor principal is **denied read + list** on the recorder's key directory, and
+  **cannot `ptrace`/debug** the recorder process (distinct UID + `ptrace_scope`/no shared
+  debug rights) — so it can neither read the key file nor the recorder's process memory;
+- the runner→executor channel is an **explicit output pipe** (the executor writes only its
+  reply bytes to a fixed handle the runner reads); the executor never touches the store or
+  the keys.
+- **Machine-tested:** the Linux `engine-isolation` job extends to prove the executor
+  principal cannot read the recorder key dir nor `ptrace` the recorder (same dedicated-user
+  pattern already used for the signer/supervisor denials).
+
+**Authoritative containment verdict (P0-2) — no `sign(caller_claim)` oracle.** The final
+`contained` verdict is known only after process-group teardown, and the runner must not
+simply sign a supervisor-supplied JSON claim. LOCKED option: **the evidence-recorder
+runner is itself the execution + containment observer** — it spawns the model executor as
+its child process group, performs the teardown/containment measurement (reusing
+`bro_supervisor`'s group-stop machinery), and thus *measures* `contained` firsthand before
+signing the containment evidence event + receipt. The supervisor owns the lease and the
+governed-turn-record; the runner owns the measured containment. Neither signs an unmeasured
+caller claim. (If a future split is needed, the alternative is a supervisor→runner
+**cryptographically-authenticated measured outcome** bound to the exact
+attempt/lease/process-group id — never plain JSON — but rev 3 locks the runner-as-observer
+option.)
+
 **Exact output bytes (P0-2) — a byte-for-byte contract:** the governed-turn runner
 1. captures the executor's reply from **stdout in BINARY mode** (`text=False`),
 2. stores those **exact bytes** with **no decode / trim / newline (CRLF→LF) normalization**,
@@ -92,13 +130,14 @@ attempt). The supervisor-service protocol becomes `{run_id, request-challenge}` 
 
 ## 3. `brops.governed-turn-record.v1` — the ONLY signing authority (exact signed schema)
 
-Signed by the **evidence-recorder** authority, `verify_artifact`-checkable, written
-atomically to the protected state dir as `<run_id>__<execution_attempt_id>.json`.
+Signed by the **dedicated `governed-turn-recorder`** authority (§8 — NOT the
+evidence-recorder), `verify_artifact`-checkable, written atomically (create-if-absent, §4)
+to the protected state dir as `<run_id>__<execution_attempt_id>.json`.
 
 ```jsonc
 { "payload": {
     "artifact_type": "brops.governed-turn-record.v1",
-    "key_id": "<evidence-recorder key id>",
+    "key_id": "<governed-turn-recorder key id>",
     "run_id": "<string ≤128>", "execution_attempt_id": "<string ≤128>",
     // lease binding (== the verified execution-lease)
     "lease_id": "<string>", "lease_nonce": "<string>",
@@ -127,13 +166,50 @@ atomically to the protected state dir as `<run_id>__<execution_attempt_id>.json`
 All `*_sha256` are lowercase-64-hex; ids are strings; the signature is detached Ed25519
 over `JCS(payload)` (the same canonicalizer as every other engine artifact).
 
+## 3.5 `brops.governed-turn-execution-receipt.v1` — the exact-byte receipt (P1-4)
+
+The existing `bro_receipt`/`run_and_sign` is a test-command receipt whose transcript hash
+CRLF-normalizes (text mode) — insufficient here. 3b-1B adds a **governed-turn-specific**
+receipt with a byte-for-byte output contract, signed by the **evidence-recorder runner**.
+
+```jsonc
+{ "payload": {
+    "artifact_type": "brops.governed-turn-execution-receipt.v1",
+    "key_id": "<evidence-recorder key id>",         // the recorder RUNNER signs
+    "run_id": "<string>", "execution_attempt_id": "<string>", "lease_id": "<string>",
+    "runner_id": "<string>", "executor_id": "<string>", "builder_id": "<string>",
+    "exit_code": 0, "contained": true,
+    "output_handle": "<64hex>",        // content-addressed store handle of the exact reply
+    "output_sha256": "<64hex>",        // == output_handle == SHA256(exact BINARY reply bytes)
+    "started_at_epoch": <int>, "finished_at_epoch": <int>, "issued_at_epoch": <int>
+  },
+  "signature": "<detached Ed25519 over JCS(payload)>" }
+```
+
+- **Signed bytes:** detached Ed25519 over `JCS(payload)`.
+- **Output-byte formula (normative):** `output_sha256 = SHA256(exact reply bytes)` where the
+  bytes are captured in **binary** with NO decode/trim/CRLF normalization; `output_handle`
+  is the content-addressed store handle of those exact bytes (so `output_handle ==
+  output_sha256`, and the desktop re-hashes the SAME bytes it renders).
+- **Fields/types:** ids are non-empty strings ≤128; `exit_code` an integer (must be `0`);
+  `contained` a bool (must be `true`); the two handle/hash fields lowercase-64-hex;
+  timestamps integer epochs with `started ≤ finished`.
+- **Authority mapping:** `ARTIFACT_AUTHORITY["brops.governed-turn-execution-receipt.v1"] =
+  evidence-recorder`; `verify_artifact` refuses any other signer.
+- **Verifier contract (dedicated API, not the generic `verify_passing_receipt`):**
+  `verify_governed_turn_receipt(document, keys, *, run_id, execution_attempt_id, lease_id,
+  output_bytes, now) -> payload` — `verify_artifact` the receipt, require `exit_code == 0`
+  and `contained is True`, require the run/attempt/lease ids to match, and require
+  `output_sha256 == SHA256(output_bytes) == output_handle`. Any deviation is fail-closed.
+
 ## 4. Atomic write / sign / publish order (fail-closed, no partial)
 
 The supervisor, on a `COMPLETED` + verified turn, performs strictly in order:
 
-1. **Verify the executor's artifacts** — `verify_artifact` the lease; `verify_passing_receipt`
-   the receipt (exit 0, task/candidate bound); `load_head` + `validate_chain` the evidence;
-   confirm containment. Any failure ⇒ no record (fail-closed).
+1. **Verify the executor's artifacts** — `verify_artifact` the lease;
+   `verify_governed_turn_receipt` the governed-turn receipt (§3.5: exit 0, contained,
+   exact output bytes, run/attempt/lease bound); `load_head` + `validate_chain` the
+   evidence. Any failure ⇒ no record (fail-closed).
 2. **Publish** the exact artifacts (`system`, `history`, `output`, `generation_config`,
    `containment_evidence`, `policy_bundle`) to the content-addressed store via the §4.0
    atomic publish (temp → fsync → verify sha → atomic exclusive publish under the digest).
@@ -166,7 +242,7 @@ re-run idempotent and a divergent overwrite impossible.
 | `lease_id`, `lease_nonce` | the verified execution-lease (`verify_artifact` + `validate_execution_lease`) |
 | `policy_id`, `policy_version`, `policy_bundle_sha256` | the operator-authorized policy (the signer re-checks bundle digest, P1-7) |
 | `containment_evidence_sha256` + `containment_event_id` | a signed evidence-chain event whose payload hash equals it |
-| `receipt_id`, `output_sha256` | the verified passing receipt (receipt id match; output bytes re-hash to the receipt's transcript/stdout hash) |
+| `receipt_id`, `output_sha256` | the verified governed-turn execution receipt (§3.5): receipt/attempt/lease ids match; the exact output bytes re-hash to `output_sha256 == output_handle` (binary, no normalization) |
 | `evidence_final_event_hash`, `evidence_head_sequence` | the verified evidence head, with the sequence **≥ a durable per-install high-water mark** (anti-rollback) |
 
 The `RunState` is built from the **verified signed record** only.
@@ -195,9 +271,10 @@ The `RunState` is built from the **verified signed record** only.
 - **Idempotent record:** the record is keyed by `(run_id, execution_attempt_id)`; a second
   atomic write for the same attempt is allowed only if byte-identical, else refused. The
   content-addressed store is idempotent by construction.
-- **Crash recovery:** a crash before the record's `rename` ⇒ no record ⇒ the turn Blocks
-  (fail-closed; nothing renders). A crash after ⇒ a complete signed record that
-  re-verifies on restart. No reconciliation can turn a partial run into an accepted one.
+- **Crash recovery:** a crash before the record's create-if-absent publish (§4 step 5) ⇒
+  no record ⇒ the turn Blocks (fail-closed; nothing renders). A crash after ⇒ a complete
+  signed record that re-verifies on restart. No reconciliation can turn a partial run into
+  an accepted one.
 
 ## 7. No unsigned JSON is authority (explicit)
 
