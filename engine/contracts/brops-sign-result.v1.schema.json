@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "brops.sign-result.v1",
+  "description": "Isolated receipt signer -> supervisor (design §4.2). A tagged union: exactly one of `signed` (carries the base64url JCS envelope + Ed25519 signature + the durable forensic-attestation record, P1-3) or `refused` (NO signature, an enum reason). Frame capped at 64 KiB. A `signed` result REQUIRES both `envelope_jcs_b64` and `signature_b64`; anything else is malformed and the desktop Blocks.",
+  "type": "object",
+  "required": ["protocol", "status"],
+  "properties": {
+    "protocol": { "const": "brops.sign-result.v1" },
+    "status": { "enum": ["signed", "refused"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "signed" } }, "required": ["status"] },
+      "then": {
+        "additionalProperties": false,
+        "required": [
+          "protocol", "status", "receipt_id", "envelope_jcs_b64", "signature_b64", "key_id",
+          "attestation_evidence_jcs_b64", "attestation_signature_b64",
+          "supervisor_attestation_key_id", "run_id", "execution_attempt_id", "lease_id"
+        ],
+        "properties": {
+          "protocol": { "const": "brops.sign-result.v1" },
+          "status": { "const": "signed" },
+          "receipt_id": { "type": "string", "minLength": 1 },
+          "envelope_jcs_b64": { "type": "string", "minLength": 1 },
+          "signature_b64": { "type": "string", "minLength": 1 },
+          "key_id": { "type": "string", "minLength": 1 },
+          "attestation_evidence_jcs_b64": { "type": "string", "minLength": 1 },
+          "attestation_signature_b64": { "type": "string", "minLength": 1 },
+          "supervisor_attestation_key_id": { "type": "string", "minLength": 1 },
+          "run_id": { "type": "string", "minLength": 1 },
+          "execution_attempt_id": { "type": "string", "minLength": 1 },
+          "lease_id": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "refused" } }, "required": ["status"] },
+      "then": {
+        "additionalProperties": false,
+        "required": ["protocol", "status", "receipt_id", "reason"],
+        "properties": {
+          "protocol": { "const": "brops.sign-result.v1" },
+          "status": { "const": "refused" },
+          "receipt_id": { "type": ["string", "null"] },
+          "reason": {
+            "enum": [
+              "attestation_invalid", "not_completed", "run_binding_invalid", "nonce_mismatch",
+              "handle_missing", "hash_mismatch", "policy_mismatch", "containment_missing",
+              "identity_denied", "timestamp_invalid", "oversize", "malformed"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

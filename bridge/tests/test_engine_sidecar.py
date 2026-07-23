@@ -70,7 +70,8 @@ class EngineSidecarTests(unittest.TestCase):
     # Clear any ambient provisioning / fake flag so real-mode tests are deterministic.
     def setUp(self):
         self._saved = {k: os.environ.pop(k, None) for k in
-                       (*engine_sidecar._PROVISION_ENV, "BRIDGE_SIDECAR_FAKE")}
+                       (*engine_sidecar._PROVISION_ENV,
+                        *engine_sidecar._SIGNER_PROVISION_ENV, "BRIDGE_SIDECAR_FAKE")}
 
     def tearDown(self):
         for k, v in self._saved.items():
@@ -124,12 +125,50 @@ class EngineSidecarTests(unittest.TestCase):
         self.assertIsNone(doc["result"])
         self.assertIn("not provisioned", doc["error"])
 
-    def test_real_mode_provisioned_but_no_signer_fails_closed(self):
+    def test_real_mode_provisioned_but_no_signer_material_fails_closed(self):
+        # Supervisor provisioning present, but the receipt-signer material
+        # (`_SIGNER_PROVISION_ENV`, its OWN custody — never BRO_KEYDIR) is absent.
         env = {k: "x" for k in engine_sidecar._PROVISION_ENV}
         doc = _drive(_VALID, env=env)
         self.assertFalse(doc["ok"])
         self.assertIsNone(doc["result"])
-        self.assertIn("signer", doc["error"])
+        self.assertIn("receipt signer not provisioned", doc["error"])
+
+    def test_real_mode_fully_provisioned_still_fails_closed_pending_live_wiring(self):
+        # Both env sets present: the signer chain exists, but the live supervisor
+        # run-state provider + desktop trusted manifest are pending (design §5 STOP), so
+        # real mode still emits nothing — never an unsigned/partial result.
+        env = {k: "x" for k in (*engine_sidecar._PROVISION_ENV,
+                                *engine_sidecar._SIGNER_PROVISION_ENV)}
+        doc = _drive(_VALID, env=env)
+        self.assertFalse(doc["ok"])
+        self.assertIsNone(doc["result"])
+        self.assertIn("pending", doc["error"])
+
+    def test_self_test_signed_mints_a_real_signed_receipt_desktop_still_blocks(self):
+        # Exercises the REAL Wave 3b signer/store/attestation chain end to end. The
+        # bridge result is schema-valid and carries a real Ed25519 signature over the
+        # canonical envelope + the containment bytes — but there is no trusted manifest,
+        # so the desktop would still Block (design §5 STOP: no "Verified" in 3b-1).
+        import base64
+
+        doc = _drive(_VALID, argv=["--self-test-signed"])
+        self.assertTrue(doc["ok"], doc.get("error"))
+        self.assertIsInstance(doc["result"], str)
+        receipt = doc["receipt"]
+        self.assertEqual(receipt["status"], "completed")
+        self.assertNotIn("verified", receipt)
+        # Real signed wire present.
+        self.assertTrue(receipt["envelope_jcs_b64"])
+        self.assertTrue(receipt["signature_b64"])
+        self.assertTrue(receipt["containment_evidence_b64"])
+        # The envelope is the 21-field brops.receipt.v1 (decodes as strict JSON).
+        env_bytes = base64.urlsafe_b64decode(
+            receipt["envelope_jcs_b64"] + "=" * (-len(receipt["envelope_jcs_b64"]) % 4)
+        )
+        envelope = json.loads(env_bytes)
+        self.assertEqual(envelope["protocol"], "brops.receipt.v1")
+        self.assertEqual(envelope["decision"], "completed")
 
     def test_result_never_carries_result_on_any_failure(self):
         # Sweep: every non-happy path has result is None.

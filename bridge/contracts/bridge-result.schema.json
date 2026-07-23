@@ -27,6 +27,10 @@
         "signature_b64": {
           "type": ["string", "null"],
           "description": "base64url(Ed25519 signature) over `envelope_jcs_b64`. `null` when unsigned → the desktop Blocks. The bridge NEVER asserts this is valid; the desktop verifies it."
+        },
+        "containment_evidence_b64": {
+          "type": ["string", "null"],
+          "description": "Wave 3b (design §4.2, P1-3): base64url of the EXACT containment-evidence bytes the signer hashed into `containment_evidence_sha256`, so the desktop can persist the artifact for audit and re-check `sha256 == containment_evidence_sha256` without depending on the engine store. Capped at 64 KiB HERE (it does NOT ride the signer's 64 KiB IPC frame). `null`/absent when there is no signed receipt. The desktop ignores it until 3b-2 persistence lands."
         }
       },
       "description": "The governed-run receipt (from bro_supervisor.SupervisorResult). Carries the signed material for the DESKTOP to verify. There is no `verified` field — trust is a desktop signature check, never a bridge boolean."

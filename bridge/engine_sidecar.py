@@ -44,6 +44,12 @@ from typing import Any, Callable
 _HERE = pathlib.Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
+# The Wave 3b signer/store/attestation live in the engine (reuse its crypto + custody).
+_ENGINE = _HERE.parent / "engine"
+for _sub in ("runtime", "tools"):
+    _p = str(_ENGINE / _sub)
+    if (_ENGINE / _sub).is_dir() and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from engine_adapter import run_governed_turn  # noqa: E402  (bridge/ on path above)
 
@@ -54,6 +60,16 @@ _PROVISION_ENV = (
     "BRO_BINDING",
     "BRO_REPOSITORY_ROOT",
     "BRO_BUILDER_COMMAND",
+)
+
+# Wave 3b receipt-signer material (its own key custody, separate from BRO_KEYDIR — the
+# receipt-signing key must NEVER live in BRO_KEYDIR; design §1.2). Required IN ADDITION to
+# `_PROVISION_ENV` before real mode can mint a signed receipt.
+_SIGNER_PROVISION_ENV = (
+    "BROPS_RECEIPT_SIGNER_KEYDIR",
+    "BROPS_SUPERVISOR_ATTESTATION_KEYDIR",
+    "BROPS_SUPERVISOR_ATTESTATION_PUBKEY",
+    "BROPS_EVIDENCE_STORE_DIR",
 )
 
 
@@ -90,29 +106,125 @@ def _fake_read(outcome: Any) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Real mode — provisioning + (audit-pending) engine wiring.
+# Signed self-test — exercises the REAL Wave 3b signer/store/attestation chain end to
+# end (ephemeral keys + temp store, a fake COMPLETED run) so the sidecar->adapter->
+# signed-bridge-result->schema path is proven cross-platform, without a live builder.
+# CLI-flag only (`--self-test-signed`), never an env var. It signs a real receipt the
+# desktop would still BLOCK (no trusted manifest yet, design §5 STOP).
+# --------------------------------------------------------------------------- #
+def _signed_self_test_callables() -> tuple[Callable[[dict], Any], Callable[[Any], str]]:
+    import tempfile
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from brops_evidence_store import EvidenceStore
+    from brops_sign_flow import sign_completed_run
+    from brops_supervisor_attest import RunState
+
+    def _mk_key():
+        priv = Ed25519PrivateKey.generate()
+        raw_priv = priv.private_bytes(
+            serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,
+            serialization.NoEncryption(),
+        ).hex()
+        raw_pub = priv.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        ).hex()
+        return raw_priv, raw_pub
+
+    sig_priv, _ = _mk_key()
+    att_priv, att_pub = _mk_key()
+    signing_key = {"key_id": "self-test-receipt-key", "private_key": sig_priv}
+    attestation_key = {"key_id": "self-test-attestation-key", "private_key": att_priv}
+    store = EvidenceStore(tempfile.mkdtemp(prefix="brops-selftest-store-"))
+
+    def run_task(request: dict) -> Any:
+        task_id = str(request.get("task_id", "t-self-test-signed"))
+        state = RunState(
+            run_id=task_id,
+            execution_attempt_id="attempt-self-test",
+            lease_id="lease-self-test",
+            request_nonce="00000000-0000-4000-8000-000000000000",
+            receipt_id="11111111-1111-4111-8111-111111111111",
+            decision="completed",
+            workspace_id="ws-self-test",
+            install_id="install-self-test",
+            supervisor_id="sup-self-test",
+            executor_id="exec-self-test",
+            builder_id="builder-self-test",
+            policy_id="policy-self-test",
+            policy_version="1",
+            requested_at="1000",
+            completed_at="2000",
+            system="You are a governed assistant (self-test).",
+            history=[{"role": "user", "content": str(request.get("rationale", "hi"))}],
+            output="SELF-TEST-SIGNED OK — real signed receipt minted (desktop still Blocks).",
+            generation_config='{"model":"self-test"}',
+            containment_evidence={"contained": True, "group": "pg-self-test"},
+            policy_bundle=b"self-test-policy-bundle",
+        )
+
+        class _Provider:
+            def terminal_run_state(self, run_id, execution_attempt_id):
+                if (run_id, execution_attempt_id) == (state.run_id, state.execution_attempt_id):
+                    return state
+                return None
+
+        return sign_completed_run(
+            task_id,
+            "attempt-self-test",
+            run_state_provider=_Provider(),
+            store=store,
+            signing_key=signing_key,
+            attestation_key=attestation_key,
+            supervisor_attestation_pubkey_hex=att_pub,
+        )
+
+    def read_result(outcome: Any) -> str:
+        return getattr(outcome, "_text", "")
+
+    return run_task, read_result
+
+
+# --------------------------------------------------------------------------- #
+# Real mode — provisioning + engine wiring.
 # --------------------------------------------------------------------------- #
 def _real_callables(
     request: dict,
 ) -> tuple[Callable[[dict], Any], Callable[[Any], str]]:
     """Return the engine-bound callables, or raise RuntimeError with a fail-closed
-    reason. Two gates, both fail-closed:
+    reason. Gates, all fail-closed:
 
-    1. provisioning — every `_PROVISION_ENV` var must be present (operator step);
-    2. signer seam — the engine's isolated trusted SIGNER (which mints the signed
-       receipt the desktop verifies) is Wave 3b; until it lands, real mode has no
-       signed receipt to return, so it fails closed rather than emit an unsigned one.
+    1. supervisor provisioning — every `_PROVISION_ENV` var must be present;
+    2. signer provisioning — every `_SIGNER_PROVISION_ENV` var must be present (the
+       receipt-signing key has its OWN custody, never `BRO_KEYDIR`; design §1.2);
+    3. live run-state provider — the isolated signer/store/attestation chain now EXISTS
+       (Wave 3b-1, `brops_receipt_signer`/`brops_evidence_store`/`brops_supervisor_attest`),
+       but wiring the LIVE supervisor's terminal run-state into it (so `run_task` builds a
+       real `RunState` from an executed governed turn under a dedicated OS principal) is
+       the remaining Linux-first 3b-1 step, and the desktop still resolves
+       `NoTrustedManifest` ⇒ Blocks until the manifest lands (3b-2/3b-3). Until then real
+       mode fails closed rather than emit anything. `--self-test-signed` exercises the
+       full signer chain today.
     """
     missing = [k for k in _PROVISION_ENV if not os.environ.get(k, "").strip()]
     if missing:
         raise RuntimeError(
             "governed engine not provisioned: missing " + ", ".join(missing)
         )
-    # Provisioning is present, but the isolated trusted signer that mints the signed
-    # receipt is Wave 3b (see module SECURITY note). No signer -> no signed receipt.
+    missing_signer = [k for k in _SIGNER_PROVISION_ENV if not os.environ.get(k, "").strip()]
+    if missing_signer:
+        raise RuntimeError(
+            "governed engine receipt signer not provisioned: missing "
+            + ", ".join(missing_signer)
+        )
     raise RuntimeError(
-        "governed engine real-mode signed receipt is pending the Wave 3b isolated "
-        "signer; refusing to emit an unsigned result"
+        "governed engine real-mode is pending the Wave 3b-1 live supervisor run-state "
+        "provider and the Wave 3b-2/3b-3 desktop trusted manifest; the isolated signer "
+        "chain is implemented and self-tested (`--self-test-signed`) but refusing to "
+        "emit until the live wiring + trusted key land"
     )
 
 
@@ -143,20 +255,15 @@ def run(argv: list[str], stdin, stdout) -> int:
     # desktop never passes --self-test (and strips any fake flag before spawning), so
     # production can only ever reach real mode. (Architect merge-blocker, slice 2.)
     fake = "--self-test" in argv
+    signed_self_test = "--self-test-signed" in argv
     try:
-        if fake:
-            result = run_governed_turn(
-                request,
-                run_task=_fake_run_task,
-                read_result=_fake_read,
-            )
+        if signed_self_test:
+            run_task, read_result = _signed_self_test_callables()
+        elif fake:
+            run_task, read_result = _fake_run_task, _fake_read
         else:
             run_task, read_result = _real_callables(request)
-            result = run_governed_turn(
-                request,
-                run_task=run_task,
-                read_result=read_result,
-            )
+        result = run_governed_turn(request, run_task=run_task, read_result=read_result)
     except Exception as exc:  # noqa: BLE001 — fail closed, never leak a partial result
         result = _fail(task_id, exc)
 
