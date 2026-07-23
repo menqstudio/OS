@@ -1,24 +1,31 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 7)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 8)
 
 > **STATUS: ❌ DESIGN RED — NOT Architect-GREEN. 3b-1B code has NOT started.** The Architect
-> reviewed **rev 6** and returned **Design RED** with **2 P0 + 3 P1 narrow consistency
-> blockers**. **rev 7 (this document)** is the implementer's **proposed** closure of those
-> five — it is **awaiting Architect design review** and is **NOT ratified**. The rev-6 → rev-7
-> blockers were: **P0-1** the challenge-authority store-population path could still be a
-> two-step `create_pending(bytes)→sign(id)` oracle → locked (authority builds the challenge
-> from the trusted desktop DB; caller supplies only an ID; the pending row is written only by
-> the app/package-authenticated desktop host, not the sidecar); **P0-2** the launcher FD
-> contract was internally contradictory ("close all but the output pipe" vs "preserve
-> read-only input FDs") → one canonical fixed-FD table (FDs 3/4/5 read-only inputs + FD 6
-> write-only output, close all else); **P1-3** no principal published the signed challenge
-> document → the supervisor is the sole publisher, `challenge_handle = SHA256(JCS({payload,
-> sig}))`, must exist + re-hash before the record is signed; **P1-4** challenge-key trust
-> depended on the not-yet-started 3b-2 manifest (sequencing deadlock) → a self-contained
-> 3b-1B root-pinned challenge-key registry, no 3b-2 dependency; **P1-5** historical
-> re-verification would break after challenge expiry → acceptance-time window gate vs.
-> as-of-`requested_at` historical semantics + as-of-run revocation. **These five remain OPEN
-> until the Architect returns design-GREEN** — see `NEXT_CHAT.md` §3.3. Do not treat any part
-> of this document as ratified until that GREEN. STOP gates: `NoTrustedManifest` unchanged, no
+> reviewed **rev 7** and returned **Design RED** with **2 P0 + 2 P1 deeper-consistency
+> blockers** (rev 7 had closed the literal rev-6 findings, but a fuller consistency audit
+> surfaced four more). **rev 8 (this document)** is the implementer's **proposed** closure of
+> those four — it is **awaiting Architect design review** and is **NOT ratified**. The
+> rev-7 → rev-8 blockers were: **P0-1** "trusted desktop database" is not a real Linux trust
+> boundary (same-login sidecar RCE could tamper a same-UID SQLite/store file) → the
+> pending-challenge store is now **owned by a dedicated challenge-authority principal/UID**,
+> the sidecar UID has **no r/w/list**, creation is only over an **`SO_PEERCRED` channel
+> admitting a UID distinct from the sidecar** (else fail-closed), and Linux CI proves the
+> **direct file/DB-mutation** denial, not just the API-insert denial; **P0-2** the historical
+> predicate used the wrong field (`issued_at ≤ requested_at` can never hold, since
+> `requested_at` precedes `issued_at`) → a **supervisor-stamped `challenge_accepted_at`**
+> (bound to lease + record + attestation) is the field the window is checked against:
+> `requested_at ≤ challenge_accepted_at` and `issued_at ≤ challenge_accepted_at ≤
+> expires_at`, revocation as of `challenge_accepted_at`; **P1-3** the challenge-key registry
+> lacked a durable trust contract → full normative `brops.challenge-key-registry.v1` (top-level
+> schema, `registry_epoch`/`registry_hash`/`root_key_id`, JCS wire, same-epoch/different-hash
+> rejection, durable anti-rollback floor, accepted-snapshot publication) with
+> `challenge_registry_handle`/`epoch`/`root_key_id` **bound into the record** so it stays
+> verifiable after rotation; **P1-4** the input-FD framing (u32 / 256 KiB) contradicted the
+> 8 MiB history ceiling → FDs 3/4/5 are **read-only regular-file descriptors to the exact
+> content-addressed bytes** (no length prefix), launcher-validated (regular file, `O_RDONLY`,
+> offset 0, size ceiling, store ownership), read to EOF. **These four remain OPEN until the
+> Architect returns design-GREEN** — see `NEXT_CHAT.md` §3.3. Do not treat any part of this
+> document as ratified until that GREEN. STOP gates: `NoTrustedManifest` unchanged, no
 > production "Verified", 3b-2/3b-3 not started, PR #31 not merged.
 >
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. Builds on
@@ -58,6 +65,8 @@
 > **rev 6** closes the narrow design RED on rev 5: **P0-1** the challenge is signed by a **dedicated `desktop-challenge-authority` principal/SID** (not the same-login sidecar principal) that is NOT a `sign(payload)` oracle — it takes a protected pending-challenge ID, reads the bytes from its own authoritative store, signs once; sidecar key-read/ptrace/oracle denials are machine-proven; key rotation/revocation via `challenge_key_id` (§2.5); **P0-2** the signed challenge now binds `run_id`/`task_id` + context identities (the supervisor request is `{challenge}` alone), so an unused challenge cannot be redirected to another run (§2.5); **P0-3** the input-delivery order is fixed — import inputs BEFORE execution, launch the recorder with read-only input FD(s), executor gets exact bytes on a read-only FD (§2.5, §4); **P1-4** ONE frozen ingress mechanism — chunked authenticated upload to supervisor-owned staging with frozen chunk/artifact/total caps, sequence/dup rules, O_EXCL, hash/size verify, atomic commit, expiry/quota/crash (§2.5); **P1-5** the signed challenge is stored content-addressed and the record binds `challenge_handle`/`challenge_key_id`/`issued_at`/`expires_at`/`request_sha256` so the provider independently re-verifies it (§3, §5).
 >
 > **rev 7** closes the narrow design RED on rev 6 (2 P0 + 3 P1 consistency blockers): **P0-1** the challenge-authority input path can no longer become a two-step `create_pending(bytes)→sign(id)` oracle — the authority **builds** the challenge from the **trusted desktop database** (caller supplies only an ID, never bytes) and the pending-challenge row is written **only by the app/package-identity-authenticated desktop host**, a channel the same-login sidecar lacks; the sidecar's inability to create a pending row or sign caller-chosen bytes is machine-proven (§2.5); **P0-2** the launcher FD contract is now ONE canonical table — FDs `3`/`4`/`5` read-only `system`/`history`/`generation_config` + FD `6` write-only output, validate modes, close every other — replacing the contradictory "close all but the output pipe" wording (§2, §2.5 step 4, §4 step 2); **P1-3** the **supervisor** is the sole publisher of the exact canonical signed challenge document with `challenge_handle = SHA256(JCS({payload,sig}))`, published in §4 step 1 and required to exist + re-hash before the record is signed (§3, §4); **P1-4** challenge-key trust no longer depends on the un-started 3b-2 manifest — a **self-contained 3b-1B root-pinned `brops.challenge-key-registry.v1`** (binary-pinned challenge-root anchor in the supervisor config) resolves `challenge_key_id` in-tx, removing the sequencing deadlock (§2.5); **P1-5** historical re-verification no longer breaks at challenge expiry — acceptance-time requires `now ∈ [issued_at, expires_at]`, but durable re-verification checks the **as-of-run** predicate `issued_at ≤ requested_at ≤ expires_at` and evaluates revocation **as of `requested_at`**, so a valid completed run stays verifiable forever (§5).
+>
+> **rev 8** closes the deeper-consistency design RED on rev 7 (2 P0 + 2 P1): **P0-1** "trusted desktop database" is not a real boundary between two same-UID Linux processes (a same-login sidecar RCE could edit the SQLite/store file directly) — the pending-challenge store is now **owned by a dedicated challenge-authority principal/UID** (`0700`, sidecar UID has no r/w/list), rows are created **only over an `SO_PEERCRED` channel admitting a UID distinct from the sidecar** (fail-closed where a platform can't separate the UIDs), and Linux CI proves the **direct file/DB-mutation** denial in addition to the API-insert denial (§2.5); **P0-2** the historical timestamp predicate used the wrong field (`issued_at ≤ requested_at` can never hold — `requested_at` precedes `issued_at`) — a **supervisor-stamped `challenge_accepted_at`** (bound to lease + record + attestation) is now the checked field: acceptance and re-verification require `requested_at ≤ challenge_accepted_at` and `issued_at ≤ challenge_accepted_at ≤ expires_at`, revocation as of `challenge_accepted_at` (§2.5 step 3, §3, §5); **P1-3** the challenge-key registry gains a **full durable trust contract** — normative top-level `brops.challenge-key-registry.v1` (schema + `registry_epoch`/`registry_hash`/`root_key_id`, JCS wire, same-epoch/different-hash rejection, durable anti-rollback floor, accepted-snapshot publication), with `challenge_registry_handle`/`challenge_registry_epoch`/`challenge_registry_root_key_id` **bound into the record** and re-verified from the stored snapshot so rotation never breaks a historical record (§2.5, §3, §4, §5); **P1-4** the input-FD framing/size contradiction is removed — FDs `3`/`4`/`5` are **read-only regular-file descriptors to the exact content-addressed bytes** (no u32 length prefix; the 256 KiB frame belongs only to the IPC/ingress path), launcher-validated (regular file, `O_RDONLY`, offset 0, per-artifact size ceiling incl. history ≤ 8 MiB, store-owned inode), read to EOF (§2).
 
 ## 1. The governed AI turn IS a `bro_supervisor`-owned supervised execution
 
@@ -142,21 +151,28 @@ sets these up (from the store handles it received, §2.5 step 4) and the launche
 
 | FD | Role | Mode (validated) | Source |
 |---|---|---|---|
-| `3` | `system` bytes | **read-only** (`O_RDONLY`, `fcntl` flags checked; no write bit) | recorder opens the published `system` handle |
-| `4` | `history` bytes | **read-only** | recorder opens the published `history` handle |
-| `5` | `generation_config` bytes | **read-only** | recorder opens the published `generation_config` handle |
+| `3` | `system` bytes | **read-only regular file** (`O_RDONLY`, `S_ISREG`, offset 0, size ≤ **256 KiB**) | recorder `open()`s the published `system` store artifact read-only |
+| `4` | `history` bytes | **read-only regular file** (`O_RDONLY`, `S_ISREG`, offset 0, size ≤ **8 MiB**) | recorder `open()`s the published `history` store artifact read-only |
+| `5` | `generation_config` bytes | **read-only regular file** (`O_RDONLY`, `S_ISREG`, offset 0, size ≤ **64 KiB**) | recorder `open()`s the published `generation_config` store artifact read-only |
 | `6` | `output` pipe | **write-only** (`O_WRONLY`) | recorder-owned output pipe |
 
-- The input FDs (`3`,`4`,`5`) carry the **exact bytes of the content-addressed handles the
-  supervisor published** (§4 step 1); each is a **framed** artifact (u32 length prefix, the
-  same codec + 256 KiB-frame / per-artifact caps as the bounded ingress, §2.5) so the
-  executor reads a bounded, delimited artifact per FD — no ambient files, no store access.
-- The launcher **validates** that FDs `3`–`5` are read-only and FD `6` is write-only
-  (refuses otherwise), **closes every FD ≥ 7 and any of 0/1/2 not explicitly remapped**,
-  then `setuid(executor) + exec`. The executor therefore has **exactly** the three
-  read-only input FDs + the one write-only output FD — nothing else (no key FD, no store
-  FD, no extra inherited descriptor). This is the single normative statement; §2.5 step 4
-  and §4 step 2 reference this table.
+- **The input FDs are read-only regular-file descriptors to the EXACT content-addressed
+  store bytes — NO framing prefix (P1-4, resolves the earlier "u32-framed 256 KiB"
+  contradiction).** The u32-length-frame + 256 KiB cap belongs only to the **IPC / bounded
+  ingress** path (§2.5) where messages arrive over a socket; the executor instead reads a
+  **plain file** whose bytes ARE the hashed artifact, so a `history` up to its **8 MiB**
+  per-artifact ceiling is delivered without any 256 KiB frame limit and without a length
+  prefix that would otherwise be part of (and corrupt) the hashed content. Each FD's bytes,
+  read `[0, EOF)`, re-hash to exactly the published `*_sha256` handle.
+- The launcher **validates**, per the table, that FDs `3`/`4`/`5` are **`O_RDONLY` regular
+  files at offset 0 whose size is ≤ the per-artifact ceiling** and whose backing inode is a
+  file **owned by the supervisor in the protected store** (not a sidecar/executor-writable
+  path, not a pipe/fifo/device/symlink), that FD `6` is `O_WRONLY`, then **closes every FD
+  ≥ 7 and any of 0/1/2 not explicitly remapped**, and `setuid(executor) + exec`. The
+  executor therefore has **exactly** the three read-only input files + the one write-only
+  output FD — nothing else (no key FD, no store-dir FD, no extra inherited descriptor);
+  it reads each input to **EOF**. This is the single normative statement; §2.5 step 4 and
+  §4 step 2 reference this table.
 
 **Windows (P1-6).** The ratified base design requires a Windows **service SID / virtual
 account** boundary; setuid is Linux-only. On Windows the equivalent is a **broker service**
@@ -215,34 +231,76 @@ hardware/app-scoped key), distinct from the sidecar:
     ID, **builds** the `brops.governed-turn-challenge.v1` payload from those trusted rows,
     stamps `issued_at`/`expires_at`, and signs once (marking the id consumed). It **never
     accepts, stores, or signs caller-supplied challenge bytes/fields.**
-  - **The pending-challenge record is created only by the desktop native-host authority
-    path, authenticated by app/package code identity — NOT by the sidecar principal.** The
-    row that seeds a pending-challenge ID is written by the trusted desktop process (the
-    same authority that already owns the Wave-3a challenge issuance), whose write channel is
-    gated by application/package identity (Tauri host / signed app identity / distinct
-    SID) that the same-login sidecar process does **not** possess. A compromised sidecar can
-    neither write a pending-challenge row nor influence the bytes the authority signs; the
-    most it can do is present an **ID whose bytes it did not choose**, which yields a
-    challenge over the desktop's own trusted facts.
-  - **Machine-proven:** the Linux `engine-isolation` job proves the sidecar principal cannot
-    (a) read/list the authority key dir, (b) `ptrace` the authority, **(c) create a
-    pending-challenge record**, or (d) obtain a signature over caller-chosen bytes; only a
-    desktop-authority-created ID signs, and only over authority-built bytes;
-- **key id / rotation / revocation — a SELF-CONTAINED 3b-1B challenge-key registry (P1-4,
-  LOCKED; NO dependency on 3b-2).** The challenge is signed under a `challenge_key_id`
-  resolved against a **3b-1B-local, root-pinned challenge-key registry** — it does **not**
-  depend on the 3b-2 operator receipt-key manifest (the STOP law forbids starting 3b-2
-  until all of 3b-1 is GREEN + merged; sourcing challenge trust from 3b-2 would be a
-  sequencing deadlock). The registry is entirely within 3b-1B scope:
-  - a **root-signed `brops.challenge-key-registry.v1`** document (`keys[]` each with
-    `challenge_key_id`, public key, `valid_from`/`valid_to`, `key_epoch`, `revoked` /
-    `revoked_at`), signed by a **binary-pinned challenge-root anchor** compiled into /
-    baked into the **supervisor** config (root-owned, non-writable by the recorder /
-    executor / sidecar) — the same pinned-root pattern the ratified base design uses, but a
-    **separate root and separate registry** dedicated to challenge keys;
-  - the supervisor **verifies the registry against its pinned root, then resolves
-    `challenge_key_id` in-tx** (current key + a bounded rotation window; a
-    revoked/out-of-window/unknown id is refused at acceptance);
+  - **The pending-challenge store is OWNED by the challenge-authority principal; both the
+    API-insert AND the direct-file-mutation paths are closed (P0-1, LOCKED for Linux).**
+    "App/package identity" is a Windows/macOS notion and is **NOT** a boundary between two
+    processes sharing one Linux UID — a same-login sidecar RCE (in scope) could otherwise
+    just edit the SQLite/store file the desktop wrote. So the boundary is an **OS-identity**
+    one, made concrete on Linux:
+    - the pending-challenge store (the rows the authority reads its facts from) is a store
+      **owned by the `desktop-challenge-authority`'s own dedicated principal/UID**, mode
+      `0700`; the **sidecar UID has no read / write / list** on it — it can neither inject a
+      row nor tamper the file/DB, so "read facts from a trusted store" is now backed by real
+      file ownership, not trust-by-convention;
+    - a pending-challenge row is created **only over an OS-authenticated creation channel**
+      (an `AF_UNIX` socket the authority owns, admitting via `SO_PEERCRED` **only the desktop
+      UI principal's UID**, which **must be a UID distinct from the sidecar**); the authority
+      writes the row into its own store **itself** from the authenticated request — it never
+      ingests a file some other principal wrote;
+    - **platform gate (fail-closed):** this requires the desktop-UI/authority side to run
+      under a principal **distinct from the sidecar UID**. Where a platform cannot yet
+      provide that separation (e.g. desktop UI and sidecar forced to share a login UID),
+      governed real-mode is **FAIL-CLOSED** there (mirroring the Windows-broker stance, §2) —
+      never silently same-UID. 3b-1B ships the Linux dedicated-principal path first.
+    A compromised sidecar can neither call the create channel (peer-UID denied) nor mutate
+    the store directly (file-ownership denied); the most it can present is an **ID whose
+    bytes it did not choose**, yielding a challenge over the authority's own trusted facts.
+  - **Machine-proven (extended, P0-1):** the Linux `engine-isolation` job proves the sidecar
+    principal cannot (a) read/list the authority key dir, (b) `ptrace` the authority,
+    (c) create a pending-challenge record **via the authenticated channel** (peer-UID
+    denied), (d) **directly read / write / list / mutate the pending-challenge store file(s)
+    or DB** to inject or alter a row, or (e) obtain a signature over caller-chosen bytes;
+    only a desktop-authority-created ID signs, and only over authority-built bytes;
+- **key id / rotation / revocation — a SELF-CONTAINED 3b-1B challenge-key registry with a
+  FULL durable trust contract (P1-3, LOCKED; NO dependency on 3b-2).** The challenge is
+  signed under a `challenge_key_id` resolved against a **3b-1B-local, root-pinned
+  challenge-key registry** — it does **not** depend on the 3b-2 operator receipt-key
+  manifest (the STOP law forbids starting 3b-2 until all of 3b-1 is GREEN + merged; sourcing
+  challenge trust from 3b-2 would be a sequencing deadlock). The registry is a normative,
+  durably-anchored, snapshot-bound artifact — not just a `keys[]` list:
+  - **Normative top-level schema `brops.challenge-key-registry.v1` (signed document):**
+    ```jsonc
+    { "payload": {
+        "artifact_type": "brops.challenge-key-registry.v1",
+        "root_key_id": "<challenge-root anchor id>",
+        "registry_epoch": <int>,               // monotonically increasing
+        "issued_at": "<ms>",
+        "keys": [ { "challenge_key_id": "<string>", "public_key": "<b64url>",
+                    "valid_from": "<ms>", "valid_to": "<ms>",
+                    "key_epoch": <int>, "revoked": false, "revoked_at": null } ] },
+      "root_sig": "<b64url Ed25519 over JCS(payload), by the pinned challenge-root>" }
+    ```
+    `registry_hash = SHA256(JCS(payload))`; the **wire form is `JCS({payload, root_sig})`**;
+    the signed bytes are detached Ed25519 over `JCS(payload)`.
+  - **Binary-pinned root:** `root_key_id` selects a **challenge-root anchor baked into the
+    supervisor config** (root-owned, non-writable by recorder / executor / sidecar) — a
+    **separate root + separate registry** from the receipt keys; an unknown/unpinned
+    `root_key_id` is refused.
+  - **Durable anti-rollback floor:** the supervisor keeps a durable
+    `(highest_registry_epoch, registry_hash)`; it **refuses** a registry with `registry_epoch
+    < floor.epoch`, or `registry_epoch == floor.epoch && registry_hash != floor.hash`
+    (same-epoch/different-hash = fork), and advances the floor atomically on acceptance.
+  - **Resolve in-tx + publish the accepted snapshot:** the supervisor verifies the registry
+    against its pinned root, resolves `challenge_key_id` in-tx (valid-window + a bounded
+    rotation window; revoked/out-of-window/unknown refused at acceptance), and **atomically
+    publishes the accepted root-signed registry snapshot content-addressed** →
+    `challenge_registry_handle = SHA256(JCS(registry payload))`.
+  - **Bound into the terminal record so it stays forever-verifiable:** the record binds
+    `challenge_registry_handle` / `challenge_registry_epoch` / `challenge_registry_root_key_id`
+    (§3). Durable re-verification fetches **that stored snapshot by handle** (not the current
+    live registry), re-checks its `root_sig` under the pinned `challenge_registry_root_key_id`,
+    and confirms the challenge's `challenge_key_id` is present in it — so a key later rotated
+    out of the live registry does **not** break the historical record.
   - this registry ships and is bootstrapped **in 3b-1B**; when 3b-2 later lands the operator
     manifest, migrating challenge keys onto it is an explicit **future** step, never a
     prerequisite for 3b-1B;
@@ -292,19 +350,30 @@ fail-closed until its broker lands, §2). Frozen parameters:
 The staging store is supervisor-owned (0700); the sidecar/executor have no read there.
 
 **Flow (P0-1..P0-3, P1-3, P1-5) — the frozen order (see §4 for the full sign/publish order):**
-1. **Verify the signed challenge** against the pinned `challenge_key_id` (not revoked);
-   refuse an expired challenge (`now > expires_at`) or a replayed/consumed `request_nonce`
-   (durable one-time ledger) — **before** any attempt reservation. `run_id`/`task_id` +
-   all context identities are taken from INSIDE the signature.
+1. **Verify the signed challenge** against the `challenge_key_id` resolved from the
+   root-signed challenge-key registry (not revoked as of now); refuse an expired challenge
+   (`now > expires_at`) or a replayed/consumed `request_nonce` (durable one-time ledger) —
+   **before** any attempt reservation. `run_id`/`task_id` + all context identities are taken
+   from INSIDE the signature.
 2. **Import the input artifacts BEFORE execution** — read `system`/`history`/
    `generation_config` from staging **by handle** (confirming `sha256(bytes) == handle`),
    publish them into the protected store, and **recompute the FULL `request_sha256`** over
    the complete canonical envelope (`protocol, workspace_id, install_id, request_nonce,
    system_sha256, history_sha256, generation_config_sha256, requested_at`); refuse on any
    mismatch.
-3. **Reserve the attempt + issue the lease** — atomically reserve/generate a one-time
-   `execution_attempt_id` (a `run_id` cannot yield two live racing attempts) and
-   `issue_lease` for it.
+3. **Reserve the attempt + issue the lease + STAMP `challenge_accepted_at` (P0-2).**
+   Atomically reserve/generate a one-time `execution_attempt_id` (a `run_id` cannot yield two
+   live racing attempts) and `issue_lease` for it. The supervisor stamps its own trusted
+   clock as **`challenge_accepted_at`** (the attempt-reservation instant) and enforces the
+   **acceptance-time window on THIS field, not on `requested_at`** — because `requested_at`
+   is a *desktop* stamp from BEFORE the authority stamped `issued_at`, so the normal timeline
+   is `requested_at < issued_at < challenge_accepted_at` and a naive `issued_at ≤
+   requested_at` could never hold. The supervisor requires:
+   `requested_at ≤ challenge_accepted_at` **and** `issued_at ≤ challenge_accepted_at ≤
+   expires_at`, and evaluates key revocation **as of `challenge_accepted_at`**. This
+   `challenge_accepted_at` is bound into the **lease**, the signed **terminal record** (§3),
+   and the supervisor **attestation** (§6), so durable re-verification uses the exact same
+   supervisor-authenticated instant — never a wall-clock `now` (§5).
 4. **Launch the recorder with the immutable input handles + read-only input FDs**; the
    recorder's launcher (§2) preserves ONLY the **canonical FD set** (§2 FD contract: FDs
    `3`/`4`/`5` read-only `system`/`history`/`generation_config`, FD `6` write-only output)
@@ -346,6 +415,14 @@ to the protected state dir as `<run_id>__<execution_attempt_id>.json`.
                                            // challenge doc, published by the supervisor (§4 step 1)
     "challenge_key_id": "<string>",
     "challenge_issued_at": "<ms>", "challenge_expires_at": "<ms>",
+    "challenge_accepted_at": "<ms>",       // P0-2: SUPERVISOR-stamped attempt-reservation
+                                           // instant; the field the temporal window is
+                                           // checked against (== the lease + attestation).
+    // challenge-key-registry snapshot binding (P1-3): the exact root-signed registry by
+    // which challenge_key_id was accepted, so the record stays verifiable after rotation.
+    "challenge_registry_handle": "<64hex>",   // == SHA256(JCS(registry payload)), published §4 step 1
+    "challenge_registry_epoch": <int>,
+    "challenge_registry_root_key_id": "<string>",
     // output binding (the exact reply bytes; equals the receipt's transcript/stdout hash)
     "output_sha256": "<64hex>",
     // policy binding
@@ -446,9 +523,13 @@ publish):
    **atomically publishes the exact canonical signed challenge document** — the full
    `{payload, sig}` object serialized as `JCS({payload, sig})` — into the protected store,
    so that **`challenge_handle = SHA256(exact canonical signed challenge document bytes)`**;
+   it also **atomically publishes the accepted root-signed challenge-key-registry snapshot**
+   (§2.5 P1-3) → **`challenge_registry_handle = SHA256(JCS(registry payload))`** so the exact
+   registry that admitted `challenge_key_id` is preserved for historical re-verification;
    then from staging it **atomically publishes** `system`/`history`/`generation_config`
-   (+ the `policy_bundle` it holds) into the protected store — every input and the signed
-   challenge exist as content-addressed handles *before* anything runs. Publishing uses the
+   (+ the `policy_bundle` it holds) into the protected store — every input, the signed
+   challenge, and the registry snapshot exist as content-addressed handles *before* anything
+   runs. Publishing uses the
    same create-if-absent atomic algorithm as every other artifact (temp→fsync→verify
    size+sha256→exclusive publish under the digest). The supervisor is the **sole publisher**
    of the signed challenge document (the recorder still owns output/containment only); a
@@ -498,7 +579,8 @@ idempotent and a divergent overwrite impossible.
 
 | Field | Bound to |
 |---|---|
-| `request_nonce`, `system_sha256`, `history_sha256`, `generation_config_sha256`, `requested_at`, `request_sha256` | independently re-verified: fetch the signed challenge by `challenge_handle`, verify its `sig` under the pinned `challenge_key_id` (§2.5), apply the **temporal + revocation semantics below (P1-5)** — NOT a wall-clock `now ∈ window` check — and confirm its `run_id`/`task_id`/`workspace_id`/`install_id`/`request_nonce`/`*_sha256`/`requested_at` equal the record's + `request_sha256 == sha256(JCS(envelope))` |
+| `request_nonce`, `system_sha256`, `history_sha256`, `generation_config_sha256`, `requested_at`, `request_sha256`, `challenge_accepted_at` | independently re-verified: fetch the signed challenge by `challenge_handle`, verify its `sig` under the challenge key resolved from the **bound registry snapshot** (row below), apply the **temporal + revocation semantics below (P0-2/P1-5)** against the record's `challenge_accepted_at` — NOT a wall-clock `now ∈ window` check — and confirm its `run_id`/`task_id`/`workspace_id`/`install_id`/`request_nonce`/`*_sha256`/`requested_at` equal the record's + `request_sha256 == sha256(JCS(envelope))` |
+| `challenge_registry_handle`, `challenge_registry_epoch`, `challenge_registry_root_key_id` | fetch the **accepted registry snapshot** by `challenge_registry_handle`, verify its `root_sig` under the pinned `challenge_registry_root_key_id` (a binary-pinned challenge-root), confirm `registry_epoch == challenge_registry_epoch`, and resolve the challenge's `challenge_key_id` **from that stored snapshot** — so a key later rotated out of the live registry still verifies (§2.5 P1-3) |
 | `execution_attempt_id`, `run_id` | the requested handle |
 | `lease_id`, `lease_nonce` | the verified execution-lease (`verify_artifact` + `validate_execution_lease`) |
 | `policy_id`, `policy_version`, `policy_bundle_sha256` | the operator-authorized policy (the signer re-checks bundle digest, P1-7) |
@@ -508,27 +590,33 @@ idempotent and a divergent overwrite impossible.
 
 The `RunState` is built from the **verified signed record** only.
 
-**Temporal + revocation semantics (P1-5, LOCKED) — acceptance-time gate vs. historical
-re-verification.** A challenge's `expires_at`/revocation must gate **first use**, and must
-**not** retroactively invalidate an already-accepted, signed historical record on later
-forensic re-verification (otherwise every valid completed turn would turn "invalid" the
-moment its short-lived challenge expired — a durability bug, not a security property):
-- **At execution acceptance (first use, §2.5 step 1):** the supervisor requires
-  `challenge_issued_at ≤ now ≤ challenge_expires_at`, the `request_nonce` unconsumed
-  (durable one-time ledger), and the `challenge_key_id` **not revoked as of `now`**. An
-  expired/replayed/revoked challenge is refused here, before any attempt is reserved. This
-  is the only wall-clock-`now` window check.
+**Temporal + revocation semantics (P0-2 / P1-5, LOCKED) — acceptance-time gate vs.
+historical re-verification, checked against `challenge_accepted_at`.** A challenge's
+`expires_at`/revocation must gate **first use**, and must **not** retroactively invalidate
+an already-accepted, signed historical record on later forensic re-verification (otherwise
+every valid completed turn would turn "invalid" the moment its short-lived challenge
+expired — a durability bug, not a security property). The window is checked against the
+**supervisor-stamped `challenge_accepted_at`** (the attempt-reservation instant, §2.5
+step 3), **not** the desktop's earlier `requested_at` — because the true timeline is
+`requested_at < challenge_issued_at < challenge_accepted_at`, so testing the window against
+`requested_at` (which precedes `issued_at`) would wrongly reject valid runs:
+- **At execution acceptance (first use, §2.5 step 3):** the supervisor stamps
+  `challenge_accepted_at` and requires `requested_at ≤ challenge_accepted_at` **and**
+  `challenge_issued_at ≤ challenge_accepted_at ≤ challenge_expires_at`, the `request_nonce`
+  unconsumed (durable one-time ledger), and the `challenge_key_id` **not revoked as of
+  `challenge_accepted_at`**. An expired/replayed/revoked challenge is refused here, before
+  any attempt is reserved. `challenge_accepted_at` is bound into the lease + record + attestation.
 - **At durable re-verification (`LiveRunStateProvider`, restart / forensic / audit):** the
-  provider verifies the signed challenge's `sig` and binding fields, then checks the
-  **as-of-acceptance** predicate — `challenge_issued_at ≤ requested_at ≤
-  challenge_expires_at` (the record's `requested_at`, i.e. the attempt-reservation instant,
-  fell inside the challenge window) — and **does not** compare the current wall clock to
-  `expires_at`. A record whose `requested_at` was in-window stays valid forever.
-- **Revocation is evaluated as-of the run, not as-of now.** Historical re-verification
-  treats a `challenge_key_id` as revoked for this record **only if** the registry's
-  `revoked_at` for that key is **≤ the record's `requested_at`** (the key was already
-  revoked when the run was accepted). A routine later rotation/revocation (`revoked_at >
-  requested_at`) does **not** fail forensic re-verification. (A retroactive
+  provider verifies the signed challenge's `sig` and binding fields, then checks the **same
+  as-of-acceptance** predicate against the **record's bound `challenge_accepted_at`** —
+  `requested_at ≤ challenge_accepted_at` and `challenge_issued_at ≤ challenge_accepted_at ≤
+  challenge_expires_at` — and **does not** compare the current wall clock to `expires_at`. A
+  record whose `challenge_accepted_at` was in-window stays valid forever.
+- **Revocation is evaluated as-of `challenge_accepted_at`, not as-of now.** Historical
+  re-verification treats a `challenge_key_id` as revoked for this record **only if** the
+  registry snapshot's `revoked_at` for that key is **≤ `challenge_accepted_at`** (the key was
+  already revoked when the run was accepted). A routine later rotation/revocation (`revoked_at
+  > challenge_accepted_at`) does **not** fail forensic re-verification. (A retroactive
   compromise-invalidation, if ever needed, is a separate explicit operator action —
   out of 3b-1B scope — never the default.)
 - The signed challenge itself remains **immutable and re-verifiable**: its bytes are
