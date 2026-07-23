@@ -8,7 +8,7 @@
 > **Նոր session (Claude կամ ChatGPT):** այս ֆայլը + իր ցույց տված canonical ֆայլերը
 > բավական են։ GitHub-ն ա միակ ճշմարտության աղբյուրը; հին chat-երին մի ապավինիր։
 
-**Last updated:** 2026-07-22 · **Maintained by:** the implementer session, in the same commit as any state change.
+**Last updated:** 2026-07-23 · **Maintained by:** the implementer session, in the same commit as any state change.
 
 ---
 
@@ -38,7 +38,7 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 
 ## 3. Current work — exact pointers
 
-**Wave 3a is COMPLETE — slices 1, 2 AND 3 are DONE and merged.** **Wave 3b (T-017) is under way, DESIGN-FIRST** — its **3b-0 design PR** is IN PROGRESS on `design/wave-3b-isolated-signer` ([`docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](./docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md)); it locks the isolated-signer custody boundary + narrow IPC + signed-manifest/anchor/anti-rollback contracts and needs **Architect design GREEN before any 3b code**. (Owner directive: the private-key custody boundary IS the trust boundary — no rushing the engine perimeter.) Slice 3 (T-016, PR #28, approved HEAD `dee6661`, squash **merge commit `8a580028`**) wired the desktop to CALL the merged verifier on a real governed turn (fail-closed strict 3a: every governed turn Blocks until Wave 3b provisions a trusted key), through the `ReceiptKeyAuthority` seam, a single `PreparedGovernedTurn` source, exact structured `system`+`history` as the bridge signing authority, buffered `governed_turn`, a turn-level Blocked notice with no double-post, dev/blocked badges, JCS cross-language parity, and bounded transport-failure evidence. Zero-trust GREEN after a YELLOW + two RED rounds; final CI 7/7 GREEN.
+**Wave 3a is COMPLETE — slices 1, 2 AND 3 are DONE and merged.** **Wave 3b (T-017) is under way, DESIGN-FIRST** — its **3b-0 design PR** is IN PROGRESS on `design/wave-3b-isolated-signer` ([`docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](./docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md)). **Architect returned design RED on rev 1 (PR #30 @ `6a6882e`) with 4 P0 blockers; rev 2 remediates all four** — dedicated OS **security principal** (P0-1), an **authenticated run-evidence chain** where the supervisor attests and recompute ≠ authenticity (P0-2), a context-aware `KeyResolutionQuery` + in-tx anti-rollback (P0-3), and **normative §4 interface schemas** (P0-4) — and awaits design re-review. It needs **Architect design GREEN before any 3b code**. (Owner directive: the private-key custody boundary IS the trust boundary — no rushing the engine perimeter.) Slice 3 (T-016, PR #28, approved HEAD `dee6661`, squash **merge commit `8a580028`**) wired the desktop to CALL the merged verifier on a real governed turn (fail-closed strict 3a: every governed turn Blocks until Wave 3b provisions a trusted key), through the `ReceiptKeyAuthority` seam, a single `PreparedGovernedTurn` source, exact structured `system`+`history` as the bridge signing authority, buffered `governed_turn`, a turn-level Blocked notice with no double-post, dev/blocked badges, JCS cross-language parity, and bounded transport-failure evidence. Zero-trust GREEN after a YELLOW + two RED rounds; final CI 7/7 GREEN.
 
 | | |
 |---|---|
