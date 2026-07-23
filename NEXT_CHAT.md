@@ -38,20 +38,18 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 
 ## 3. Current work — exact pointers
 
-**Wave 3a slices 1 AND 2 are DONE and merged.** **Slice 3 (transport wiring + receipt trust UI, T-016) is IMPLEMENTED and in Review** on `feat/wave-3a-transport-ui` (PR #28) — the desktop now CALLS the merged verifier on a real governed turn (fail-closed strict 3a: every governed turn Blocks until Wave 3b provisions a key). **Audit rounds 1 (5 blockers + hardening) and 2 (3 blockers) — RED — both RESOLVED; candidate `32a71d1`** (R1: challenge context reaches the signer, exact output bytes, collision-safe history hash, fresh verify clock, real transport-failure evidence, fail-closed provider-resolve; R2: one `PreparedGovernedTurn` single source for trim+hash+context, exact structured `system`+`history` as the bridge signing authority, bounded transport-failure evidence). **Not merged**; awaiting the Architect's round-3 re-audit on the pushed HEAD, then Owner merge. core 89 · host 42 · bridge 35 py · frontend 6 tests green; clippy-clean; coordination + capabilities GREEN. After it merges, the next work is **Wave 3b** (isolated signer + provisioned manifest + production "Verified").
+**Wave 3a is COMPLETE — slices 1, 2 AND 3 are DONE and merged.** The next task is **Wave 3b** (isolated trusted signer + provisioned signed key manifest + root anchor → production "Verified"). Slice 3 (T-016, PR #28, approved HEAD `dee6661`, squash **merge commit `8a580028`**) wired the desktop to CALL the merged verifier on a real governed turn (fail-closed strict 3a: every governed turn Blocks until Wave 3b provisions a trusted key), through the `ReceiptKeyAuthority` seam, a single `PreparedGovernedTurn` source, exact structured `system`+`history` as the bridge signing authority, buffered `governed_turn`, a turn-level Blocked notice with no double-post, dev/blocked badges, JCS cross-language parity, and bounded transport-failure evidence. Zero-trust GREEN after a YELLOW + two RED rounds; final CI 7/7 GREEN.
 
 | | |
 |---|---|
-| **Next task** | **Wave 3b** — isolated trusted signer + operator-provisioned signed key manifest + binary-pinned root anchor + anti-rollback (design §5); only 3b mints a real key and enables production **`trusted_verified`** ("Verified"). It fills the `ReceiptKeyAuthority` seam slice 3 left (today `NoTrustedManifest` ⇒ every governed turn Blocks). Start after slice 3 (T-016) merges; cut a fresh branch from `main`. |
-| **In review** | **Slice 3 (T-016)** — transport wiring + receipt trust UI — is **IMPLEMENTED** on `feat/wave-3a-transport-ui` (**PR #28**); audit rounds 1 + 2 (RED) resolved. **Code candidate `32a71d1`; audit the pushed PR #28 HEAD** (docs-only commits sit on top of `32a71d1`). core 89 · host 42 · bridge 35 py · frontend 6 green; clippy-clean; coordination + capabilities GREEN. Awaiting the Architect's round-3 GREEN, then Owner merge. |
-| **Just merged** | **T-015 / slice 2 — PR #26 MERGED.** Approved HEAD `64c2372`; squash **merge commit `9b214e5`** on `main`; final CI 7/7 GREEN; Architect **zero-trust GREEN** after a YELLOW + two RED rounds (full history in the T-015 row of `TASKS.md`). Shipped migration **0014** + `brops-core::receipt_store` (atomic `BEGIN IMMEDIATE` verify→consume→persist, durable one-time nonce, `receipt_id` global uniqueness, two-timestamp freshness/skew, `ON DELETE RESTRICT` evidence that survives deletion by refusing it, `ReceiptOutcome` with **no `TrustedVerified` variant**). |
-| **Baseline** | `brops-core` = **83 tests** green, clippy-clean; migrations through **0014**, `SCHEMA_VERSION = 14`; `tools/check_coordination.py` + `tools/check_capabilities.py` GREEN. |
+| **Next task** | **Wave 3b** — isolated trusted signer + operator-provisioned signed key manifest + binary-pinned root anchor + anti-rollback (design §5); only 3b mints a real key and enables production **`trusted_verified`** ("Verified"). It fills the `ReceiptKeyAuthority` seam slice 3 left (today `NoTrustedManifest` ⇒ every governed turn Blocks). **Not started** — cut a fresh branch from `main` @ `8a58002` and claim it in `TASKS.md`. |
+| **Just merged** | **T-016 / slice 3 — PR #28 MERGED.** Approved HEAD `dee6661`; squash **merge commit `8a580028`** on `main`; final CI 7/7 GREEN; Architect **zero-trust GREEN** after a YELLOW + two RED rounds. Wired the desktop verifier into the governed turn: `PreparedGovernedTurn` single source, structured `system`+`history` bridge authority, `issue_challenge`→`verify_and_record_receipt(&NoTrustedManifest)`→Blocked notice (no double-post), bounded transport-failure evidence, dev/blocked badges, JCS parity + e2e. |
+| **Baseline** | `brops-core` = **89 tests** green (host **42**, bridge **35** py, frontend **6**), clippy-clean; migrations through **0014**, `SCHEMA_VERSION = 14`; `tools/check_coordination.py` + `tools/check_capabilities.py` GREEN. |
 
-> **Slices 1 + 2 are GREEN + merged** (`git log main` → `6c920d0`, `9b214e5`); **slice 3 (T-016) is IMPLEMENTED
-> and in review** (PR #28, code candidate `32a71d1` + docs on top, rounds 1 + 2 RED resolved — not merged). It is the
-> transport/UI layer that wires the desktop to CALL the merged verifier on a real governed turn; the isolated
-> signer + provisioned manifest + production "Verified" remain **Wave 3b** (§10) — **do not present any
-> Wave 3b item as implemented** (slice 3 itself is implemented + in review).
+> **Wave 3a is COMPLETE** — slices 1, 2, 3 all GREEN + merged (`git log main` → `6c920d0`, `9b214e5`, `8a580028`).
+> The desktop now issues a nonce challenge, runs the governed turn buffered, and verifies the signed receipt
+> (fail-closed: no trusted key yet ⇒ Blocked). The isolated signer + provisioned manifest + production
+> "Verified" are **Wave 3b** (§10, the next task) — **do not present any Wave 3b item as implemented.**
 
 ## 4. Merged baseline (Done — verify via `git log main`)
 
@@ -62,7 +60,8 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 - **Wave 3 Receipt Protocol v1 — design rev 4**, PR #23 (`35a6ab5`): Architect + Owner **GREEN**, merged. The design is the spec Wave 3a/3b implement.
 - **Wave 3a slice 1 — receipt protocol core** (T-014), PR #24 (approved HEAD `c51031e`, **merge commit `6c920d0`**): `brops-core::receipt` — the pure verifier core (§5). Zero-trust GREEN after three RED rounds (§6).
 - **Wave 3a slice 2 — receipt storage & atomicity** (T-015), PR #26 (approved HEAD `64c2372`, **merge commit `9b214e5`**): migration **0014** + `brops-core::receipt_store` — the durable, atomic `verify→consume→persist` layer on the slice-1 core (`issue_challenge`, one-time nonce, `receipt_id` uniqueness, freshness/skew, `ON DELETE RESTRICT` evidence, tri-state outcome with no "Verified"). Zero-trust GREEN after a YELLOW + two RED rounds (see the T-015 row in `TASKS.md`).
-- **Schema:** migrations through **0014**, `SCHEMA_VERSION = 14`. `brops-core` test suite: **83 tests** green.
+- **Wave 3a slice 3 — transport wiring + receipt trust UI** (T-016), PR #28 (approved HEAD `dee6661`, **merge commit `8a580028`**): the desktop CALLS the merged verifier on a real governed turn — `ai::PreparedGovernedTurn` single source, structured `system`+`history` bridge authority, `commands.rs` `issue_challenge`→`verify_and_record_receipt(&NoTrustedManifest)`→`StreamEvent::Blocked` notice (no double-post), `receipt_store::{record_pre_verification_block, bounded_reason}`, `Message.receipt` projection + dev/blocked badges, JCS cross-language parity + e2e. Fail-closed strict 3a. Zero-trust GREEN after a YELLOW + two RED rounds (see the T-016 row in `TASKS.md`). **Wave 3a complete.**
+- **Schema:** migrations through **0014**, `SCHEMA_VERSION = 14`. Test suites: `brops-core` **89**, host `brops` **42**, bridge **35** py, frontend **6** — green.
 
 ## 5. What IS implemented — slice 1 (PR #24) + slice 2 (PR #26)
 
@@ -144,12 +143,16 @@ CI (`.github/workflows/ci.yml`) triggers on `push → main` and on `pull_request
 
 ## 10. Deferred — NOT yet implemented (do not claim as done)
 
-Slices 1 + 2 are merged (durable nonce issue/consume, `receipt_id` uniqueness, wall-clock
-freshness/skew, migration 0014, atomic verify→consume→persist, `receipt_verification_attempts` — all
-**done**, §5). Still deferred to **slice 3** / **Wave 3b**:
+**Wave 3a is complete** — slices 1 + 2 + 3 merged (durable nonce issue/consume, `receipt_id` uniqueness,
+wall-clock freshness/skew, migration 0014, atomic verify→consume→persist, `receipt_verification_attempts`,
+**and** the desktop transport wiring + structured bridge contract + receipt trust UI + JCS parity + e2e —
+all **done**, §5). Still deferred to **Wave 3b**:
 
-- **slice 3** — desktop **transport wiring** (the governed turn issues the challenge and calls the merged verifier; sign-on-complete buffering); Python bridge changes; JCS **cross-language parity** test; frontend **receipt trust UI** (dev/blocked badges); one real governed round-trip e2e
-- **Wave 3b** — manifest **loading + signature verification**; key validity window / epoch / revocation; manifest **anti-rollback**; isolated trusted signer + provisioned signed manifest + root anchor; only 3b enables production **`trusted_verified`** ("Verified")
+- **Wave 3b** — the isolated trusted signer (real key custody, not a `sign(arbitrary_bytes)` oracle) +
+  operator-provisioned signed key manifest + binary-pinned root anchor; manifest **loading + signature
+  verification**; key validity window / epoch / revocation; manifest **anti-rollback**. It fills the
+  `ReceiptKeyAuthority` seam (today `NoTrustedManifest` ⇒ Blocked); only 3b enables production
+  **`trusted_verified`** ("Verified").
 
 Beyond Wave 3: Wave 4 (supervisor hardening, engine P0-4), Wave 5 (trusted sidecar, P0-3), production CI/release (P0-6), then the product roadmap phases (`MASTER_EXECUTION_ROADMAP.md`).
 
