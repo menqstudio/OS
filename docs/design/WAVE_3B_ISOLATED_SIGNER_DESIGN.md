@@ -1,4 +1,4 @@
-# Wave 3b — Isolated Signer + Signed Manifest + Production "Verified" · DESIGN (rev 4, design-only)
+# Wave 3b — Isolated Signer + Signed Manifest + Production "Verified" · DESIGN (rev 5, design-only)
 
 > **Status: DESIGN-ONLY.** No product code ships under this document until it is
 > **Architect-GREEN + Owner-approved**. This is the **3b-0** deliverable (design PR).
@@ -27,7 +27,14 @@
 >   store, and the containment bridge-transport field is exact (§4.2); **P1-4** the
 >   supervisor process split / service / ACL / IPC is reclassified **BUILD** (not REUSE)
 >   with 4 same-user-isolation acceptance tests (§3, §5); **P1-5** the protected-store
->   atomic publish algorithm (§4.0).
+>   atomic publish algorithm (§4.0). Architect design **YELLOW** (architecture approved;
+>   1 final contract redline — the supervisor-attestation key authority).
+> - **rev 5** (this) — closes rev-4's final redline: the desktop resolves the
+>   **supervisor-attestation key from the root-signed manifest snapshot** (not signer
+>   config), via an explicit **`key_usage`** discriminator (`receipt_signing` |
+>   `supervisor_attestation`) with **enforced type separation** — a receipt-signing key
+>   can never verify an attestation and vice-versa (§1.6–1.7, §4.2–4.5), plus the
+>   attestation-key negative matrix (§5).
 >
 > **Հայերեն:** Սա design-only ա։ Private-key custody-ն հենց trust boundary-ն ա։ Product
 > code չի land-ում մինչև Architect-GREEN + Owner։
@@ -172,19 +179,33 @@ signature**, a structured `refused{reason}` — never a partial/unsigned success
   not TOFU, not a plain editable config. **No webview key command.**
 - Signed payload fields (§4.3): `manifest_protocol`, `manifest_version`, `manifest_epoch`,
   **`root_key_id`** (selects the pinned root — see below), `issued_at`, `expires_at`, and
-  `keys[]`. **Per key:** `key_id`, `public_key`, `trust_class: production | development`
-  (the render authority, signed in — never inferred), `allowed_protocols`
-  (e.g. `["brops.receipt.v1"]`), `workspace`/scope, `allowed_audiences`/install scope,
-  `supervisor_id`, `valid_from`/`valid_to`, `key_epoch`, `revoked`.
+  `keys[]`. **Per key:** `key_id`, `public_key`, **`key_usage: receipt_signing |
+  supervisor_attestation`** (the type discriminator — see §1.7 type separation),
+  `supervisor_id`, `valid_from`/`valid_to`, `key_epoch`, `revoked`, and — **for
+  `receipt_signing` keys only** — `trust_class: production | development` (the render
+  authority, signed in — never inferred), `allowed_protocols` (e.g.
+  `["brops.receipt.v1"]`), `workspace`/scope, `allowed_audiences`/install scope. A
+  `supervisor_attestation` key carries **no** `trust_class`/`allowed_protocols`/workspace
+  scope (it never renders "Verified"; it is bound by `supervisor_id` + validity +
+  revocation only).
+- **Single root-signed authority (P1, rev 5).** Both the receipt-signing keys **and** the
+  supervisor-attestation keys live in this **one root-signed manifest** — so the desktop
+  has a real trust authority for the attestation it re-verifies at persist time (§4.2),
+  instead of trusting the signer's local config. (The signer still pins its own
+  attestation key for its own signing gate; that is the signer's trust, not the
+  desktop's.)
 - **Root selection with multiple pinned roots:** if the binary pins more than one root
   key, the manifest's **`root_key_id` is inside the signed payload**; the desktop selects
   that pinned root and verifies `root_sig` against it, refusing if `root_key_id` is not
   in the pinned set. (A forger cannot name a different pinned root without also producing
   that root's signature.)
-- **Semantic validation (reject, not just parse — P1-5):** duplicate `key_id`; the same
-  `key_id` with a different `public_key` or `trust_class`; `issued_at > expires_at`;
-  `valid_from > valid_to`; **ambiguous/wildcard scopes** (workspace/audience must be
-  explicit — no `"*"`).
+- **Semantic validation (reject, not just parse — P1-5, extended rev 5):** duplicate
+  `key_id`; the same `key_id` with a different `public_key`, `trust_class`, or
+  **`key_usage`**; `issued_at > expires_at`; `valid_from > valid_to`; **ambiguous/wildcard
+  scopes** (workspace/audience must be explicit — no `"*"`); an **unknown `key_usage`**; a
+  `receipt_signing` key **missing** `trust_class`/`allowed_protocols`/workspace; a
+  `supervisor_attestation` key **carrying** any render scope
+  (`trust_class`/`allowed_protocols`/workspace/audience).
 - **Anti-rollback (normative):** the desktop durably records the **highest accepted
   `manifest_epoch` AND that manifest's hash** and refuses a manifest when
   `epoch < highest_epoch`, **OR** `epoch == highest_epoch AND manifest_hash differs`,
@@ -224,13 +245,35 @@ signature**, a structured `refused{reason}` — never a partial/unsigned success
   }
   ```
 
-- **Constraint enforcement + scope binding.** The resolver validates every manifest
-  constraint against `q` (`allowed_protocols ∋ protocol`, workspace/audience/supervisor
-  match, `valid_from <= now_ms <= valid_to`, not revoked, manifest not expired). Any miss
-  ⇒ `Unavailable(reason)`. `ResolvedManifestKey` is extended to carry the **bound scopes**
-  (`workspace`, `install`, `supervisor`, `protocol`, `valid_from`/`valid_to`,
-  `key_epoch`, `trust_class`); downstream `verify`/`bind` **must** bind them — no bare key
-  escapes its scope. Fields stay private, no public ctor outside `brops-core`.
+- **Constraint enforcement + scope binding.** The receipt-key resolver validates every
+  manifest constraint against `q` — **`key_usage == receipt_signing`**, `allowed_protocols
+  ∋ protocol`, workspace/audience/supervisor match, `valid_from <= now_ms <= valid_to`,
+  not revoked, manifest not expired. Any miss ⇒ `Unavailable(reason)`.
+  `ResolvedManifestKey` is extended to carry the **bound scopes** (`workspace`, `install`,
+  `supervisor`, `protocol`, `valid_from`/`valid_to`, `key_epoch`, `trust_class`);
+  downstream `verify`/`bind` **must** bind them — no bare key escapes its scope. Fields
+  stay private, no public ctor outside `brops-core`.
+- **Supervisor-attestation key authority + type separation (P1, rev 5).** The desktop's
+  persist-time attestation check (§4.2) resolves the attestation key from the **same
+  accepted immutable manifest snapshot** via a distinct path:
+
+  ```
+  resolve_attestation_key(
+      supervisor_attestation_key_id,   // from the sign-result
+      supervisor_id,                   // must match the key's bound supervisor_id
+      now_ms,                          // validity window
+  ) -> Trusted(AttestationKey) | Unavailable(reason)
+  // requires key_usage == supervisor_attestation, in-window, not revoked,
+  // snapshot still == durable floor (re-read in the same tx, §1.7)
+  ```
+
+  **Enforced type separation:** the receipt-key resolver **rejects** any key whose
+  `key_usage != receipt_signing`, and `resolve_attestation_key` **rejects** any key whose
+  `key_usage != supervisor_attestation`. A `receipt_signing` key can therefore **never**
+  verify an attestation, and a `supervisor_attestation` key can **never** render a
+  receipt as "Verified" — the two verifiers draw from disjoint key sets by construction.
+  Both resolutions run **inside** the verify/persist tx and re-read the floor (§1.7
+  durable-snapshot semantics).
 
 - **Durable snapshot + anti-rollback transaction (P1-5).** Manifest acceptance is
   two-phase:
@@ -334,12 +377,15 @@ signature**, a structured `refused{reason}` — never a partial/unsigned success
   → attest → call the signer directly. The **content-addressed protected evidence store**
   it writes to and the signer reads from.
 - **(b)** the **desktop signed key manifest + binary-pinned root anchor + anti-rollback +
-  durable snapshot** — schema, pinned root(s) with `root_key_id` selection, semantic
-  validation, migration for the durable manifest row + floor, atomic acceptance.
-- **(c)** the **desktop manifest resolver** (Rust, in-crate `brops-core`) — context-aware
-  `ReceiptKeyAuthority` (§1.7), consulted **in-tx**, query sourced from `Expected`,
-  returns a scope-bound `ResolvedManifestKey`. Swaps `NoTrustedManifest` at `ai.rs` +
-  `commands.rs`.
+  durable snapshot** — schema (both `receipt_signing` **and** `supervisor_attestation`
+  keys, `key_usage`-typed), pinned root(s) with `root_key_id` selection, semantic
+  validation, migration for the durable manifest row + floor + forensic-attestation
+  storage, atomic acceptance.
+- **(c)** the **desktop manifest resolver** (Rust, in-crate `brops-core`) — the two
+  disjoint `key_usage`-typed resolution paths (§1.7, §4.5), consulted **in-tx**, receipt
+  query sourced from `Expected`, returns a scope-bound `ResolvedManifestKey`; the
+  attestation path feeds the §4.2 persist-time re-verify. Swaps `NoTrustedManifest` at
+  `ai.rs` + `commands.rs`.
 - **(d)** **All-formula JCS parity** — extend the parity test beyond the request envelope
   to **every §4.0a artifact formula** (`system`/`history`/`output`/`generation_config`/
   `containment_evidence`/`policy_bundle`) **and** the full 21-field receipt envelope,
@@ -452,8 +498,12 @@ Frame ≤64 KiB. Tagged union — exactly one of:
   `receipt_attestations(attempt_id FK ON DELETE RESTRICT, attestation_evidence_jcs BLOB,
   attestation_signature BLOB, supervisor_attestation_key_id TEXT, run_id TEXT,
   execution_attempt_id TEXT, lease_id TEXT)`. The desktop **re-verifies the attestation
-  signature** (against the pinned/manifest-listed supervisor attestation key) at persist
-  time and Blocks on failure — the attestation is recorded **only** when it verifies.
+  signature** at persist time against the key returned by `resolve_attestation_key` (§1.7)
+  — the `supervisor_attestation`-usage key resolved from the **accepted root-signed
+  manifest snapshot** by `supervisor_attestation_key_id` + `supervisor_id` + `now_ms` +
+  validity + revocation, **not** the signer's local config (which the desktop neither sees
+  nor trusts) — and Blocks on any failure (unknown / wrong-usage / wrong-supervisor /
+  revoked / out-of-window key, or bad signature) — the attestation is recorded **only** when it verifies.
   The `sign-result` frame carrying these stays within the §4.2 **64 KiB** cap because
   `attestation_evidence_jcs` holds only handles + small fields (never inline artifacts).
 - **Desktop persistence of containment bytes — exact transport (P1-3).** The containment
@@ -476,12 +526,21 @@ Frame ≤64 KiB. Tagged union — exactly one of:
     "manifest_protocol":"brops.key-manifest.v1", "manifest_version":1,
     "manifest_epoch":<u64>, "root_key_id":"<pinned root selector>",
     "issued_at":<u64 ms>, "expires_at":<u64 ms>,
-    "keys":[ { "key_id":"<≤128>", "public_key":"<b64url 32B>",
-               "trust_class":"production"|"development",
-               "allowed_protocols":["brops.receipt.v1"],
-               "workspace":"<explicit scope>", "allowed_audiences":["<explicit>"],
-               "supervisor_id":"<str>", "valid_from":<u64 ms>, "valid_to":<u64 ms>,
-               "key_epoch":<u64>, "revoked":<bool> } ] },
+    "keys":[
+      // receipt_signing key — carries render scopes
+      { "key_id":"<≤128>", "public_key":"<b64url 32B>",
+        "key_usage":"receipt_signing",
+        "trust_class":"production"|"development",
+        "allowed_protocols":["brops.receipt.v1"],
+        "workspace":"<explicit scope>", "allowed_audiences":["<explicit>"],
+        "supervisor_id":"<str>", "valid_from":<u64 ms>, "valid_to":<u64 ms>,
+        "key_epoch":<u64>, "revoked":<bool> },
+      // supervisor_attestation key — NO render scopes; bound by supervisor_id + validity
+      { "key_id":"<≤128>", "public_key":"<b64url 32B>",
+        "key_usage":"supervisor_attestation",
+        "supervisor_id":"<str>", "valid_from":<u64 ms>, "valid_to":<u64 ms>,
+        "key_epoch":<u64>, "revoked":<bool> }
+    ] },
   "root_sig":"<b64url Ed25519(64B) detached over JCS(payload)>" }
 ```
 
@@ -519,10 +578,19 @@ it never accepts a caller-supplied evidence object or arbitrary bytes to attest/
 
 ### 4.5 Resolver contract (Rust)
 
-`KeyResolutionQuery` + `resolve(&self, &KeyResolutionQuery, &Transaction) -> KeyResolution`
-(§1.7); query fields sourced from the trusted `Expected`/turn per the §1.7 mapping;
-`ResolvedManifestKey` extended with scope fields, private, no public ctor outside
-`brops-core`; the verify pipeline binds the resolved scopes and refuses on mismatch.
+Two disjoint resolution paths over the one accepted manifest snapshot (§1.7), both run
+in-tx with a floor re-read:
+- **Receipt key:** `resolve(&self, &KeyResolutionQuery, &Transaction) -> KeyResolution`;
+  query fields sourced from the trusted `Expected`/turn per the §1.7 mapping; enforces
+  `key_usage == receipt_signing`; `ResolvedManifestKey` carries scope fields, private, no
+  public ctor outside `brops-core`; the verify pipeline binds the resolved scopes and
+  refuses on mismatch.
+- **Attestation key:** `resolve_attestation_key(&self, supervisor_attestation_key_id,
+  supervisor_id, now_ms, &Transaction) -> AttestationResolution`; enforces `key_usage ==
+  supervisor_attestation`, `supervisor_id` match, validity, revocation; used only by the
+  §4.2 persist-time attestation re-verify.
+- **Type separation is total:** each path rejects the other's `key_usage`, so the two key
+  sets are disjoint by construction — no key can serve both roles.
 
 ## 5. Slicing (implementation follows Architect GREEN on this doc)
 
@@ -547,7 +615,11 @@ it never accepts a caller-supplied evidence object or arbitrary bytes to attest/
   negative matrix (rolled-back epoch,
   same-epoch different-hash, expired, bad root sig, unknown `root_key_id`, duplicate/
   conflicting key_id, wildcard scope, revoked/out-of-window/out-of-scope key,
-  crash-between-floor-and-bytes).
+  crash-between-floor-and-bytes). **Attestation-key authority matrix (rev 5), all MUST
+  Block:** unknown `supervisor_attestation_key_id`; wrong `supervisor_id` binding; revoked
+  attestation key; out-of-window attestation key; a **`receipt_signing` key used as an
+  attestation key**; a **`supervisor_attestation` key used as a receipt key**; snapshot/
+  floor mismatch on the attestation resolution.
 - **3b-3 — Resolver integration + real e2e.** Context-aware `ReceiptKeyAuthority` swap
   (in-tx, query from `Expected`), production key path, the **first `trusted_verified`**.
   **Merge only after exact-head zero-trust GREEN.**
@@ -556,8 +628,9 @@ it never accepts a caller-supplied evidence object or arbitrary bytes to attest/
 
 **No `trusted_verified` ("Verified") renders, and `NoTrustedManifest` is not swapped,
 until the ENTIRE chain — isolated signer (dedicated principal) + supervisor evidence/
-attestation + content-addressed store + signed manifest + binary-pinned root + anti-
-rollback + durable snapshot + context-aware resolver — is GREEN.** Any partial landing
+attestation + content-addressed store + signed manifest (`key_usage`-typed receipt +
+attestation keys) + binary-pinned root + anti-rollback + durable snapshot + the two
+disjoint `key_usage` resolvers + manifest-resolved attestation re-verify — is GREEN.** Any partial landing
 keeps every governed turn Blocked. "Verified" is a single, chain-complete event.
 
 ## 7. Non-goals (this design)
