@@ -178,6 +178,8 @@ class SignerProcessBoundaryTests(unittest.TestCase):
         store_dir = pathlib.Path(d) / "store"
         keydir = pathlib.Path(d) / "keys"
         keydir.mkdir()
+        if _POSIX:
+            os.chmod(keydir, 0o700)  # the signer refuses a group/other-accessible key dir
         sig_priv, _ = _keypair()
         att_priv, att_pub = _keypair()
         (keydir / signer.RECEIPT_SIGNER_KEY_FILENAME).write_text(

@@ -232,9 +232,15 @@ class _GovernedOutcome:
 def _real_callables(
     request: dict,
 ) -> tuple[Callable[[dict], Any], Callable[[Any], str]]:
-    """Return the engine-bound callables, or raise RuntimeError (fail-closed). Gates:
-    supervisor provisioning (`_PROVISION_ENV`) + the supervisor-service socket. The
-    sidecar connects ONLY to the supervisor service — never the signer."""
+    """Return the engine-bound callables, or raise RuntimeError (fail-closed). The sidecar
+    connects ONLY to the supervisor service — never the signer — and holds no signer
+    material. The desktop request carries NO execution attempt id (audit P1-5): the
+    supervisor reserves/generates the attempt and binds it into the signed terminal
+    record. That attempt-reservation + the authoritative execution→receipt binding are
+    Wave 3b-1B (design-locked in `WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`), so real
+    governed mode fail-closes here until 3b-1B lands. The isolated signing BOUNDARY itself
+    (services + ACL + a valid signed record → signed) is machine-proven by the Linux
+    `engine-isolation` CI job. `--self-test-signed` exercises the signer chain today."""
     missing = [k for k in _PROVISION_ENV if not os.environ.get(k, "").strip()]
     if missing:
         raise RuntimeError("governed engine not provisioned: missing " + ", ".join(missing))
@@ -245,25 +251,11 @@ def _real_callables(
             "required — the sidecar relays to the supervisor service and never holds "
             "signer keys or reaches the signer"
         )
-    import brops_socket
-
-    def run_task(req: dict) -> Any:
-        run_id = str(req.get("task_id", "")).strip()
-        attempt_id = str(req.get("execution_attempt_id", "")).strip()
-        if not run_id or not attempt_id:
-            raise RuntimeError("governed request missing run_id/execution_attempt_id")
-        governed = brops_socket.request(
-            supervisor_socket,
-            {"protocol": "brops.evidence-request.v1", "run_id": run_id,
-             "execution_attempt_id": attempt_id},
-        )
-        if not isinstance(governed, dict) or governed.get("status") != "signed":
-            reason = governed.get("reason") if isinstance(governed, dict) else "malformed"
-            raise RuntimeError(f"governed supervisor refused: {reason}")
-        return _GovernedOutcome(run_id, governed)
-
-    def read_result(outcome: Any) -> str:
-        return getattr(outcome, "_text", "")
+    raise RuntimeError(
+        "governed engine real-mode is pending the Wave 3b-1B supervisor-reserved "
+        "execution attempt + authoritative execution→receipt binding; the isolated "
+        "signing boundary is proven by the engine-isolation CI job and --self-test-signed"
+    )
 
     return run_task, read_result
 

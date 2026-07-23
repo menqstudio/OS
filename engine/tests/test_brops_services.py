@@ -63,6 +63,8 @@ class SignerServiceTests(unittest.TestCase):
         self.d = pathlib.Path(tempfile.mkdtemp())
         keydir = self.d / "keys"
         keydir.mkdir()
+        if os.name == "posix":
+            os.chmod(keydir, 0o700)  # the signer refuses a group/other-accessible key dir
         sig_priv, _ = _keypair()
         self.att_priv, self.att_pub = _keypair()
         (keydir / signer.RECEIPT_SIGNER_KEY_FILENAME).write_text(

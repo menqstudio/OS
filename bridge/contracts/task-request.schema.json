@@ -8,10 +8,6 @@
   "properties": {
     "task_id": { "type": "string", "minLength": 1 },
     "task_class": { "type": "string", "minLength": 1 },
-    "execution_attempt_id": {
-      "type": "string", "minLength": 1, "maxLength": 128,
-      "description": "Wave 3b (audit P0-1): the authoritative execution attempt the desktop's governed request context targets. The sidecar relays {task_id (=run_id), execution_attempt_id} to the supervisor service; the supervisor builds the AUTHORITATIVE run state for exactly this attempt. Required in real governed mode; absent for ungoverned/self-test transport."
-    },
     "rationale": {
       "type": "string", "minLength": 1,
       "description": "DERIVED human-readable convenience only — NOT execution or signing authority. The supervisor/executor works from `system` + `history`; `rationale` is never trusted as input."

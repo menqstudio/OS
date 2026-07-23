@@ -135,16 +135,18 @@ class EngineSidecarTests(unittest.TestCase):
         self.assertIsNone(doc["result"])
         self.assertIn("supervisor service not provisioned", doc["error"])
 
-    def test_real_mode_relay_is_fail_closed_when_the_supervisor_is_unreachable(self):
-        # A schema-valid governed request now carries execution_attempt_id, so the sidecar
-        # wires the real relay to the supervisor service. With no service listening the
-        # relay fails and the sidecar fails closed (never a partial/unsigned result). The
-        # sidecar holds no signer material and never reaches the signer either way.
+    def test_real_mode_with_supervisor_socket_fails_closed_pending_3b1b(self):
+        # Supervisor provisioning + the supervisor-service socket are present, so the
+        # sidecar's topology is correct (relay to the supervisor, never the signer). But
+        # the desktop request carries no execution attempt (the supervisor reserves it in
+        # 3b-1B), and the authoritative execution→receipt binding is 3b-1B — so real mode
+        # fails closed (never a partial/unsigned result).
         env = {k: "x" for k in engine_sidecar._PROVISION_ENV}
-        env[engine_sidecar._SUPERVISOR_SOCKET_ENV] = "/nonexistent/brops-supervisor.sock"
-        doc = _drive({**_VALID, "execution_attempt_id": "attempt-1"}, env=env)
+        env[engine_sidecar._SUPERVISOR_SOCKET_ENV] = "/run/brops-supervisor.sock"
+        doc = _drive(_VALID, env=env)
         self.assertFalse(doc["ok"])
         self.assertIsNone(doc["result"])
+        self.assertIn("3b-1B", doc["error"])
 
     def test_self_test_signed_mints_a_real_signed_receipt_desktop_still_blocks(self):
         # Exercises the REAL Wave 3b signer/store/attestation chain end to end. The
