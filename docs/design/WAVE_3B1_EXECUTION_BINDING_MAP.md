@@ -1,11 +1,12 @@
 # Wave 3b-1 re-scope — implementation index (3b-1A + 3b-1B)
 
-> **STATUS (2026-07-24):** **3b-1A is Architect Code GREEN** (@ `dffd164`; exact-head CI
-> **#114** 8/8 GREEN); **3b-1B is design-lock RED** — the Architect returned Design RED on
-> addendum **rev 10** (@ `6b1f8f4`; 3 P0 + 2 P1; CI GREEN ≠ design GREEN) and directed a
-> one-pass consolidation; the addendum is now **rev 11 (CONSOLIDATED)** — a proposed
-> design-GREEN candidate, **not yet Architect-GREEN, no code**. See `NEXT_CHAT.md` §3 for
-> the authoritative current state, STOP gates, and next action.
+> **STATUS (2026-07-24):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
+> CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
+> — the Architect reviewed the consolidated **rev 11** (@ `ac35314`; exact-head CI #115 GREEN;
+> CI GREEN ≠ design GREEN) and returned Design RED with 2 P0 + 3 P1 final consistency findings,
+> directing a **surgical correction**; the addendum is now **rev 12 (CONSOLIDATED)** — a
+> proposed design-GREEN candidate, **not yet Architect-GREEN, no code**. See `NEXT_CHAT.md` §3
+> for the authoritative current state, STOP gates, and next action.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative
 > source for every 3b-1B contract (artifact matrix, exact schemas, time model, capability
