@@ -36,7 +36,7 @@
 
 | Agent | Task (see TASKS.md) | Branch | Status |
 |---|---|---|---|
-| 🔨 Claude | Wave 3a — Receipt Protocol v1 **slice 3 (transport wiring + receipt trust UI)** (T-016) — **DONE, MERGED** | `main` @ `8a58002` | ✅ **Done** — PR #28, approved HEAD `dee6661`, squash merge `8a580028`; zero-trust GREEN after YELLOW + 2 RED rounds; 7/7 CI. Wired the desktop verifier into the governed turn (fail-closed strict 3a). **Wave 3a COMPLETE. Next: Wave 3b (T-017) — not started.** |
+| 🔨 Claude | **Wave 3b (T-017) — isolated signer + signed manifest + production "Verified"** — DESIGN-FIRST | `design/wave-3b-isolated-signer` | 🔨 **In-Progress (3b-0 design)** — Owner directive: custody boundary = trust boundary, Architect-gated design note before code. [`docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](./docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md) locks process boundary / key custody / narrow IPC / auth checklist / manifest+anchor+anti-rollback / fail-closed / threat model. Awaiting **Architect design GREEN** before 3b-1. **Wave 3a (slices 1+2+3) COMPLETE + merged** (`8a580028`). |
 | 📐 ChatGPT | — | — | — |
 | 👑 Gev | reviews / approvals · roadmap **v1.0 🔒 Locked** (Owner-approved, basis HEAD `2e0157b`) | — | — |
 
