@@ -1,4 +1,4 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 4)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 5)
 
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. Builds on
 > the Architect-GREEN Wave 3b design ([`WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](./WAVE_3B_ISOLATED_SIGNER_DESIGN.md))
@@ -31,6 +31,8 @@
 > create-if-absent (§6).
 >
 > **rev 4** closes the design RED on rev 3: **P0-1** one non-contradictory executor lifecycle owner — the supervisor launches the recorder runner; the recorder starts the executor under a different UID via a **narrow privileged launcher** (setuid-only, holds no key) and owns the pidfd/cgroup + teardown, so signing-capability and setuid-capability live in separate principals (§1, §2); **P1-2** the evidence-head floor is keyed **per (install, task/chain)**, not per-install (§6); **P1-3** the supervisor request carries the **exact** system/history/generation_config bytes + challenge, and the supervisor recomputes the three hashes and refuses on mismatch before reserving/executing (§2.5); **P1-4** a normative `brops.governed-turn-containment.v1` artifact binds run/attempt/lease/runner + cgroup + the measured `contained`, hashed into a containment-confirmed evidence event and cross-bound by the verifier (§3.6).
+>
+> **rev 5** closes the design RED on rev 4: **P0-1** the request challenge is **desktop-native-host authenticated** (signed `brops.governed-turn-challenge.v1` over the FULL envelope incl. `workspace_id`/`install_id`, pinned key, replay-refused) — a compromised sidecar cannot forge a self-consistent request (§2.5); **P0-2** ONE ownership flow — the **recorder** publishes output+containment and signs the receipt over those handles; the **supervisor** imports its own artifacts, verifies by handle, and signs the record; store write is recorder/supervisor only (§4); **P1-3** large inputs use a **bounded authenticated ingress** to supervisor-owned staging (handles, not inline megabytes) (§2.5); **P1-4** schemas de-dangled — `receipt_id` added to the receipt, `runner_id` to the record, containment enum closed + `cgroup_id`/`process_group_id` explicit, §8 uses the dedicated `verify_governed_turn_receipt` (§3, §3.5, §3.6, §8); **P1-5** the head fields (`task_id`/`evidence_head_sequence`/`evidence_final_event_hash`) are authenticated through sign-request→attestation→sign-result→bridge→desktop verify tx (§6); **P1-6** the launcher TCB is frozen (fixed caller/target UID, digest-pinned root-owned executable, sanitized env/argv/FDs/groups, cap-drop) + Windows broker/restricted-token equivalent or Windows fail-closed until implemented (§2).
 
 ## 1. The governed AI turn IS a `bro_supervisor`-owned supervised execution
 
@@ -96,6 +98,24 @@ custody:**
   principal cannot read the recorder key dir nor `ptrace` the recorder (same dedicated-user
   pattern already used for the signer/supervisor denials).
 
+**Privileged launcher TCB contract (P1-6, LOCKED).** The setuid launcher is the only
+privileged component, so its behavior is frozen: a **fixed caller UID** (only the recorder
+principal may invoke it) and a **fixed target UID** (the executor principal — never
+caller-selected); a **fixed executable path pinned by digest** (never a caller-supplied
+path/argv); the launcher binary + its config are **root-owned and non-writable** by the
+recorder/executor/sidecar; before `exec` it **sanitizes** the environment, argv, open FDs
+(closes all but the recorder-owned output pipe), and supplementary groups, and **drops all
+capabilities**; it refuses any request to run a different target UID or executable. It
+holds no signing key and performs no other action.
+
+**Windows (P1-6).** The ratified base design requires a Windows **service SID / virtual
+account** boundary; setuid is Linux-only. On Windows the equivalent is a **broker service**
+under a distinct service SID that spawns the executor with a **restricted/lowbox token**
+(dropped privileges, distinct SID, no read on the recorder key ACL), mirroring the fixed
+caller/target/executable-digest contract above. **Until that Windows broker is separately
+implemented + audited, governed real-mode is FAIL-CLOSED on Windows** (the desktop Blocks;
+Windows is Linux-first per the base design), and 3b-1B ships the Linux launcher first.
+
 **Authoritative containment verdict (P0-2) — no `sign(caller_claim)` oracle.** The final
 `contained` verdict is known only after teardown; the runner never signs a supervisor
 JSON claim. Because the **recorder owns the executor's `pidfd`/cgroup** (via the launcher
@@ -119,39 +139,53 @@ normalization drift.
 
 ## 2.5 Execution-attempt ownership (P1-5) — the SUPERVISOR reserves it
 
-The desktop **never** supplies `execution_attempt_id`, but it MUST supply the **exact
-execution bytes** the executor runs on (the executor needs `system`/`history`/
-`generation_config`, not just hashes). Locked supervisor-service request schema
-(`brops.governed-turn-request.v1`):
+The desktop **never** supplies `execution_attempt_id`; and the request is **authenticated
+by the desktop native host** (P0-1) and carries large inputs as **handles**, not inline
+bytes (P1-3).
+
+**Desktop-authenticated challenge (P0-1).** The sidecar is a compromised-in-scope
+transport; a self-consistent recompute is NOT authenticity (a compromised sidecar could
+alter the bytes AND the hashes AND the nonce together). So the **desktop native host**
+(the Tauri host, the same principal that mints the Wave-3a one-time challenge) signs the
+challenge with a **native-host challenge key** whose public key the supervisor **pins**
+(operator-provisioned). The full canonical envelope — including `workspace_id` +
+`install_id`, which the locked `request_sha256` formula requires (§2.2 of the base design)
+— is what is signed:
 
 ```jsonc
-{ "protocol": "brops.governed-turn-request.v1",
-  "run_id": "<string>",
-  "system": "<exact system prompt bytes>",
-  "history": [ { "role": "…", "content": "…" }, … ],
-  "generation_config": "<exact generation-config bytes>",
-  "request": {                       // the desktop's canonical request envelope (challenge)
-    "request_nonce": "<string>", "system_sha256": "<64hex>", "history_sha256": "<64hex>",
-    "generation_config_sha256": "<64hex>", "requested_at": "<ms>" } }
+// brops.governed-turn-challenge.v1 (signed by the desktop native-host challenge key)
+{ "payload": {
+    "protocol": "brops.request.v1",
+    "workspace_id": "…", "install_id": "…", "request_nonce": "…",
+    "system_sha256": "<64hex>", "history_sha256": "<64hex>",
+    "generation_config_sha256": "<64hex>", "requested_at": "<ms>" },
+  "sig": "<b64url Ed25519 over JCS(payload), native-host challenge key>" }
 ```
 
-Flow (P1-3, P1-5):
-1. **Recompute-and-bind first.** Before reserving an attempt or executing, the supervisor
-   **recomputes** `system_sha256`/`history_sha256`/`generation_config_sha256` from the
-   exact `system`/`history`/`generation_config` bytes (the §4.0a formulas) and **refuses**
-   if any differs from the `request` envelope — the challenge is bound to the exact bytes,
-   never trusted.
-2. the **supervisor atomically reserves/generates** `execution_attempt_id` for that
-   `run_id` (durable, one-time — a `run_id` cannot yield two live attempts racing);
-3. the executor runs on the **verified exact bytes**; the reserved `execution_attempt_id`
-   + the verified request hashes are **bound into** the signed governed-turn-record + the
-   execution receipt;
-4. the caller **cannot choose an arbitrary pre-existing attempt** — the supervisor owns
-   the attempt namespace and returns `{execution_attempt_id, governed-result}`.
+**Bounded ingress (P1-3).** The large inputs (`system`, `history`, `generation_config`)
+are NOT inlined — they exceed the 256 KiB IPC frame the base design locks (history alone
+may reach 8 MiB). The desktop **uploads** them to a **supervisor-owned staging store**
+over a **bounded, authenticated ingress** (chunked authenticated upload / sealed
+FD-handle / supervisor-owned import) — never a single unbounded JSON. Each upload is
+content-addressed; the staging handle IS the input's sha256 (`system_sha256`, etc.). The
+supervisor-service request frame is small: `{run_id, challenge}` (the challenge's
+`*_sha256` fields ARE the staging handles).
 
-This removes the 3b-1A/3b-1B contradiction (the sidecar was requiring a desktop-supplied
-attempt): the desktop sends the exact bytes + challenge + `run_id`; the supervisor
-verifies, reserves, executes, signs, and returns the attempt id.
+**Flow (P0-1, P1-3, P1-5) — verify → import → recompute → reserve → execute:**
+1. the supervisor **verifies the challenge signature** against the pinned native-host key,
+   and **refuses a replayed/expired `request_nonce`** (checked against a durable one-time
+   ledger) — **before** any attempt reservation;
+2. it reads the three inputs from staging **by handle**, confirming `sha256(bytes) ==
+   handle`, and **recomputes the FULL `request_sha256`** over the complete canonical
+   envelope (`protocol, workspace_id, install_id, request_nonce, system_sha256,
+   history_sha256, generation_config_sha256, requested_at`), refusing on any mismatch;
+3. it **atomically reserves/generates** `execution_attempt_id` (durable, one-time — a
+   `run_id` cannot yield two live racing attempts);
+4. the executor runs on the **verified exact bytes**; the attempt id + the verified
+   request hashes are **bound into** the signed governed-turn-record + the execution
+   receipt;
+5. the caller **cannot choose an arbitrary pre-existing attempt** — the supervisor owns
+   the attempt namespace and returns `{execution_attempt_id, governed-result}`.
 
 ## 3. `brops.governed-turn-record.v1` — the ONLY signing authority (exact signed schema)
 
@@ -168,7 +202,7 @@ to the protected state dir as `<run_id>__<execution_attempt_id>.json`.
     "lease_id": "<string>", "lease_nonce": "<string>",
     "task_id": "<string>", "agent_id": "<string>", "session_id": "<string>",
     "workspace_id": "<string>", "install_id": "<string>", "supervisor_id": "<string>",
-    "executor_id": "<string>", "builder_id": "<string>",
+    "executor_id": "<string>", "builder_id": "<string>", "runner_id": "<string>",
     // exact request binding (== the desktop-issued canonical request envelope, design §2.2)
     "request_nonce": "<string>",
     "system_sha256": "<64hex>", "history_sha256": "<64hex>",
@@ -201,6 +235,7 @@ receipt with a byte-for-byte output contract, signed by the **evidence-recorder 
 { "payload": {
     "artifact_type": "brops.governed-turn-execution-receipt.v1",
     "key_id": "<evidence-recorder key id>",         // the recorder RUNNER signs
+    "receipt_id": "<string>",                        // the record + binding table cite this
     "run_id": "<string>", "execution_attempt_id": "<string>", "lease_id": "<string>",
     "runner_id": "<string>", "executor_id": "<string>", "builder_id": "<string>",
     "exit_code": 0, "contained": true,
@@ -238,10 +273,18 @@ teardown measurement (§2), publishes to the content-addressed store, and record
 ```jsonc
 { "artifact_type": "brops.governed-turn-containment.v1",
   "run_id": "<string>", "execution_attempt_id": "<string>", "lease_id": "<string>",
-  "runner_id": "<string>", "process_group_id": "<string>",   // or cgroup id
-  "contained": true, "teardown_outcome": "<enum: contained|orphan-quarantined|…>",
-  "measured_at": "<ms>" }
+  "runner_id": "<string>",
+  "cgroup_id": "<string>",              // the executor's cgroup v2 path/id (Linux)
+  "process_group_id": "<string>",       // the executor's PGID (both are recorded, not "or")
+  "contained": true,                    // MUST be true for an accepted record
+  "teardown_outcome": "contained",      // closed enum: exactly one of
+                                        //   "contained" | "orphan-quarantined" | "timed-out" | "failed"
+  "measured_at": <int> }                // epoch ms
 ```
+
+`teardown_outcome` is a **closed** enum — `contained | orphan-quarantined | timed-out |
+failed`; only `contained` (with `contained: true`) yields an accepted record. Both
+`cgroup_id` and `process_group_id` are always present (the recorder owns both).
 
 - **Canonical bytes:** `JCS(artifact)`; `containment_evidence_sha256 = SHA256(JCS(artifact))`
   is the store handle and the value in the governed-turn-record.
@@ -253,33 +296,49 @@ teardown measurement (§2), publishes to the content-addressed store, and record
   `payload_hash` to equal `containment_evidence_sha256` — so a containment measurement from
   a different attempt/lease can never be substituted.
 
-## 4. Atomic write / sign / publish order (fail-closed, no partial)
+## 4. Ownership + atomic order — ONE flow (P0-2, no partial)
 
-The supervisor, on a `COMPLETED` + verified turn, performs strictly in order:
+Ownership is split by principal and the publication order is fixed so that whoever SIGNS
+an artifact is whoever PRODUCED + published its bytes (nobody signs handles they did not
+publish):
 
-1. **Verify the executor's artifacts** — `verify_artifact` the lease;
-   `verify_governed_turn_receipt` the governed-turn receipt (§3.5: exit 0, contained,
-   exact output bytes, run/attempt/lease bound); `load_head` + `validate_chain` the
-   evidence. Any failure ⇒ no record (fail-closed).
-2. **Publish** the exact artifacts (`system`, `history`, `output`, `generation_config`,
-   `containment_evidence`, `policy_bundle`) to the content-addressed store via the §4.0
-   atomic publish (temp → fsync → verify sha → atomic exclusive publish under the digest).
-3. **Construct** the §3 payload, binding every handle/id/hash from the VERIFIED artifacts
-   (not from any caller input).
-4. **Sign** the payload with the **dedicated governed-turn-recorder** key (§8) ⇒
-   `{payload, signature}`.
-5. **Atomically write, idempotent create-if-absent (P1-4):** temp file in the same dir →
-   `fsync` the file → `sign`/`verify` → **`os.link` / `O_CREAT|O_EXCL`** into
-   `<run_id>__<execution_attempt_id>.json` (create-if-absent, never a clobbering rename).
-   On `EEXIST`: read the existing record and **compare byte-for-byte**; identical ⇒
-   idempotent success, any difference ⇒ **refuse** (a second, divergent attempt for the
-   same `(run_id, attempt_id)` is rejected). Finally `fsync` the directory.
+1. **Recorder captures + publishes what IT owns.** The recorder reads the executor's exact
+   reply bytes (binary, §2) and measures `contained` at teardown; it **atomically publishes
+   the `output` bytes and the `brops.governed-turn-containment.v1` artifact** (§3.6) to the
+   protected content-addressed store (§4.0 atomic publish) — obtaining `output_handle` +
+   `containment_evidence_sha256`.
+2. **Recorder signs over those handles.** It signs the
+   `brops.governed-turn-execution-receipt.v1` (§3.5, over `output_handle`) + the
+   containment-confirmed evidence event + head (evidence-recorder key) — so the receipt's
+   `output_handle` refers to bytes the recorder itself published (no forward reference).
+3. **Supervisor imports what IT owns.** From the authenticated request staging (§2.5) the
+   supervisor **atomically publishes** the `system`/`history`/`generation_config` and the
+   `policy_bundle` it holds into the protected store (it re-verified their hashes in §2.5).
+   The supervisor never publishes the output/containment (the recorder owns those).
+4. **Supervisor verifies the recorder's chain by handle.** `verify_artifact` the lease;
+   `verify_governed_turn_receipt` (§3.5 — reads `output` from the store by handle,
+   re-hashes, checks exit 0 + `contained` + run/attempt/lease); `load_head` +
+   `validate_chain`; confirm the containment artifact cross-binds (§3.6). Any failure ⇒ no
+   record.
+5. **Supervisor constructs + signs the terminal record** with the **dedicated
+   governed-turn-recorder** key (§8), binding every handle/id/hash from the VERIFIED
+   artifacts (never a caller input).
+6. **Atomic write, idempotent create-if-absent (P1-4):** temp file in the state dir →
+   `fsync` → **`os.link` / `O_CREAT|O_EXCL`** into `<run_id>__<execution_attempt_id>.json`
+   (create-if-absent, never a clobbering rename). On `EEXIST`: read + **byte-compare**;
+   identical ⇒ idempotent success, any difference ⇒ **refuse**. Finally `fsync` the dir.
 
-Ordering guarantees: artifacts exist in the store before the record references them (2
-before 3); the record is signed before it is visible (4 before 5); a crash before step 5
+**Store ACL (P0-2):** the protected store is writable only by the **recorder** (output +
+containment) and the **supervisor** (its imported artifacts); the **executor** and the
+**sidecar** have **no write** (and no read of keys). Both service principals are in the
+shared store group (as 3b-1A), but the executor/sidecar principals are not.
+
+**Ordering guarantees:** every artifact's bytes exist in the store before anything
+references them; each signer signed only handles it published (1→2 recorder, 3→5
+supervisor); the record is signed before it is visible (5 before 6); a crash before step 6
 leaves **no** record (the turn is unattestable ⇒ the desktop Blocks); a crash after leaves
-a complete, signed, re-verifiable record. The create-if-absent + byte-compare makes a
-re-run idempotent and a divergent overwrite impossible.
+a complete, signed, re-verifiable record. Create-if-absent + byte-compare makes a re-run
+idempotent and a divergent overwrite impossible.
 
 ## 5. Bindings (each cross-checked by `LiveRunStateProvider`, verifying the SIGNED record)
 
@@ -294,7 +353,7 @@ re-run idempotent and a divergent overwrite impossible.
 | `policy_id`, `policy_version`, `policy_bundle_sha256` | the operator-authorized policy (the signer re-checks bundle digest, P1-7) |
 | `containment_evidence_sha256` + `containment_event_id` | the `brops.governed-turn-containment.v1` artifact (§3.6) whose `run_id`/`execution_attempt_id`/`lease_id`/`runner_id` equal the record's + `contained==true`, recorded as a containment-confirmed evidence event whose `payload_hash == containment_evidence_sha256` |
 | `receipt_id`, `output_sha256` | the verified governed-turn execution receipt (§3.5): receipt/attempt/lease ids match; the exact output bytes re-hash to `output_sha256 == output_handle` (binary, no normalization) |
-| `evidence_final_event_hash`, `evidence_head_sequence` | the verified evidence head, with the sequence **≥ a durable per-install high-water mark** (anti-rollback) |
+| `task_id`, `evidence_final_event_hash`, `evidence_head_sequence` | the verified evidence head, authenticated via the supervisor attestation (§6 P1-5), with the sequence checked against the durable **per-(install, task/chain)** high-water mark (§6 P1-2, P1-6 anti-rollback) |
 
 The `RunState` is built from the **verified signed record** only.
 
@@ -323,6 +382,22 @@ The `RunState` is built from the **verified signed record** only.
   - **Crash sync:** the floor advance and the accepted-attempt row commit together; a crash
     before COMMIT leaves both unchanged (the turn Blocks); after COMMIT both are durable and
     consistent — a stolen older signed head can never be re-accepted.
+  - **Authenticated relay of the head fields (P1-5, LOCKED):** the desktop floor needs
+    `task_id` + `evidence_head_sequence` + `evidence_final_event_hash` to be **authenticated**
+    (they are in the SIGNED governed-turn-record, but today's forensic bridge relay carries
+    only run/attempt/lease ids + the attestation blob). Lock the extension chain so the head
+    fields reach the desktop verify tx inside supervisor-attested evidence:
+    - **sign-request evidence** (`brops.sign-request.v1`, design §4.1) gains
+      `task_id`, `evidence_head_sequence`, `evidence_final_event_hash` — so the supervisor
+      **attestation** (`brops.run-attestation.v1`) covers them (JCS(evidence));
+    - **sign-result** (`brops.sign-result.v1`, §4.2) echoes them into the forensic record
+      alongside run/attempt/lease;
+    - **bridge-result** `receipt` relays them (`task_id`, `evidence_head_sequence`,
+      `evidence_final_event_hash`), and they equal the governed-turn-record's;
+    - **desktop verification source:** the desktop `verify_and_record_receipt` tx re-verifies
+      the supervisor attestation (against the manifest attestation key, 3b-2), reads these
+      authenticated head fields, and advances `evidence_head_floor` from them — the floor is
+      driven only by supervisor-attested values, never a bare bridge claim.
 - **Idempotent record:** the record is keyed by `(run_id, execution_attempt_id)`; a second
   atomic write for the same attempt is allowed only if byte-identical, else refused. The
   content-addressed store is idempotent by construction.
@@ -359,10 +434,13 @@ full receipt/evidence-head forgery capability):
 - **Lease:** `bro_supervisor.issue_lease` (issuer) + `bro_execution_lease.validate_execution_lease`.
 - **Containment:** `bro_supervisor.spawn_builder`'s process-group containment verdict + the
   containment evidence event.
-- **Receipt + evidence:** signed by the **evidence-recorder RUNNER** (§2), not the model
-  executor — `bro_run_receipt.run_and_sign` (governed-turn variant, exact-byte
-  `output_sha256`, §2) + `bro_evidence` chain/head, verified by
-  `bro_receipt.verify_passing_receipt` / `bro_evidence`.
+- **Receipt:** the **`brops.governed-turn-execution-receipt.v1`** (§3.5) — a NEW
+  governed-turn artifact signed by the **evidence-recorder RUNNER** (not the model
+  executor, not the generic test-command `run_and_sign`), verified by the dedicated
+  **`verify_governed_turn_receipt`** (§3.5), NOT `verify_passing_receipt`.
+- **Containment + evidence:** the **`brops.governed-turn-containment.v1`** artifact (§3.6)
+  recorded as a containment-confirmed `bro_evidence` event + head (evidence-recorder),
+  measured firsthand by the recorder (§2).
 
 ## 9. Acceptance (for 3b-1B implementation, after this addendum is GREEN)
 
