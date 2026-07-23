@@ -99,9 +99,13 @@ def load_attestation_key(keydir: os.PathLike[str] | str) -> dict[str, str]:
     return {"key_id": str(key["key_id"]), "private_key": str(key["private_key"])}
 
 
-def build_evidence(run_state: RunState, store: EvidenceStore) -> dict[str, Any]:
+def _build_evidence(run_state: RunState, store: EvidenceStore) -> dict[str, Any]:
     """Publish each large artifact to the store and build the evidence object with
-    handles + authoritative scalars (design §4.1). The handle IS the artifact's sha256."""
+    handles + authoritative scalars (design §4.1). The handle IS the artifact's sha256.
+
+    PRIVATE (audit P0-2): only `produce_sign_request` may call this. There is no public
+    seam that builds/attests caller-supplied evidence — the supervisor accepts only a
+    `{run_id, execution_attempt_id}` handle and builds evidence from its own state."""
     if run_state.decision != DECISION_COMPLETED:
         raise AttestationError(f"refusing to attest a non-completed run: {run_state.decision}")
     system_handle = store.publish(system_bytes(run_state.system))
@@ -135,9 +139,13 @@ def build_evidence(run_state: RunState, store: EvidenceStore) -> dict[str, Any]:
     }
 
 
-def attest(evidence: Mapping[str, Any], attestation_key: Mapping[str, str]) -> dict[str, Any]:
+def _attest(evidence: Mapping[str, Any], attestation_key: Mapping[str, str]) -> dict[str, Any]:
     """Sign a detached attestation over `JCS(evidence)` and wrap it in a
-    `brops.sign-request.v1` (design §1.3, §4.1)."""
+    `brops.sign-request.v1` (design §1.3, §4.1).
+
+    PRIVATE (audit P0-2): this is NOT a public `attest(caller_evidence)` oracle. It is
+    reachable only through `produce_sign_request`, which builds `evidence` itself from the
+    supervisor's own terminal run state — never from a caller."""
     private = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(attestation_key["private_key"]))
     signature = private.sign(canonical_bytes(dict(evidence)))
     return {
@@ -171,5 +179,5 @@ def produce_sign_request(
         )
     if run_state.run_id != run_id or run_state.execution_attempt_id != execution_attempt_id:
         raise AttestationError("run state identity does not match the requested handle")
-    evidence = build_evidence(run_state, store)
-    return attest(evidence, attestation_key)
+    evidence = _build_evidence(run_state, store)
+    return _attest(evidence, attestation_key)

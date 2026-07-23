@@ -22,12 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import brops_canonical as bc
 from brops_evidence_store import EvidenceStore, EvidenceStoreError
 import brops_receipt_signer as signer
-from brops_supervisor_attest import (
-    RunState,
-    attest,
-    build_evidence,
-    produce_sign_request,
-)
+from brops_supervisor_attest import RunState, produce_sign_request
 
 
 def _keypair():
@@ -255,11 +250,24 @@ class SignerEndToEndTests(unittest.TestCase):
         self.assertIn(result["reason"], {"handle_missing", "containment_missing"})
 
     def test_non_completed_run_is_never_attested(self):
+        # The supervisor refuses to attest a non-completed run — reachable ONLY through
+        # produce_sign_request (there is no public build_evidence/attest seam, P0-2).
         from brops_supervisor_attest import AttestationError
 
         state = _run_state(decision="denied")
         with self.assertRaises(AttestationError):
-            build_evidence(state, self.store)
+            produce_sign_request(
+                state.run_id, state.execution_attempt_id,
+                run_state_provider=_Provider(state), store=self.store,
+                attestation_key=self.attestation_key,
+            )
+
+    def test_no_public_attest_or_build_evidence_oracle(self):
+        # P0-2: the caller-evidence signing seam must not exist as a public callable.
+        import brops_supervisor_attest as mod
+
+        self.assertFalse(hasattr(mod, "attest"))
+        self.assertFalse(hasattr(mod, "build_evidence"))
 
     def test_reversed_timestamps_are_refused(self):
         state = _run_state(requested_at="5000", completed_at="1000")
