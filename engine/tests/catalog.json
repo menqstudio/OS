@@ -577,6 +577,15 @@
         "bounded-frame-cap",
         "strict-decode-duplicate-unknown"
       ]
+    },
+    {
+      "id": "brops-live-runstate",
+      "path": "tests/test_brops_live_runstate.py",
+      "covers": [
+        "authoritative-lease-validation",
+        "passing-receipt-verification",
+        "evidence-chain-and-containment"
+      ]
     }
   ]
 }
