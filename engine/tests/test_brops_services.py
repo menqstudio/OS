@@ -114,7 +114,9 @@ class SignerServiceTests(unittest.TestCase):
         env = dict(self.env)
         env["BROPS_ALLOWED_PEER_UIDS"] = "999999"  # not our uid
         self._serve_once(env)
-        with self.assertRaises(brops_protocol.ProtocolError):
+        # A denied peer is dropped without a response: the client sees EOF (ProtocolError)
+        # or a broken pipe / reset (OSError) depending on timing — both mean DENIED.
+        with self.assertRaises((brops_protocol.ProtocolError, OSError)):
             brops_socket.request(self.sock, self._request(), timeout=5)
 
 

@@ -135,14 +135,14 @@ class EngineSidecarTests(unittest.TestCase):
         self.assertIsNone(doc["result"])
         self.assertIn("supervisor service not provisioned", doc["error"])
 
-    def test_real_mode_relay_is_fail_closed_when_the_run_state_is_unavailable(self):
-        # The supervisor socket is set, so the sidecar wires the relay — but the governed
-        # task-request carries no run identifiers the supervisor can resolve, so the relay
-        # never yields a signed governed-result and the sidecar fails closed (never a
-        # partial/unsigned result). The sidecar holds no signer material either way.
+    def test_real_mode_relay_is_fail_closed_when_the_supervisor_is_unreachable(self):
+        # A schema-valid governed request now carries execution_attempt_id, so the sidecar
+        # wires the real relay to the supervisor service. With no service listening the
+        # relay fails and the sidecar fails closed (never a partial/unsigned result). The
+        # sidecar holds no signer material and never reaches the signer either way.
         env = {k: "x" for k in engine_sidecar._PROVISION_ENV}
         env[engine_sidecar._SUPERVISOR_SOCKET_ENV] = "/nonexistent/brops-supervisor.sock"
-        doc = _drive(_VALID, env=env)
+        doc = _drive({**_VALID, "execution_attempt_id": "attempt-1"}, env=env)
         self.assertFalse(doc["ok"])
         self.assertIsNone(doc["result"])
 

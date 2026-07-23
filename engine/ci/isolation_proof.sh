@@ -19,12 +19,14 @@ SUPUID="$(id -u brops-supervisor)"
 
 B="$(mktemp -d /tmp/brops-iso.XXXXXX)"
 chmod 755 "$B"
-mkdir -p "$B"/{signerkeys,attkeys,store,state,registry/config,signer-sock,sup-sock}
+mkdir -p "$B"/{signerkeys,attkeys,store,state,registry/config,signer-sock,sup-sock,wt}
 
-# 1) Generate keys + a signed registry (as the login user, before we tighten ownership).
+# 1) Generate keys + a signed registry + a VALID signed run record (as the login user,
+#    before we tighten ownership).
 python3 "$ENGINE/ci/gen_isolation_fixture.py" "$B"
 ATT_PUB="$(cat "$B/att-pub")"
 OP_PIN="$(cat "$B/operator-pin")"
+POLICY_SHA="$(cat "$B/policy-bundle-sha")"
 
 # 2) Custody: private-key dirs owner-only to their principals; the store is group-shared
 #    and SETGID (2770) so artifacts the supervisor publishes inherit the brops-store group
@@ -40,9 +42,9 @@ sudo chown brops-supervisor:brops-supervisor "$B/sup-sock";  sudo chmod 755 "$B/
 
 SIGNER_SOCK="$B/signer-sock/signer.sock"
 SUP_SOCK="$B/sup-sock/sup.sock"
-DUMMY_DIGEST="$(printf '0%.0s' {1..64})"
 
-# 3) Start the SIGNER service AS brops-signer; it admits ONLY the supervisor UID.
+# 3) Start the SIGNER service AS brops-signer; it admits ONLY the supervisor UID. Its
+#    expected policy-bundle digest is the run record's real bundle (positive control).
 sudo -u brops-signer env \
   BRO_ENV=ci PYTHONPATH="$PYTHONPATH" \
   BROPS_EVIDENCE_STORE_DIR="$B/store" \
@@ -51,7 +53,7 @@ sudo -u brops-signer env \
   BROPS_SUPERVISOR_ATTESTATION_KEY_ID="sup-att-1" \
   BROPS_ALLOWED_EXECUTOR_IDS="exec-1" BROPS_ALLOWED_BUILDER_IDS="builder-1" \
   BROPS_ALLOWED_SUPERVISOR_IDS="sup-1" BROPS_EXPECTED_POLICY_ID="policy-1" \
-  BROPS_EXPECTED_POLICY_VERSION="1" BROPS_EXPECTED_POLICY_BUNDLE_SHA256="$DUMMY_DIGEST" \
+  BROPS_EXPECTED_POLICY_VERSION="1" BROPS_EXPECTED_POLICY_BUNDLE_SHA256="$POLICY_SHA" \
   BROPS_SIGNER_SOCKET="$SIGNER_SOCK" BROPS_ALLOWED_PEER_UIDS="$SUPUID" \
   python3 "$ENGINE/tools/brops_signer_service.py" &
 SIGNER_PID=$!
@@ -79,7 +81,28 @@ done
 [ -S "$SIGNER_SOCK" ] || { echo "signer service did not bind"; exit 1; }
 [ -S "$SUP_SOCK" ]    || { echo "supervisor service did not bind"; exit 1; }
 
-# 6) Run the PROVER as the login (attacker) user — every attack must be denied.
+# 6) POSITIVE CONTROL (before the denials): a real allowed login->supervisor->signer
+#    signed round-trip. This proves the signing path is ALIVE, so the denial checks
+#    below are real denials, not a dead path silently "passing".
+BROPS_POS_SOCK="$SUP_SOCK" python3 - "$ENGINE" <<'PY'
+import sys, pathlib, os
+engine = sys.argv[1]
+sys.path.insert(0, str(pathlib.Path(engine) / "runtime"))
+sys.path.insert(0, str(pathlib.Path(engine) / "tools"))
+import brops_socket
+r = brops_socket.request(
+    os.environ["BROPS_POS_SOCK"],
+    {"protocol": "brops.evidence-request.v1", "run_id": "ci-run-1",
+     "execution_attempt_id": "ci-attempt-1"},
+    timeout=20,
+)
+assert isinstance(r, dict) and r.get("status") == "signed", f"POSITIVE CONTROL FAILED: {r}"
+rec = r.get("receipt") or {}
+assert rec.get("envelope_jcs_b64") and rec.get("signature_b64"), f"missing signed wire: {r}"
+print("POSITIVE CONTROL PASSED — supervisor->signer signed round-trip")
+PY
+
+# 7) Run the PROVER as the login (attacker) user — every attack must be denied.
 BROPS_SIGNER_SOCKET="$SIGNER_SOCK" BROPS_SUPERVISOR_SOCKET="$SUP_SOCK" \
 BROPS_PROVE_SIGNER_KEY="$B/signerkeys/brops-receipt-signer.json" \
 BROPS_PROVE_ATTESTATION_KEY="$B/attkeys/brops-supervisor-attestation.json" \
