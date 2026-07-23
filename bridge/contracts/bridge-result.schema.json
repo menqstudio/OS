@@ -31,6 +31,30 @@
         "containment_evidence_b64": {
           "type": ["string", "null"],
           "description": "Wave 3b (design §4.2, P1-3): base64url of the EXACT containment-evidence bytes the signer hashed into `containment_evidence_sha256`, so the desktop can persist the artifact for audit and re-check `sha256 == containment_evidence_sha256` without depending on the engine store. Capped at 64 KiB HERE (it does NOT ride the signer's 64 KiB IPC frame). `null`/absent when there is no signed receipt. The desktop ignores it until 3b-2 persistence lands."
+        },
+        "attestation_evidence_jcs_b64": {
+          "type": ["string", "null"],
+          "description": "Wave 3b (design §4.2, P1-6): base64url of the JCS(evidence) the supervisor attested. Non-authoritative transport — the desktop re-verifies the attestation signature against its manifest `supervisor_attestation`-usage key before persisting/trusting."
+        },
+        "attestation_signature_b64": {
+          "type": ["string", "null"],
+          "description": "Wave 3b (design §4.2, P1-6): base64url of the detached Ed25519 supervisor attestation over `attestation_evidence_jcs_b64`."
+        },
+        "supervisor_attestation_key_id": {
+          "type": ["string", "null"],
+          "description": "Wave 3b (design §4.2, P1-6): the manifest `supervisor_attestation` key id the desktop resolves + re-verifies the attestation against."
+        },
+        "run_id": {
+          "type": ["string", "null"],
+          "description": "Wave 3b (design §4.2, P1-6): forensic run binding — the supervisor's run id for this receipt."
+        },
+        "execution_attempt_id": {
+          "type": ["string", "null"],
+          "description": "Wave 3b (design §4.2, P1-6): forensic run binding — the execution attempt id."
+        },
+        "lease_id": {
+          "type": ["string", "null"],
+          "description": "Wave 3b (design §4.2, P1-6): forensic run binding — the execution lease id."
         }
       },
       "description": "The governed-run receipt (from bro_supervisor.SupervisorResult). Carries the signed material for the DESKTOP to verify. There is no `verified` field — trust is a desktop signature check, never a bridge boolean."

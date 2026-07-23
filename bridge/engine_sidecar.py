@@ -118,7 +118,11 @@ def _signed_self_test_callables() -> tuple[Callable[[dict], Any], Callable[[Any]
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+    import time
+
+    from brops_canonical import policy_bundle_sha256
     from brops_evidence_store import EvidenceStore
+    from brops_receipt_signer import SignerAuthorizationPolicy
     from brops_sign_flow import sign_completed_run
     from brops_supervisor_attest import RunState
 
@@ -139,6 +143,15 @@ def _signed_self_test_callables() -> tuple[Callable[[dict], Any], Callable[[Any]
     signing_key = {"key_id": "self-test-receipt-key", "private_key": sig_priv}
     attestation_key = {"key_id": "self-test-attestation-key", "private_key": att_priv}
     store = EvidenceStore(tempfile.mkdtemp(prefix="brops-selftest-store-"))
+    # The signer's own authorization policy (audit P1-7), matching the fake run below.
+    policy = SignerAuthorizationPolicy(
+        allowed_executor_ids=frozenset({"exec-self-test"}),
+        allowed_builder_ids=frozenset({"builder-self-test"}),
+        allowed_supervisor_ids=frozenset({"sup-self-test"}),
+        expected_policy_id="policy-self-test",
+        expected_policy_version="1",
+        expected_policy_bundle_sha256=policy_bundle_sha256(b"self-test-policy-bundle"),
+    )
 
     def run_task(request: dict) -> Any:
         task_id = str(request.get("task_id", "t-self-test-signed"))
@@ -180,6 +193,8 @@ def _signed_self_test_callables() -> tuple[Callable[[dict], Any], Callable[[Any]
             signing_key=signing_key,
             attestation_key=attestation_key,
             supervisor_attestation_pubkey_hex=att_pub,
+            policy=policy,
+            now_ms=int(time.time() * 1000),
         )
 
     def read_result(outcome: Any) -> str:

@@ -26,6 +26,7 @@ import json
 import os
 import pathlib
 import stat
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from cryptography.exceptions import InvalidSignature
@@ -78,6 +79,22 @@ _EVIDENCE_HANDLES = (
     "containment_evidence_handle",
     "policy_bundle_handle",
 )
+
+
+@dataclass(frozen=True)
+class SignerAuthorizationPolicy:
+    """Operator-provisioned authorization the signer enforces INDEPENDENTLY of the
+    attestation (design §1.5, audit P1-7). Even a validly-attested run is refused unless
+    its identities are in the allow-sets, its policy is in force, its policy bundle matches
+    the authorized digest, and its timestamps are sane + not in the future beyond skew."""
+
+    allowed_executor_ids: frozenset[str]
+    allowed_builder_ids: frozenset[str]
+    allowed_supervisor_ids: frozenset[str]
+    expected_policy_id: str
+    expected_policy_version: str
+    expected_policy_bundle_sha256: str
+    max_future_skew_ms: int = 300_000  # 5 minutes
 
 
 class SignRefused(Exception):
@@ -143,9 +160,9 @@ def _verify_attestation(
     return evidence
 
 
-def _authorize(evidence: Mapping[str, Any]) -> None:
-    """The signer's independent gate (design §1.5, items 1/4/6/7). Handle checks (item 3,
-    5) and the request binding (item 2) happen where the store is read."""
+def _authorize(evidence: Mapping[str, Any], policy: SignerAuthorizationPolicy, now_ms: int) -> None:
+    """The signer's independent authorization gate (design §1.5; audit P1-7). Handle
+    checks (item 3, 5) and the request binding (item 2) happen where the store is read."""
     for field in _EVIDENCE_SCALARS:
         value = evidence.get(field)
         if not isinstance(value, str) or value == "":
@@ -158,8 +175,25 @@ def _authorize(evidence: Mapping[str, Any]) -> None:
             raise _refuse("malformed", f"evidence.{field} must be a 64-hex handle")
     if evidence["decision"] != DECISION_COMPLETED:
         raise _refuse("not_completed", evidence["decision"])
-    # Identity (item 6): all three must be present (already checked non-empty above).
-    # Timestamps (item 7): requested_at <= completed_at, both integer ms.
+
+    # Identity (item 6): each principal must be in its operator-provisioned allow-set —
+    # non-empty is NOT enough (audit P1-7).
+    if evidence["executor_id"] not in policy.allowed_executor_ids:
+        raise _refuse("identity_denied", f"executor {evidence['executor_id']} not allowed")
+    if evidence["builder_id"] not in policy.allowed_builder_ids:
+        raise _refuse("identity_denied", f"builder {evidence['builder_id']} not allowed")
+    if evidence["supervisor_id"] not in policy.allowed_supervisor_ids:
+        raise _refuse("identity_denied", f"supervisor {evidence['supervisor_id']} not allowed")
+
+    # Policy in force (item 4): the run's policy id + version must be the authorized ones.
+    if (
+        evidence["policy_id"] != policy.expected_policy_id
+        or evidence["policy_version"] != policy.expected_policy_version
+    ):
+        raise _refuse("policy_mismatch", "policy id/version is not in force")
+
+    # Timestamps (item 7): integer ms, requested <= completed, and neither in the future
+    # beyond the allowed skew (defends a rolled-forward clock / replayed future receipt).
     try:
         requested = int(evidence["requested_at"])
         completed = int(evidence["completed_at"])
@@ -167,6 +201,9 @@ def _authorize(evidence: Mapping[str, Any]) -> None:
         raise _refuse("timestamp_invalid", "requested_at/completed_at are not ms integers")
     if requested < 0 or completed < 0 or requested > completed:
         raise _refuse("timestamp_invalid", f"{requested} > {completed}")
+    horizon = now_ms + policy.max_future_skew_ms
+    if requested > horizon or completed > horizon:
+        raise _refuse("timestamp_invalid", "timestamp is in the future beyond the allowed skew")
 
 
 def _resolve_handles(evidence: Mapping[str, Any], store: EvidenceStore) -> dict[str, str]:
@@ -194,10 +231,12 @@ def sign(
     signing_key: Mapping[str, str],
     supervisor_attestation_pubkey_hex: str,
     supervisor_key_id: str,
+    policy: SignerAuthorizationPolicy,
+    now_ms: int,
 ) -> dict[str, Any]:
-    """Verify → validate → construct → sign. Returns a `brops.sign-result.v1` union
-    (design §4.2): `{status:"signed", ...}` or `{status:"refused", reason, ...}`. Never
-    raises for a refusal — the caller always gets a structured result to relay."""
+    """Verify → authorize → validate → construct → sign. Returns a `brops.sign-result.v1`
+    union (design §4.2): `{status:"signed", ...}` or `{status:"refused", reason, ...}`.
+    Never raises for a refusal — the caller always gets a structured result to relay."""
     receipt_id = None
     try:
         if isinstance(sign_request, Mapping) and isinstance(sign_request.get("evidence"), Mapping):
@@ -208,8 +247,12 @@ def sign(
             sign_request, supervisor_attestation_pubkey_hex, supervisor_key_id
         )
         receipt_id = evidence.get("receipt_id") if isinstance(evidence.get("receipt_id"), str) else receipt_id
-        _authorize(evidence)
+        _authorize(evidence, policy, now_ms)
         handles = _resolve_handles(evidence, store)
+        # Policy-bundle authority (audit P1-7): the run's policy bundle must be the exact
+        # operator-authorized digest, not merely a well-formed handle.
+        if handles["policy_bundle_handle"] != policy.expected_policy_bundle_sha256:
+            raise _refuse("policy_mismatch", "policy bundle digest is not the authorized one")
 
         # Recompute request_sha256 independently from the derived hashes (design §1.5
         # item 2) — never trust an incoming request_sha256.
@@ -281,50 +324,116 @@ def sign(
 
 
 # --------------------------------------------------------------------------- #
-# Separate-process entrypoint (design §1.1). The signer runs as its own OS process
-# under a dedicated principal; the supervisor connects over an ACL'd local channel and
-# streams a sign-request in / a sign-result out. Here the boundary is realized as a
-# stdin->stdout process; the dedicated-SID/UID + socket/pipe ACL is the deployment layer
-# (Linux-first, design §1.1). Config comes ONLY from the signer's own environment — never
-# from the request — so the sidecar cannot point it at a foreign key.
+# Signer service components + request handling (design §1.1, §4). All config comes ONLY
+# from the signer's OWN environment — never from the request — so a caller cannot point
+# the signer at a foreign key or a looser policy. `handle_sign_request` is shared by the
+# stdin entrypoint here and the socket service in `brops_signer_service`.
 # --------------------------------------------------------------------------- #
-def main(stdin, stdout) -> int:
-    """Read one `brops.sign-request.v1` (JSON) from stdin, write one
-    `brops.sign-result.v1` to stdout. Always exits 0; a refusal is fail-closed."""
-    try:
-        raw = stdin.read()
-        sign_request = json.loads(raw) if raw and raw.strip() else {}
-    except Exception:  # noqa: BLE001 — unparseable input is a fail-closed refusal
-        json.dump(
-            {"protocol": SIGN_RESULT_PROTOCOL, "status": "refused", "receipt_id": None,
-             "reason": "malformed"},
-            stdout,
-        )
-        return 0
-    try:
-        store = EvidenceStore(os.environ["BROPS_EVIDENCE_STORE_DIR"])
-        signing_key = load_receipt_signing_key(os.environ["BROPS_RECEIPT_SIGNER_KEYDIR"])
-        att_pub = os.environ["BROPS_SUPERVISOR_ATTESTATION_PUBKEY"].strip()
-        supervisor_key_id = os.environ["BROPS_SUPERVISOR_ATTESTATION_KEY_ID"].strip()
-    except (KeyError, ValueError, EvidenceStoreError):
-        json.dump(
-            {"protocol": SIGN_RESULT_PROTOCOL, "status": "refused", "receipt_id": None,
-             "reason": "malformed"},
-            stdout,
-        )
-        return 0
-    result = sign(
-        sign_request,
-        store=store,
-        signing_key=signing_key,
-        supervisor_attestation_pubkey_hex=att_pub,
-        supervisor_key_id=supervisor_key_id,
+_CONTRACTS_DIR = pathlib.Path(__file__).resolve().parents[1] / "contracts"
+
+
+def _sign_request_schema() -> dict:
+    return json.loads((_CONTRACTS_DIR / "brops-sign-request.v1.schema.json").read_text("utf-8"))
+
+
+def load_authorization_policy(env: Mapping[str, str] | None = None) -> SignerAuthorizationPolicy:
+    """Build the signer's authorization policy from its own environment (audit P1-7)."""
+    e = os.environ if env is None else env
+
+    def _set(name: str) -> "frozenset[str]":
+        return frozenset(x.strip() for x in e.get(name, "").split(",") if x.strip())
+
+    return SignerAuthorizationPolicy(
+        allowed_executor_ids=_set("BROPS_ALLOWED_EXECUTOR_IDS"),
+        allowed_builder_ids=_set("BROPS_ALLOWED_BUILDER_IDS"),
+        allowed_supervisor_ids=_set("BROPS_ALLOWED_SUPERVISOR_IDS"),
+        expected_policy_id=e["BROPS_EXPECTED_POLICY_ID"].strip(),
+        expected_policy_version=e["BROPS_EXPECTED_POLICY_VERSION"].strip(),
+        expected_policy_bundle_sha256=e["BROPS_EXPECTED_POLICY_BUNDLE_SHA256"].strip(),
+        max_future_skew_ms=int(e.get("BROPS_MAX_FUTURE_SKEW_MS", "300000")),
     )
-    json.dump(result, stdout)
+
+
+@dataclass
+class SignerComponents:
+    store: EvidenceStore
+    signing_key: Mapping[str, str]
+    supervisor_attestation_pubkey_hex: str
+    supervisor_key_id: str
+    policy: SignerAuthorizationPolicy
+
+
+def load_components(env: Mapping[str, str] | None = None) -> SignerComponents:
+    """Load the signer's store + keys + policy from its own environment. Raises on any
+    missing/invalid provisioning (the caller turns that into a fail-closed refusal)."""
+    e = os.environ if env is None else env
+    return SignerComponents(
+        store=EvidenceStore(e["BROPS_EVIDENCE_STORE_DIR"]),
+        signing_key=load_receipt_signing_key(e["BROPS_RECEIPT_SIGNER_KEYDIR"]),
+        supervisor_attestation_pubkey_hex=e["BROPS_SUPERVISOR_ATTESTATION_PUBKEY"].strip(),
+        supervisor_key_id=e["BROPS_SUPERVISOR_ATTESTATION_KEY_ID"].strip(),
+        policy=load_authorization_policy(e),
+    )
+
+
+def _refused_malformed(sign_request: Any) -> dict[str, Any]:
+    rid = None
+    if isinstance(sign_request, Mapping) and isinstance(sign_request.get("evidence"), Mapping):
+        r = sign_request["evidence"].get("receipt_id")
+        rid = r if isinstance(r, str) else None
+    return {"protocol": SIGN_RESULT_PROTOCOL, "status": "refused", "receipt_id": rid, "reason": "malformed"}
+
+
+def handle_sign_request(
+    sign_request: Mapping[str, Any], components: SignerComponents, now_ms: int
+) -> dict[str, Any]:
+    """Schema-validate a decoded `brops.sign-request.v1` (unknown-field rejection) then
+    sign. A schema failure is a fail-closed `refused{malformed}` (design §4)."""
+    import brops_protocol
+
+    try:
+        brops_protocol.validate(sign_request, _sign_request_schema())
+    except brops_protocol.ProtocolError:
+        return _refused_malformed(sign_request)
+    return sign(
+        sign_request,
+        store=components.store,
+        signing_key=components.signing_key,
+        supervisor_attestation_pubkey_hex=components.supervisor_attestation_pubkey_hex,
+        supervisor_key_id=components.supervisor_key_id,
+        policy=components.policy,
+        now_ms=now_ms,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# stdin/stdout entrypoint — a single framed request in, a single framed result out
+# (design §1.9 framing, audit P1-4). The socket SERVICE (design §1.1) lives in
+# `brops_signer_service`; this entrypoint is used for one-shot invocation and tests.
+# --------------------------------------------------------------------------- #
+def main(reader, writer) -> int:
+    """Read one length-prefixed `brops.sign-request.v1` frame from `reader` (binary),
+    write one `brops.sign-result.v1` frame to `writer` (binary). Always exits 0."""
+    import time
+
+    import brops_protocol
+
+    now_ms = int(time.time() * 1000)
+    try:
+        components = load_components()
+    except (KeyError, ValueError, EvidenceStoreError):
+        brops_protocol.write_frame(writer, _refused_malformed(None))
+        return 0
+    try:
+        sign_request = brops_protocol.read_frame(reader)
+    except brops_protocol.ProtocolError:
+        brops_protocol.write_frame(writer, _refused_malformed(None))
+        return 0
+    brops_protocol.write_frame(writer, handle_sign_request(sign_request, components, now_ms))
     return 0
 
 
 if __name__ == "__main__":
     import sys
 
-    raise SystemExit(main(sys.stdin, sys.stdout))
+    raise SystemExit(main(sys.stdin.buffer, sys.stdout.buffer))

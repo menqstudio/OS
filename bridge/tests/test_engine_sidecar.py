@@ -169,6 +169,11 @@ class EngineSidecarTests(unittest.TestCase):
         envelope = json.loads(env_bytes)
         self.assertEqual(envelope["protocol"], "brops.receipt.v1")
         self.assertEqual(envelope["decision"], "completed")
+        # Forensic-attestation record relayed to the desktop (P1-6).
+        self.assertTrue(receipt["attestation_evidence_jcs_b64"])
+        self.assertTrue(receipt["attestation_signature_b64"])
+        self.assertEqual(receipt["supervisor_attestation_key_id"], "self-test-attestation-key")
+        self.assertTrue(receipt["run_id"] and receipt["lease_id"] and receipt["execution_attempt_id"])
 
     def test_result_never_carries_result_on_any_failure(self):
         # Sweep: every non-happy path has result is None.

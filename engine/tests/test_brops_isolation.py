@@ -26,12 +26,30 @@ sys.path.insert(0, str(ROOT / "tools"))
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+import io
+
+import brops_canonical as bc
+import brops_protocol
 import brops_receipt_signer as signer
 import brops_supervisor_attest as attest_mod
 from brops_evidence_store import EvidenceStore, EvidenceStoreError
 from brops_supervisor_attest import RunState, produce_sign_request
 
 _POSIX = os.name == "posix"
+
+# The signer's authorization policy matching the `_run_state()` fixture (policy_bundle=b"pb").
+_POLICY_BUNDLE = b"pb"
+
+
+def _policy():
+    return signer.SignerAuthorizationPolicy(
+        allowed_executor_ids=frozenset({"exec-1"}),
+        allowed_builder_ids=frozenset({"builder-1"}),
+        allowed_supervisor_ids=frozenset({"sup-1"}),
+        expected_policy_id="policy-1",
+        expected_policy_version="1",
+        expected_policy_bundle_sha256=bc.policy_bundle_sha256(_POLICY_BUNDLE),
+    )
 
 
 def _keypair():
@@ -137,6 +155,7 @@ class NoOracleTests(unittest.TestCase):
         result = signer.sign(
             request, store=store, signing_key={"key_id": "rk", "private_key": sig_priv},
             supervisor_attestation_pubkey_hex=att_pub, supervisor_key_id="sup-1",
+            policy=_policy(), now_ms=10_000,
         )
         self.assertEqual(result["status"], "refused")
         self.assertEqual(result["reason"], "attestation_invalid")
@@ -168,28 +187,36 @@ class SignerProcessBoundaryTests(unittest.TestCase):
         env["BROPS_RECEIPT_SIGNER_KEYDIR"] = str(keydir)
         env["BROPS_SUPERVISOR_ATTESTATION_PUBKEY"] = att_pub
         env["BROPS_SUPERVISOR_ATTESTATION_KEY_ID"] = "sup-att-1"
+        # The signer's own authorization policy (P1-7).
+        env["BROPS_ALLOWED_EXECUTOR_IDS"] = "exec-1"
+        env["BROPS_ALLOWED_BUILDER_IDS"] = "builder-1"
+        env["BROPS_ALLOWED_SUPERVISOR_IDS"] = "sup-1"
+        env["BROPS_EXPECTED_POLICY_ID"] = "policy-1"
+        env["BROPS_EXPECTED_POLICY_VERSION"] = "1"
+        env["BROPS_EXPECTED_POLICY_BUNDLE_SHA256"] = bc.policy_bundle_sha256(_POLICY_BUNDLE)
         env["PYTHONPATH"] = os.pathsep.join([str(ROOT / "runtime"), str(ROOT / "tools")])
         return request, env
 
-    def test_signer_subprocess_signs_a_request_over_stdin(self):
-        request, env = self._provision()
-        proc = subprocess.run(
+    def _run_signer(self, env, stdin_bytes: bytes):
+        return subprocess.run(
             [sys.executable, str(ROOT / "tools" / "brops_receipt_signer.py")],
-            input=json.dumps(request), capture_output=True, text=True, env=env, timeout=30,
+            input=stdin_bytes, capture_output=True, env=env, timeout=30,
         )
+
+    def test_signer_subprocess_signs_a_framed_request(self):
+        request, env = self._provision()
+        proc = self._run_signer(env, brops_protocol.encode_frame(request))
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        result = json.loads(proc.stdout)
+        result = brops_protocol.read_frame(io.BytesIO(proc.stdout))
         self.assertEqual(result["status"], "signed")
         self.assertTrue(result["envelope_jcs_b64"] and result["signature_b64"])
 
-    def test_signer_subprocess_refuses_garbage_over_stdin(self):
+    def test_signer_subprocess_refuses_an_unframed_garbage_stream(self):
         _, env = self._provision()
-        proc = subprocess.run(
-            [sys.executable, str(ROOT / "tools" / "brops_receipt_signer.py")],
-            input="not json", capture_output=True, text=True, env=env, timeout=30,
-        )
+        proc = self._run_signer(env, b"not a valid frame")
         self.assertEqual(proc.returncode, 0)
-        self.assertEqual(json.loads(proc.stdout)["status"], "refused")
+        result = brops_protocol.read_frame(io.BytesIO(proc.stdout))
+        self.assertEqual(result["status"], "refused")
 
     @unittest.skip(
         "Dedicated-OS-principal socket/pipe ACL denying the same-login-user peer is "

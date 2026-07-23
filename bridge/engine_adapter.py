@@ -57,6 +57,16 @@ def _receipt_of(outcome: Any) -> Receipt:
         "containment_evidence_b64": _bounded_b64(
             getattr(outcome, "receipt_containment_evidence_b64", None)
         ),
+        # Wave 3b (design §4.2, P1-6): the durable forensic-attestation record, so the
+        # desktop can persist + later re-verify receipt<->run (which supervisor attested
+        # what) WITHOUT the runtime. Non-authoritative transport — the desktop re-verifies
+        # the attestation against its manifest attestation key before trusting it.
+        "attestation_evidence_jcs_b64": getattr(outcome, "receipt_attestation_evidence_jcs_b64", None),
+        "attestation_signature_b64": getattr(outcome, "receipt_attestation_signature_b64", None),
+        "supervisor_attestation_key_id": getattr(outcome, "receipt_supervisor_attestation_key_id", None),
+        "run_id": getattr(outcome, "receipt_run_id", None),
+        "execution_attempt_id": getattr(outcome, "receipt_execution_attempt_id", None),
+        "lease_id": getattr(outcome, "receipt_lease_id", None),
     }
 
 

@@ -41,8 +41,16 @@ class SignedOutcome:
     receipt_envelope_jcs_b64: str | None = None
     receipt_signature_b64: str | None = None
     receipt_containment_evidence_b64: str | None = None
-    # The full sign-result union (incl. the forensic-attestation record, design §4.2),
-    # kept for callers that persist it. Not read by `_receipt_of`.
+    # Durable forensic-attestation record relayed to the desktop (design §4.2, P1-6) so it
+    # can persist + later re-verify receipt<->run without the runtime. `_receipt_of` reads
+    # each of these `receipt_*` attributes onto the bridge-result receipt.
+    receipt_attestation_evidence_jcs_b64: str | None = None
+    receipt_attestation_signature_b64: str | None = None
+    receipt_supervisor_attestation_key_id: str | None = None
+    receipt_run_id: str | None = None
+    receipt_execution_attempt_id: str | None = None
+    receipt_lease_id: str | None = None
+    # The full sign-result union, kept for callers that persist it. Not read by `_receipt_of`.
     sign_result: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -55,6 +63,8 @@ def sign_completed_run(
     signing_key: Mapping[str, str],
     attestation_key: Mapping[str, str],
     supervisor_attestation_pubkey_hex: str,
+    policy: "signer.SignerAuthorizationPolicy",
+    now_ms: int,
 ) -> SignedOutcome:
     """Run the supervisor→signer chain for a completed attempt and return the signed
     outcome. Raises `SignFlowError` on any refusal (fail-closed)."""
@@ -73,6 +83,8 @@ def sign_completed_run(
         signing_key=signing_key,
         supervisor_attestation_pubkey_hex=supervisor_attestation_pubkey_hex,
         supervisor_key_id=attestation_key["key_id"],
+        policy=policy,
+        now_ms=now_ms,
     )
     if result.get("status") != "signed":
         raise SignFlowError(
@@ -97,5 +109,11 @@ def sign_completed_run(
         receipt_containment_evidence_b64=b64url(
             containment_evidence_bytes(run_state.containment_evidence)
         ),
+        receipt_attestation_evidence_jcs_b64=result["attestation_evidence_jcs_b64"],
+        receipt_attestation_signature_b64=result["attestation_signature_b64"],
+        receipt_supervisor_attestation_key_id=result["supervisor_attestation_key_id"],
+        receipt_run_id=result["run_id"],
+        receipt_execution_attempt_id=result["execution_attempt_id"],
+        receipt_lease_id=result["lease_id"],
         sign_result=result,
     )

@@ -148,6 +148,28 @@ class SignerEndToEndTests(unittest.TestCase):
         self.sig_priv, self.sig_pub = _keypair()
         self.attestation_key = {"key_id": "sup-att-1", "private_key": self.att_priv}
         self.signing_key = {"key_id": "receipt-key-1", "private_key": self.sig_priv}
+        self.now_ms = 10_000
+        # The signer's own authorization policy (P1-7), matching the _run_state() fixture.
+        self.policy = signer.SignerAuthorizationPolicy(
+            allowed_executor_ids=frozenset({"exec-1"}),
+            allowed_builder_ids=frozenset({"builder-1"}),
+            allowed_supervisor_ids=frozenset({"sup-1"}),
+            expected_policy_id="policy-1",
+            expected_policy_version="1",
+            expected_policy_bundle_sha256=bc.policy_bundle_sha256(b"policy-bundle-bytes"),
+        )
+
+    def _sign_only(self, request, **overrides):
+        kwargs = dict(
+            store=self.store,
+            signing_key=self.signing_key,
+            supervisor_attestation_pubkey_hex=self.att_pub,
+            supervisor_key_id="sup-att-1",
+            policy=self.policy,
+            now_ms=self.now_ms,
+        )
+        kwargs.update(overrides)
+        return signer.sign(request, **kwargs)
 
     def _sign(self, run_state):
         provider = _Provider(run_state)
@@ -158,13 +180,7 @@ class SignerEndToEndTests(unittest.TestCase):
             store=self.store,
             attestation_key=self.attestation_key,
         )
-        return request, signer.sign(
-            request,
-            store=self.store,
-            signing_key=self.signing_key,
-            supervisor_attestation_pubkey_hex=self.att_pub,
-            supervisor_key_id="sup-att-1",
-        )
+        return request, self._sign_only(request)
 
     def test_happy_path_signs_a_verifiable_21_field_receipt(self):
         state = _run_state()
@@ -211,26 +227,14 @@ class SignerEndToEndTests(unittest.TestCase):
         state = _run_state()
         request, _ = self._sign(state)
         request["evidence"]["output_handle"] = bc.sha256_hex(b"forged")  # break the signed set
-        result = signer.sign(
-            request,
-            store=self.store,
-            signing_key=self.signing_key,
-            supervisor_attestation_pubkey_hex=self.att_pub,
-            supervisor_key_id="sup-att-1",
-        )
+        result = self._sign_only(request)
         self.assertEqual(result["status"], "refused")
         self.assertEqual(result["reason"], "attestation_invalid")
 
     def test_wrong_supervisor_key_id_is_refused(self):
         state = _run_state()
         request, _ = self._sign(state)
-        result = signer.sign(
-            request,
-            store=self.store,
-            signing_key=self.signing_key,
-            supervisor_attestation_pubkey_hex=self.att_pub,
-            supervisor_key_id="sup-att-DIFFERENT",
-        )
+        result = self._sign_only(request, supervisor_key_id="sup-att-DIFFERENT")
         self.assertEqual(result["reason"], "attestation_invalid")
 
     def test_missing_store_handle_is_refused(self):
@@ -242,10 +246,7 @@ class SignerEndToEndTests(unittest.TestCase):
             state.run_id, state.execution_attempt_id,
             run_state_provider=provider, store=other, attestation_key=self.attestation_key,
         )
-        result = signer.sign(
-            request, store=self.store, signing_key=self.signing_key,
-            supervisor_attestation_pubkey_hex=self.att_pub, supervisor_key_id="sup-att-1",
-        )
+        result = self._sign_only(request)
         self.assertEqual(result["status"], "refused")
         self.assertIn(result["reason"], {"handle_missing", "containment_missing"})
 
@@ -287,19 +288,34 @@ class SignerEndToEndTests(unittest.TestCase):
         jsonschema.validate(request, req_schema)
         jsonschema.validate(result, res_schema)
         # A refusal also conforms to the union.
-        bad = signer.sign(
-            {"protocol": "brops.sign-request.v1", "evidence": {}},
-            store=self.store, signing_key=self.signing_key,
-            supervisor_attestation_pubkey_hex=self.att_pub, supervisor_key_id="sup-att-1",
-        )
+        bad = self._sign_only({"protocol": "brops.sign-request.v1", "evidence": {}})
         jsonschema.validate(bad, res_schema)
+
+    def test_identity_not_in_allow_set_is_refused(self):
+        state = _run_state(executor_id="rogue-exec")
+        _, result = self._sign(state)
+        self.assertEqual(result["status"], "refused")
+        self.assertEqual(result["reason"], "identity_denied")
+
+    def test_policy_not_in_force_is_refused(self):
+        state = _run_state(policy_version="99")
+        _, result = self._sign(state)
+        self.assertEqual(result["reason"], "policy_mismatch")
+
+    def test_wrong_policy_bundle_digest_is_refused(self):
+        state = _run_state(policy_bundle=b"an-unauthorized-bundle")
+        _, result = self._sign(state)
+        self.assertEqual(result["reason"], "policy_mismatch")
+
+    def test_future_timestamp_beyond_skew_is_refused(self):
+        state = _run_state(requested_at="1000", completed_at="999999999999")
+        _, result = self._sign(state)
+        self.assertEqual(result["reason"], "timestamp_invalid")
 
     def test_signer_never_signs_arbitrary_bytes(self):
         # A sign-request with no attestation is refused, not signed.
-        result = signer.sign(
+        result = self._sign_only(
             {"protocol": "brops.sign-request.v1", "evidence": {}},
-            store=self.store, signing_key=self.signing_key,
-            supervisor_attestation_pubkey_hex=self.att_pub, supervisor_key_id="sup-att-1",
         )
         self.assertEqual(result["status"], "refused")
 
