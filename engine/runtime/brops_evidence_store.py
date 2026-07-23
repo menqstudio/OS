@@ -58,20 +58,24 @@ def _hardlink_unsupported(exc: OSError) -> bool:
 
 
 def _harden_dir(directory: pathlib.Path) -> pathlib.Path:
-    """Create (0700) or validate the store dir. On POSIX, refuse a pre-existing
-    group/other-accessible dir rather than silently re-permissioning it."""
+    """Create (0700) or validate the store dir. On POSIX, refuse an **other-accessible**
+    dir. A *group*-accessible dir is allowed on purpose: the store is shared by the two
+    dedicated principals (the supervisor writes, the signer reads) via a shared group
+    (design §4.0), so it may be group-readable — but NEVER world-accessible, and never
+    reachable by the sidecar/desktop login identity. (The private-key dirs stay strictly
+    owner-only; only this shared store permits a group.)"""
     resolved = directory.expanduser().resolve()
     if not resolved.exists():
         resolved.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":
-            os.chmod(resolved, 0o700)
+            os.chmod(resolved, 0o700)  # created owner-only; operator opts into a group
     elif not resolved.is_dir():
         raise EvidenceStoreError(f"evidence store path is not a directory: {resolved}")
     elif os.name == "posix":
         mode = resolved.stat().st_mode
-        if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        if mode & stat.S_IRWXO:
             raise EvidenceStoreError(
-                f"evidence store dir {resolved} is group/other-accessible; refusing"
+                f"evidence store dir {resolved} is world-accessible; refusing"
             )
     return resolved
 

@@ -71,7 +71,7 @@ class EngineSidecarTests(unittest.TestCase):
     def setUp(self):
         self._saved = {k: os.environ.pop(k, None) for k in
                        (*engine_sidecar._PROVISION_ENV,
-                        *engine_sidecar._SIGNER_PROVISION_ENV, "BRIDGE_SIDECAR_FAKE")}
+                        engine_sidecar._SUPERVISOR_SOCKET_ENV, "BRIDGE_SIDECAR_FAKE")}
 
     def tearDown(self):
         for k, v in self._saved.items():
@@ -125,25 +125,26 @@ class EngineSidecarTests(unittest.TestCase):
         self.assertIsNone(doc["result"])
         self.assertIn("not provisioned", doc["error"])
 
-    def test_real_mode_provisioned_but_no_signer_material_fails_closed(self):
-        # Supervisor provisioning present, but the receipt-signer material
-        # (`_SIGNER_PROVISION_ENV`, its OWN custody — never BRO_KEYDIR) is absent.
+    def test_real_mode_without_supervisor_socket_fails_closed(self):
+        # Supervisor provisioning present, but the sidecar's only governance endpoint —
+        # the supervisor service socket — is absent. Fail-closed (P0-1): the sidecar
+        # holds no signer material and never reaches the signer directly.
         env = {k: "x" for k in engine_sidecar._PROVISION_ENV}
         doc = _drive(_VALID, env=env)
         self.assertFalse(doc["ok"])
         self.assertIsNone(doc["result"])
-        self.assertIn("receipt signer not provisioned", doc["error"])
+        self.assertIn("supervisor service not provisioned", doc["error"])
 
-    def test_real_mode_fully_provisioned_still_fails_closed_pending_live_wiring(self):
-        # Both env sets present: the signer chain exists, but the live supervisor
-        # run-state provider + desktop trusted manifest are pending (design §5 STOP), so
-        # real mode still emits nothing — never an unsigned/partial result.
-        env = {k: "x" for k in (*engine_sidecar._PROVISION_ENV,
-                                *engine_sidecar._SIGNER_PROVISION_ENV)}
+    def test_real_mode_relay_is_fail_closed_when_the_run_state_is_unavailable(self):
+        # The supervisor socket is set, so the sidecar wires the relay — but the governed
+        # task-request carries no run identifiers the supervisor can resolve, so the relay
+        # never yields a signed governed-result and the sidecar fails closed (never a
+        # partial/unsigned result). The sidecar holds no signer material either way.
+        env = {k: "x" for k in engine_sidecar._PROVISION_ENV}
+        env[engine_sidecar._SUPERVISOR_SOCKET_ENV] = "/nonexistent/brops-supervisor.sock"
         doc = _drive(_VALID, env=env)
         self.assertFalse(doc["ok"])
         self.assertIsNone(doc["result"])
-        self.assertIn("pending", doc["error"])
 
     def test_self_test_signed_mints_a_real_signed_receipt_desktop_still_blocks(self):
         # Exercises the REAL Wave 3b signer/store/attestation chain end to end. The

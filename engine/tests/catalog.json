@@ -586,6 +586,15 @@
         "passing-receipt-verification",
         "evidence-chain-and-containment"
       ]
+    },
+    {
+      "id": "brops-services",
+      "path": "tests/test_brops_services.py",
+      "covers": [
+        "signer-service-framed-roundtrip",
+        "peer-uid-acl-denial",
+        "supervisor-only-run-handle"
+      ]
     }
   ]
 }

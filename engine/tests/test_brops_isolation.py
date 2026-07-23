@@ -80,11 +80,19 @@ class CustodyTests(unittest.TestCase):
     """(2)/(3): the store + key dirs refuse group/other access (POSIX)."""
 
     @unittest.skipUnless(_POSIX, "POSIX file-mode custody; ACLs enforce this on Windows")
-    def test_store_refuses_group_or_other_accessible_dir(self):
+    def test_store_refuses_a_world_accessible_dir(self):
         d = tempfile.mkdtemp()
-        os.chmod(d, 0o777)
+        os.chmod(d, 0o777)  # world-accessible
         with self.assertRaises(EvidenceStoreError):
             EvidenceStore(d)
+
+    @unittest.skipUnless(_POSIX, "POSIX file-mode custody")
+    def test_store_allows_a_group_shared_but_not_world_dir(self):
+        # The store is legitimately shared by the two dedicated principals via a group
+        # (supervisor writes, signer reads) — group access is allowed, world is not.
+        d = tempfile.mkdtemp()
+        os.chmod(d, 0o770)  # owner + group, no other
+        EvidenceStore(d)  # must NOT raise
 
     @unittest.skipUnless(_POSIX, "POSIX file-mode custody")
     def test_receipt_signer_keydir_refuses_group_or_other_access(self):

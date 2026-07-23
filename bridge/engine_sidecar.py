@@ -62,15 +62,12 @@ _PROVISION_ENV = (
     "BRO_BUILDER_COMMAND",
 )
 
-# Wave 3b receipt-signer material (its own key custody, separate from BRO_KEYDIR — the
-# receipt-signing key must NEVER live in BRO_KEYDIR; design §1.2). Required IN ADDITION to
-# `_PROVISION_ENV` before real mode can mint a signed receipt.
-_SIGNER_PROVISION_ENV = (
-    "BROPS_RECEIPT_SIGNER_KEYDIR",
-    "BROPS_SUPERVISOR_ATTESTATION_KEYDIR",
-    "BROPS_SUPERVISOR_ATTESTATION_PUBKEY",
-    "BROPS_EVIDENCE_STORE_DIR",
-)
+# Wave 3b (audit P0-1): the sidecar holds NO signer material and NEVER reaches the signer.
+# Its only governance endpoint is the SUPERVISOR SERVICE, reached over this socket; the
+# supervisor (a separate principal) builds the authoritative run state, attests, and
+# relays to the isolated signer service. The receipt-signing + attestation keys live with
+# those services, unreachable by the sidecar.
+_SUPERVISOR_SOCKET_ENV = "BROPS_SUPERVISOR_SOCKET"
 
 
 def _fail(task_id: Any, error: str) -> dict:
@@ -204,43 +201,71 @@ def _signed_self_test_callables() -> tuple[Callable[[dict], Any], Callable[[Any]
 
 
 # --------------------------------------------------------------------------- #
-# Real mode — provisioning + engine wiring.
+# Real mode — the sidecar is a pure RELAY to the supervisor service (audit P0-1). It
+# holds no signer material and never reaches the signer. It forwards the run handle
+# {run_id, execution_attempt_id} to the supervisor service, which builds the
+# authoritative run state, attests, and relays to the isolated signer service; the
+# sidecar returns the governed-result's output + signed receipt wire to the desktop.
+# The desktop STILL Blocks (NoTrustedManifest) until 3b-2/3b-3 — design §5 STOP.
 # --------------------------------------------------------------------------- #
+class _GovernedOutcome:
+    """A SupervisorResult-shaped relay of the supervisor service's governed-result."""
+
+    def __init__(self, run_id: str, governed: dict) -> None:
+        r = governed.get("receipt", {}) or {}
+        self.task_id = run_id
+        self.status = "completed"
+        self.exit_code = 0
+        self.evidence = (f"evidence:receipt:{r.get('run_id', run_id)}",)
+        self._text = governed.get("output", "")
+        self.receipt_envelope_jcs_b64 = r.get("envelope_jcs_b64")
+        self.receipt_signature_b64 = r.get("signature_b64")
+        self.receipt_containment_evidence_b64 = r.get("containment_evidence_b64")
+        self.receipt_attestation_evidence_jcs_b64 = r.get("attestation_evidence_jcs_b64")
+        self.receipt_attestation_signature_b64 = r.get("attestation_signature_b64")
+        self.receipt_supervisor_attestation_key_id = r.get("supervisor_attestation_key_id")
+        self.receipt_run_id = r.get("run_id")
+        self.receipt_execution_attempt_id = r.get("execution_attempt_id")
+        self.receipt_lease_id = r.get("lease_id")
+
+
 def _real_callables(
     request: dict,
 ) -> tuple[Callable[[dict], Any], Callable[[Any], str]]:
-    """Return the engine-bound callables, or raise RuntimeError with a fail-closed
-    reason. Gates, all fail-closed:
-
-    1. supervisor provisioning — every `_PROVISION_ENV` var must be present;
-    2. signer provisioning — every `_SIGNER_PROVISION_ENV` var must be present (the
-       receipt-signing key has its OWN custody, never `BRO_KEYDIR`; design §1.2);
-    3. live run-state provider — the isolated signer/store/attestation chain now EXISTS
-       (Wave 3b-1, `brops_receipt_signer`/`brops_evidence_store`/`brops_supervisor_attest`),
-       but wiring the LIVE supervisor's terminal run-state into it (so `run_task` builds a
-       real `RunState` from an executed governed turn under a dedicated OS principal) is
-       the remaining Linux-first 3b-1 step, and the desktop still resolves
-       `NoTrustedManifest` ⇒ Blocks until the manifest lands (3b-2/3b-3). Until then real
-       mode fails closed rather than emit anything. `--self-test-signed` exercises the
-       full signer chain today.
-    """
+    """Return the engine-bound callables, or raise RuntimeError (fail-closed). Gates:
+    supervisor provisioning (`_PROVISION_ENV`) + the supervisor-service socket. The
+    sidecar connects ONLY to the supervisor service — never the signer."""
     missing = [k for k in _PROVISION_ENV if not os.environ.get(k, "").strip()]
     if missing:
+        raise RuntimeError("governed engine not provisioned: missing " + ", ".join(missing))
+    supervisor_socket = os.environ.get(_SUPERVISOR_SOCKET_ENV, "").strip()
+    if not supervisor_socket:
         raise RuntimeError(
-            "governed engine not provisioned: missing " + ", ".join(missing)
+            "governed supervisor service not provisioned: BROPS_SUPERVISOR_SOCKET is "
+            "required — the sidecar relays to the supervisor service and never holds "
+            "signer keys or reaches the signer"
         )
-    missing_signer = [k for k in _SIGNER_PROVISION_ENV if not os.environ.get(k, "").strip()]
-    if missing_signer:
-        raise RuntimeError(
-            "governed engine receipt signer not provisioned: missing "
-            + ", ".join(missing_signer)
+    import brops_socket
+
+    def run_task(req: dict) -> Any:
+        run_id = str(req.get("task_id", "")).strip()
+        attempt_id = str(req.get("execution_attempt_id", "")).strip()
+        if not run_id or not attempt_id:
+            raise RuntimeError("governed request missing run_id/execution_attempt_id")
+        governed = brops_socket.request(
+            supervisor_socket,
+            {"protocol": "brops.evidence-request.v1", "run_id": run_id,
+             "execution_attempt_id": attempt_id},
         )
-    raise RuntimeError(
-        "governed engine real-mode is pending the Wave 3b-1 live supervisor run-state "
-        "provider and the Wave 3b-2/3b-3 desktop trusted manifest; the isolated signer "
-        "chain is implemented and self-tested (`--self-test-signed`) but refusing to "
-        "emit until the live wiring + trusted key land"
-    )
+        if not isinstance(governed, dict) or governed.get("status") != "signed":
+            reason = governed.get("reason") if isinstance(governed, dict) else "malformed"
+            raise RuntimeError(f"governed supervisor refused: {reason}")
+        return _GovernedOutcome(run_id, governed)
+
+    def read_result(outcome: Any) -> str:
+        return getattr(outcome, "_text", "")
+
+    return run_task, read_result
 
 
 # --------------------------------------------------------------------------- #

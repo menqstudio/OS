@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Wave 3b-1 — machine-prove the four same-login-user isolation denials (design §1.1;
+# audit P0-1). Runs on Linux CI with passwordless sudo. Creates two dedicated service
+# principals, provisions their keys/store/sockets, starts the real signer + supervisor
+# services AS those principals, then runs the prover AS the login (attacker) user and
+# requires all four attacks to be denied. No skip/placeholder.
+set -euo pipefail
+
+ENGINE="$(cd "$(dirname "$0")/.." && pwd)"
+export BRO_ENV=ci
+export PYTHONPATH="$ENGINE/runtime:$ENGINE/tools"
+
+MYUID="$(id -u)"
+sudo groupadd -f brops-store
+id brops-signer     >/dev/null 2>&1 || sudo useradd -r -M -s /usr/sbin/nologin -G brops-store brops-signer
+id brops-supervisor >/dev/null 2>&1 || sudo useradd -r -M -s /usr/sbin/nologin -G brops-store brops-supervisor
+SIGUID="$(id -u brops-signer)"
+SUPUID="$(id -u brops-supervisor)"
+
+B="$(mktemp -d /tmp/brops-iso.XXXXXX)"
+chmod 755 "$B"
+mkdir -p "$B"/{signerkeys,attkeys,store,state,registry/config,socks}
+
+# 1) Generate keys + a signed registry (as the login user, before we tighten ownership).
+python3 "$ENGINE/ci/gen_isolation_fixture.py" "$B"
+ATT_PUB="$(cat "$B/att-pub")"
+OP_PIN="$(cat "$B/operator-pin")"
+
+# 2) Custody: private-key dirs owner-only to their principals; store group-shared (0770);
+#    the login user is in NEITHER service context and NOT in brops-store.
+sudo chown -R brops-signer:brops-signer "$B/signerkeys";   sudo chmod 700 "$B/signerkeys"
+sudo chown -R brops-supervisor:brops-supervisor "$B/attkeys"; sudo chmod 700 "$B/attkeys"
+sudo chown -R brops-supervisor:brops-store "$B/store";     sudo chmod 770 "$B/store"
+sudo chown -R brops-supervisor:brops-supervisor "$B/state" "$B/registry"; sudo chmod -R 750 "$B/state" "$B/registry"
+chmod 755 "$B/socks"
+
+SIGNER_SOCK="$B/socks/signer.sock"
+SUP_SOCK="$B/socks/sup.sock"
+DUMMY_DIGEST="$(printf '0%.0s' {1..64})"
+
+# 3) Start the SIGNER service AS brops-signer; it admits ONLY the supervisor UID.
+sudo -u brops-signer env \
+  BRO_ENV=ci PYTHONPATH="$PYTHONPATH" \
+  BROPS_EVIDENCE_STORE_DIR="$B/store" \
+  BROPS_RECEIPT_SIGNER_KEYDIR="$B/signerkeys" \
+  BROPS_SUPERVISOR_ATTESTATION_PUBKEY="$ATT_PUB" \
+  BROPS_SUPERVISOR_ATTESTATION_KEY_ID="sup-att-1" \
+  BROPS_ALLOWED_EXECUTOR_IDS="exec-1" BROPS_ALLOWED_BUILDER_IDS="builder-1" \
+  BROPS_ALLOWED_SUPERVISOR_IDS="sup-1" BROPS_EXPECTED_POLICY_ID="policy-1" \
+  BROPS_EXPECTED_POLICY_VERSION="1" BROPS_EXPECTED_POLICY_BUNDLE_SHA256="$DUMMY_DIGEST" \
+  BROPS_SIGNER_SOCKET="$SIGNER_SOCK" BROPS_ALLOWED_PEER_UIDS="$SUPUID" \
+  python3 "$ENGINE/tools/brops_signer_service.py" &
+SIGNER_PID=$!
+
+# 4) Start the SUPERVISOR service AS brops-supervisor; it admits ONLY the login UID
+#    (the sidecar) and is the only peer the signer admits.
+sudo -u brops-supervisor env \
+  BRO_ENV=ci PYTHONPATH="$PYTHONPATH" BRO_OPERATOR_ROOT_PUBKEY="$OP_PIN" \
+  BROPS_SUPERVISOR_SOCKET="$SUP_SOCK" BROPS_SUPERVISOR_ALLOWED_PEER_UIDS="$MYUID" \
+  BROPS_SIGNER_SOCKET="$SIGNER_SOCK" \
+  BROPS_SUPERVISOR_ATTESTATION_KEYDIR="$B/attkeys" \
+  BROPS_EVIDENCE_STORE_DIR="$B/store" BROPS_RUNSTATE_DIR="$B/state" \
+  BROPS_REGISTRY_ROOT="$B/registry" BROPS_REQUIRED_CAPABILITIES="EXECUTE_CODE" \
+  python3 "$ENGINE/tools/brops_supervisor_service.py" &
+SUP_PID=$!
+
+cleanup() { sudo kill "$SIGNER_PID" "$SUP_PID" 2>/dev/null || true; }
+trap cleanup EXIT
+
+# 5) Wait for both services to BIND (guards against a false "denied" from a down service).
+for _ in $(seq 1 50); do
+  [ -S "$SIGNER_SOCK" ] && [ -S "$SUP_SOCK" ] && break
+  sleep 0.2
+done
+[ -S "$SIGNER_SOCK" ] || { echo "signer service did not bind"; exit 1; }
+[ -S "$SUP_SOCK" ]    || { echo "supervisor service did not bind"; exit 1; }
+
+# 6) Run the PROVER as the login (attacker) user — every attack must be denied.
+BROPS_SIGNER_SOCKET="$SIGNER_SOCK" BROPS_SUPERVISOR_SOCKET="$SUP_SOCK" \
+BROPS_PROVE_SIGNER_KEY="$B/signerkeys/brops-receipt-signer.json" \
+BROPS_PROVE_ATTESTATION_KEY="$B/attkeys/brops-supervisor-attestation.json" \
+BROPS_PROVE_STORE_DIR="$B/store" \
+python3 "$ENGINE/tools/brops_isolation_prover.py"
