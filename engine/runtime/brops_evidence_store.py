@@ -119,7 +119,12 @@ class EvidenceStore:
                 handle_file.flush()
                 os.fsync(handle_file.fileno())
             if os.name == "posix":
-                os.chmod(tmp, 0o600)
+                # Owner rw + GROUP read (0640): the store is shared by the two dedicated
+                # principals via a group (the supervisor writes, the signer reads), so a
+                # published artifact must be group-readable — but never world (design §4.0,
+                # audit P0-1). No effect on the single-principal case (the group is the
+                # owner's own). World stays denied.
+                os.chmod(tmp, 0o640)
 
             # 3. verify size + recompute sha256 over the bytes actually on disk.
             written = tmp.read_bytes()
@@ -163,7 +168,7 @@ class EvidenceStore:
         # check-then-act. A crash mid-write leaves a partial target, which `read()`
         # rejects (sha mismatch) — fail-closed, never a silent bad artifact.
         try:
-            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
         except FileExistsError:
             self._verify_idempotent(target, handle)
             return False

@@ -121,13 +121,20 @@ class LiveRunStateProvider:
             )
         except Exception as exc:  # noqa: BLE001 — any lease failure is fail-closed
             raise RunStateValidationError(f"execution lease did not validate: {exc}")
+        # Cross-binding (audit P0-3): the record's asserted lease_id / task must be the
+        # SAME as the verified lease's — a record cannot claim an id the signed lease does
+        # not carry.
+        if record.get("lease_id") != lease_payload.get("lease_id"):
+            raise RunStateValidationError("record lease_id != the verified lease's lease_id")
+        if lease_payload.get("task_id") != task_id:
+            raise RunStateValidationError("verified lease is for a different task")
 
         # 2. Passing execution receipt — signed, exit 0, over the candidate head/tree.
         receipt_doc = record.get("receipt_document")
         if not isinstance(receipt_doc, dict):
             raise RunStateValidationError("run record has no receipt document")
         try:
-            verify_passing_receipt(
+            receipt_payload = verify_passing_receipt(
                 receipt_doc,
                 self.trusted_keys,
                 task_id=task_id,
@@ -137,6 +144,12 @@ class LiveRunStateProvider:
             )
         except Exception as exc:  # noqa: BLE001
             raise RunStateValidationError(f"passing receipt did not verify: {exc}")
+        # Cross-binding (audit P0-3): the record's asserted receipt_id must be the SAME as
+        # the verified receipt's, and both must be for this task.
+        if record.get("receipt_id") != receipt_payload.get("receipt_id"):
+            raise RunStateValidationError("record receipt_id != the verified receipt's receipt_id")
+        if receipt_payload.get("task_id") != task_id:
+            raise RunStateValidationError("verified receipt is for a different task")
 
         # 3. Evidence-chain head + chain.
         event_ids = record.get("evidence_event_ids")

@@ -14,7 +14,11 @@
       "properties": {
         "attestation_protocol": { "const": "brops.run-attestation.v1" },
         "supervisor_key_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "sig": { "type": "string", "minLength": 1, "description": "base64url(Ed25519) detached over JCS(evidence)." }
+        "sig": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "base64url (no-pad) of a 64-byte Ed25519 signature over JCS(evidence). 64 bytes → exactly 86 base64url chars; padding + '+'/'/' are rejected."
+        }
       }
     },
     "evidence": {

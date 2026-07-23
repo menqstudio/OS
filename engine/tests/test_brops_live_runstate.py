@@ -190,6 +190,17 @@ class LiveRunStateProviderTests(unittest.TestCase):
         with self.assertRaises(RunStateValidationError):
             self.provider.terminal_run_state("run-1", "attempt-1")
 
+    def test_record_lease_id_not_matching_signed_lease_is_refused(self):
+        # The record claims a lease_id the SIGNED lease does not carry (P0-3 cross-bind).
+        self._write_record(lease_id="lease-DIFFERENT")
+        with self.assertRaises(RunStateValidationError):
+            self.provider.terminal_run_state("run-1", "attempt-1")
+
+    def test_record_receipt_id_not_matching_signed_receipt_is_refused(self):
+        self._write_record(receipt_id="receipt-DIFFERENT")
+        with self.assertRaises(RunStateValidationError):
+            self.provider.terminal_run_state("run-1", "attempt-1")
+
     def test_missing_evidence_chain_is_refused(self):
         self._write_record(evidence_event_ids=["task-1-e1", "task-1-eMISSING"])
         with self.assertRaises(RunStateValidationError):

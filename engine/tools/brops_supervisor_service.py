@@ -29,11 +29,13 @@ Env:
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import time
 from typing import Any
 
+import brops_protocol
 import brops_socket
 from bro_signature import load_trusted_keys
 from brops_canonical import b64url, containment_evidence_bytes
@@ -44,6 +46,13 @@ from brops_supervisor_attest import load_attestation_key, produce_sign_request
 EVIDENCE_REQUEST_PROTOCOL = "brops.evidence-request.v1"
 SIGN_RESULT_PROTOCOL = "brops.sign-result.v1"
 GOVERNED_RESULT_PROTOCOL = "brops.governed-result.v1"
+
+
+_CONTRACTS_DIR = pathlib.Path(__file__).resolve().parents[1] / "contracts"
+
+
+def _sign_result_schema() -> dict:
+    return json.loads((_CONTRACTS_DIR / "brops-sign-result.v1.schema.json").read_text("utf-8"))
 
 
 def _refused(reason: str) -> dict[str, Any]:
@@ -105,6 +114,12 @@ class SupervisorService:
         try:
             sign_result = brops_socket.request(self.signer_socket, request)
         except Exception:  # noqa: BLE001 — signer unreachable ⇒ fail-closed
+            return _refused("malformed")
+        # Strictly validate the signer's response against its contract before trusting any
+        # field (audit P1) — a malformed/oversize response is fail-closed.
+        try:
+            brops_protocol.validate(sign_result, _sign_result_schema())
+        except brops_protocol.ProtocolError:
             return _refused("malformed")
         if sign_result.get("status") != "signed":
             return {"protocol": GOVERNED_RESULT_PROTOCOL, "status": "refused",

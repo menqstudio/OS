@@ -19,23 +19,27 @@ SUPUID="$(id -u brops-supervisor)"
 
 B="$(mktemp -d /tmp/brops-iso.XXXXXX)"
 chmod 755 "$B"
-mkdir -p "$B"/{signerkeys,attkeys,store,state,registry/config,socks}
+mkdir -p "$B"/{signerkeys,attkeys,store,state,registry/config,signer-sock,sup-sock}
 
 # 1) Generate keys + a signed registry (as the login user, before we tighten ownership).
 python3 "$ENGINE/ci/gen_isolation_fixture.py" "$B"
 ATT_PUB="$(cat "$B/att-pub")"
 OP_PIN="$(cat "$B/operator-pin")"
 
-# 2) Custody: private-key dirs owner-only to their principals; store group-shared (0770);
-#    the login user is in NEITHER service context and NOT in brops-store.
-sudo chown -R brops-signer:brops-signer "$B/signerkeys";   sudo chmod 700 "$B/signerkeys"
+# 2) Custody: private-key dirs owner-only to their principals; the store is group-shared
+#    and SETGID (2770) so artifacts the supervisor publishes inherit the brops-store group
+#    (the signer, also in brops-store, can read the 0640 files); the login user is in
+#    NEITHER service context and NOT in brops-store. Each service owns its OWN socket dir
+#    (world-traversable) so it can bind() there; SO_PEERCRED is the connect-time gate.
+sudo chown -R brops-signer:brops-signer "$B/signerkeys";     sudo chmod 700 "$B/signerkeys"
 sudo chown -R brops-supervisor:brops-supervisor "$B/attkeys"; sudo chmod 700 "$B/attkeys"
-sudo chown -R brops-supervisor:brops-store "$B/store";     sudo chmod 770 "$B/store"
+sudo chown -R brops-supervisor:brops-store "$B/store";       sudo chmod 2770 "$B/store"
 sudo chown -R brops-supervisor:brops-supervisor "$B/state" "$B/registry"; sudo chmod -R 750 "$B/state" "$B/registry"
-chmod 755 "$B/socks"
+sudo chown brops-signer:brops-signer "$B/signer-sock";       sudo chmod 755 "$B/signer-sock"
+sudo chown brops-supervisor:brops-supervisor "$B/sup-sock";  sudo chmod 755 "$B/sup-sock"
 
-SIGNER_SOCK="$B/socks/signer.sock"
-SUP_SOCK="$B/socks/sup.sock"
+SIGNER_SOCK="$B/signer-sock/signer.sock"
+SUP_SOCK="$B/sup-sock/sup.sock"
 DUMMY_DIGEST="$(printf '0%.0s' {1..64})"
 
 # 3) Start the SIGNER service AS brops-signer; it admits ONLY the supervisor UID.
