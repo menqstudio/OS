@@ -28,7 +28,19 @@ Only then start. **No exceptions.** When Gev says *"go read the repo / կարդ�
 **Canonical files (read every session) · Canonical ֆայլեր:** `NEXT_CHAT.md` · `CLAUDE.md` · `PROJECT_STATE.md` · `TASKS.md` · `OWNERS.md`.
 **Work rule:** no direct `main`; every task = branch + PR (uses the PR template); merge only after the Owner approves. **A security PR also needs the Architect's zero-trust GREEN on the exact HEAD before merge — CI GREEN is not audit GREEN.**
 
-> **📍 Exact current state (branch, PR, HEAD, blockers, next action) lives in [`NEXT_CHAT.md`](./NEXT_CHAT.md).** This §3 roadmap is the durable product plan; the active **security-remediation track** (Waves 1–5, closing the Challenger Deep audit's P0/P1 findings) is tracked in `NEXT_CHAT.md` + `PROJECT_STATE.md` + `TASKS.md`. As of 2026-07-22: Wave 1 (T-012), Wave 2a (T-013), T-010, T-011 **merged**; Wave 3 design rev 4 **GREEN + merged**; **Wave 3a slice 1 (T-014) — protocol core — zero-trust GREEN + merged (PR #24, `6c920d0`)**; **next is Wave 3a slice 2 (receipt storage & atomicity, migration 0014) — not started.**
+> **📍 Exact current state (branch, PR, HEAD, blockers, next action) lives in [`NEXT_CHAT.md`](./NEXT_CHAT.md) §3** (always re-confirm HEAD/CI from git/GitHub, never from chat memory). This §3 roadmap is the durable product plan; the active **security-remediation track** (Waves 1–5, closing the Challenger Deep audit's P0/P1 findings) is tracked in `NEXT_CHAT.md` + `PROJECT_STATE.md` + `TASKS.md` (per-slice audit history: `TASKS.md` T-014…T-017).
+
+---
+
+## ⛔ CONTINUOUS-DOCUMENTATION LAW — mandatory, every work cycle · ՊԱՐՏԱԴԻՐ
+
+**After EVERY** design change, code change, audit verdict, CI result, HEAD change, blocker discovery/closure, status transition, or merge, you MUST — **in the same work cycle** — update **all** affected canonical documents, commit, push, and update the PR body. **No required continuation state may live only in chat, GPT chat, memory, a scratchpad, or an unpushed commit.**
+
+At every moment the repository must be sufficient for a brand-new Claude/GPT session told only *"Go to `menqstudio/OS`, read `NEXT_CHAT.md` and every file in `config/canonical-read-manifest.json`, verify the exact GitHub HEAD/CI, and continue"* — and then continue correctly **from GitHub alone**, without asking Gev to repeat history. This is **continuous**, not a one-time cleanup; do not create a disconnected documentation graveyard — update the authoritative existing files.
+
+**Each such cycle:** (1) update at least `NEXT_CHAT.md` (§3 = authoritative current state), `PROJECT_STATE.md`, `TASKS.md`, the relevant `docs/design/*` (banner + changelog), this `CLAUDE.md` where the law/roadmap state belongs, the PR body, and any other roadmap/status/handoff doc holding the changed fact (manifest only if the startup read-set changes); (2) record exact HEAD, CI run + result (state **"CI GREEN ≠ design/audit GREEN"**), current revision, verdict, OPEN findings, next permitted action, STOP gates; (3) run `python tools/check_coordination.py` + `python tools/check_capabilities.py` (both GREEN) and verify manifest paths exist; (4) commit, **push**, `gh pr edit <n> --body-file …`, and confirm the remote HEAD.
+
+**Design docs:** one file is the single normative source per subsystem (e.g. the 3b-1B contracts live only in `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`); other files reference it and must not re-inline schemas that can drift. Revision history is a **non-normative appendix** — historical prose never redefines a current contract.
 
 ---
 
