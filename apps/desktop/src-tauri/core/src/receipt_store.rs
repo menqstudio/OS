@@ -139,6 +139,32 @@ pub fn verify_and_record_receipt(
     in_immediate_tx(conn, |tx| record(tx, authority, turn))
 }
 
+/// Max bytes of a free-text reason we let into durable evidence / the UI, so a
+/// hostile or runaway error string can never bloat SQLite or the renderer.
+pub const MAX_REASON_BYTES: usize = 8 * 1024;
+
+/// Bound a free-text failure reason to [`MAX_REASON_BYTES`], UTF-8-safely. A reason
+/// within budget is returned verbatim; a longer one is truncated on a char boundary
+/// and annotated `\n[truncated; sha256=<full-hash>; original_bytes=<n>]` so the full
+/// original stays auditable (by hash) without storing it. Callers pass the SAME bounded
+/// value to the durable record AND the UI, so `verification_error == Blocked.reason`.
+pub fn bounded_reason(reason: &str) -> String {
+    if reason.len() <= MAX_REASON_BYTES {
+        return reason.to_string();
+    }
+    let marker = format!(
+        "\n[truncated; sha256={}; original_bytes={}]",
+        crate::receipt::sha256_hex(reason.as_bytes()),
+        reason.len()
+    );
+    // Reserve room for the marker; truncate the visible prefix on a char boundary.
+    let mut end = MAX_REASON_BYTES.saturating_sub(marker.len());
+    while end > 0 && !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &reason[..end], marker)
+}
+
 /// Record a **pre-verification terminal block**: used when there is NO receipt to
 /// verify (e.g. the governed transport failed *after* the challenge was issued). In
 /// one transaction it consumes the one-time nonce and records a `blocked` attempt
@@ -1489,5 +1515,22 @@ mod tests {
             .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-A'", [], |r| r.get(0))
             .unwrap();
         assert!(consumed.is_some(), "the nonce is terminally consumed");
+    }
+
+    #[test]
+    fn bounded_reason_caps_a_hostile_multi_megabyte_error_utf8_safely() {
+        let short = "sidecar timed out";
+        assert_eq!(bounded_reason(short), short, "within budget → verbatim");
+
+        // A multi-megabyte reason ending in a multi-byte char (so a naive byte cut
+        // would split it) must be capped on a char boundary, tagged with the full hash.
+        let huge = format!("{}é", "A".repeat(5_000_000));
+        let out = bounded_reason(&huge);
+        assert!(out.len() <= MAX_REASON_BYTES, "bounded to <= 8 KiB, got {}", out.len());
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok(), "still valid UTF-8");
+        assert!(out.contains("[truncated; sha256="), "carries the truncation marker");
+        assert!(out.contains(&format!("original_bytes={}", huge.len())));
+        // The full original is recoverable by hash but never stored inline.
+        assert!(out.contains(&crate::receipt::sha256_hex(huge.as_bytes())));
     }
 }

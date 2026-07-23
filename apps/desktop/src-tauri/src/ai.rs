@@ -564,17 +564,14 @@ pub fn provider_is_governed() -> Result<bool, String> {
 /// (command layer) issues the desktop nonce challenge and verifies via
 /// `brops-core::receipt_store`. Errors if the resolved provider is not the governed
 /// engine.
-pub async fn governed_turn(
-    system: &str,
-    messages: &[ChatMsg],
-    ctx: &GovernedRequestContext,
-) -> Result<GovernedReply, String> {
-    validate_input(system, messages)?;
+pub async fn governed_turn(prepared: &PreparedGovernedTurn) -> Result<GovernedReply, String> {
+    // Input was already validated + trimmed once in `prepare_governed_turn`; this runs
+    // the EXACT prepared data (no second trim/hash that could diverge from what was
+    // hashed into the challenge).
     let _permit = GenerationPermit::acquire()?;
-    let messages = trim_history(messages);
     match resolve()? {
         Provider::GovernedEngine { python, sidecar } => {
-            governed_engine(&python, &sidecar, system, messages, ctx).await
+            governed_engine(&python, &sidecar, prepared).await
         }
         _ => Err("governed_turn requires the governed engine provider".to_string()),
     }
@@ -1197,17 +1194,74 @@ pub fn governed_history_sha256(messages: &[ChatMsg]) -> String {
     brops_core::receipt::sha256_hex(&serde_json::to_vec(&arr).unwrap_or_default())
 }
 
-fn governed_request(system: &str, messages: &[ChatMsg], ctx: &GovernedRequestContext) -> String {
+/// A governed turn prepared ONCE so the exact input is the single source of truth
+/// (audit R2 P0). The history is trimmed here, and everything downstream derives from
+/// this same prepared data: `system_sha256` from `system`, `history_sha256` from the
+/// trimmed `history`, the [`GovernedRequestContext`], the bridge request (structured
+/// `system` + `history`), the durable challenge, and the desktop `Expected`. Nothing
+/// re-trims or re-hashes a different input afterwards, so what is sent, what is hashed,
+/// and what is verified can never diverge.
+#[derive(Debug, Clone)]
+pub struct PreparedGovernedTurn {
+    pub system: String,
+    /// The exact canonical trimmed history that is sent AND hashed.
+    pub history: Vec<ChatMsg>,
+    pub context: GovernedRequestContext,
+}
+
+/// Prepare a governed turn: validate, trim the history exactly once, and hash the
+/// exact `system` + trimmed `history` into the canonical [`GovernedRequestContext`].
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_governed_turn(
+    system: &str,
+    messages: &[ChatMsg],
+    now_ms: u64,
+    workspace_id: &str,
+    install_id: &str,
+    generation_config: &str,
+) -> Result<PreparedGovernedTurn, String> {
+    validate_input(system, messages)?;
+    let history: Vec<ChatMsg> = trim_history(messages).to_vec();
+    let context = GovernedRequestContext {
+        workspace_id: workspace_id.to_string(),
+        install_id: install_id.to_string(),
+        request_nonce: brops_core::id(),
+        system_sha256: brops_core::receipt::sha256_hex(system.as_bytes()),
+        history_sha256: governed_history_sha256(&history),
+        generation_config_sha256: brops_core::receipt::sha256_hex(generation_config.as_bytes()),
+        requested_at: now_ms.to_string(),
+    };
+    Ok(PreparedGovernedTurn { system: system.to_string(), history, context })
+}
+
+fn governed_request(prepared: &PreparedGovernedTurn) -> String {
+    let ctx = &prepared.context;
+    // `system` + structured `history` are the EXECUTION / SIGNING authority (audit R2
+    // P0-2): the supervisor/executor works from them, and the Wave 3b signer recomputes
+    // system_sha256 / history_sha256 from THESE exact structured fields — it never
+    // trusts the incoming hash claims in `request`. `rationale` is a derived,
+    // human-readable convenience only, with no authority.
     let rationale = format!(
-        "{system}\n\n{}\n\nReply to the latest user message.",
-        transcript(messages)
+        "{}\n\n{}\n\nReply to the latest user message.",
+        prepared.system,
+        transcript(&prepared.history)
     );
+    let history: Vec<serde_json::Value> = prepared
+        .history
+        .iter()
+        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+        .collect();
     serde_json::json!({
         "task_id": governed_task_id(),
         "task_class": GOVERNED_TASK_CLASS,
         "rationale": rationale,
-        // The canonical request envelope (design §2.2) — the desktop nonce + request
-        // hashes travel to the supervisor/signer, so a Wave 3b receipt can bind them.
+        // Exact structured input — the authority the executor/signer works from.
+        "system": prepared.system,
+        "history": history,
+        // The canonical request envelope (design §2.2): the desktop nonce + request
+        // hashes travel to the supervisor/signer so a Wave 3b receipt can bind them.
+        // The signer RECOMPUTES these hashes from `system`/`history`, never trusting
+        // them as input evidence.
         "request": {
             "protocol": "brops.request.v1",
             "workspace_id": ctx.workspace_id,
@@ -1292,11 +1346,9 @@ fn interpret_bridge_result(doc: &serde_json::Value) -> Result<GovernedReply, Str
 async fn governed_engine(
     python: &str,
     sidecar: &str,
-    system: &str,
-    messages: &[ChatMsg],
-    ctx: &GovernedRequestContext,
+    prepared: &PreparedGovernedTurn,
 ) -> Result<GovernedReply, String> {
-    let request = governed_request(system, messages, ctx);
+    let request = governed_request(prepared);
     let mut cmd = tokio::process::Command::new(python);
     cmd.arg(sidecar)
         // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
@@ -1711,26 +1763,66 @@ mod tests {
     }
 
     #[test]
-    fn governed_request_is_a_valid_lease_free_task_request() {
+    fn governed_request_carries_structured_input_and_the_canonical_envelope() {
         let msgs = vec![ChatMsg { role: "user".into(), content: "hello world".into() }];
-        let ctx = GovernedRequestContext {
-            workspace_id: "ws".into(), install_id: "in".into(), request_nonce: "nonce-1".into(),
-            system_sha256: "aa".repeat(32), history_sha256: "bb".repeat(32),
-            generation_config_sha256: "cc".repeat(32), requested_at: "1000".into(),
-        };
-        let req: serde_json::Value = serde_json::from_str(&governed_request("sys", &msgs, &ctx)).unwrap();
+        let prepared = prepare_governed_turn("sys", &msgs, 1000, "ws", "in", "gen-cfg").unwrap();
+        let req: serde_json::Value = serde_json::from_str(&governed_request(&prepared)).unwrap();
         assert_eq!(req["task_class"], GOVERNED_TASK_CLASS);
         assert!(req["task_id"].as_str().unwrap().starts_with("t-"));
-        assert!(req["rationale"].as_str().unwrap().contains("hello world"));
-        // The canonical request envelope reaches the supervisor/signer (P0-1): the
-        // desktop nonce + request hashes travel in the request.
-        assert_eq!(req["request"]["request_nonce"], "nonce-1");
-        assert_eq!(req["request"]["system_sha256"], "aa".repeat(32));
+        // Exact STRUCTURED input is the execution/signing authority (P0-2), not rationale.
+        assert_eq!(req["system"], "sys");
+        assert_eq!(req["history"][0]["role"], "user");
+        assert_eq!(req["history"][0]["content"], "hello world");
+        // The request envelope's hashes match the structured fields (the signer
+        // RECOMPUTES + compares; it never trusts these claims).
+        assert_eq!(req["request"]["request_nonce"], prepared.context.request_nonce);
+        assert_eq!(req["request"]["system_sha256"], brops_core::receipt::sha256_hex(b"sys"));
+        assert_eq!(req["request"]["history_sha256"], governed_history_sha256(&prepared.history));
         assert_eq!(req["request"]["protocol"], "brops.request.v1");
         // Carries NO lease / key / environment — the conductor never holds them.
         for forbidden in ["lease", "key", "env", "issuer", "protected_scope"] {
             assert!(req.get(forbidden).is_none(), "request must not carry {forbidden}");
         }
+    }
+
+    #[test]
+    fn prepared_turn_hashes_the_exact_sent_trimmed_history_not_the_full_one() {
+        // Over-budget history (10 × 50 KiB) so trim_history drops the oldest; the
+        // latest must remain a user turn.
+        let mut msgs: Vec<ChatMsg> = (0..9)
+            .map(|i| ChatMsg {
+                role: if i % 2 == 0 { "user" } else { "assistant" }.to_string(),
+                content: "x".repeat(50 * 1024),
+            })
+            .collect();
+        msgs.push(ChatMsg { role: "user".into(), content: "the latest question".into() });
+        let full = msgs.clone();
+
+        let prepared = prepare_governed_turn("sys", &msgs, 1000, "ws", "in", "gen").unwrap();
+        assert!(prepared.history.len() < full.len(), "history was actually trimmed");
+
+        let req: serde_json::Value = serde_json::from_str(&governed_request(&prepared)).unwrap();
+        let sent: Vec<ChatMsg> = req["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| ChatMsg {
+                role: m["role"].as_str().unwrap().to_string(),
+                content: m["content"].as_str().unwrap().to_string(),
+            })
+            .collect();
+        let pairs = |v: &[ChatMsg]| -> Vec<(String, String)> {
+            v.iter().map(|m| (m.role.clone(), m.content.clone())).collect()
+        };
+        // 1. The actual SENT history == the prepared trimmed history.
+        assert_eq!(pairs(&sent), pairs(&prepared.history));
+        // 2. The request's history_sha256 == hash(SENT history).
+        assert_eq!(req["request"]["history_sha256"], governed_history_sha256(&sent));
+        // 3. hash(sent) != hash(full) — it is NOT the untrimmed history.
+        assert_ne!(governed_history_sha256(&sent), governed_history_sha256(&full));
+        // 4. The latest user message is preserved.
+        assert_eq!(sent.last().unwrap().content, "the latest question");
+        assert_eq!(sent.last().unwrap().role, "user");
     }
 
     #[test]

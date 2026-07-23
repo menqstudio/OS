@@ -836,21 +836,23 @@ pub async fn stream_reply(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            // ONE immutable request context (design §2.2), the single source for the
-            // challenge, the bridge request, and the desktop's Expected. history_sha256
-            // is a COLLISION-SAFE JCS array hash (crate::ai::governed_history_sha256),
-            // never a delimiter concat that user content could forge.
-            let ctx = crate::ai::GovernedRequestContext {
-                workspace_id: GOVERNED_WORKSPACE_ID.to_string(),
-                install_id: GOVERNED_INSTALL_ID.to_string(),
-                request_nonce: brops_core::id(),
-                system_sha256: brops_core::receipt::sha256_hex(system.as_bytes()),
-                history_sha256: crate::ai::governed_history_sha256(&history),
-                generation_config_sha256: brops_core::receipt::sha256_hex(
-                    GOVERNED_GENERATION_CONFIG.as_bytes(),
-                ),
-                requested_at: started_ms.to_string(),
+            // Prepare the turn ONCE (audit R2 P0): trim the history a single time and
+            // hash the EXACT system + trimmed history into the canonical context. The
+            // challenge, the bridge request (structured system + history), and the
+            // desktop Expected ALL derive from this same prepared data — nothing
+            // re-trims or re-hashes a different input downstream.
+            let prepared = match crate::ai::prepare_governed_turn(
+                &system,
+                &history,
+                started_ms,
+                GOVERNED_WORKSPACE_ID,
+                GOVERNED_INSTALL_ID,
+                GOVERNED_GENERATION_CONFIG,
+            ) {
+                Ok(p) => p,
+                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
             };
+            let ctx = &prepared.context;
             let issued = brops_core::receipt::IssuedRequest {
                 workspace_id: &ctx.workspace_id,
                 install_id: &ctx.install_id,
@@ -876,8 +878,9 @@ pub async fn stream_reply(
             }
 
             // Run the turn buffered (no DB lock held across the async sidecar call). The
-            // exact same `ctx` rides in the bridge request so the signer sees the nonce.
-            let governed = crate::ai::governed_turn(&system, &history, &ctx).await;
+            // exact prepared data (structured system + trimmed history + the same
+            // context) rides in the bridge request so the signer sees the nonce.
+            let governed = crate::ai::governed_turn(&prepared).await;
             // Freshness / verified_at use a FRESH clock taken AFTER the turn — never the
             // stale request-start time.
             let verify_ms: u64 = std::time::SystemTime::now()
@@ -889,12 +892,15 @@ pub async fn stream_reply(
                 // Transport failure: a terminal block with the REAL reason (not a
                 // fabricated empty receipt), consuming the nonce in one tx.
                 Err(transport) => {
+                    // Bound the (possibly hostile/huge) transport error to the SAME
+                    // value stored durably and shown to the UI, so they can't diverge.
+                    let reason = brops_core::receipt_store::bounded_reason(transport);
                     let conn = match locked(&state) {
                         Ok(c) => c,
                         Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
                     };
                     brops_core::receipt_store::record_pre_verification_block(
-                        &conn, &ctx.request_nonce, transport, verify_ms,
+                        &conn, &ctx.request_nonce, &reason, verify_ms,
                     )
                 }
                 // A receipt (possibly unsigned/malformed): verify it — desktop authority.

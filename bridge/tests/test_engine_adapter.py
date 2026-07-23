@@ -33,6 +33,8 @@ _REQUEST_ENVELOPE = {
 }
 VALID_REQUEST = {
     "task_id": "t1", "task_class": "standard-builder", "rationale": "reply to user",
+    "system": "you are a specialist",
+    "history": [{"role": "user", "content": "hello"}],
     "request": dict(_REQUEST_ENVELOPE),
 }
 

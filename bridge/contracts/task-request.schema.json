@@ -4,11 +4,31 @@
   "description": "What the desktop cockpit asks the engine sidecar to run as a governed task. Carries no lease, no key, no environment (mirrors bro_supervisor.TaskRequest).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["task_id", "task_class", "rationale", "request"],
+  "required": ["task_id", "task_class", "rationale", "system", "history", "request"],
   "properties": {
     "task_id": { "type": "string", "minLength": 1 },
     "task_class": { "type": "string", "minLength": 1 },
-    "rationale": { "type": "string", "minLength": 1 },
+    "rationale": {
+      "type": "string", "minLength": 1,
+      "description": "DERIVED human-readable convenience only — NOT execution or signing authority. The supervisor/executor works from `system` + `history`; `rationale` is never trusted as input."
+    },
+    "system": {
+      "type": "string",
+      "description": "The EXACT system prompt (execution/signing authority). The signer recomputes system_sha256 from this, never trusting request.system_sha256."
+    },
+    "history": {
+      "type": "array",
+      "description": "The EXACT structured turn input (execution/signing authority): the ordered messages. The signer recomputes history_sha256 = sha256(JCS(this)) from it, never trusting request.history_sha256.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "content"],
+        "properties": {
+          "role": { "type": "string", "minLength": 1 },
+          "content": { "type": "string" }
+        }
+      }
+    },
     "request": {
       "type": "object",
       "additionalProperties": false,

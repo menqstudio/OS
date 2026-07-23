@@ -30,6 +30,8 @@ except Exception:  # pragma: no cover - jsonschema is a declared dep
 
 _VALID = {
     "task_id": "t-0001", "task_class": "standard-builder", "rationale": "reply",
+    "system": "you are a specialist",
+    "history": [{"role": "user", "content": "hello"}],
     "request": {
         "protocol": "brops.request.v1", "workspace_id": "ws", "install_id": "in",
         "request_nonce": "nonce-1", "system_sha256": "aa" * 32, "history_sha256": "bb" * 32,
