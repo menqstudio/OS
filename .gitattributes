@@ -1,0 +1,4 @@
+# Shell scripts must stay LF so they run on the Linux CI runners (a CRLF `\r` would
+# break `#!/usr/bin/env bash` and every command). The Wave 3b isolation-proof job
+# (`engine/ci/isolation_proof.sh`) depends on this.
+*.sh text eol=lf

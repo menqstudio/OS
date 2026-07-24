@@ -32,5 +32,5 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 > If you read all 6 files fully + pulled + claimed a task, you are fully onboarded.
 > Applies to **every agent — Claude and ChatGPT — every session.** No exceptions.
 >
-> Եթե 5-ն էլ ամբողջովին կարդացիր + pull արեցիր + task claim արեցիր՝ լրիվ onboarded ես։
+> Եթե 6-ն էլ ամբողջովին կարդացիր + pull արեցիր + task claim արեցիր՝ լրիվ onboarded ես։
 > Վերաբերում ա **ամեն agent-ին — Claude ու ChatGPT — ամեն session։** Բացառություն չկա։

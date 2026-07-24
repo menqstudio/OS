@@ -70,7 +70,8 @@ class EngineSidecarTests(unittest.TestCase):
     # Clear any ambient provisioning / fake flag so real-mode tests are deterministic.
     def setUp(self):
         self._saved = {k: os.environ.pop(k, None) for k in
-                       (*engine_sidecar._PROVISION_ENV, "BRIDGE_SIDECAR_FAKE")}
+                       (*engine_sidecar._PROVISION_ENV,
+                        engine_sidecar._SUPERVISOR_SOCKET_ENV, "BRIDGE_SIDECAR_FAKE")}
 
     def tearDown(self):
         for k, v in self._saved.items():
@@ -124,12 +125,58 @@ class EngineSidecarTests(unittest.TestCase):
         self.assertIsNone(doc["result"])
         self.assertIn("not provisioned", doc["error"])
 
-    def test_real_mode_provisioned_but_no_signer_fails_closed(self):
+    def test_real_mode_without_supervisor_socket_fails_closed(self):
+        # Supervisor provisioning present, but the sidecar's only governance endpoint —
+        # the supervisor service socket — is absent. Fail-closed (P0-1): the sidecar
+        # holds no signer material and never reaches the signer directly.
         env = {k: "x" for k in engine_sidecar._PROVISION_ENV}
         doc = _drive(_VALID, env=env)
         self.assertFalse(doc["ok"])
         self.assertIsNone(doc["result"])
-        self.assertIn("signer", doc["error"])
+        self.assertIn("supervisor service not provisioned", doc["error"])
+
+    def test_real_mode_with_supervisor_socket_fails_closed_pending_3b1b(self):
+        # Supervisor provisioning + the supervisor-service socket are present, so the
+        # sidecar's topology is correct (relay to the supervisor, never the signer). But
+        # the desktop request carries no execution attempt (the supervisor reserves it in
+        # 3b-1B), and the authoritative execution→receipt binding is 3b-1B — so real mode
+        # fails closed (never a partial/unsigned result).
+        env = {k: "x" for k in engine_sidecar._PROVISION_ENV}
+        env[engine_sidecar._SUPERVISOR_SOCKET_ENV] = "/run/brops-supervisor.sock"
+        doc = _drive(_VALID, env=env)
+        self.assertFalse(doc["ok"])
+        self.assertIsNone(doc["result"])
+        self.assertIn("3b-1B", doc["error"])
+
+    def test_self_test_signed_mints_a_real_signed_receipt_desktop_still_blocks(self):
+        # Exercises the REAL Wave 3b signer/store/attestation chain end to end. The
+        # bridge result is schema-valid and carries a real Ed25519 signature over the
+        # canonical envelope + the containment bytes — but there is no trusted manifest,
+        # so the desktop would still Block (design §5 STOP: no "Verified" in 3b-1).
+        import base64
+
+        doc = _drive(_VALID, argv=["--self-test-signed"])
+        self.assertTrue(doc["ok"], doc.get("error"))
+        self.assertIsInstance(doc["result"], str)
+        receipt = doc["receipt"]
+        self.assertEqual(receipt["status"], "completed")
+        self.assertNotIn("verified", receipt)
+        # Real signed wire present.
+        self.assertTrue(receipt["envelope_jcs_b64"])
+        self.assertTrue(receipt["signature_b64"])
+        self.assertTrue(receipt["containment_evidence_b64"])
+        # The envelope is the 21-field brops.receipt.v1 (decodes as strict JSON).
+        env_bytes = base64.urlsafe_b64decode(
+            receipt["envelope_jcs_b64"] + "=" * (-len(receipt["envelope_jcs_b64"]) % 4)
+        )
+        envelope = json.loads(env_bytes)
+        self.assertEqual(envelope["protocol"], "brops.receipt.v1")
+        self.assertEqual(envelope["decision"], "completed")
+        # Forensic-attestation record relayed to the desktop (P1-6).
+        self.assertTrue(receipt["attestation_evidence_jcs_b64"])
+        self.assertTrue(receipt["attestation_signature_b64"])
+        self.assertEqual(receipt["supervisor_attestation_key_id"], "self-test-attestation-key")
+        self.assertTrue(receipt["run_id"] and receipt["lease_id"] and receipt["execution_attempt_id"])
 
     def test_result_never_carries_result_on_any_failure(self):
         # Sweep: every non-happy path has result is None.

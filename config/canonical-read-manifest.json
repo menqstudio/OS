@@ -10,9 +10,12 @@
     "OWNERS.md",
     "docs/ARCHITECTURE.md",
     "MASTER_EXECUTION_ROADMAP.md",
+    "apps/desktop/SECURITY.md",
     "docs/design/WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md",
-    "apps/desktop/SECURITY.md"
+    "docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md",
+    "docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md",
+    "docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md"
   ],
   "current_state_pointer": "NEXT_CHAT.md",
-  "notes": "NEXT_CHAT.md holds the exact current branch/PR/HEAD/blockers/next-action and must be updated in the same commit as any state change. PROJECT_STATE.md and TASKS.md are the live coordination board. Do not add stale or nonexistent paths here."
+  "notes": "NEXT_CHAT.md §3 holds the exact current branch/PR/HEAD/3b-1A-GREEN-evidence/3b-1B-RED-findings/STOP-gates/next-action and must be updated in the same commit as any state change. PROJECT_STATE.md and TASKS.md are the live coordination board. The Wave 3b design chain is: WAVE_3B_ISOLATED_SIGNER_DESIGN.md (Architect-GREEN, the isolated-signer/manifest design) -> WAVE_3B1_EXECUTION_BINDING_MAP.md (3b-1 re-scope) -> WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md (3b-1B design-lock, currently design RED, NOT GREEN, no code). Do not add stale or nonexistent paths here."
 }

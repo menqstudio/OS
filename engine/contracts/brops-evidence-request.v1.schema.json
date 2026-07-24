@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "brops.evidence-request.v1",
+  "description": "Trigger -> supervisor (design §4.4). The supervisor's ONLY receipt-evidence input: a run handle, NEVER an evidence object or arbitrary bytes to attest/sign. The supervisor builds evidence from its own terminal run state for the attempt (design §1.3, P0-1). This closes the 'attestation oracle moved into the supervisor' path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "run_id", "execution_attempt_id"],
+  "properties": {
+    "protocol": { "const": "brops.evidence-request.v1" },
+    "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "execution_attempt_id": { "type": "string", "minLength": 1, "maxLength": 128 }
+  }
+}
