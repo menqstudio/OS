@@ -2,9 +2,10 @@
 
 > **STATUS (2026-07-24):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
 > CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
-> — the Architect reviewed the consolidated **rev 11** (@ `ac35314`; exact-head CI #115 GREEN;
-> CI GREEN ≠ design GREEN) and returned Design RED with 2 P0 + 3 P1 final consistency findings,
-> directing a **surgical correction**; the addendum is now **rev 12 (CONSOLIDATED)** — a
+> — the Architect reviewed the consolidated **rev 12** (@ `8d83246`; exact-head CI #116 GREEN;
+> CI GREEN ≠ design GREEN) and returned Design RED with 3 P0 + 3 P1 implementation-readiness
+> findings, mandating a **6-track read-only fan-out audit + one integrator + a red-team pass**;
+> the addendum is now **rev 13 (CONSOLIDATED)** — a
 > proposed design-GREEN candidate, **not yet Architect-GREEN, no code**. See `NEXT_CHAT.md` §3
 > for the authoritative current state, STOP gates, and next action.
 >
