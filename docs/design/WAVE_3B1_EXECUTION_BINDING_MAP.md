@@ -6,8 +6,9 @@
 > CI GREEN ≠ design GREEN) and returned Design RED with 2 P0 + 3 P1 desktop-ingress/evidence-floor/
 > bounded-staging findings, mandating a **5-track read-only fan-out audit + one integrator + a
 > fresh independent red-team**; the addendum is now **rev 18 (CONSOLIDATED)** — a
-> proposed design-GREEN candidate, **not yet Architect-GREEN, no code**. See `NEXT_CHAT.md` §3
-> for the authoritative current state, STOP gates, and next action.
+> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-18 HEAD `c3cf0ae`,
+> exact-head CI 8/8 GREEN — evidence only; resolve the live tip + Checks from GitHub). See
+> `NEXT_CHAT.md` §0/§3 for the authoritative current state, STOP gates, and next action.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative
 > source for every 3b-1B contract (artifact matrix, exact schemas, time model, capability
