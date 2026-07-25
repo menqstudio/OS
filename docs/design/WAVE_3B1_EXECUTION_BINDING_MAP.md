@@ -2,13 +2,14 @@
 
 > **STATUS (2026-07-25):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
 > CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
-> — the Architect reviewed the consolidated **rev 19** (@ `8d3451e`; exact-head CI #125 SUCCESS 8/8;
-> CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-18 P0 (orchestrator ordering) + P1 (generation_config),
-> and returned Design RED with a new 1 P0 · 0 P1 (challenge-channel decoupled `request_nonce` from
-> `request_sha256`), mandating a **read-only fan-out audit + one integrator + a
-> fresh independent red-team**; the addendum is now **rev 20 (CONSOLIDATED)** — a
-> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-19 reviewed HEAD `8d3451e`,
-> exact-head CI #125 8/8 GREEN — evidence only; resolve the live tip + Checks from GitHub). See
+> — the Architect reviewed the consolidated **rev 20** (@ `85240ed`; exact-head CI #126 — mandatory
+> gates SUCCESS; CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-19 nonce/hash P0, and returned
+> Design RED with a new 1 P0 · 0 P1 (the desktop `generation_config` hash source was contradictory —
+> split authority between the frozen raw-string `prepare_governed_turn` and the object-JCS requirement),
+> mandating a **read-only real-code investigation + one integrator + a
+> fresh independent red-team**; the addendum is now **rev 21 (CONSOLIDATED)** — a
+> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-20 reviewed HEAD `85240ed`,
+> exact-head CI #126 mandatory-gates GREEN — evidence only; resolve the live tip + Checks from GitHub). See
 > `NEXT_CHAT.md` §0/§3 for the authoritative current state, STOP gates, and next action.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative

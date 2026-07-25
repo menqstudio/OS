@@ -1,35 +1,37 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 20 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 21 — CONSOLIDATED)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 20 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 19 was Architect-reviewed at exact HEAD
-> `8d3451e28b542f290cc9b7c981c4636aec3dc54b` (exact-head CI **#125** SUCCESS, all 8 jobs GREEN —
-> **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED** the rev-18 **P0 orchestrator
-> ordering** (turn-open → staging×3 → … → exit, no submit-subprocess output pull) and the rev-18 **P1
-> generation_config canonicalization** (flat string→string, no numeric divergence), but the rev-19
-> challenge-creation-channel replacement introduced a **new P0-1** (1 P0 · 0 P1), and directed a
-> **read-only fan-out + one integrator + a fresh independent red-team, NOT a rewrite.** rev 20 closes
-> it in place:
-> **P0-1 (rev-19 regression) — the challenge creation channel decoupled `request_nonce` from
-> `request_sha256`.** rev 19 had the **challenge authority mint `request_nonce`** while the desktop
-> supplied `request_sha256`; but the ratified & already-merged Wave-3a contract is that the **desktop**
-> mints `request_nonce` (`prepare_governed_turn` → `brops_core::id()` UUIDv4, `ai.rs:1228`),
-> `request_sha256 = SHA256(JCS(request-envelope))` with `request_nonce` **inside** the hashed envelope
-> (`receipt.rs::request_envelope_sha256:245-264` ↔ `brops_canonical.request_sha256:157-179`,
-> `protocol="brops.request.v1"`), and the desktop **atomically pre-stores** `(nonce, request_sha256)`
-> in its own `receipt_challenges` table (`issue_challenge`, `receipt_store.rs:109-126`) **before**
-> submit (`commands.rs:866-883`), consuming it at final acceptance keyed by
-> `expected.request.request_nonce` (`receipt_store.rs:256-271`). An authority-minted nonce can never be
-> the pair of a desktop-supplied `request_sha256`, so every happy-path turn would Block (supervisor
-> `request_sha256` mismatch, or desktop "nonce not found"). **rev 20 (§2.1):** the create-pending (A)
-> message now carries the **desktop-minted `request_nonce`** + envelope fields and **no**
-> `request_sha256`; the authority **recomputes `request_sha256` itself** (byte-identical merged formula)
-> and stores the desktop nonce + its recomputed hash; issue (B) signs the §4.1 payload with that exact
-> `(request_nonce, request_sha256)` pair; a normative **desktop `receipt_challenges` pre-store** step +
-> a **mandatory E2E test** (authority recompute == supervisor open-time recompute == the desktop's
-> pre-stored row, consumed at acceptance) lock the single-envelope chain. The authority-minted-nonce
-> variant is explicitly deferred to a separate ratified redesign, out of scope here.
-> *(rev-18 → rev-19 findings — P0 orchestrator ordering, P1 generation_config canonicalization, P1
-> two-trust-model creation channel — remain closed; see the non-normative Appendix A.)*
+> **STATUS: ❌ DESIGN RED being closed — rev 21 is a PROPOSED design-GREEN candidate, NOT
+> Architect-GREEN. 3b-1B code has NOT started.** rev 20 was Architect-reviewed at exact HEAD
+> `85240edf9bd66673d9f3e8f94e732aab155273f9` (exact-head CI **#126** SUCCESS on the two mandatory
+> Wave-3b engine gates + the coordination gate — **CI GREEN ≠ design GREEN**); the Architect
+> **CONFIRMED CLOSED** the rev-19 nonce/hash P0 (desktop-minted `request_nonce`, authority-recomputed
+> `request_sha256`, single-envelope chain), but that fix surfaced a **new P0-1 on the same chain**
+> (1 P0 · 0 P1), and directed a **read-only real-code investigation + one integrator + a fresh
+> independent red-team, NOT a rewrite.** rev 21 closes it in place:
+> **P0-1 — the desktop `generation_config` hash SOURCE was still contradictory (split authority).** rev
+> 20 requires the desktop pre-stored `IssuedRequest`, the challenge authority, and sidecar staging all
+> use `generation_config_sha256 = SHA256(JCS(flat string→string generation_config OBJECT))`, while also
+> freezing `prepare_governed_turn(&str)` byte-for-byte. But the merged `prepare_governed_turn`
+> (`ai.rs:1214-1235`) hashes the **raw UTF-8 string** (`ai.rs:1231`), stores that raw-string hash in
+> `GovernedRequestContext`→`IssuedRequest`→the `receipt_challenges` pre-store, and the current
+> `GOVERNED_GENERATION_CONFIG` is a plain **string** (`commands.rs:785`), not an object — so the desktop
+> would pre-store a raw-string-based `request_sha256` while the authority/staging derive the
+> object-JCS-based one ⇒ every legitimate turn Blocks (`handle_not_challenge`/`request_sha256` mismatch
+> at `receipt_store.rs:322-327`), and the implementer was left to choose among undefined split-authority
+> workarounds. **rev 21 (§4.10(g)):** adds a NEW immutable 3b-1B preparation contract
+> **`prepare_governed_turn_v1b`** (`PreparedGovernedTurnV1B`) that, in ONE pass, validates the flat
+> `generation_config` **object**, computes `generation_config_jcs = JCS(object)` + its
+> `generation_config_sha256` **once**, mints `request_nonce` once, and is the **single source** for the
+> `receipt_challenges` pre-store `IssuedRequest`, the create-pending (A) request, the
+> `bridge.governed-turn-submit.v1` submit frame (carrying the validated object), and the final
+> `Expected` — so the **same** object-JCS hash flows through `receipt_challenges` → authority row →
+> §4.1 challenge → §2.4 staging → terminal record → `Expected`, with no split authority; the frozen
+> `prepare_governed_turn(&str)` + `GOVERNED_GENERATION_CONFIG: &str` + the `receipt.rs:1215-1219`
+> raw-string fixture stay byte-for-byte (§2.2 KEEP+ADD). Mandatory tests: the frozen fixture's
+> raw-string hash **≠** the object-JCS hash, and **only** the object-JCS hash appears at every 3b-1B hop.
+> *(rev-18 → rev-19 → rev-20 findings — orchestrator ordering, generation_config canonicalization,
+> two-trust-model channel, nonce/`request_sha256` decoupling — remain closed; see the non-normative
+> Appendix A.)*
 > **All contracts below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.**
 > STOP gates: `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31
 > not merged.
@@ -177,7 +179,7 @@ The exact current contract (not history):
   row-id" disjunction, which left the implementer a choice between two trust models):
   - **(A) `brops.governed-challenge-create-pending.v1`** (create-pending / propose — **does NOT
     sign**). The desktop-UI supplies the **DESKTOP-minted `request_nonce`** (the ratified Wave-3a
-    nonce — `prepare_governed_turn` → `brops_core::id()` UUIDv4, `ai.rs:1228`) **plus the structured
+    nonce — `prepare_governed_turn_v1b` → `brops_core::id()` UUIDv4; see §4.10(g)) **plus the structured
     authoritative turn facts** (`run_id`/`task_id` + `workspace_id`/`install_id` context +
     `system_sha256`/`history_sha256`/`generation_config_sha256`/`requested_at_ms`). It does **NOT**
     supply `request_sha256`. The authority **validates** them (rules below), **recomputes
@@ -214,12 +216,16 @@ The exact current contract (not history):
   Wave-3a contract).** The `request_nonce` is minted by the **desktop**, and `request_sha256` is the
   SHA-256 of the canonical request **envelope that CONTAINS that nonce** — so the two are, by
   construction, ONE pair from ONE request. This is the already-merged Wave-3a model and MUST NOT be
-  changed: (1) the desktop mints `request_nonce = brops_core::id()` (UUIDv4) inside
-  `prepare_governed_turn` (`ai.rs:1225-1233`); (2) **before** submitting the governed turn the desktop
-  **atomically pre-stores** `(nonce, request_sha256, conversation_id)` in its own `receipt_challenges`
-  table via `issue_challenge` (`receipt_store.rs:109-126`; ordering `commands.rs:866-878` runs BEFORE
-  `governed_turn` at `commands.rs:883`), where `request_sha256 = IssuedRequest::request_sha256()` over
-  the exact same fields; (3) the desktop carries that SAME `request_nonce` + envelope fields into
+  changed: (1) the desktop mints `request_nonce = brops_core::id()` (UUIDv4) inside the **NEW 3b-1B
+  preparation function `prepare_governed_turn_v1b`** (§4.10(g) — the object-JCS-hash single source; NOT
+  the frozen raw-string `prepare_governed_turn(&str)`, which produces a different
+  `generation_config_sha256` and would split-authority the hash, P0-1); (2) **before** submitting the
+  governed turn the desktop **atomically pre-stores** `(nonce, request_sha256, conversation_id)` in its
+  own `receipt_challenges` table via `issue_challenge` (`receipt_store.rs:109-126`; ordering
+  `commands.rs:866-878` runs BEFORE `governed_turn` at `commands.rs:883`), where
+  `request_sha256 = IssuedRequest::request_sha256()` over the exact same fields — **including the
+  object-JCS `generation_config_sha256` from `prepare_governed_turn_v1b`**, so the pre-stored hash and
+  the authority/staging hash are one value, not two; (3) the desktop carries that SAME `request_nonce` + envelope fields into
   create-pending (A); (4) the authority **recomputes** `request_sha256` from those inputs with the
   byte-identical formula (`receipt.rs::request_envelope_sha256:245-264` ↔
   `brops_canonical.request_sha256:157-179`) and stores the desktop nonce + its recomputed hash; (5) at
@@ -272,7 +278,7 @@ The authority's **protected pending-challenge store** (owner-only `0700`, §2.3)
 ```sql
 CREATE TABLE governed_pending_challenge (
   pending_challenge_id     TEXT PRIMARY KEY,          -- opaque, authority-minted (≥128-bit random)
-  request_nonce            TEXT NOT NULL,             -- DESKTOP-minted (brops_core::id() UUIDv4, prepare_governed_turn ai.rs:1228); pre-stored by the desktop in receipt_challenges BEFORE (A); the authority stores it verbatim, NEVER mints it (feeds §4.1 request_nonce)
+  request_nonce            TEXT NOT NULL,             -- DESKTOP-minted (brops_core::id() UUIDv4, prepare_governed_turn_v1b §4.10(g)); pre-stored by the desktop in receipt_challenges BEFORE (A); the authority stores it verbatim, NEVER mints it (feeds §4.1 request_nonce)
   run_id TEXT NOT NULL, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL, install_id TEXT NOT NULL,
   supervisor_id            TEXT NOT NULL,             -- authority's OWN config, never caller-supplied
   system_sha256 TEXT NOT NULL, history_sha256 TEXT NOT NULL,
@@ -1496,11 +1502,72 @@ artifacts' bytes, and the signed challenge commits to their SHA-256:
 `challenge_doc bytes = JCS({payload,sig})` for the open-time canonicality gate (§4.10(a0),
 unchanged).
 
+**Desktop governed-turn preparation contract (P0-1, v1b — the SINGLE immutable object-JCS-hash
+source).** The frozen `prepare_governed_turn(system, messages, now_ms, workspace_id, install_id,
+generation_config: &str)` (`ai.rs:1214-1235`) hashes `generation_config` as a **raw UTF-8 string**
+(`generation_config_sha256 = sha256_hex(generation_config.as_bytes())`, `ai.rs:1231`) and stores that
+raw-string hash in `GovernedRequestContext` (`ai.rs:1169-1177`) → `IssuedRequest`
+(`receipt.rs:270-294`, built at `commands.rs:856-864`) → the `receipt_challenges` pre-store
+(`issue_challenge`, `receipt_store.rs:109-126`) → the final `Expected` compare
+(`receipt_store.rs:322-327`). The governed family instead requires
+`generation_config_sha256 = SHA256(JCS(flat string→string generation_config OBJECT))` (the P1-1
+form). Those two hashes **differ**, so 3b-1B MUST NOT reuse the frozen `&str` preparation — otherwise
+the desktop pre-stores a raw-string-based `request_sha256` while the authority/staging derive the
+object-JCS-based one ⇒ a `request_sha256` mismatch that fails closed at **every** gate on the path —
+the authority/supervisor `handle_not_challenge`, the desktop `Verified::bind` recompute
+(`receipt.rs:467`/`:484`), and the pre-stored-challenge vs Expected compare
+(`receipt_store.rs:322-327`) — so **every** legitimate turn Blocks (the split-authority the Architect
+flagged). 3b-1B therefore ADDS **one new, immutable**
+preparation function that is the sole source of the object-JCS hash for the entire chain:
+```rust
+// NEW — additive; the frozen prepare_governed_turn(&str) + its fixtures are byte-for-byte untouched.
+pub struct PreparedGovernedTurnV1B {
+    pub system: String,                     // exact bytes sent AND hashed (raw UTF-8)
+    pub history: Vec<ChatMsg>,              // canonical trimmed history sent AND hashed (JCS)
+    pub generation_config: GovernedGenerationConfig,   // the VALIDATED flat string→string OBJECT (retained — the frozen struct dropped the raw string)
+    pub generation_config_jcs: Vec<u8>,     // JCS(object) computed ONCE
+    pub context: GovernedRequestContext,    // request_nonce + the OBJECT-JCS generation_config_sha256 + the other hashes
+}
+pub fn prepare_governed_turn_v1b(
+    system: &str, messages: &[ChatMsg],
+    generation_config: GovernedGenerationConfig,   // OBJECT, not &str
+    now_ms: u64, workspace_id: &str, install_id: &str,
+) -> Result<PreparedGovernedTurnV1B, String>
+```
+It **MUST, in ONE pass, produce every downstream value from the same inputs**: (1) `validate` the flat
+`generation_config` object (§4.10(g) per-field regex + integer-range, rejecting exponent/`-0.0`/
+precision/bare-int **before** canonicalization); (2) compute `generation_config_jcs = JCS(object)`
+**once** and `generation_config_sha256 = SHA256(generation_config_jcs)` — the **object-JCS** hash, never
+`generation_config.as_bytes()`; (3) normalize `system` (raw UTF-8) + `history` (JCS) once; (4) mint
+`request_nonce = brops_core::id()` (UUIDv4) **once**; (5) build **one immutable**
+`GovernedRequestContext`/`IssuedRequest` carrying that object-JCS `generation_config_sha256`; (6) be the
+**single source** from which the desktop derives, with no re-hashing and no second config
+representation: **(a)** the `receipt_challenges` pre-store `IssuedRequest` (`issue_challenge` →
+`request_sha256()`), **(b)** the create-pending (A) request (§2.1), **(c)** the
+`bridge.governed-turn-submit.v1` submit frame (§4.10(g) — which carries the **validated object** so the
+authority + sidecar staging recompute the identical `SHA256(JCS(object))`), and **(d)** the final
+`Expected.request` used at §6.1 step-14 verification (`receipt.rs:418-486`). Because all four derive
+from the one `PreparedGovernedTurnV1B`, the **same** object-JCS `generation_config_sha256` — and hence
+the same `request_sha256` — flows through `receipt_challenges` → authority pending row → §4.1 challenge
+→ §2.4 staging → terminal record → `Expected`, with **no split authority**. **Frozen (untouched, §2.2
+KEEP+ADD):** `prepare_governed_turn(&str)` (`ai.rs:1214-1235`), `GOVERNED_GENERATION_CONFIG: &str =
+"brops.governed-engine.sidecar.v1"` (`commands.rs:785`), the raw-string hash line (`ai.rs:1231`), and
+the raw-string parity fixture (`receipt.rs:1215-1219`) all stay byte-for-byte; v1b is a **new**
+function/struct beside them. **Mandatory tests (P0-1):** (i) the frozen fixture's raw-string hash
+`SHA256("{\"model\":\"claude\",\"temperature\":0}") = 963be7a4…` (`receipt.rs:1215-1219`) is asserted
+**≠** the object-JCS `generation_config_sha256` of the corresponding validated object — proving the two
+formulas are distinct and the frozen path is not silently reused; (ii) an E2E assertion that **only**
+the object-JCS `generation_config_sha256` appears at every 3b-1B hop — the desktop `receipt_challenges`
+row, the authority `governed_pending_challenge` row, the §4.1 challenge payload, the §2.4
+`generation_config` staged-artifact re-hash, the terminal record, and the §7 `Expected` — and the
+raw-string hash appears **nowhere** on the 3b-1B path.
+
 **New Tauri command `governed_turn_submit`** (a genuinely NEW entry added to the `generate_handler!`
 list, `apps/desktop/src-tauri/src/lib.rs:95-166` — that list has **no** governed `#[tauri::command]`
 today; governed turns are currently reached only internally from the `stream_*` commands via the
 non-command `governed_turn` (`ai.rs:567`) → `governed_engine` (`ai.rs:1346`), so nothing is renamed
-or replaced): it takes `{system, history, generation_config, challenge_doc_b64, task_id}` from the
+or replaced): it takes the `PreparedGovernedTurnV1B` (from `prepare_governed_turn_v1b` above) as
+`{system, history, generation_config, challenge_doc_b64, task_id}` from the
 desktop-UI,
 spawns the **one-shot** governed sidecar exactly as `ai.rs::governed_engine` does today
 (`ai.rs:1346-1412`: spawn, write the submit JSON to `stdin` `:1369-1376`, read one reply from
@@ -2296,6 +2363,29 @@ The current normative design is §0–§9 above. This log is historical only.
   ratified redesign. Fresh independent red-team over the rev-20 diff + real repo: no BLOCKER; the frozen
   3b-1A + Wave-3a request/nonce path proven untouched; `check_coordination` + `check_capabilities` GREEN
   live. NOT Architect-GREEN; 3b-1B code not started.
+- **rev 21 (this doc):** single-P0 closure of the rev-20 Architect Design RED (**1 P0 · 0 P1** @
+  `85240edf9bd66673d9f3e8f94e732aab155273f9`, exact-head CI #126 — two mandatory Wave-3b engine gates +
+  coordination gate GREEN; CI GREEN ≠ design GREEN; the rev-19 nonce/hash P0 was CONFIRMED CLOSED) via a
+  read-only real-code investigation + one integrator + a fresh independent red-team. **P0-1** — the
+  desktop `generation_config` hash source was contradictory: the frozen `prepare_governed_turn(&str)`
+  (`ai.rs:1214-1235`) hashes the **raw UTF-8 string** (`ai.rs:1231`) into
+  `GovernedRequestContext`→`IssuedRequest`→the `receipt_challenges` pre-store, and
+  `GOVERNED_GENERATION_CONFIG` is a plain string (`commands.rs:785`), while 3b-1B requires
+  `generation_config_sha256 = SHA256(JCS(flat string→string OBJECT))` — so the desktop pre-stored a
+  raw-string-based `request_sha256` and the authority/staging derived the object-JCS-based one ⇒ every
+  turn Blocks (`receipt_store.rs:322-327`), with no single immutable desktop source. **rev 21
+  (§4.10(g)):** adds a NEW immutable preparation contract **`prepare_governed_turn_v1b`** /
+  `PreparedGovernedTurnV1B` that in ONE pass validates the config **object**, computes
+  `generation_config_jcs = JCS(object)` + its hash once, mints the nonce once, and is the single source
+  for the `receipt_challenges` pre-store `IssuedRequest`, the create-pending (A) request, the
+  `bridge.governed-turn-submit.v1` submit frame (carrying the validated object), and the final
+  `Expected` — so the same object-JCS hash flows `receipt_challenges` → authority row → §4.1 → §2.4
+  staging → terminal record → `Expected`, no split authority; the frozen `prepare_governed_turn(&str)` +
+  `GOVERNED_GENERATION_CONFIG: &str` + the `receipt.rs:1215-1219` fixture stay byte-for-byte (§2.2
+  KEEP+ADD). Mandatory tests: frozen raw-string hash ≠ object-JCS hash; only the object-JCS hash appears
+  at every 3b-1B hop. Fresh independent red-team over the rev-21 diff + real repo: no BLOCKER; the frozen
+  3b-1A/Wave-3a prep path proven untouched; `check_coordination` + `check_capabilities` GREEN live. NOT
+  Architect-GREEN; 3b-1B code not started.
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 
