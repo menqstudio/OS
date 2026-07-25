@@ -4,6 +4,7 @@
   "paths": [
     "NEXT_CHAT.md",
     "START_HERE.md",
+    "AGENTS.md",
     "CLAUDE.md",
     "PROJECT_STATE.md",
     "TASKS.md",
@@ -17,5 +18,5 @@
     "docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md"
   ],
   "current_state_pointer": "NEXT_CHAT.md",
-  "notes": "NEXT_CHAT.md §3 holds the exact current branch/PR/HEAD/3b-1A-GREEN-evidence/3b-1B-RED-findings/STOP-gates/next-action and must be updated in the same commit as any state change. PROJECT_STATE.md and TASKS.md are the live coordination board. The Wave 3b design chain is: WAVE_3B_ISOLATED_SIGNER_DESIGN.md (Architect-GREEN, the isolated-signer/manifest design) -> WAVE_3B1_EXECUTION_BINDING_MAP.md (3b-1 re-scope) -> WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md (3b-1B design-lock, currently design RED, NOT GREEN, no code). Do not add stale or nonexistent paths here."
+  "notes": "AGENTS.md and START_HERE.md are equivalent doorways (AGENTS.md is a GitHub/Codex convenience shim that redirects to START_HERE.md). NEXT_CHAT.md §3 holds the exact current branch/PR/HEAD/3b-1A-GREEN-evidence/3b-1B-RED-findings/STOP-gates/next-action and must be updated in the same commit as any state change. PROJECT_STATE.md and TASKS.md are the live coordination board. The Wave 3b design chain is: WAVE_3B_ISOLATED_SIGNER_DESIGN.md (Architect-GREEN, the isolated-signer/manifest design) -> WAVE_3B1_EXECUTION_BINDING_MAP.md (3b-1 re-scope) -> WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md (3b-1B design-lock, currently design RED, NOT GREEN, no code). Every path here is asserted to exist by tools/check_coordination.py (the 'Coordination · docs consistency gate' CI job), so a deleted doc cannot silently orphan the chain. Do not add stale or nonexistent paths here."
 }

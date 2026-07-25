@@ -1,6 +1,7 @@
 """Tests for tools/check_coordination.py — the coordination-docs CI gate."""
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import tempfile
@@ -37,6 +38,18 @@ def _good_docs(root: pathlib.Path) -> None:
         "Where we are: everything is fine and this body is long enough.\n",
         encoding="utf-8",
     )
+    (root / "config").mkdir(parents=True, exist_ok=True)
+    (root / "config" / "canonical-read-manifest.json").write_text(
+        json.dumps({
+            "schema": 2,
+            "paths": [
+                "CLAUDE.md", "OWNERS.md", "docs/ARCHITECTURE.md",
+                "MASTER_EXECUTION_ROADMAP.md", "TASKS.md", "PROJECT_STATE.md",
+            ],
+            "current_state_pointer": "PROJECT_STATE.md",
+        }),
+        encoding="utf-8",
+    )
 
 
 class CheckCoordinationTests(unittest.TestCase):
@@ -65,6 +78,36 @@ class CheckCoordinationTests(unittest.TestCase):
         (root / "MASTER_EXECUTION_ROADMAP.md").write_text(text, encoding="utf-8")
         probs = cc.check(root)
         self.assertTrue(any("Phase 3 is missing section" in p and "Objective" in p for p in probs))
+
+    def test_manifest_dead_path(self):
+        # The canonical-read manifest may not point at a file that does not exist.
+        root = self._tmp()
+        _good_docs(root)
+        (root / "config" / "canonical-read-manifest.json").write_text(
+            json.dumps({"paths": ["CLAUDE.md", "docs/GONE.md"],
+                        "current_state_pointer": "PROJECT_STATE.md"}),
+            encoding="utf-8",
+        )
+        probs = cc.check(root)
+        self.assertTrue(any("docs/GONE.md" in p and "does not exist" in p for p in probs))
+
+    def test_manifest_missing(self):
+        # A missing root manifest is a hard failure (GitHub-only continuation depends on it).
+        root = self._tmp()
+        _good_docs(root)
+        (root / "config" / "canonical-read-manifest.json").unlink()
+        probs = cc.check(root)
+        self.assertTrue(any("canonical-read-manifest.json" in p for p in probs))
+
+    def test_manifest_pointer_absent(self):
+        # A manifest with no current_state_pointer is a hard failure (fail-closed).
+        root = self._tmp()
+        _good_docs(root)
+        (root / "config" / "canonical-read-manifest.json").write_text(
+            json.dumps({"paths": ["CLAUDE.md"]}), encoding="utf-8",
+        )
+        probs = cc.check(root)
+        self.assertTrue(any("current_state_pointer" in p for p in probs))
 
     def test_wrong_phase_count(self):
         root = self._tmp()

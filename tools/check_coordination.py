@@ -17,6 +17,7 @@ Exit 0 + "GREEN: ..." when consistent; exit 1 + the problems otherwise.
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import re
 import sys
@@ -113,6 +114,39 @@ def check(root: pathlib.Path) -> list[str]:
         if not m or len(m.group(1).strip()) < 3:
             problems.append("PROJECT_STATE.md: missing/empty '**Last updated ...:**' line")
 
+    # 7. Root canonical-read manifest: valid JSON and every listed path exists as a file
+    #    (mirrors engine/tools/bro_validate.py's path-existence loop). This closes the
+    #    GitHub-only-continuation drift window where the manifest could point at a deleted
+    #    doc without CI catching it.
+    manifest_rel = "config/canonical-read-manifest.json"
+    manifest_txt = _read(root, manifest_rel)
+    if manifest_txt is None:
+        problems.append(f"missing canonical file: {manifest_rel}")
+    else:
+        try:
+            manifest = json.loads(manifest_txt)
+        except ValueError as exc:
+            problems.append(f"{manifest_rel}: invalid JSON ({exc})")
+        else:
+            paths = manifest.get("paths")
+            if not isinstance(paths, list) or not paths:
+                problems.append(f"{manifest_rel}: 'paths' must be a non-empty list")
+            else:
+                for rel in paths:
+                    if not isinstance(rel, str) or not (root / rel).is_file():
+                        problems.append(
+                            f"{manifest_rel}: listed path does not exist as a file: {rel!r}"
+                        )
+            pointer = manifest.get("current_state_pointer")
+            if not isinstance(pointer, str) or not pointer:
+                problems.append(
+                    f"{manifest_rel}: 'current_state_pointer' must be a non-empty string"
+                )
+            elif not (root / pointer).is_file():
+                problems.append(
+                    f"{manifest_rel}: current_state_pointer does not exist as a file: {pointer!r}"
+                )
+
     return problems
 
 
@@ -137,7 +171,8 @@ def main(argv: list[str] | None = None) -> int:
     # on non-ASCII (the exact hazard CLAUDE.md §5 warns about), which would break a hook.
     print(f"GREEN: coordination docs consistent "
           f"(canonical files present; roadmap {len(EXPECTED_PHASES)} phases x "
-          f"{len(REQUIRED_SECTIONS)} sections; TASKS statuses valid; PROJECT_STATE fresh).")
+          f"{len(REQUIRED_SECTIONS)} sections; TASKS statuses valid; PROJECT_STATE fresh; "
+          f"canonical-read-manifest paths all exist).")
     return 0
 
 

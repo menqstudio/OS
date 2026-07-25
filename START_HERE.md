@@ -21,7 +21,9 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 5. [`OWNERS.md`](./OWNERS.md) — who has which role · դերեր
 6. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — the design · ճարտարապետություն
 
-*(Machine-readable form of this read order: [`config/canonical-read-manifest.json`](./config/canonical-read-manifest.json).)*
+*(Machine-readable form of this read order: [`config/canonical-read-manifest.json`](./config/canonical-read-manifest.json) — every path in it is asserted to exist by the `Coordination · docs consistency gate` in CI, so the chain can never point at a deleted file.)*
+
+**Active front (2026-07-25):** the live work is **Wave 3b-1B** (authoritative execution→receipt binding), a **design-lock addendum in Architect Design RED**. Its single normative source is [`docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`](./docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md); the implementation index is [`docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md`](./docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md). **Read `NEXT_CHAT.md` §3 for the exact HEAD, verdict, STOP gates, and next autonomous action.** GitHub is the only source of truth — do not rely on prior chat memory.
 
 **3. Claim your task in `TASKS.md`** before touching anything · claim արա task-ը որևէ բանի դիպչելուց առաջ
 

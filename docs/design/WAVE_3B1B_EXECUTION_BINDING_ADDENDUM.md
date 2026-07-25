@@ -15,13 +15,21 @@
 > the raw system/history/generation_config bytes "at the sidecar" by assumption, and the frozen
 > `bridge.task-request` (`additionalProperties:false`, no `challenge_doc_b64`/discriminator) cannot
 > carry them → a new **`bridge.governed-turn-submit.v1`** ingress frame + a new Tauri
-> `governed_turn_submit` command + the one-shot sidecar orchestrator, byte formulas LOCKED to the
-> shipped `brops_canonical.py`, the §2.1 authority→desktop-UI document return path, and §6.1 step 0
-> (§2.1, §2.2, §4.10(g), §6.1); **P0-2** the evidence-head floor gated advance on `head_sequence`,
-> which is a **re-ANCHOR/re-SIGN counter** (rises on an unchanged chain) — falsely forking a
-> legitimate re-anchor → the floor now keys on **chain-content** `(event_count, last_sequence,
-> final_event_hash)` via a **5-case matrix** (+ a `validate_chain_detailed` helper; `head_sequence`
-> demoted to a high-water counter; envelope binds `event_count`/`last_sequence`) (§7, §4.9); **P1-3**
+> `governed_turn_submit` command + the one-shot sidecar orchestrator; byte formulas: `system`=raw
+> UTF-8 and `history`=JCS reuse the shipped `brops_canonical.py`, while **`generation_config` is a
+> closed JSON object with `generation_config_bytes = JCS(object)`** — a NEW, strictly-additive
+> governed-family canonicalization (owner-mandated) that leaves the frozen 3b-1A raw-UTF-8-string
+> `generation_config_bytes` + its parity fixture + `prepare_governed_turn`'s `&str` signature
+> byte-for-byte untouched (§2.2 KEEP+ADD); plus the §2.1 authority→desktop-UI document return path,
+> and §6.1 step 0 (§2.1, §2.2, §4.10(g), §6.1); **P0-2** the evidence-head floor gated advance on
+> `head_sequence`, which is a **re-ANCHOR/re-SIGN counter** (rises on an unchanged chain — the real
+> code's stale check `bro_evidence.py:112-116` keys on it) — falsely forking a legitimate re-anchor →
+> the floor now keys on **`head_sequence` monotonicity + chain-content** `(event_count, last_sequence,
+> final_event_hash)` via a **head-keyed A–E matrix** (A lower head → new `stale_evidence` reason; B
+> same head + content diff → `evidence_fork`; C unchanged re-anchor advances head only; D longer chain
+> accepted only if it reproduces the stored prefix; E every other higher-head anomaly → `evidence_fork`)
+> + a `validate_chain_detailed` helper; `head_sequence` → `highest_head_sequence` high-water; envelope
+> binds `event_count`/`last_sequence` (§7, §4.5, §4.9); **P1-3**
 > staging chunks had no minimum length and no count bound (tiny-chunk amplification) → **deterministic
 > `expected_chunk_len` + `MAX_STAGING_CHUNKS = 46`** and exact numeric quotas (2 turns / 6 sessions /
 > 49 files-per-turn / 98 per-install / 17 MiB / 60 s sweep) (§2.4, §4.10(b/c)); **P1-4** the FAILED
@@ -362,10 +370,11 @@ CREATE TABLE governed_turn_staging (
 -- Per-artifact upload session (durable — P0-1 crash-consistency + P1-6 idempotency):
 CREATE TABLE governed_turn_staging_session (
   staging_session_id TEXT PRIMARY KEY,   -- opaque
-  challenge_handle TEXT NOT NULL, artifact TEXT NOT NULL,   -- system|history|generation_config
-  declared_len INTEGER NOT NULL CHECK (declared_len >= 0), declared_sha256 TEXT NOT NULL,
+  challenge_handle TEXT NOT NULL,
+  artifact TEXT NOT NULL CHECK (artifact IN ('system','history','generation_config')),  -- P1-4: closed; policy_bundle REFUSED
+  declared_len INTEGER NOT NULL CHECK (declared_len >= 0 AND declared_len <= 8388608), declared_sha256 TEXT NOT NULL,  -- P1-4: <= absolute max ceiling (history 8 MiB); the tighter per-artifact ceiling (system 262144 / generation_config 65536) is enforced at staging-open (§4.10(a))
   next_seq INTEGER NOT NULL CHECK (next_seq >= 0 AND next_seq <= 46),   -- 46 = MAX_STAGING_CHUNKS (P1-3/P1-4)
-  byte_count INTEGER NOT NULL CHECK (byte_count >= 0),   -- NO running_sha256 (not a resumable hash state, P0-1)
+  byte_count INTEGER NOT NULL CHECK (byte_count >= 0 AND byte_count <= declared_len),   -- P1-4: never exceeds declared; NO running_sha256 (not a resumable hash state, P0-1)
   session_dir TEXT NOT NULL,             -- 0700 dir holding the IMMUTABLE <seq>.chunk files
   state TEXT NOT NULL CHECK (state IN ('UPLOADING','ARTIFACT_READY','SESSION_CORRUPT')),  -- P1-4: renamed (was INPUTS_ARTIFACT_READY, collided with the row's INPUTS_READY / FAILED)
   published_handle TEXT,                  -- set on final publish
@@ -476,14 +485,17 @@ protocol:
   decoded chunk base64url-encodes to `4·⌈184320/3⌉ = 245760` bytes; plus the chunk-frame JSON
   envelope (`{"protocol":"brops.governed-staging-chunk.v1","staging_session_id":"…",
   "seq":<int>,"bytes_b64":"…"}`, ≤ ~203 bytes with a ≤128-char session id + **≤2-digit seq** (P1-3:
-  `seq` ∈ `0..45`)) = **≤ 245963 ≤ 262144** (≥ 16 KiB headroom). A 256 KiB decoded chunk would encode to `349526` +
+  `seq` ∈ `0..45`)) = **≤ 245963 ≤ 262144** (≥ 16 KiB headroom). A 256 KiB decoded chunk would encode to `4·⌈262144/3⌉ = 349528` +
   envelope > 262144 — **rejected**. The validator MUST check **BOTH** caps independently and
   fail-closed: (1) `decoded_len ≤ 184320`, **and** (2) the serialized frame ≤ `262144` (reuse
   `encode_frame`/`read_frame`). Tests: exact-max (184320 → accept), max+1 (184321 → refuse on
   the DECODED cap even though its frame still fits), oversized-serialized-frame (refuse on the
   FRAME cap before decode), and a `256 KiB`-decoded regression (refused by both).
-- **Per-artifact ceilings (LOCKED):** `system ≤ 256 KiB`, `history ≤ 8 MiB`,
-  `generation_config ≤ 64 KiB` (match the desktop's real `ai.rs` caps); `policy_bundle ≤ 64 KiB`
+- **Per-artifact ceilings (LOCKED):** `system ≤ 256 KiB` and `history ≤ 8 MiB` match the desktop's
+  real `ai.rs` caps (`MAX_SYSTEM_BYTES = 262144` `:71`, `MAX_CONVERSATION_BYTES = 8388608` `:73`);
+  `generation_config ≤ 64 KiB` = `MAX_GENERATION_CONFIG_BYTES = 65536`, the governed-family ceiling on
+  `JCS(generation_config_object)` (NOT an `ai.rs` cap — the frozen 3b-1A path carries only a fixed
+  arbitrary config string, so this ceiling is new to the 3b-1B object form, §4.10(g)); `policy_bundle ≤ 64 KiB`
   applies only to the **supervisor-self-published** bundle (below), never to a sidecar upload.
   Total sidecar-uploaded request `≤ 8.5 MiB`.
 - **Policy authority (P0-2, LOCKED — sidecar NEVER supplies policy):** the signed challenge
@@ -502,18 +514,25 @@ protocol:
     desktop `MAX_CONCURRENT_GENERATIONS = 2`, `ai.rs:212`); a 3rd `governed-turn-open` ⇒ `quota_turns`.
   - **`MAX_STAGING_SESSIONS_PER_INSTALL = 6`** concurrent `governed_turn_staging_session` rows
     (= 2 turns × 3 artifacts); over ⇒ `quota_sessions`.
-  - **`MAX_STAGING_CHUNKS = 46`** per session (above) ⇒ at most **49 chunk-files per turn**
-    (`history` 46 + `system` 2 + `generation_config` 1) and **`MAX_STAGING_FILES_PER_INSTALL = 98`**
-    (= 2 turns × 49) immutable `<seq>.chunk` files on disk; over ⇒ `too_many_chunks`.
+  - **`MAX_STAGING_CHUNKS = 46`** per session (above) ⇒ **`MAX_STAGING_FILES_PER_TURN = 49`** immutable
+    `<seq>.chunk` files per turn (`history` 46 + `system` 2 + `generation_config` 1) and
+    **`MAX_STAGING_FILES_PER_INSTALL = 98`** (= 2 turns × 49) files on disk; over ⇒ `too_many_chunks`.
   - **`MAX_STAGING_BYTES_PER_INSTALL = 17825792`** (= 17 MiB = 2 × the 8.5 MiB per-turn request
     ceiling) total decoded staging bytes; over ⇒ `quota_bytes`.
   - A session/row **TTL bound to the signed challenge's own `challenge_expires_at_ms`** (NOT an
-    acceptance window — none exists yet); a **`STAGING_SWEEP_INTERVAL_MS = 60000`** background sweep
-    (plus a startup pass) unlinks orphan `.tmp-*.part` + the whole `session_dir` and deletes
-    expired/abandoned staging rows **WITHOUT consuming the challenge nonce** — the desktop may
-    re-issue against the same signed challenge until the challenge itself expires (this denies the
-    sidecar a nonce-burning DoS). A partial temp is never linked to a handle; `read(handle)`
-    re-verifies sha.
+    acceptance window — none exists yet). Two literal cleanup bounds (P1-3, no implicit latency):
+    **`EXPIRED_SESSION_RETENTION_MS = 0`** — an expired staging row/`session_dir` (now past
+    `challenge_expires_at_ms`) has **zero** retention: it is eligible for unlink the instant it
+    expires, never preserved (staging holds no post-expiry value; the nonce is not consumed on sweep,
+    so nothing is lost). **`STAGING_CLEANUP_DEADLINE_MS = 120000`** — an expired session MUST be fully
+    unlinked (row + `session_dir` + temps) within `2 × STAGING_SWEEP_INTERVAL_MS` of its expiry (one
+    missed-sweep tolerance), a provable completion SLA so the per-install byte/file quotas can rely on
+    expired rows being gone (a slow sweep can never silently exceed `MAX_STAGING_BYTES/FILES_PER_INSTALL`).
+    A **`STAGING_SWEEP_INTERVAL_MS = 60000`** background sweep (plus a startup pass) unlinks orphan
+    `.tmp-*.part` + the whole `session_dir` and deletes expired/abandoned staging rows **WITHOUT
+    consuming the challenge nonce** — the desktop may re-issue against the same signed challenge until
+    the challenge itself expires (this denies the sidecar a nonce-burning DoS). A partial temp is never
+    linked to a handle; `read(handle)` re-verifies sha.
 - **Isolation:** `governed_turn_staging` + staging blob root are `0700` supervisor-only;
   sidecar/executor have **no read**; the executor receives only post-publish read-only FDs (§4.7).
 - **Ordering:** acceptance/lease/execution (§5) may proceed **only after** the staging row is
@@ -540,7 +559,7 @@ everywhere; §4 gives the exact key sets.
 | 5 | `brops.governed-sign-request.v1` (attested evidence) | supervisor | **supervisor attestation** key (`supervisor_attestation_key_id`) over `JCS(evidence)` | isolated signer §6.1; desktop re-verifies the attestation bytes | ms | (transported, not stored) | — | `request_nonce` + `execution_attempt_id` | echoes #4/#6 handles; every `*_sha256` DERIVED by signer |
 | 6 | `brops.governed-turn-execution-receipt.v1` | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7; `verify_governed_turn_receipt` | ms | `execution_receipt_handle = SHA256(JCS({payload,signature}))` | recorder store namespace (§2.3) | `receipt_id` (global unique) | `output_handle == output_sha256`; binds attempt/lease |
 | 7 | `brops.governed-turn-containment.v1` | recorder runner | evidence event (evidence-recorder) | provider §7 | ms | `containment_evidence_sha256 = SHA256(JCS(artifact))` | recorder store namespace | attempt+lease | `contained==true`, closed `teardown_outcome` enum |
-| 8 | evidence event / head (`bro_evidence`, REUSED) | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7 | **legacy epoch-seconds (never compared to ms)** | `event_hash` chain | evidence chain + **signer-owned `governed_evidence_head_floor`** (§7 P1-7/P0-2) | signer-owned floor keyed on chain-content `(event_count, last_sequence, final_event_hash)` via BEGIN IMMEDIATE CAS 5-case matrix; `head_sequence` is a re-anchor counter (high-water only) | chain content monotone-or-extends per chain (structural) |
+| 8 | evidence event / head (`bro_evidence`, REUSED) | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7 | **legacy epoch-seconds (never compared to ms)** | `event_hash` chain | evidence chain + **signer-owned `governed_evidence_head_floor`** (§7 P1-7/P0-2) | signer-owned floor keyed on `head_sequence` monotonicity + chain-content `(event_count, last_sequence, final_event_hash)` via BEGIN IMMEDIATE CAS A–E matrix (case A lower head → `stale_evidence`; B/D/E → `evidence_fork`; C unchanged re-anchor advances head only; D prefix-extend) | head monotone + chain content prefix-extends (structural) |
 | 9 | `brops.governed-sign-result.v1` | isolated signer | signer key (the receipt envelope #12) | supervisor → bridge → desktop | ms | (transported) | — | `receipt_id` | tagged union `signed`/`refused`; echoes TRANSPORT-ONLY |
 | 10 | `bridge.governed-turn-result.v1` (metadata-only, top-level `protocol` discriminator) + `brops.governed-turn-output-read.v1` pull | sidecar (transport/proxy) | — (carries #9/#12 signed bytes; output pulled) | **desktop verifies signatures + whole-output SHA256, NO store access** | ms | (transported; output via §4.10(f) pull) | — | `receipt_id` + `execution_attempt_id` + `output_stream_id` (read 3-tuple, P1-3) | echoes TRANSPORT-ONLY; desktop equality-checks vs the verified signed envelope #12; output digest vs #12 |
 | 11 | `brops.governed-turn-record.v1` | supervisor | **`governed-turn-recorder`** key (dedicated) | isolated signer's `LiveRunStateProvider` §7 | ms | `record_handle = SHA256(JCS({payload,signature}))` (also create-if-absent at `<run_id>__<execution_attempt_id>.json`) | supervisor store namespace | `(run_id, execution_attempt_id)` | binds ALL of #1,#2,#4 (via `lease_handle`),#6 (via `execution_receipt_handle`),#7,#8 + `challenge_accepted_at_ms` |
@@ -718,9 +737,11 @@ union; SEPARATE from the frozen 12-value `brops.sign-result.v1` enum, which is u
 ratified 12 (`attestation_invalid, not_completed, run_binding_invalid, nonce_mismatch,
 handle_missing, hash_mismatch, policy_mismatch, containment_missing, identity_denied,
 timestamp_invalid, oversize, malformed`) + the governed additions (`challenge_replay,
-acceptance_conflict, lease_not_ready, output_oversize, output_timeout, evidence_fork, lease_expired,
-challenge_invalidated, retry_conflict, stream_unknown, stream_expired, stream_binding_mismatch,
-seq_out_of_range`). The previously-prose-only reasons (`evidence_fork` from §7, `lease_expired`/
+acceptance_conflict, lease_not_ready, output_oversize, output_timeout, evidence_fork, stale_evidence,
+lease_expired, challenge_invalidated, retry_conflict, stream_unknown, stream_expired,
+stream_binding_mismatch, seq_out_of_range`). `stale_evidence` (P0-2, §7 case A — a lower-`head_sequence`
+rolled-back/truncated head) is **distinct** from `evidence_fork` (a divergent-content fork, §7 cases
+B/D/E). The previously-prose-only reasons (`evidence_fork`/`stale_evidence` from §7, `lease_expired`/
 `EXPIRED` from the §7 lease-time invariants, acceptance-time `challenge_invalidated`, idempotency
 `retry_conflict`, output-stream `stream_expired`/`stream_binding_mismatch`) are now closed members —
 no reason is prose-only. (The §4.10 a0/a/b/c internal supervisor↔sidecar producer codes —
@@ -1256,34 +1277,54 @@ here. No new principal handles the document.
 ```json
 { "protocol": "bridge.governed-turn-submit.v1",
   "task_id": "<string ≤128>",
-  "challenge_doc_b64": "<base64url of the exact signed {payload,sig} bytes>",
+  "challenge_doc_b64": "<base64url of the exact signed {payload,sig} bytes, decoded ≤ 4096>",
   "system": "<string, UTF-8, ≤ 262144 bytes>",
   "history": [ { "role": "user"|"assistant"|"system", "content": "<string>" }, … ],
-  "generation_config": "<string ≤128 — the sidecar engine config id, e.g. brops.governed-engine.sidecar.v1>" }
+  "generation_config": {                 // ONE closed JSON object (P0-1, owner-mandated)
+    "engine_id": "<string ≤128 — e.g. brops.governed-engine.sidecar.v1>",
+    "model": "<string ≤128>",
+    "max_output_tokens": <int 1..1048576>,
+    "temperature": <number 0..2>,
+    "top_p": <number 0..1> } }
 ```
-`additionalProperties:false`; `required:[protocol,task_id,challenge_doc_b64,system,history,
-generation_config]`; the top-level `protocol` const both admits this frame and (being absent from
-`bridge.result`/`bridge.task-request`) keeps it disjoint from the frozen family. Caps mirror the
-real code: `system` ≤ `MAX_SYSTEM_BYTES = 262144` (`ai.rs:71`), `JCS(history)` ≤
-`MAX_CONVERSATION_BYTES = 8388608` (`ai.rs:73`); overflow ⇒ out-of-band ingress error (below), no
-frame emitted.
+`additionalProperties:false` at BOTH levels; top-level `required:[protocol,task_id,challenge_doc_b64,
+system,history,generation_config]`; `generation_config` is a **closed object** with
+`additionalProperties:false` and `required:[engine_id,model,max_output_tokens,temperature,top_p]`
+(a strict, individually-bounded config — tighter/more fail-closed than an opaque string). The
+top-level `protocol` const both admits this frame and (being absent from
+`bridge.result`/`bridge.task-request`) keeps it disjoint from the frozen family. `role` is a closed
+enum `{user,assistant,system}`; caps: `system` ≤ `MAX_SYSTEM_BYTES = 262144`
+(`ai.rs:71`), `JCS(history)` ≤ `MAX_CONVERSATION_BYTES = 8388608` (`ai.rs:73`), `history` ≤
+`MAX_MESSAGES = 1000` (`ai.rs:74`) with each `content` ≤ `MAX_MESSAGE_BYTES = 1048576` (`ai.rs:72`)
+mirror the real code, and the **governed-family** `JCS(generation_config)` ≤
+`MAX_GENERATION_CONFIG_BYTES = 65536` (a NEW 3b-1B constant for the object form — NOT an `ai.rs` cap);
+overflow ⇒ out-of-band ingress error (below), no frame emitted.
 
-**Canonical input bytes (LOCKED to the shipped `brops_canonical.py`, NOT re-invented).** The
-sidecar derives the three staged artifacts' bytes with the **exact** functions already in
-`engine/runtime/brops_canonical.py`, and the challenge document commits to their SHA-256:
-- `system_bytes  = system.encode("utf-8")` — raw UTF-8, **no trim/normalize** (`brops_canonical.py:98-101`).
+**Canonical input bytes (governed family — LOCKED, with a NEW parallel `generation_config`
+formula that does NOT touch the frozen 3b-1A path).** The sidecar derives the three staged
+artifacts' bytes, and the signed challenge commits to their SHA-256:
+- `system_bytes  = system.encode("utf-8")` — raw UTF-8, **no trim/NFC/NFKC/CRLF normalize**
+  (the shipped `brops_canonical.system_bytes`, `brops_canonical.py:98-101`).
 - `history_bytes = JCS([{ "content":…, "role":… } for each turn])` — RFC 8785 canonical JSON of the
-  normalized `{content,role}` objects (`brops_canonical.py:104-109`); **Rust↔Python JCS parity** is
-  the same primitive proven for receipts (`core/src/receipt.rs::jcs_bytes:235-237` ↔
-  `bro_signature.canonical_bytes:158-160`, parity test `receipt.rs:1284-1288`).
-- `generation_config_bytes = generation_config.encode("utf-8")` — **raw UTF-8**, NOT JCS
-  (`brops_canonical.py:118-122`). *(Reconciliation: the REV-18 force-text wrote
-  `JCS(generation_config)`; the shipped code canonicalizes `generation_config` as raw UTF-8 of the
-  config string. The two are **NOT** interchangeable — JCS (RFC 8785) of a JSON string emits the
-  quoted, escaped form (surrounding `"` bytes) whereas raw UTF-8 is unquoted, so they differ — and
-  the normative rule is **raw UTF-8** because that is what produces `generation_config_sha256`, the
-  digest the challenge already commits; using JCS here would make the staged digest mismatch the
-  challenge and refuse via `handle_not_challenge`.)*
+  normalized `{content,role}` objects (the shipped `brops_canonical.history_bytes`,
+  `brops_canonical.py:104-109`); **Rust↔Python JCS parity** is the same primitive proven for
+  receipts (`core/src/receipt.rs::jcs_bytes:235-237` ↔ `bro_signature.canonical_bytes:158-160`,
+  parity test `receipt.rs:1283-1289`).
+- `generation_config_bytes = JCS(generation_config)` — RFC 8785 canonical JSON of the **closed
+  `generation_config` OBJECT** (P0-1, owner-mandated). *(Reconciliation — this is a **NEW, strictly
+  additive** canonicalization for the 3b-1B governed family, per the §2.2 KEEP + ADD law, and does
+  NOT modify anything frozen: the shipped `brops_canonical.generation_config_bytes` (raw UTF-8 of a
+  an arbitrary config **string** via `generation_config: &str`, e.g. `{"model":"claude","temperature":0}`
+  hashed as raw bytes, `brops_canonical.py:118-122` / `ai.rs:1221`), the frozen 3b-1A parity fixture
+  (`receipt.rs:1216-1219`, which hashes the raw-UTF-8 string form), and `prepare_governed_turn`'s
+  `generation_config: &str` signature (`ai.rs:1221/1231`) all stay **byte-for-byte unchanged** on the
+  frozen path. The 3b-1B canonicalizer ADDS a `governed_generation_config_bytes(obj) = JCS(obj)`
+  function alongside the frozen one, and the governed desktop-challenge-authority hashes exactly
+  `SHA256(JCS(generation_config))` so the challenge-commit ↔ staged-digest equality holds within the
+  governed family; a mismatch fails closed via `handle_not_challenge`. A **new Rust↔Python parity
+  fixture** covers the object/JCS form (distinct from the frozen `receipt.rs:1216-1219` string
+  fixture, which is untouched). A closed, individually-bounded object is deliberately more fail-closed
+  than the opaque config string it replaces on the governed path.)*
 `challenge_doc bytes = JCS({payload,sig})` for the open-time canonicality gate (§4.10(a0),
 unchanged).
 
@@ -1567,8 +1608,8 @@ No output renders before step 14 commits.
    `governed_turn_submit` command, which spawns the one-shot governed sidecar (as
    `ai.rs::governed_engine`) and writes a single **`bridge.governed-turn-submit.v1`** frame carrying
    `{task_id, challenge_doc_b64, system, history, generation_config}`. The sidecar derives the three
-   canonical input-byte blobs via the shipped `brops_canonical.py` formulas (system=raw UTF-8,
-   history=JCS, generation_config=raw UTF-8) and becomes the originator of steps 1–2. A local
+   canonical input-byte blobs via the governed-family formulas (system=raw UTF-8, history=JCS,
+   generation_config=JCS of the closed config object — §4.10(g)) and becomes the originator of steps 1–2. A local
    spawn/socket/timeout/oversize-reply/unexpected-exit failure here is an **out-of-band Tauri error
    ⇒ desktop Block, no result** (P1-5); nothing downstream exists "by assumption".
 1. **Challenge open + OPEN-TIME PRELIMINARY verify + publish (P0-2/P0-3):** the sidecar sends
@@ -1586,7 +1627,8 @@ No output renders before step 14 commits.
    sidecar-uploaded inputs (each `== the challenge's committed *_sha256`); the supervisor
    self-resolves+publishes+binds `policy_bundle`; the row advances to `INPUTS_READY`.
 3. **Acceptance ledger / outbox** (§5): on the execute trigger (§4.10(d)), read the clock once →
-   `challenge_accepted_at_ms`; CAS `UNSEEN → ACCEPTED_PREPARED`; reserve `execution_attempt_id`;
+   `challenge_accepted_at_ms`; **CAS insert `absent → ACCEPTED_PREPARED`** (create-if-absent — `UNSEEN`
+   = no-row is not a stored predecessor, P1-5); reserve `execution_attempt_id`;
    persist bindings + exact lease payload bytes; commit.
 4. **Lease publication + `LEASE_READY`**: idempotently sign + publish the governed-turn lease
    (`lease_handle`, `lease_issued_at_ms == challenge_accepted_at_ms`, `lease_expires_at_ms =
@@ -1637,9 +1679,10 @@ No output renders before step 14 commits.
 desktop↔sidecar hops (step 0 submit, step 13/14 output pull) run over one-shot Tauri subprocesses
 and an `AF_UNIX` socket that can fail *without* producing any governed reply frame. Distinct from a
 supervisor **verdict** (a `refused` reason from `GOVERNED_REFUSAL_REASONS`, which is authoritative
-and relayed verbatim), a **local transport failure** — sidecar spawn failure, socket connect/read
-error, `EXECUTION_TIMEOUT_MS` expiry, a reply that is oversize (> `MAX_STDOUT_BYTES = 9 MiB`) or
-malformed/unparseable, or an unexpected non-zero exit — is **NOT** a governed reason: it surfaces as
+and relayed verbatim), a **local transport failure** — sidecar spawn failure, sidecar unexpected
+exit, the **supervisor `AF_UNIX` socket unavailable**, a sidecar↔supervisor connect/read error,
+`EXECUTION_TIMEOUT_MS` expiry, a reply that is oversize (> `MAX_STDOUT_BYTES = 9 MiB`) or
+malformed/unparseable, or an invalid supervisor `protocol`/result — is **NOT** a governed reason: it surfaces as
 an **out-of-band Tauri command error and the desktop deterministically Blocks the turn with NO
 result and NO render** (no partial output, no receipt persisted, `request_nonce` NOT consumed so the
 still-valid signed challenge may be retried). The sidecar **never fabricates** a `signed` result or a
@@ -1719,64 +1762,81 @@ is authority), then require, all fail-closed:
   ("the recorder bumps it every time it re-signs, so a retained stale head always carries a lower
   number") — an unchanged chain's `event_count`/`last_sequence`/`final_event_hash` stay fixed while
   `head_sequence` climbs. rev 17 stored only
-  `highest_sequence`+`final_event_hash` and gated advance on `head_sequence`, which **falsely forks
-  a legitimate re-anchor of an unchanged chain** — the P0-2 defect. The floor therefore tracks the
-  chain-content pair `(event_count, last_sequence)` plus `final_event_hash`, and carries
-  `highest_head_sequence` only as an informational re-anchor high-water mark (never a fork signal).
-  Today `min_head_sequence` is a caller-only parameter never persisted (`brops_live_runstate.py`
-  calls `load_head`/`validate_chain` with **no** floor → a no-op); the fix makes it a **durable
+  `highest_sequence`+`final_event_hash` and gated advance on `head_sequence` as if it were a chain
+  length, which **falsely forks a legitimate re-anchor of an unchanged chain** — the P0-2 defect. The
+  fixed floor is keyed on **`head_sequence` monotonicity (the primary axis — the real code's stale
+  check `bro_evidence.py:112-116` compares `head_sequence` and raises "stale")** COMBINED with the
+  **chain-content identity** `(event_count, last_sequence, final_event_hash)`. Today `min_head_sequence`
+  is a caller-only parameter never persisted (`bro_completion.py` `TODO(L-4)` defaults it to the
+  store's own current head → self-referential no-op); the fix makes it a **durable
   `brops-signer`-owned floor DB**, separate from the read-only `brops-store` artifact store (the
   signer is read-only there, §2.3), dir `0700` / file `0600`:
   ```sql
   CREATE TABLE governed_evidence_head_floor (
-    install_id            TEXT NOT NULL, task_id TEXT NOT NULL,
+    install_id            TEXT NOT NULL,          -- supervisor-supplied turn context (NOT in bro_evidence)
+    task_id               TEXT NOT NULL,          -- EvidenceHead.task_id
+    highest_head_sequence INTEGER NOT NULL CHECK (highest_head_sequence >= 1),  -- re-anchor high-water
     event_count           INTEGER NOT NULL CHECK (event_count >= 1),
-    last_sequence         INTEGER NOT NULL CHECK (last_sequence >= 0),
-    final_event_hash      TEXT NOT NULL,
-    highest_head_sequence INTEGER NOT NULL CHECK (highest_head_sequence >= 1),
-    updated_at_ms         INTEGER NOT NULL,
+    last_sequence         INTEGER NOT NULL CHECK (last_sequence >= 1),          -- == event_count (1-based)
+    final_event_hash      TEXT NOT NULL,          -- 64-hex
+    updated_at_ms         INTEGER NOT NULL,       -- SIGNER wall-clock write time (bro_evidence has only issued_at_epoch seconds; NOT chain-derived)
     PRIMARY KEY (install_id, task_id) );
   ```
-  Inside `LiveRunStateProvider`, **before minting the §4.9 envelope**, the signer runs `load_head`
-  + a **`validate_chain_detailed`** helper (a thin wrapper over the existing `validate_chain` that
-  additionally returns the **per-event hash list** and `(event_count, last_sequence, final_event_hash,
-  head_sequence)`, since `validate_chain:158-171` computes but discards the per-event hashes) → the
-  chain-content tuple, then in **one `BEGIN IMMEDIATE`** tx (write-lock up front, reject nested — the
-  proven `receipt_store.rs` `in_immediate_tx` shape) `SELECT … WHERE install_id=? AND task_id=?` and
-  decides on **chain content, not `head_sequence`** — the **5-case matrix**:
-  1. **no row** → `INSERT` the tuple (bootstrap).
-  2. **`event_count < stored.event_count`** (fewer events, i.e. `last_sequence` also lower) →
-     **refuse `evidence_fork`** (stale / truncated / rolled-back chain).
-  3. **`event_count == stored.event_count` and `last_sequence == stored.last_sequence`** → the chain
-     is the SAME length; if **`final_event_hash == stored.final_event_hash`** → **idempotent
-     re-anchor**: do NOT change the content columns, `UPDATE highest_head_sequence =
-     max(stored, head_sequence)` + `updated_at_ms`, and re-sign the byte-identical envelope
-     (deterministic from the verified record — this is exactly the re-sign-counter case rev 17 forked);
-     if **`final_event_hash != stored.final_event_hash`** → **refuse `evidence_fork`** (same length,
-     divergent content).
-  4. **`event_count > stored.event_count`** (strictly more events) → **advance ONLY IF the new chain
-     extends the stored floor (extend-or-scope):** using the `validate_chain_detailed` per-event
-     hashes, the event at **sequence `stored.last_sequence`** (0-based list index
-     `stored.last_sequence − 1`, since `bro_evidence` sequences are 1-based —
-     `enumerate(event_ids, start=1)`, `bro_evidence.py:142`) MUST reproduce `stored.final_event_hash`
-     byte-for-byte (the stored prefix is an exact ancestor) — then `UPDATE … SET event_count=?,
-     last_sequence=?, final_event_hash=?, highest_head_sequence=max(stored, head_sequence),
-     updated_at_ms=?`. If the longer chain does NOT reproduce the stored prefix hash → **divergent
-     lineage → refuse `evidence_fork`**.
-  5. **`event_count == stored.event_count` but `last_sequence != stored.last_sequence`** (length/seq
-     disagreement — malformed) → **refuse `evidence_fork`**.
+  (`bro_evidence` exposes `task_id`/`event_count`/`last_sequence`/`final_event_hash`/`head_sequence`
+  via `load_head` `:84-119`; `install_id` is supervisor turn context, and `updated_at_ms` is the
+  signer's own write clock — the head carries only `issued_at_epoch` seconds, so `_ms` is NOT derived
+  from the chain.) Inside `LiveRunStateProvider`, **before minting the §4.9 envelope**, the signer
+  runs `load_head` → `(head_sequence, event_count, last_sequence, final_event_hash)` + a **new
+  `validate_chain_detailed`** helper (the existing `validate_chain` returns ONLY the final digest —
+  `bro_evidence.py:171` — and discards the per-event hashes it computes at `:158`; the detailed
+  variant returns the **ordered per-event hash list** AND each event's stored `previous_event_hash`
+  field — `EVENT_FIELDS`, `bro_evidence.py:43` — so D-ii/D-iii below are checkable). Then in **one
+  `BEGIN IMMEDIATE`** tx (write-lock up front, reject nested — the proven `receipt_store.rs`
+  `in_immediate_tx` shape) `SELECT … WHERE install_id=? AND task_id=?` and decide by the exact
+  **head_sequence-keyed A–E matrix**:
+  - **A. `head_sequence < stored.highest_head_sequence`** → **refuse `stale_evidence`** (a stale /
+    rolled-back / truncated head — a retained older signed head always carries a LOWER re-anchor
+    number; this is the real code's `bro_evidence.py:112-116` stale check made durable). *(No row exists
+    yet on the very first turn → this branch is unreachable then; see bootstrap below.)*
+  - **B. `head_sequence == stored.highest_head_sequence`** → if `(event_count, last_sequence,
+    final_event_hash)` **all equal** the stored triple → **idempotent retry** (re-sign the
+    byte-identical envelope, no field changes); **any** difference → **refuse `evidence_fork`**.
+  - **C. `head_sequence > stored.highest_head_sequence` AND `(event_count, last_sequence,
+    final_event_hash)` all equal** the stored triple → a **valid unchanged-chain re-anchor**: advance
+    **only** `highest_head_sequence` (= the new head_sequence) `+ updated_at_ms`; the content columns
+    are unchanged; mint an envelope with **identical chain-content fields** but binding the **new
+    `evidence_head_sequence`** (§4.9) — NOT byte-identical to a prior envelope (only case B, equal head,
+    is byte-identical). *(This is exactly the re-anchor rev 17 forked.)*
+  - **D. `head_sequence > stored.highest_head_sequence` AND `event_count`/`last_sequence` INCREASED** →
+    accept **ONLY** when the fully-validated new chain contains the stored chain as its **exact
+    prefix**, proven from `validate_chain_detailed`: (i) the stored `event_count` is reproduced
+    exactly (the new chain's first `stored.event_count` events exist in order); (ii) the per-event hash
+    at sequence `stored.event_count` (0-based list index `stored.event_count − 1`, since `bro_evidence`
+    sequences are 1-based — `enumerate(..., start=1)`, `:142`) equals `stored.final_event_hash`; (iii)
+    the NEXT event's stored `previous_event_hash` equals `stored.final_event_hash`; (iv) `event_count`
+    and `last_sequence` advance consistently (`new.event_count == new.last_sequence`,
+    `new.event_count > stored.event_count`). All four hold → `UPDATE … SET highest_head_sequence=?,
+    event_count=?, last_sequence=?, final_event_hash=?, updated_at_ms=?` (every field). Any sub-condition
+    fails → **refuse `evidence_fork`** (divergent lineage).
+  - **E. every other higher-`head_sequence` case** (e.g. `head_sequence >` stored but `event_count`/
+    `last_sequence` did NOT increase and content differs, or a shorter chain with a higher head, or a
+    length/seq disagreement) → **refuse `evidence_fork`**.
+  - **Bootstrap (no row):** `INSERT (install_id, task_id, highest_head_sequence, event_count,
+    last_sequence, final_event_hash, updated_at_ms)` from the validated head.
   (A divergent-content chain that is nonetheless validly signed would require **evidence-recorder key
   compromise**, which is **OUT of the §0 threat model** — the signer does not silently bless it; it
   refuses.) **Commit the floor BEFORE returning the signed envelope**; concurrent same-chain attempts
   serialize on `BEGIN IMMEDIATE` + the `(install_id, task_id)` PK (closing the TOCTOU). Crash after
-  floor-commit before response → the retry hits case 3 (idempotent re-anchor) and re-signs the
-  identical envelope (no content advance, no re-execution). **Startup integrity (scoped honestly, P1-7 — Option A):** on open, verify each
+  floor-commit before response → the retry hits case B (idempotent, equal head_sequence + equal
+  content) and re-signs the identical envelope (no advance, no re-execution). **Startup integrity (scoped honestly, P1-7 — Option A):** on open, verify each
   floor row is internally self-consistent (`final_event_hash` is 64-hex, `event_count ≥ 1`,
-  `last_sequence ≥ 0`, `highest_head_sequence ≥ 1`) and refuse a malformed/corrupt DB, fail-closed.
-  This floor detects and refuses — **against the current persisted floor** — a truncated chain
-  (case 2, fewer `event_count`), a same-length content fork (case 3, equal `event_count`/`last_sequence`
-  + divergent `final_event_hash`), and a longer chain that does not reproduce the stored prefix
-  (case 4 divergent lineage), i.e. rollback/fork mounted **through the running signer** by the
+  `last_sequence ≥ 1` = `event_count`, `highest_head_sequence ≥ 1` — matching the DDL CHECKs and the
+  real `bro_evidence.py:107-109` `< 1` rejection) and refuse a malformed/corrupt DB, fail-closed.
+  This floor detects and refuses — **against the current persisted floor** — a stale/rolled-back head
+  (case A, lower `head_sequence` → `stale_evidence`), a same-length or same-head content fork (case B,
+  equal head + any content difference → `evidence_fork`), a longer chain that does not reproduce the
+  stored prefix (case D divergent lineage → `evidence_fork`), and every other higher-head anomaly
+  (case E → `evidence_fork`), i.e. rollback/fork mounted **through the running signer** by the
   in-scope sidecar (which per §2.3 cannot read or write this `brops-signer` `0700`/`0600` DB at all). **This local table CANNOT
   detect a full-DB restore to an older self-consistent backup** — no external anchor exists to
   compare against, and the restored DB returns the restored (lower) floor as authoritative.
@@ -1787,15 +1847,21 @@ is authority), then require, all fail-closed:
   unlike the registry floor (whose strength comes from that external anchor), this evidence-head
   floor makes **no** cross-restart backup-rollback claim. The envelope binds `evidence_event_count`/
   `evidence_last_sequence`/`evidence_final_event_hash`/`evidence_head_sequence` (§4.9) so the signed
-  artifact commits to the exact chain content **and** the re-anchor counter. **Tests (5-case matrix):**
-  concurrent (exactly one advances), crash-after-commit (idempotent re-anchor re-sign), case 1
-  bootstrap-insert, case 2 fewer-events (refuse `evidence_fork`), case 3 same-length same-hash with a
-  **higher `head_sequence`** (idempotent re-anchor — advances only `highest_head_sequence`, NOT a fork:
-  the exact P0-2 regression guard), case 3 same-length divergent-hash (refuse `evidence_fork`), case 4
-  more-events-that-reproduce-the-stored-prefix (advance), case 4 more-events-divergent-lineage
-  (refuse `evidence_fork`), case 5 length/seq disagreement (refuse `evidence_fork`). (The Wave-3a desktop SQLite
-  has **no** `evidence_head_floor` table — this primitive is signer-side; a stale head is refused
-  here at the signer, before any envelope is minted.)
+  artifact commits to the exact chain content **and** the re-anchor counter. **Mandatory tests (the
+  A–E matrix + concurrency/crash):** (1) same chain + **equal** `head_sequence` → case B idempotent;
+  (2) same chain + **higher** `head_sequence` → case C valid unchanged re-anchor (advances ONLY
+  `highest_head_sequence`, NOT a fork — the exact P0-2 regression guard); (3) extension by ONE event
+  that reproduces the stored prefix → case D advance; (4) extension by MANY events that reproduce the
+  prefix → case D advance; (5) **higher** `head_sequence` + **shorter** chain → case E `evidence_fork`;
+  (6) same `event_count` + **different** `final_event_hash` → case B `evidence_fork`; (7) extension
+  MISSING the stored prefix (D-ii/D-iii fail) → `evidence_fork`; (8) concurrent unchanged re-anchor vs
+  extension → exactly one commits, the other re-evaluates on the new floor; (9) crash after floor
+  commit before the envelope response → retry hits case B, identical re-sign, no second advance; plus
+  the **lower `head_sequence`** case → `stale_evidence`, and the bootstrap no-row → INSERT. (The
+  Wave-3a desktop SQLite has **no** `evidence_head_floor` table — this primitive is signer-side; a
+  stale head is refused here at the signer, before any envelope is minted. Note: the shipped
+  `tests/test_evidence_chain.py` only exercises `head_sequence == 1`; the `min_head_sequence`
+  stale-reject path is currently **uncovered** and these tests add that coverage.)
 - **Registry anti-rollback (supervisor side, crash-consistent):** verify full signed
   registry → create-if-absent publish exact doc + fsync file&dir → durable floor tx persists
   `(highest_registry_epoch, registry_hash, challenge_registry_handle, root_key_id)` → the
@@ -1967,12 +2033,18 @@ The current normative design is §0–§9 above. This log is historical only.
   INGRESS frame was undefined (the signed challenge document + raw input bytes reached the sidecar
   "by assumption"; the frozen `bridge.task-request` cannot carry them) → new
   **`bridge.governed-turn-submit.v1`** ingress frame + Tauri `governed_turn_submit` command + the
-  one-shot sidecar orchestrator, byte formulas LOCKED to `brops_canonical.py`, the §2.1
-  authority→desktop-UI document return path, and §6.1 step 0 (§2.1, §2.2, §4.10(g), §6.1); **P0-2**
+  one-shot sidecar orchestrator; byte formulas: `system`=raw UTF-8 + `history`=JCS reuse
+  `brops_canonical.py`, and **`generation_config` = a closed JSON object with `JCS(object)`** — a NEW
+  strictly-additive governed-family formula (owner-mandated) that leaves the frozen 3b-1A
+  raw-UTF-8-string `generation_config_bytes` + its `receipt.rs:1216-1219` parity fixture untouched
+  (§2.2 KEEP+ADD); plus the §2.1 authority→desktop-UI document return path, and §6.1 step 0
+  (§2.1, §2.2, §4.10(g), §6.1); **P0-2**
   the evidence-head floor gated advance on `head_sequence` (a re-ANCHOR/re-SIGN counter that rises on
-  an unchanged chain — falsely forking a legitimate re-anchor) → the floor keys on **chain-content**
-  `(event_count, last_sequence, final_event_hash)` via a **5-case matrix** + a `validate_chain_detailed`
-  helper, `head_sequence` demoted to a high-water counter, envelope binds `event_count`/`last_sequence`
+  an unchanged chain — falsely forking a legitimate re-anchor) → the floor keys on `head_sequence`
+  monotonicity + chain-content `(event_count, last_sequence, final_event_hash)` via a **head-keyed A–E
+  matrix** (case A lower head → new `stale_evidence` reason; B/D/E → `evidence_fork`; C unchanged
+  re-anchor advances head only; D prefix-extend) + a `validate_chain_detailed`
+  helper, `head_sequence` demoted to a `highest_head_sequence` high-water counter, envelope binds `event_count`/`last_sequence`
   (§7, §4.9); **P1-3** staging chunks had no min length + no count bound (tiny-chunk amplification) →
   deterministic `expected_chunk_len` + `MAX_STAGING_CHUNKS = 46` + exact numeric quotas (2 turns / 6
   sessions / 49 files-per-turn / 98 per-install / 17 MiB / 60 s sweep) (§2.4, §4.10(b/c)); **P1-4**
@@ -1983,7 +2055,13 @@ The current normative design is §0–§9 above. This log is historical only.
   `UNSEEN` (no-row) as a predecessor and "the sidecar originates no reasons" was over-absolute →
   `BLOCKED` predecessors are `ACCEPTED_PREPARED`/`LEASE_READY` only (pre-accept refusals create NO
   row) and local transport failures are homed as **out-of-band Tauri Blocks** distinct from supervisor
-  verdicts (§5, §4.5, §4.10(f), §6.1, §7.1).
+  verdicts (§5, §4.5, §4.10(f), §6.1, §7.1). Also, per the owner's re-mandate, `generation_config`
+  became a **closed JSON object canonicalized via `JCS`** (P0-1, additive to the frozen family), and
+  the **GitHub-only continuation law** was applied outside this doc in the same commit: `START_HERE.md`
+  names the active design file, `NEXT_CHAT.md §3.1` gives the exact-HEAD resolution method (GitHub is
+  authoritative), `AGENTS.md` was added to `config/canonical-read-manifest.json`, and
+  `tools/check_coordination.py` now asserts every manifest path exists (a new CI gate) so the startup
+  chain `START_HERE → NEXT_CHAT → manifest → design files` can never silently orphan.
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 
@@ -2016,8 +2094,10 @@ The current normative design is §0–§9 above. This log is historical only.
   constraints) + lease `nonce` + `receipt_id` (global, desktop `receipt_ids_seen`) +
   `execution_attempt_id` (unique) + `registry_epoch`/`registry_hash` (registry floor) +
   **signer-owned durable** evidence-head floor `governed_evidence_head_floor` (BEGIN IMMEDIATE
-  CAS keyed on chain-content `(event_count, last_sequence, final_event_hash)` — 5-case matrix;
-  `head_sequence` is a re-anchor counter, high-water only; NO desktop head-floor table exists).
+  CAS keyed on `head_sequence` monotonicity + chain-content `(event_count, last_sequence,
+  final_event_hash)` — head-keyed A–E matrix; case A lower head → `stale_evidence`, B/D/E →
+  `evidence_fork`, C unchanged re-anchor, D prefix-extend; `head_sequence` is a re-anchor counter,
+  `highest_head_sequence` high-water; NO desktop head-floor table exists).
 - **Principal/ACL matrix (P0-1 mode-fix `2750` owner-write / group read-only):** `brops-store`
   group = {`brops-supervisor`, `brops-recorder`, `brops-signer`(read-only)}; `store/sup/` owner
   `brops-supervisor` **`2750`**, `store/rec/` owner `brops-recorder` **`2750`** (group `r-x`,
