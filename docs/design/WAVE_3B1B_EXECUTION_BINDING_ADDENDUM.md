@@ -1,38 +1,35 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 16 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 17 — CONSOLIDATED)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 16 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 15 was Architect-reviewed at exact HEAD
-> `848f2a665b04cdef64783a8ff452f24dec274831` (exact-head CI **#119 / run 30065934684**
-> SUCCESS — **CI GREEN ≠ design GREEN**); the Architect returned **Design RED** with **3 P0 + 3 P1
-> protocol/proxy/state-consistency findings** and directed a **mandatory parallel fan-out + one
-> integrator + a fresh independent red-team, NOT a rewrite.** rev 16 was produced exactly that way:
-> **six independent read-only audit tracks** (A protocol-compat/routing · B output proxy ·
-> C challenge two-phase verify · D state/reason enums · E retry/crash idempotency · F adversarial
-> E2E) read the real repo code, a **single integrator** consolidated their evidence and edited in
-> place, and a **fresh independent red-team** re-checked the diff. The rev-15 → rev-16 findings
-> closed here: **P0-1** rev 15 still said the shipped `brops.governed-result.v1` constant/emitter/
-> consumer must be "renamed together" (would break the GREEN 3b-1A path) → **KEEP** the shipped
-> `GOVERNED_RESULT_PROTOCOL` unchanged + **ADD a parallel** `GOVERNED_TURN_RESULT_PROTOCOL`
-> (new emitter/consumer/schema/tests, nothing old renamed) + one canonical positive-`protocol`-const
-> bridge rule (§2.2); **P0-2** the supervisor-side output pull had no desktop→sidecar route → a
-> complete **`bridge.governed-turn-output-read.v1`** request/reply, a per-chunk one-shot-subprocess
-> Tauri command, and a durable supervisor **`governed_output_streams`** table (43-char base64url
-> capability token, `OUTPUT_STREAM_TTL_MS = 360000`, restart-survival, same-id retry) (§4.10(f));
-> **P0-3** `governed-turn-open` referenced the §7 as-of-`challenge_accepted_at_ms` predicate that
-> does not exist at open → **two-phase verification** (open-time preliminary as-of
-> `challenge_issued_at_ms` + a **canonicality gate** `decoded == JCS({payload,sig})`; acceptance-time
-> authoritative **re-resolves the current registry** as-of `challenge_accepted_at_ms`) (§4.10(a0),
-> §5, §7); **P1-4** `EXPIRED` was CAS'd but not in the state enum and `evidence_fork`/several reasons
-> were prose-only → a **closed 9-value state enum + one `GOVERNED_REFUSAL_REASONS` union** enumerated
-> in every relay (no "mirrors §4.5") (§5, §4.5, §4.6, §4.10); **P1-5** §7 never bounded
-> `completed_at_ms ≤ lease_expires_at_ms` and the launch gate had zero slack → **`MIN_LAUNCH_REMAINING_MS
-> = 180000`** + the full chain `lease_issued ≤ started ≤ finished ≤ completed ≤ lease_expires`
-> (§5, §7, §4.7); **P1-6** a lost reply stranded an upload (`duplicate_open`/`duplicate_session`/
-> `seq_mismatch`) → **exact idempotency** (same-bytes retry → same handle/session/ack; conflict →
-> `retry_conflict`) + durable session/per-chunk columns for restart survival (§2.4, §4.10). **All
-> contracts below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.**
-> STOP gates: `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31
-> not merged.
+> **STATUS: ❌ DESIGN RED being closed — rev 17 is a PROPOSED design-GREEN candidate, NOT
+> Architect-GREEN. 3b-1B code has NOT started.** rev 16 was Architect-reviewed at exact HEAD
+> `953f73852893457fdd848e1979ebfcf05bc2f34b` (exact-head CI **#120 / run 30070062286**
+> SUCCESS, all 8 jobs GREEN — **CI GREEN ≠ design GREEN**); the Architect returned **Design RED**
+> with **1 P0 + 3 P1 durability/idempotency/stream-binding/state findings** and directed a
+> **mandatory parallel fan-out + one integrator + a fresh independent red-team, NOT a rewrite.**
+> rev 17 was produced exactly that way: **four independent read-only audit tracks** (A FS/SQLite
+> crash-consistency · B idempotency/schema · C output-stream capability/threat · D closed
+> state/reason machine) read the real repo code, a **single integrator** consolidated their evidence
+> and edited in place, and a **fresh independent red-team** re-checked the diff. The rev-16 → rev-17
+> findings closed here: **P0-1** staging chunk persistence mixed a mutable append file with SQLite
+> state (no atomic file-fsync↔DB-commit ordering; `running_sha256` is a finalized digest, not a
+> resumable hash state) → **immutable per-chunk storage** (`<session_id>/<seq>.chunk` O_EXCL→fsync→
+> link→fsync-dir→**then** the DB tx→**ACK only after commit**), 3 restart-recovery reconciliation
+> rules, and final SHA-256 recomputed from byte zero (§2.4, §4.10(b/c)); **P1-2** §2.4 still carried
+> the stale collapsed `seq != next_seq ⇒ refuse` and §4.10(a) hardcoded `next_seq: 0` → the single
+> four-way split rule + `next_seq: <int ≥ 0>` (reopen returns the current cursor) + a discriminated
+> chunk-reply union (§2.4, §4.10(a/b)); **P1-3** the output-read request carried only
+> `{output_stream_id, seq}` (so `stream_binding_mismatch` was unimplementable) and falsely claimed
+> sidecar confidentiality → both hops now carry `{output_stream_id, receipt_id, execution_attempt_id,
+> seq}` (server compares all three), the confidentiality claim is replaced with the honest threat
+> scope (token = anti-guessing only; integrity via the signed envelope; no confidentiality from the
+> proxy sidecar), zero-byte output is defined, and the bridge reason enum is literal-identical to the
+> supervisor's (§4.10(f)); **P1-4** the "closed" state machine still used `EXPIRED/BLOCKED` /
+> `RECOVERY_REQUIRED/BLOCKED` slash-alternatives and every refusal field was a `<enum>`/"superset"
+> placeholder → one **deterministic** destination per condition (lease-gate → `EXPIRED`; post-launch
+> crash → `RECOVERY_REQUIRED`; never `BLOCKED`), a `CHECK (state IN …)` constraint, and **literal
+> closed reason arrays** in every schema (§4.7, §5, §6.1, §4.5, §4.6, §4.10). **All contracts below
+> are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.** STOP gates:
+> `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31 not merged.
 
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. It reuses the
 > existing lease / containment / receipt / evidence authorities — **no parallel executor**.
@@ -341,29 +338,58 @@ CREATE TABLE governed_turn_staging (
   state TEXT NOT NULL,                    -- VERIFYING(transient) → UPLOADING → INPUTS_READY
   challenge_expires_at_ms INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL,
   UNIQUE (install_id, request_nonce), UNIQUE (challenge_handle) );
--- Per-artifact upload session (durable, survives restart — P1-6 idempotency + restart recovery):
+-- Per-artifact upload session (durable — P0-1 crash-consistency + P1-6 idempotency):
 CREATE TABLE governed_turn_staging_session (
   staging_session_id TEXT PRIMARY KEY,   -- opaque
   challenge_handle TEXT NOT NULL, artifact TEXT NOT NULL,   -- system|history|generation_config
   declared_len INTEGER NOT NULL, declared_sha256 TEXT NOT NULL,
-  next_seq INTEGER NOT NULL, running_sha256 TEXT NOT NULL, byte_count INTEGER NOT NULL,
-  tmp_path TEXT NOT NULL,                 -- the O_EXCL .tmp-*.part holding the accepted prefix
+  next_seq INTEGER NOT NULL, byte_count INTEGER NOT NULL,   -- NO running_sha256 (not a resumable hash state, P0-1)
+  session_dir TEXT NOT NULL,             -- 0700 dir holding the IMMUTABLE <seq>.chunk files
+  state TEXT NOT NULL CHECK (state IN ('UPLOADING','INPUTS_ARTIFACT_READY','FAILED')),
   published_handle TEXT,                  -- set on final publish
   UNIQUE (challenge_handle, artifact) );
--- Per-chunk digest (durable — answers "is this re-sent seq<next_seq chunk byte-identical?"):
+-- Per-chunk digest of the IMMUTABLE <seq>.chunk file (durable; the source of truth for resume/idempotency):
 CREATE TABLE governed_turn_staging_chunk (
   staging_session_id TEXT NOT NULL, seq INTEGER NOT NULL,
   chunk_sha256 TEXT NOT NULL, chunk_len INTEGER NOT NULL,
   PRIMARY KEY (staging_session_id, seq) );
 ```
-**Idempotency + restart survival (P1-6, LOCKED):** all session cursors (`next_seq`,
-`running_sha256`, `byte_count`, `tmp_path`) and per-chunk digests are **durable columns**, not
-in-memory — so a supervisor restart mid-upload rehydrates the cursor + re-attaches the accepted-prefix
-temp and the upload resumes rather than stranding; a lost reply after ANY committed
-open/chunk/final is safely re-driven to the SAME handle/session/state (§4.10(a0/a/b/c)). A
-`governed-turn-open` re-open with the byte-identical canonical challenge doc returns the existing
-`challenge_handle` + current state; a differing doc under the same `(install_id,request_nonce)` ⇒
-`retry_conflict`. An abandoned session is swept **without consuming the challenge nonce**.
+**Crash-consistent immutable per-chunk storage (P0-1, LOCKED — no mutable append file, no
+resumable-hash assumption).** Each staging session owns a supervisor-only `0700` `session_dir`;
+each accepted chunk is an **immutable** `<session_id>/<seq>.chunk` file, and the DB records only
+`next_seq`/`byte_count` + per-chunk `(sha256,len)`. **`running_sha256` is removed** — a finalized
+SHA-256 digest is NOT a resumable internal hash state; the final hash is recomputed from byte zero.
+- **Accept `seq == next_seq` (exact order, reusing `brops_evidence_store` mechanics):** (1) strict-
+  decode + validate the chunk; (2) compute `chunk_sha256`, `chunk_len`; (3) write bytes to an
+  `O_CREAT|O_EXCL` temp in `session_dir`; (4) `fsync` the temp; (5) atomically link/rename it to the
+  immutable `<seq>.chunk` (EEXIST ⇒ verify byte-identical = idempotent replay, else `retry_conflict`);
+  (6) `fsync(session_dir)`; (7) `BEGIN IMMEDIATE`; (8) re-check `next_seq == seq`; (9) `INSERT
+  governed_turn_staging_chunk(seq, chunk_sha256, chunk_len)`; (10) `UPDATE next_seq=seq+1,
+  byte_count+=chunk_len`; (11) `COMMIT`; (12) **ACK only after commit.**
+- **Restart-recovery reconciliation (per seq):** (a) durable `<seq>.chunk` exists but NO DB row
+  (crash between step 6 and step 11) → verify its digest; the byte-identical retry **adopts** it
+  (re-runs the tx then ACKs), a conflicting re-send ⇒ `retry_conflict`; (b) DB row exists but the
+  `<seq>.chunk` is missing/unreadable/`sha ≠ chunk_sha256` → session `state = FAILED`
+  (RECOVERY_REQUIRED-class), never ACK/finalize; (c) both present + sha matches → consistent
+  (idempotent ACK, current `next_seq`, no re-append). **No mutable incremental-hash state is
+  trusted across restart.**
+- **Final assembly (§4.10(c)):** read `<seq>.chunk` in strict `seq` order `0..next_seq-1`, assert
+  no gap + `Σ chunk_len == declared_len`, stream into one `O_EXCL` final temp while **recomputing
+  SHA-256 + length from byte zero**, assert `== declared_sha256 == the challenge's committed
+  *_sha256` (else `sha_mismatch`/`handle_not_challenge`), `fsync`, publish via the idempotent
+  `EvidenceStore.publish` (`os.link`/`O_EXCL` create-if-absent, divergent ⇒ `publish_divergent`),
+  `fsync(dir)`, then persist `published_handle` + advance in one tx; identical final retry re-returns
+  the same handle.
+- **Idempotency + restart survival:** a `governed-turn-open` re-open with the byte-identical
+  canonical challenge doc returns the existing `challenge_handle` + current state; a differing doc
+  under the same `(install_id,request_nonce)` ⇒ `retry_conflict`. An abandoned session's
+  `session_dir` is swept **without consuming the challenge nonce**.
+- **Crash tests (each = crash injected at the cut, then restart + recover):** after chunk-file
+  fsync + dir-fsync **before** the DB commit (rule a: adopt-if-identical / else `retry_conflict`);
+  after the DB row commits (rule c: idempotent re-ACK, `byte_count`/`next_seq` unchanged); mid-final-
+  concat (orphan final temp swept, final re-driven from the immutable chunks); after final-temp fsync
+  **before** publish (retry re-links identical bytes → same handle); after publish **before** the
+  `published_handle`/advance commit (idempotent publish → re-record handle + advance).
 Staging states: **`VERIFYING`** (uncommitted — happens inside **`brops.governed-turn-open.v1`**
 (§4.10(a0)), where the sidecar delivers the EXACT signed challenge document bytes and the
 supervisor decodes them, computes the handle, verifies the `sig`+registry+context, publishes the
@@ -385,17 +411,20 @@ protocol:
   SAME session_id + current `next_seq`** (idempotent, P1-6), a conflicting re-open ⇒ `retry_conflict`.
   `policy_bundle` is **not** an accepted `artifact` value (refused).
 - **`brops.governed-staging-chunk.v1`** `{staging_session_id, seq, bytes_b64}` — each chunk ≤
-  **`MAX_STAGING_CHUNK_BYTES = 184320` decoded bytes (180 KiB, P1-4)**. Per session `{next_seq
-  (0-based, strictly increasing), running_sha256, byte_count, O_EXCL temp fd}`: `seq != next_seq`
-  ⇒ refuse (dup / gap / out-of-order in one predicate); `byte_count+len > declared_len` (or >
-  ceiling) ⇒ refuse.
-- **`brops.governed-staging-final.v1`** `{staging_session_id, seq==next_seq}` — fsync temp,
-  assert `byte_count == declared_len` and `running_sha256 == declared_sha256`, compute
-  `handle = digest`, and **require `handle == the challenge's committed `*_sha256`** for that
-  artifact (else refuse — never publish bytes the challenge did not authorize); then atomic
-  create-if-absent publish into `store/sup/` (divergent existing handle refused); record the
-  handle on the staging row. When all three input handles are set, the row advances to
-  `INPUTS_READY`.
+  **`MAX_STAGING_CHUNK_BYTES = 184320` decoded bytes (180 KiB, P1-4)**. **Single canonical predicate
+  (P1-2, LOCKED — replaces the old collapsed `seq != next_seq ⇒ refuse`):** `seq == next_seq` ⇒
+  persist the immutable `<seq>.chunk` + advance + ACK (P0-1 order above); `seq < next_seq` **and**
+  the bytes are byte-identical to the durable `<seq>.chunk`/recorded `chunk_sha256` ⇒ idempotent ACK
+  with the current `next_seq` (no re-append); `seq < next_seq` **and** different ⇒ `retry_conflict`;
+  `seq > next_seq` ⇒ `seq_mismatch`. `byte_count+chunk_len > declared_len` (or > ceiling) ⇒
+  `over_declared`/`oversize_chunk`.
+- **`brops.governed-staging-final.v1`** `{staging_session_id, seq==next_seq}` — assemble the
+  immutable `<seq>.chunk` files in order **recomputing SHA-256 + length from byte zero** (P0-1 — no
+  stored `running_sha256`), assert `total == declared_len` and `recomputed_sha == declared_sha256`,
+  and **require `handle == the challenge's committed *_sha256`** for that artifact (else refuse —
+  never publish bytes the challenge did not authorize); then idempotent atomic create-if-absent
+  publish into `store/sup/` (divergent existing handle ⇒ `publish_divergent`); record the handle on
+  the staging row. When all three input handles are set, the row advances to `INPUTS_READY`.
 - **Frame sizing proof (P1-4, LOCKED):** the IPC frame body cap is `MAX_FRAME_BYTES = 262144`
   (`brops_protocol.py`, body-only, compact JSON, base64url **no padding**). A `184320`-byte
   decoded chunk base64url-encodes to `4·⌈184320/3⌉ = 245760` bytes; plus the chunk-frame JSON
@@ -455,7 +484,7 @@ everywhere; §4 gives the exact key sets.
 | 7 | `brops.governed-turn-containment.v1` | recorder runner | evidence event (evidence-recorder) | provider §7 | ms | `containment_evidence_sha256 = SHA256(JCS(artifact))` | recorder store namespace | attempt+lease | `contained==true`, closed `teardown_outcome` enum |
 | 8 | evidence event / head (`bro_evidence`, REUSED) | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7 | **legacy epoch-seconds (never compared to ms)** | `event_hash` chain | evidence chain + **signer-owned `governed_evidence_head_floor`** (§7 P1-7) | signer-owned `head_sequence` vs durable `highest_sequence` high-water (BEGIN IMMEDIATE CAS) | head seq strictly-increasing per chain (structural) |
 | 9 | `brops.governed-sign-result.v1` | isolated signer | signer key (the receipt envelope #12) | supervisor → bridge → desktop | ms | (transported) | — | `receipt_id` | tagged union `signed`/`refused`; echoes TRANSPORT-ONLY |
-| 10 | `bridge.governed-turn-result.v1` (metadata-only, top-level `protocol` discriminator) + `brops.governed-turn-output-read.v1` pull | sidecar (transport/proxy) | — (carries #9/#12 signed bytes; output pulled) | **desktop verifies signatures + whole-output SHA256, NO store access** | ms | (transported; output via §4.10(f) pull) | — | `receipt_id` + `output_stream_id` | echoes TRANSPORT-ONLY; desktop equality-checks vs the verified signed envelope #12; output digest vs #12 |
+| 10 | `bridge.governed-turn-result.v1` (metadata-only, top-level `protocol` discriminator) + `brops.governed-turn-output-read.v1` pull | sidecar (transport/proxy) | — (carries #9/#12 signed bytes; output pulled) | **desktop verifies signatures + whole-output SHA256, NO store access** | ms | (transported; output via §4.10(f) pull) | — | `receipt_id` + `execution_attempt_id` + `output_stream_id` (read 3-tuple, P1-3) | echoes TRANSPORT-ONLY; desktop equality-checks vs the verified signed envelope #12; output digest vs #12 |
 | 11 | `brops.governed-turn-record.v1` | supervisor | **`governed-turn-recorder`** key (dedicated) | isolated signer's `LiveRunStateProvider` §7 | ms | `record_handle = SHA256(JCS({payload,signature}))` (also create-if-absent at `<run_id>__<execution_attempt_id>.json`) | supervisor store namespace | `(run_id, execution_attempt_id)` | binds ALL of #1,#2,#4 (via `lease_handle`),#6 (via `execution_receipt_handle`),#7,#8 + `challenge_accepted_at_ms` |
 | 12 | governed **receipt envelope** (`brops.governed-receipt-envelope.v1`) | isolated signer | **isolated-signer** key (pinned by desktop) | **desktop** (§6.1 step 14) | ms | (inside `envelope_jcs_b64`) | — | `receipt_id` | binds `record_handle`/`lease_handle`/`execution_receipt_handle`/`request_nonce`/`execution_attempt_id`/head fields/attestation digest/`output_sha256`/`output_bytes` |
 
@@ -624,7 +653,7 @@ exceed 64 KiB at full schema max).
   "evidence_head_sequence": <int>, "evidence_final_event_hash": "<64hex>" }
 // status == "refused":
 { "protocol": "brops.governed-sign-result.v1", "status": "refused",
-  "receipt_id": "<string ≤128>" | null, "reason": "<enum>" }
+  "receipt_id": "<string ≤128>" | null, "reason": "<one literal member of GOVERNED_REFUSAL_REASONS (defined next)>" }
 ```
 **The CLOSED governed refusal-reason enum `GOVERNED_REFUSAL_REASONS` (P1-4, LOCKED — the single
 union; SEPARATE from the frozen 12-value `brops.sign-result.v1` enum, which is untouched):** the
@@ -639,15 +668,17 @@ seq_out_of_range`). The previously-prose-only reasons (`evidence_fork` from §7,
 no reason is prose-only. (The §4.10 a0/a/b/c internal supervisor↔sidecar producer codes —
 `peer_denied`, `noncanonical`, `session_unknown`, `seq_mismatch`, `oversize_chunk`, … — live in
 their own per-message reply schemas; the desktop-facing relays carry the `GOVERNED_REFUSAL_REASONS`
-union per the relay-superset rule below.) A `signed` result REQUIRES both `envelope_jcs_b64` and
+union per the relay literal-embed rule below.) A `signed` result REQUIRES both `envelope_jcs_b64` and
 `signature_b64`; anything else ⇒ the desktop Blocks.
 
-**Relay-superset rule (P1-4, LOCKED):** every bridge/relay reason enum — §4.6
-`bridge.governed-turn-result.v1.error.reason` and §4.10(e) `brops.governed-turn-result.v1.reason`,
-and the bridge output-read `error.reason` (§4.10(f)) — is the **literal enumerated
-`GOVERNED_REFUSAL_REASONS` union** (or a declared superset), **never** an inferred "mirrors §4.5". A
-staging/open/output-read producer reason that must reach the desktop through the bridge therefore
-always has a representable code. No prose-only reason exists outside a closed schema.
+**Relay literal-embed rule (P1-4, LOCKED):** the two metadata-result relay reason enums — §4.6
+`bridge.governed-turn-result.v1.error.reason` and §4.10(e) `brops.governed-turn-result.v1.reason` —
+embed the **exact literal `GOVERNED_REFUSAL_REASONS` array VERBATIM** (a `$ref`/copy of the single
+list above), **never** an inferred "mirrors §4.5" and **never** an open "superset". The bridge
+output-read reason (§4.10(f)) is instead the **literal 5-member output-read set IDENTICAL to its
+supervisor hop** (the sidecar is a stateless proxy that originates no reasons — NOT a superset). Every
+governed refusal thus has a representable literal code; no prose-only or placeholder reason exists in
+any normative schema.
 
 ### 4.6 `bridge.governed-turn-result.v1` — COMPLETE metadata-only parent (artifact #10)
 **NEW bridge protocol (§2.2, renamed from the P0-1-collided `bridge.governed-result.v1`) — the
@@ -685,7 +716,7 @@ Removing inline output drops this frame's worst case to **≈9.9 KiB** (§4.10 f
     "lease_handle": "<64hex>", "execution_receipt_handle": "<64hex>",
     "output_sha256": "<64hex>", "output_bytes": <int 0..8388608>,
     "evidence_head_sequence": <int>, "evidence_final_event_hash": "<64hex>" } | null,
-  "error": { "reason": "<enum ∈ GOVERNED_REFUSAL_REASONS, §4.5>", "receipt_id": "<string ≤128>" | null } | null }
+  "error": { "reason": "<the literal GOVERNED_REFUSAL_REASONS array (§4.5), embedded verbatim>", "receipt_id": "<string ≤128>" | null } | null }
 ```
 **Exact frame-fit (P1-6, machine-checked):** every b64 field has a frozen **encoded-byte**
 `maxLength` — `envelope_jcs_b64 ≤ 2848` (= `4·⌈2135/3⌉`, the §4.9 payload at schema max),
@@ -798,7 +829,7 @@ reply. **The output channel is BOUNDED:**
   on any oversize/timeout/crash; a partial temp is never linked to a handle.
 - **Negative tests:** `output_bytes` at `MAX-1` (accept), `MAX` (accept), `MAX+1`
   (`output_oversize`, no receipt), timeout mid-stream (`output_timeout`, no receipt), and a
-  partial-write crash (no receipt, ledger → `RECOVERY_REQUIRED`/`BLOCKED`).
+  partial-write crash (no receipt, ledger → `RECOVERY_REQUIRED`).
 
 ### 4.7b `brops.governed-turn-containment.v1` (artifact #7) — COMPLETE schema
 Recorder-measured firsthand; `additionalProperties:false`; recorded as a containment-confirmed
@@ -907,7 +938,8 @@ handle (verify-by-handle-before-possession is impossible).
   "request_nonce": "<string ≤128>",
   "challenge_doc_b64": "<b64url of the EXACT signed challenge document JCS({payload,sig}), decoded ≤ 4096>" }
 // reply (opened): { "protocol": "brops.governed-turn-open-result.v1", "status": "opened", "challenge_handle": "<64hex>" }
-// reply (refused): { "protocol": "brops.governed-turn-open-result.v1", "status": "refused", "reason": "<enum>" }
+// reply (refused): { "protocol": "brops.governed-turn-open-result.v1", "status": "refused",
+//   "reason": "peer_denied"|"doc_oversize"|"malformed"|"noncanonical"|"handle_mismatch"|"registry_unknown"|"key_invalid"|"sig_invalid"|"context_mismatch"|"retry_conflict" }
 ```
 **OPEN-TIME PRELIMINARY verification (P0-3, LOCKED — this is NOT the final §7 predicate; the
 authoritative as-of-acceptance predicate runs at §5/§7 because `challenge_accepted_at_ms` does not
@@ -944,11 +976,11 @@ only; the challenge signature + supervisor-resolved registry are the authority.
   "declared_len": <int 0..8388608>, "declared_sha256": "<64hex>" }
 // reply (opened):
 { "protocol": "brops.governed-staging-open-result.v1", "status": "opened",
-  "staging_session_id": "<opaque string ≤128>", "next_seq": 0 }
-// reply (refused): { "protocol": "brops.governed-staging-open-result.v1", "status": "refused", "reason": "<enum>" }
+  "staging_session_id": "<opaque string ≤128>", "next_seq": <int ≥ 0> }   // first open 0; idempotent reopen = current cursor (may be ≥ 1)
+// reply (refused): { "protocol": "brops.governed-staging-open-result.v1", "status": "refused",
+//   "reason": "peer_denied"|"no_staging_row"|"artifact_invalid"|"digest_mismatch"|"oversize"|"retry_conflict"|"malformed" }
 ```
-Refused reasons: `peer_denied, no_staging_row, artifact_invalid, digest_mismatch, oversize,
-retry_conflict, malformed`. `declared_sha256` MUST equal the verified challenge's committed
+`declared_sha256` MUST equal the verified challenge's committed
 `*_sha256` for `artifact`; `declared_len` ≤ that artifact's ceiling (§2.4). **Idempotent re-open
 (P1-6, LOCKED):** a re-open with the SAME `(challenge_handle, request_nonce, install_id, artifact,
 declared_len, declared_sha256)` returns the **SAME** `staging_session_id` + the current `next_seq`
@@ -961,17 +993,20 @@ declared_len, declared_sha256)` returns the **SAME** `staging_session_id` + the 
 // request:
 { "protocol": "brops.governed-staging-chunk.v1", "staging_session_id": "<string ≤128>",
   "seq": <int ≥0>, "bytes_b64": "<b64url, decoded ≤ 184320 (P1-4)>" }
-// reply: { "protocol": "brops.governed-staging-chunk-result.v1", "status": "ack" | "refused",
-//          "next_seq": <int>, "reason": "<enum>" | null }
+// reply (ack):     { "protocol": "brops.governed-staging-chunk-result.v1", "status": "ack", "next_seq": <int ≥ 0>, "reason": null }
+// reply (refused): { "protocol": "brops.governed-staging-chunk-result.v1", "status": "refused", "next_seq": <int ≥ 0>,
+//   "reason": "session_unknown"|"seq_mismatch"|"retry_conflict"|"oversize_chunk"|"oversize_frame"|"over_declared"|"malformed" }
 ```
-Refused reasons: `session_unknown, seq_mismatch, retry_conflict, oversize_chunk, oversize_frame,
-over_declared, malformed`. Validator enforces **both** `len(decode(bytes_b64)) ≤ 184320` **and**
-serialized frame ≤ 262144 (§2.4 P1-4). **Idempotent chunk (P1-6, LOCKED — the `seq != next_seq`
-predicate is split three ways):** `seq == next_seq` ⇒ append once (persist the per-chunk
-`(seq → chunk_sha256, chunk_len)`), advance `next_seq`, ACK; `seq < next_seq` **and** the bytes are
-byte-identical to the persisted per-chunk digest at that `seq` ⇒ idempotent ACK + current `next_seq`
-(NO re-append; `byte_count`/`running_sha256` unchanged — a lost ACK is safely retried); `seq <
-next_seq` **and** the bytes differ ⇒ `retry_conflict`; `seq > next_seq` ⇒ `seq_mismatch` (a true gap).
+**Discriminated union (P1-2, LOCKED):** `status:"ack"` ⇒ `reason == null`; `status:"refused"` ⇒
+`reason` a non-null literal from the closed set above; `next_seq` (the current durable cursor) is
+present in both. Validator enforces **both** `len(decode(bytes_b64)) ≤ 184320` **and** serialized
+frame ≤ 262144 (§2.4 P1-4). **Idempotent chunk (P1-2/P1-6, LOCKED — the old collapsed `seq !=
+next_seq ⇒ refuse` is DELETED; the single canonical rule is the four-way split):** `seq ==
+next_seq` ⇒ persist the immutable `<seq>.chunk` + advance + ACK **only after the DB commit** (§2.4
+P0-1 order); `seq < next_seq` **and** byte-identical to the durable `<seq>.chunk`/recorded
+`chunk_sha256` ⇒ idempotent ACK + current `next_seq` (NO re-append, `byte_count` unchanged — a lost
+ACK is safely retried); `seq < next_seq` **and** different ⇒ `retry_conflict`; `seq > next_seq` ⇒
+`seq_mismatch` (a true gap).
 
 **(c) `brops.governed-staging-final.v1`** — sidecar→supervisor. Reply
 `brops.governed-staging-final-result.v1`. Frame ≤ 4 KiB.
@@ -981,7 +1016,8 @@ next_seq` **and** the bytes differ ⇒ `retry_conflict`; `seq > next_seq` ⇒ `s
 { "protocol": "brops.governed-staging-final-result.v1", "status": "published",
   "artifact": "system" | "history" | "generation_config", "handle": "<64hex>",
   "inputs_ready": <bool> }          // true once all three inputs are published + re-hashed
-// reply (refused): { ..., "status": "refused", "reason": "<enum>" }
+// reply (refused): { "protocol": "brops.governed-staging-final-result.v1", "status": "refused",
+//   "reason": "session_unknown"|"seq_mismatch"|"len_mismatch"|"sha_mismatch"|"handle_not_challenge"|"publish_divergent"|"retry_conflict"|"malformed" }
 ```
 Refused reasons: `session_unknown, seq_mismatch, len_mismatch, sha_mismatch, handle_not_challenge,
 publish_divergent, retry_conflict, malformed`. Requires `handle == the challenge's committed
@@ -1023,7 +1059,7 @@ the output is pulled via §4.10(f). All non-signature fields TRANSPORT-ONLY.
   "run_id": "<string ≤128>", "execution_attempt_id": "<string ≤128>", "lease_id": "<string ≤128>" }
 // status == "refused":
 { "protocol": "brops.governed-turn-result.v1", "status": "refused",
-  "receipt_id": "<string ≤128>" | null, "reason": "<enum ∈ GOVERNED_REFUSAL_REASONS, §4.5>" }
+  "receipt_id": "<string ≤128>" | null, "reason": "<the literal GOVERNED_REFUSAL_REASONS array (§4.5), embedded verbatim>" }
 ```
 A `signed` result REQUIRES `envelope_jcs_b64` + `signature_b64` + `output_stream_id`; anything
 else ⇒ Block. The desktop's authority for the output is always the signed envelope's
@@ -1036,12 +1072,22 @@ The desktop therefore **drives a pull loop by re-invoking the sidecar once per c
 one-shot subprocess each read); the sidecar is a **stateless proxy** that forwards exactly one
 supervisor read and reframes the reply.
 
-**Capability token (P0-2, LOCKED).** `output_stream_id` = **32 cryptographically-random bytes,
-base64url no-pad, EXACTLY 43 chars** (256-bit) — an unguessable, non-enumerable capability. It is
-generated server-side and bound in the durable `governed_output_streams` table (below) to
-`(receipt_id, execution_attempt_id, output_handle, output_bytes, output_sha256)`; a client can
-neither forge nor enumerate it (the SHA256 gate guarantees output *integrity*; the 256-bit token
-guarantees cross-turn output *confidentiality* — the sidecar proxies **all** turns).
+**Capability token + binding (P0-2/P1-3, LOCKED).** `output_stream_id` = **32 cryptographically-
+random bytes, base64url no-pad, EXACTLY 43 chars** (256-bit) — an unguessable, non-enumerable
+capability generated server-side and bound in the durable `governed_output_streams` table (below)
+to `(receipt_id, execution_attempt_id, output_handle, output_bytes, output_sha256)`. **The
+supervisor requires the client to present `receipt_id` + `execution_attempt_id` alongside the token
+(P1-3)** and compares all three against the row before serving — so a *valid* token from a different
+receipt/attempt is caught **server-side** (`stream_binding_mismatch`), not merely by the desktop's
+final digest.
+
+**Honest threat scope (P1-3, LOCKED — no false confidentiality claim):** the 256-bit token prevents
+**blind guessing and unauthorized *unrelated* callers**; it does **NOT** provide confidentiality
+against the compromised sidecar, which — being the transport proxy for **all** turns — necessarily
+observes the token and every chunk's bytes. 3b-1B guarantees output **authenticity/integrity** via
+the isolated-signer envelope's `output_sha256`/`output_bytes` (the desktop's sole authority);
+**confidentiality of the output from the sidecar is NOT provided in 3b-1B** — end-to-end output
+encryption would require a separate future contract.
 
 **Durable mapping (P0-2, LOCKED — supervisor-owned `0700` DB, survives restart):**
 ```sql
@@ -1067,15 +1113,20 @@ returns `stream_expired`. No stream enumeration is ever exposed.
 `brops_socket`). Frame ≤ `MAX_FRAME_BYTES = 262144`.
 ```jsonc
 // request:
-{ "protocol": "brops.governed-turn-output-read.v1", "output_stream_id": "<43-char b64url>", "seq": <int 0..45> }
+{ "protocol": "brops.governed-turn-output-read.v1", "output_stream_id": "<43-char b64url>",
+  "receipt_id": "<string ≤128>", "execution_attempt_id": "<string ≤128>", "seq": <int ≥0> }
 // reply (ok): { "protocol": "brops.governed-turn-output-read-result.v1", "ok": true,
 //   "output_stream_id": "<same>", "seq": <same>,
 //   "bytes_b64": "<b64url of output[seq·184320 : (seq+1)·184320], decoded ≤ 184320>", "eof": <bool>, "error": null }
 // reply (refused): { "protocol": "brops.governed-turn-output-read-result.v1", "ok": false,
 //   "output_stream_id": "<same or null>", "seq": <int or null>, "bytes_b64": null, "eof": null,
-//   "error": { "reason": "<enum>" } }
+//   "error": { "reason": "stream_unknown"|"stream_expired"|"stream_binding_mismatch"|"seq_out_of_range"|"malformed" } }
 ```
-Refused reasons: `stream_unknown, stream_expired, stream_binding_mismatch, seq_out_of_range, malformed`.
+**Binding compare (P1-3, LOCKED):** the supervisor looks up the row by `output_stream_id` and then:
+token absent ⇒ `stream_unknown`; `now_ms > expires_at_ms` ⇒ `stream_expired`; row's `receipt_id` OR
+`execution_attempt_id` ≠ the request's ⇒ `stream_binding_mismatch`; only on a full 3-tuple match does
+it serve the requested immutable range. The desktop sources `receipt_id`/`execution_attempt_id` from
+the **verified §4.9 signed envelope** (authenticated values, not transport claims).
 
 **Desktop hop — `bridge.governed-turn-output-read.v1`** (desktop→sidecar) + its
 `bridge.governed-turn-output-read-result.v1` reply (P0-2 — the previously-missing bridge side).
@@ -1085,28 +1136,35 @@ mirroring `governed_engine`); a NEW `protocol`-keyed branch in `engine_sidecar` 
 request, forwards exactly ONE `brops.governed-turn-output-read.v1` to the supervisor socket,
 validates the reply, reframes and exits. `bridge.task-request` is untouched.
 ```jsonc
-// desktop→sidecar request:
-{ "protocol": "bridge.governed-turn-output-read.v1", "output_stream_id": "<43-char b64url>", "seq": <int 0..45> }
+// desktop→sidecar request (the sidecar forwards these fields UNCHANGED to the supervisor):
+{ "protocol": "bridge.governed-turn-output-read.v1", "output_stream_id": "<43-char b64url>",
+  "receipt_id": "<string ≤128>", "execution_attempt_id": "<string ≤128>", "seq": <int ≥0> }
 // sidecar→desktop reply (ok):
 { "protocol": "bridge.governed-turn-output-read-result.v1", "ok": true, "output_stream_id": "<same>",
   "seq": <same>, "bytes_b64": "<b64url ≤ 245760>", "eof": <bool>, "error": null }
-// sidecar→desktop reply (refused):
+// sidecar→desktop reply (refused): the sidecar is a stateless proxy that originates NO reasons, so
+//   the enum is IDENTICAL to the supervisor's (NOT a superset):
 { "protocol": "bridge.governed-turn-output-read-result.v1", "ok": false, "output_stream_id": "<same or null>",
-  "seq": <int or null>, "bytes_b64": null, "eof": null, "error": { "reason": "<enum, superset of the supervisor's>" } }
+  "seq": <int or null>, "bytes_b64": null, "eof": null,
+  "error": { "reason": "stream_unknown"|"stream_expired"|"stream_binding_mismatch"|"seq_out_of_range"|"malformed" } }
 ```
 Chunk size = **184320** decoded (= 245760 b64url + a small JSON envelope ≤ 262144). For an 8 MiB
 output: `ceil(8388608 / 184320) = 46` chunks, **`seq` 0..45** (last chunk 94208 bytes, `eof=true`).
-Reads are **idempotent**: the same `seq` always returns the exact same byte range (offset
-`seq · 184320`); a lost reply is safely retried (no `next_seq` consume). The desktop reassembles all
-chunks into a bounded ≤ 8 MiB buffer **outside any DB transaction** (never hold `BEGIN IMMEDIATE`
-across the per-chunk subprocess/socket I/O — `receipt_store.rs::in_immediate_tx` rejects a nested
-tx), then asserts `reassembled_len == envelope.output_bytes` **and** `SHA256(reassembled) ==
-envelope.output_sha256` **before** any normalization/render (§7.1). The **signed envelope** is the
-sole authority, so a tampered/re-ordered/dropped/cross-turn chunk fails the whole-output digest →
-Block. Tests: exact-max chunk, `seq` out-of-range, `stream_expired` after TTL, `stream_binding_mismatch`
-on a replayed other-turn token, supervisor-restart-mid-pull re-drives from the durable row,
-`COMPLETED` retry returns the same token, idempotent re-read returns identical bytes, and a
-1-byte-tampered chunk (whole-output SHA256 → Block).
+**Zero-byte output (P1-3, LOCKED):** when `output_bytes == 0` the `governed_output_streams` row
+still exists; a read with `seq == 0` returns `ok:true, bytes_b64:"", eof:true`; any `seq > 0` ⇒
+`seq_out_of_range`; the desktop then asserts `reassembled_len == 0 == envelope.output_bytes` and
+`SHA256("") == envelope.output_sha256`. Reads are **idempotent**: the same `seq` always returns the
+exact same byte range (offset `seq · 184320`); a lost reply is safely retried (no `next_seq`
+consume). The desktop reassembles all chunks into a bounded ≤ 8 MiB buffer **outside any DB
+transaction** (never hold `BEGIN IMMEDIATE` across the per-chunk subprocess/socket I/O —
+`receipt_store.rs::in_immediate_tx` rejects a nested tx), then asserts `reassembled_len ==
+envelope.output_bytes` **and** `SHA256(reassembled) == envelope.output_sha256` **before** any
+normalization/render (§7.1). The **signed envelope** is the sole authority, so a tampered/re-ordered/
+dropped/cross-turn chunk fails the whole-output digest → Block. Tests: exact-max chunk, zero-byte
+output, `seq` out-of-range, `stream_expired` after TTL, **`stream_binding_mismatch` on a valid
+other-turn token presented with the wrong `receipt_id`/`execution_attempt_id`** (now caught
+server-side), supervisor-restart-mid-pull re-drives from the durable row, `COMPLETED` retry returns
+the same token, idempotent re-read returns identical bytes, and a 1-byte-tampered chunk.
 
 **Routing/rejection (LOCKED + tested):** each control-plane message
 is dispatched by its `protocol` const; a governed handler refuses any v1 `protocol` value and
@@ -1139,7 +1197,9 @@ CREATE TABLE governed_turn_acceptance (
   lease_payload_sha256           TEXT NOT NULL,   -- sha256 of the EXACT canonical lease payload bytes
   lease_payload_bytes            BLOB NOT NULL,    -- the exact JCS(payload) to be signed
   lease_handle                   TEXT,             -- 64hex, set at LEASE_READY
-  state                          TEXT NOT NULL,    -- enum below
+  state                          TEXT NOT NULL CHECK (state IN (   -- closed enum enforced by the DB (P1-4)
+      'ACCEPTED_PREPARED','LEASE_READY','EXECUTION_STARTING','EXECUTING',
+      'COMPLETED','BLOCKED','FAILED','EXPIRED','RECOVERY_REQUIRED')),  -- UNSEEN = absent/no-row, never stored
   execution_started_marker       TEXT,
   cgroup_id                      TEXT,
   process_group_id               TEXT,
@@ -1159,13 +1219,30 @@ A retry that presents a nonce/challenge pairing different from the stored row (d
 `run_id`/`task_id`/`workspace_id`/`challenge_handle`) is a **conflict** and is refused. Any
 new attempt requires a **new signed challenge + new nonce**.
 
-**State enum (full lifecycle across the two tables) — CLOSED (P1-4):**
+**State enum (full lifecycle across the two tables) — CLOSED + DETERMINISTIC (P1-4):**
 pre-accept in `governed_turn_staging` (§2.4): `VERIFYING` → `UPLOADING` → `INPUTS_READY`
 (no `execution_attempt_id`, **no execution right**); then in `governed_turn_acceptance` the exact
-9-value closed enum `UNSEEN` (absent) → `ACCEPTED_PREPARED` → `LEASE_READY` → `EXECUTION_STARTING` →
-`EXECUTING` → `COMPLETED`; terminal `BLOCKED`, `FAILED`, **`EXPIRED`** (the lease-expiry terminal,
-§5 step 8a / §6.1 — a member of the enum, not a prose-only transition), `RECOVERY_REQUIRED`. There is **no
-circular dependency**: staging is gated by the *verified signed challenge* (§2.4), and the
+closed set (DB `CHECK` above; `UNSEEN` = **absent/no-row**, never stored, so the 9 stored states are)
+`ACCEPTED_PREPARED` → `LEASE_READY` → `EXECUTION_STARTING` → `EXECUTING` → `COMPLETED`; terminal
+`BLOCKED`, `FAILED`, `EXPIRED`, `RECOVERY_REQUIRED`.
+
+**Deterministic state-purpose matrix (P1-4, LOCKED — every condition maps to exactly ONE state; no
+slash/or alternatives):**
+- **`EXPIRED`** (terminal; predecessor `LEASE_READY` only): the ONLY destination of a pre-launch
+  lease-expiry gate failure (§5 step 8a / §6.1 step 5) — `now_ms > lease_expires_at_ms`, `now_ms <
+  lease_issued_at_ms`, or remaining `< MIN_LAUNCH_REMAINING_MS`. No launch occurs.
+- **`RECOVERY_REQUIRED`** (terminal, operator-inspect-only; predecessors `EXECUTION_STARTING`/
+  `EXECUTING`): the ONLY destination of an **ambiguous post-launch crash** where execution may have
+  occurred but complete terminal proof is unavailable. Never auto-relaunch.
+- **`BLOCKED`** (terminal; predecessors `UNSEEN`/`ACCEPTED_PREPARED`/`LEASE_READY`): a
+  **deterministic pre-execution** security/policy/identity/schema/binding refusal — never a crash-cut
+  and never lease-expiry.
+- **`FAILED`** (terminal; predecessor `EXECUTING`): a known completed operational failure with
+  authoritative evidence the attempt produced NO acceptable governed result.
+- **`COMPLETED`** (terminal; predecessor `EXECUTING`): the exact terminal record exists + re-verifies;
+  idempotent retry re-serves the same record.
+
+There is **no circular dependency**: staging is gated by the *verified signed challenge* (§2.4), and the
 acceptance row is created only **after** the staging row reaches `INPUTS_READY` — the two never
 depend on each other.
 
@@ -1214,7 +1291,8 @@ depend on each other.
     setuid + exec + cgroup setup + model-endpoint connect, whose latency `L` must not push
     `completed_at_ms` past `lease_expires_at_ms`). This guarantees `finished_at_ms` **and**
     `completed_at_ms` land inside the lease window. Exact-`175000` remaining **refuses**;
-    exact-`180000` **proceeds**. If either check fails → CAS `LEASE_READY → EXPIRED` (or `BLOCKED`);
+    exact-`180000` **proceeds**. If either check fails → CAS `LEASE_READY → EXPIRED` (P1-4 — a
+    lease-expiry gate failure is DETERMINISTICALLY `EXPIRED`, never `BLOCKED`);
     **do NOT launch**; a new execution requires a newly signed challenge + new `request_nonce` + new
     `execution_attempt_id` (no reuse). The gate uses the **wall clock** (it compares signed `_ms`
     fields); the in-execution timeout then uses the **monotonic** clock (§4.7).
@@ -1230,7 +1308,7 @@ depend on each other.
     model request, or produced external effects and then exited before `EXECUTING`/process
     metadata became durable, so "no live child + no output" does **not** prove non-execution.
     A restart finding `EXECUTION_STARTING` or `EXECUTING` without **complete terminal proof**
-    moves to `RECOVERY_REQUIRED`/`BLOCKED` (fail-closed). An owner/operator may **inspect**
+    moves to `RECOVERY_REQUIRED` (fail-closed). An owner/operator may **inspect**
     evidence but MUST NOT reuse the same `challenge_handle` / `request_nonce` /
     `execution_attempt_id` for another execution; **a new execution requires a newly signed
     challenge + new `request_nonce` + new attempt.**
@@ -1250,12 +1328,12 @@ before publish → publish is create-if-absent, idempotent; after publish before
 → re-hash/re-verify then advance; **`LEASE_READY` (the only auto-launchable state) → the
 supervisor re-runs the step-8a lease-expiry gate on the current wall clock and, ONLY if it
 passes, CASes to `EXECUTION_STARTING` then launches once — an expired or
-insufficient-remaining-budget `LEASE_READY` found on restart moves to `BLOCKED`/`EXPIRED` and is
+insufficient-remaining-budget `LEASE_READY` found on restart moves to `EXPIRED` and is
 NEVER auto-launched (P0-4);** **after `EXECUTION_STARTING`
-commit but before the launcher call → `RECOVERY_REQUIRED`/`BLOCKED`, never relaunch;** **crash
-inside the launcher before `exec` → `RECOVERY_REQUIRED`/`BLOCKED`;** **crash immediately after
+commit but before the launcher call → `RECOVERY_REQUIRED`, never relaunch;** **crash
+inside the launcher before `exec` → `RECOVERY_REQUIRED`;** **crash immediately after
 `exec` / child exits before `EXECUTING` persistence / a remote model call occurred but no
-output/receipt exists → `RECOVERY_REQUIRED`/`BLOCKED`, never relaunch;** after receipt/evidence
+output/receipt exists → `RECOVERY_REQUIRED`, never relaunch;** after receipt/evidence
 before terminal record → re-drive record signing from the already-published verified artifacts
 (idempotent create-if-absent, no new execution); after terminal record before ledger
 `COMPLETED` → set `COMPLETED` from the existing verified record.
@@ -1267,9 +1345,9 @@ conflicting `run_id`/`task_id` on retry (refused); and — proving **zero automa
 execution** — crash **after `EXECUTION_STARTING` commit before the launcher call**, crash
 **inside the launcher before `exec`**, crash **immediately after `exec`**, **child exits
 before `EXECUTING` persistence**, and **a remote model call occurred but no output/receipt
-exists**: each must land in `RECOVERY_REQUIRED`/`BLOCKED` with no relaunch. **Lease-expiry gate
+exists**: each must land in `RECOVERY_REQUIRED` with no relaunch. **Lease-expiry gate
 (P0-4):** expired-`LEASE_READY` recovery (`now_ms > lease_expires_at_ms` on restart →
-`BLOCKED`/`EXPIRED`, zero launch); exact-expiry boundary (`now_ms == lease_expires_at_ms` passes
+`EXPIRED`, zero launch); exact-expiry boundary (`now_ms == lease_expires_at_ms` passes
 (i) but must fail remaining-budget (ii); `now_ms == lease_expires_at_ms + 1` → expired);
 insufficient-remaining-budget at the true threshold boundary (`lease_expires_at_ms − now_ms ==
 179999` → blocked; `== 180000` → proceeds); and a wall-clock **NTP step** between `LEASE_READY`
@@ -1343,7 +1421,7 @@ No output renders before step 14 commits.
    +LEASE_DURATION_MS`); CAS to `LEASE_READY` only after it re-hashes + `validate_governed_turn_lease`.
 5. **Lease-expiry gate + one-time recorder/executor launch (P0-4/P1-5):** run the §5 step-8a gate
    (read `now_ms`; require the lease valid + `lease_expires_at_ms − now_ms ≥ MIN_LAUNCH_REMAINING_MS
-   = 180000`), else `EXPIRED`/`BLOCKED`; only if it passes, CAS `LEASE_READY → EXECUTION_STARTING`
+   = 180000`), else `EXPIRED`; only if it passes, CAS `LEASE_READY → EXECUTION_STARTING`
    (never auto-relaunch after, §5 P0-1); the launcher enforces the FD/executable contract (§4.7).
 6. **Output + containment publication** by the recorder (`output_handle`,
    `containment_evidence_sha256`).
@@ -1630,27 +1708,28 @@ The current normative design is §0–§9 above. This log is historical only.
   top-level `protocol` const; `brops.governed-turn-open.v1` challenge submission; idempotent PULL
   output-read; `LEASE_DURATION_MS = 210000` + pre-launch gate; governed-turn-recorder = supervisor
   key authority; always-stream metadata-only summary; Option-A evidence-floor scope + extend-or-scope.
-- **rev 16 (this doc):** targeted protocol/proxy/state-consistency closure via a mandatory **6-track
-  fan-out (A protocol-compat/routing · B output proxy · C challenge two-phase verify · D state/
-  reason enums · E retry/crash idempotency · F adversarial E2E) + one integrator + a fresh
-  independent red-team** — **P0-1** rev 15 still instructed renaming the **shipped**
-  `brops.governed-result.v1` constant/emitter/consumer → **KEEP** it unchanged + **ADD a parallel**
-  `GOVERNED_TURN_RESULT_PROTOCOL` (new emitter/consumer/schema/tests, nothing old renamed) + one
-  canonical positive-`protocol`-const bridge rule (§2.2); **P0-2** the supervisor output pull had no
-  desktop→sidecar route → a complete **`bridge.governed-turn-output-read.v1`** request/reply, a
-  per-chunk one-shot-subprocess Tauri command, and a durable **`governed_output_streams`** table
-  (43-char base64url capability, `OUTPUT_STREAM_TTL_MS = 360000`, restart-survival, same-id retry)
-  (§4.10(f)); **P0-3** `governed-turn-open` referenced the as-of-`challenge_accepted_at_ms` §7
-  predicate (nonexistent at open) → **two-phase verification** (open-time preliminary as-of
-  `challenge_issued_at_ms` + a **canonicality gate** `decoded == JCS({payload,sig})`; acceptance-time
-  authoritative **re-resolves the current registry**) (§4.10(a0), §5, §7); **P1-4** `EXPIRED` CAS'd
-  but not in the enum + prose-only reasons → **closed 9-value state enum + one
-  `GOVERNED_REFUSAL_REASONS` union** enumerated in every relay (§5, §4.5, §4.6, §4.10); **P1-5** §7
-  never bounded `completed_at_ms ≤ lease_expires_at_ms` + zero launch slack → **`MIN_LAUNCH_REMAINING_MS
-  = 180000`** + the full chain `lease_issued ≤ started ≤ finished ≤ completed ≤ lease_expires`
-  (§5, §7, §4.7); **P1-6** a lost reply stranded an upload → **exact idempotency** (same-bytes retry
-  → same handle/session/ack; conflict → `retry_conflict`) + durable session/per-chunk columns for
-  restart survival (§2.4, §4.10).
+- **rev 16:** protocol/proxy/state-consistency closure — KEEP+ADD parallel `GOVERNED_TURN_RESULT_PROTOCOL`;
+  desktop→sidecar `bridge.governed-turn-output-read.v1` + `governed_output_streams` table; two-phase
+  challenge verify; closed 9-value state enum + `GOVERNED_REFUSAL_REASONS`; `MIN_LAUNCH_REMAINING_MS
+  = 180000` + `completed ≤ lease_expires`; exact ingress idempotency.
+- **rev 17 (this doc):** targeted durability/idempotency/stream-binding/state closure via a mandatory
+  **4-track fan-out (A FS/SQLite crash-consistency · B idempotency/schema · C output-stream
+  capability/threat · D closed state/reason machine) + one integrator + a fresh independent
+  red-team** — **P0-1** staging mixed a mutable append file with SQLite state (no atomic file↔DB
+  ordering; `running_sha256` is a finalized digest, not a resumable hash context) → **immutable
+  per-chunk storage** (`<session_id>/<seq>.chunk`, O_EXCL→fsync→link→fsync-dir→**then** the DB tx,
+  ACK only after commit), 3 restart-recovery reconciliation rules, and final SHA-256 recomputed from
+  byte zero (§2.4, §4.10(b/c)); **P1-2** deleted the stale collapsed `seq != next_seq ⇒ refuse`,
+  fixed §4.10(a) `next_seq: 0` → `<int ≥ 0>` (reopen = current cursor), and tightened the chunk-reply
+  discriminated union (§2.4, §4.10(a/b)); **P1-3** both output-read hops now carry
+  `{output_stream_id, receipt_id, execution_attempt_id, seq}` so the supervisor catches a valid
+  other-turn token server-side (`stream_binding_mismatch`), the false sidecar-confidentiality claim
+  is replaced with the honest threat scope, zero-byte output is defined, and the bridge reason enum
+  is literal-identical to the supervisor's (§4.10(f)); **P1-4** removed every `EXPIRED/BLOCKED` /
+  `RECOVERY_REQUIRED/BLOCKED` slash-alternative for one deterministic destination per condition
+  (lease-gate → `EXPIRED`; post-launch crash → `RECOVERY_REQUIRED`; never `BLOCKED`), added a `CHECK
+  (state IN …)` constraint + the deterministic state-purpose matrix, and replaced every `<enum>`/
+  "superset" placeholder with a **literal closed reason array** (§4.7, §5, §6.1, §4.5, §4.6, §4.10).
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 
