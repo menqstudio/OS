@@ -1,34 +1,39 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 17 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 18 — CONSOLIDATED)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 17 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 16 was Architect-reviewed at exact HEAD
-> `953f73852893457fdd848e1979ebfcf05bc2f34b` (exact-head CI **#120 / run 30070062286**
-> SUCCESS, all 8 jobs GREEN — **CI GREEN ≠ design GREEN**); the Architect returned **Design RED**
-> with **1 P0 + 3 P1 durability/idempotency/stream-binding/state findings** and directed a
-> **mandatory parallel fan-out + one integrator + a fresh independent red-team, NOT a rewrite.**
-> rev 17 was produced exactly that way: **four independent read-only audit tracks** (A FS/SQLite
-> crash-consistency · B idempotency/schema · C output-stream capability/threat · D closed
-> state/reason machine) read the real repo code, a **single integrator** consolidated their evidence
-> and edited in place, and a **fresh independent red-team** re-checked the diff. The rev-16 → rev-17
-> findings closed here: **P0-1** staging chunk persistence mixed a mutable append file with SQLite
-> state (no atomic file-fsync↔DB-commit ordering; `running_sha256` is a finalized digest, not a
-> resumable hash state) → **immutable per-chunk storage** (`<session_id>/<seq>.chunk` O_EXCL→fsync→
-> link→fsync-dir→**then** the DB tx→**ACK only after commit**), 3 restart-recovery reconciliation
-> rules, and final SHA-256 recomputed from byte zero (§2.4, §4.10(b/c)); **P1-2** §2.4 still carried
-> the stale collapsed `seq != next_seq ⇒ refuse` and §4.10(a) hardcoded `next_seq: 0` → the single
-> four-way split rule + `next_seq: <int ≥ 0>` (reopen returns the current cursor) + a discriminated
-> chunk-reply union (§2.4, §4.10(a/b)); **P1-3** the output-read request carried only
-> `{output_stream_id, seq}` (so `stream_binding_mismatch` was unimplementable) and falsely claimed
-> sidecar confidentiality → both hops now carry `{output_stream_id, receipt_id, execution_attempt_id,
-> seq}` (server compares all three), the confidentiality claim is replaced with the honest threat
-> scope (token = anti-guessing only; integrity via the signed envelope; no confidentiality from the
-> proxy sidecar), zero-byte output is defined, and the bridge reason enum is literal-identical to the
-> supervisor's (§4.10(f)); **P1-4** the "closed" state machine still used `EXPIRED/BLOCKED` /
-> `RECOVERY_REQUIRED/BLOCKED` slash-alternatives and every refusal field was a `<enum>`/"superset"
-> placeholder → one **deterministic** destination per condition (lease-gate → `EXPIRED`; post-launch
-> crash → `RECOVERY_REQUIRED`; never `BLOCKED`), a `CHECK (state IN …)` constraint, and **literal
-> closed reason arrays** in every schema (§4.7, §5, §6.1, §4.5, §4.6, §4.10). **All contracts below
-> are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.** STOP gates:
+> **STATUS: ❌ DESIGN RED being closed — rev 18 is a PROPOSED design-GREEN candidate, NOT
+> Architect-GREEN. 3b-1B code has NOT started.** rev 17 was Architect-reviewed at exact HEAD
+> `d8a6510c12192daef9053f74d674cfdb80044413` (exact-head CI **#121** SUCCESS, all 8 jobs GREEN —
+> **CI GREEN ≠ design GREEN**); the Architect returned **Design RED** with **2 P0 + 3 P1
+> desktop-ingress / evidence-floor / bounded-staging findings** and directed a **mandatory parallel
+> fan-out + one integrator + a fresh independent red-team, NOT a rewrite.** rev 18 was produced
+> exactly that way: **five independent read-only audit tracks** (A desktop→sidecar→supervisor
+> transport · B evidence-head re-anchor semantics · C staging resource/concurrency · D
+> state/reason + transport-failure homing · E full adversarial E2E) read the real repo code, a
+> **single integrator** consolidated their evidence and edited in place, and a **fresh independent
+> red-team** re-checked the diff. The rev-17 → rev-18 findings closed here: **P0-1** the desktop→
+> sidecar governed INGRESS frame was undefined — the flow consumed the signed challenge document +
+> the raw system/history/generation_config bytes "at the sidecar" by assumption, and the frozen
+> `bridge.task-request` (`additionalProperties:false`, no `challenge_doc_b64`/discriminator) cannot
+> carry them → a new **`bridge.governed-turn-submit.v1`** ingress frame + a new Tauri
+> `governed_turn_submit` command + the one-shot sidecar orchestrator, byte formulas LOCKED to the
+> shipped `brops_canonical.py`, the §2.1 authority→desktop-UI document return path, and §6.1 step 0
+> (§2.1, §2.2, §4.10(g), §6.1); **P0-2** the evidence-head floor gated advance on `head_sequence`,
+> which is a **re-ANCHOR/re-SIGN counter** (rises on an unchanged chain) — falsely forking a
+> legitimate re-anchor → the floor now keys on **chain-content** `(event_count, last_sequence,
+> final_event_hash)` via a **5-case matrix** (+ a `validate_chain_detailed` helper; `head_sequence`
+> demoted to a high-water counter; envelope binds `event_count`/`last_sequence`) (§7, §4.9); **P1-3**
+> staging chunks had no minimum length and no count bound (tiny-chunk amplification) → **deterministic
+> `expected_chunk_len` + `MAX_STAGING_CHUNKS = 46`** and exact numeric quotas (2 turns / 6 sessions /
+> 49 files-per-turn / 98 per-install / 17 MiB / 60 s sweep) (§2.4, §4.10(b/c)); **P1-4** the FAILED
+> staging session dead-ended, the session-state CHECK drifted (`INPUTS_ARTIFACT_READY` vs the row's
+> `INPUTS_READY`), and CHECK constraints/the publish primitive were vague → the `os.link`
+> create-if-absent freeze, a `SESSION_CORRUPT` terminal contract (`session_corrupt` in the a/b/c
+> enums), and CHECK constraints on state/`next_seq`/`byte_count` (§2.4, §4.10(a/b/c)); **P1-5**
+> `BLOCKED` wrongly listed `UNSEEN` (no-row) as a predecessor and "the sidecar originates no reasons"
+> was over-absolute → `BLOCKED` predecessors are `ACCEPTED_PREPARED`/`LEASE_READY` only (pre-accept
+> refusals create NO row), and local one-shot-subprocess transport failures are homed as **out-of-band
+> Tauri Blocks** distinct from supervisor verdicts (§5, §4.5, §4.10(f), §6.1, §7.1). **All contracts
+> below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.** STOP gates:
 > `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31 not merged.
 
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. It reuses the
@@ -173,6 +178,14 @@ The exact current contract (not history):
   **constructs** the exact `brops.governed-turn-challenge.v1` payload (§4.1), stamps
   `challenge_issued_at_ms`/`challenge_expires_at_ms`, and signs once (consuming the pending
   id). It never signs caller-supplied bytes/fields.
+- **Return path (P0-1, closes the "by-assumption" document carriage):** the authority returns the
+  **exact signed `{payload,sig}` document bytes** to the desktop-UI **in the reply on the same
+  authenticated `AF_UNIX` channel** — the desktop-UI is the only `SO_PEERCRED`-allowlisted peer, so
+  no other principal receives it. The desktop-UI (which now holds the document bytes) base64url-
+  encodes them into `challenge_doc_b64` and passes them to the sidecar **only** via the
+  `bridge.governed-turn-submit.v1` ingress frame (§4.10(g), §6.1 step 0). The sidecar first sees the
+  document here; it can neither mint nor alter it (the canonicality gate + `challenge_handle` re-hash
+  at §4.10(a0) bind the exact bytes). No step delivers the document "by assumption".
 - **How desktop facts cross the boundary without giving the sidecar the same capability:** the
   desktop-UI principal (a **distinct UID**) is the only peer the `SO_PEERCRED` allowlist
   admits; it hands the structured facts over the authenticated channel, and the authority
@@ -216,6 +229,14 @@ directions** (the one canonical bridge rule, P0-1: the FROZEN `bridge.result` ha
 top-level key); every NEW `bridge.governed-*` schema **REQUIRES** its explicit top-level `protocol`
 const, so it rejects any `bridge.result` (missing const) — do NOT discriminate on
 `receipt.envelope_jcs_b64`, which is required in both):
+- **`bridge.governed-turn-submit.v1`** (+ `bridge.governed-turn-result.v1` reply) — the
+  **desktop→sidecar governed INGRESS frame (P0-1)**: the ONLY protocol that carries the signed
+  challenge document + the raw `system`/`history`/`generation_config` bytes from the desktop into
+  the one-shot sidecar, which then originates §2.4 staging and §4.10(a0) open. The frozen
+  `bridge.task-request` (`additionalProperties:false`, `required:[task_id,task_class,rationale,system,history,request]`, no
+  `challenge_doc_b64`, no bytes-carrying `generation_config`, no `protocol` discriminator —
+  `bridge/contracts/task-request.schema.json`) **cannot** carry it and is NOT reused. COMPLETE in
+  §4.10(g); driven by the new Tauri `governed_turn_submit` command (§6.1 step 0).
 - **`brops.governed-turn-open.v1`** (+ `-result`) — the signed-challenge submission (P0-2),
   COMPLETE in §4.10(a0)
 - **`brops.governed-sign-request.v1`** — `engine/contracts/brops-governed-sign-request.v1.schema.json`
@@ -335,17 +356,18 @@ CREATE TABLE governed_turn_staging (
   run_id TEXT NOT NULL, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
   system_sha256 TEXT NOT NULL, history_sha256 TEXT NOT NULL, generation_config_sha256 TEXT NOT NULL,
   system_handle TEXT, history_handle TEXT, generation_config_handle TEXT,   -- set as each publishes
-  state TEXT NOT NULL,                    -- VERIFYING(transient) → UPLOADING → INPUTS_READY
+  state TEXT NOT NULL CHECK (state IN ('VERIFYING','UPLOADING','INPUTS_READY')),  -- P1-4 CHECK; VERIFYING(transient)→UPLOADING→INPUTS_READY
   challenge_expires_at_ms INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL,
   UNIQUE (install_id, request_nonce), UNIQUE (challenge_handle) );
 -- Per-artifact upload session (durable — P0-1 crash-consistency + P1-6 idempotency):
 CREATE TABLE governed_turn_staging_session (
   staging_session_id TEXT PRIMARY KEY,   -- opaque
   challenge_handle TEXT NOT NULL, artifact TEXT NOT NULL,   -- system|history|generation_config
-  declared_len INTEGER NOT NULL, declared_sha256 TEXT NOT NULL,
-  next_seq INTEGER NOT NULL, byte_count INTEGER NOT NULL,   -- NO running_sha256 (not a resumable hash state, P0-1)
+  declared_len INTEGER NOT NULL CHECK (declared_len >= 0), declared_sha256 TEXT NOT NULL,
+  next_seq INTEGER NOT NULL CHECK (next_seq >= 0 AND next_seq <= 46),   -- 46 = MAX_STAGING_CHUNKS (P1-3/P1-4)
+  byte_count INTEGER NOT NULL CHECK (byte_count >= 0),   -- NO running_sha256 (not a resumable hash state, P0-1)
   session_dir TEXT NOT NULL,             -- 0700 dir holding the IMMUTABLE <seq>.chunk files
-  state TEXT NOT NULL CHECK (state IN ('UPLOADING','INPUTS_ARTIFACT_READY','FAILED')),
+  state TEXT NOT NULL CHECK (state IN ('UPLOADING','ARTIFACT_READY','SESSION_CORRUPT')),  -- P1-4: renamed (was INPUTS_ARTIFACT_READY, collided with the row's INPUTS_READY / FAILED)
   published_handle TEXT,                  -- set on final publish
   UNIQUE (challenge_handle, artifact) );
 -- Per-chunk digest of the IMMUTABLE <seq>.chunk file (durable; the source of truth for resume/idempotency):
@@ -361,18 +383,29 @@ each accepted chunk is an **immutable** `<session_id>/<seq>.chunk` file, and the
 SHA-256 digest is NOT a resumable internal hash state; the final hash is recomputed from byte zero.
 - **Accept `seq == next_seq` (exact order, reusing `brops_evidence_store` mechanics):** (1) strict-
   decode + validate the chunk; (2) compute `chunk_sha256`, `chunk_len`; (3) write bytes to an
-  `O_CREAT|O_EXCL` temp in `session_dir`; (4) `fsync` the temp; (5) atomically link/rename it to the
-  immutable `<seq>.chunk` (EEXIST ⇒ verify byte-identical = idempotent replay, else `retry_conflict`);
-  (6) `fsync(session_dir)`; (7) `BEGIN IMMEDIATE`; (8) re-check `next_seq == seq`; (9) `INSERT
-  governed_turn_staging_chunk(seq, chunk_sha256, chunk_len)`; (10) `UPDATE next_seq=seq+1,
-  byte_count+=chunk_len`; (11) `COMMIT`; (12) **ACK only after commit.**
+  `O_CREAT|O_EXCL` temp in `session_dir`; (4) `fsync` the temp; (5) **`os.link(temp, <seq>.chunk)`**
+  (P1-4, LOCKED — the exact frozen `brops_evidence_store.py:157` `os.link` create-if-absent no-overwrite
+  primitive, with the `O_EXCL` fallback `:171`; **NOT `rename` and NOT `renameat2`**, which are used
+  nowhere in the store) to the immutable `<seq>.chunk` (EEXIST ⇒ verify byte-identical = idempotent
+  replay, else `retry_conflict`); (6) `fsync(session_dir)`; (7) `BEGIN IMMEDIATE`; (8) re-check
+  `next_seq == seq`; (9) `INSERT governed_turn_staging_chunk(seq, chunk_sha256, chunk_len)`; (10)
+  `UPDATE next_seq=seq+1, byte_count+=chunk_len`; (11) `COMMIT`; (12) **ACK only after commit.**
 - **Restart-recovery reconciliation (per seq):** (a) durable `<seq>.chunk` exists but NO DB row
   (crash between step 6 and step 11) → verify its digest; the byte-identical retry **adopts** it
   (re-runs the tx then ACKs), a conflicting re-send ⇒ `retry_conflict`; (b) DB row exists but the
-  `<seq>.chunk` is missing/unreadable/`sha ≠ chunk_sha256` → session `state = FAILED`
-  (RECOVERY_REQUIRED-class), never ACK/finalize; (c) both present + sha matches → consistent
+  `<seq>.chunk` is missing/unreadable/`sha ≠ chunk_sha256` → session `state = SESSION_CORRUPT`
+  (terminal), never ACK/finalize; (c) both present + sha matches → consistent
   (idempotent ACK, current `next_seq`, no re-append). **No mutable incremental-hash state is
   trusted across restart.**
+- **`SESSION_CORRUPT` terminal contract (P1-4, LOCKED):** once a session is `SESSION_CORRUPT`, EVERY
+  later `governed-staging-open` (reopen), `-chunk`, and `-final` for that `staging_session_id` (or
+  its `(challenge_handle, artifact)`) returns **`session_corrupt`** and the supervisor **never**
+  finalizes, publishes, advances the `governed_turn_staging` row to `INPUTS_READY`, or silently
+  re-creates/reuses the session. Recovery is **operator-swept only** (the §2.4 sweep unlinks the
+  `session_dir` + deletes the row **without consuming the challenge nonce**); the desktop then
+  re-issues a fresh staging session against the still-valid signed challenge (new `request_nonce`
+  if the whole turn is abandoned). A `SESSION_CORRUPT` artifact can never contribute to an accepted
+  turn — it fails closed, not open.
 - **Final assembly (§4.10(c)):** read `<seq>.chunk` in strict `seq` order `0..next_seq-1`, assert
   no gap + `Σ chunk_len == declared_len`, stream into one `O_EXCL` final temp while **recomputing
   SHA-256 + length from byte zero**, assert `== declared_sha256 == the challenge's committed
@@ -411,13 +444,26 @@ protocol:
   SAME session_id + current `next_seq`** (idempotent, P1-6), a conflicting re-open ⇒ `retry_conflict`.
   `policy_bundle` is **not** an accepted `artifact` value (refused).
 - **`brops.governed-staging-chunk.v1`** `{staging_session_id, seq, bytes_b64}` — each chunk ≤
-  **`MAX_STAGING_CHUNK_BYTES = 184320` decoded bytes (180 KiB, P1-4)**. **Single canonical predicate
+  **`MAX_STAGING_CHUNK_BYTES = 184320` decoded bytes (180 KiB, P1-4)**. **Deterministic chunk length
+  — bounds cardinality (P1-3, LOCKED, closes the tiny-chunk amplification Track E flagged):** the
+  chunk length is **not sender-chosen**; every chunk MUST be exactly
+  `expected_chunk_len = min(MAX_STAGING_CHUNK_BYTES, declared_len − byte_count)` (i.e. all chunks are
+  a full `184320` except the final remainder), else ⇒ **`nondeterministic_chunk`**. This makes the
+  chunk count a deterministic function of `declared_len`: `n_chunks = ceil(declared_len / 184320)`
+  (so `n_chunks == 0` for the zero-byte case below — no chunk is sent), `seq` runs `0..n_chunks−1`,
+  and a session is hard-capped at
+  **`MAX_STAGING_CHUNKS = 46`** (= `ceil(8 MiB / 184320)`, the worst case = the `history ≤ 8 MiB`
+  ceiling); any `seq ≥ 46` or a `next_seq` that would exceed 46 ⇒ **`too_many_chunks`**. A compromised
+  sidecar therefore cannot mount a 1-byte-chunk flood — the min-size is enforced per chunk and the
+  count is bounded. **Zero-byte artifact (`declared_len == 0`):** send **NO** chunk messages; go
+  straight to `governed-staging-final` with `seq == next_seq == 0`, which publishes the empty artifact
+  and asserts `SHA256("") == declared_sha256`. **Single canonical order predicate
   (P1-2, LOCKED — replaces the old collapsed `seq != next_seq ⇒ refuse`):** `seq == next_seq` ⇒
-  persist the immutable `<seq>.chunk` + advance + ACK (P0-1 order above); `seq < next_seq` **and**
-  the bytes are byte-identical to the durable `<seq>.chunk`/recorded `chunk_sha256` ⇒ idempotent ACK
-  with the current `next_seq` (no re-append); `seq < next_seq` **and** different ⇒ `retry_conflict`;
-  `seq > next_seq` ⇒ `seq_mismatch`. `byte_count+chunk_len > declared_len` (or > ceiling) ⇒
-  `over_declared`/`oversize_chunk`.
+  validate `chunk_len == expected_chunk_len` then persist the immutable `<seq>.chunk` + advance + ACK
+  (P0-1 order above); `seq < next_seq` **and** the bytes are byte-identical to the durable
+  `<seq>.chunk`/recorded `chunk_sha256` ⇒ idempotent ACK with the current `next_seq` (no re-append);
+  `seq < next_seq` **and** different ⇒ `retry_conflict`; `seq > next_seq` ⇒ `seq_mismatch`.
+  `byte_count+chunk_len > declared_len` (or > ceiling) ⇒ `over_declared`/`oversize_chunk`.
 - **`brops.governed-staging-final.v1`** `{staging_session_id, seq==next_seq}` — assemble the
   immutable `<seq>.chunk` files in order **recomputing SHA-256 + length from byte zero** (P0-1 — no
   stored `running_sha256`), assert `total == declared_len` and `recomputed_sha == declared_sha256`,
@@ -429,8 +475,8 @@ protocol:
   (`brops_protocol.py`, body-only, compact JSON, base64url **no padding**). A `184320`-byte
   decoded chunk base64url-encodes to `4·⌈184320/3⌉ = 245760` bytes; plus the chunk-frame JSON
   envelope (`{"protocol":"brops.governed-staging-chunk.v1","staging_session_id":"…",
-  "seq":<int>,"bytes_b64":"…"}`, ≤ ~211 bytes with a ≤128-char session id + ≤10-digit seq) =
-  **≤ 245971 ≤ 262144** (≥ 16 KiB headroom). A 256 KiB decoded chunk would encode to `349526` +
+  "seq":<int>,"bytes_b64":"…"}`, ≤ ~203 bytes with a ≤128-char session id + **≤2-digit seq** (P1-3:
+  `seq` ∈ `0..45`)) = **≤ 245963 ≤ 262144** (≥ 16 KiB headroom). A 256 KiB decoded chunk would encode to `349526` +
   envelope > 262144 — **rejected**. The validator MUST check **BOTH** caps independently and
   fail-closed: (1) `decoded_len ≤ 184320`, **and** (2) the serialized frame ≤ `262144` (reuse
   `encode_frame`/`read_frame`). Tests: exact-max (184320 → accept), max+1 (184321 → refuse on
@@ -450,12 +496,24 @@ protocol:
   isolated signer independently re-checks it against the operator-provisioned
   `BROPS_EXPECTED_POLICY_BUNDLE_SHA256` (`brops_receipt_signer` authorization policy). The
   desktop ships only a placeholder policy hash (used only on the never-active Trusted path).
-- **Quota / expiry / crash:** per-`install_id` staging quota; a session/row **TTL bound to the
-  signed challenge's own `challenge_expires_at_ms`** (NOT an acceptance window — none exists
-  yet); startup + sweep unlink orphan `.tmp-*.part` and delete expired/abandoned staging rows
-  **WITHOUT consuming the challenge nonce** — the desktop may re-issue against the same signed
-  challenge until the challenge itself expires (this denies the sidecar a nonce-burning DoS). A
-  partial temp is never linked to a handle; `read(handle)` re-verifies sha.
+- **Quota / expiry / crash (P1-3, LOCKED — exact numeric caps, no prose-only quota):** per
+  `install_id` the supervisor enforces, fail-closed:
+  - **`MAX_CONCURRENT_GOVERNED_TURNS = 2`** in-flight `governed_turn_staging` rows (matches the
+    desktop `MAX_CONCURRENT_GENERATIONS = 2`, `ai.rs:212`); a 3rd `governed-turn-open` ⇒ `quota_turns`.
+  - **`MAX_STAGING_SESSIONS_PER_INSTALL = 6`** concurrent `governed_turn_staging_session` rows
+    (= 2 turns × 3 artifacts); over ⇒ `quota_sessions`.
+  - **`MAX_STAGING_CHUNKS = 46`** per session (above) ⇒ at most **49 chunk-files per turn**
+    (`history` 46 + `system` 2 + `generation_config` 1) and **`MAX_STAGING_FILES_PER_INSTALL = 98`**
+    (= 2 turns × 49) immutable `<seq>.chunk` files on disk; over ⇒ `too_many_chunks`.
+  - **`MAX_STAGING_BYTES_PER_INSTALL = 17825792`** (= 17 MiB = 2 × the 8.5 MiB per-turn request
+    ceiling) total decoded staging bytes; over ⇒ `quota_bytes`.
+  - A session/row **TTL bound to the signed challenge's own `challenge_expires_at_ms`** (NOT an
+    acceptance window — none exists yet); a **`STAGING_SWEEP_INTERVAL_MS = 60000`** background sweep
+    (plus a startup pass) unlinks orphan `.tmp-*.part` + the whole `session_dir` and deletes
+    expired/abandoned staging rows **WITHOUT consuming the challenge nonce** — the desktop may
+    re-issue against the same signed challenge until the challenge itself expires (this denies the
+    sidecar a nonce-burning DoS). A partial temp is never linked to a handle; `read(handle)`
+    re-verifies sha.
 - **Isolation:** `governed_turn_staging` + staging blob root are `0700` supervisor-only;
   sidecar/executor have **no read**; the executor receives only post-publish read-only FDs (§4.7).
 - **Ordering:** acceptance/lease/execution (§5) may proceed **only after** the staging row is
@@ -482,7 +540,7 @@ everywhere; §4 gives the exact key sets.
 | 5 | `brops.governed-sign-request.v1` (attested evidence) | supervisor | **supervisor attestation** key (`supervisor_attestation_key_id`) over `JCS(evidence)` | isolated signer §6.1; desktop re-verifies the attestation bytes | ms | (transported, not stored) | — | `request_nonce` + `execution_attempt_id` | echoes #4/#6 handles; every `*_sha256` DERIVED by signer |
 | 6 | `brops.governed-turn-execution-receipt.v1` | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7; `verify_governed_turn_receipt` | ms | `execution_receipt_handle = SHA256(JCS({payload,signature}))` | recorder store namespace (§2.3) | `receipt_id` (global unique) | `output_handle == output_sha256`; binds attempt/lease |
 | 7 | `brops.governed-turn-containment.v1` | recorder runner | evidence event (evidence-recorder) | provider §7 | ms | `containment_evidence_sha256 = SHA256(JCS(artifact))` | recorder store namespace | attempt+lease | `contained==true`, closed `teardown_outcome` enum |
-| 8 | evidence event / head (`bro_evidence`, REUSED) | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7 | **legacy epoch-seconds (never compared to ms)** | `event_hash` chain | evidence chain + **signer-owned `governed_evidence_head_floor`** (§7 P1-7) | signer-owned `head_sequence` vs durable `highest_sequence` high-water (BEGIN IMMEDIATE CAS) | head seq strictly-increasing per chain (structural) |
+| 8 | evidence event / head (`bro_evidence`, REUSED) | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7 | **legacy epoch-seconds (never compared to ms)** | `event_hash` chain | evidence chain + **signer-owned `governed_evidence_head_floor`** (§7 P1-7/P0-2) | signer-owned floor keyed on chain-content `(event_count, last_sequence, final_event_hash)` via BEGIN IMMEDIATE CAS 5-case matrix; `head_sequence` is a re-anchor counter (high-water only) | chain content monotone-or-extends per chain (structural) |
 | 9 | `brops.governed-sign-result.v1` | isolated signer | signer key (the receipt envelope #12) | supervisor → bridge → desktop | ms | (transported) | — | `receipt_id` | tagged union `signed`/`refused`; echoes TRANSPORT-ONLY |
 | 10 | `bridge.governed-turn-result.v1` (metadata-only, top-level `protocol` discriminator) + `brops.governed-turn-output-read.v1` pull | sidecar (transport/proxy) | — (carries #9/#12 signed bytes; output pulled) | **desktop verifies signatures + whole-output SHA256, NO store access** | ms | (transported; output via §4.10(f) pull) | — | `receipt_id` + `execution_attempt_id` + `output_stream_id` (read 3-tuple, P1-3) | echoes TRANSPORT-ONLY; desktop equality-checks vs the verified signed envelope #12; output digest vs #12 |
 | 11 | `brops.governed-turn-record.v1` | supervisor | **`governed-turn-recorder`** key (dedicated) | isolated signer's `LiveRunStateProvider` §7 | ms | `record_handle = SHA256(JCS({payload,signature}))` (also create-if-absent at `<run_id>__<execution_attempt_id>.json`) | supervisor store namespace | `(run_id, execution_attempt_id)` | binds ALL of #1,#2,#4 (via `lease_handle`),#6 (via `execution_receipt_handle`),#7,#8 + `challenge_accepted_at_ms` |
@@ -624,7 +682,7 @@ authority) — only `executor_id` + `runner_id`.
     "challenge_handle": "<64hex>", "challenge_key_id": "<string ≤128>",
     "challenge_registry_handle": "<64hex>", "challenge_registry_hash": "<64hex>",
     "challenge_registry_epoch": <int>, "challenge_registry_root_key_id": "<string ≤128>",
-    "evidence_head_sequence": <int>, "evidence_final_event_hash": "<64hex>" } }
+    "evidence_event_count": <int ≥ 1>, "evidence_last_sequence": <int ≥ 0>, "evidence_head_sequence": <int>, "evidence_final_event_hash": "<64hex>" } }
 ```
 `evidence` is authoritative ONLY because `attestation.sig` covers `JCS(evidence)`; every
 `*_handle`/`*_sha256` is **DERIVED by the signer** from the store bytes, never trusted from
@@ -650,7 +708,7 @@ exceed 64 KiB at full schema max).
   "challenge_registry_handle": "<64hex>", "challenge_registry_hash": "<64hex>",
   "challenge_registry_epoch": <int>, "challenge_registry_root_key_id": "<string ≤128>",
   "lease_handle": "<64hex>", "execution_receipt_handle": "<64hex>",
-  "evidence_head_sequence": <int>, "evidence_final_event_hash": "<64hex>" }
+  "evidence_event_count": <int ≥ 1>, "evidence_last_sequence": <int ≥ 0>, "evidence_head_sequence": <int>, "evidence_final_event_hash": "<64hex>" }
 // status == "refused":
 { "protocol": "brops.governed-sign-result.v1", "status": "refused",
   "receipt_id": "<string ≤128>" | null, "reason": "<one literal member of GOVERNED_REFUSAL_REASONS (defined next)>" }
@@ -676,9 +734,15 @@ union per the relay literal-embed rule below.) A `signed` result REQUIRES both `
 embed the **exact literal `GOVERNED_REFUSAL_REASONS` array VERBATIM** (a `$ref`/copy of the single
 list above), **never** an inferred "mirrors §4.5" and **never** an open "superset". The bridge
 output-read reason (§4.10(f)) is instead the **literal 5-member output-read set IDENTICAL to its
-supervisor hop** (the sidecar is a stateless proxy that originates no reasons — NOT a superset). Every
-governed refusal thus has a representable literal code; no prose-only or placeholder reason exists in
-any normative schema.
+supervisor hop** (the sidecar is a transport proxy that originates **no supervisor or signature
+verdict** — it never mints a refusal reason or a signed result, NOT a superset). **Precise scope
+(P1-5):** "originates no reasons" means the sidecar cannot author a *governed decision* (accept,
+refuse-with-reason, sign); it says nothing about **local transport failures** on the one-shot
+subprocess/socket. A spawn/connect/timeout/oversize-or-malformed-reply/unexpected-exit is NOT a
+supervisor reason at all — it surfaces as an **out-of-band Tauri command error ⇒ the desktop Blocks
+with no result** (§6.1 step 14, §7.1). Every governed refusal thus has a representable literal code,
+and every non-verdict transport failure is an explicit out-of-band Block; no prose-only or placeholder
+reason exists in any normative schema.
 
 ### 4.6 `bridge.governed-turn-result.v1` — COMPLETE metadata-only parent (artifact #10)
 **NEW bridge protocol (§2.2, renamed from the P0-1-collided `bridge.governed-result.v1`) — the
@@ -715,7 +779,7 @@ Removing inline output drops this frame's worst case to **≈9.9 KiB** (§4.10 f
     "challenge_registry_epoch": <int>, "challenge_registry_root_key_id": "<string ≤128>",
     "lease_handle": "<64hex>", "execution_receipt_handle": "<64hex>",
     "output_sha256": "<64hex>", "output_bytes": <int 0..8388608>,
-    "evidence_head_sequence": <int>, "evidence_final_event_hash": "<64hex>" } | null,
+    "evidence_event_count": <int ≥ 1>, "evidence_last_sequence": <int ≥ 0>, "evidence_head_sequence": <int>, "evidence_final_event_hash": "<64hex>" } | null,
   "error": { "reason": "<the literal GOVERNED_REFUSAL_REASONS array (§4.5), embedded verbatim>", "receipt_id": "<string ≤128>" | null } | null }
 ```
 **Exact frame-fit (P1-6, machine-checked):** every b64 field has a frozen **encoded-byte**
@@ -880,7 +944,7 @@ over `JCS(payload)`; **`record_handle = SHA256(JCS({payload,signature}))`**.
     "containment_evidence_sha256": "<64hex>", "containment_event_id": "<string ≤128>",
     "receipt_id": "<string ≤128>", "execution_receipt_handle": "<64hex>",
     // evidence head (bro_evidence is LEGACY epoch-seconds; only these structural fields cross in)
-    "evidence_final_event_hash": "<64hex>", "evidence_head_sequence": <int>,
+    "evidence_final_event_hash": "<64hex>", "evidence_event_count": <int ≥ 1>, "evidence_last_sequence": <int ≥ 0>, "evidence_head_sequence": <int>,
     "completed_at_ms": <int> },
   "signature": "<detached Ed25519 over JCS(payload)>" }
 ```
@@ -908,7 +972,7 @@ over `JCS(payload)` under the **isolated-signer key pinned by the desktop manife
     "record_handle": "<64hex>", "lease_handle": "<64hex>", "execution_receipt_handle": "<64hex>",
     "output_sha256": "<64hex>", "output_bytes": <int>,
     "challenge_accepted_at_ms": <int>, "completed_at_ms": <int>,
-    "evidence_final_event_hash": "<64hex>", "evidence_head_sequence": <int>,
+    "evidence_final_event_hash": "<64hex>", "evidence_event_count": <int ≥ 1>, "evidence_last_sequence": <int ≥ 0>, "evidence_head_sequence": <int>,
     "supervisor_attestation_key_id": "<string ≤128>",
     "attestation_evidence_sha256": "<64hex>" },   // SHA256(the JCS(governed-sign-request evidence) the supervisor attested
   "signature": "<detached Ed25519 over JCS(payload), isolated-signer key>" }
@@ -962,7 +1026,8 @@ context + recompute `request_sha256`; **atomically create-if-absent publish the 
 read, no nonce consume, no execution right — this only *admits* the turn to upload; the binding
 authority is the acceptance-time re-verification (§5).** Refused reasons: `peer_denied, doc_oversize,
 malformed, noncanonical, handle_mismatch, registry_unknown, key_invalid, sig_invalid,
-context_mismatch, retry_conflict` (idempotent re-open, P1-6). The untrusted sidecar transports bytes
+context_mismatch, retry_conflict` (idempotent re-open, P1-6), plus `quota_turns` (P1-3: a 3rd
+concurrent `governed_turn_staging` row for the `install_id` — `MAX_CONCURRENT_GOVERNED_TURNS = 2`). The untrusted sidecar transports bytes
 only; the challenge signature + supervisor-resolved registry are the authority.
 
 **(a) `brops.governed-staging-open.v1`** — sidecar→supervisor (§2.4), **only after a successful
@@ -978,7 +1043,8 @@ only; the challenge signature + supervisor-resolved registry are the authority.
 { "protocol": "brops.governed-staging-open-result.v1", "status": "opened",
   "staging_session_id": "<opaque string ≤128>", "next_seq": <int ≥ 0> }   // first open 0; idempotent reopen = current cursor (may be ≥ 1)
 // reply (refused): { "protocol": "brops.governed-staging-open-result.v1", "status": "refused",
-//   "reason": "peer_denied"|"no_staging_row"|"artifact_invalid"|"digest_mismatch"|"oversize"|"retry_conflict"|"malformed" }
+//   "reason": "peer_denied"|"no_staging_row"|"artifact_invalid"|"digest_mismatch"|"oversize"|"retry_conflict"
+//            |"quota_sessions"|"quota_bytes"|"session_corrupt"|"malformed" }   // P1-3 quotas, P1-4 session_corrupt
 ```
 `declared_sha256` MUST equal the verified challenge's committed
 `*_sha256` for `artifact`; `declared_len` ≤ that artifact's ceiling (§2.4). **Idempotent re-open
@@ -995,12 +1061,16 @@ declared_len, declared_sha256)` returns the **SAME** `staging_session_id` + the 
   "seq": <int ≥0>, "bytes_b64": "<b64url, decoded ≤ 184320 (P1-4)>" }
 // reply (ack):     { "protocol": "brops.governed-staging-chunk-result.v1", "status": "ack", "next_seq": <int ≥ 0>, "reason": null }
 // reply (refused): { "protocol": "brops.governed-staging-chunk-result.v1", "status": "refused", "next_seq": <int ≥ 0>,
-//   "reason": "session_unknown"|"seq_mismatch"|"retry_conflict"|"oversize_chunk"|"oversize_frame"|"over_declared"|"malformed" }
+//   "reason": "session_unknown"|"seq_mismatch"|"retry_conflict"|"oversize_chunk"|"oversize_frame"|"over_declared"
+//            |"nondeterministic_chunk"|"too_many_chunks"|"session_corrupt"|"malformed" }   // P1-3 length/count, P1-4 session_corrupt
 ```
 **Discriminated union (P1-2, LOCKED):** `status:"ack"` ⇒ `reason == null`; `status:"refused"` ⇒
 `reason` a non-null literal from the closed set above; `next_seq` (the current durable cursor) is
-present in both. Validator enforces **both** `len(decode(bytes_b64)) ≤ 184320` **and** serialized
-frame ≤ 262144 (§2.4 P1-4). **Idempotent chunk (P1-2/P1-6, LOCKED — the old collapsed `seq !=
+present in both. Validator enforces `len(decode(bytes_b64)) ≤ 184320`, the serialized
+frame ≤ 262144 (§2.4 P1-4), **and (P1-3) the deterministic length `chunk_len == min(184320,
+declared_len − byte_count)`** (else `nondeterministic_chunk`) plus the cardinality cap `seq ≤ 45`
+/ `next_seq ≤ 46 = MAX_STAGING_CHUNKS` (else `too_many_chunks`); a `SESSION_CORRUPT` session ⇒
+`session_corrupt` (P1-4). **Idempotent chunk (P1-2/P1-6, LOCKED — the old collapsed `seq !=
 next_seq ⇒ refuse` is DELETED; the single canonical rule is the four-way split):** `seq ==
 next_seq` ⇒ persist the immutable `<seq>.chunk` + advance + ACK **only after the DB commit** (§2.4
 P0-1 order); `seq < next_seq` **and** byte-identical to the durable `<seq>.chunk`/recorded
@@ -1017,10 +1087,10 @@ ACK is safely retried); `seq < next_seq` **and** different ⇒ `retry_conflict`;
   "artifact": "system" | "history" | "generation_config", "handle": "<64hex>",
   "inputs_ready": <bool> }          // true once all three inputs are published + re-hashed
 // reply (refused): { "protocol": "brops.governed-staging-final-result.v1", "status": "refused",
-//   "reason": "session_unknown"|"seq_mismatch"|"len_mismatch"|"sha_mismatch"|"handle_not_challenge"|"publish_divergent"|"retry_conflict"|"malformed" }
+//   "reason": "session_unknown"|"seq_mismatch"|"len_mismatch"|"sha_mismatch"|"handle_not_challenge"|"publish_divergent"|"retry_conflict"|"session_corrupt"|"malformed" }
 ```
 Refused reasons: `session_unknown, seq_mismatch, len_mismatch, sha_mismatch, handle_not_challenge,
-publish_divergent, retry_conflict, malformed`. Requires `handle == the challenge's committed
+publish_divergent, retry_conflict, session_corrupt, malformed` (`session_corrupt` = P1-4). Requires `handle == the challenge's committed
 *_sha256`. **Idempotent final (P1-6, LOCKED):** the first valid final publishes (reusing the
 already-idempotent `os.link`/`O_EXCL` create-if-absent, `brops_evidence_store.publish`) and records
 the `*_handle` + advances `inputs_ready`; an identical retry re-returns the SAME
@@ -1142,11 +1212,14 @@ validates the reply, reframes and exits. `bridge.task-request` is untouched.
 // sidecar→desktop reply (ok):
 { "protocol": "bridge.governed-turn-output-read-result.v1", "ok": true, "output_stream_id": "<same>",
   "seq": <same>, "bytes_b64": "<b64url ≤ 245760>", "eof": <bool>, "error": null }
-// sidecar→desktop reply (refused): the sidecar is a stateless proxy that originates NO reasons, so
-//   the enum is IDENTICAL to the supervisor's (NOT a superset):
+// sidecar→desktop reply (refused): the sidecar RELAYS a supervisor verdict verbatim (it originates NO
+//   supervisor/signature verdict of its own), so this reason enum is IDENTICAL to the supervisor's (NOT a superset):
 { "protocol": "bridge.governed-turn-output-read-result.v1", "ok": false, "output_stream_id": "<same or null>",
   "seq": <int or null>, "bytes_b64": null, "eof": null,
   "error": { "reason": "stream_unknown"|"stream_expired"|"stream_binding_mismatch"|"seq_out_of_range"|"malformed" } }
+// NOTE (P1-5): a LOCAL transport failure of the one-shot sidecar (spawn/connect/timeout/oversize-or-
+//   malformed-reply/unexpected-exit) is NOT one of these reasons and produces NO reply frame — it is an
+//   out-of-band Tauri command error ⇒ the desktop Blocks with no result (§6.1 step 14, §7.1).
 ```
 Chunk size = **184320** decoded (= 245760 b64url + a small JSON envelope ≤ 262144). For an 8 MiB
 output: `ceil(8388608 / 184320) = 46` chunks, **`seq` 0..45** (last chunk 94208 bytes, `eof=true`).
@@ -1165,6 +1238,89 @@ output, `seq` out-of-range, `stream_expired` after TTL, **`stream_binding_mismat
 other-turn token presented with the wrong `receipt_id`/`execution_attempt_id`** (now caught
 server-side), supervisor-restart-mid-pull re-drives from the durable row, `COMPLETED` retry returns
 the same token, idempotent re-read returns identical bytes, and a 1-byte-tampered chunk.
+
+### 4.10(g) Desktop→sidecar governed INGRESS — `bridge.governed-turn-submit.v1` (P0-1)
+
+This is the missing normative hop the rev-16/17 flow consumed "by assumption": nothing carried
+the signed challenge document or the raw input bytes **to the sidecar**. The frozen
+`bridge.task-request` (`bridge/contracts/task-request.schema.json`, `additionalProperties:false`,
+`required:[task_id,task_class,rationale,system,history,request]`, no `challenge_doc_b64`, no discriminator) cannot be extended
+(3b-1A positive control depends on it byte-for-byte), so 3b-1B ADDS a **new** ingress frame in a
+new schema file `bridge/contracts/bridge-governed-turn-submit.schema.json`. **Challenge-document
+carriage (Track E risk #2):** §2.1 already has the desktop-UI as the challenge authority's only
+AF_UNIX peer; the authority returns the signed `{payload,sig}` document to the desktop-UI in that
+same reply, and the desktop-UI (holding the raw bytes) base64url-encodes it into `challenge_doc_b64`
+here. No new principal handles the document.
+
+**Request (desktop → one-shot sidecar `stdin`, one JSON object):**
+```json
+{ "protocol": "bridge.governed-turn-submit.v1",
+  "task_id": "<string ≤128>",
+  "challenge_doc_b64": "<base64url of the exact signed {payload,sig} bytes>",
+  "system": "<string, UTF-8, ≤ 262144 bytes>",
+  "history": [ { "role": "user"|"assistant"|"system", "content": "<string>" }, … ],
+  "generation_config": "<string ≤128 — the sidecar engine config id, e.g. brops.governed-engine.sidecar.v1>" }
+```
+`additionalProperties:false`; `required:[protocol,task_id,challenge_doc_b64,system,history,
+generation_config]`; the top-level `protocol` const both admits this frame and (being absent from
+`bridge.result`/`bridge.task-request`) keeps it disjoint from the frozen family. Caps mirror the
+real code: `system` ≤ `MAX_SYSTEM_BYTES = 262144` (`ai.rs:71`), `JCS(history)` ≤
+`MAX_CONVERSATION_BYTES = 8388608` (`ai.rs:73`); overflow ⇒ out-of-band ingress error (below), no
+frame emitted.
+
+**Canonical input bytes (LOCKED to the shipped `brops_canonical.py`, NOT re-invented).** The
+sidecar derives the three staged artifacts' bytes with the **exact** functions already in
+`engine/runtime/brops_canonical.py`, and the challenge document commits to their SHA-256:
+- `system_bytes  = system.encode("utf-8")` — raw UTF-8, **no trim/normalize** (`brops_canonical.py:98-101`).
+- `history_bytes = JCS([{ "content":…, "role":… } for each turn])` — RFC 8785 canonical JSON of the
+  normalized `{content,role}` objects (`brops_canonical.py:104-109`); **Rust↔Python JCS parity** is
+  the same primitive proven for receipts (`core/src/receipt.rs::jcs_bytes:235-237` ↔
+  `bro_signature.canonical_bytes:158-160`, parity test `receipt.rs:1284-1288`).
+- `generation_config_bytes = generation_config.encode("utf-8")` — **raw UTF-8**, NOT JCS
+  (`brops_canonical.py:118-122`). *(Reconciliation: the REV-18 force-text wrote
+  `JCS(generation_config)`; the shipped code canonicalizes `generation_config` as raw UTF-8 of the
+  config string. The two are **NOT** interchangeable — JCS (RFC 8785) of a JSON string emits the
+  quoted, escaped form (surrounding `"` bytes) whereas raw UTF-8 is unquoted, so they differ — and
+  the normative rule is **raw UTF-8** because that is what produces `generation_config_sha256`, the
+  digest the challenge already commits; using JCS here would make the staged digest mismatch the
+  challenge and refuse via `handle_not_challenge`.)*
+`challenge_doc bytes = JCS({payload,sig})` for the open-time canonicality gate (§4.10(a0),
+unchanged).
+
+**New Tauri command `governed_turn_submit`** (a genuinely NEW entry added to the `generate_handler!`
+list, `apps/desktop/src-tauri/src/lib.rs:95-166` — that list has **no** governed `#[tauri::command]`
+today; governed turns are currently reached only internally from the `stream_*` commands via the
+non-command `governed_turn` (`ai.rs:567`) → `governed_engine` (`ai.rs:1346`), so nothing is renamed
+or replaced): it takes `{system, history, generation_config, challenge_doc_b64, task_id}` from the
+desktop-UI,
+spawns the **one-shot** governed sidecar exactly as `ai.rs::governed_engine` does today
+(`ai.rs:1346-1412`: spawn, write the submit JSON to `stdin` `:1369-1376`, read one reply from
+`stdout` `:1391-1399` bounded by `MAX_STDOUT_BYTES = 9 MiB :43`, await exit), under the existing
+`MAX_CONCURRENT_GENERATIONS = 2` permit (`ai.rs:212`).
+
+**Sidecar orchestrator (`bridge/engine_sidecar.py::run`, `:266-303`, a NEW dispatch branch beside the
+frozen `_real_callables`, `:232-260`).** On a `bridge.governed-turn-submit.v1` frame the one-shot
+subprocess drives the whole governed turn against the supervisor over `brops_socket`
+(one-request/one-response), in order:
+1. `brops.governed-staging-open.v1` (§4.10(a)) → then, for each of the three artifacts
+   (system, history, generation_config), `-staging-chunk.v1` ×N (§4.10(b), §2.4 bounds) →
+   `-staging-final.v1` (§4.10(c)); the three `*_sha256` MUST equal the challenge's committed digests.
+2. `brops.governed-turn-open.v1` (§4.10(a0)) submitting `challenge_doc_b64`.
+3. `brops.governed-evidence-request.v1` (§4.10(d)) to execute/finalize.
+4. receive `brops.governed-turn-result.v1` (§4.10(e)); on `signed`, pull the output via
+   `brops.governed-turn-output-read.v1` (§4.10(f)) per chunk.
+5. emit **exactly one** `bridge.governed-turn-result.v1` (§4.6) on `stdout` and exit.
+
+**Reply.** Success ⇒ the sidecar's single `stdout` frame is `bridge.governed-turn-result.v1` (§4.6),
+which the desktop verifies at §6.1 step 14 / §7.1. **Local ingress/transport failure is out-of-band
+(P1-5):** a spawn failure, socket error, `EXECUTION_TIMEOUT_MS` expiry, an oversize/malformed sidecar
+reply, or an unexpected non-zero exit surfaces as a **Tauri command error to the desktop-UI (a
+`Block`, NO result frame)** — the sidecar is a transport proxy and originates **no** supervisor or
+signature verdict (§4.10(f), §7.1). **Tests:** submit round-trips to a `signed` bridge result; a
+frozen `bridge.task-request` fed to the governed command is refused (missing `protocol` const); an
+oversize `system`/`history` ⇒ ingress error, no frame; a sidecar-spawn failure ⇒ desktop Block, no
+result; the three staged `*_sha256` mismatching the challenge digests ⇒ `handle_not_challenge`
+refusal relayed as a Block.
 
 **Routing/rejection (LOCKED + tested):** each control-plane message
 is dispatched by its `protocol` const; a governed handler refuses any v1 `protocol` value and
@@ -1234,9 +1390,16 @@ slash/or alternatives):**
 - **`RECOVERY_REQUIRED`** (terminal, operator-inspect-only; predecessors `EXECUTION_STARTING`/
   `EXECUTING`): the ONLY destination of an **ambiguous post-launch crash** where execution may have
   occurred but complete terminal proof is unavailable. Never auto-relaunch.
-- **`BLOCKED`** (terminal; predecessors `UNSEEN`/`ACCEPTED_PREPARED`/`LEASE_READY`): a
-  **deterministic pre-execution** security/policy/identity/schema/binding refusal — never a crash-cut
-  and never lease-expiry.
+- **`BLOCKED`** (terminal; predecessors `ACCEPTED_PREPARED`/`LEASE_READY` only): a
+  **deterministic post-acceptance pre-execution** security/policy/identity/schema/binding refusal —
+  never a crash-cut and never lease-expiry. **`UNSEEN` is NOT a predecessor (P1-5):** `UNSEEN` =
+  absent/no-row is not a persisted state, so it cannot transition to a stored `BLOCKED` row. A
+  **pre-acceptance** (pre-row) deterministic refusal — anything the supervisor rejects during
+  `brops.governed-turn-open.v1` / staging (§4.10(a0/a/b/c)), before a `governed_turn_acceptance` row
+  exists — creates **NO acceptance row**; it returns that path's own protocol reason
+  (`peer_denied`/`noncanonical`/`sig_invalid`/`no_staging_row`/`session_corrupt`/… ) and the desktop
+  renders it as a Block via the out-of-band relay (§4.5, §6.1 step 0/step 14). `BLOCKED` is reserved
+  for a refusal decided **after** the row is `ACCEPTED_PREPARED`/`LEASE_READY`.
 - **`FAILED`** (terminal; predecessor `EXECUTING`): a known completed operational failure with
   authoritative evidence the attempt produced NO acceptable governed result.
 - **`COMPLETED`** (terminal; predecessor `EXECUTING`): the exact terminal record exists + re-verifies;
@@ -1399,6 +1562,15 @@ access.
 ### 6.1 The COMPLETE end-to-end order (LOCKED, P1-5) — through the isolated signer + desktop
 
 No output renders before step 14 commits.
+0. **Desktop→sidecar governed ingress (P0-1, §4.10(g)):** the desktop-UI — already holding the
+   signed challenge document returned by the §2.1 authority — invokes the new Tauri
+   `governed_turn_submit` command, which spawns the one-shot governed sidecar (as
+   `ai.rs::governed_engine`) and writes a single **`bridge.governed-turn-submit.v1`** frame carrying
+   `{task_id, challenge_doc_b64, system, history, generation_config}`. The sidecar derives the three
+   canonical input-byte blobs via the shipped `brops_canonical.py` formulas (system=raw UTF-8,
+   history=JCS, generation_config=raw UTF-8) and becomes the originator of steps 1–2. A local
+   spawn/socket/timeout/oversize-reply/unexpected-exit failure here is an **out-of-band Tauri error
+   ⇒ desktop Block, no result** (P1-5); nothing downstream exists "by assumption".
 1. **Challenge open + OPEN-TIME PRELIMINARY verify + publish (P0-2/P0-3):** the sidecar sends
    **`brops.governed-turn-open.v1`** (§4.10(a0)) carrying the **exact signed challenge document
    bytes** (`challenge_doc_b64`). The supervisor strict-decodes, applies the **canonicality gate**
@@ -1461,6 +1633,24 @@ No output renders before step 14 commits.
     → persist. A stale/rolled-back evidence head was already refused by the signer's durable
     head-floor (step 11, §7 P1-7). Only on commit does the desktop render.
 
+**Out-of-band transport-failure contract (P1-5, LOCKED — covers steps 0/13/14).** The
+desktop↔sidecar hops (step 0 submit, step 13/14 output pull) run over one-shot Tauri subprocesses
+and an `AF_UNIX` socket that can fail *without* producing any governed reply frame. Distinct from a
+supervisor **verdict** (a `refused` reason from `GOVERNED_REFUSAL_REASONS`, which is authoritative
+and relayed verbatim), a **local transport failure** — sidecar spawn failure, socket connect/read
+error, `EXECUTION_TIMEOUT_MS` expiry, a reply that is oversize (> `MAX_STDOUT_BYTES = 9 MiB`) or
+malformed/unparseable, or an unexpected non-zero exit — is **NOT** a governed reason: it surfaces as
+an **out-of-band Tauri command error and the desktop deterministically Blocks the turn with NO
+result and NO render** (no partial output, no receipt persisted, `request_nonce` NOT consumed so the
+still-valid signed challenge may be retried). The sidecar **never fabricates** a `signed` result or a
+refusal reason to paper over a transport failure — it originates no supervisor/signature verdict
+(§4.5, §4.10(f)). Because the signed envelope's `output_sha256`/`output_bytes` is the sole output
+authority, a truncated/dropped/reordered pull can never be mistaken for a complete output: the
+whole-output digest fails ⇒ Block. **Tests:** submit-hop spawn failure ⇒ Block/no-row; pull-hop
+socket drop mid-stream ⇒ digest-mismatch Block; oversize sidecar reply ⇒ Block; timeout ⇒ Block; a
+genuine supervisor `refused` ⇒ relayed reason Block (distinct path); each leaves no persisted receipt
+and does not consume the nonce.
+
 ---
 
 ## 7. Verification — `LiveRunStateProvider` (runs INSIDE the isolated signer; all cross-bindings)
@@ -1520,44 +1710,74 @@ is authority), then require, all fail-closed:
   bytes)`; the receipt's `receipt_id`/`execution_attempt_id`/`lease_id` equal the record's.
 - **Containment:** the containment artifact's run/attempt/lease/runner equal the record's,
   `contained==true`, its evidence event `payload_hash == containment_evidence_sha256`.
-- **Evidence head + anti-rollback (SIGNER-OWNED durable floor, P1-7 — NO desktop head-floor
+- **Evidence head + anti-rollback (SIGNER-OWNED durable floor, P1-7 / P0-2 — NO desktop head-floor
   table).** The reused `bro_evidence` head/chain has no timestamp comparison; its anti-truncation
-  is **structural** (`event_hash`/`sequence`/`final_event_hash`/`head_sequence`). Today
-  `min_head_sequence` is a caller-only parameter never persisted (`brops_live_runstate.py` calls
-  `load_head`/`validate_chain` with **no** floor → a no-op); the fix makes it a **durable
+  is **structural**, keyed on the **chain-content** invariants `event_count` / `last_sequence` /
+  `final_event_hash` (the per-event `event_hash`/`sequence` linkage). **`head_sequence` is NOT a
+  chain-length — it is a re-ANCHOR / re-SIGN counter** that rises **every time the identical chain
+  is re-anchored and re-signed**, per the recorder contract documented at `bro_evidence.py:63-67`
+  ("the recorder bumps it every time it re-signs, so a retained stale head always carries a lower
+  number") — an unchanged chain's `event_count`/`last_sequence`/`final_event_hash` stay fixed while
+  `head_sequence` climbs. rev 17 stored only
+  `highest_sequence`+`final_event_hash` and gated advance on `head_sequence`, which **falsely forks
+  a legitimate re-anchor of an unchanged chain** — the P0-2 defect. The floor therefore tracks the
+  chain-content pair `(event_count, last_sequence)` plus `final_event_hash`, and carries
+  `highest_head_sequence` only as an informational re-anchor high-water mark (never a fork signal).
+  Today `min_head_sequence` is a caller-only parameter never persisted (`brops_live_runstate.py`
+  calls `load_head`/`validate_chain` with **no** floor → a no-op); the fix makes it a **durable
   `brops-signer`-owned floor DB**, separate from the read-only `brops-store` artifact store (the
   signer is read-only there, §2.3), dir `0700` / file `0600`:
   ```sql
   CREATE TABLE governed_evidence_head_floor (
-    install_id       TEXT NOT NULL, task_id TEXT NOT NULL,
-    highest_sequence INTEGER NOT NULL, final_event_hash TEXT NOT NULL, updated_at_ms INTEGER NOT NULL,
+    install_id            TEXT NOT NULL, task_id TEXT NOT NULL,
+    event_count           INTEGER NOT NULL CHECK (event_count >= 1),
+    last_sequence         INTEGER NOT NULL CHECK (last_sequence >= 0),
+    final_event_hash      TEXT NOT NULL,
+    highest_head_sequence INTEGER NOT NULL CHECK (highest_head_sequence >= 1),
+    updated_at_ms         INTEGER NOT NULL,
     PRIMARY KEY (install_id, task_id) );
   ```
   Inside `LiveRunStateProvider`, **before minting the §4.9 envelope**, the signer runs `load_head`
-  + `validate_chain` structurally → `(head_sequence, final_event_hash)`, then in **one
-  `BEGIN IMMEDIATE`** tx (write-lock up front, reject nested — the proven `receipt_store.rs`
-  `in_immediate_tx` shape) `SELECT … WHERE install_id=? AND task_id=?` and decide: **no row** →
-  `INSERT`; **`head_sequence < highest_sequence`** → **refuse** (stale/rolled-back); **`==` with
-  different `final_event_hash`** → **refuse** (fork at same seq); **`==` with same hash** →
-  **idempotent** (do not advance; re-sign the byte-identical envelope, deterministic from the
-  verified record); **`head_sequence > highest_sequence`** → **advance ONLY IF the new chain
-  extends the stored floor (P1-7 extend-or-scope):** the validated chain MUST descend from the
-  stored floor — some event carries `previous_event_hash == the stored floor's final_event_hash`
-  and the stored `highest_sequence` prefix reproduces byte-for-byte — then `UPDATE … SET
-  highest_sequence=?, final_event_hash=?, updated_at_ms=?`. If a higher `head_sequence` does NOT
-  descend from the stored `final_event_hash` it is a **divergent lineage → refuse as
-  `evidence_fork`**. (A divergent higher head that is nonetheless validly signed would require
-  **evidence-recorder key compromise**, which is **OUT of the §0 threat model** — the signer does
-  not silently bless it; it refuses.) **Commit the floor BEFORE returning the signed envelope**;
-  concurrent same-chain attempts serialize on `BEGIN IMMEDIATE` + the `(install_id, task_id)` PK
-  (closing the TOCTOU). Crash after floor-commit before response → the retry hits the
-  equal-seq/equal-hash branch and re-signs the identical envelope (no second advance, no
-  re-execution). **Startup integrity (scoped honestly, P1-7 — Option A):** on open, verify each
-  floor row is internally self-consistent (`final_event_hash` is 64-hex, `highest_sequence ≥ 1`)
-  and refuse a malformed/corrupt DB, fail-closed. This floor detects and refuses — **against the
-  current persisted floor** — a stale head (`<`) and a same-sequence fork (`==` different hash),
-  i.e. rollback mounted **through the running signer** by the in-scope sidecar (which per §2.3
-  cannot read or write this `brops-signer` `0700`/`0600` DB at all). **This local table CANNOT
+  + a **`validate_chain_detailed`** helper (a thin wrapper over the existing `validate_chain` that
+  additionally returns the **per-event hash list** and `(event_count, last_sequence, final_event_hash,
+  head_sequence)`, since `validate_chain:158-171` computes but discards the per-event hashes) → the
+  chain-content tuple, then in **one `BEGIN IMMEDIATE`** tx (write-lock up front, reject nested — the
+  proven `receipt_store.rs` `in_immediate_tx` shape) `SELECT … WHERE install_id=? AND task_id=?` and
+  decides on **chain content, not `head_sequence`** — the **5-case matrix**:
+  1. **no row** → `INSERT` the tuple (bootstrap).
+  2. **`event_count < stored.event_count`** (fewer events, i.e. `last_sequence` also lower) →
+     **refuse `evidence_fork`** (stale / truncated / rolled-back chain).
+  3. **`event_count == stored.event_count` and `last_sequence == stored.last_sequence`** → the chain
+     is the SAME length; if **`final_event_hash == stored.final_event_hash`** → **idempotent
+     re-anchor**: do NOT change the content columns, `UPDATE highest_head_sequence =
+     max(stored, head_sequence)` + `updated_at_ms`, and re-sign the byte-identical envelope
+     (deterministic from the verified record — this is exactly the re-sign-counter case rev 17 forked);
+     if **`final_event_hash != stored.final_event_hash`** → **refuse `evidence_fork`** (same length,
+     divergent content).
+  4. **`event_count > stored.event_count`** (strictly more events) → **advance ONLY IF the new chain
+     extends the stored floor (extend-or-scope):** using the `validate_chain_detailed` per-event
+     hashes, the event at **sequence `stored.last_sequence`** (0-based list index
+     `stored.last_sequence − 1`, since `bro_evidence` sequences are 1-based —
+     `enumerate(event_ids, start=1)`, `bro_evidence.py:142`) MUST reproduce `stored.final_event_hash`
+     byte-for-byte (the stored prefix is an exact ancestor) — then `UPDATE … SET event_count=?,
+     last_sequence=?, final_event_hash=?, highest_head_sequence=max(stored, head_sequence),
+     updated_at_ms=?`. If the longer chain does NOT reproduce the stored prefix hash → **divergent
+     lineage → refuse `evidence_fork`**.
+  5. **`event_count == stored.event_count` but `last_sequence != stored.last_sequence`** (length/seq
+     disagreement — malformed) → **refuse `evidence_fork`**.
+  (A divergent-content chain that is nonetheless validly signed would require **evidence-recorder key
+  compromise**, which is **OUT of the §0 threat model** — the signer does not silently bless it; it
+  refuses.) **Commit the floor BEFORE returning the signed envelope**; concurrent same-chain attempts
+  serialize on `BEGIN IMMEDIATE` + the `(install_id, task_id)` PK (closing the TOCTOU). Crash after
+  floor-commit before response → the retry hits case 3 (idempotent re-anchor) and re-signs the
+  identical envelope (no content advance, no re-execution). **Startup integrity (scoped honestly, P1-7 — Option A):** on open, verify each
+  floor row is internally self-consistent (`final_event_hash` is 64-hex, `event_count ≥ 1`,
+  `last_sequence ≥ 0`, `highest_head_sequence ≥ 1`) and refuse a malformed/corrupt DB, fail-closed.
+  This floor detects and refuses — **against the current persisted floor** — a truncated chain
+  (case 2, fewer `event_count`), a same-length content fork (case 3, equal `event_count`/`last_sequence`
+  + divergent `final_event_hash`), and a longer chain that does not reproduce the stored prefix
+  (case 4 divergent lineage), i.e. rollback/fork mounted **through the running signer** by the
+  in-scope sidecar (which per §2.3 cannot read or write this `brops-signer` `0700`/`0600` DB at all). **This local table CANNOT
   detect a full-DB restore to an older self-consistent backup** — no external anchor exists to
   compare against, and the restored DB returns the restored (lower) floor as authoritative.
   Offline/root/admin backup restore of the signer-owned DB requires privileges that are **OUT of
@@ -1565,11 +1785,15 @@ is authority), then require, all fail-closed:
   anti-rollback anchoring** (an operator-held pin outside the DB, mirroring `resolve_registry_floor`'s
   `BRO_OPERATOR_REGISTRY_MIN_FILE`, or a hardware monotonic counter) is **DEFERRED to 3b-2**;
   unlike the registry floor (whose strength comes from that external anchor), this evidence-head
-  floor makes **no** cross-restart backup-rollback claim. The envelope binds `evidence_head_sequence`/
-  `evidence_final_event_hash` (§4.9) so the signed artifact commits to the exact floor. **Tests:**
-  concurrent (exactly one advances), crash-after-commit (identical re-sign), same-seq/same-hash
-  (idempotent), same-seq/different-hash (refuse), lower-seq (refuse), greater-seq-that-extends
-  (advance), greater-seq-divergent-lineage (refuse `evidence_fork`). (The Wave-3a desktop SQLite
+  floor makes **no** cross-restart backup-rollback claim. The envelope binds `evidence_event_count`/
+  `evidence_last_sequence`/`evidence_final_event_hash`/`evidence_head_sequence` (§4.9) so the signed
+  artifact commits to the exact chain content **and** the re-anchor counter. **Tests (5-case matrix):**
+  concurrent (exactly one advances), crash-after-commit (idempotent re-anchor re-sign), case 1
+  bootstrap-insert, case 2 fewer-events (refuse `evidence_fork`), case 3 same-length same-hash with a
+  **higher `head_sequence`** (idempotent re-anchor — advances only `highest_head_sequence`, NOT a fork:
+  the exact P0-2 regression guard), case 3 same-length divergent-hash (refuse `evidence_fork`), case 4
+  more-events-that-reproduce-the-stored-prefix (advance), case 4 more-events-divergent-lineage
+  (refuse `evidence_fork`), case 5 length/seq disagreement (refuse `evidence_fork`). (The Wave-3a desktop SQLite
   has **no** `evidence_head_floor` table — this primitive is signer-side; a stale head is refused
   here at the signer, before any envelope is minted.)
 - **Registry anti-rollback (supervisor side, crash-consistent):** verify full signed
@@ -1614,6 +1838,12 @@ immutable bytes are kept, THEN the tx opens for the replay/persist steps below.
 The nonce-consume + `receipt_id` uniqueness + freshness + echo-equality + persist run in one
 `BEGIN IMMEDIATE` tx (the already-verified output bytes are used, no I/O in the lock); render only
 on commit.
+- **Out-of-band transport failure (P1-5)** — a local sidecar-hop failure (spawn/connect/timeout/
+  oversize-or-malformed-reply/unexpected-exit) at the submit (§6.1 step 0) or pull (§4.10(f)) hop is
+  **not** a signer/attestation/echo verdict and yields **no** governed reply frame; it is an
+  out-of-band Tauri error ⇒ the desktop **Blocks with no result, persists nothing, and does not
+  consume the `request_nonce`** (the still-valid signed challenge may be retried). The sidecar never
+  fabricates a `signed` result or a refusal reason to mask it (§4.5, §6.1 out-of-band contract).
 
 ---
 
@@ -1712,7 +1942,7 @@ The current normative design is §0–§9 above. This log is historical only.
   desktop→sidecar `bridge.governed-turn-output-read.v1` + `governed_output_streams` table; two-phase
   challenge verify; closed 9-value state enum + `GOVERNED_REFUSAL_REASONS`; `MIN_LAUNCH_REMAINING_MS
   = 180000` + `completed ≤ lease_expires`; exact ingress idempotency.
-- **rev 17 (this doc):** targeted durability/idempotency/stream-binding/state closure via a mandatory
+- **rev 17:** targeted durability/idempotency/stream-binding/state closure via a mandatory
   **4-track fan-out (A FS/SQLite crash-consistency · B idempotency/schema · C output-stream
   capability/threat · D closed state/reason machine) + one integrator + a fresh independent
   red-team** — **P0-1** staging mixed a mutable append file with SQLite state (no atomic file↔DB
@@ -1730,6 +1960,30 @@ The current normative design is §0–§9 above. This log is historical only.
   (lease-gate → `EXPIRED`; post-launch crash → `RECOVERY_REQUIRED`; never `BLOCKED`), added a `CHECK
   (state IN …)` constraint + the deterministic state-purpose matrix, and replaced every `<enum>`/
   "superset" placeholder with a **literal closed reason array** (§4.7, §5, §6.1, §4.5, §4.6, §4.10).
+- **rev 18 (this doc):** desktop-ingress / evidence-floor / bounded-staging closure via a mandatory
+  **5-track fan-out (A desktop→sidecar→supervisor transport · B evidence-head re-anchor semantics ·
+  C staging resource/concurrency · D state/reason + transport-failure homing · E full adversarial
+  E2E) + one integrator + a fresh independent red-team** — **P0-1** the desktop→sidecar governed
+  INGRESS frame was undefined (the signed challenge document + raw input bytes reached the sidecar
+  "by assumption"; the frozen `bridge.task-request` cannot carry them) → new
+  **`bridge.governed-turn-submit.v1`** ingress frame + Tauri `governed_turn_submit` command + the
+  one-shot sidecar orchestrator, byte formulas LOCKED to `brops_canonical.py`, the §2.1
+  authority→desktop-UI document return path, and §6.1 step 0 (§2.1, §2.2, §4.10(g), §6.1); **P0-2**
+  the evidence-head floor gated advance on `head_sequence` (a re-ANCHOR/re-SIGN counter that rises on
+  an unchanged chain — falsely forking a legitimate re-anchor) → the floor keys on **chain-content**
+  `(event_count, last_sequence, final_event_hash)` via a **5-case matrix** + a `validate_chain_detailed`
+  helper, `head_sequence` demoted to a high-water counter, envelope binds `event_count`/`last_sequence`
+  (§7, §4.9); **P1-3** staging chunks had no min length + no count bound (tiny-chunk amplification) →
+  deterministic `expected_chunk_len` + `MAX_STAGING_CHUNKS = 46` + exact numeric quotas (2 turns / 6
+  sessions / 49 files-per-turn / 98 per-install / 17 MiB / 60 s sweep) (§2.4, §4.10(b/c)); **P1-4**
+  the FAILED staging session dead-ended, the session-state CHECK drifted (`INPUTS_ARTIFACT_READY` vs
+  the row's `INPUTS_READY`), and CHECKs/the publish primitive were vague → `os.link` create-if-absent
+  freeze, a `SESSION_CORRUPT` terminal contract (`session_corrupt` in the a/b/c enums), CHECK
+  constraints on state/`next_seq`/`byte_count` (§2.4, §4.10(a/b/c)); **P1-5** `BLOCKED` wrongly listed
+  `UNSEEN` (no-row) as a predecessor and "the sidecar originates no reasons" was over-absolute →
+  `BLOCKED` predecessors are `ACCEPTED_PREPARED`/`LEASE_READY` only (pre-accept refusals create NO
+  row) and local transport failures are homed as **out-of-band Tauri Blocks** distinct from supervisor
+  verdicts (§5, §4.5, §4.10(f), §6.1, §7.1).
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 
@@ -1762,7 +2016,8 @@ The current normative design is §0–§9 above. This log is historical only.
   constraints) + lease `nonce` + `receipt_id` (global, desktop `receipt_ids_seen`) +
   `execution_attempt_id` (unique) + `registry_epoch`/`registry_hash` (registry floor) +
   **signer-owned durable** evidence-head floor `governed_evidence_head_floor` (BEGIN IMMEDIATE
-  CAS; `head_sequence` vs `highest_sequence`; NO desktop head-floor table exists).
+  CAS keyed on chain-content `(event_count, last_sequence, final_event_hash)` — 5-case matrix;
+  `head_sequence` is a re-anchor counter, high-water only; NO desktop head-floor table exists).
 - **Principal/ACL matrix (P0-1 mode-fix `2750` owner-write / group read-only):** `brops-store`
   group = {`brops-supervisor`, `brops-recorder`, `brops-signer`(read-only)}; `store/sup/` owner
   `brops-supervisor` **`2750`**, `store/rec/` owner `brops-recorder` **`2750`** (group `r-x`,
@@ -1780,7 +2035,9 @@ The current normative design is §0–§9 above. This log is historical only.
   **`brops.governed-result.v1`** (the shipped `{status,output,receipt}` shape — `GOVERNED_RESULT_PROTOCOL`
   constant + emitter + `engine_sidecar` consumer stay byte-for-byte)/`bridge.result`/`bridge.task-request`)
   UNCHANGED; the NEW governed family — added in parallel (new `GOVERNED_TURN_RESULT_PROTOCOL`) —
-  (`brops.governed-turn-open.v1` / `brops.governed-sign-request.v1` / `brops.governed-sign-result.v1`
+  (the desktop→sidecar ingress **`bridge.governed-turn-submit.v1`** (P0-1, the frozen
+  `bridge.task-request` cannot carry the challenge doc/inputs) / `brops.governed-turn-open.v1` /
+  `brops.governed-sign-request.v1` / `brops.governed-sign-result.v1`
   / `brops.governed-evidence-request.v1` / **`brops.governed-turn-result.v1`** / the ingress
   `brops.governed-staging-open/-chunk/-final.v1` / the egress **pull**
   `brops.governed-turn-output-read.v1` (supervisor) + **`bridge.governed-turn-output-read.v1`**
