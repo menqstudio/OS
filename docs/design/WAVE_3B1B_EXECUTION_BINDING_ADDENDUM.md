@@ -1,44 +1,38 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 19 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 20 — CONSOLIDATED)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 19 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 18 was Architect-reviewed at exact HEAD
-> `89d0df4c7211c97c85c582090cea05c5da02bc42` (exact-head CI **#124** SUCCESS, all 8 jobs GREEN —
-> **CI GREEN ≠ design GREEN**); the Architect returned **Design RED** with **1 P0 + 2 P1
-> orchestrator-ordering / generation_config-canonicalization / challenge-creation-channel findings**
-> and directed a **mandatory read-only fan-out + one integrator + a fresh independent red-team, NOT a
-> rewrite.** rev 19 was produced exactly that way: **independent read-only audit tracks** (P0-1
-> orchestrator ordering · P1-1 generation_config canonicalization vs the real jcs primitive · P1-2
-> challenge-authority creation channel · cross-consistency/doc-sync) read the real repo code, a
-> **single integrator** consolidated their evidence and edited in place, and a **fresh independent
-> red-team** re-checked the diff. The rev-18 → rev-19 findings closed here:
-> **P0-1** the §4.10(g) one-shot sidecar submit subprocess sequenced `staging×3 → turn-open →
-> evidence-request → result → PULL output` — but `governed-staging-open` requires the `UPLOADING`
-> `governed_turn_staging` row that ONLY `governed-turn-open` creates (else `no_staging_row`), so no
-> turn could ever execute, and the submit path must not pull output → reordered to
-> **`turn-open → staging×3 → evidence-request → metadata-result → reframe → exit`** with **NO
-> `brops.governed-turn-output-read.v1` PULL in the submit subprocess** (the output pull is confined to
-> the separate §6.1 step-13/14 desktop-driven `governed_turn_output_read` subprocess), plus an exact
-> call-order test that turn-open MUST precede the first staging-open (§4.10(g), §6.1);
-> **P1-2** the challenge-authority creation channel left the implementer a **choice between two trust
-> models** — §2.1 accepted "structured turn facts **OR** a protected row-id", while §4.1 required
-> "row-id only" → collapsed to a **single protected-row-ID model with two explicit messages**:
-> `brops.governed-challenge-create-pending.v1` (facts validated + stored in the authority's own
-> `0700` row, no signing) then `brops.governed-challenge-issue.v1` (row-id only; the authority builds
-> the exact §4.1 payload from its own row and signs once, one-time-consume), with full request/reply +
-> pending-row schemas, validation, idempotency, and frame limits (§2.1, §4.1);
-> **P1-1** `generation_config_bytes = JCS(object)` relied on JCS **numeric** canonicalization, which
-> is representation-ambiguous (Python `json.dumps` float-repr vs Rust `serde_json`/`ryu`, neither RFC
-> 8785 ECMAScript number formatting; the real `receipt.rs::jcs_bytes:235-237` is a
-> `BTreeMap<String,String>`-only serializer — no numeric path exists) so a legitimate numeric config
-> could re-hash differently and false-Block `handle_not_challenge` → `generation_config` is now a
-> **flat string→string object** (fixed-point decimal strings + a canonical integer string, validated
-> by regex + integer-range checks that reject exponent/`-0.0`/precision/bare-int forms **before**
-> canonicalization), so `JCS(generation_config)` rides the already-proven string→string primitive and
-> no number is ever serialized; strictly additive to the frozen 3b-1A raw-UTF-8-string
-> `generation_config_bytes` + its `receipt.rs:1216-1219` parity fixture + `prepare_governed_turn`'s
-> `&str` signature (§2.2 KEEP+ADD, untouched) (§2.2, §4.10(g)). **All contracts
-> below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.** STOP gates:
-> `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31 not merged.
+> **STATUS: ❌ DESIGN RED being closed — rev 20 is a PROPOSED design-GREEN candidate, NOT
+> Architect-GREEN. 3b-1B code has NOT started.** rev 19 was Architect-reviewed at exact HEAD
+> `8d3451e28b542f290cc9b7c981c4636aec3dc54b` (exact-head CI **#125** SUCCESS, all 8 jobs GREEN —
+> **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED** the rev-18 **P0 orchestrator
+> ordering** (turn-open → staging×3 → … → exit, no submit-subprocess output pull) and the rev-18 **P1
+> generation_config canonicalization** (flat string→string, no numeric divergence), but the rev-19
+> challenge-creation-channel replacement introduced a **new P0-1** (1 P0 · 0 P1), and directed a
+> **read-only fan-out + one integrator + a fresh independent red-team, NOT a rewrite.** rev 20 closes
+> it in place:
+> **P0-1 (rev-19 regression) — the challenge creation channel decoupled `request_nonce` from
+> `request_sha256`.** rev 19 had the **challenge authority mint `request_nonce`** while the desktop
+> supplied `request_sha256`; but the ratified & already-merged Wave-3a contract is that the **desktop**
+> mints `request_nonce` (`prepare_governed_turn` → `brops_core::id()` UUIDv4, `ai.rs:1228`),
+> `request_sha256 = SHA256(JCS(request-envelope))` with `request_nonce` **inside** the hashed envelope
+> (`receipt.rs::request_envelope_sha256:245-264` ↔ `brops_canonical.request_sha256:157-179`,
+> `protocol="brops.request.v1"`), and the desktop **atomically pre-stores** `(nonce, request_sha256)`
+> in its own `receipt_challenges` table (`issue_challenge`, `receipt_store.rs:109-126`) **before**
+> submit (`commands.rs:866-883`), consuming it at final acceptance keyed by
+> `expected.request.request_nonce` (`receipt_store.rs:256-271`). An authority-minted nonce can never be
+> the pair of a desktop-supplied `request_sha256`, so every happy-path turn would Block (supervisor
+> `request_sha256` mismatch, or desktop "nonce not found"). **rev 20 (§2.1):** the create-pending (A)
+> message now carries the **desktop-minted `request_nonce`** + envelope fields and **no**
+> `request_sha256`; the authority **recomputes `request_sha256` itself** (byte-identical merged formula)
+> and stores the desktop nonce + its recomputed hash; issue (B) signs the §4.1 payload with that exact
+> `(request_nonce, request_sha256)` pair; a normative **desktop `receipt_challenges` pre-store** step +
+> a **mandatory E2E test** (authority recompute == supervisor open-time recompute == the desktop's
+> pre-stored row, consumed at acceptance) lock the single-envelope chain. The authority-minted-nonce
+> variant is explicitly deferred to a separate ratified redesign, out of scope here.
+> *(rev-18 → rev-19 findings — P0 orchestrator ordering, P1 generation_config canonicalization, P1
+> two-trust-model creation channel — remain closed; see the non-normative Appendix A.)*
+> **All contracts below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.**
+> STOP gates: `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31
+> not merged.
 
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. It reuses the
 > existing lease / containment / receipt / evidence authorities — **no parallel executor**.
@@ -182,13 +176,21 @@ The exact current contract (not history):
   challenge bytes or a caller-chosen canonical payload** (this replaces the rev-18 "facts **or**
   row-id" disjunction, which left the implementer a choice between two trust models):
   - **(A) `brops.governed-challenge-create-pending.v1`** (create-pending / propose — **does NOT
-    sign**). The desktop-UI supplies the **structured authoritative turn facts** (`run_id`/`task_id`
-    + `workspace_id`/`install_id` context + `system_sha256`/`history_sha256`/
-    `generation_config_sha256`/`request_sha256`/`requested_at_ms`). The authority **validates** them
-    (rules below) and **stores them verbatim in its OWN protected pending-challenge row**, minting a
-    **fresh opaque `pending_challenge_id`** and the one-time `request_nonce` itself; it returns that
-    `pending_challenge_id`. No signature is produced and no `brops.governed-turn-challenge.v1` payload
-    exists yet. Reply `brops.governed-challenge-create-pending-result.v1`. **Frame ≤ 4 KiB** each way.
+    sign**). The desktop-UI supplies the **DESKTOP-minted `request_nonce`** (the ratified Wave-3a
+    nonce — `prepare_governed_turn` → `brops_core::id()` UUIDv4, `ai.rs:1228`) **plus the structured
+    authoritative turn facts** (`run_id`/`task_id` + `workspace_id`/`install_id` context +
+    `system_sha256`/`history_sha256`/`generation_config_sha256`/`requested_at_ms`). It does **NOT**
+    supply `request_sha256`. The authority **validates** them (rules below), **recomputes
+    `request_sha256` itself** from the supplied `request_nonce` + normalized context + the three
+    hashes via the **merged canonical request-envelope formula** (`receipt.rs::request_envelope_sha256:245-264`
+    ↔ `brops_canonical.request_sha256:157-179` — `protocol="brops.request.v1"`, an 8-field JCS
+    envelope with `request_nonce` **inside** the hashed bytes), and **stores the supplied nonce + the
+    recomputed `request_sha256` + facts verbatim in its OWN protected pending-challenge row**, minting
+    **only** a **fresh opaque `pending_challenge_id`** (it NEVER mints the `request_nonce` — that is the
+    desktop's, already pre-stored by the desktop in `receipt_challenges`, see the pre-store bullet
+    below); it returns that `pending_challenge_id`. No signature is produced and no
+    `brops.governed-turn-challenge.v1` payload exists yet. Reply
+    `brops.governed-challenge-create-pending-result.v1`. **Frame ≤ 4 KiB** each way.
   - **(B) `brops.governed-challenge-issue.v1`** (issue / sign — **signs exactly once**). The
     desktop-UI supplies **ONLY the `pending_challenge_id`** (never facts, never bytes). The authority
     **resolves the row from its OWN protected store**, **constructs the exact
@@ -208,18 +210,53 @@ The exact current contract (not history):
   same message. (This closes the `create_pending(arbitrary_bytes) → sign(id)` oracle: (A) stores only
   strictly-validated fixed-shape hashes/ids — never free bytes — and (B) signs only what the authority
   itself assembled.)
+- **Desktop nonce authority + `receipt_challenges` pre-store (P0-1 LOCKED — preserves the ratified
+  Wave-3a contract).** The `request_nonce` is minted by the **desktop**, and `request_sha256` is the
+  SHA-256 of the canonical request **envelope that CONTAINS that nonce** — so the two are, by
+  construction, ONE pair from ONE request. This is the already-merged Wave-3a model and MUST NOT be
+  changed: (1) the desktop mints `request_nonce = brops_core::id()` (UUIDv4) inside
+  `prepare_governed_turn` (`ai.rs:1225-1233`); (2) **before** submitting the governed turn the desktop
+  **atomically pre-stores** `(nonce, request_sha256, conversation_id)` in its own `receipt_challenges`
+  table via `issue_challenge` (`receipt_store.rs:109-126`; ordering `commands.rs:866-878` runs BEFORE
+  `governed_turn` at `commands.rs:883`), where `request_sha256 = IssuedRequest::request_sha256()` over
+  the exact same fields; (3) the desktop carries that SAME `request_nonce` + envelope fields into
+  create-pending (A); (4) the authority **recomputes** `request_sha256` from those inputs with the
+  byte-identical formula (`receipt.rs::request_envelope_sha256:245-264` ↔
+  `brops_canonical.request_sha256:157-179`) and stores the desktop nonce + its recomputed hash; (5) at
+  §4.10(a0) open-time the supervisor **recomputes** `request_sha256` the same way and requires equality;
+  (6) at desktop final acceptance (§6.1 step 14) the one-time consume is keyed by
+  `expected.request.request_nonce` against `receipt_challenges` (`receipt_store.rs:256-271`) and
+  additionally requires the stored `request_sha256` to equal the expected envelope's
+  (`receipt_store.rs:322-327`). Because every hop derives `request_sha256` from the SAME desktop nonce +
+  context + hashes, the happy path is constructible end-to-end: authority recompute == supervisor
+  recompute == the desktop's pre-stored row, and the desktop always finds its own issued nonce to
+  consume. **The authority NEVER mints the nonce** (that would decouple it from `request_sha256` and
+  from the desktop's pre-stored `receipt_challenges` row, forcing a supervisor `request_sha256`
+  mismatch or a desktop "nonce not found" Block — the rev-19 defect this closes). A future
+  authority-minted-nonce variant would require a separate ratified redesign (authority returns the
+  nonce/hash pair; desktop atomically records them in `receipt_challenges` before submit) and is NOT in
+  scope here.
+- **Mandatory E2E test (P0-1):** one governed turn proves the single-envelope chain end-to-end — the
+  desktop mints + pre-stores the nonce in `receipt_challenges`; create-pending (A) carries it; the
+  authority-recomputed `request_sha256` equals the desktop's pre-stored value; issue (B) signs the §4.1
+  challenge carrying that exact `(request_nonce, request_sha256)`; the supervisor open-time recompute
+  (§4.10(a0)) matches; and desktop final acceptance consumes the **same** `receipt_challenges` row
+  (nonce match + stored `request_sha256` == expected). Negatives: an authority that re-mints the nonce ⇒
+  desktop consume fails / supervisor mismatch (both Block); a create-pending carrying a `request_sha256`
+  field ⇒ `malformed`.
 
 Creation-channel schemas (both on the authority-owned `AF_UNIX` + `SO_PEERCRED` desktop-UI-UID
 channel; `additionalProperties:false`, unknown-field + duplicate-key rejection, schema-validated
 before any side effect):
 ```jsonc
-// (A) request:
+// (A) request:  (carries the DESKTOP-minted request_nonce + envelope fields; NO caller request_sha256 — the authority recomputes it)
 { "protocol": "brops.governed-challenge-create-pending.v1",
   "run_id": "<string ≤128>", "task_id": "<string ≤128>",
-  "workspace_id": "<string ≤128>", "install_id": "<string ≤128>",   // context; authority MAY override from its own config
+  "workspace_id": "<string ≤128>", "install_id": "<string ≤128>",   // context; the authority MAY substitute its own trusted install/workspace, but for the SAME install these MUST equal the desktop's values (they are inputs to request_sha256 — a divergence makes the authority-recomputed hash ≠ the desktop's pre-stored receipt_challenges.request_sha256 and every turn Blocks at receipt_store.rs:322-327)
+  "request_nonce": "<string ≤128 — the desktop-minted brops_core::id() UUIDv4, already pre-stored in receipt_challenges>",
   "system_sha256": "<64hex>", "history_sha256": "<64hex>",
-  "generation_config_sha256": "<64hex>", "request_sha256": "<64hex>",
-  "requested_at_ms": <int> }
+  "generation_config_sha256": "<64hex>",
+  "requested_at_ms": <int> }        // the authority forms the envelope `requested_at` = decimal-ms string of this, matching ai.rs:1233
 // (A) reply (created):  { "protocol": "brops.governed-challenge-create-pending-result.v1", "status": "created",
 //   "pending_challenge_id": "<opaque string ≤128>", "pending_expires_at_ms": <int> }
 // (A) reply (refused):  { "protocol": "brops.governed-challenge-create-pending-result.v1", "status": "refused",
@@ -235,11 +272,12 @@ The authority's **protected pending-challenge store** (owner-only `0700`, §2.3)
 ```sql
 CREATE TABLE governed_pending_challenge (
   pending_challenge_id     TEXT PRIMARY KEY,          -- opaque, authority-minted (≥128-bit random)
-  request_nonce            TEXT NOT NULL,             -- authority-minted one-time (feeds §4.1 request_nonce)
+  request_nonce            TEXT NOT NULL,             -- DESKTOP-minted (brops_core::id() UUIDv4, prepare_governed_turn ai.rs:1228); pre-stored by the desktop in receipt_challenges BEFORE (A); the authority stores it verbatim, NEVER mints it (feeds §4.1 request_nonce)
   run_id TEXT NOT NULL, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL, install_id TEXT NOT NULL,
   supervisor_id            TEXT NOT NULL,             -- authority's OWN config, never caller-supplied
   system_sha256 TEXT NOT NULL, history_sha256 TEXT NOT NULL,
-  generation_config_sha256 TEXT NOT NULL, request_sha256 TEXT NOT NULL,
+  generation_config_sha256 TEXT NOT NULL,
+  request_sha256           TEXT NOT NULL,             -- authority-RECOMPUTED via receipt.rs::request_envelope_sha256:245-264 / brops_canonical.request_sha256:157-179 from request_nonce+context+hashes (protocol brops.request.v1); NOT caller-supplied
   requested_at_ms          INTEGER NOT NULL,
   created_at_ms            INTEGER NOT NULL,          -- authority clock at create-pending
   pending_expires_at_ms    INTEGER NOT NULL,          -- created_at_ms + PENDING_TTL_MS
@@ -250,25 +288,30 @@ CREATE TABLE governed_pending_challenge (
   UNIQUE(install_id, request_sha256) );               -- idempotency key: one pending row per identical request
 ```
 - **Validation (A):** peer UID == allowlisted desktop-UI UID else `peer_denied`; strict UTF-8 JSON +
-  `additionalProperties:false` + duplicate-key rejection + exact required set else `malformed`; every
-  `*_sha256` matches `^[0-9a-f]{64}$` and all ids ≤128 else `field_invalid`; `requested_at_ms` an
-  integer in the §1 canonical-ms range and not future-beyond-skew else `timestamp_invalid`; serialized
-  frame ≤ 4096 else `oversize`; a 3rd live `PENDING` row for the `install_id` ⇒ `quota_pending`
-  (mirrors `MAX_CONCURRENT_GOVERNED_TURNS = 2`). The authority sets `supervisor_id`, `request_nonce`,
-  `created_at_ms`, `pending_expires_at_ms` (and later `challenge_key_id`) from its **own** state —
-  never from the request.
-- **One-time consume + idempotency (P1-6):** a repeat (A) with byte-identical
-  `(install_id, request_sha256)` AND identical stored facts re-returns the SAME
-  `pending_challenge_id`/`pending_expires_at_ms` (lost-reply safe retry); a repeat with the same
-  `(install_id, request_sha256)` but any differing fact ⇒ `retry_conflict`. Issue (B) atomically CAS
+  `additionalProperties:false` + duplicate-key rejection + exact required set
+  `[protocol,run_id,task_id,workspace_id,install_id,request_nonce,system_sha256,history_sha256,generation_config_sha256,requested_at_ms]`
+  else `malformed` (a caller-supplied `request_sha256` is an unknown field ⇒ `malformed`, since the
+  authority recomputes it); every `*_sha256` matches `^[0-9a-f]{64}$`, `request_nonce` non-empty and
+  all ids ≤128 else `field_invalid`; `requested_at_ms` an integer in the §1 canonical-ms range and not
+  future-beyond-skew else `timestamp_invalid`; serialized frame ≤ 4096 else `oversize`; a 3rd live
+  `PENDING` row for the `install_id` ⇒ `quota_pending` (mirrors `MAX_CONCURRENT_GOVERNED_TURNS = 2`).
+  The authority sets `supervisor_id`, `created_at_ms`, `pending_expires_at_ms` (and later
+  `challenge_key_id`) from its **own** state, and **recomputes `request_sha256`** from the supplied
+  `request_nonce` + normalized context + hashes — it takes `request_nonce` verbatim from the request
+  (the desktop's) but never re-mints it and never accepts a caller `request_sha256`.
+- **One-time consume + idempotency (P1-6):** a repeat (A) with the same `(install_id, request_nonce)`
+  AND identical stored facts re-returns the SAME `pending_challenge_id`/`pending_expires_at_ms`
+  (lost-reply safe retry; the recomputed `request_sha256` is deterministic in the same inputs, so it is
+  identical too); a repeat with the same `(install_id, request_nonce)` but any differing fact (or a
+  differing recomputed `request_sha256`) ⇒ `retry_conflict`. Issue (B) atomically CAS
   `PENDING → ISSUED` before returning; the first success **signs once and stores the exact signed
   `{payload,sig}` document bytes** verbatim in `issued_challenge_document` (+ its `issued_challenge_handle`
   for integrity), inside the same commit that flips the state; a repeat (B) on an already-`ISSUED` row
   **re-returns that stored document byte-for-byte** — it never re-signs, never re-stamps
   `challenge_issued_at_ms`/`challenge_expires_at_ms`, never re-selects `challenge_key_id`, and never
-  mints a second `request_nonce` (a one-way handle could not reproduce the bytes, so the exact document
-  MUST be persisted, not just its hash); a concurrent-CAS loser observes `ISSUED` and takes that same
-  replay path; an unknown id ⇒ `no_pending_row`, an expired row ⇒ `pending_expired`.
+  alters the stored desktop `request_nonce` (a one-way handle could not reproduce the bytes, so the
+  exact document MUST be persisted, not just its hash); a concurrent-CAS loser observes `ISSUED` and
+  takes that same replay path; an unknown id ⇒ `no_pending_row`, an expired row ⇒ `pending_expired`.
 - **Authority builds the payload itself:** at issue (B), from its protected row the authority
   **constructs** the exact `brops.governed-turn-challenge.v1` payload (§4.1), stamps
   `challenge_issued_at_ms`/`challenge_expires_at_ms`, and signs once (consuming the pending id). It
@@ -2234,6 +2277,25 @@ The current normative design is §0–§9 above. This log is historical only.
   independent red-team over the full rev-19 diff + the real repo returned **no BLOCKER**; the frozen
   3b-1A family proven untouched; the `check_coordination` manifest gate + its tests run GREEN live.
   **NOT Architect-GREEN; 3b-1B code not started.**
+- **rev 20 (this doc):** single-P0 closure of the rev-19 Architect Design RED (**1 P0 · 0 P1** @
+  `8d3451e28b542f290cc9b7c981c4636aec3dc54b`, exact-head CI #125 SUCCESS 8/8 — CI GREEN ≠ design GREEN;
+  the rev-18 P0 orchestrator ordering + P1 generation_config canonicalization were CONFIRMED CLOSED)
+  via a mandatory read-only real-code investigation + one integrator + a fresh independent red-team.
+  **P0-1** — the rev-19 challenge creation channel had the **authority mint `request_nonce`** while the
+  desktop supplied `request_sha256`, decoupling the pair; but the ratified/merged Wave-3a contract is
+  desktop-minted `request_nonce` (`ai.rs:1228`), `request_sha256 = SHA256(JCS(request-envelope))` with
+  the nonce **inside** the hashed envelope (`receipt.rs:245-264` ↔ `brops_canonical.py:157-179`), and a
+  desktop `receipt_challenges` pre-store (`receipt_store.rs:109-126`, `commands.rs:866-883`) consumed at
+  acceptance by `expected.request.request_nonce` (`receipt_store.rs:256-271`) — so an authority-minted
+  nonce forces every happy-path turn to Block. **rev 20 (§2.1):** create-pending (A) carries the
+  desktop `request_nonce` + envelope fields and **no** `request_sha256`; the authority **recomputes**
+  `request_sha256` via the byte-identical merged formula and stores the desktop nonce + recomputed hash;
+  issue (B) signs with that exact pair; a normative desktop `receipt_challenges` pre-store step + a
+  mandatory E2E test (authority recompute == supervisor open-time recompute == the desktop's pre-stored
+  row) lock the single-envelope chain; the authority-minted-nonce variant is deferred to a separate
+  ratified redesign. Fresh independent red-team over the rev-20 diff + real repo: no BLOCKER; the frozen
+  3b-1A + Wave-3a request/nonce path proven untouched; `check_coordination` + `check_capabilities` GREEN
+  live. NOT Architect-GREEN; 3b-1B code not started.
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 
