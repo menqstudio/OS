@@ -2,14 +2,14 @@
 
 > **STATUS (2026-07-25):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
 > CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
-> — the Architect reviewed the consolidated **rev 20** (@ `85240ed`; exact-head CI #126 — mandatory
-> gates SUCCESS; CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-19 nonce/hash P0, and returned
-> Design RED with a new 1 P0 · 0 P1 (the desktop `generation_config` hash source was contradictory —
-> split authority between the frozen raw-string `prepare_governed_turn` and the object-JCS requirement),
-> mandating a **read-only real-code investigation + one integrator + a
-> fresh independent red-team**; the addendum is now **rev 21 (CONSOLIDATED)** — a
-> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-20 reviewed HEAD `85240ed`,
-> exact-head CI #126 mandatory-gates GREEN — evidence only; resolve the live tip + Checks from GitHub). See
+> — the Architect reviewed the consolidated **rev 21** (@ `a05629b`; exact-head CI #127 — mandatory
+> gates SUCCESS; CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-20 generation_config hash-source
+> split, and returned Design RED with a new 1 P0 · 0 P1 (the `PreparedGovernedTurnV1B` lifecycle was
+> severed at the Tauri/frontend boundary — submit was a separate frontend-invoked command re-accepting
+> raw fields after the pre-store), mandating a **read-only real-code investigation + one integrator + a
+> fresh independent red-team**; the addendum is now **rev 22 (CONSOLIDATED)** — a
+> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-21 reviewed HEAD `a05629b`,
+> exact-head CI #127 mandatory-gates GREEN — evidence only; resolve the live tip + Checks from GitHub). See
 > `NEXT_CHAT.md` §0/§3 for the authoritative current state, STOP gates, and next action.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative

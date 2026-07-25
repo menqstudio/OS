@@ -1,37 +1,43 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 21 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 22 — CONSOLIDATED)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 21 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 20 was Architect-reviewed at exact HEAD
-> `85240edf9bd66673d9f3e8f94e732aab155273f9` (exact-head CI **#126** SUCCESS on the two mandatory
-> Wave-3b engine gates + the coordination gate — **CI GREEN ≠ design GREEN**); the Architect
-> **CONFIRMED CLOSED** the rev-19 nonce/hash P0 (desktop-minted `request_nonce`, authority-recomputed
-> `request_sha256`, single-envelope chain), but that fix surfaced a **new P0-1 on the same chain**
-> (1 P0 · 0 P1), and directed a **read-only real-code investigation + one integrator + a fresh
-> independent red-team, NOT a rewrite.** rev 21 closes it in place:
-> **P0-1 — the desktop `generation_config` hash SOURCE was still contradictory (split authority).** rev
-> 20 requires the desktop pre-stored `IssuedRequest`, the challenge authority, and sidecar staging all
-> use `generation_config_sha256 = SHA256(JCS(flat string→string generation_config OBJECT))`, while also
-> freezing `prepare_governed_turn(&str)` byte-for-byte. But the merged `prepare_governed_turn`
-> (`ai.rs:1214-1235`) hashes the **raw UTF-8 string** (`ai.rs:1231`), stores that raw-string hash in
-> `GovernedRequestContext`→`IssuedRequest`→the `receipt_challenges` pre-store, and the current
-> `GOVERNED_GENERATION_CONFIG` is a plain **string** (`commands.rs:785`), not an object — so the desktop
-> would pre-store a raw-string-based `request_sha256` while the authority/staging derive the
-> object-JCS-based one ⇒ every legitimate turn Blocks (`handle_not_challenge`/`request_sha256` mismatch
-> at `receipt_store.rs:322-327`), and the implementer was left to choose among undefined split-authority
-> workarounds. **rev 21 (§4.10(g)):** adds a NEW immutable 3b-1B preparation contract
-> **`prepare_governed_turn_v1b`** (`PreparedGovernedTurnV1B`) that, in ONE pass, validates the flat
-> `generation_config` **object**, computes `generation_config_jcs = JCS(object)` + its
-> `generation_config_sha256` **once**, mints `request_nonce` once, and is the **single source** for the
-> `receipt_challenges` pre-store `IssuedRequest`, the create-pending (A) request, the
-> `bridge.governed-turn-submit.v1` submit frame (carrying the validated object), and the final
-> `Expected` — so the **same** object-JCS hash flows through `receipt_challenges` → authority row →
-> §4.1 challenge → §2.4 staging → terminal record → `Expected`, with no split authority; the frozen
-> `prepare_governed_turn(&str)` + `GOVERNED_GENERATION_CONFIG: &str` + the `receipt.rs:1215-1219`
-> raw-string fixture stay byte-for-byte (§2.2 KEEP+ADD). Mandatory tests: the frozen fixture's
-> raw-string hash **≠** the object-JCS hash, and **only** the object-JCS hash appears at every 3b-1B hop.
-> *(rev-18 → rev-19 → rev-20 findings — orchestrator ordering, generation_config canonicalization,
-> two-trust-model channel, nonce/`request_sha256` decoupling — remain closed; see the non-normative
-> Appendix A.)*
+> **STATUS: ❌ DESIGN RED being closed — rev 22 is a PROPOSED design-GREEN candidate, NOT
+> Architect-GREEN. 3b-1B code has NOT started.** rev 21 was Architect-reviewed at exact HEAD
+> `a05629b7179e9ee87f315e5ac8452e88c8f4f89a` (exact-head CI **#127** SUCCESS on the two mandatory
+> Wave-3b engine gates + the coordination gate; `Cockpit · Tauri host` still running at review —
+> **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED** the rev-20 generation_config
+> hash-source split (rev 21's `prepare_governed_turn_v1b` correctly makes the object-JCS hash the single
+> source), but that surfaced a **new P0-1 on the same chain** (1 P0 · 0 P1), and directed a **read-only
+> real-code investigation + one integrator + a fresh independent red-team, NOT a rewrite.** rev 22
+> closes it in place:
+> **P0-1 — the `PreparedGovernedTurnV1B` lifecycle was severed at the Tauri/frontend boundary.** rev 21
+> required ONE immutable Rust `PreparedGovernedTurnV1B` to be the single source for pre-store, authority
+> request, submit, and final `Expected`, **but** defined submit as a **separate frontend-invoked Tauri
+> command** re-accepting raw fields `{task_id, challenge_doc_b64, system, history, generation_config}`
+> **after** challenge creation + `receipt_challenges` pre-store — with no defined way for the same
+> in-process object to survive to that call without a webview re-serialize/reconstruct. So the submit's
+> object-JCS bytes could differ from the already-pre-stored `request_sha256` ⇒ fail-closed Block again;
+> the implementer was left to pick an undefined workaround (re-take raw fields / accept frontend claims
+> / an undefined cache / reconstruct a second object) — the first two destroy the single-source
+> guarantee, the last two have no ownership/TTL/retry/crash/one-time-consume semantics. **rev 22
+> (§4.10(g), §6.1):** submit is **no longer** a frontend command; 3b-1B adds **exactly one**
+> frontend-exposed governed Tauri command **`governed_turn_execute(raw UI inputs)`** (mirroring the
+> merged single-backend-command `stream_reply`, `commands.rs:794/844-935`) that, in **one backend
+> execution owning a single in-process `PreparedGovernedTurnV1B`**, runs prepare-v1b once →
+> `receipt_challenges` pre-store → authority create-pending + issue → the **internal** helper
+> `governed_turn_submit_prepared(&prepared, challenge_document)` (NOT a Tauri command) → the internal
+> output-pull loop → final `Expected` from the **same** `&prepared`. `system`/`history`/
+> `generation_config`/hashes/`context` **never** round-trip the webview after prepare; fields are
+> **private** with read-only accessors and no mutable public copies; before submit the backend asserts
+> `SHA256(prepared.generation_config_jcs) == context.generation_config_sha256` **and**
+> `prepared.issued_request().request_sha256() == the pre-stored receipt_challenges.request_sha256`. A
+> frontend-exposed raw-field submit command is **forbidden**; the only permitted alternative is a
+> server-side **opaque `prepared_turn_id`** state machine (bounded store, TTL, closed
+> `PREPARED→CHALLENGED→SUBMITTED→FINALIZED`, one-time-consume). Mandatory test: a frontend that mutates
+> `config`/`system`/`history` after `governed_turn_execute` begins cannot reach submit or alter the
+> pre-stored request.
+> *(rev-18 → … → rev-21 findings — orchestrator ordering, generation_config canonicalization,
+> two-trust-model channel, nonce/`request_sha256` decoupling, generation_config hash-source split —
+> remain closed; see the non-normative Appendix A.)*
 > **All contracts below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.**
 > STOP gates: `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31
 > not merged.
@@ -382,7 +388,8 @@ const, so it rejects any `bridge.result` (missing const) — do NOT discriminate
   `bridge.task-request` (`additionalProperties:false`, `required:[task_id,task_class,rationale,system,history,request]`, no
   `challenge_doc_b64`, no bytes-carrying `generation_config`, no `protocol` discriminator —
   `bridge/contracts/task-request.schema.json`) **cannot** carry it and is NOT reused. COMPLETE in
-  §4.10(g); driven by the new Tauri `governed_turn_submit` command (§6.1 step 0).
+  §4.10(g); built by the internal `governed_turn_submit_prepared` helper inside the one backend
+  `governed_turn_execute` command from the in-process `PreparedGovernedTurnV1B` (§4.10(g), §6.1 step 0).
 - **`brops.governed-turn-open.v1`** (+ `-result`) — the signed-challenge submission (P0-2),
   COMPLETE in §4.10(a0)
 - **`brops.governed-sign-request.v1`** — `engine/contracts/brops-governed-sign-request.v1.schema.json`
@@ -1364,9 +1371,11 @@ the **verified §4.9 signed envelope** (authenticated values, not transport clai
 
 **Desktop hop — `bridge.governed-turn-output-read.v1`** (desktop→sidecar) + its
 `bridge.governed-turn-output-read-result.v1` reply (P0-2 — the previously-missing bridge side).
-Each is one stdin request / one stdout reply of a **fresh one-shot sidecar subprocess**, invoked by
-a NEW Tauri command (`governed_turn_output_read`, registered in `lib.rs` `generate_handler!`,
-mirroring `governed_engine`); a NEW `protocol`-keyed branch in `engine_sidecar` validates the bridge
+Each is one stdin request / one stdout reply of a **fresh one-shot sidecar subprocess**, spawned by an
+**INTERNAL backend helper** (`governed_turn_output_read`, a private function of the one
+`governed_turn_execute` command — **NOT** a frontend-exposed `#[tauri::command]`; it must NOT appear in
+`generate_handler!`, so the output pull never round-trips the webview), mirroring `governed_engine`'s
+one-shot spawn; a NEW `protocol`-keyed branch in `engine_sidecar` validates the bridge
 request, forwards exactly ONE `brops.governed-turn-output-read.v1` to the supervisor socket,
 validates the reply, reframes and exits. `bridge.task-request` is untouched.
 ```jsonc
@@ -1562,17 +1571,57 @@ row, the authority `governed_pending_challenge` row, the §4.1 challenge payload
 `generation_config` staged-artifact re-hash, the terminal record, and the §7 `Expected` — and the
 raw-string hash appears **nowhere** on the 3b-1B path.
 
-**New Tauri command `governed_turn_submit`** (a genuinely NEW entry added to the `generate_handler!`
-list, `apps/desktop/src-tauri/src/lib.rs:95-166` — that list has **no** governed `#[tauri::command]`
-today; governed turns are currently reached only internally from the `stream_*` commands via the
-non-command `governed_turn` (`ai.rs:567`) → `governed_engine` (`ai.rs:1346`), so nothing is renamed
-or replaced): it takes the `PreparedGovernedTurnV1B` (from `prepare_governed_turn_v1b` above) as
-`{system, history, generation_config, challenge_doc_b64, task_id}` from the
-desktop-UI,
-spawns the **one-shot** governed sidecar exactly as `ai.rs::governed_engine` does today
-(`ai.rs:1346-1412`: spawn, write the submit JSON to `stdin` `:1369-1376`, read one reply from
-`stdout` `:1391-1399` bounded by `MAX_STDOUT_BYTES = 9 MiB :43`, await exit), under the existing
-`MAX_CONCURRENT_GENERATIONS = 2` permit (`ai.rs:212`).
+**ONE trusted Rust orchestration command `governed_turn_execute` (P0-1 LOCKED — the
+`PreparedGovernedTurnV1B` lifecycle NEVER crosses the frontend/webview boundary).** Submit is **NOT**
+a separate frontend-invoked Tauri command that re-accepts raw fields: that would sever the single
+immutable object at the Tauri boundary (the object cannot survive to submit/`Expected` without a
+webview re-serialize/reconstruct, re-opening the split-authority — a frontend-supplied
+`system`/`history`/`generation_config` could then differ from the already-pre-stored `request_sha256`
+⇒ fail-closed Block). Instead 3b-1B adds **exactly one** frontend-exposed governed
+`#[tauri::command]` — **`governed_turn_execute`** (the sole NEW entry in `generate_handler!`,
+`apps/desktop/src-tauri/src/lib.rs:95-166`) — that **mirrors the merged single-backend-command shape of
+`stream_reply`** (`commands.rs:794`, which today already does prepare → `issue_challenge` pre-store →
+`governed_turn` execute → build `Expected` → `verify_and_record_receipt` in ONE backend execution,
+`commands.rs:844-935`). It takes the **raw UI inputs once** (`{system, history, generation_config
+object, task_id, workspace_id, install_id}`) and, in **one backend execution owning the whole
+lifecycle of ONE in-process `PreparedGovernedTurnV1B`**, performs in order:
+1. `prepare_governed_turn_v1b(…)` **once** (validate the config object; `generation_config_jcs =
+   JCS(object)` + `generation_config_sha256` once; mint `request_nonce` once);
+2. `receipt_challenges` pre-store via `issue_challenge` from the prepared `IssuedRequest`
+   (`receipt_store.rs:109-126`) — **before** any submit;
+3. challenge **create-pending (A)** then **issue (B)** over the authority `AF_UNIX` channel (§2.1) —
+   the prepared object stays in the backend across both authority round-trips;
+4. **`governed_turn_submit_prepared(&prepared, challenge_document)`** — an **INTERNAL Rust helper, NOT
+   a `#[tauri::command]` and NOT in `generate_handler!`** — which builds the
+   `bridge.governed-turn-submit.v1` frame from **`&prepared`** (the validated object + its object-JCS
+   bytes) + `challenge_doc_b64` and spawns the one-shot governed sidecar exactly as
+   `ai.rs::governed_engine` does today (`ai.rs:1346-1412`: spawn, write the submit JSON to `stdin`
+   `:1369-1376`, read one reply from `stdout` `:1391-1399` bounded by `MAX_STDOUT_BYTES = 9 MiB :43`,
+   await exit), under the existing `MAX_CONCURRENT_GENERATIONS = 2` permit (`ai.rs:212`), returning the
+   **metadata-only** result;
+5. the **internal output-pull loop** (fresh one-shot sidecars per chunk, §4.10(f)) — also an internal
+   backend function driven by `governed_turn_execute`, **not** a frontend-exposed command;
+6. build the final `Expected` from the **same `&prepared`** object and verify/persist
+   (`receipt.rs:418-486`, `verify_and_record_receipt`).
+**No post-prepare webview round-trip (LOCKED):** after step 1, `system`/`history`/`generation_config`/
+its hashes/`context` are **never** re-serialized to, or re-accepted from, the frontend; the only
+frontend interactions are the initial raw UI inputs to `governed_turn_execute` and the final rendered
+result. **Encapsulation enforcement (P0-1 LOCKED):** `PreparedGovernedTurnV1B` fields are **private**;
+no mutable public copy of the object/JCS/context is exposed; every cross-stage read is via a
+**read-only accessor**; and **before submit** the backend asserts
+`SHA256(prepared.generation_config_jcs) == prepared.context.generation_config_sha256` **and**
+`prepared.issued_request().request_sha256() == the pre-stored receipt_challenges.request_sha256` — a
+tampered/reconstructed object cannot reach submit. **Mandatory test (P0-1):** a frontend that mutates
+`generation_config`/`system`/`history` after `governed_turn_execute` begins **cannot** reach submit or
+alter the pre-stored request (there is no post-prepare frontend input path; the single in-process
+`PreparedGovernedTurnV1B` is the sole source of the submit bytes and the `Expected`). **Permitted
+alternative (only if a future architecture must split the stages across processes):** a server-side
+**opaque `prepared_turn_id`** state machine — a bounded, TTL'd, supervisor-or-backend-owned store with
+closed transitions `PREPARED → CHALLENGED → SUBMITTED → FINALIZED`, one-time-consume, crash/retry
+semantics; the frontend receives **only** the opaque id, and the authority request, submit frame, and
+final `Expected` are all produced from the **same stored immutable object**. 3b-1B mandates the
+single-backend-command form above; the `prepared_turn_id` state machine is the **only** other
+permitted shape — a frontend-exposed raw-field submit command is **forbidden**.
 
 **Sidecar orchestrator (`bridge/engine_sidecar.py::run`, `:266-303`, a NEW dispatch branch beside the
 frozen `_real_callables`, `:232-260`).** On a `bridge.governed-turn-submit.v1` frame the one-shot
@@ -1592,18 +1641,20 @@ is refused `no_staging_row`):
 3. `brops.governed-evidence-request.v1` (§4.10(d)) to execute/finalize.
 4. receive the **metadata-only** `brops.governed-turn-result.v1` (§4.10(e)) — envelope/attestation +
    `output_bytes`/`output_sha256` + a transport `output_stream_id`, **no inline output**. This
-   subprocess pulls **NO** output: the §4.10(f) `brops.governed-turn-output-read.v1` loop is driven
-   LATER by the **desktop** through the separate `governed_turn_output_read` Tauri command (fresh
-   one-shot sidecars, §4.10(f), §6.1 steps 13–14), never inside this submit subprocess.
+   submit subprocess pulls **NO** output: the §4.10(f) `brops.governed-turn-output-read.v1` loop is
+   driven LATER by the **backend `governed_turn_execute` command's internal output-pull loop** (fresh
+   one-shot sidecars — an internal backend helper, NOT a frontend-exposed command; §4.10(f), §6.1
+   steps 13–14), never inside this submit subprocess.
 5. re-frame the §4.10(e) summary into `bridge.governed-turn-result.v1` (§4.6) and emit **exactly
    one** such frame on `stdout`, then exit.
 
 **Reply.** Success ⇒ the sidecar's single `stdout` frame is the **metadata-only**
 `bridge.governed-turn-result.v1` (§4.6) — envelope/attestation + `output_bytes`/`output_sha256` +
 a transport `output_stream_id`, **NO inline output and NO output pulled in this subprocess**. The
-desktop verifies this frame at §6.1 step 14 / §7.1 and then drives the §4.10(f) output pull **itself**
-via the separate `governed_turn_output_read` Tauri command (a fresh one-shot sidecar per chunk —
-§4.10(f), §6.1 steps 13–14); the submit subprocess has already exited. **Local ingress/transport
+backend `governed_turn_execute` command verifies this frame at §6.1 step 14 / §7.1 and then drives the
+§4.10(f) output pull **itself** via its **internal output-pull loop** (a fresh one-shot sidecar per
+chunk — an internal backend helper, NOT a frontend-exposed command; §4.10(f), §6.1 steps 13–14); the
+submit subprocess has already exited. **Local ingress/transport
 failure is out-of-band (P1-5):** a spawn failure, socket error, `EXECUTION_TIMEOUT_MS` expiry, an
 oversize/malformed sidecar reply, or an unexpected non-zero exit surfaces as a **Tauri command error
 to the desktop-UI (a `Block`, NO result frame)** — the sidecar is a transport proxy and originates
@@ -1613,8 +1664,8 @@ to the desktop-UI (a `Block`, NO result frame)** — the sidecar is a transport 
 `governed-turn-open` MUST precede the first `governed-staging-open` (asserts the §4.10(a0)→(a)
 ordering, and that turn-open creates the `UPLOADING` row staging-open requires);** the submit
 subprocess emits its one metadata frame and exits **without** issuing any
-`brops.governed-turn-output-read.v1` call (output-pull happens only via the desktop's separate
-`governed_turn_output_read` command); a frozen `bridge.task-request` fed to the governed command is
+`brops.governed-turn-output-read.v1` call (output-pull happens only via `governed_turn_execute`'s
+internal loop); a frozen `bridge.task-request` fed to the governed command is
 refused (missing `protocol` const); an oversize `system`/`history` ⇒ ingress error, no frame; a
 sidecar-spawn failure ⇒ desktop Block, no result; the three staged `*_sha256` mismatching the
 challenge digests ⇒ `handle_not_challenge` refusal relayed as a Block.
@@ -1859,12 +1910,17 @@ access.
 ### 6.1 The COMPLETE end-to-end order (LOCKED, P1-5) — through the isolated signer + desktop
 
 No output renders before step 14 commits.
-0. **Desktop→sidecar governed ingress (P0-1, §4.10(g)):** the desktop-UI — already holding the
-   signed challenge document returned by the §2.1 authority — invokes the new Tauri
-   `governed_turn_submit` command, which spawns the one-shot governed sidecar (as
-   `ai.rs::governed_engine`) and writes a single **`bridge.governed-turn-submit.v1`** frame carrying
-   `{task_id, challenge_doc_b64, system, history, generation_config}`. The sidecar derives the three
-   canonical input-byte blobs via the governed-family formulas (system=raw UTF-8, history=JCS,
+0. **Desktop backend governed orchestration (P0-1, §4.10(g)):** the frontend invokes the **one**
+   governed Tauri command **`governed_turn_execute`** with the **raw UI inputs once**
+   (`{system, history, generation_config object, task_id, workspace_id, install_id}`). In **one backend
+   execution owning a single in-process `PreparedGovernedTurnV1B`** it: `prepare_governed_turn_v1b`
+   once → `receipt_challenges` pre-store (`issue_challenge`) → the §2.1 authority **create-pending +
+   issue** calls (obtaining the signed challenge document **in the backend**, never via the webview) →
+   the **internal** `governed_turn_submit_prepared(&prepared, challenge_document)` helper, which spawns
+   the one-shot governed sidecar (as `ai.rs::governed_engine`) and writes a single
+   **`bridge.governed-turn-submit.v1`** frame carrying `{task_id, challenge_doc_b64, system, history,
+   generation_config}` **derived from `&prepared`** (no frontend re-serialize). The sidecar derives the
+   three canonical input-byte blobs via the governed-family formulas (system=raw UTF-8, history=JCS,
    generation_config=JCS of the closed config object — §4.10(g)) and becomes the originator of steps 1–2. A local
    spawn/socket/timeout/oversize-reply/unexpected-exit failure here is an **out-of-band Tauri error
    ⇒ desktop Block, no result** (P1-5); nothing downstream exists "by assumption".
@@ -2386,6 +2442,28 @@ The current normative design is §0–§9 above. This log is historical only.
   at every 3b-1B hop. Fresh independent red-team over the rev-21 diff + real repo: no BLOCKER; the frozen
   3b-1A/Wave-3a prep path proven untouched; `check_coordination` + `check_capabilities` GREEN live. NOT
   Architect-GREEN; 3b-1B code not started.
+- **rev 22 (this doc):** single-P0 closure of the rev-21 Architect Design RED (**1 P0 · 0 P1** @
+  `a05629b7179e9ee87f315e5ac8452e88c8f4f89a`, exact-head CI #127 mandatory-gates SUCCESS; CI GREEN ≠
+  design GREEN; the rev-20 generation_config hash-source split was CONFIRMED CLOSED) via a read-only
+  real-code investigation + one integrator + a fresh independent red-team. **P0-1** — rev 21's
+  `PreparedGovernedTurnV1B` lifecycle was severed at the Tauri/frontend boundary: submit was a separate
+  frontend-invoked Tauri command re-accepting raw fields after challenge creation + `receipt_challenges`
+  pre-store, with no defined way for the same in-process object to reach submit/`Expected` without a
+  webview re-serialize — so the submit bytes could diverge from the pre-stored `request_sha256` ⇒ Block.
+  **rev 22 (§4.10(g), §6.1):** submit is no longer a frontend command; 3b-1B adds exactly one
+  frontend-exposed governed Tauri command **`governed_turn_execute`** (mirroring the merged
+  single-backend `stream_reply`, `commands.rs:794/844-935`) that owns the whole lifecycle of one
+  in-process `PreparedGovernedTurnV1B` — prepare-v1b once → `receipt_challenges` pre-store → authority
+  create-pending + issue → the **internal** `governed_turn_submit_prepared(&prepared, …)` helper (NOT a
+  Tauri command) → internal output-pull loop → final `Expected` from the same `&prepared`; nothing
+  round-trips the webview after prepare; `PreparedGovernedTurnV1B` fields are private with read-only
+  accessors; a pre-submit assert binds `SHA256(generation_config_jcs) == context.generation_config_sha256`
+  and `issued_request().request_sha256() == the pre-stored receipt_challenges.request_sha256`; a
+  frontend-exposed raw-field submit command is forbidden, the only alternative a server-side opaque
+  `prepared_turn_id` state machine; mandatory test: frontend-mutated config/system/history cannot reach
+  submit or alter the pre-stored request. Fresh independent red-team over the rev-22 diff + real repo: no
+  BLOCKER; the frozen 3b-1A/Wave-3a path + the merged `stream_reply` shape proven cited byte-exact;
+  `check_coordination` + `check_capabilities` GREEN live. NOT Architect-GREEN; 3b-1B code not started.
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 
