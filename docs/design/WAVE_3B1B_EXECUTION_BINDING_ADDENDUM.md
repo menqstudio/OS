@@ -1,46 +1,42 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 18 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 19 — CONSOLIDATED)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 18 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 17 was Architect-reviewed at exact HEAD
-> `d8a6510c12192daef9053f74d674cfdb80044413` (exact-head CI **#121** SUCCESS, all 8 jobs GREEN —
-> **CI GREEN ≠ design GREEN**); the Architect returned **Design RED** with **2 P0 + 3 P1
-> desktop-ingress / evidence-floor / bounded-staging findings** and directed a **mandatory parallel
-> fan-out + one integrator + a fresh independent red-team, NOT a rewrite.** rev 18 was produced
-> exactly that way: **five independent read-only audit tracks** (A desktop→sidecar→supervisor
-> transport · B evidence-head re-anchor semantics · C staging resource/concurrency · D
-> state/reason + transport-failure homing · E full adversarial E2E) read the real repo code, a
+> **STATUS: ❌ DESIGN RED being closed — rev 19 is a PROPOSED design-GREEN candidate, NOT
+> Architect-GREEN. 3b-1B code has NOT started.** rev 18 was Architect-reviewed at exact HEAD
+> `89d0df4c7211c97c85c582090cea05c5da02bc42` (exact-head CI **#124** SUCCESS, all 8 jobs GREEN —
+> **CI GREEN ≠ design GREEN**); the Architect returned **Design RED** with **1 P0 + 2 P1
+> orchestrator-ordering / generation_config-canonicalization / challenge-creation-channel findings**
+> and directed a **mandatory read-only fan-out + one integrator + a fresh independent red-team, NOT a
+> rewrite.** rev 19 was produced exactly that way: **independent read-only audit tracks** (P0-1
+> orchestrator ordering · P1-1 generation_config canonicalization vs the real jcs primitive · P1-2
+> challenge-authority creation channel · cross-consistency/doc-sync) read the real repo code, a
 > **single integrator** consolidated their evidence and edited in place, and a **fresh independent
-> red-team** re-checked the diff. The rev-17 → rev-18 findings closed here: **P0-1** the desktop→
-> sidecar governed INGRESS frame was undefined — the flow consumed the signed challenge document +
-> the raw system/history/generation_config bytes "at the sidecar" by assumption, and the frozen
-> `bridge.task-request` (`additionalProperties:false`, no `challenge_doc_b64`/discriminator) cannot
-> carry them → a new **`bridge.governed-turn-submit.v1`** ingress frame + a new Tauri
-> `governed_turn_submit` command + the one-shot sidecar orchestrator; byte formulas: `system`=raw
-> UTF-8 and `history`=JCS reuse the shipped `brops_canonical.py`, while **`generation_config` is a
-> closed JSON object with `generation_config_bytes = JCS(object)`** — a NEW, strictly-additive
-> governed-family canonicalization (owner-mandated) that leaves the frozen 3b-1A raw-UTF-8-string
-> `generation_config_bytes` + its parity fixture + `prepare_governed_turn`'s `&str` signature
-> byte-for-byte untouched (§2.2 KEEP+ADD); plus the §2.1 authority→desktop-UI document return path,
-> and §6.1 step 0 (§2.1, §2.2, §4.10(g), §6.1); **P0-2** the evidence-head floor gated advance on
-> `head_sequence`, which is a **re-ANCHOR/re-SIGN counter** (rises on an unchanged chain — the real
-> code's stale check `bro_evidence.py:112-116` keys on it) — falsely forking a legitimate re-anchor →
-> the floor now keys on **`head_sequence` monotonicity + chain-content** `(event_count, last_sequence,
-> final_event_hash)` via a **head-keyed A–E matrix** (A lower head → new `stale_evidence` reason; B
-> same head + content diff → `evidence_fork`; C unchanged re-anchor advances head only; D longer chain
-> accepted only if it reproduces the stored prefix; E every other higher-head anomaly → `evidence_fork`)
-> + a `validate_chain_detailed` helper; `head_sequence` → `highest_head_sequence` high-water; envelope
-> binds `event_count`/`last_sequence` (§7, §4.5, §4.9); **P1-3**
-> staging chunks had no minimum length and no count bound (tiny-chunk amplification) → **deterministic
-> `expected_chunk_len` + `MAX_STAGING_CHUNKS = 46`** and exact numeric quotas (2 turns / 6 sessions /
-> 49 files-per-turn / 98 per-install / 17 MiB / 60 s sweep) (§2.4, §4.10(b/c)); **P1-4** the FAILED
-> staging session dead-ended, the session-state CHECK drifted (`INPUTS_ARTIFACT_READY` vs the row's
-> `INPUTS_READY`), and CHECK constraints/the publish primitive were vague → the `os.link`
-> create-if-absent freeze, a `SESSION_CORRUPT` terminal contract (`session_corrupt` in the a/b/c
-> enums), and CHECK constraints on state/`next_seq`/`byte_count` (§2.4, §4.10(a/b/c)); **P1-5**
-> `BLOCKED` wrongly listed `UNSEEN` (no-row) as a predecessor and "the sidecar originates no reasons"
-> was over-absolute → `BLOCKED` predecessors are `ACCEPTED_PREPARED`/`LEASE_READY` only (pre-accept
-> refusals create NO row), and local one-shot-subprocess transport failures are homed as **out-of-band
-> Tauri Blocks** distinct from supervisor verdicts (§5, §4.5, §4.10(f), §6.1, §7.1). **All contracts
+> red-team** re-checked the diff. The rev-18 → rev-19 findings closed here:
+> **P0-1** the §4.10(g) one-shot sidecar submit subprocess sequenced `staging×3 → turn-open →
+> evidence-request → result → PULL output` — but `governed-staging-open` requires the `UPLOADING`
+> `governed_turn_staging` row that ONLY `governed-turn-open` creates (else `no_staging_row`), so no
+> turn could ever execute, and the submit path must not pull output → reordered to
+> **`turn-open → staging×3 → evidence-request → metadata-result → reframe → exit`** with **NO
+> `brops.governed-turn-output-read.v1` PULL in the submit subprocess** (the output pull is confined to
+> the separate §6.1 step-13/14 desktop-driven `governed_turn_output_read` subprocess), plus an exact
+> call-order test that turn-open MUST precede the first staging-open (§4.10(g), §6.1);
+> **P1-2** the challenge-authority creation channel left the implementer a **choice between two trust
+> models** — §2.1 accepted "structured turn facts **OR** a protected row-id", while §4.1 required
+> "row-id only" → collapsed to a **single protected-row-ID model with two explicit messages**:
+> `brops.governed-challenge-create-pending.v1` (facts validated + stored in the authority's own
+> `0700` row, no signing) then `brops.governed-challenge-issue.v1` (row-id only; the authority builds
+> the exact §4.1 payload from its own row and signs once, one-time-consume), with full request/reply +
+> pending-row schemas, validation, idempotency, and frame limits (§2.1, §4.1);
+> **P1-1** `generation_config_bytes = JCS(object)` relied on JCS **numeric** canonicalization, which
+> is representation-ambiguous (Python `json.dumps` float-repr vs Rust `serde_json`/`ryu`, neither RFC
+> 8785 ECMAScript number formatting; the real `receipt.rs::jcs_bytes:235-237` is a
+> `BTreeMap<String,String>`-only serializer — no numeric path exists) so a legitimate numeric config
+> could re-hash differently and false-Block `handle_not_challenge` → `generation_config` is now a
+> **flat string→string object** (fixed-point decimal strings + a canonical integer string, validated
+> by regex + integer-range checks that reject exponent/`-0.0`/precision/bare-int forms **before**
+> canonicalization), so `JCS(generation_config)` rides the already-proven string→string primitive and
+> no number is ever serialized; strictly additive to the frozen 3b-1A raw-UTF-8-string
+> `generation_config_bytes` + its `receipt.rs:1216-1219` parity fixture + `prepare_governed_turn`'s
+> `&str` signature (§2.2 KEEP+ADD, untouched) (§2.2, §4.10(g)). **All contracts
 > below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.** STOP gates:
 > `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31 not merged.
 
@@ -165,7 +161,10 @@ profile — NOT a base-lease superset**:
 
 The sidecar is compromised-in-scope (same login user). The desktop signed challenge
 (artifact #1) is minted by a **dedicated `desktop-challenge-authority`** that is neither a
-`sign(payload)` oracle nor a `create_pending(arbitrary_bytes) → sign(id)` two-step oracle.
+`sign(payload)` oracle nor a `create_pending(arbitrary_bytes) → sign(id)` two-step oracle (the
+mandated create-pending/issue split below is **not** such an oracle: create-pending stores only
+strictly-validated fixed-shape hashes/ids — never arbitrary bytes — and issue signs only what the
+authority itself assembles from its own row).
 The exact current contract (not history):
 
 - **Store ownership:** the **pending-challenge store** (the trusted rows the authority builds
@@ -175,17 +174,105 @@ The exact current contract (not history):
 - **Distinct principals:** the **desktop-UI principal MUST be a UID distinct from the
   sidecar** principal. Where a platform cannot provide that separation, governed real-mode is
   **FAIL-CLOSED** on that platform (mirrors the Windows-broker stance, §0).
-- **Creation channel:** pending-challenge rows are created **only** through an
+- **Creation channel (TWO explicit messages, ONE canonical trust model — P1-2 LOCKED):**
+  pending-challenge rows are created and challenges are issued **only** through the
   **authority-owned `AF_UNIX` channel**; on Linux the authority authenticates the peer with
-  **`SO_PEERCRED`, allowlisting the exact desktop-UI UID** — the sidecar UID is denied. The
-  caller supplies **structured authoritative turn facts** (`run_id`/`task_id`/context +
-  `system_sha256`/`history_sha256`/`generation_config_sha256`/`request_sha256`/
-  `requested_at_ms`) **or** an **authority-resolved protected row identifier** — **never
-  challenge bytes and never a caller-chosen canonical payload.**
-- **Authority builds the payload itself:** from its protected state the authority
+  **`SO_PEERCRED`, allowlisting the exact desktop-UI UID** — the sidecar UID is denied on both
+  messages. The channel carries exactly two request/reply protocols, and **neither ever carries
+  challenge bytes or a caller-chosen canonical payload** (this replaces the rev-18 "facts **or**
+  row-id" disjunction, which left the implementer a choice between two trust models):
+  - **(A) `brops.governed-challenge-create-pending.v1`** (create-pending / propose — **does NOT
+    sign**). The desktop-UI supplies the **structured authoritative turn facts** (`run_id`/`task_id`
+    + `workspace_id`/`install_id` context + `system_sha256`/`history_sha256`/
+    `generation_config_sha256`/`request_sha256`/`requested_at_ms`). The authority **validates** them
+    (rules below) and **stores them verbatim in its OWN protected pending-challenge row**, minting a
+    **fresh opaque `pending_challenge_id`** and the one-time `request_nonce` itself; it returns that
+    `pending_challenge_id`. No signature is produced and no `brops.governed-turn-challenge.v1` payload
+    exists yet. Reply `brops.governed-challenge-create-pending-result.v1`. **Frame ≤ 4 KiB** each way.
+  - **(B) `brops.governed-challenge-issue.v1`** (issue / sign — **signs exactly once**). The
+    desktop-UI supplies **ONLY the `pending_challenge_id`** (never facts, never bytes). The authority
+    **resolves the row from its OWN protected store**, **constructs the exact
+    `brops.governed-turn-challenge.v1` payload (§4.1) itself** — selecting `challenge_key_id` from its
+    active registry key, filling `workspace_id`/`install_id`/`supervisor_id` from its own trusted
+    config, copying the stored `*_sha256`/`requested_at_ms`/`run_id`/`task_id`/`request_nonce`, and
+    stamping `challenge_issued_at_ms`/`challenge_expires_at_ms` from its own clock — **signs once**,
+    **one-time-consumes** the pending row (`PENDING → ISSUED`, non-reusable), and returns the signed
+    `{payload,sig}` document. Reply `brops.governed-challenge-issue-result.v1`. **Frame ≤ 4 KiB** each
+    way (the signed document decodes ≤ 4096, matching `challenge_doc_b64` at §4.10(a0)/§4.10(g)).
+- **Single trust invariant (LOCKED):** the caller **NEVER** supplies challenge bytes or a
+  caller-chosen canonical payload; the authority **ALWAYS** builds the signed
+  `brops.governed-turn-challenge.v1` payload from its **own stored row**. Turn facts enter the system
+  **only** at create-pending (A), where they are validated and stored; at issue (B) they are
+  re-derived from the authority's own store and **never re-accepted from, or signed verbatim as,
+  caller-controlled bytes.** There is no path by which supplied facts and a signature occur in the
+  same message. (This closes the `create_pending(arbitrary_bytes) → sign(id)` oracle: (A) stores only
+  strictly-validated fixed-shape hashes/ids — never free bytes — and (B) signs only what the authority
+  itself assembled.)
+
+Creation-channel schemas (both on the authority-owned `AF_UNIX` + `SO_PEERCRED` desktop-UI-UID
+channel; `additionalProperties:false`, unknown-field + duplicate-key rejection, schema-validated
+before any side effect):
+```jsonc
+// (A) request:
+{ "protocol": "brops.governed-challenge-create-pending.v1",
+  "run_id": "<string ≤128>", "task_id": "<string ≤128>",
+  "workspace_id": "<string ≤128>", "install_id": "<string ≤128>",   // context; authority MAY override from its own config
+  "system_sha256": "<64hex>", "history_sha256": "<64hex>",
+  "generation_config_sha256": "<64hex>", "request_sha256": "<64hex>",
+  "requested_at_ms": <int> }
+// (A) reply (created):  { "protocol": "brops.governed-challenge-create-pending-result.v1", "status": "created",
+//   "pending_challenge_id": "<opaque string ≤128>", "pending_expires_at_ms": <int> }
+// (A) reply (refused):  { "protocol": "brops.governed-challenge-create-pending-result.v1", "status": "refused",
+//   "reason": "peer_denied"|"malformed"|"field_invalid"|"timestamp_invalid"|"oversize"|"retry_conflict"|"quota_pending" }
+// (B) request:  { "protocol": "brops.governed-challenge-issue.v1", "pending_challenge_id": "<opaque string ≤128>" }
+// (B) reply (issued):   { "protocol": "brops.governed-challenge-issue-result.v1", "status": "issued",
+//   "challenge_document": { "payload": { … §4.1 … }, "sig": "<b64url Ed25519>" } }
+// (B) reply (refused):  { "protocol": "brops.governed-challenge-issue-result.v1", "status": "refused",
+//   "reason": "peer_denied"|"no_pending_row"|"pending_expired"|"key_unavailable"|"malformed" }
+//   (NOTE: an already-ISSUED row is NOT a refusal — it takes the idempotent replay path below and re-returns the stored `issued`.)
+```
+The authority's **protected pending-challenge store** (owner-only `0700`, §2.3) row:
+```sql
+CREATE TABLE governed_pending_challenge (
+  pending_challenge_id     TEXT PRIMARY KEY,          -- opaque, authority-minted (≥128-bit random)
+  request_nonce            TEXT NOT NULL,             -- authority-minted one-time (feeds §4.1 request_nonce)
+  run_id TEXT NOT NULL, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL, install_id TEXT NOT NULL,
+  supervisor_id            TEXT NOT NULL,             -- authority's OWN config, never caller-supplied
+  system_sha256 TEXT NOT NULL, history_sha256 TEXT NOT NULL,
+  generation_config_sha256 TEXT NOT NULL, request_sha256 TEXT NOT NULL,
+  requested_at_ms          INTEGER NOT NULL,
+  created_at_ms            INTEGER NOT NULL,          -- authority clock at create-pending
+  pending_expires_at_ms    INTEGER NOT NULL,          -- created_at_ms + PENDING_TTL_MS
+  state                    TEXT NOT NULL,             -- 'PENDING' → 'ISSUED' (one-time-consume); terminal
+  issued_challenge_document TEXT,                     -- the EXACT signed {payload,sig} JCS document (base64url), stored verbatim at issue so a lost-reply retry replays byte-identical bytes (a hash cannot reproduce its preimage)
+  issued_challenge_handle  TEXT,                      -- SHA256(decode(issued_challenge_document)) — integrity only, NOT the replay source
+  UNIQUE(install_id, request_nonce),                  -- nonce one-time per install (mirrors §4.10(a0))
+  UNIQUE(install_id, request_sha256) );               -- idempotency key: one pending row per identical request
+```
+- **Validation (A):** peer UID == allowlisted desktop-UI UID else `peer_denied`; strict UTF-8 JSON +
+  `additionalProperties:false` + duplicate-key rejection + exact required set else `malformed`; every
+  `*_sha256` matches `^[0-9a-f]{64}$` and all ids ≤128 else `field_invalid`; `requested_at_ms` an
+  integer in the §1 canonical-ms range and not future-beyond-skew else `timestamp_invalid`; serialized
+  frame ≤ 4096 else `oversize`; a 3rd live `PENDING` row for the `install_id` ⇒ `quota_pending`
+  (mirrors `MAX_CONCURRENT_GOVERNED_TURNS = 2`). The authority sets `supervisor_id`, `request_nonce`,
+  `created_at_ms`, `pending_expires_at_ms` (and later `challenge_key_id`) from its **own** state —
+  never from the request.
+- **One-time consume + idempotency (P1-6):** a repeat (A) with byte-identical
+  `(install_id, request_sha256)` AND identical stored facts re-returns the SAME
+  `pending_challenge_id`/`pending_expires_at_ms` (lost-reply safe retry); a repeat with the same
+  `(install_id, request_sha256)` but any differing fact ⇒ `retry_conflict`. Issue (B) atomically CAS
+  `PENDING → ISSUED` before returning; the first success **signs once and stores the exact signed
+  `{payload,sig}` document bytes** verbatim in `issued_challenge_document` (+ its `issued_challenge_handle`
+  for integrity), inside the same commit that flips the state; a repeat (B) on an already-`ISSUED` row
+  **re-returns that stored document byte-for-byte** — it never re-signs, never re-stamps
+  `challenge_issued_at_ms`/`challenge_expires_at_ms`, never re-selects `challenge_key_id`, and never
+  mints a second `request_nonce` (a one-way handle could not reproduce the bytes, so the exact document
+  MUST be persisted, not just its hash); a concurrent-CAS loser observes `ISSUED` and takes that same
+  replay path; an unknown id ⇒ `no_pending_row`, an expired row ⇒ `pending_expired`.
+- **Authority builds the payload itself:** at issue (B), from its protected row the authority
   **constructs** the exact `brops.governed-turn-challenge.v1` payload (§4.1), stamps
-  `challenge_issued_at_ms`/`challenge_expires_at_ms`, and signs once (consuming the pending
-  id). It never signs caller-supplied bytes/fields.
+  `challenge_issued_at_ms`/`challenge_expires_at_ms`, and signs once (consuming the pending id). It
+  never signs caller-supplied bytes/fields.
 - **Return path (P0-1, closes the "by-assumption" document carriage):** the authority returns the
   **exact signed `{payload,sig}` document bytes** to the desktop-UI **in the reply on the same
   authenticated `AF_UNIX` channel** — the desktop-UI is the only `SO_PEERCRED`-allowlisted peer, so
@@ -196,15 +283,17 @@ The exact current contract (not history):
   at §4.10(a0) bind the exact bytes). No step delivers the document "by assumption".
 - **How desktop facts cross the boundary without giving the sidecar the same capability:** the
   desktop-UI principal (a **distinct UID**) is the only peer the `SO_PEERCRED` allowlist
-  admits; it hands the structured facts over the authenticated channel, and the authority
+  admits; it hands the structured facts over the authenticated channel **at create-pending (A)**,
+  and at issue (B) supplies only the `pending_challenge_id`, while the authority
   writes its **own** store. The sidecar (a different UID) is denied the channel by
   `SO_PEERCRED` **and** the store by file ownership — so it can present neither facts the
   authority will trust nor bytes the authority will sign.
 - **Mandatory Linux isolation tests:** the sidecar principal cannot (a) read/list the
-  authority key dir, (b) `ptrace` the authority, (c) create a pending row via the channel
-  (peer-UID denied), (d) directly read/write/list/mutate the pending store file(s)/DB, or
-  (e) obtain a signature over caller-chosen bytes — all machine-proven, alongside the 3b-1A
-  denials.
+  authority key dir, (b) `ptrace` the authority, (c) call **either** creation-channel message
+  (`create-pending` **or** `issue`) — peer-UID denied on both, (d) directly read/write/list/mutate
+  the pending store file(s)/DB, (e) obtain a signature over caller-chosen bytes, or (f) issue a
+  challenge by presenting a forged/guessed `pending_challenge_id` (refused `no_pending_row`) — all
+  machine-proven, alongside the 3b-1A denials.
 
 Full principal/ACL matrix in Appendix B. The acceptance ledger + protected content-addressed
 store: **acceptance ledger** is supervisor-only `0700`; the **published content-addressed
@@ -268,6 +357,9 @@ const, so it rejects any `bridge.result` (missing const) — do NOT discriminate
   each hop (the real `brops_socket` is one-request/one-response and the sidecar is a one-shot
   subprocess, so NO push stream); the desktop re-invokes the sidecar per chunk, the sidecar proxies
   one supervisor read. Backed by the durable supervisor `governed_output_streams` table (§4.10(f)).
+- **`brops.governed-challenge-create-pending.v1`** and **`brops.governed-challenge-issue.v1`** (+
+  their `-result` replies) — the desktop-UI↔`desktop-challenge-authority` **challenge creation
+  channel** (the single two-message protected-row-ID trust model, COMPLETE in §2.1, P1-2)
 - **`brops.governed-receipt-envelope.v1`** — the isolated-signer receipt envelope (§4.9)
 - **`bridge.governed-turn-result.v1`** — `bridge/contracts/bridge-governed-turn-result.schema.json`
   (the COMPLETE parent, §4.6; a distinct schema + a distinct sidecar emit branch). **Discriminator
@@ -594,8 +686,10 @@ echoed. Signed bytes = detached Ed25519 over `JCS(payload)` unless noted.
     "challenge_expires_at_ms": <int> },
   "sig": "<b64url Ed25519 over JCS(payload), by the desktop-challenge-authority key>" }
 ```
-The authority **builds** this from the trusted desktop DB (caller supplies only a
-protected pending-challenge ID, never bytes; §5 P0-1 history); it does **not** carry
+The authority **builds** this from its own protected pending-challenge row (the caller supplies only
+a protected `pending_challenge_id` via `brops.governed-challenge-issue.v1`; the turn facts were entered
+earlier and validated at `brops.governed-challenge-create-pending.v1` — the single two-message trust
+model, §2.1); it does **not** carry
 `challenge_accepted_at_ms` (the supervisor stamps that later — §1/§5).
 
 ### 4.2 `brops.challenge-key-registry.v1` (artifact #2)
@@ -1280,24 +1374,32 @@ here. No new principal handles the document.
   "challenge_doc_b64": "<base64url of the exact signed {payload,sig} bytes, decoded ≤ 4096>",
   "system": "<string, UTF-8, ≤ 262144 bytes>",
   "history": [ { "role": "user"|"assistant"|"system", "content": "<string>" }, … ],
-  "generation_config": {                 // ONE closed JSON object (P0-1, owner-mandated)
-    "engine_id": "<string ≤128 — e.g. brops.governed-engine.sidecar.v1>",
-    "model": "<string ≤128>",
-    "max_output_tokens": <int 1..1048576>,
-    "temperature": <number 0..2>,
-    "top_p": <number 0..1> } }
+  "generation_config": {                 // ONE closed FLAT string→string object (P1-1 — every value a validated canonical STRING; NO JSON numbers)
+    "engine_id":         "<string, regex ^[A-Za-z0-9._-]{1,128}$ — e.g. brops.governed-engine.sidecar.v1>",
+    "model":             "<string, regex ^[A-Za-z0-9._:-]{1,128}$>",
+    "max_output_tokens": "<string, regex ^[1-9][0-9]{0,6}$  AND 1 ≤ int(v) ≤ 1048576>",
+    "temperature":       "<string, regex ^[0-2]\\.[0-9]{2}$ AND 0 ≤ 100·intdigit + int(2 fraction digits) ≤ 200>",
+    "top_p":             "<string, regex ^[01]\\.[0-9]{2}$  AND 0 ≤ 100·intdigit + int(2 fraction digits) ≤ 100>" } }
 ```
 `additionalProperties:false` at BOTH levels; top-level `required:[protocol,task_id,challenge_doc_b64,
-system,history,generation_config]`; `generation_config` is a **closed object** with
-`additionalProperties:false` and `required:[engine_id,model,max_output_tokens,temperature,top_p]`
-(a strict, individually-bounded config — tighter/more fail-closed than an opaque string). The
+system,history,generation_config]`; `generation_config` is a **closed FLAT string→string object**
+(P1-1) with `additionalProperties:false` and `required:[engine_id,model,max_output_tokens,temperature,top_p]`
+— **every value is a validated canonical STRING, never a JSON number** (see the P1-1 note below): the
+numeric bounds are enforced by **regex + integer-range validation at strict-decode time (in BOTH Rust
+and Python)**, which REJECTS exponent form, signed zero, extra/insufficient precision, and
+bare-integer float forms **before** canonicalization — so a non-canonical value can never reach JCS,
+and `JCS(generation_config)` reduces to the already-proven string→string primitive (no numeric
+serialization on either side). `temperature`/`top_p` are fixed-point decimal strings with **exactly 2
+fractional digits** (the integer-range check uses pure integer arithmetic on the digits, no float
+parse); `max_output_tokens` is a canonical decimal-integer string (no leading zeros). This is
+strictly more fail-closed than an opaque string. The
 top-level `protocol` const both admits this frame and (being absent from
 `bridge.result`/`bridge.task-request`) keeps it disjoint from the frozen family. `role` is a closed
 enum `{user,assistant,system}`; caps: `system` ≤ `MAX_SYSTEM_BYTES = 262144`
 (`ai.rs:71`), `JCS(history)` ≤ `MAX_CONVERSATION_BYTES = 8388608` (`ai.rs:73`), `history` ≤
 `MAX_MESSAGES = 1000` (`ai.rs:74`) with each `content` ≤ `MAX_MESSAGE_BYTES = 1048576` (`ai.rs:72`)
 mirror the real code, and the **governed-family** `JCS(generation_config)` ≤
-`MAX_GENERATION_CONFIG_BYTES = 65536` (a NEW 3b-1B constant for the object form — NOT an `ai.rs` cap);
+`MAX_GENERATION_CONFIG_BYTES = 65536` (a NEW 3b-1B constant for the flat string→string object form — NOT an `ai.rs` cap);
 overflow ⇒ out-of-band ingress error (below), no frame emitted.
 
 **Canonical input bytes (governed family — LOCKED, with a NEW parallel `generation_config`
@@ -1310,21 +1412,44 @@ artifacts' bytes, and the signed challenge commits to their SHA-256:
   `brops_canonical.py:104-109`); **Rust↔Python JCS parity** is the same primitive proven for
   receipts (`core/src/receipt.rs::jcs_bytes:235-237` ↔ `bro_signature.canonical_bytes:158-160`,
   parity test `receipt.rs:1283-1289`).
-- `generation_config_bytes = JCS(generation_config)` — RFC 8785 canonical JSON of the **closed
-  `generation_config` OBJECT** (P0-1, owner-mandated). *(Reconciliation — this is a **NEW, strictly
-  additive** canonicalization for the 3b-1B governed family, per the §2.2 KEEP + ADD law, and does
-  NOT modify anything frozen: the shipped `brops_canonical.generation_config_bytes` (raw UTF-8 of a
-  an arbitrary config **string** via `generation_config: &str`, e.g. `{"model":"claude","temperature":0}`
-  hashed as raw bytes, `brops_canonical.py:118-122` / `ai.rs:1221`), the frozen 3b-1A parity fixture
+- `generation_config_bytes = JCS(generation_config)` — where `generation_config` is a **FLAT
+  string→string object** (every value a validated canonical string). This rides the **EXACT proven
+  string→string primitive**: Rust `core/src/receipt.rs::jcs_bytes:235-237` (a `BTreeMap<String,String>`
+  serializer — its own doc-comment scopes it to a flat `string → string` object and there is **no**
+  numeric/general-RFC-8785 serializer anywhere in the core crate) ↔ Python
+  `bro_signature.canonical_bytes:158-160` (`json.dumps(sort_keys=True, separators=(",",":"),
+  ensure_ascii=False)`), already cross-language parity-proven by `receipt.rs::brops_all_formula_parity_matches_python:1200`
+  (the flat-object minimal-escaping shape is additionally pinned by `receipt.rs:1284`). **No JSON number is ever
+  serialized on either side** (P1-1 — the rev-18 `JCS(number)` form was representation-ambiguous:
+  Python `json.dumps` uses CPython float-repr while Rust `serde_json` uses `ryu`, and neither matches
+  RFC 8785 ECMAScript number formatting, so a legitimate numeric config could be committed by the
+  Rust authority and re-hash differently on the Python sidecar → false `handle_not_challenge`/
+  `sha_mismatch` Block). All numeric bounds are instead enforced by **regex + integer-range validation
+  at strict-decode time in BOTH languages**, which REJECTS exponent form, signed zero, extra/
+  insufficient precision, and bare-integer float forms before canonicalization — so a non-canonical
+  value never reaches JCS. *(Reconciliation — this is a **NEW, strictly additive** canonicalization
+  for the 3b-1B governed family, per the §2.2 KEEP + ADD law, and does NOT modify anything frozen: the
+  shipped `brops_canonical.generation_config_bytes` (raw UTF-8 of an arbitrary config **string** via
+  `generation_config: &str`, e.g. `{"model":"claude","temperature":0}` hashed as raw bytes,
+  `brops_canonical.py:118-122` / `ai.rs:1221`), the frozen 3b-1A parity fixture
   (`receipt.rs:1216-1219`, which hashes the raw-UTF-8 string form), and `prepare_governed_turn`'s
   `generation_config: &str` signature (`ai.rs:1221/1231`) all stay **byte-for-byte unchanged** on the
   frozen path. The 3b-1B canonicalizer ADDS a `governed_generation_config_bytes(obj) = JCS(obj)`
-  function alongside the frozen one, and the governed desktop-challenge-authority hashes exactly
-  `SHA256(JCS(generation_config))` so the challenge-commit ↔ staged-digest equality holds within the
-  governed family; a mismatch fails closed via `handle_not_challenge`. A **new Rust↔Python parity
-  fixture** covers the object/JCS form (distinct from the frozen `receipt.rs:1216-1219` string
-  fixture, which is untouched). A closed, individually-bounded object is deliberately more fail-closed
-  than the opaque config string it replaces on the governed path.)*
+  function over the validated flat string→string object alongside the frozen one, and the governed
+  desktop-challenge-authority hashes exactly `SHA256(JCS(generation_config))` so the challenge-commit
+  ↔ staged-digest equality holds within the governed family; a mismatch fails closed via
+  `handle_not_challenge`. A **new Rust↔Python parity fixture** (distinct from and additive to the
+  frozen `receipt.rs:1216-1219` string fixture, which is untouched) pins the object/JCS form on the
+  string→string shape, and MUST cover: (1) an accepted canonical instance canonicalizes byte-identically
+  Rust==Python with a pinned `SHA256`; (2) boundary values `temperature`/`top_p` `"0.00"`/`"1.00"`/`"2.00"`
+  and `max_output_tokens` `"1"`/`"1048576"` accepted + identical; (3) exponent form (`"1e0"`,`"1E2"`,`"1e3"`)
+  rejected in BOTH; (4) signed zero (`"-0.00"`,`"-0"`) rejected; (5) integral-float / precision mismatch
+  (`"1"`,`"1.0"`,`"1.000"` where `"1.00"` is required) rejected; (6) high-precision input
+  (`"0.300000000000000004"`,`"0.9999"`) rejected; (7) leading-zero / out-of-range integer
+  (`"0256"`,`"0"`,`"1048577"`) rejected; (8) out-of-range fixed-point (`"2.01"`,`"3.00"`,`"1.01"` for
+  `top_p`) rejected by the integer-hundredths bound though the regex passes. A flat string→string object
+  is deliberately more fail-closed than the opaque config string it replaces on the governed path, and
+  by construction makes cross-language numeric divergence structurally impossible.)*
 `challenge_doc bytes = JCS({payload,sig})` for the open-time canonicality gate (§4.10(a0),
 unchanged).
 
@@ -1341,27 +1466,48 @@ spawns the **one-shot** governed sidecar exactly as `ai.rs::governed_engine` doe
 
 **Sidecar orchestrator (`bridge/engine_sidecar.py::run`, `:266-303`, a NEW dispatch branch beside the
 frozen `_real_callables`, `:232-260`).** On a `bridge.governed-turn-submit.v1` frame the one-shot
-subprocess drives the whole governed turn against the supervisor over `brops_socket`
-(one-request/one-response), in order:
-1. `brops.governed-staging-open.v1` (§4.10(a)) → then, for each of the three artifacts
-   (system, history, generation_config), `-staging-chunk.v1` ×N (§4.10(b), §2.4 bounds) →
-   `-staging-final.v1` (§4.10(c)); the three `*_sha256` MUST equal the challenge's committed digests.
-2. `brops.governed-turn-open.v1` (§4.10(a0)) submitting `challenge_doc_b64`.
+subprocess drives the governed turn against the supervisor over `brops_socket`
+(one-request/one-response), in this **exact order — `governed-turn-open` MUST precede the first
+`governed-staging-open`** (§4.10(a0)→(a): staging-open requires the `UPLOADING`
+`governed_turn_staging` row that ONLY `governed-turn-open` creates, so any staging-open sent first
+is refused `no_staging_row`):
+1. `brops.governed-turn-open.v1` (§4.10(a0)) submitting `challenge_doc_b64` — the **FIRST** governed
+   message; the supervisor runs the open-time preliminary verify + publish and CAS-creates the
+   `governed_turn_staging` row (`VERIFYING`→`UPLOADING`). Nothing may be staged before this returns
+   `opened`.
+2. then, for each of the three artifacts (system, history, generation_config),
+   `brops.governed-staging-open.v1` (§4.10(a)) → `-staging-chunk.v1` ×N (§4.10(b), §2.4 bounds) →
+   `-staging-final.v1` (§4.10(c)); each `declared_sha256` MUST equal the challenge's committed
+   `*_sha256`, advancing the row to `INPUTS_READY`.
 3. `brops.governed-evidence-request.v1` (§4.10(d)) to execute/finalize.
-4. receive `brops.governed-turn-result.v1` (§4.10(e)); on `signed`, pull the output via
-   `brops.governed-turn-output-read.v1` (§4.10(f)) per chunk.
-5. emit **exactly one** `bridge.governed-turn-result.v1` (§4.6) on `stdout` and exit.
+4. receive the **metadata-only** `brops.governed-turn-result.v1` (§4.10(e)) — envelope/attestation +
+   `output_bytes`/`output_sha256` + a transport `output_stream_id`, **no inline output**. This
+   subprocess pulls **NO** output: the §4.10(f) `brops.governed-turn-output-read.v1` loop is driven
+   LATER by the **desktop** through the separate `governed_turn_output_read` Tauri command (fresh
+   one-shot sidecars, §4.10(f), §6.1 steps 13–14), never inside this submit subprocess.
+5. re-frame the §4.10(e) summary into `bridge.governed-turn-result.v1` (§4.6) and emit **exactly
+   one** such frame on `stdout`, then exit.
 
-**Reply.** Success ⇒ the sidecar's single `stdout` frame is `bridge.governed-turn-result.v1` (§4.6),
-which the desktop verifies at §6.1 step 14 / §7.1. **Local ingress/transport failure is out-of-band
-(P1-5):** a spawn failure, socket error, `EXECUTION_TIMEOUT_MS` expiry, an oversize/malformed sidecar
-reply, or an unexpected non-zero exit surfaces as a **Tauri command error to the desktop-UI (a
-`Block`, NO result frame)** — the sidecar is a transport proxy and originates **no** supervisor or
-signature verdict (§4.10(f), §7.1). **Tests:** submit round-trips to a `signed` bridge result; a
-frozen `bridge.task-request` fed to the governed command is refused (missing `protocol` const); an
-oversize `system`/`history` ⇒ ingress error, no frame; a sidecar-spawn failure ⇒ desktop Block, no
-result; the three staged `*_sha256` mismatching the challenge digests ⇒ `handle_not_challenge`
-refusal relayed as a Block.
+**Reply.** Success ⇒ the sidecar's single `stdout` frame is the **metadata-only**
+`bridge.governed-turn-result.v1` (§4.6) — envelope/attestation + `output_bytes`/`output_sha256` +
+a transport `output_stream_id`, **NO inline output and NO output pulled in this subprocess**. The
+desktop verifies this frame at §6.1 step 14 / §7.1 and then drives the §4.10(f) output pull **itself**
+via the separate `governed_turn_output_read` Tauri command (a fresh one-shot sidecar per chunk —
+§4.10(f), §6.1 steps 13–14); the submit subprocess has already exited. **Local ingress/transport
+failure is out-of-band (P1-5):** a spawn failure, socket error, `EXECUTION_TIMEOUT_MS` expiry, an
+oversize/malformed sidecar reply, or an unexpected non-zero exit surfaces as a **Tauri command error
+to the desktop-UI (a `Block`, NO result frame)** — the sidecar is a transport proxy and originates
+**no** supervisor or signature verdict (§4.10(f), §7.1). **Tests:** submit round-trips to a `signed`
+**metadata-only** bridge result (no output bytes in the submit reply); **exact call-order test — a
+`governed-staging-open` issued before a successful `governed-turn-open` ⇒ `no_staging_row`, and
+`governed-turn-open` MUST precede the first `governed-staging-open` (asserts the §4.10(a0)→(a)
+ordering, and that turn-open creates the `UPLOADING` row staging-open requires);** the submit
+subprocess emits its one metadata frame and exits **without** issuing any
+`brops.governed-turn-output-read.v1` call (output-pull happens only via the desktop's separate
+`governed_turn_output_read` command); a frozen `bridge.task-request` fed to the governed command is
+refused (missing `protocol` const); an oversize `system`/`history` ⇒ ingress error, no frame; a
+sidecar-spawn failure ⇒ desktop Block, no result; the three staged `*_sha256` mismatching the
+challenge digests ⇒ `handle_not_challenge` refusal relayed as a Block.
 
 **Routing/rejection (LOCKED + tested):** each control-plane message
 is dispatched by its `protocol` const; a governed handler refuses any v1 `protocol` value and
@@ -2062,6 +2208,32 @@ The current normative design is §0–§9 above. This log is historical only.
   authoritative), `AGENTS.md` was added to `config/canonical-read-manifest.json`, and
   `tools/check_coordination.py` now asserts every manifest path exists (a new CI gate) so the startup
   chain `START_HERE → NEXT_CHAT → manifest → design files` can never silently orphan.
+- **rev 19 (this doc):** orchestrator-ordering / generation_config-canonicalization /
+  challenge-creation-channel closure of the rev-18 Architect Design RED (**1 P0 + 2 P1** @
+  `89d0df4c7211c97c85c582090cea05c5da02bc42`, exact-head CI #124 SUCCESS 8/8 — CI GREEN ≠ design GREEN)
+  via a mandatory **read-only fan-out + one integrator + a fresh independent red-team** — **P0-1**
+  §4.10(g)/§6.1 the one-shot sidecar submit subprocess sequenced `staging×3 → turn-open →
+  evidence-request → result → PULL` inside the submit path, but `governed-staging-open` requires the
+  `UPLOADING` row only `governed-turn-open` creates (`no_staging_row` otherwise), so no turn could
+  execute → reordered to `turn-open → staging×3 → evidence-request → metadata-result → reframe → exit`
+  with **no** `brops.governed-turn-output-read.v1` output pull in the submit path (pull confined to the
+  §6.1 step-13/14 desktop-driven subprocess) + an exact call-order test; **P1-2** §2.1/§4.1 the
+  challenge-authority creation channel left a choice between two trust models (§2.1 "facts OR row-id"
+  vs §4.1 "row-id only") → a single **protected-row-ID model with two explicit messages**
+  (`brops.governed-challenge-create-pending.v1` stores validated facts in the authority's own `0700`
+  row, no signing; `brops.governed-challenge-issue.v1` takes row-id only, the authority builds the
+  §4.1 payload from its own row and signs once, one-time-consume), with full request/reply + pending-row
+  schemas, validation, idempotency, frame limits; **P1-1** §2.2/§4.10(g) `generation_config_bytes =
+  JCS(object)` relied on representation-ambiguous JCS numeric canonicalization (Python `json.dumps`
+  float-repr vs Rust `ryu`; the real `receipt.rs::jcs_bytes:235-237` is `BTreeMap<String,String>`-only,
+  no numeric serializer exists) → `generation_config` is now a **flat string→string object**
+  (fixed-point decimal + canonical integer strings, regex + integer-range validated to reject
+  exponent/`-0.0`/precision/bare-int forms before canonicalization), riding the already-proven
+  string→string primitive with no number ever serialized; strictly additive to the frozen 3b-1A string
+  `generation_config_bytes` + `receipt.rs:1216-1219` fixture (§2.2 KEEP+ADD, untouched). Fresh
+  independent red-team over the full rev-19 diff + the real repo returned **no BLOCKER**; the frozen
+  3b-1A family proven untouched; the `check_coordination` manifest gate + its tests run GREEN live.
+  **NOT Architect-GREEN; 3b-1B code not started.**
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 

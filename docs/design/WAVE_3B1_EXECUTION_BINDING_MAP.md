@@ -2,12 +2,12 @@
 
 > **STATUS (2026-07-25):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
 > CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
-> — the Architect reviewed the consolidated **rev 17** (@ `d8a6510`; exact-head CI #121 SUCCESS 8/8;
-> CI GREEN ≠ design GREEN) and returned Design RED with 2 P0 + 3 P1 desktop-ingress/evidence-floor/
-> bounded-staging findings, mandating a **5-track read-only fan-out audit + one integrator + a
-> fresh independent red-team**; the addendum is now **rev 18 (CONSOLIDATED)** — a
-> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-18 HEAD `c3cf0ae`,
-> exact-head CI 8/8 GREEN — evidence only; resolve the live tip + Checks from GitHub). See
+> — the Architect reviewed the consolidated **rev 18** (@ `89d0df4c`; exact-head CI #124 SUCCESS 8/8;
+> CI GREEN ≠ design GREEN) and returned Design RED with 1 P0 + 2 P1 orchestrator-ordering /
+> generation_config-canonicalization / challenge-creation-channel findings, mandating a **read-only fan-out audit + one integrator + a
+> fresh independent red-team**; the addendum is now **rev 19 (CONSOLIDATED)** — a
+> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-18 reviewed HEAD `89d0df4c`,
+> exact-head CI #124 8/8 GREEN — evidence only; resolve the live tip + Checks from GitHub). See
 > `NEXT_CHAT.md` §0/§3 for the authoritative current state, STOP gates, and next action.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative
