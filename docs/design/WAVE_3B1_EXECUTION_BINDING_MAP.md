@@ -2,14 +2,15 @@
 
 > **STATUS (2026-07-25):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
 > CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
-> — the Architect reviewed the consolidated **rev 21** (@ `a05629b`; exact-head CI #127 — mandatory
-> gates SUCCESS; CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-20 generation_config hash-source
-> split, and returned Design RED with a new 1 P0 · 0 P1 (the `PreparedGovernedTurnV1B` lifecycle was
-> severed at the Tauri/frontend boundary — submit was a separate frontend-invoked command re-accepting
-> raw fields after the pre-store), mandating a **read-only real-code investigation + one integrator + a
-> fresh independent red-team**; the addendum is now **rev 22 (CONSOLIDATED)** — a
-> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-21 reviewed HEAD `a05629b`,
-> exact-head CI #127 mandatory-gates GREEN — evidence only; resolve the live tip + Checks from GitHub). See
+> — the Architect reviewed the consolidated **rev 22** (@ live tip `4703351`, design content `a84ee12`;
+> exact-head CI #129 8/8 SUCCESS; CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-21
+> `PreparedGovernedTurnV1B`-lifecycle P0, and returned Design RED with 1 P0 · 1 P1 (P0-1
+> `governed_turn_execute` missing routing identities `conversation_id`/`run_id` + wrongly renderer-sourced
+> system/history/identities; P1-1 non-durable transport-failure retry), mandating a **read-only real-code
+> investigation + one integrator + a fresh independent red-team**; the addendum is now **rev 23
+> (CONSOLIDATED)** — a proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-22
+> design reviewed at live tip `4703351`/content `a84ee12`, exact-head CI #129 8/8 GREEN — evidence only;
+> resolve the live tip + Checks from GitHub). See
 > `NEXT_CHAT.md` §0/§3 for the authoritative current state, STOP gates, and next action.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative
