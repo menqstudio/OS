@@ -87,12 +87,22 @@ class CustodyTests(unittest.TestCase):
             EvidenceStore(d)
 
     @unittest.skipUnless(_POSIX, "POSIX file-mode custody")
-    def test_store_allows_a_group_shared_but_not_world_dir(self):
-        # The store is legitimately shared by the two dedicated principals via a group
-        # (supervisor writes, signer reads) — group access is allowed, world is not.
+    def test_store_allows_a_group_readable_but_not_writable_dir(self):
+        # rev-26 §2.3: the store is shared via a group for READ (supervisor writes, signer
+        # reads) — group read-traverse (2750) is allowed; world is not.
         d = tempfile.mkdtemp()
-        os.chmod(d, 0o770)  # owner + group, no other
+        os.chmod(d, 0o2750)  # setgid + owner rwx + group r-x, NO group-write, no world
         EvidenceStore(d)  # must NOT raise
+
+    @unittest.skipUnless(_POSIX, "POSIX file-mode custody")
+    def test_store_refuses_a_group_writable_dir(self):
+        # rev-26 §2.3: group-write on the store dir would let a non-owner group member
+        # create/rename/unlink artifacts — the store MUST refuse S_IWGRP (a 2770/0770 regression).
+        for mode in (0o2770, 0o770):
+            d = tempfile.mkdtemp()
+            os.chmod(d, mode)
+            with self.assertRaises(EvidenceStoreError):
+                EvidenceStore(d)
 
     @unittest.skipUnless(_POSIX, "POSIX file-mode custody")
     def test_receipt_signer_keydir_refuses_group_or_other_access(self):
@@ -114,11 +124,13 @@ class CustodyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             attest_mod.load_attestation_key(d)
 
-    def test_store_created_owner_only_on_posix(self):
+    def test_store_created_at_2750_on_posix(self):
+        # rev-26 §2.3: a freshly created store is 2750 (setgid + owner rwx + group r-x, no
+        # group-write, no world) so it fails closed on group-write and matches the mode guard.
         store = EvidenceStore(tempfile.mkdtemp() + "/sub")
         if _POSIX:
             mode = stat.S_IMODE(os.stat(store.root).st_mode)
-            self.assertEqual(mode, 0o700)
+            self.assertEqual(mode, 0o2750)
 
 
 class NoOracleTests(unittest.TestCase):

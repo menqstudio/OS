@@ -58,17 +58,19 @@ def _hardlink_unsupported(exc: OSError) -> bool:
 
 
 def _harden_dir(directory: pathlib.Path) -> pathlib.Path:
-    """Create (0700) or validate the store dir. On POSIX, refuse an **other-accessible**
-    dir. A *group*-accessible dir is allowed on purpose: the store is shared by the two
-    dedicated principals (the supervisor writes, the signer reads) via a shared group
-    (design §4.0), so it may be group-readable — but NEVER world-accessible, and never
-    reachable by the sidecar/desktop login identity. (The private-key dirs stay strictly
-    owner-only; only this shared store permits a group.)"""
+    """Create (2750) or validate the store dir per the rev-26 §2.3 custody model:
+    `2750` owner-write / group **read-traverse only** (setgid). The store is shared by the
+    dedicated principals — the owner (supervisor/recorder) WRITES, the signer (group member)
+    READS — so it may be group-READABLE but MUST NOT be group-WRITABLE: group `w` on the dir
+    would let a non-owner group member create/rename/unlink artifacts, breaking append-only
+    custody. So refuse BOTH world access (`S_IRWXO`) AND group-write (`S_IWGRP`); a re-introduced
+    `2770` fails closed at load, not just in CI (§2.3). The private-key dirs stay owner-only."""
     resolved = directory.expanduser().resolve()
     if not resolved.exists():
         resolved.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":
-            os.chmod(resolved, 0o700)  # created owner-only; operator opts into a group
+            # setgid + owner rwx + group r-x, NO group-write, no world (matches the §2.3 guard).
+            os.chmod(resolved, 0o2750)
     elif not resolved.is_dir():
         raise EvidenceStoreError(f"evidence store path is not a directory: {resolved}")
     elif os.name == "posix":
@@ -76,6 +78,10 @@ def _harden_dir(directory: pathlib.Path) -> pathlib.Path:
         if mode & stat.S_IRWXO:
             raise EvidenceStoreError(
                 f"evidence store dir {resolved} is world-accessible; refusing"
+            )
+        if mode & stat.S_IWGRP:
+            raise EvidenceStoreError(
+                f"evidence store dir {resolved} is group-writable; refusing (§2.3 requires 2750)"
             )
     return resolved
 

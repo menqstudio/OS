@@ -40,15 +40,18 @@ ATT_PUB="$(cat "$B/att-pub")"
 OP_PIN="$(cat "$B/operator-pin")"
 POLICY_SHA="$(cat "$B/policy-bundle-sha")"
 
-# 2) Custody: private-key dirs owner-only to their principals; the store is group-shared
-#    and SETGID (2770) so artifacts the supervisor publishes inherit the brops-store group
-#    (the signer, also in brops-store, can read the 0640 files); the login user is in
-#    NEITHER service context and NOT in brops-store. Each service owns its OWN socket dir
-#    (world-traversable) so it can bind() there; SO_PEERCRED is the connect-time gate.
+# 2) Custody (rev-26 §2.3): private-key dirs owner-only to their principals; the store is
+#    group-shared and SETGID at **2750** — owner (supervisor) rwx, group (brops-store) r-x =
+#    read+traverse ONLY, NO group-write, no world. Setgid so artifacts the supervisor publishes
+#    inherit the brops-store group (the signer, also in brops-store, can read the 0640 files) but
+#    a group member canNOT create/rename/unlink (that needs group-write on the dir, which 2750
+#    denies). The login user is in NEITHER service context and NOT in brops-store. Each service
+#    owns its OWN socket dir (world-traversable) so it can bind() there; SO_PEERCRED is the gate.
 sudo chown -R brops-signer:brops-signer "$B/signerkeys";     sudo chmod 700 "$B/signerkeys"
 sudo chown -R brops-supervisor:brops-supervisor "$B/attkeys"; sudo chmod 700 "$B/attkeys"
-sudo chown -R brops-supervisor:brops-store "$B/store";       sudo chmod 2770 "$B/store"
-sudo chmod -R g+r "$B/store"  # the evidence artifacts written before chown stay group-readable
+sudo chown -R brops-supervisor:brops-store "$B/store"
+sudo chmod -R g+r "$B/store"          # evidence artifacts written before chown stay group-READABLE
+sudo chmod 2750 "$B/store"            # dir: setgid + owner rwx + group r-x, group-write bit CLEAR
 sudo chown -R brops-supervisor:brops-supervisor "$B/state" "$B/registry"; sudo chmod -R 750 "$B/state" "$B/registry"
 sudo chown brops-signer:brops-signer "$B/signer-sock";       sudo chmod 755 "$B/signer-sock"
 sudo chown brops-supervisor:brops-supervisor "$B/sup-sock";  sudo chmod 755 "$B/sup-sock"
@@ -121,3 +124,21 @@ BROPS_PROVE_SIGNER_KEY="$B/signerkeys/brops-receipt-signer.json" \
 BROPS_PROVE_ATTESTATION_KEY="$B/attkeys/brops-supervisor-attestation.json" \
 BROPS_PROVE_STORE_DIR="$B/store" \
 "$PYBIN" "$ENGINE/tools/brops_isolation_prover.py"
+
+# 8) rev-26 §2.3 store-custody write-denial. The store is 2750 (group read-traverse, NO
+#    group-write): a brops-store group member (the signer) and the login user (not in the
+#    group) MUST be denied create/rename/unlink in the store. The frozen prover proves the
+#    login user cannot READ the store; this proves neither can WRITE it (the S_IWGRP leak the
+#    old 2770 provisioning left open). Mode-regression guard: the store MUST stat as 2750.
+STORE_MODE="$(stat -c '%a' "$B/store")"
+[ "$STORE_MODE" = "2750" ] || { echo "SECURITY FAIL: store mode $STORE_MODE != 2750 (group-write must be clear)"; exit 1; }
+if sudo -u brops-signer touch "$B/store/attack-signer" 2>/dev/null; then
+  echo "SECURITY FAIL: signer (brops-store member) created a file in the 2750 store (S_IWGRP leak)"; exit 1
+fi
+if sudo -u brops-signer sh -c "mv '$B/store'/*.json '$B/store/renamed' 2>/dev/null"; then
+  echo "SECURITY FAIL: signer renamed an artifact in the 2750 store"; exit 1
+fi
+if touch "$B/store/attack-login" 2>/dev/null; then
+  echo "SECURITY FAIL: login user (not in brops-store) created a file in the store"; exit 1
+fi
+echo "WRITE-DENIAL PASSED — store is 2750; neither the signer nor the login user can write it"
