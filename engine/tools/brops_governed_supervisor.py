@@ -26,6 +26,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 
 import brops_socket
 from bro_signature import canonical_bytes
+from bro_evidence import event_hash as evidence_event_hash
+from broctl import sign_payload
 from brops_evidence_store import EvidenceStore, EvidenceStoreError
 from brops_governed_common import (
     CHALLENGE_TTL_MS, EXECUTION_TIMEOUT_MS, ISSUED_RETENTION_MS,
@@ -943,7 +945,35 @@ class GovernedSupervisor:
         }
         execution_receipt = _sign_document(execution_receipt_payload, self.evidence_recorder_key)
         execution_receipt_handle = self.store.publish(canonical_bytes(execution_receipt))
-        event_hash = sha256_hex(canonical_bytes({"attempt": attempt, "output_handle": output_handle, "finished_at_ms": finished_at}))
+        # §7 — persist a REAL bro_evidence chain (event + signed head) in the recorder namespace,
+        # signed by the evidence-recorder authority (bro_signature {payload,signature} format). The
+        # signer LOADS + VALIDATES this chain and derives the head scalars from it; the record/
+        # attestation evidence_* fields below are echoes the signer re-checks, never trusts.
+        evidence_dir = pathlib.Path(self.store.root) / "evidence"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        if os.name == "posix":
+            os.chmod(evidence_dir, 0o2750)
+        evidence_event_id = str(uuid.uuid4())
+        issued_at_epoch = now // 1000
+        event_payload = {
+            "artifact_type": "evidence-event", "key_id": self.evidence_recorder_key["key_id"],
+            "event_id": evidence_event_id, "sequence": 1, "previous_event_hash": None,
+            "task_id": challenge["task_id"], "event_type": "governed-turn-completed",
+            "agent_id": self.config.agent_id, "payload_hash": output_handle,
+            "issued_at_epoch": issued_at_epoch,
+        }
+        event_hash = evidence_event_hash(event_payload)
+        head_payload = {
+            "artifact_type": "evidence-head", "key_id": self.evidence_recorder_key["key_id"],
+            "task_id": challenge["task_id"], "final_event_hash": event_hash,
+            "event_count": 1, "last_sequence": 1, "head_sequence": 1,
+            "issued_at_epoch": issued_at_epoch,
+        }
+        _ev_priv = self.evidence_recorder_key["private_key"]
+        (evidence_dir / f"{evidence_event_id}.json").write_text(
+            json.dumps(sign_payload(_ev_priv, event_payload)), encoding="utf-8")
+        (evidence_dir / f"{challenge['task_id']}.head.json").write_text(
+            json.dumps(sign_payload(_ev_priv, head_payload)), encoding="utf-8")
         record_payload = {
             "artifact_type": "brops.governed-turn-record.v1", "key_id": self.governed_turn_recorder_key["key_id"],
             "run_id": challenge["run_id"], "execution_attempt_id": attempt,
@@ -968,6 +998,7 @@ class GovernedSupervisor:
             "policy_bundle_sha256": self.policy_bundle_handle,
             "containment_evidence_sha256": containment_handle, "containment_event_id": str(uuid.uuid4()),
             "receipt_id": receipt_id, "execution_receipt_handle": execution_receipt_handle,
+            "evidence_event_id": evidence_event_id,
             "evidence_final_event_hash": event_hash, "evidence_event_count": 1,
             "evidence_last_sequence": 1, "evidence_head_sequence": 1, "completed_at_ms": finished_at,
         }
@@ -997,6 +1028,7 @@ class GovernedSupervisor:
             "challenge_registry_hash": self.registry.payload_hash,
             "challenge_registry_epoch": self.registry.payload["registry_epoch"],
             "challenge_registry_root_key_id": self.registry.payload["root_key_id"],
+            "evidence_event_id": evidence_event_id,
             "evidence_event_count": 1, "evidence_last_sequence": 1, "evidence_head_sequence": 1,
             "evidence_final_event_hash": event_hash,
         }

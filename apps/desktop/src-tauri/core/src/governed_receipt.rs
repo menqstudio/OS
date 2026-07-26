@@ -46,8 +46,8 @@ const ATTESTATION_FIELDS: &[&str] = &[
     "output_handle", "containment_evidence_handle", "policy_bundle_handle", "lease_handle",
     "execution_receipt_handle", "challenge_handle", "challenge_key_id",
     "challenge_registry_handle", "challenge_registry_hash", "challenge_registry_epoch",
-    "challenge_registry_root_key_id", "evidence_event_count", "evidence_last_sequence",
-    "evidence_head_sequence", "evidence_final_event_hash",
+    "challenge_registry_root_key_id", "evidence_event_id", "evidence_event_count",
+    "evidence_last_sequence", "evidence_head_sequence", "evidence_final_event_hash",
 ];
 
 fn invalid(value: impl Into<String>) -> CoreError {

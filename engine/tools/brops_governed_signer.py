@@ -16,7 +16,8 @@ from typing import Any, Mapping
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from bro_signature import canonical_bytes
+from bro_evidence import EvidenceError, load_head, validate_chain_detailed
+from bro_signature import ACTIVE, TrustedKey, canonical_bytes
 from brops_evidence_store import EvidenceStore, EvidenceStoreError
 from brops_governed_common import (
     LEASE_DURATION_MS, GovernedProtocolError, b64url_decode, b64url_encode,
@@ -46,6 +47,7 @@ _EVIDENCE_KEYS = frozenset({
     "execution_receipt_handle", "challenge_handle",
     "challenge_key_id", "challenge_registry_handle", "challenge_registry_hash",
     "challenge_registry_epoch", "challenge_registry_root_key_id",
+    "evidence_event_id",
     "evidence_event_count", "evidence_last_sequence", "evidence_head_sequence",
     "evidence_final_event_hash",
 })
@@ -378,17 +380,39 @@ def sign_governed(request: Mapping[str, Any], c: GovernedSignerComponents, now_m
             raise GovernedSignRefused("run_binding_invalid")
         if containment.get("contained") is not True or containment.get("teardown_outcome") != "contained":
             raise GovernedSignRefused("run_binding_invalid")
-        for field in ("evidence_event_count", "evidence_last_sequence", "evidence_head_sequence", "evidence_final_event_hash"):
+        for field in ("evidence_event_id", "evidence_event_count", "evidence_last_sequence",
+                      "evidence_head_sequence", "evidence_final_event_hash"):
             if record.get(field) != evidence[field]:
                 raise GovernedSignRefused("evidence_fork")
-        # §7 — durable evidence-head anti-rollback floor, committed BEFORE the envelope is minted:
-        # a replayed OLDER head (lower head_sequence) ⇒ stale_evidence; a divergent lineage ⇒
-        # evidence_fork; an unchanged re-anchor advances the high-water; a byte-identical re-sign is
-        # idempotent. Keyed on (install_id, task_id) in a BEGIN IMMEDIATE tx.
-        apply_head_floor(
-            c.head_floor_db, evidence["install_id"], evidence["task_id"],
-            evidence["evidence_head_sequence"], evidence["evidence_event_count"],
-            evidence["evidence_last_sequence"], evidence["evidence_final_event_hash"], now_ms)
+        # §7 — LOAD + VERIFY the real bro_evidence chain from the recorder namespace (signed by the
+        # evidence-recorder authority) and DERIVE the head scalars from the VALIDATED chain. No
+        # envelope is minted from caller/supervisor-asserted head fields alone: the asserted fields
+        # are echoes that MUST equal the validated head, and the anti-rollback floor is fed the
+        # validated values. validate_chain_detailed internally loads + verifies the signed head.
+        evidence_dir = pathlib.Path(c.store.root) / "evidence"
+        ev_keys = {c.evidence_recorder_key_id: TrustedKey(
+            key_id=c.evidence_recorder_key_id, public_key=c.evidence_recorder_pubkey_hex,
+            authority_type="evidence-recorder",
+            allowed_artifact_types=("evidence-event", "evidence-head"),
+            not_before_epoch=0, not_after_epoch=(1 << 62), status=ACTIVE,
+            issued_by="brops-governed-evidence-recorder", subject_agent_id=None)}
+        try:
+            validated = validate_chain_detailed(
+                evidence["task_id"], [evidence["evidence_event_id"]], ev_keys,
+                store=evidence_dir, now=now_ms // 1000)
+        except EvidenceError as exc:
+            raise GovernedSignRefused("evidence_fork", f"evidence chain invalid: {exc}")
+        v_count = validated["event_count"]; v_last = validated["last_sequence"]
+        v_final = validated["final_event_hash"]; v_head = validated["head_sequence"]
+        if (v_count != evidence["evidence_event_count"] or v_last != evidence["evidence_last_sequence"]
+                or v_final != evidence["evidence_final_event_hash"]
+                or v_head != evidence["evidence_head_sequence"]):
+            raise GovernedSignRefused("evidence_fork", "asserted head disagrees with the validated chain")
+        # commit the durable anti-rollback floor on the VALIDATED head BEFORE the envelope is minted:
+        # a replayed OLDER head ⇒ stale_evidence; divergent lineage ⇒ evidence_fork; unchanged
+        # re-anchor advances the high-water; a byte-identical re-sign is idempotent.
+        apply_head_floor(c.head_floor_db, evidence["install_id"], evidence["task_id"],
+                         v_head, v_count, v_last, v_final, now_ms, detailed=validated)
 
         attestation_evidence = canonical_bytes(dict(evidence))
         envelope = {
