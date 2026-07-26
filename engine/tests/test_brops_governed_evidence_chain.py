@@ -23,7 +23,25 @@ for sub in ("runtime", "tools"):
 
 from bro_evidence import EvidenceError, event_hash, validate_chain_detailed  # noqa: E402
 from bro_signature import ACTIVE, TrustedKey  # noqa: E402
+from brops_evidence_store import NamespacedEvidenceStore  # noqa: E402
 from broctl import sign_payload  # noqa: E402
+
+
+class NamespacedStoreTests(unittest.TestCase):
+    """§2.3 app split: sup/ and rec/ are physically separate content-addressed namespaces;
+    publish defaults to sup, publish_rec writes rec, and read resolves from whichever holds it."""
+
+    def test_publish_and_read_across_namespaces(self):
+        d = pathlib.Path(tempfile.mkdtemp())
+        store = NamespacedEvidenceStore(d)
+        h_sup = store.publish(b"supervisor-artifact")
+        h_rec = store.publish_rec(b"recorder-artifact")
+        self.assertEqual(store.read(h_sup), b"supervisor-artifact")   # resolved from sup/
+        self.assertEqual(store.read(h_rec), b"recorder-artifact")     # resolved from rec/
+        self.assertTrue((d / "sup" / h_sup).exists())
+        self.assertTrue((d / "rec" / h_rec).exists())
+        self.assertFalse((d / "sup" / h_rec).exists())               # rec artifact NOT in sup/
+        self.assertFalse((d / "rec" / h_sup).exists())               # sup artifact NOT in rec/
 
 
 def _keypair():

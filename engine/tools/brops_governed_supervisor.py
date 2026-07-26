@@ -28,7 +28,7 @@ import brops_socket
 from bro_signature import canonical_bytes
 from bro_evidence import event_hash as evidence_event_hash
 from broctl import sign_payload
-from brops_evidence_store import EvidenceStore, EvidenceStoreError
+from brops_evidence_store import EvidenceStore, EvidenceStoreError, NamespacedEvidenceStore
 from brops_governed_common import (
     CHALLENGE_TTL_MS, EXECUTION_TIMEOUT_MS, ISSUED_RETENTION_MS,
     LEASE_DURATION_MS, MAX_CONCURRENT_GOVERNED_TURNS, MAX_GENERATION_CONFIG_BYTES,
@@ -925,7 +925,7 @@ class GovernedSupervisor:
         # §5 — child ran; persist process metadata and flip EXECUTION_STARTING -> EXECUTING.
         self._set_acceptance(handle, "EXECUTING", self.clock_ms(),
                              process_group_id=attempt, cgroup_id="process-group:" + attempt)
-        output_handle = self.store.publish(output)
+        output_handle = self.store.publish_rec(output)   # §2.3 recorder namespace (store/rec/)
         containment = {
             "artifact_type": "brops.governed-turn-containment.v1",
             "run_id": challenge["run_id"], "execution_attempt_id": attempt, "lease_id": lease_id,
@@ -933,7 +933,7 @@ class GovernedSupervisor:
             "cgroup_id": "process-group:" + attempt, "process_group_id": attempt,
             "contained": True, "teardown_outcome": "contained", "measured_at_ms": finished_at,
         }
-        containment_handle = self.store.publish(canonical_bytes(containment))
+        containment_handle = self.store.publish_rec(canonical_bytes(containment))   # §2.3 rec/
         execution_receipt_payload = {
             "artifact_type": "brops.governed-turn-execution-receipt.v1",
             "key_id": self.evidence_recorder_key["key_id"], "receipt_id": receipt_id,
@@ -944,12 +944,12 @@ class GovernedSupervisor:
             "started_at_ms": started_at, "finished_at_ms": finished_at,
         }
         execution_receipt = _sign_document(execution_receipt_payload, self.evidence_recorder_key)
-        execution_receipt_handle = self.store.publish(canonical_bytes(execution_receipt))
+        execution_receipt_handle = self.store.publish_rec(canonical_bytes(execution_receipt))   # §2.3 rec/
         # §7 — persist a REAL bro_evidence chain (event + signed head) in the recorder namespace,
         # signed by the evidence-recorder authority (bro_signature {payload,signature} format). The
         # signer LOADS + VALIDATES this chain and derives the head scalars from it; the record/
         # attestation evidence_* fields below are echoes the signer re-checks, never trusts.
-        evidence_dir = pathlib.Path(self.store.root) / "evidence"
+        evidence_dir = pathlib.Path(self.store.rec.root) / "evidence"   # §2.3 recorder namespace
         evidence_dir.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":
             os.chmod(evidence_dir, 0o2750)
@@ -1189,7 +1189,7 @@ def load_supervisor_from_env(env: Mapping[str, str] | None = None) -> GovernedSu
         record_dir=pathlib.Path(e["BROPS_GOVERNED_RECORD_DIR"]),
     )
     return GovernedSupervisor(
-        db_path=e["BROPS_GOVERNED_DB"], store=EvidenceStore(e["BROPS_EVIDENCE_STORE_DIR"]),
+        db_path=e["BROPS_GOVERNED_DB"], store=NamespacedEvidenceStore(e["BROPS_EVIDENCE_STORE_DIR"]),
         registry=registry, signer_socket=e["BROPS_SIGNER_SOCKET"],
         attestation_key=load_attestation_key(e["BROPS_SUPERVISOR_ATTESTATION_KEYDIR"]),
         lease_key=_key(e["BROPS_LEASE_ISSUER_KEYDIR"], "brops-governed-lease-issuer.json"),

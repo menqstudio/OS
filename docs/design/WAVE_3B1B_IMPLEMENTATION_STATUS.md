@@ -14,7 +14,7 @@
 | §8 | dual-key authority separation (evidence-recorder vs governed-turn-recorder; supervisor+signer) | **IMPLEMENTED** — split across supervisor signing + signer verification + env; key-confusion refusal tests GREEN |
 | §5 | durable acceptance ledger + outbox + idempotency + restart/crash recovery | **IMPLEMENTED** — `governed_turn_acceptance` outbox (9-state CHECK + 3 UNIQUE CAS); `execute()` split into ACCEPTED_PREPARED (lease bytes persisted before signing) → LEASE_READY → gate→EXPIRED/EXECUTION_STARTING → EXECUTING → COMPLETED; deterministic post-accept refusals → durable BLOCKED + idempotent replay; `recover()` (post-launch→RECOVERY_REQUIRED, stale LEASE_READY→EXPIRED). In-process ledger tests GREEN; full accept→COMPLETED E2E on Linux CI |
 | §7 | durable evidence-head anti-rollback floor + A–E CAS/fork/replay matrix + real evidence chain | **IMPLEMENTED** — signer-owned `governed_evidence_head_floor` (keyed install_id+task_id) with the full A–E matrix in one BEGIN IMMEDIATE tx, committed BEFORE the envelope: rollback→`stale_evidence`, fork→`evidence_fork`, unchanged re-anchor advances the high-water, byte-identical re-sign idempotent, valid prefix-extend via `validate_chain_detailed`; the supervisor now persists a **real `bro_evidence` chain** (event + signed head, evidence-recorder authority, `{payload,signature}` format) in the recorder namespace; the signer **loads + validates it via `validate_chain_detailed`** with a `TrustedKey` built from the evidence-recorder pubkey and **derives** `event_count`/`last_sequence`/`final_event_hash`/`head_sequence` from the validated chain (the asserted record/attestation fields must equal it, else `evidence_fork`) — no envelope is minted from asserted head fields alone. A–E floor tests + real-chain verification tests (tamper/untrusted-key/missing-head) GREEN; full E2E on Linux CI |
-| §2.3 | `2750` store custody (`S_IWGRP` refusal) + additive isolation test/proof write-denial | **IMPLEMENTED** — `_harden_dir` now creates at `2750` and refuses `S_IWGRP` (group-write) as well as world; `test_brops_isolation` additively asserts `2750` allowed / group-writable (`2770`/`0770`) refused / created-at-`2750`; `isolation_proof.sh` provisions the store at `2750` (was `2770`) and adds a machine write-denial proof (signer group member + login user cannot create/rename in the store; `stat`==`2750` guard). POSIX-only — proven on the Linux isolation job. **REMAINING (in progress):** two-namespace `sup/`+`rec/` custody + full principal matrix (see gap 2 below) |
+| §2.3 | `2750` store custody (`S_IWGRP` refusal) + additive isolation test/proof write-denial | **IMPLEMENTED** — `_harden_dir` now creates at `2750` and refuses `S_IWGRP` (group-write) as well as world; `test_brops_isolation` additively asserts `2750` allowed / group-writable (`2770`/`0770`) refused / created-at-`2750`; `isolation_proof.sh` provisions the store at `2750` (was `2770`) and adds a machine write-denial proof (signer group member + login user cannot create/rename in the store; `stat`==`2750` guard). **Two-namespace custody CLOSED:** the governed store is a `NamespacedEvidenceStore` (`store/sup/` supervisor-written + `store/rec/` recorder-written — output/containment/execution-receipt/evidence go to `rec/`, everything else to `sup/`; read resolves from whichever namespace holds the handle); `isolation_proof.sh` proves the **complete** principal × operation × namespace matrix with real `brops-recorder`/supervisor/signer/login principals (create/overwrite/rename/unlink/chmod/symlink/list/read). Linux isolation job GREEN |
 | §4.10(g) | exact frontend `governed_turn_execute` command + 4-inventory wiring | **IMPLEMENTED** — the dedicated `#[tauri::command] governed_turn_execute(conversation_id, agent)` is wired into all four capability inventories (lib.rs `generate_handler!` + build.rs COMMANDS + command-policy.json + capabilities/default.json), capability gate GREEN at **67** (was 66); system/history/config/run_id/task_id are all backend-resolved (never cross the webview); `resolve_governed_generation_config_v1b()` is the single generation-config source (5 frozen literals + 4 `BROPS_GOVERNED_*` host overrides, `engine_id` immutable). Refinements remaining: freezing `stream_reply`'s governed branch entirely into the new command + private `PreparedGovernedTurnV1B` fields (audit MINOR, single-process/immutable so fails closed) |
 
 Then: full normative test matrix, one real end-to-end proof, exact-head CI + Linux isolation GREEN, and a fresh zero-trust audit.
@@ -42,21 +42,20 @@ completeness / defense-in-depth (all fail-closed, no wrong-accept). **Remediated
 - **MINORs:** `final_event_hash` 64-**hex** check; floor `DatabaseError` fails closed to refused;
   store docstring corrected to the 2750 model. New tests for each. 
 
-## Genuinely-remaining §0–§9 gaps (the ONLY open items; being closed now)
+## §0–§9 gaps — BOTH CLOSED
 
-Fail-closed (not attacker-exploitable under the §0 threat model); being closed in this branch before
-3b-1B is called design-faithful complete:
+Both previously-tracked infrastructure gaps are now implemented in this branch and CI-proven:
 
 1. ~~**§7 real evidence chain**~~ — **CLOSED**: the supervisor persists a real `bro_evidence` event +
    signed head (evidence-recorder authority) in the recorder namespace; the signer loads + validates it
    via `validate_chain_detailed` and derives the head scalars from the validated chain, refusing if the
    asserted fields disagree — no envelope from asserted head fields alone. Real-chain verification tests
    + the A–E floor tests GREEN; full E2E on Linux CI.
-2. **§2.3 two-namespace store custody** (still open) — `store/sup/` (owned/written by the supervisor) vs `store/rec/`
-   (owned/written by the dedicated `brops-recorder` OS principal), signer read-traverse only in both,
-   sidecar/executor/login denied; the full machine matrix (create/overwrite/rename/unlink/chmod/
-   symlink/list/read) proven in the Linux isolation job. The narrow signer/login write-denial +
-   `stat==2750` is already proven.
+2. ~~**§2.3 two-namespace store custody**~~ — **CLOSED**: the governed store is a two-namespace
+   `NamespacedEvidenceStore` (`store/sup/` supervisor-written, `store/rec/` recorder-written); the Linux
+   isolation job proves the complete principal × operation × namespace matrix with real `brops-recorder`,
+   supervisor, signer, and login principals (create/overwrite/rename/unlink/chmod/symlink-attack/list/
+   read), with a `stat==2750`/`640` mode-regression guard.
 
 ## Provenance
 

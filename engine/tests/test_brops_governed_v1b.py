@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT.parent / "bridge"))
 import brops_socket
 from bro_signature import canonical_bytes
 from brops_challenge_authority import AuthorityConfig, ChallengeAuthority
-from brops_evidence_store import EvidenceStore
+from brops_evidence_store import NamespacedEvidenceStore as EvidenceStore
 from brops_governed_common import (
     DEFAULT_GENERATION_CONFIG, OUTPUT_STREAM_RETENTION_MS, OUTPUT_STREAM_TTL_MS,
     PINNED_GENERATION_CONFIG_SHA256, STAGING_CHUNK_BYTES,

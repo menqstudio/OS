@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 
 from bro_evidence import EvidenceError, load_head, validate_chain_detailed
 from bro_signature import ACTIVE, TrustedKey, canonical_bytes
-from brops_evidence_store import EvidenceStore, EvidenceStoreError
+from brops_evidence_store import EvidenceStore, EvidenceStoreError, NamespacedEvidenceStore
 from brops_governed_common import (
     LEASE_DURATION_MS, GovernedProtocolError, b64url_decode, b64url_encode,
     generation_config_sha256, model_profile_id, request_sha256,
@@ -389,7 +389,7 @@ def sign_governed(request: Mapping[str, Any], c: GovernedSignerComponents, now_m
         # envelope is minted from caller/supervisor-asserted head fields alone: the asserted fields
         # are echoes that MUST equal the validated head, and the anti-rollback floor is fed the
         # validated values. validate_chain_detailed internally loads + verifies the signed head.
-        evidence_dir = pathlib.Path(c.store.root) / "evidence"
+        evidence_dir = pathlib.Path(c.store.rec.root) / "evidence"   # §2.3 recorder namespace
         ev_keys = {c.evidence_recorder_key_id: TrustedKey(
             key_id=c.evidence_recorder_key_id, public_key=c.evidence_recorder_pubkey_hex,
             authority_type="evidence-recorder",
@@ -491,7 +491,7 @@ def load_governed_signer_components(env: Mapping[str, str] | None = None) -> Gov
     if not isinstance(roots, dict) or not roots:
         raise ValueError("challenge root map missing")
     return GovernedSignerComponents(
-        store=EvidenceStore(e["BROPS_EVIDENCE_STORE_DIR"]),
+        store=NamespacedEvidenceStore(e["BROPS_EVIDENCE_STORE_DIR"]),
         receipt_signing_key=load_receipt_signing_key(e["BROPS_RECEIPT_SIGNER_KEYDIR"]),
         supervisor_attestation_pubkey_hex=e["BROPS_SUPERVISOR_ATTESTATION_PUBKEY"].strip(),
         supervisor_attestation_key_id=e["BROPS_SUPERVISOR_ATTESTATION_KEY_ID"].strip(),

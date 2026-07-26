@@ -28,7 +28,7 @@ from brops_governed_common import (  # noqa: E402
     DEFAULT_GENERATION_CONFIG, LEASE_DURATION_MS, MIN_LAUNCH_REMAINING_MS,
     PINNED_GENERATION_CONFIG_SHA256, generation_config_sha256, sha256_hex,
 )
-from brops_evidence_store import EvidenceStore  # noqa: E402
+from brops_evidence_store import NamespacedEvidenceStore as EvidenceStore  # noqa: E402
 from brops_governed_supervisor import (  # noqa: E402
     ChallengeRegistry, GovernedSupervisor, SupervisorConfig,
 )

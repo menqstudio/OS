@@ -206,3 +206,29 @@ class EvidenceStore:
         if sha256_hex(data) != handle:
             raise EvidenceStoreError(f"evidence store corruption: {handle} bytes do not hash to it")
         return data
+
+
+class NamespacedEvidenceStore:
+    """§2.3 two-namespace governed store: `sup/` (supervisor-written) + `rec/` (recorder-written),
+    each a content-addressed `EvidenceStore` under a shared root, both hardened to 2750. `publish`
+    defaults to the supervisor namespace; `publish_rec` writes the recorder namespace; `read` is
+    content-addressed and resolves from whichever namespace physically holds the handle. In a real
+    two-principal deployment `sup/` is owned/written by the supervisor and `rec/` by the dedicated
+    brops-recorder principal (the OS ACLs enforcing that boundary are machine-proven by
+    `engine/ci/isolation_proof.sh`); the signer reads both, and the login/sidecar/executor neither."""
+
+    def __init__(self, root: os.PathLike[str] | str) -> None:
+        self.root = pathlib.Path(root)
+        self.sup = EvidenceStore(self.root / "sup")
+        self.rec = EvidenceStore(self.root / "rec")
+
+    def publish(self, data: bytes) -> str:
+        return self.sup.publish(data)
+
+    def publish_rec(self, data: bytes) -> str:
+        return self.rec.publish(data)
+
+    def read(self, handle: str) -> bytes:
+        if self.rec._path(handle).exists():
+            return self.rec.read(handle)
+        return self.sup.read(handle)
