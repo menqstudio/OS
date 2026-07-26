@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import tempfile
 import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -50,6 +51,30 @@ def _sign_document(payload: Mapping[str, Any], key: Mapping[str, str]) -> dict[s
     private = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(key["private_key"]))
     return {"payload": dict(payload),
             "signature": b64url_encode(private.sign(canonical_bytes(dict(payload))))}
+
+
+def _atomic_write_json(path: pathlib.Path, obj: Any) -> None:
+    """Write JSON durably: a temp file in the same dir, fsync, then a single atomic os.replace.
+    A crash can leave a stale temp (garbage-collected on the next run) but NEVER a half-written
+    evidence event/head — the signer would in any case reject a truncated head on signature verify,
+    but atomic replace means a reader only ever sees the complete file (matches the store's rigor)."""
+    data = json.dumps(obj).encode("utf-8")
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".part")
+    tmp = pathlib.Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if os.name == "posix":
+            os.chmod(tmp, 0o640)
+        os.replace(tmp, path)          # atomic on POSIX + NTFS
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def record_governed_turn(request: Mapping[str, Any], c: RecorderComponents) -> dict[str, Any]:
@@ -89,7 +114,7 @@ def record_governed_turn(request: Mapping[str, Any], c: RecorderComponents) -> d
     containment_handle = c.rec_store.publish(canonical_bytes(containment))
     execution_receipt_payload = {
         "artifact_type": "brops.governed-turn-execution-receipt.v1",
-        "key_id": key_id, "receipt_id": receipt_id,
+        "key_id": key_id, "receipt_id": receipt_id, "task_id": task_id,
         "run_id": run_id, "execution_attempt_id": attempt, "lease_id": lease_id,
         "runner_id": runner_id, "executor_id": executor_id,
         "exit_code": 0, "contained": True, "output_handle": output_handle,
@@ -117,10 +142,10 @@ def record_governed_turn(request: Mapping[str, Any], c: RecorderComponents) -> d
         "final_event_hash": final_event_hash, "event_count": 1, "last_sequence": 1,
         "head_sequence": 1, "issued_at_epoch": issued_at_epoch,
     }
-    (evidence_dir / f"{evidence_event_id}.json").write_text(
-        json.dumps(sign_payload(priv, event_payload)), encoding="utf-8")
-    (evidence_dir / f"{task_id}.head.json").write_text(
-        json.dumps(sign_payload(priv, head_payload)), encoding="utf-8")
+    # Write the event BEFORE the head, each atomically: the head names final_event_hash, so a reader
+    # that sees the head is guaranteed the event it points at is already fully on disk.
+    _atomic_write_json(evidence_dir / f"{evidence_event_id}.json", sign_payload(priv, event_payload))
+    _atomic_write_json(evidence_dir / f"{task_id}.head.json", sign_payload(priv, head_payload))
 
     return {
         "protocol": RESULT_PROTOCOL, "status": "recorded",

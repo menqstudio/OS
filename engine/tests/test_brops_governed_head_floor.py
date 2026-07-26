@@ -84,6 +84,50 @@ class HeadFloorTests(unittest.TestCase):
                 self._floor(hs, ec, ls, feh)
             self.assertEqual(ctx.exception.reason, "evidence_fork")
 
+    def test_concurrent_advances_serialize_without_lost_update_or_lock_error(self):
+        # §7 concurrency: apply_head_floor runs its A–E matrix inside a single BEGIN IMMEDIATE tx on a
+        # WAL db with a busy timeout, so racing signers SERIALIZE — no "database is locked" crash and
+        # no lost update. Bootstrap at head 1, then race 16 threads each attempting the SAME case-C
+        # advance to head 2 (identical content, higher head). The first to grab the write lock advances
+        # the high-water; every other thread blocks on BEGIN IMMEDIATE, then re-reads head 2 and is an
+        # idempotent no-op. Invariant: zero unexpected exceptions and the stored high-water is EXACTLY 2.
+        import sqlite3
+        import threading
+
+        self._floor(1, 1, 1, H1)                                     # bootstrap high-water 1
+        start = threading.Barrier(16)
+        errors: list[BaseException] = []
+
+        def advance() -> None:
+            start.wait()                                             # maximize contention
+            try:
+                self._floor(2, 1, 1, H1)                            # C: same content, head 1 -> 2
+            except GovernedSignRefused:
+                # a legitimate matrix outcome (never expected here, but not a lock/corruption bug)
+                pass
+            except BaseException as exc:                            # sqlite "database is locked", etc.
+                errors.append(exc)
+
+        threads = [threading.Thread(target=advance) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        self.assertEqual(errors, [], f"concurrent floor writes raised: {errors!r}")
+        conn = sqlite3.connect(str(self.db))
+        try:
+            (hw,) = conn.execute(
+                "SELECT highest_head_sequence FROM governed_evidence_head_floor "
+                "WHERE install_id='install' AND task_id='task-1'").fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(hw, 2)                                      # advanced exactly once, no lost update
+        # the floor now holds: any older head is stale (proves the concurrent advance was durable).
+        with self.assertRaises(GovernedSignRefused) as ctx:
+            self._floor(1, 1, 1, H1)
+        self.assertEqual(ctx.exception.reason, "stale_evidence")
+
 
 if __name__ == "__main__":
     unittest.main()

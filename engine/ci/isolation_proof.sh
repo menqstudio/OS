@@ -144,6 +144,10 @@ sudo chmod 2750 "$GS" "$GS/sup" "$GS/rec"       # setgid + owner rwx + group r-x
 # group member cannot even overwrite an existing artifact — it lacks file write).
 sudo -u brops-supervisor sh -c "umask 0027; printf sup > '$GS/sup/a.json'"
 sudo -u brops-recorder   sh -c "umask 0027; printf rec > '$GS/rec/a.json'"
+# The recorder actually writes the signed bro_evidence chain into rec/evidence/ (the exact subtree the
+# signer reads and the Q1/Q3 no-forge argument rests on): prove its custody too — owned by the
+# recorder at 2750, a 0640 head file, no supervisor/login write, signer read-only.
+sudo -u brops-recorder sh -c "umask 0027; mkdir -m 2750 '$GS/rec/evidence' && printf head > '$GS/rec/evidence/task.head.json'"
 
 deny() { local p="$1" d="$2"; shift 2
   if sudo -u "$p" sh -c "$*" 2>/dev/null; then echo "SECURITY FAIL: [$p] $d SUCCEEDED (must be DENIED)"; exit 1; fi; }
@@ -154,10 +158,10 @@ deny_login() { local d="$1"; shift
 
 # Mode-regression guard: root + both namespaces stat 2750; both seed artifacts stat 0640. (Run via
 # sudo — the login user deliberately cannot traverse the 2750 store to stat inside it.)
-for d in "$GS" "$GS/sup" "$GS/rec"; do
+for d in "$GS" "$GS/sup" "$GS/rec" "$GS/rec/evidence"; do
   m="$(sudo stat -c '%a' "$d")"; [ "$m" = "2750" ] || { echo "SECURITY FAIL: $d mode $m != 2750"; exit 1; }
 done
-for f in "$GS/sup/a.json" "$GS/rec/a.json"; do
+for f in "$GS/sup/a.json" "$GS/rec/a.json" "$GS/rec/evidence/task.head.json"; do
   m="$(sudo stat -c '%a' "$f")"; [ "$m" = "640" ] || { echo "SECURITY FAIL: $f mode $m != 640"; exit 1; }
 done
 
@@ -185,6 +189,18 @@ deny  brops-recorder "unlink sup"        "rm '$GS/sup/a.json'"
 deny  brops-recorder "chmod sup"         "chmod 600 '$GS/sup/a.json'"
 deny  brops-recorder "symlink sup"       "ln -s /etc/passwd '$GS/sup/link'"
 deny  brops-recorder "overwrite sup"     "printf x > '$GS/sup/a.json'"
+
+# rec/evidence/ (the signed bro_evidence chain subtree): recorder owns+writes it; signer read-only;
+# supervisor read-only (via group r-x on rec/); login no access.
+allow brops-recorder "create evidence"   "touch '$GS/rec/evidence/e1'"
+allow brops-recorder "rename evidence"   "mv '$GS/rec/evidence/e1' '$GS/rec/evidence/e2'"
+allow brops-recorder "unlink evidence"   "rm '$GS/rec/evidence/e2'"
+allow brops-signer   "read+list evidence" "ls '$GS/rec/evidence' >/dev/null && cat '$GS/rec/evidence/task.head.json' >/dev/null"
+deny  brops-signer   "create evidence"   "touch '$GS/rec/evidence/attack'"
+deny  brops-signer   "overwrite evidence" "printf x > '$GS/rec/evidence/task.head.json'"
+deny  brops-signer   "unlink evidence"   "rm '$GS/rec/evidence/task.head.json'"
+deny  brops-supervisor "create evidence" "touch '$GS/rec/evidence/attack'"
+deny  brops-supervisor "overwrite evidence" "printf x > '$GS/rec/evidence/task.head.json'"
 
 # signer: read/traverse+list BOTH, DENIED EVERY write op (create/overwrite/rename/unlink/chmod/
 # symlink) in BOTH namespaces — the signer is group r-x with no group-write, so it must never be
@@ -217,5 +233,7 @@ deny_login "rename sup (other)"          "mv '$GS/sup/a.json' '$GS/sup/x'"
 deny_login "chmod rec (other)"           "chmod 600 '$GS/rec/a.json'"
 deny_login "symlink sup (other)"         "ln -s /etc/passwd '$GS/sup/link'"
 deny_login "traverse+unlink rec (other)" "rm '$GS/rec/a.json'"
+deny_login "list rec/evidence (other)"   "ls '$GS/rec/evidence'"
+deny_login "read rec/evidence (other)"   "cat '$GS/rec/evidence/task.head.json'"
 
 echo "STORE-CUSTODY MATRIX PASSED — 2750 sup/+rec/; supervisor⇄sup only, recorder⇄rec only, signer read-only both, login/sidecar/executor no access"

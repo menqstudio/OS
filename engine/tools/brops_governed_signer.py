@@ -408,6 +408,24 @@ def sign_governed(request: Mapping[str, Any], c: GovernedSignerComponents, now_m
                 or v_final != evidence["evidence_final_event_hash"]
                 or v_head != evidence["evidence_head_sequence"]):
             raise GovernedSignRefused("evidence_fork", "asserted head disagrees with the validated chain")
+        # Bind the receipt AND the signed evidence event to THIS task + the ACTUAL output, so the
+        # recorder's three co-produced artifacts (receipt, event, output) cannot be recombined with
+        # foreign parts: the receipt must name this task_id, and the validated event's payload_hash
+        # (which the recorder sets to the output handle) must equal the output the signer itself
+        # hashed. Without this, receipt<->chain binding was only "same recorder call", not enforced.
+        if execution_receipt.get("task_id") != evidence["task_id"]:
+            raise GovernedSignRefused("run_binding_invalid", "execution receipt task_id mismatch")
+        try:
+            event_doc = json.loads(
+                (evidence_dir / f"{evidence['evidence_event_id']}.json").read_text(encoding="utf-8"))
+            event_payload_hash = event_doc["payload"]["payload_hash"]
+            event_task_id = event_doc["payload"]["task_id"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise GovernedSignRefused("evidence_fork", f"evidence event unreadable: {exc}")
+        if event_task_id != evidence["task_id"]:
+            raise GovernedSignRefused("evidence_fork", "evidence event task_id mismatch")
+        if event_payload_hash != output_hash:
+            raise GovernedSignRefused("run_binding_invalid", "evidence event payload_hash != output")
         # commit the durable anti-rollback floor on the VALIDATED head BEFORE the envelope is minted:
         # a replayed OLDER head ⇒ stale_evidence; divergent lineage ⇒ evidence_fork; unchanged
         # re-anchor advances the high-water; a byte-identical re-sign is idempotent.

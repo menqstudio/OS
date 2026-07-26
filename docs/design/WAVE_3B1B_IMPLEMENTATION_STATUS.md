@@ -66,6 +66,38 @@ Both previously-tracked infrastructure gaps are now implemented in this branch a
    `stat==2750`/`640` mode-regression guard. In-process recorder-core tests exercise the runner on
    Windows; the full supervisor→recorder→signer AF_UNIX E2E runs on Linux CI.
 
+## Trust boundary + known limitations (honest — do NOT overclaim)
+
+An independent zero-trust audit (compromised-supervisor threat model) confirmed the custody wall and
+signature isolation are sound, and surfaced two limitations that this document states plainly so the
+receipt is never read as proving more than it does:
+
+- **The recorder is a NOTARY, not an execution monitor.** `record_governed_turn` signs the output
+  bytes the supervisor hands it and records fixed containment/exit facts (`contained=True`,
+  `exit_code=0`); it does NOT independently launch the executor, measure a cgroup/process group, or
+  otherwise prove that a contained execution actually occurred. In rev-26 the **supervisor remains the
+  trusted containment monitor** — the two-principal split defends *evidence-recorder key custody and
+  chain integrity* (a compromised supervisor cannot forge recorder signatures or write `rec/`), NOT
+  the proposition "a contained execution happened". A fully-compromised supervisor, for a turn the
+  desktop legitimately challenged, could substitute output bytes and obtain a genuine
+  recorder-signed receipt over them (the challenge pins `system`/`history`/`generation_config`, but
+  not the not-yet-existing output). **Executor-authenticated output** (the executor signing its own
+  output so substitution is detectable) is a FUTURE item and is explicitly NOT claimed done here.
+  What IS enforced: the receipt, the signed evidence event, and the output are now cryptographically
+  bound to one task — the signer refuses unless `execution_receipt.task_id == record.task_id`, the
+  event's `task_id` matches, and the event's `payload_hash` equals the output the signer itself
+  hashes — so the recorder's three co-produced artifacts cannot be recombined with foreign parts.
+- **The §7 A–E floor is exercised only at single-event scope today.** The recorder currently mints a
+  one-event chain per turn (`head_sequence=1`), so only bootstrap + branch B (same-sequence) fire;
+  branches C/D (multi-event advance / prefix-extension) and `min_head_sequence` are retained for a
+  future multi-event chain design and are NOT reached by current minting. Because of branch B, a
+  `task_id` MUST be unique per governed turn (a reused `task_id` with different content is refused as
+  `evidence_fork`). Cross-turn replay is therefore stopped by the freshness window + `receipt_id` /
+  `execution_attempt_id` uniqueness + the §5 durable acceptance ledger, NOT by the floor. This is
+  faithful to per-turn scope; the floor machinery is real and unit-tested (incl. a concurrency test
+  proving `BEGIN IMMEDIATE` serialization) but its multi-event branches are dormant until a
+  multi-event chain design lands.
+
 ## Provenance
 
 Reconstructed from the ChatGPT partial (`OS_PARTIAL_HANDOFF_2026-07-26`, sha256 `b043ae3b…`) applied
