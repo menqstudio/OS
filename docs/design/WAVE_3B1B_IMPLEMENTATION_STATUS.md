@@ -13,8 +13,8 @@
 |---|---|---|
 | §8 | dual-key authority separation (evidence-recorder vs governed-turn-recorder; supervisor+signer) | **IMPLEMENTED** — split across supervisor signing + signer verification + env; key-confusion refusal tests GREEN |
 | §5 | durable acceptance ledger + outbox + idempotency + restart/crash recovery | **IMPLEMENTED** — `governed_turn_acceptance` outbox (9-state CHECK + 3 UNIQUE CAS); `execute()` split into ACCEPTED_PREPARED (lease bytes persisted before signing) → LEASE_READY → gate→EXPIRED/EXECUTION_STARTING → EXECUTING → COMPLETED; deterministic post-accept refusals → durable BLOCKED + idempotent replay; `recover()` (post-launch→RECOVERY_REQUIRED, stale LEASE_READY→EXPIRED). In-process ledger tests GREEN; full accept→COMPLETED E2E on Linux CI |
-| §7 | durable evidence-head anti-rollback floor + A–E CAS/fork/replay matrix + real evidence chain | **IMPLEMENTED** — signer-owned `governed_evidence_head_floor` (keyed install_id+task_id) with the full A–E matrix in one BEGIN IMMEDIATE tx, committed BEFORE the envelope: rollback→`stale_evidence`, fork→`evidence_fork`, unchanged re-anchor advances the high-water, byte-identical re-sign idempotent, valid prefix-extend via `validate_chain_detailed`; supervisor now emits a real single-event head (`head_sequence`/`event_count`/`last_sequence`=1). A–E floor tests GREEN; full E2E through the floor on Linux CI |
-| §2.3 | `2750` store custody (`S_IWGRP` refusal) + additive isolation test/proof write-denial | **IMPLEMENTED** — `_harden_dir` now creates at `2750` and refuses `S_IWGRP` (group-write) as well as world; `test_brops_isolation` additively asserts `2750` allowed / group-writable (`2770`/`0770`) refused / created-at-`2750`; `isolation_proof.sh` provisions the store at `2750` (was `2770`) and adds a machine write-denial proof (signer group member + login user cannot create/rename in the store; `stat`==`2750` guard). POSIX-only — proven on the Linux isolation job |
+| §7 | durable evidence-head anti-rollback floor + A–E CAS/fork/replay matrix + real evidence chain | **IMPLEMENTED** — signer-owned `governed_evidence_head_floor` (keyed install_id+task_id) with the full A–E matrix in one BEGIN IMMEDIATE tx, committed BEFORE the envelope: rollback→`stale_evidence`, fork→`evidence_fork`, unchanged re-anchor advances the high-water, byte-identical re-sign idempotent, valid prefix-extend via `validate_chain_detailed`; supervisor now emits a real single-event head (`head_sequence`/`event_count`/`last_sequence`=1). A–E floor tests GREEN; full E2E through the floor on Linux CI. **REMAINING (in progress):** real `bro_evidence` chain the signer loads + validates (see gap 1 below) |
+| §2.3 | `2750` store custody (`S_IWGRP` refusal) + additive isolation test/proof write-denial | **IMPLEMENTED** — `_harden_dir` now creates at `2750` and refuses `S_IWGRP` (group-write) as well as world; `test_brops_isolation` additively asserts `2750` allowed / group-writable (`2770`/`0770`) refused / created-at-`2750`; `isolation_proof.sh` provisions the store at `2750` (was `2770`) and adds a machine write-denial proof (signer group member + login user cannot create/rename in the store; `stat`==`2750` guard). POSIX-only — proven on the Linux isolation job. **REMAINING (in progress):** two-namespace `sup/`+`rec/` custody + full principal matrix (see gap 2 below) |
 | §4.10(g) | exact frontend `governed_turn_execute` command + 4-inventory wiring | **IMPLEMENTED** — the dedicated `#[tauri::command] governed_turn_execute(conversation_id, agent)` is wired into all four capability inventories (lib.rs `generate_handler!` + build.rs COMMANDS + command-policy.json + capabilities/default.json), capability gate GREEN at **67** (was 66); system/history/config/run_id/task_id are all backend-resolved (never cross the webview); `resolve_governed_generation_config_v1b()` is the single generation-config source (5 frozen literals + 4 `BROPS_GOVERNED_*` host overrides, `engine_id` immutable). Refinements remaining: freezing `stream_reply`'s governed branch entirely into the new command + private `PreparedGovernedTurnV1B` fields (audit MINOR, single-process/immutable so fails closed) |
 
 Then: full normative test matrix, one real end-to-end proof, exact-head CI + Linux isolation GREEN, and a fresh zero-trust audit.
@@ -42,86 +42,28 @@ completeness / defense-in-depth (all fail-closed, no wrong-accept). **Remediated
 - **MINORs:** `final_event_hash` 64-**hex** check; floor `DatabaseError` fails closed to refused;
   store docstring corrected to the 2750 model. New tests for each. 
 
-**Two larger items are honestly tracked, NOT silently claimed fixed** (both fail-closed, not
-attacker-exploitable under the §0 threat model): the §7 floor still verifies supervisor-asserted
-head values rather than loading a real `bro_evidence` chain (its A–E logic is correct + tested,
-but `load_head`/`validate_chain_detailed` against real events is not wired, so cases A/C/D don't
-fire in the single-turn governed flow); and the §2.3 two-namespace (`store/sup/` vs `store/rec/`)
-+ dedicated `brops-recorder` OS-principal write matrix is not implemented (the narrow signer/login
-write-denial + `stat==2750` IS proven). Both require substantial new infrastructure.
+## Genuinely-remaining §0–§9 gaps (the ONLY open items; being closed now)
 
-## Provenance + scope
+Both currently fail-closed (not attacker-exploitable under the §0 threat model), and both are being
+implemented in this branch before 3b-1B is called design-faithful complete:
 
-The partial was authored against the rev-26 constants/closures but on the rev-25 *code* tree. It was
-applied here with `git apply --3way` onto live rev-26; the canonical docs were preserved. This RC is
-**3b-1B trust-chain only** — it is explicitly NOT 3b-2, NOT 3b-3, and NOT the Phase 0–10 application
-completion. Per the repo ordering law (`WAVE_3B1_EXECUTION_BINDING_MAP.md`: "3b-2 does not start
-until 3b-1 is exact-head zero-trust GREEN and merged"), 3b-2/3b-3 remain **held** until the Owner
-merges 3b-1 and the Architect returns design-GREEN.
+1. **§7 real evidence chain** — the floor's A–E logic is correct + tested, but the signer verifies
+   supervisor-asserted head scalars rather than loading a real `bro_evidence` event chain + signed head
+   from the recorder namespace and deriving `event_count`/`last_sequence`/`final_event_hash`/
+   `head_sequence` from `validate_chain_detailed`. Being wired so no envelope can be minted from
+   caller/supervisor-asserted head fields alone.
+2. **§2.3 two-namespace store custody** — `store/sup/` (owned/written by the supervisor) vs `store/rec/`
+   (owned/written by the dedicated `brops-recorder` OS principal), signer read-traverse only in both,
+   sidecar/executor/login denied; the full machine matrix (create/overwrite/rename/unlink/chmod/
+   symlink/list/read) proven in the Linux isolation job. The narrow signer/login write-denial +
+   `stat==2750` is already proven.
 
-## Zero-trust audit → remediation (this RC)
+## Provenance
 
-A fresh 4-track zero-trust audit (challenge-authority · governed supervisor/signer · desktop Rust
-trust chain · bridge/schemas) was run against the full rev-26 §0–§9 and the real code. The desktop
-verifier was found **cryptographically sound and fail-closed** (production `trusted_verified` is
-gated behind the complete signature→manifest-root→attestation→§7.1-binding→nonce→uniqueness→freshness
-chain; `NoTrustedManifest` stays fail-closed; `receipt.rs` and its frozen fixtures are byte-identical;
-strict-JCS and manifest anti-rollback are genuine; the `cfg-sha256:` identity formula and pinned
-`generation_config_sha256 = 732b5863…` are correct, no registry-as-identity). The audit found
-**4 BLOCKER + 9 MAJOR + minors**, split into two tiers.
-
-### Tier-1 — CLOSED in this RC (contained, locally verified where the platform allows)
-
-| # | Area | Fix |
-|---|---|---|
-| B | challenge-authority §2.1.1(d) | a physically-present but retention-expired ISSUED row now refuses `pending_expired` (was the swept-case `no_pending_row`); inline DELETE removed, cleanup left to `sweep()`. Both main + CAS-loser paths. New test. |
-| M | challenge-authority §2.1(B) | an oversize ISSUE frame now refuses in-set `malformed` (was out-of-set `oversize`). New test. |
-| B | bridge diagnostic §4.10(h) | the diagnostic `stage` vocabulary is now exactly the 5 locked sidecar hops (`governed-turn-open`/`staging-open`/`staging-chunk`/`staging-final`/`evidence-request`) across schema + `brops_governed_common.py` + `governed_v1b.py` + the `ai.rs` classifier; transport/local failures now use a distinct signature-free `bridge.governed-turn-transport-failure.v1` frame that the desktop rule-4 catch-all maps to `governed_transport_failure`. New pure tests. |
-| B | bridge result §4.5/§4.6 | the refused arm `reason` is now a CLOSED enum (the enforced 22-member `GOVERNED_REFUSAL_REASONS`), not an open `string`. |
-| M | bridge result §4.6/§4.10(f) | the success-arm receipt schema now carries `key_id` + `receipt_id` (the producer emits them; the desktop pull binding requires `receipt_id`). |
-| M | desktop routing §4.10(f) | an output-read refusal now uses the disjoint 4th prefix `governed_output_read_refused:{reason}` (was mislabeled `governed_verdict_refused:`). |
-| M | supervisor output-stream §4.10(f) | quota is now **FIFO-evict** (oldest by `created_at_ms`) with `MAX_OUTPUT_STREAM_ROWS_PER_INSTALL = 64` + a `MAX_OUTPUT_STREAM_BYTES_PER_INSTALL = 512 MiB` byte quota; a completing/signed turn's stream is **always** created (was refusing it with `stream_unknown`). Row eviction never unlinks the content-addressed output bytes. |
-| M | supervisor §4.10(d) | pre-acceptance "no INPUTS_READY row" failures now return the disjoint `brops.governed-evidence-request-result.v1 {refused, no_inputs_ready}` (was leaking `challenge_replay`/`lease_not_ready`, which are `GOVERNED_REFUSAL_REASONS` verdict members); the bridge routes it to a stage-`evidence-request` diagnostic. |
-| m | desktop hardening | `record_handle` is now type-validated (64-hex) in `prepare_with_snapshot` so a malformed signed envelope refuses rather than panics; removed an unused `manifest.rs` import. |
-
-### Tier-2 — DEFERRED (tracked; not in this RC)
-
-These are large, security-critical mechanisms that are **absent or reduced** in the partial. They are
-deferred deliberately: each is provable only on the Linux CI harness (AF_UNIX + `SO_PEERCRED` +
-dedicated principals — unrunnable on the Windows dev box), and several touch design that the Architect
-has not yet design-GREENed, so implementing them now risks rework against a moving rev-26 closure
-review. **Independently verified as genuinely absent** (not audit artifacts):
-
-1. **§7 durable evidence-head anti-rollback floor** — no `governed_evidence_head_floor` table, no
-   `validate_chain_detailed`, no A–E CAS matrix; the supervisor mints a degenerate inline evidence
-   event (`evidence_head_sequence: 0`, `evidence_event_count: 1`). A rolled-back/forked/stale head is
-   not detectable, and the §9 "replayed old evidence head" negative test cannot pass.
-2. **§5 durable acceptance ledger + outbox + crash-recovery** — no separate `governed_turn_acceptance`
-   table; the `ACCEPTED_PREPARED`/`LEASE_READY`/`EXECUTION_STARTING` states are folded into the single
-   synchronous `governed_turn_staging` table with no persisted `lease_payload_bytes` and no restart
-   re-evaluation of the launch gate.
-3. **§8 dual-key authority separation** — a single `recorder_key` signs BOTH the execution receipt and
-   the terminal record; §8 requires a distinct evidence-recorder principal vs the governed-turn-recorder.
-   A faithful fix spans the engine signer + supervisor + desktop verifier + signed manifest + pinned
-   roots + the Linux-only isolation proof.
-4. **Desktop `governed_turn_execute` command (§4.10(g))** — the design mandates exactly one new
-   frontend-exposed governed command; the partial folded the flow into the frozen Wave-3a `stream_reply`
-   branch instead. Security is contained (all inputs backend-resolved, already capability-gated, 66-command
-   gate intact), but it is a frozen-path / design-conformance deviation to reconcile.
-5. **§2.3 `2750` store-custody hardening (group read-only, refuse `S_IWGRP`)** — rev-26 §2.3 (lines
-   600–617) tightens the evidence-store ACL to `2750` and requires refusing a group-writable store dir.
-   The partial implemented this, but it is **incompatible with the frozen-GREEN 3b-1A isolation test**
-   (`test_brops_isolation.py::test_store_allows_a_group_shared_but_not_world_dir` asserts `0770` is
-   allowed) **and the 3b-1A signer isolation proof** (`engine/ci/isolation_proof.sh`, which provisions a
-   group-writable store). Landing §2.3 requires inverting those frozen 3b-1A security proofs to the new
-   model — a design-gated change (rev-26 is not Architect-GREEN) provable only on the Linux isolation
-   harness. The store code is therefore restored to the frozen 3b-1A behavior for this RC; §2.3
-   store-custody is deferred pending design-GREEN + a coordinated update of the 3b-1A proof/test.
-
-Lower-severity deferrals (defense-in-depth / completeness, current behavior is safe): `load_snapshot`
-root-signature re-verification on use; the `BROPS_GOVERNED_*` override resolver; `PreparedGovernedTurnV1B`
-field encapsulation; the code(22)-vs-addendum(27) `GOVERNED_REFUSAL_REASONS` reconciliation; the
-looser-than-code submit `max_output_tokens` schema pattern.
+Reconstructed from the ChatGPT partial (`OS_PARTIAL_HANDOFF_2026-07-26`, sha256 `b043ae3b…`) applied
+with `git apply --3way` onto the exact rev-26 base `6ebeca8`; the five rev-26 canonical docs are
+byte-for-byte preserved. Scope is **3b-1B trust-chain only** — NOT 3b-2/3b-3/Phase 0–10 (held by the
+repo ordering law until 3b-1 is merged). Each mechanism above is its own exact-head-CI-8/8 commit.
 
 ## STOP gates (unchanged, in force)
 
