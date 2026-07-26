@@ -13,7 +13,7 @@
 |---|---|---|
 | §8 | dual-key authority separation (evidence-recorder vs governed-turn-recorder; supervisor+signer) | **IMPLEMENTED** — split across supervisor signing + signer verification + env; key-confusion refusal tests GREEN |
 | §5 | durable acceptance ledger + outbox + idempotency + restart/crash recovery | **IMPLEMENTED** — `governed_turn_acceptance` outbox (9-state CHECK + 3 UNIQUE CAS); `execute()` split into ACCEPTED_PREPARED (lease bytes persisted before signing) → LEASE_READY → gate→EXPIRED/EXECUTION_STARTING → EXECUTING → COMPLETED; deterministic post-accept refusals → durable BLOCKED + idempotent replay; `recover()` (post-launch→RECOVERY_REQUIRED, stale LEASE_READY→EXPIRED). In-process ledger tests GREEN; full accept→COMPLETED E2E on Linux CI |
-| §7 | durable evidence-head anti-rollback floor + A–E CAS/fork/replay matrix + real evidence chain | IN PROGRESS |
+| §7 | durable evidence-head anti-rollback floor + A–E CAS/fork/replay matrix + real evidence chain | **IMPLEMENTED** — signer-owned `governed_evidence_head_floor` (keyed install_id+task_id) with the full A–E matrix in one BEGIN IMMEDIATE tx, committed BEFORE the envelope: rollback→`stale_evidence`, fork→`evidence_fork`, unchanged re-anchor advances the high-water, byte-identical re-sign idempotent, valid prefix-extend via `validate_chain_detailed`; supervisor now emits a real single-event head (`head_sequence`/`event_count`/`last_sequence`=1). A–E floor tests GREEN; full E2E through the floor on Linux CI |
 | §2.3 | `2750` store custody (`S_IWGRP` refusal) + additive isolation test/proof write-denial | IN PROGRESS |
 | §4.10(g) | exact frontend `governed_turn_execute` command (unfold from `stream_reply`) + 4-inventory wiring | IN PROGRESS |
 

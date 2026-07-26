@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import sqlite3
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -56,6 +57,96 @@ class GovernedSignRefused(Exception):
         self.reason = reason if reason in REFUSAL_REASONS else "malformed"
 
 
+_FLOOR_DDL = """
+CREATE TABLE IF NOT EXISTS governed_evidence_head_floor (
+  install_id TEXT NOT NULL, task_id TEXT NOT NULL,
+  highest_head_sequence INTEGER NOT NULL CHECK(highest_head_sequence >= 1),
+  event_count INTEGER NOT NULL CHECK(event_count >= 1),
+  last_sequence INTEGER NOT NULL CHECK(last_sequence >= 1),
+  final_event_hash TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (install_id, task_id)
+);
+"""
+
+
+def apply_head_floor(db_path, install_id: str, task_id: str, head_sequence: int,
+                     event_count: int, last_sequence: int, final_event_hash: str,
+                     now_ms: int, detailed: Mapping[str, Any] | None = None) -> None:
+    """§7 durable evidence-head anti-rollback floor (signer-owned), keyed on (install_id, task_id).
+
+    Runs the LOCKED A–E matrix in one BEGIN IMMEDIATE tx and COMMITS the floor BEFORE the caller
+    signs the §4.9 envelope, closing the TOCTOU:
+      A. head_sequence < stored high-water            -> refuse stale_evidence (rollback)
+      B. head_sequence == stored & content equal       -> idempotent re-sign (no change)
+         head_sequence == stored & content differs      -> refuse evidence_fork
+      C. head_sequence >  stored & content equal        -> valid unchanged re-anchor (advance head only)
+      D. head_sequence >  stored & count increased       -> accept iff the new chain reproduces the
+                                                            stored chain as its EXACT prefix (needs
+                                                            `detailed` from validate_chain_detailed)
+      E. any other higher-head case                      -> refuse evidence_fork
+      bootstrap (no row)                                 -> INSERT the validated head
+    A real evidence head has head_sequence/event_count/last_sequence >= 1 and last_sequence ==
+    event_count; anything else is a fork (a degenerate head cannot anchor identity)."""
+    for value in (head_sequence, event_count, last_sequence):
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise GovernedSignRefused("evidence_fork", "degenerate evidence head")
+    if last_sequence != event_count:
+        raise GovernedSignRefused("evidence_fork", "last_sequence != event_count")
+    if not isinstance(final_event_hash, str) or len(final_event_hash) != 64:
+        raise GovernedSignRefused("evidence_fork", "final_event_hash not a sha256 digest")
+    conn = sqlite3.connect(str(db_path), isolation_level=None, timeout=30)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.executescript(_FLOOR_DDL)
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT highest_head_sequence,event_count,last_sequence,final_event_hash "
+            "FROM governed_evidence_head_floor WHERE install_id=? AND task_id=?",
+            (install_id, task_id)).fetchone()
+        if row is None:  # bootstrap
+            conn.execute(
+                "INSERT INTO governed_evidence_head_floor(install_id,task_id,highest_head_sequence,"
+                "event_count,last_sequence,final_event_hash,updated_at_ms) VALUES(?,?,?,?,?,?,?)",
+                (install_id, task_id, head_sequence, event_count, last_sequence, final_event_hash, now_ms))
+            conn.execute("COMMIT"); return
+        stored_hhs, stored_ec, stored_ls, stored_feh = row
+        content_equal = (event_count == stored_ec and last_sequence == stored_ls
+                         and final_event_hash == stored_feh)
+        if head_sequence < stored_hhs:                                            # A
+            conn.execute("ROLLBACK")
+            raise GovernedSignRefused("stale_evidence", "rolled-back evidence head")
+        if head_sequence == stored_hhs:                                           # B
+            if content_equal:
+                conn.execute("COMMIT"); return
+            conn.execute("ROLLBACK")
+            raise GovernedSignRefused("evidence_fork", "same head_sequence, different content")
+        if content_equal:                                                         # C
+            conn.execute(
+                "UPDATE governed_evidence_head_floor SET highest_head_sequence=?,updated_at_ms=? "
+                "WHERE install_id=? AND task_id=?", (head_sequence, now_ms, install_id, task_id))
+            conn.execute("COMMIT"); return
+        if event_count > stored_ec and last_sequence == event_count:              # D
+            hashes = list((detailed or {}).get("event_hashes") or [])
+            prevs = list((detailed or {}).get("previous_event_hashes") or [])
+            idx = stored_ec - 1
+            if (detailed is None or (detailed.get("event_count") != event_count)
+                    or len(hashes) != event_count or idx >= len(hashes)
+                    or hashes[idx] != stored_feh
+                    or idx + 1 >= len(prevs) or prevs[idx + 1] != stored_feh):
+                conn.execute("ROLLBACK")
+                raise GovernedSignRefused("evidence_fork", "extension does not reproduce stored prefix")
+            conn.execute(
+                "UPDATE governed_evidence_head_floor SET highest_head_sequence=?,event_count=?,"
+                "last_sequence=?,final_event_hash=?,updated_at_ms=? WHERE install_id=? AND task_id=?",
+                (head_sequence, event_count, last_sequence, final_event_hash, now_ms, install_id, task_id))
+            conn.execute("COMMIT"); return
+        conn.execute("ROLLBACK")                                                  # E
+        raise GovernedSignRefused("evidence_fork", "divergent higher-head lineage")
+    finally:
+        conn.close()
+
+
 @dataclass(frozen=True)
 class GovernedSignerComponents:
     store: EvidenceStore
@@ -78,6 +169,8 @@ class GovernedSignerComponents:
     allowed_supervisor_ids: frozenset[str]
     expected_policy_id: str
     expected_policy_version: str
+    # §7 signer-owned durable evidence-head anti-rollback floor DB (separate from the read-only store).
+    head_floor_db: pathlib.Path
 
 
 def _verify_sig(payload: Mapping[str, Any], sig_b64: str, public_key_hex: str, reason: str) -> None:
@@ -273,6 +366,14 @@ def sign_governed(request: Mapping[str, Any], c: GovernedSignerComponents, now_m
         for field in ("evidence_event_count", "evidence_last_sequence", "evidence_head_sequence", "evidence_final_event_hash"):
             if record.get(field) != evidence[field]:
                 raise GovernedSignRefused("evidence_fork")
+        # §7 — durable evidence-head anti-rollback floor, committed BEFORE the envelope is minted:
+        # a replayed OLDER head (lower head_sequence) ⇒ stale_evidence; a divergent lineage ⇒
+        # evidence_fork; an unchanged re-anchor advances the high-water; a byte-identical re-sign is
+        # idempotent. Keyed on (install_id, task_id) in a BEGIN IMMEDIATE tx.
+        apply_head_floor(
+            c.head_floor_db, evidence["install_id"], evidence["task_id"],
+            evidence["evidence_head_sequence"], evidence["evidence_event_count"],
+            evidence["evidence_last_sequence"], evidence["evidence_final_event_hash"], now_ms)
 
         attestation_evidence = canonical_bytes(dict(evidence))
         envelope = {
@@ -365,4 +466,5 @@ def load_governed_signer_components(env: Mapping[str, str] | None = None) -> Gov
         allowed_supervisor_ids=frozenset(x.strip() for x in e["BROPS_ALLOWED_SUPERVISOR_IDS"].split(",") if x.strip()),
         expected_policy_id=e["BROPS_EXPECTED_POLICY_ID"].strip(),
         expected_policy_version=e["BROPS_EXPECTED_POLICY_VERSION"].strip(),
+        head_floor_db=pathlib.Path(e["BROPS_GOVERNED_HEAD_FLOOR_DB"]),
     )

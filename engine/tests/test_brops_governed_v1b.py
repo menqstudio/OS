@@ -109,7 +109,7 @@ class GovernedV1BTests(unittest.TestCase):
             record_dir=self.record_dir,
             allowed_executor_ids=frozenset({"exec"}), allowed_runner_ids=frozenset({"runner"}),
             allowed_supervisor_ids=frozenset({"sup"}), expected_policy_id="policy",
-            expected_policy_version="1",
+            expected_policy_version="1", head_floor_db=self.root / "head_floor.db",
         )
         ready = threading.Event()
         self.signer_thread = threading.Thread(

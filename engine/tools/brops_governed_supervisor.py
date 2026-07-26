@@ -950,7 +950,7 @@ class GovernedSupervisor:
             "containment_evidence_sha256": containment_handle, "containment_event_id": str(uuid.uuid4()),
             "receipt_id": receipt_id, "execution_receipt_handle": execution_receipt_handle,
             "evidence_final_event_hash": event_hash, "evidence_event_count": 1,
-            "evidence_last_sequence": 0, "evidence_head_sequence": 0, "completed_at_ms": finished_at,
+            "evidence_last_sequence": 1, "evidence_head_sequence": 1, "completed_at_ms": finished_at,
         }
         record_doc = _sign_document(record_payload, self.governed_turn_recorder_key)
         record_bytes = canonical_bytes(record_doc)
@@ -978,7 +978,7 @@ class GovernedSupervisor:
             "challenge_registry_hash": self.registry.payload_hash,
             "challenge_registry_epoch": self.registry.payload["registry_epoch"],
             "challenge_registry_root_key_id": self.registry.payload["root_key_id"],
-            "evidence_event_count": 1, "evidence_last_sequence": 0, "evidence_head_sequence": 0,
+            "evidence_event_count": 1, "evidence_last_sequence": 1, "evidence_head_sequence": 1,
             "evidence_final_event_hash": event_hash,
         }
         sign_request = self._attest(evidence)

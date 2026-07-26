@@ -171,6 +171,64 @@ def validate_chain(task_id: str, event_ids: list[str], keys: dict, *,
     return digest
 
 
+def validate_chain_detailed(task_id: str, event_ids: list[str], keys: dict, *,
+                            store: pathlib.Path, now: int | None = None,
+                            min_head_sequence: int | None = None) -> dict[str, Any]:
+    """Like ``validate_chain`` (full linkage/sequence/head-reproduction proof) but ALSO returns
+    the ordered per-event hash list and each event's stored ``previous_event_hash``, so a caller
+    (the §7 evidence-head floor) can prove that a longer chain reproduces a stored chain as its
+    EXACT prefix: the per-event hash at index ``stored.event_count-1`` must equal the stored
+    ``final_event_hash``, and the next event's ``previous_event_hash`` must equal it too.
+
+    Returns ``{final_event_hash, event_count, last_sequence, head_sequence,
+    event_hashes: [...], previous_event_hashes: [...]}``.
+    """
+    if not event_ids:
+        raise EvidenceError("evidence chain is empty")
+    if len(event_ids) != len(set(event_ids)):
+        raise EvidenceError("evidence event ids must be unique")
+    head = load_head(store, task_id, keys, now=now, min_head_sequence=min_head_sequence)
+    previous = None
+    digest = ""
+    event_hashes: list[str] = []
+    previous_event_hashes: list[str | None] = []
+    for index, event_id in enumerate(event_ids, start=1):
+        try:
+            payload = verify_artifact(_load(store, f"{event_id}.json"),
+                                      "evidence-event", keys, now=now)
+        except SignatureError as exc:
+            raise EvidenceError(f"evidence event {event_id} RED: {exc}") from exc
+        if set(payload) != EVENT_FIELDS:
+            raise EvidenceError(f"evidence event {event_id} has unexpected shape")
+        if payload["event_id"] != event_id or payload["task_id"] != task_id:
+            raise EvidenceError(f"evidence event {event_id} binding mismatch")
+        if payload["sequence"] != index:
+            raise EvidenceError(
+                f"evidence event {event_id} claims sequence {payload['sequence']} "
+                f"at position {index}; the chain is reordered or has a gap")
+        if payload["previous_event_hash"] != previous:
+            raise EvidenceError(f"evidence chain linkage mismatch at {event_id}")
+        previous_event_hashes.append(payload["previous_event_hash"])
+        digest = event_hash(payload)
+        event_hashes.append(digest)
+        previous = digest
+    if len(event_ids) != head.event_count:
+        raise EvidenceError(
+            f"evidence chain is incomplete: {len(event_ids)} events submitted, "
+            f"the signed head records {head.event_count}")
+    if head.last_sequence != len(event_ids):
+        raise EvidenceError("evidence head last_sequence disagrees with its own count")
+    if digest != head.final_event_hash:
+        raise EvidenceError(
+            "evidence chain does not end at the signed head; a valid prefix is "
+            "not a valid chain")
+    return {
+        "final_event_hash": digest, "event_count": head.event_count,
+        "last_sequence": head.last_sequence, "head_sequence": head.head_sequence,
+        "event_hashes": event_hashes, "previous_event_hashes": previous_event_hashes,
+    }
+
+
 def validate_criterion_evidence(task_id: str, criterion_event_ids: list[str],
                                 chain_event_ids: list[str]) -> None:
     """Every id a criterion cites must be in the validated chain.
