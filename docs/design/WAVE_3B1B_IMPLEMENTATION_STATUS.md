@@ -12,7 +12,7 @@
 | # | Mechanism | Status |
 |---|---|---|
 | §8 | dual-key authority separation (evidence-recorder vs governed-turn-recorder; supervisor+signer) | **IMPLEMENTED** — split across supervisor signing + signer verification + env; key-confusion refusal tests GREEN |
-| §5 | durable acceptance ledger + outbox + idempotency + restart/crash recovery | IN PROGRESS |
+| §5 | durable acceptance ledger + outbox + idempotency + restart/crash recovery | **IMPLEMENTED** — `governed_turn_acceptance` outbox (9-state CHECK + 3 UNIQUE CAS); `execute()` split into ACCEPTED_PREPARED (lease bytes persisted before signing) → LEASE_READY → gate→EXPIRED/EXECUTION_STARTING → EXECUTING → COMPLETED; deterministic post-accept refusals → durable BLOCKED + idempotent replay; `recover()` (post-launch→RECOVERY_REQUIRED, stale LEASE_READY→EXPIRED). In-process ledger tests GREEN; full accept→COMPLETED E2E on Linux CI |
 | §7 | durable evidence-head anti-rollback floor + A–E CAS/fork/replay matrix + real evidence chain | IN PROGRESS |
 | §2.3 | `2750` store custody (`S_IWGRP` refusal) + additive isolation test/proof write-denial | IN PROGRESS |
 | §4.10(g) | exact frontend `governed_turn_execute` command (unfold from `stream_reply`) + 4-inventory wiring | IN PROGRESS |

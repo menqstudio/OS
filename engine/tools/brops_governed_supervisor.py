@@ -401,11 +401,17 @@ class GovernedSupervisor:
             if existing["challenge_handle"] == handle and bytes(existing["challenge_document"]) == doc_bytes:
                 return {"protocol": OPEN_RESULT, "status": "opened", "challenge_handle": handle}
             return self._refused(OPEN_RESULT, "retry_conflict")
+        # Concurrent live turns = pre-accept staging (UPLOADING/INPUTS_READY, bounded by challenge
+        # expiry) + non-terminal acceptance rows (ACCEPTED_PREPARED..EXECUTING). Terminal ledger
+        # states (COMPLETED/BLOCKED/FAILED/EXPIRED/RECOVERY_REQUIRED) do not count.
         live = self.conn.execute(
-            """SELECT COUNT(*) FROM governed_turn_staging
-               WHERE install_id=? AND challenge_expires_at_ms>=?
-                 AND state IN ('UPLOADING','INPUTS_READY','ACCEPTED_PREPARED','LEASE_READY','EXECUTION_STARTING','EXECUTING')""",
+            "SELECT COUNT(*) FROM governed_turn_staging WHERE install_id=? "
+            "AND challenge_expires_at_ms>=? AND state IN ('UPLOADING','INPUTS_READY')",
             (frame["install_id"], now),
+        ).fetchone()[0] + self.conn.execute(
+            "SELECT COUNT(*) FROM governed_turn_acceptance WHERE install_id=? "
+            "AND state IN ('ACCEPTED_PREPARED','LEASE_READY','EXECUTION_STARTING','EXECUTING')",
+            (frame["install_id"],),
         ).fetchone()[0]
         if live >= MAX_CONCURRENT_GOVERNED_TURNS:
             return self._refused(OPEN_RESULT, "quota_turns")
@@ -741,37 +747,82 @@ class GovernedSupervisor:
             "evidence": dict(evidence),
         }
 
+    def _acceptance_row(self, install: str, nonce: str, handle: str):
+        return self.conn.execute(
+            "SELECT * FROM governed_turn_acceptance "
+            "WHERE install_id=? AND request_nonce=? AND challenge_handle=?",
+            (install, nonce, handle),
+        ).fetchone()
+
+    def _set_acceptance(self, handle: str, state: str, now_ms: int, *, result_json=None,
+                        failure_reason=None, lease_handle=None, process_group_id=None,
+                        cgroup_id=None, terminal_record_handle=None) -> None:
+        sets = ["state=?", "updated_at_ms=?"]
+        vals: list[Any] = [state, now_ms]
+        for col, val in (("result_json", result_json), ("failure_reason", failure_reason),
+                         ("lease_handle", lease_handle), ("process_group_id", process_group_id),
+                         ("cgroup_id", cgroup_id), ("terminal_record_handle", terminal_record_handle)):
+            if val is not None:
+                sets.append(f"{col}=?"); vals.append(val)
+        vals.append(handle)
+        with self.conn:
+            self.conn.execute(
+                f"UPDATE governed_turn_acceptance SET {','.join(sets)} WHERE challenge_handle=?", vals)
+
+    def recover(self) -> None:
+        """§5 restart scan. Post-launch ambiguity (EXECUTION_STARTING/EXECUTING with no terminal
+        proof) is fail-closed to RECOVERY_REQUIRED and NEVER auto-relaunched; a LEASE_READY row
+        whose launch gate no longer holds becomes EXPIRED. Deterministic, idempotent."""
+        now = self.clock_ms()
+        with self.conn:
+            self.conn.execute(
+                "UPDATE governed_turn_acceptance SET state='RECOVERY_REQUIRED',updated_at_ms=? "
+                "WHERE state IN ('EXECUTION_STARTING','EXECUTING') "
+                "AND terminal_record_handle IS NULL AND result_json IS NULL",
+                (now,))
+        for row in self.conn.execute(
+                "SELECT challenge_handle,lease_payload_bytes FROM governed_turn_acceptance "
+                "WHERE state='LEASE_READY'").fetchall():
+            lp = json.loads(bytes(row["lease_payload_bytes"]))
+            if not (lp["lease_issued_at_ms"] <= now <= lp["lease_expires_at_ms"]
+                    and lp["lease_expires_at_ms"] - now >= MIN_LAUNCH_REMAINING_MS):
+                verdict = self._refused(TURN_RESULT, "lease_expired")
+                self._set_acceptance(row["challenge_handle"], "EXPIRED", now,
+                                     result_json=canonical_bytes(verdict).decode("utf-8"),
+                                     failure_reason="lease_expired")
+
     def execute(self, frame: Mapping[str, Any]) -> dict[str, Any]:
         require_exact_keys(frame, {"protocol", "install_id", "challenge_handle", "request_nonce"}, "evidence request")
         install = require_id(frame["install_id"], "install_id"); nonce = require_id(frame["request_nonce"], "request_nonce")
         handle = require_hex64(frame["challenge_handle"], "challenge_handle")
+        # §5 idempotent replay: a durable acceptance verdict is returned verbatim, never re-executed.
+        prior = self._acceptance_row(install, nonce, handle)
+        if prior is not None and prior["result_json"]:
+            return json.loads(prior["result_json"])
         turn = self._turn(install, nonce, handle)
-        if turn is None:
-            # No staging row at all for this (install, nonce, handle) at the evidence-request
-            # hop ⇒ no INPUTS_READY row (§4.10(d)). Pre-acceptance internal refusal.
+        if turn is None or turn["state"] != "INPUTS_READY":
+            # No INPUTS_READY staging row ⇒ pre-acceptance internal refusal (§4.10(d)); no row created.
             return self._evidence_request_refused("no_inputs_ready")
-        if turn["result_json"]:
-            return json.loads(turn["result_json"])
-        if turn["state"] != "INPUTS_READY":
-            # Row present but staging not complete ⇒ no INPUTS_READY row (§4.10(d)).
-            return self._evidence_request_refused("no_inputs_ready")
-        now = self.clock_ms()
-        if now > turn["challenge_expires_at_ms"]:
-            return self._refused(TURN_RESULT, "challenge_invalidated")
+        now = self.clock_ms()  # §5 step 2: the acceptance clock, read exactly once.
         challenge = json.loads(turn["challenge_payload"])
-        # Final as-of-acceptance registry predicate.
-        entry = self.registry.resolve(challenge["challenge_key_id"], now)
-        if entry is None:
-            return self._refused(TURN_RESULT, "challenge_invalidated")
-        config_obj = json.loads(self.store.read(turn["generation_config_handle"]).decode("utf-8"))
-        config = validate_generation_config(config_obj)
-        cfg_hash = generation_config_sha256(config)
-        if cfg_hash != challenge["generation_config_sha256"]:
-            return self._refused(TURN_RESULT, "run_binding_invalid")
-        if cfg_hash not in self.config.generation_config_allowlist:
-            return self._refused(TURN_RESULT, "model_profile_unknown")
-        profile = model_profile_id(cfg_hash)
+        # §5 step 3 — acceptance-time authoritative verification (as-of challenge_accepted_at_ms).
+        # A deterministic refusal here is recorded as a durable BLOCKED row AFTER the CAS insert.
+        deterministic = None
+        if now > turn["challenge_expires_at_ms"] or self.registry.resolve(challenge["challenge_key_id"], now) is None:
+            deterministic = "challenge_invalidated"
+        cfg_hash = None
+        try:
+            cfg_hash = generation_config_sha256(validate_generation_config(
+                json.loads(self.store.read(turn["generation_config_handle"]).decode("utf-8"))))
+        except Exception:  # noqa: BLE001 — a malformed staged config is a deterministic binding failure
+            pass
+        if deterministic is None:
+            if cfg_hash != challenge["generation_config_sha256"]:
+                deterministic = "run_binding_invalid"
+            elif cfg_hash not in self.config.generation_config_allowlist:
+                deterministic = "model_profile_unknown"
         attempt = str(uuid.uuid4()); lease_id = str(uuid.uuid4()); receipt_id = str(uuid.uuid4())
+        profile = model_profile_id(cfg_hash) if cfg_hash else "cfg-sha256:" + "0" * 64
         lease_payload = {
             "artifact_type": "brops.governed-turn-lease.v1", "key_id": self.lease_key["key_id"],
             "schema": 1, "lease_id": lease_id, "nonce": secrets.token_urlsafe(24),
@@ -790,15 +841,52 @@ class GovernedSupervisor:
             "challenge_registry_epoch": self.registry.payload["registry_epoch"],
             "challenge_registry_root_key_id": self.registry.payload["root_key_id"],
         }
+        lease_bytes = canonical_bytes(lease_payload)
+        # §5 step 4 — CAS insert ACCEPTED_PREPARED: reserve the attempt and persist the EXACT lease
+        # bytes to be signed BEFORE any signing (crash → deterministic re-sign). The three UNIQUE
+        # constraints make this the acceptance CAS: a concurrent duplicate loses and reads the verdict.
+        try:
+            with self.conn:
+                self.conn.execute(
+                    """INSERT INTO governed_turn_acceptance(
+                       install_id,request_nonce,challenge_handle,run_id,task_id,workspace_id,
+                       execution_attempt_id,challenge_accepted_at_ms,challenge_registry_handle,
+                       challenge_registry_hash,challenge_registry_epoch,challenge_registry_root_key_id,
+                       lease_payload_sha256,lease_payload_bytes,state,created_at_ms,updated_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ACCEPTED_PREPARED',?,?)""",
+                    (install, nonce, handle, challenge["run_id"], challenge["task_id"],
+                     self.config.workspace_id, attempt, now, self.registry.handle,
+                     self.registry.payload_hash, self.registry.payload["registry_epoch"],
+                     self.registry.payload["root_key_id"], sha256_hex(lease_bytes), lease_bytes, now, now),
+                )
+        except sqlite3.IntegrityError:
+            prior = self._acceptance_row(install, nonce, handle)
+            if prior is not None and prior["result_json"]:
+                return json.loads(prior["result_json"])
+            return self._refused(TURN_RESULT, "acceptance_conflict", receipt_id=receipt_id)
+        # §5 — a deterministic post-acceptance refusal ⇒ a durable BLOCKED row (idempotent); no lease/launch.
+        if deterministic is not None:
+            verdict = self._refused(TURN_RESULT, deterministic, receipt_id=receipt_id)
+            self._set_acceptance(handle, "BLOCKED", self.clock_ms(),
+                                 result_json=canonical_bytes(verdict).decode("utf-8"),
+                                 failure_reason=deterministic)
+            return verdict
+        # §5 steps 6/7 — sign + publish the lease from the persisted bytes; CAS ACCEPTED_PREPARED->LEASE_READY.
         lease_doc = _sign_document(lease_payload, self.lease_key)
         lease_handle = self.store.publish(canonical_bytes(lease_doc))
-        if lease_payload["lease_expires_at_ms"] - self.clock_ms() < MIN_LAUNCH_REMAINING_MS:
-            return self._refused(TURN_RESULT, "lease_expired")
-        with self.conn:
-            self.conn.execute(
-                "UPDATE governed_turn_staging SET state='EXECUTION_STARTING',accepted_at_ms=?,execution_attempt_id=?,lease_id=? WHERE challenge_handle=? AND state='INPUTS_READY'",
-                (now, attempt, lease_id, handle),
-            )
+        self._set_acceptance(handle, "LEASE_READY", self.clock_ms(), lease_handle=lease_handle)
+        # §5 step 8a — launch gate (wall clock read once): (i) not pre-valid / not expired AND
+        # (ii) remaining budget >= MIN_LAUNCH_REMAINING_MS. Failure ⇒ deterministic EXPIRED, no launch.
+        gate_now = self.clock_ms()
+        if not (lease_payload["lease_issued_at_ms"] <= gate_now <= lease_payload["lease_expires_at_ms"]
+                and lease_payload["lease_expires_at_ms"] - gate_now >= MIN_LAUNCH_REMAINING_MS):
+            verdict = self._refused(TURN_RESULT, "lease_expired", receipt_id=receipt_id)
+            self._set_acceptance(handle, "EXPIRED", self.clock_ms(),
+                                 result_json=canonical_bytes(verdict).decode("utf-8"),
+                                 failure_reason="lease_expired")
+            return verdict
+        # §5 step 9 — persist EXECUTION_STARTING BEFORE launching (no auto-relaunch past this point).
+        self._set_acceptance(handle, "EXECUTION_STARTING", self.clock_ms())
         try:
             output, started_at, finished_at = self._run_executor(
                 system_handle=turn["system_handle"], history_handle=turn["history_handle"],
@@ -806,9 +894,16 @@ class GovernedSupervisor:
             )
         except GovernedProtocolError as exc:
             reason = str(exc) if str(exc) in GOVERNED_REFUSAL_REASONS else "run_binding_invalid"
-            with self.conn:
-                self.conn.execute("UPDATE governed_turn_staging SET state='RECOVERY_REQUIRED',refusal_reason=? WHERE challenge_handle=?", (reason, handle))
-            return self._refused(TURN_RESULT, reason)
+            verdict = self._refused(TURN_RESULT, reason, receipt_id=receipt_id)
+            # Deterministic operational failure (timeout/oversize/etc.) ⇒ FAILED + durable verdict; an
+            # AMBIGUOUS crash instead leaves the row at EXECUTION_STARTING for recover() → RECOVERY_REQUIRED.
+            self._set_acceptance(handle, "FAILED", self.clock_ms(),
+                                 result_json=canonical_bytes(verdict).decode("utf-8"),
+                                 failure_reason=reason)
+            return verdict
+        # §5 — child ran; persist process metadata and flip EXECUTION_STARTING -> EXECUTING.
+        self._set_acceptance(handle, "EXECUTING", self.clock_ms(),
+                             process_group_id=attempt, cgroup_id="process-group:" + attempt)
         output_handle = self.store.publish(output)
         containment = {
             "artifact_type": "brops.governed-turn-containment.v1",
@@ -935,8 +1030,9 @@ class GovernedSupervisor:
                  created + OUTPUT_STREAM_TTL_MS + OUTPUT_STREAM_RETENTION_MS, install),
             )
             self.conn.execute(
-                "UPDATE governed_turn_staging SET state='COMPLETED',result_json=? WHERE challenge_handle=?",
-                (canonical_bytes(result).decode("utf-8"), handle),
+                "UPDATE governed_turn_acceptance SET state='COMPLETED',result_json=?,"
+                "terminal_record_handle=?,updated_at_ms=? WHERE challenge_handle=?",
+                (canonical_bytes(result).decode("utf-8"), record_handle, created, handle),
             )
         return result
 
