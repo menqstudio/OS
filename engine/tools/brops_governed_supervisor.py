@@ -220,6 +220,27 @@ def _db(path: os.PathLike[str] | str) -> sqlite3.Connection:
           PRIMARY KEY(staging_session_id, seq),
           FOREIGN KEY(staging_session_id) REFERENCES governed_staging_sessions(staging_session_id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS governed_turn_acceptance (
+          install_id TEXT NOT NULL, request_nonce TEXT NOT NULL,
+          challenge_handle TEXT NOT NULL, run_id TEXT NOT NULL, task_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL, execution_attempt_id TEXT NOT NULL,
+          challenge_accepted_at_ms INTEGER NOT NULL,
+          challenge_registry_handle TEXT NOT NULL, challenge_registry_hash TEXT NOT NULL,
+          challenge_registry_epoch INTEGER NOT NULL, challenge_registry_root_key_id TEXT NOT NULL,
+          lease_payload_sha256 TEXT NOT NULL, lease_payload_bytes BLOB NOT NULL,
+          lease_handle TEXT,
+          state TEXT NOT NULL CHECK(state IN (
+            'ACCEPTED_PREPARED','LEASE_READY','EXECUTION_STARTING','EXECUTING',
+            'COMPLETED','BLOCKED','FAILED','EXPIRED','RECOVERY_REQUIRED')),
+          execution_started_marker TEXT, cgroup_id TEXT, process_group_id TEXT,
+          terminal_record_handle TEXT, result_json TEXT, failure_reason TEXT,
+          created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL,
+          UNIQUE(install_id, request_nonce),
+          UNIQUE(challenge_handle),
+          UNIQUE(execution_attempt_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_acceptance_recovery
+          ON governed_turn_acceptance(state);
         CREATE TABLE IF NOT EXISTS governed_output_streams (
           output_stream_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL UNIQUE,
           execution_attempt_id TEXT NOT NULL UNIQUE, output_handle TEXT NOT NULL,
