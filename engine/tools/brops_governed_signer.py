@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from bro_signature import canonical_bytes
 from brops_evidence_store import EvidenceStore, EvidenceStoreError
 from brops_governed_common import (
-    GovernedProtocolError, b64url_decode, b64url_encode,
+    LEASE_DURATION_MS, GovernedProtocolError, b64url_decode, b64url_encode,
     generation_config_sha256, model_profile_id, request_sha256,
     require_exact_keys, require_hex64, require_id, sha256_hex,
     validate_generation_config,
@@ -93,8 +93,9 @@ def apply_head_floor(db_path, install_id: str, task_id: str, head_sequence: int,
             raise GovernedSignRefused("evidence_fork", "degenerate evidence head")
     if last_sequence != event_count:
         raise GovernedSignRefused("evidence_fork", "last_sequence != event_count")
-    if not isinstance(final_event_hash, str) or len(final_event_hash) != 64:
-        raise GovernedSignRefused("evidence_fork", "final_event_hash not a sha256 digest")
+    if (not isinstance(final_event_hash, str) or len(final_event_hash) != 64
+            or any(c not in "0123456789abcdef" for c in final_event_hash)):
+        raise GovernedSignRefused("evidence_fork", "final_event_hash not a 64-hex sha256 digest")
     conn = sqlite3.connect(str(db_path), isolation_level=None, timeout=30)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -308,6 +309,11 @@ def sign_governed(request: Mapping[str, Any], c: GovernedSignerComponents, now_m
         history = c.store.read(evidence["history_handle"])
         config_raw = c.store.read(evidence["generation_config_handle"])
         output = c.store.read(evidence["output_handle"])
+        # §8: bind the containment the signer trusts to the gov-turn-recorder-signed record. The
+        # store read is content-addressed (handle == sha256(bytes)); this ties that handle to the
+        # value the terminal record committed, so a substituted containment fails run_binding_invalid.
+        if evidence["containment_evidence_handle"] != record.get("containment_evidence_sha256"):
+            raise GovernedSignRefused("run_binding_invalid", "containment handle not bound to the record")
         containment = _load_json(c.store, evidence["containment_evidence_handle"])
         c.store.read(evidence["policy_bundle_handle"])
         try:
@@ -352,8 +358,17 @@ def sign_governed(request: Mapping[str, Any], c: GovernedSignerComponents, now_m
             raise GovernedSignRefused("run_binding_invalid")
         if lease["model_profile_id"] != model_profile_id(cfg_hash):
             raise GovernedSignRefused("run_binding_invalid")
-        if not (lease["lease_issued_at_ms"] <= record["completed_at_ms"] <= lease["lease_expires_at_ms"]):
-            raise GovernedSignRefused("lease_expired")
+        # §7 lease-time invariants (fail-closed): lease_issued == challenge_accepted; the lease is
+        # exactly LEASE_DURATION_MS long; and execution is fully inside the lease window in order.
+        issued = lease["lease_issued_at_ms"]; expires = lease["lease_expires_at_ms"]
+        started = execution_receipt["started_at_ms"]; finished = execution_receipt["finished_at_ms"]
+        completed = record["completed_at_ms"]
+        if lease.get("challenge_accepted_at_ms") != issued:
+            raise GovernedSignRefused("run_binding_invalid", "lease_issued != challenge_accepted")
+        if expires - issued != LEASE_DURATION_MS:
+            raise GovernedSignRefused("run_binding_invalid", "lease duration != LEASE_DURATION_MS")
+        if not (issued <= started <= finished <= completed <= expires):
+            raise GovernedSignRefused("lease_expired", "execution outside the lease window")
         if now_ms < record["completed_at_ms"] - 60_000 or now_ms - record["completed_at_ms"] > 300_000:
             raise GovernedSignRefused("stale_evidence")
         output_hash = sha256_hex(output)
@@ -433,7 +448,10 @@ def sign_governed(request: Mapping[str, Any], c: GovernedSignerComponents, now_m
             "record_handle": record_handle,
             "output_sha256": output_hash, "output_bytes": len(output),
         }
-    except (GovernedSignRefused, GovernedProtocolError, EvidenceStoreError, KeyError, TypeError, ValueError) as exc:
+    except (GovernedSignRefused, GovernedProtocolError, EvidenceStoreError, KeyError, TypeError,
+            ValueError, sqlite3.DatabaseError) as exc:
+        # A head-floor DB fault (lock timeout / corruption) is fail-closed: without the floor we
+        # cannot prove the head is not a rollback, so we refuse to sign rather than emit an envelope.
         reason = exc.reason if isinstance(exc, GovernedSignRefused) else "malformed"
         return {"protocol": RESULT_PROTOCOL, "status": "refused", "receipt_id": receipt_id, "reason": reason}
 

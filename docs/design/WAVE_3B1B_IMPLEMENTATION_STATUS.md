@@ -19,6 +19,37 @@
 
 Then: full normative test matrix, one real end-to-end proof, exact-head CI + Linux isolation GREEN, and a fresh zero-trust audit.
 
+## Fresh zero-trust audit → remediation
+
+A fresh 2-track independent zero-trust audit (adversarial, try-to-refute) ran over all five
+mechanisms. Both tracks confirmed the **safety cores sound** — no double-spend, no auto-relaunch
+past `EXECUTION_STARTING`, idempotent replay never re-executes, no cross-authority forgery, no
+gating bypass, pinned hash correct, `_harden_dir` refusals genuine. Findings were normative /
+completeness / defense-in-depth (all fail-closed, no wrong-accept). **Remediated in place:**
+
+- **§4.10(g) override contract (BLOCKER):** `resolve_governed_generation_config_v1b` now returns
+  `Result` and strict-decode validates each `BROPS_GOVERNED_*` override (format+range); `prepare`
+  no longer hard-pins the hash, so a format-valid override flows through and is refused DOWNSTREAM
+  as `model_profile_unknown` (was: every override aborted at prepare with "hash drift").
+- **§7 signer lease-time invariants:** now also enforces `lease_issued == challenge_accepted`,
+  exact `LEASE_DURATION_MS`, and `lease_issued ≤ started ≤ finished ≤ completed ≤ lease_expires`.
+- **§8 key distinctness guard:** the supervisor refuses construction if the two recorder keys are
+  the same key_id/private key (a misconfig pointing both keydirs at one file).
+- **§8 containment binding:** the signer now binds `containment_evidence_handle` to the
+  gov-turn-recorder-signed record's `containment_evidence_sha256`.
+- **§5 crash-resume:** `recover()` now deterministically re-signs an `ACCEPTED_PREPARED` lease from
+  the persisted `lease_payload_bytes` → `LEASE_READY` (the documented determinism).
+- **MINORs:** `final_event_hash` 64-**hex** check; floor `DatabaseError` fails closed to refused;
+  store docstring corrected to the 2750 model. New tests for each. 
+
+**Two larger items are honestly tracked, NOT silently claimed fixed** (both fail-closed, not
+attacker-exploitable under the §0 threat model): the §7 floor still verifies supervisor-asserted
+head values rather than loading a real `bro_evidence` chain (its A–E logic is correct + tested,
+but `load_head`/`validate_chain_detailed` against real events is not wired, so cases A/C/D don't
+fire in the single-turn governed flow); and the §2.3 two-namespace (`store/sup/` vs `store/rec/`)
++ dedicated `brops-recorder` OS-principal write matrix is not implemented (the narrow signer/login
+write-denial + `stat==2750` IS proven). Both require substantial new infrastructure.
+
 ## Provenance + scope
 
 The partial was authored against the rev-26 constants/closures but on the rev-25 *code* tree. It was

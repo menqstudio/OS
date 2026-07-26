@@ -1289,11 +1289,21 @@ fn governed_request(prepared: &PreparedGovernedTurn) -> String {
 
 /// A process-unique task id (monotonic counter + wall-clock nanos; no extra crate).
 
-/// Exact rev-26 generation configuration. All values are strings so its compact
-/// sorted-key JSON is byte-identical to the Python/JCS representation. Delegates to the
-/// §4.10(g) `resolve_governed_generation_config_v1b` resolver (the single source).
+/// Exact rev-26 governed generation configuration (the frozen default, no host overrides). All
+/// values are strings so its compact sorted-key JSON is byte-identical to the Python/JCS form.
+/// The live path uses `resolve_governed_generation_config_v1b()` (which also applies + validates
+/// `BROPS_GOVERNED_*` overrides); this convenience returns the default and cannot fail.
 pub fn governed_generation_config() -> std::collections::BTreeMap<String, String> {
-    resolve_governed_generation_config_v1b()
+    [
+        ("engine_id", GOVERNED_ENGINE_ID),
+        ("max_output_tokens", GOVERNED_MAX_OUTPUT_TOKENS),
+        ("model", GOVERNED_MODEL),
+        ("temperature", GOVERNED_TEMPERATURE),
+        ("top_p", GOVERNED_TOP_P),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
 }
 
 pub const PINNED_GOVERNED_GENERATION_CONFIG_SHA256: &str =
@@ -1309,23 +1319,65 @@ const GOVERNED_TOP_P: &str = "1.00";
 
 /// §4.10(g) resolver — the SOLE source of the governed generation config. Returns all five
 /// fields from the frozen literals, with four overridable via `BROPS_GOVERNED_*` trusted host
-/// env (`engine_id` is immutable). With no overrides this is byte-identical to the pinned
-/// config whose JCS-SHA256 is `PINNED_GOVERNED_GENERATION_CONFIG_SHA256`; an override that is
-/// not on the supervisor's allowlist is refused downstream as `model_profile_unknown`.
-pub fn resolve_governed_generation_config_v1b() -> std::collections::BTreeMap<String, String> {
+/// env (`engine_id` is immutable). Each override is strict-decode validated to the §4.10(g)
+/// format+range rules; a SET-BUT-INVALID override returns `Err` (an out-of-band block, never
+/// canonicalized). A format-VALID override that is not on the supervisor's allowlist flows
+/// through and is refused DOWNSTREAM as `model_profile_unknown`. With no overrides the object is
+/// byte-identical to the pinned config (`PINNED_GOVERNED_GENERATION_CONFIG_SHA256`).
+pub fn resolve_governed_generation_config_v1b() -> Result<std::collections::BTreeMap<String, String>, String> {
     fn host_override(var: &str, default: &str) -> String {
         std::env::var(var).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
     }
-    [
+    // ^[A-Za-z0-9._:-]{1,128}$
+    fn valid_model(s: &str) -> bool {
+        (1..=128).contains(&s.len())
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+    }
+    // ^[1-9][0-9]{0,6}$ AND 1 <= int <= 1048576
+    fn valid_max_tokens(s: &str) -> bool {
+        let b = s.as_bytes();
+        if b.is_empty() || b.len() > 7 || b[0] == b'0' || !b.iter().all(u8::is_ascii_digit) {
+            return false;
+        }
+        matches!(s.parse::<u64>(), Ok(v) if (1..=1_048_576).contains(&v))
+    }
+    // exactly D.DD; the two-fraction-digit value in hundredths must be <= `max_hundredths`
+    fn valid_fixed2(s: &str, max_hundredths: u32) -> bool {
+        let b = s.as_bytes();
+        if b.len() != 4 || b[1] != b'.'
+            || !(b[0].is_ascii_digit() && b[2].is_ascii_digit() && b[3].is_ascii_digit())
+        {
+            return false;
+        }
+        let value = (b[0] - b'0') as u32 * 100 + (b[2] - b'0') as u32 * 10 + (b[3] - b'0') as u32;
+        value <= max_hundredths
+    }
+    let model = host_override("BROPS_GOVERNED_MODEL", GOVERNED_MODEL);
+    let max_output_tokens = host_override("BROPS_GOVERNED_MAX_OUTPUT_TOKENS", GOVERNED_MAX_OUTPUT_TOKENS);
+    let temperature = host_override("BROPS_GOVERNED_TEMPERATURE", GOVERNED_TEMPERATURE);
+    let top_p = host_override("BROPS_GOVERNED_TOP_P", GOVERNED_TOP_P);
+    if !valid_model(&model) {
+        return Err("governed generation config: invalid model (BROPS_GOVERNED_MODEL)".to_string());
+    }
+    if !valid_max_tokens(&max_output_tokens) {
+        return Err("governed generation config: invalid max_output_tokens".to_string());
+    }
+    if !valid_fixed2(&temperature, 200) {
+        return Err("governed generation config: invalid temperature".to_string());
+    }
+    if !valid_fixed2(&top_p, 100) {
+        return Err("governed generation config: invalid top_p".to_string());
+    }
+    Ok([
         ("engine_id", GOVERNED_ENGINE_ID.to_string()), // immutable — never overridable
-        ("model", host_override("BROPS_GOVERNED_MODEL", GOVERNED_MODEL)),
-        ("max_output_tokens", host_override("BROPS_GOVERNED_MAX_OUTPUT_TOKENS", GOVERNED_MAX_OUTPUT_TOKENS)),
-        ("temperature", host_override("BROPS_GOVERNED_TEMPERATURE", GOVERNED_TEMPERATURE)),
-        ("top_p", host_override("BROPS_GOVERNED_TOP_P", GOVERNED_TOP_P)),
+        ("model", model),
+        ("max_output_tokens", max_output_tokens),
+        ("temperature", temperature),
+        ("top_p", top_p),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
-    .collect()
+    .collect())
 }
 
 #[derive(Debug, Clone)]
@@ -1385,12 +1437,13 @@ pub fn prepare_governed_turn_v1b(
 ) -> Result<PreparedGovernedTurnV1B, String> {
     validate_input(system, messages)?;
     let history = trim_history(messages).to_vec();
-    let generation_config = governed_generation_config();
+    // §4.10(g): the resolver is the single source; a set-but-invalid BROPS_GOVERNED_* override
+    // returns Err here (out-of-band block). A format-valid non-default override is NOT rejected
+    // at prepare (no hash pin) — it flows through and the supervisor's allowlist refuses a config
+    // it is not configured to execute as `model_profile_unknown`.
+    let generation_config = resolve_governed_generation_config_v1b()?;
     let config_bytes = serde_json::to_vec(&generation_config).map_err(|e| e.to_string())?;
     let config_hash = brops_core::receipt::sha256_hex(&config_bytes);
-    if config_hash != PINNED_GOVERNED_GENERATION_CONFIG_SHA256 {
-        return Err("governed generation config hash drift".to_string());
-    }
     Ok(PreparedGovernedTurnV1B {
         system: system.to_string(),
         history: history.clone(),
@@ -1882,6 +1935,28 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // §4.10(g): the resolver is the single governed generation-config source. With no
+    // BROPS_GOVERNED_* overrides it must be byte-identical to the pinned config (so the
+    // governed model identity cfg-sha256:732b58… is stable) and engine_id is the frozen
+    // immutable literal.
+    #[test]
+    fn governed_config_resolver_default_matches_pinned_hash() {
+        let cfg = resolve_governed_generation_config_v1b().expect("frozen default must resolve");
+        assert_eq!(cfg.len(), 5);
+        assert_eq!(cfg.get("engine_id").map(String::as_str), Some("brops.governed-engine.sidecar.v1"));
+        for key in ["model", "max_output_tokens", "temperature", "top_p"] {
+            assert!(cfg.contains_key(key), "resolver missing {key}");
+        }
+        // the convenience default and the resolver's default must be identical
+        assert_eq!(cfg, governed_generation_config());
+        let bytes = serde_json::to_vec(&cfg).unwrap();
+        assert_eq!(
+            brops_core::receipt::sha256_hex(&bytes),
+            PINNED_GOVERNED_GENERATION_CONFIG_SHA256,
+            "default resolved config must hash to the pinned governed generation_config_sha256",
+        );
+    }
 
     // Security regression: chat calls must disable ALL Claude tools so a
     // prompt-injection can't read/write files or run commands via the agent.

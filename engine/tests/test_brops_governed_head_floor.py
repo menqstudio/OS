@@ -77,7 +77,9 @@ class HeadFloorTests(unittest.TestCase):
         self.assertEqual(ctx.exception.reason, "evidence_fork")
 
     def test_degenerate_head_is_fork(self):
-        for hs, ec, ls, feh in [(0, 1, 1, H1), (1, 1, 0, H1), (1, 2, 1, H1), (1, 1, 1, "x" * 10)]:
+        # <1 counts, last!=count, wrong-length hash, AND a 64-char NON-hex final hash.
+        for hs, ec, ls, feh in [(0, 1, 1, H1), (1, 1, 0, H1), (1, 2, 1, H1),
+                                (1, 1, 1, "x" * 10), (1, 1, 1, "z" * 64), (1, 1, 1, "A" * 64)]:
             with self.assertRaises(GovernedSignRefused) as ctx:
                 self._floor(hs, ec, ls, feh)
             self.assertEqual(ctx.exception.reason, "evidence_fork")

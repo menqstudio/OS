@@ -264,6 +264,14 @@ class GovernedSupervisor:
                  governed_turn_recorder_key: Mapping[str, str], config: SupervisorConfig,
                  clock_ms: Callable[[], int] | None = None,
                  monotonic: Callable[[], float] | None = None) -> None:
+        # §8 total authority separation: the two recorder authorities MUST be distinct keys, or a
+        # single compromise/misconfig (both keydirs pointing at one file) forges both artifacts.
+        # Checked before opening any resource so a misconfig fails fast and clean.
+        if (evidence_recorder_key["key_id"] == governed_turn_recorder_key["key_id"]
+                or evidence_recorder_key.get("private_key")
+                == governed_turn_recorder_key.get("private_key")):
+            raise ValueError(
+                "evidence-recorder and governed-turn-recorder keys must be distinct (§8)")
         db_path = pathlib.Path(db_path)
         self.conn = _db(db_path)
         self.staging_root = db_path.parent / "governed-staging"
@@ -770,9 +778,12 @@ class GovernedSupervisor:
                 f"UPDATE governed_turn_acceptance SET {','.join(sets)} WHERE challenge_handle=?", vals)
 
     def recover(self) -> None:
-        """§5 restart scan. Post-launch ambiguity (EXECUTION_STARTING/EXECUTING with no terminal
-        proof) is fail-closed to RECOVERY_REQUIRED and NEVER auto-relaunched; a LEASE_READY row
-        whose launch gate no longer holds becomes EXPIRED. Deterministic, idempotent."""
+        """§5 restart scan. A row left at ACCEPTED_PREPARED (crash after the CAS insert, before the
+        lease was published) is deterministically re-signed from the persisted lease bytes and
+        advanced to LEASE_READY (idempotent publish; no re-execution, no fresh nonces). Post-launch
+        ambiguity (EXECUTION_STARTING/EXECUTING with no terminal proof) is fail-closed to
+        RECOVERY_REQUIRED and NEVER auto-relaunched; a LEASE_READY row whose launch gate no longer
+        holds becomes EXPIRED. Deterministic, idempotent."""
         now = self.clock_ms()
         with self.conn:
             self.conn.execute(
@@ -780,6 +791,14 @@ class GovernedSupervisor:
                 "WHERE state IN ('EXECUTION_STARTING','EXECUTING') "
                 "AND terminal_record_handle IS NULL AND result_json IS NULL",
                 (now,))
+        # §5 crash-resume: re-sign ACCEPTED_PREPARED leases deterministically from lease_payload_bytes.
+        for row in self.conn.execute(
+                "SELECT challenge_handle,lease_payload_bytes FROM governed_turn_acceptance "
+                "WHERE state='ACCEPTED_PREPARED'").fetchall():
+            lease_payload = json.loads(bytes(row["lease_payload_bytes"]))
+            lease_doc = _sign_document(lease_payload, self.lease_key)
+            lease_handle = self.store.publish(canonical_bytes(lease_doc))
+            self._set_acceptance(row["challenge_handle"], "LEASE_READY", now, lease_handle=lease_handle)
         for row in self.conn.execute(
                 "SELECT challenge_handle,lease_payload_bytes FROM governed_turn_acceptance "
                 "WHERE state='LEASE_READY'").fetchall():

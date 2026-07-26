@@ -18,10 +18,12 @@ window:
   6. artifacts are retained until the receipt flow terminates + a retention policy
      elapses (retention/GC is out of this module's scope — it never deletes).
 
-Store custody (design §4.0): the directory is created owner-only (0700 on POSIX) so only
-the supervisor + signer identities (which run as the store owner) can read/write it; it
-is never the sidecar/desktop login identity's to read. This module reuses the same
-"refuse a group/other-accessible dir" discipline as `broctl._require_private_key_dir`.
+Store custody (rev-26 §2.3): the directory is created `2750` on POSIX (owner rwx, group
+read-traverse ONLY, setgid, no world) — the owner (supervisor/recorder) WRITES and the
+signer (a group member) READS; it is never the sidecar/desktop login identity's to read.
+`_harden_dir` refuses BOTH world access (`S_IRWXO`) AND group-write (`S_IWGRP`), so a
+re-introduced group-writable (`2770`) store fails closed at load. The private-key dirs stay
+strictly owner-only (`0700`); only this shared published store permits a group.
 """
 
 from __future__ import annotations

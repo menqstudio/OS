@@ -168,6 +168,44 @@ class LedgerTests(unittest.TestCase):
         for state in ("EXECUTION_STARTING", "EXECUTING"):
             self.assertEqual(self._row(sup, sha256_hex(state.encode()))["state"], "RECOVERY_REQUIRED")
 
+    def test_recover_re_signs_accepted_prepared_to_lease_ready(self):
+        # §5 crash-resume: a row stranded at ACCEPTED_PREPARED (crash before the lease was
+        # published) is deterministically re-signed from lease_payload_bytes → LEASE_READY.
+        sup = self._supervisor()
+        h = sha256_hex(b"accepted-prepared")
+        lease = {"artifact_type": "brops.governed-turn-lease.v1", "lease_id": "L",
+                 "lease_issued_at_ms": self.now - 1000,
+                 "lease_expires_at_ms": self.now + LEASE_DURATION_MS}
+        sup.conn.execute(
+            "INSERT INTO governed_turn_acceptance(install_id,request_nonce,challenge_handle,run_id,"
+            "task_id,workspace_id,execution_attempt_id,challenge_accepted_at_ms,challenge_registry_handle,"
+            "challenge_registry_hash,challenge_registry_epoch,challenge_registry_root_key_id,"
+            "lease_payload_sha256,lease_payload_bytes,state,created_at_ms,updated_at_ms) "
+            "VALUES('install','n',?,'r','t','ws','a',?,'rh','rhash',1,'rk','s',?,'ACCEPTED_PREPARED',?,?)",
+            (h, self.now, json.dumps(lease).encode(), self.now, self.now))
+        sup.conn.commit()
+        sup.recover()
+        row = self._row(sup, h)
+        self.assertEqual(row["state"], "LEASE_READY")
+        self.assertIsNotNone(row["lease_handle"])   # deterministically re-signed + published
+
+    def test_recorder_keys_must_be_distinct(self):
+        # §8: constructing a supervisor with the SAME key for both recorder authorities is refused.
+        from brops_governed_supervisor import GovernedSupervisor
+        config = SupervisorConfig(
+            workspace_id="ws", install_id="install", supervisor_id="sup", executor_id="exec",
+            runner_id="runner", agent_id="Bro", session_id="session", policy_id="policy",
+            policy_version="1", policy_bundle=b"policy bundle", launcher_executable_sha256="a" * 64,
+            executor_command=(sys.executable, "-c", "pass"),
+            generation_config_allowlist=frozenset({CFG_HASH}), record_dir=self.root / "records")
+        dup = _keypair("dup-recorder")[0]
+        with self.assertRaises(ValueError):
+            GovernedSupervisor(
+                db_path=self.root / "distinct.db", store=self.store, registry=self.registry,
+                signer_socket=str(self.root / "u.sock"), attestation_key=_keypair("a")[0],
+                lease_key=_keypair("l")[0], evidence_recorder_key=dup,
+                governed_turn_recorder_key=dup, config=config, clock_ms=lambda: self.now)
+
     def test_recover_expires_stale_lease_ready_but_keeps_valid(self):
         sup = self._supervisor()
         def seed(handle, lease_expires):
