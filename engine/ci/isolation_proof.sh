@@ -152,12 +152,13 @@ allow() { local p="$1" d="$2"; shift 2
 deny_login() { local d="$1"; shift
   if sh -c "$*" 2>/dev/null; then echo "SECURITY FAIL: [login] $d SUCCEEDED (must be DENIED)"; exit 1; fi; }
 
-# Mode-regression guard: root + both namespaces stat 2750; both seed artifacts stat 0640.
+# Mode-regression guard: root + both namespaces stat 2750; both seed artifacts stat 0640. (Run via
+# sudo — the login user deliberately cannot traverse the 2750 store to stat inside it.)
 for d in "$GS" "$GS/sup" "$GS/rec"; do
-  m="$(stat -c '%a' "$d")"; [ "$m" = "2750" ] || { echo "SECURITY FAIL: $d mode $m != 2750"; exit 1; }
+  m="$(sudo stat -c '%a' "$d")"; [ "$m" = "2750" ] || { echo "SECURITY FAIL: $d mode $m != 2750"; exit 1; }
 done
 for f in "$GS/sup/a.json" "$GS/rec/a.json"; do
-  m="$(stat -c '%a' "$f")"; [ "$m" = "640" ] || { echo "SECURITY FAIL: $f mode $m != 640"; exit 1; }
+  m="$(sudo stat -c '%a' "$f")"; [ "$m" = "640" ] || { echo "SECURITY FAIL: $f mode $m != 640"; exit 1; }
 done
 
 # supervisor: writes sup/ (create/rename/unlink), reads+lists both, DENIED every write in rec/.
