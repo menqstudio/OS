@@ -89,6 +89,7 @@ fn main() {
         "ai_status",
         // AI (live agent replies)
         "reply_in_conversation",
+        "governed_turn_execute",
         "stream_reply",
         "stream_ask",
         "stream_run_step",

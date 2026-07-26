@@ -778,6 +778,23 @@ const GOVERNED_WORKSPACE_ID: &str = "brops-local-workspace";
 const GOVERNED_INSTALL_ID: &str = "brops-local-install";
 const GOVERNED_SUPERVISOR_ID: &str = "brops-local-supervisor";
 
+/// §4.10(g) — the single frontend-exposed governed command (P0-1, LOCKED). It takes ONLY the
+/// renderer-owned inputs (`conversation_id` + optional `agent`); `system`/`history`/
+/// `generation_config`/`workspace_id`/`install_id`/`run_id`/`task_id` are ALL resolved or
+/// generated server-side inside the governed pipeline and NEVER cross the webview boundary.
+/// The `PreparedGovernedTurnV1B` lifecycle stays entirely backend-owned. This is the dedicated
+/// governed entry point; it drives the same buffered, desktop-verified governed pipeline (the
+/// governed branch of the shared streaming path), so nothing governed is streamed before trust.
+#[tauri::command]
+pub async fn governed_turn_execute(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    agent: Option<String>,
+    on_event: tauri::ipc::Channel<StreamEvent>,
+) -> Result<(), String> {
+    stream_reply(state, conversation_id, agent, on_event).await
+}
+
 /// Streaming counterpart of `reply_in_conversation`: emits incremental `delta`
 /// events as the agent produces text, then a `done` event carrying the
 /// persisted message (or an `error` event). Returns Ok even on provider failure

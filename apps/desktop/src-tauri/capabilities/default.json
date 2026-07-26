@@ -69,6 +69,7 @@
     "allow-get-security-summary",
     "allow-ai-status",
     "allow-reply-in-conversation",
+    "allow-governed-turn-execute",
     "allow-stream-reply",
     "allow-stream-ask",
     "allow-stream-run-step",

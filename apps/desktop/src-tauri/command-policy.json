@@ -254,6 +254,10 @@
       "tier": "X",
       "grant": "allow"
     },
+    "governed_turn_execute": {
+      "tier": "X",
+      "grant": "allow"
+    },
     "stream_run_step": {
       "tier": "X",
       "grant": "allow"

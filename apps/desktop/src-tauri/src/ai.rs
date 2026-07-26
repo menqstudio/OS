@@ -1290,22 +1290,43 @@ fn governed_request(prepared: &PreparedGovernedTurn) -> String {
 /// A process-unique task id (monotonic counter + wall-clock nanos; no extra crate).
 
 /// Exact rev-26 generation configuration. All values are strings so its compact
-/// sorted-key JSON is byte-identical to the Python/JCS representation.
+/// sorted-key JSON is byte-identical to the Python/JCS representation. Delegates to the
+/// §4.10(g) `resolve_governed_generation_config_v1b` resolver (the single source).
 pub fn governed_generation_config() -> std::collections::BTreeMap<String, String> {
-    [
-        ("engine_id", "brops.governed-engine.sidecar.v1"),
-        ("max_output_tokens", "4096"),
-        ("model", "claude-sonnet-5"),
-        ("temperature", "0.00"),
-        ("top_p", "1.00"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect()
+    resolve_governed_generation_config_v1b()
 }
 
 pub const PINNED_GOVERNED_GENERATION_CONFIG_SHA256: &str =
     "732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22";
+
+// §4.10(g) frozen governed generation-config literals. `engine_id` is immutable (not
+// overridable); the other four are overridable ONLY via trusted host env (never the renderer).
+const GOVERNED_ENGINE_ID: &str = "brops.governed-engine.sidecar.v1";
+const GOVERNED_MODEL: &str = "claude-sonnet-5";
+const GOVERNED_MAX_OUTPUT_TOKENS: &str = "4096";
+const GOVERNED_TEMPERATURE: &str = "0.00";
+const GOVERNED_TOP_P: &str = "1.00";
+
+/// §4.10(g) resolver — the SOLE source of the governed generation config. Returns all five
+/// fields from the frozen literals, with four overridable via `BROPS_GOVERNED_*` trusted host
+/// env (`engine_id` is immutable). With no overrides this is byte-identical to the pinned
+/// config whose JCS-SHA256 is `PINNED_GOVERNED_GENERATION_CONFIG_SHA256`; an override that is
+/// not on the supervisor's allowlist is refused downstream as `model_profile_unknown`.
+pub fn resolve_governed_generation_config_v1b() -> std::collections::BTreeMap<String, String> {
+    fn host_override(var: &str, default: &str) -> String {
+        std::env::var(var).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
+    }
+    [
+        ("engine_id", GOVERNED_ENGINE_ID.to_string()), // immutable — never overridable
+        ("model", host_override("BROPS_GOVERNED_MODEL", GOVERNED_MODEL)),
+        ("max_output_tokens", host_override("BROPS_GOVERNED_MAX_OUTPUT_TOKENS", GOVERNED_MAX_OUTPUT_TOKENS)),
+        ("temperature", host_override("BROPS_GOVERNED_TEMPERATURE", GOVERNED_TEMPERATURE)),
+        ("top_p", host_override("BROPS_GOVERNED_TOP_P", GOVERNED_TOP_P)),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect()
+}
 
 #[derive(Debug, Clone)]
 pub struct PreparedGovernedTurnV1B {

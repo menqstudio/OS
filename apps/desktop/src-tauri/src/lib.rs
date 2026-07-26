@@ -192,6 +192,7 @@ pub fn run() {
             commands::get_security_summary,
             commands::ai_status,
             commands::reply_in_conversation,
+            commands::governed_turn_execute,
             commands::stream_reply,
             commands::stream_ask,
             commands::stream_run_step,
