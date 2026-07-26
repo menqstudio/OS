@@ -2,14 +2,14 @@
 
 > **STATUS (2026-07-25):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
 > CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
-> — the Architect reviewed the consolidated **rev 23** (@ `b89bab9`; exact-head CI #130 8/8 SUCCESS;
-> CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-22 routing-identities P0 + non-durable-transport-retry
-> P1, and returned Design RED with 1 P0 · 1 P1 (P0-1 backend single-source not constructible — `task_id`
-> absent from `PreparedGovernedTurnV1B` + no trusted 5-field generation_config source; P1-1 authority-channel
-> failure boundary still non-durable), mandating a **read-only real-code investigation + one integrator + a
-> fresh independent red-team**; the addendum is now **rev 24 (CONSOLIDATED)** — a proposed design-GREEN
-> candidate, **not yet Architect-GREEN, no code** (rev-23 reviewed HEAD `b89bab9`, exact-head CI #130 8/8
-> GREEN — evidence only; resolve the live tip + Checks from GitHub). See
+> — the Architect reviewed the consolidated **rev 24** (@ `232be53`; exact-head CI #131 8/8 SUCCESS;
+> CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-23 single-source-constructibility P0 +
+> authority-failure-boundary P1, and returned Design RED with 1 P0 · 1 P1 (P0 model identity had two
+> independent authorities — the desktop `generation_config` vs the lease's `model_profile_id`, unbound;
+> P1 the ISSUED authority-row cleanup was contradictory), mandating a **read-only real-code investigation +
+> one integrator + a fresh independent red-team**; the addendum is now **rev 25 (CONSOLIDATED)** — a
+> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-24 reviewed HEAD `232be53`,
+> exact-head CI #131 8/8 GREEN — evidence only; resolve the live tip + Checks from GitHub). See
 > `NEXT_CHAT.md` §0/§3 for the authoritative current state, STOP gates, and next action.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative

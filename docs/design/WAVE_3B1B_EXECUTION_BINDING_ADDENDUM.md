@@ -1,45 +1,35 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 24 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 25 — CONSOLIDATED)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 24 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 23 was Architect-reviewed at exact HEAD
-> `b89bab9b76273957848103b9812fdc9a9334c150` (exact-head CI **#130** 8/8 SUCCESS incl. both mandatory
-> Wave-3b gates — **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED** the rev-22 routing-
-> identities P0 + non-durable-transport-retry P1, but rev 23 opened **two next contract seams** (1 P0 · 1
-> P1), and directed a **read-only real-code investigation + one integrator + a fresh independent red-team,
-> NOT a rewrite.** rev 24 closes both in place:
-> **P0-1 — the backend single-source orchestration was not yet constructible.** (A) `task_id` lives in
-> `GovernedTurnExecutionV1B` but NOT in `PreparedGovernedTurnV1B`, so the rev-23 helper
-> `governed_turn_submit_prepared(&prepared, …)` could not derive the submit frame's required top-level
-> `task_id`. (B) the 5-field `generation_config` object had no trusted backend source — only the frozen
-> opaque string `GOVERNED_GENERATION_CONFIG` exists; `model`/`max_output_tokens`/`temperature`/`top_p`
-> were undefined. **rev 24 (§4.10(g)):** (A) the helper is
-> `governed_turn_submit_prepared(execution: &GovernedTurnExecutionV1B, challenge_document: &ChallengeDocument)`
-> — it takes the **whole** orchestration object and, before writing the frame, asserts `submit.task_id ==
-> execution.task_id == challenge.payload.task_id`, `challenge.payload.run_id == execution.run_id`, and
-> `SHA256(JCS(execution.prepared.generation_config)) == challenge.payload.generation_config_sha256`; (B) a
-> new `resolve_governed_generation_config_v1b() -> Result<GovernedGenerationConfig, String>` returns all
-> five fields from **locked governed defaults / trusted host config** (engine_id = the frozen
-> `GOVERNED_GENERATION_CONFIG`; new `GOVERNED_MODEL`/`GOVERNED_MAX_OUTPUT_TOKENS`/`GOVERNED_TEMPERATURE`/
-> `GOVERNED_TOP_P` consts), validated once; plus a whole-chain E2E test that the same `task_id`/`run_id`/
-> config-JCS flow authority row → challenge → submit → lease → record → envelope. The frozen
-> `prepare_governed_turn(&str)` opaque-string path is untouched (§2.2 KEEP+ADD).
-> **P1-1 — the challenge-authority failure boundary was still non-durable.** rev 23's terminal-durable-Block
-> contract covered only the desktop↔sidecar hops, not the authority `create-pending`/`issue` hops after the
-> `receipt_challenges` pre-store — an authority socket-unavailable / lost-create-reply / lost-issue-reply /
-> refusal / malformed reply could return the command with an **unconsumed** nonce while the in-memory object
-> is gone (rev 22's seam, one hop earlier). **rev 24 (§4.10(g) Authority-channel failure boundary):** after
-> pre-store, EVERY authority-channel failure has **exactly two** permitted outcomes — (a) **bounded internal
-> idempotent retry** with the same live `GovernedTurnExecutionV1B` (the §2.1 authority protocols are
-> lost-reply-safe idempotent, so a retry recovers the same `pending_challenge_id` / byte-identical
-> `{payload,sig}`), bounded by `MAX_AUTHORITY_RETRIES`; or (b) **terminal durable Block** via
-> `record_pre_verification_block` (consume the nonce + exactly one `blocked` attempt). No third outcome; a
-> left-behind authority `PENDING`/`ISSUED` row binds no execution right and its `PENDING_TTL` sweeps it. Tests:
-> authority-unavailable, lost create/issue replies, refusal, malformed — each recovers the same challenge or
-> terminal-consumes the nonce.
-> *(rev-18 → … → rev-23 findings — orchestrator ordering, generation_config canonicalization,
+> **STATUS: ❌ DESIGN RED being closed — rev 25 is a PROPOSED design-GREEN candidate, NOT
+> Architect-GREEN. 3b-1B code has NOT started.** rev 24 was Architect-reviewed at exact HEAD
+> `232be53a64e9afccec5338d5f1440f76fae69884` (exact-head CI **#131** 8/8 SUCCESS incl. both mandatory
+> Wave-3b gates — **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED** the rev-23 single-source-
+> constructibility P0 + authority-failure-boundary P1, but returned RED with **1 P0 · 1 P1** on the model
+> identity + issued-row cleanup, and directed a **read-only real-code investigation + one integrator + a
+> fresh independent red-team, NOT a rewrite.** rev 25 closes both in place:
+> **P0 — model identity had two independent authorities.** The desktop resolver's `generation_config`
+> (engine_id/model/…, read by the executor via FD, §4.7) and the lease's `model_profile_id` were unbound —
+> a signed lease could declare "profile A" while the executor ran "model B": cryptographically valid but a
+> misrepresented execution identity. **rev 25 (§2, §4.3, §7):** the supervisor owns a **deterministic
+> model-profile registry** `SHA256(JCS(generation_config)) → model_profile_id` (total over the accepted
+> governed configs; unknown ⇒ `model_profile_unknown` Block, no lease); **before acceptance** the supervisor
+> parses/validates the staged config, recomputes `generation_config_sha256`, and **derives**
+> `model_profile_id`; `issue_governed_turn_lease` sets the lease `model_profile_id` to exactly the derived
+> value and binds `generation_config_sha256` (a signed lease field); `validate_governed_turn_lease` +
+> `LiveRunStateProvider` (§7) re-derive and refuse unless `lease.model_profile_id == registry[lease.generation_config_sha256]`
+> and `lease.generation_config_sha256 == challenge.generation_config_sha256 == the executed config's hash` —
+> every model/engine/parameter mismatch Blocks **before launch**.
+> **P1 — the ISSUED authority-row cleanup was contradictory.** rev 24 said `PENDING_TTL` sweeps a left-behind
+> `ISSUED` row, but `ISSUED` is terminal and retains the exact signed document for byte-identical replay —
+> only `PENDING`-row expiry was defined. **rev 25 (§2.1):** `PENDING` rows expire at `PENDING_TTL_MS`; an
+> `ISSUED` row is retained for **`ISSUED_RETENTION_MS = challenge_expiry_window + AUTHORITY_REPLAY_WINDOW_MS`**
+> then swept (document + row); a per-`install_id` `MAX_ISSUED_ROWS_PER_INSTALL` / `MAX_ISSUED_BYTES_PER_INSTALL`
+> quota bounds stored issued documents; a deterministic `PENDING_SWEEP_INTERVAL_MS = 60000` sweep removes
+> expired PENDING + retention-expired ISSUED rows; post-`ISSUED_RETENTION_MS` replay ⇒ `no_pending_row`.
+> *(rev-18 → … → rev-24 findings — orchestrator ordering, generation_config canonicalization,
 > two-trust-model channel, nonce/`request_sha256` decoupling, generation_config hash-source split,
-> prepared-object lifecycle, routing identities, non-durable transport-retry — remain closed; see the
-> non-normative Appendix A.)*
+> prepared-object lifecycle, routing identities, non-durable transport-retry, single-source-constructibility,
+> authority-failure-boundary — remain closed; see the non-normative Appendix A.)*
 > **All contracts below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.**
 > STOP gates: `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31
 > not merged.
@@ -156,6 +146,23 @@ profile — NOT a base-lease superset**:
   profile** (`model_profile_id`) are explicit lease fields with real verifiers (§4.3): the
   launcher refuses any other executable/target UID (§4.7), and the recorder refuses a
   `model_profile_id` not in its allow-set.
+- **ONE model authority (P0 LOCKED — the config IS the profile).** `model_profile_id` is **NOT**
+  a free lease field: the executor reads the actual `engine_id`/`model`/`max_output_tokens`/
+  `temperature`/`top_p` from the `generation_config` FD (§4.7), so a lease `model_profile_id` that
+  is unbound to that config would let a signed lease declare "profile A" while the executor runs
+  "model B" — a cryptographically-valid but misrepresented execution identity. To make the config
+  the single authority, the supervisor owns a **deterministic model-profile registry**
+  `model_profile_registry: SHA256(JCS(generation_config)) → model_profile_id` (a locked, total map
+  over the accepted governed configs the §4.10(g) resolver can emit; one config-hash ⇒ exactly one
+  profile; unknown config-hash ⇒ `model_profile_unknown` refusal). **Before acceptance** the
+  supervisor parses+validates the **staged** `generation_config` bytes (§2.4), recomputes
+  `generation_config_sha256`, and **derives** `model_profile_id = model_profile_registry[hash]`;
+  `issue_governed_turn_lease` (§4.3) sets the lease `model_profile_id` to **exactly** that derived
+  value and the lease additionally binds `generation_config_sha256` (a signed field), so the
+  config↔profile link is cryptographic. `LiveRunStateProvider` (§7) re-derives the profile from the
+  challenge/lease `generation_config_sha256` and refuses unless `derive == lease.model_profile_id ==
+  the registry value` **and** `lease.generation_config_sha256 == challenge.generation_config_sha256
+  == the executed config's hash`; **any** model/engine/parameter mismatch Blocks **before launch**.
 - The governed-turn lease **omits** the builder-only fields `repository`, `branch`,
   `worktree`, `head_sha`, `tree_identity`, and `protected_scope` — none has a verifier for a
   model turn. (If a future justified use reintroduces `protected_scope`, its type is an
@@ -296,6 +303,7 @@ CREATE TABLE governed_pending_challenge (
   created_at_ms            INTEGER NOT NULL,          -- authority clock at create-pending
   pending_expires_at_ms    INTEGER NOT NULL,          -- created_at_ms + PENDING_TTL_MS
   state                    TEXT NOT NULL,             -- 'PENDING' → 'ISSUED' (one-time-consume); terminal
+  issued_at_ms             INTEGER,                    -- authority clock stamped in the CAS PENDING→ISSUED tx; NULL while PENDING; the ISSUED retention/sweep key (issued_at_ms + ISSUED_RETENTION_MS)
   issued_challenge_document TEXT,                     -- the EXACT signed {payload,sig} JCS document (base64url), stored verbatim at issue so a lost-reply retry replays byte-identical bytes (a hash cannot reproduce its preimage)
   issued_challenge_handle  TEXT,                      -- SHA256(decode(issued_challenge_document)) — integrity only, NOT the replay source
   UNIQUE(install_id, request_nonce),                  -- nonce one-time per install (mirrors §4.10(a0))
@@ -320,12 +328,36 @@ CREATE TABLE governed_pending_challenge (
   differing recomputed `request_sha256`) ⇒ `retry_conflict`. Issue (B) atomically CAS
   `PENDING → ISSUED` before returning; the first success **signs once and stores the exact signed
   `{payload,sig}` document bytes** verbatim in `issued_challenge_document` (+ its `issued_challenge_handle`
-  for integrity), inside the same commit that flips the state; a repeat (B) on an already-`ISSUED` row
+  for integrity, + stamps `issued_at_ms` from the authority clock — the retention/sweep key, §2.1),
+  inside the same commit that flips the state; a repeat (B) on an already-`ISSUED` row
   **re-returns that stored document byte-for-byte** — it never re-signs, never re-stamps
   `challenge_issued_at_ms`/`challenge_expires_at_ms`, never re-selects `challenge_key_id`, and never
   alters the stored desktop `request_nonce` (a one-way handle could not reproduce the bytes, so the
   exact document MUST be persisted, not just its hash); a concurrent-CAS loser observes `ISSUED` and
   takes that same replay path; an unknown id ⇒ `no_pending_row`, an expired row ⇒ `pending_expired`.
+- **Pending/issued store retention + sweep (P1 LOCKED — PENDING and ISSUED are cleaned DIFFERENTLY).**
+  A `PENDING` row (never issued) expires at `pending_expires_at_ms = created_at_ms + PENDING_TTL_MS`
+  and is swept then. An `ISSUED` row is **terminal** and MUST **retain** its exact signed
+  `issued_challenge_document` for byte-identical replay (the lost-`issue`-reply idempotency above) —
+  so it is **NOT** governed by `PENDING_TTL`; it is retained for
+  **`ISSUED_RETENTION_MS = challenge_expiry_window + AUTHORITY_REPLAY_WINDOW_MS`** (≥ the signed
+  challenge's own `challenge_expires_at_ms − challenge_issued_at_ms` **plus** the create/issue
+  `MAX_AUTHORITY_RETRIES` window, §4.10(g)), measured from the row's **`issued_at_ms`** (the queryable
+  column stamped in the CAS `PENDING → ISSUED` tx — NOT `created_at_ms`, since create-pending (A)
+  precedes issue (B)), so replay is available for exactly as long as the challenge could still be
+  legitimately submitted. **After `issued_at_ms + ISSUED_RETENTION_MS` the row + its stored document are
+  swept**; a replay `issue(pending_challenge_id)` after that ⇒ `no_pending_row`
+  (the desktop's `request_nonce` is by then either consumed (terminal turn) or its own challenge expired,
+  so no turn is lost). **Deterministic sweep:** a `PENDING_SWEEP_INTERVAL_MS = 60000` background pass
+  (+ startup pass) deletes every `PENDING` row past `pending_expires_at_ms` and every `ISSUED` row past
+  `issued_at_ms + ISSUED_RETENTION_MS` (an indexed column), within `2 × PENDING_SWEEP_INTERVAL_MS` of
+  eligibility (one missed-sweep tolerance). **Quotas (fail-closed):** at most `MAX_CONCURRENT_GOVERNED_TURNS = 2` live
+  `PENDING` rows per `install_id` (existing `quota_pending`), and at most `MAX_ISSUED_ROWS_PER_INSTALL`
+  live `ISSUED` rows / `MAX_ISSUED_BYTES_PER_INSTALL` total stored `issued_challenge_document` bytes per
+  `install_id` (a new create-pending refuses `quota_pending` when the sum of live PENDING+ISSUED would
+  exceed the bound — a compromised desktop-UI cannot amass unbounded issued documents). A left-behind
+  `ISSUED` row binds **no execution right** (it is not an acceptance-ledger row, §5) and cannot become a
+  reusable turn, so this retention is safe.
 - **Authority builds the payload itself:** at issue (B), from its protected row the authority
   **constructs** the exact `brops.governed-turn-challenge.v1` payload (§4.1), stamps
   `challenge_issued_at_ms`/`challenge_expires_at_ms`, and signs once (consuming the pending id). It
@@ -795,7 +827,8 @@ selects a **binary-pinned challenge-root anchor baked into the supervisor config
     "allowed_capabilities": ["INVOKE_GOVERNED_MODEL"],  // CLOSED; exactly this
     "max_tool_calls": 0,
     "launcher_executable_sha256": "<64hex>",            // pinned setuid launcher digest
-    "model_profile_id": "<string ≤128>",               // bound model endpoint/profile
+    "model_profile_id": "<string ≤128>",               // == model_profile_registry[generation_config_sha256] (supervisor-derived, §2 P0); NOT a free field
+    "generation_config_sha256": "<64hex>",             // == challenge #1 generation_config_sha256 == the executed config's hash; binds config↔profile in the signed lease
     "lease_issued_at_ms": <int>, "lease_expires_at_ms": <int>,
     "challenge_accepted_at_ms": <int>,                  // supervisor-stamped (§5)
     "request_nonce": "<string ≤128>",                   // == challenge #1 request_nonce
@@ -810,7 +843,11 @@ selects a **binary-pinned challenge-root anchor baked into the supervisor config
   receipts/records/evidence). `verify_artifact` refuses any other signer.
 - **`issue_governed_turn_lease`:** the sole issuer; called **inside §5 step 4/6** with the
   accepted challenge, reserved `execution_attempt_id`, stamped `challenge_accepted_at_ms`, and
-  resolved registry bindings. **Lease time is frozen, not issuer-chosen (P0-4, LOCKED):**
+  resolved registry bindings. **Model-profile derivation (P0 LOCKED):** it sets
+  `generation_config_sha256 = the accepted challenge's committed generation_config_sha256` and
+  `model_profile_id = model_profile_registry[generation_config_sha256]` (§2) — **never** a
+  free/caller-chosen value; an unknown config-hash ⇒ the acceptance Blocks (`model_profile_unknown`)
+  and no lease is issued. **Lease time is frozen, not issuer-chosen (P0-4, LOCKED):**
   `lease_issued_at_ms == challenge_accepted_at_ms` (equality — the exact lease payload bytes are
   persisted in the same acceptance tx, §5 step 4) and `lease_expires_at_ms == lease_issued_at_ms
   + LEASE_DURATION_MS` where **`LEASE_DURATION_MS = 210000` (210 s)** — one locked constant, not
@@ -823,7 +860,9 @@ selects a **binary-pinned challenge-root anchor baked into the supervisor config
 - **`validate_governed_turn_lease`:** `verify_artifact` (issuer) → strict-decode the exact
   key set → return fields. Refuses a missing/extra key, non-int `_ms`, `schema != 1`,
   `nonce` length ∉ [16,128], `allowed_capabilities != ["INVOKE_GOVERNED_MODEL"]`,
-  `max_tool_calls != 0`. **Separate** from the base `validate_execution_lease` (which would
+  `max_tool_calls != 0`, `generation_config_sha256` not `^[0-9a-f]{64}$`, and — the P0 binding —
+  `model_profile_id != model_profile_registry[generation_config_sha256]` (re-derived) or
+  `generation_config_sha256 != the bound challenge's generation_config_sha256`. **Separate** from the base `validate_execution_lease` (which would
   reject the governed-turn keys as unexpected — a governed-turn lease presented to the base
   validator MUST be refused, tested).
 
@@ -891,7 +930,9 @@ handle_missing, hash_mismatch, policy_mismatch, containment_missing, identity_de
 timestamp_invalid, oversize, malformed`) + the governed additions (`challenge_replay,
 acceptance_conflict, lease_not_ready, output_oversize, output_timeout, evidence_fork, stale_evidence,
 lease_expired, challenge_invalidated, retry_conflict, stream_unknown, stream_expired,
-stream_binding_mismatch, seq_out_of_range`). `stale_evidence` (P0-2, §7 case A — a lower-`head_sequence`
+stream_binding_mismatch, seq_out_of_range, model_profile_unknown`). `model_profile_unknown` (P0 — a
+staged `generation_config` whose `generation_config_sha256` has no entry in the supervisor
+model-profile registry, §2) is a **pre-launch acceptance Block** (`BLOCKED`; no lease is issued). `stale_evidence` (P0-2, §7 case A — a lower-`head_sequence`
 rolled-back/truncated head) is **distinct** from `evidence_fork` (a divergent-content fork, §7 cases
 B/D/E). The previously-prose-only reasons (`evidence_fork`/`stale_evidence` from §7, `lease_expired`/
 `EXPIRED` from the §7 lease-time invariants, acceptance-time `challenge_invalidated`, idempotency
@@ -1697,9 +1738,11 @@ or a malformed/oversize/unparseable reply — has **exactly two** permitted outc
 
 There is **no** third outcome that returns from the command with an **unconsumed** desktop nonce while
 the in-memory object is gone (that was the rev-22/rev-23 non-durable seam, one hop earlier). An
-authority-side `PENDING`/`ISSUED` row left behind by a terminal Block is harmless: it binds **no
-execution right** and its own `PENDING_TTL` sweeps it (§2.1), and it can never become a reusable/orphan
-logical turn because the desktop nonce is already consumed. **Mandatory tests (P1-1):**
+authority-side row left behind by a terminal Block is harmless: it binds **no
+execution right** and is swept by its state-specific retention (§2.1: a `PENDING` row by `PENDING_TTL`;
+an `ISSUED` row — which must retain its signed document for byte-identical replay — by
+`ISSUED_RETENTION_MS`), and it can never become a reusable/orphan logical turn because the desktop
+nonce is already consumed. **Mandatory tests (P1-1):**
 authority-socket-unavailable, lost `create-pending` reply, lost `issue` reply, explicit authority
 `refused`, and malformed authority reply — each MUST end in exactly one of the two outcomes: the same
 challenge recovered (idempotent retry) and the chain proceeds, **or** the nonce terminal-consumed with
@@ -2128,6 +2171,16 @@ is authority), then require, all fail-closed:
   record's `lease_id`/`lease_nonce`(==lease `nonce`)/`challenge_accepted_at_ms` +
   challenge/registry bindings equal the lease's; `allowed_capabilities ==
   ["INVOKE_GOVERNED_MODEL"]`, `max_tool_calls == 0`.
+- **Model-identity binding (P0 LOCKED — config ↔ profile ↔ lease):** the fetched lease's
+  `generation_config_sha256` **==** the challenge's committed `generation_config_sha256` (== the
+  staged/executed config's hash, already re-hashed by handle above); and the lease's
+  `model_profile_id` **==** `model_profile_registry[lease.generation_config_sha256]` (§2,
+  re-derived from the supervisor-owned deterministic registry). So the signed lease's declared model
+  profile is provably the one derived from the exact `generation_config` the executor read — a lease
+  claiming "profile A" over a "model B" config is refused **before** the envelope is minted (which,
+  per §6.1, is before the desktop accepts; a mismatch never reaches launch). (Tests: lease
+  `model_profile_id` ≠ registry-derived; lease `generation_config_sha256` ≠ challenge's; a config
+  whose hash is not in the registry ⇒ `model_profile_unknown` at acceptance, no lease — each refuses.)
 - **Lease-time invariants (P0-4/P1-5, all fail-closed):** on the fetched lease, `lease_issued_at_ms
   == challenge_accepted_at_ms` and `lease_expires_at_ms − lease_issued_at_ms == LEASE_DURATION_MS
   (210000)`; and the **complete** execution time-chain must fall **inside** the lease window:
@@ -2616,6 +2669,26 @@ The current normative design is §0–§9 above. This log is historical only.
   (consume nonce + one `blocked` attempt); no orphan. Fresh independent red-team over the rev-24 diff + real
   repo: no BLOCKER; frozen 3b-1A/Wave-3a + `stream_reply`/`record_pre_verification_block`/`DEFAULT_ANTHROPIC_MODEL`
   cites byte-exact; `check_coordination` + `check_capabilities` GREEN live. NOT Architect-GREEN; 3b-1B code not started.
+- **rev 25 (this doc):** dual-finding closure of the rev-24 Architect Design RED (**1 P0 · 1 P1** @
+  `232be53`, exact-head CI #131 8/8 SUCCESS; the rev-23 single-source-constructibility P0 +
+  authority-failure-boundary P1 were CONFIRMED CLOSED) via a read-only real-code investigation + one
+  integrator + a fresh independent red-team. **P0** — model identity had two independent authorities: the
+  desktop `generation_config` (read by the executor via FD) vs the lease's `model_profile_id`, unbound — a
+  signed lease could declare "profile A" over a "model B" config. **rev 25 (§2, §4.3, §7):** a
+  supervisor-owned deterministic model-profile registry `SHA256(JCS(generation_config)) → model_profile_id`
+  (unknown ⇒ `model_profile_unknown` acceptance Block); the supervisor derives the profile pre-acceptance
+  from the staged config; `issue_governed_turn_lease` sets `model_profile_id` = derived and binds
+  `generation_config_sha256` in the signed lease; `validate_governed_turn_lease` + `LiveRunStateProvider`
+  re-derive and refuse unless `lease.model_profile_id == registry[lease.generation_config_sha256]` and
+  `lease.generation_config_sha256 == challenge's == executed config's hash` — mismatch Blocks before launch.
+  **P1** — the ISSUED authority-row cleanup was contradictory (rev 24 claimed `PENDING_TTL` sweeps an ISSUED
+  row, but ISSUED is terminal + retains the signed document for replay). **rev 25 (§2.1):** PENDING rows
+  expire at `PENDING_TTL_MS`; ISSUED rows are retained `ISSUED_RETENTION_MS = challenge_expiry_window +
+  AUTHORITY_REPLAY_WINDOW_MS` then swept; `MAX_ISSUED_ROWS_PER_INSTALL`/`MAX_ISSUED_BYTES_PER_INSTALL` quota;
+  deterministic `PENDING_SWEEP_INTERVAL_MS = 60000` sweep; post-retention replay ⇒ `no_pending_row`; the
+  §4.10(g) "PENDING_TTL sweeps ISSUED" wording corrected. Fresh independent red-team over the rev-25 diff +
+  real repo: no BLOCKER; the frozen 3b-1A/Wave-3a path + `model_profile_id`/lease/§7-provider cites
+  byte-exact; `check_coordination` + `check_capabilities` GREEN live. NOT Architect-GREEN; 3b-1B code not started.
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 
