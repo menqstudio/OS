@@ -703,9 +703,9 @@ class GovernedSupervisor:
         if not self.config.executor_command:
             raise GovernedProtocolError("model_profile_unknown")
         start_ms = self.clock_ms(); start_mono = self.monotonic()
-        system_path = self.store.root / system_handle
-        history_path = self.store.root / history_handle
-        config_path = self.store.root / config_handle
+        system_path = self.store.path(system_handle)   # §2.3: resolve to the holding namespace (sup/)
+        history_path = self.store.path(history_handle)
+        config_path = self.store.path(config_handle)
         fds = [os.open(p, os.O_RDONLY) for p in (system_path, history_path, config_path)]
         env = os.environ.copy()
         env.update({

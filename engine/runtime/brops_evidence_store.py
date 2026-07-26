@@ -232,3 +232,9 @@ class NamespacedEvidenceStore:
         if self.rec._path(handle).exists():
             return self.rec.read(handle)
         return self.sup.read(handle)
+
+    def path(self, handle: str) -> pathlib.Path:
+        """Resolve the on-disk path of a content-addressed handle to whichever namespace holds it
+        (for callers that must open the file by FD; the content-address invariant still holds)."""
+        rec_path = self.rec._path(handle)
+        return rec_path if rec_path.exists() else self.sup._path(handle)
