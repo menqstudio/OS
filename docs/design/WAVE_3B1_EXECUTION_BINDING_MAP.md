@@ -2,14 +2,13 @@
 
 > **STATUS (2026-07-25):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
 > CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
-> — the Architect reviewed the consolidated **rev 24** (@ `232be53`; exact-head CI #131 8/8 SUCCESS;
-> CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-23 single-source-constructibility P0 +
-> authority-failure-boundary P1, and returned Design RED with 1 P0 · 1 P1 (P0 model identity had two
-> independent authorities — the desktop `generation_config` vs the lease's `model_profile_id`, unbound;
-> P1 the ISSUED authority-row cleanup was contradictory), mandating a **read-only real-code investigation +
-> one integrator + a fresh independent red-team**; the addendum is now **rev 25 (CONSOLIDATED)** — a
-> proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-24 reviewed HEAD `232be53`,
-> exact-head CI #131 8/8 GREEN — evidence only; resolve the live tip + Checks from GitHub). See
+> — the Architect reviewed the consolidated **rev 25** (@ `bcd24fe`; exact-head CI #132 8/8 SUCCESS;
+> CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-24 model-identity P0 + issued-row-cleanup P1, and returned the
+> FINAL CONSOLIDATED remediation Design RED with 2 P0 · 3 P1 (refusal-plumbing / immutable-identity /
+> authority-constants / output-stream / staging-expiry), mandating a **parallel fan-out (Tracks A–F) + one
+> integrator + a fresh independent red-team over the whole §0–§9**; the addendum is now **rev 26 (CONSOLIDATED)** —
+> a proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-25 reviewed HEAD `bcd24fe`, exact-head
+> CI #132 8/8 GREEN — evidence only; resolve the live tip + Checks from GitHub). See
 > `NEXT_CHAT.md` §0/§3 for the authoritative current state, STOP gates, and next action.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative

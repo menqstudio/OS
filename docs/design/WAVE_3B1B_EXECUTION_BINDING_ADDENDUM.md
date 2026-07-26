@@ -1,35 +1,50 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 25 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 26 — CONSOLIDATED)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 25 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 24 was Architect-reviewed at exact HEAD
-> `232be53a64e9afccec5338d5f1440f76fae69884` (exact-head CI **#131** 8/8 SUCCESS incl. both mandatory
-> Wave-3b gates — **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED** the rev-23 single-source-
-> constructibility P0 + authority-failure-boundary P1, but returned RED with **1 P0 · 1 P1** on the model
-> identity + issued-row cleanup, and directed a **read-only real-code investigation + one integrator + a
-> fresh independent red-team, NOT a rewrite.** rev 25 closes both in place:
-> **P0 — model identity had two independent authorities.** The desktop resolver's `generation_config`
-> (engine_id/model/…, read by the executor via FD, §4.7) and the lease's `model_profile_id` were unbound —
-> a signed lease could declare "profile A" while the executor ran "model B": cryptographically valid but a
-> misrepresented execution identity. **rev 25 (§2, §4.3, §7):** the supervisor owns a **deterministic
-> model-profile registry** `SHA256(JCS(generation_config)) → model_profile_id` (total over the accepted
-> governed configs; unknown ⇒ `model_profile_unknown` Block, no lease); **before acceptance** the supervisor
-> parses/validates the staged config, recomputes `generation_config_sha256`, and **derives**
-> `model_profile_id`; `issue_governed_turn_lease` sets the lease `model_profile_id` to exactly the derived
-> value and binds `generation_config_sha256` (a signed lease field); `validate_governed_turn_lease` +
-> `LiveRunStateProvider` (§7) re-derive and refuse unless `lease.model_profile_id == registry[lease.generation_config_sha256]`
-> and `lease.generation_config_sha256 == challenge.generation_config_sha256 == the executed config's hash` —
-> every model/engine/parameter mismatch Blocks **before launch**.
-> **P1 — the ISSUED authority-row cleanup was contradictory.** rev 24 said `PENDING_TTL` sweeps a left-behind
-> `ISSUED` row, but `ISSUED` is terminal and retains the exact signed document for byte-identical replay —
-> only `PENDING`-row expiry was defined. **rev 25 (§2.1):** `PENDING` rows expire at `PENDING_TTL_MS`; an
-> `ISSUED` row is retained for **`ISSUED_RETENTION_MS = challenge_expiry_window + AUTHORITY_REPLAY_WINDOW_MS`**
-> then swept (document + row); a per-`install_id` `MAX_ISSUED_ROWS_PER_INSTALL` / `MAX_ISSUED_BYTES_PER_INSTALL`
-> quota bounds stored issued documents; a deterministic `PENDING_SWEEP_INTERVAL_MS = 60000` sweep removes
-> expired PENDING + retention-expired ISSUED rows; post-`ISSUED_RETENTION_MS` replay ⇒ `no_pending_row`.
-> *(rev-18 → … → rev-24 findings — orchestrator ordering, generation_config canonicalization,
-> two-trust-model channel, nonce/`request_sha256` decoupling, generation_config hash-source split,
-> prepared-object lifecycle, routing identities, non-durable transport-retry, single-source-constructibility,
-> authority-failure-boundary — remain closed; see the non-normative Appendix A.)*
+> **STATUS: ❌ DESIGN RED being closed — rev 26 is a PROPOSED design-GREEN candidate, NOT
+> Architect-GREEN. 3b-1B code has NOT started.** rev 25 was Architect-reviewed at exact HEAD
+> `bcd24fe0d5af0a33fc72ca7eaee35b8f1f12be1a` (exact-head CI **#132** 8/8 SUCCESS incl. both mandatory
+> Wave-3b gates — **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED** the rev-24 model-identity
+> P0 + issued-row-cleanup P1, and returned the **FINAL CONSOLIDATED remediation, 2 P0 · 3 P1**, mandating a
+> **parallel fan-out (Tracks A–F) → one integrator → a fresh independent red-team over the ENTIRE §0–§9 +
+> real code.** rev 26 closes all five in place:
+> **P0-1 — pre-result refusal plumbing was not constructible.** Internal a0/a/b/c/d + authority refusal
+> codes are absent from `GOVERNED_REFUSAL_REASONS` and the sidecar may originate no verdict, yet must reach
+> the desktop as a Block. **rev 26 (§4.10(h)):** a NEW `bridge.governed-turn-diagnostic.v1{stage,
+> upstream_reason}` (≤ `MAX_DIAGNOSTIC_BYTES = 256`, no signature, distinct discriminator) carries internal
+> refusals; `governed_turn_execute` classifies by top-level `protocol` into 3 disjoint bounded-reason
+> prefixes (`governed_verdict_refused:` / `governed_internal_refusal:` / `governed_transport_failure:`),
+> each → exactly one `record_pre_verification_block` Block, never confusable with a signed verdict; a
+> complete routing table maps every internal reason; explicit `refused` is terminal, only transport
+> failures retry.
+> **P0-2 — model identity must be immutable + historically verifiable.** The rev-25 mutable registry could
+> let a later update reinterpret a past execution. **rev 26 (§2/§4.3/§7):** identity is a pure formula
+> `model_profile_id = "cfg-sha256:" + generation_config_sha256` (no lookup); the former registry survives
+> only as a non-identity `GOVERNED_EXECUTION_ALLOWLIST` (execution-permission gate, consulted once at
+> acceptance, never by §7); the 5-field resolver is frozen to exact literals (model `"claude-sonnet-5"`,
+> max_output_tokens `"4096"`, temperature `"0.00"`, top_p `"1.00"`, engine_id the frozen id) with an exact
+> `BROPS_GOVERNED_*` override contract; `validate_governed_turn_lease` + `LiveRunStateProvider` recompute
+> the formula from signed bytes, so an allowlist change after signing cannot reinterpret a record.
+> **P1-1 — challenge-authority exact constants + ordering + frame-fit.** **rev 26 (§2.1.1):** a canonical
+> constants table (all literal — `PENDING_TTL_MS 30000`, `MAX_AUTHORITY_ATTEMPTS 3`,
+> `AUTHORITY_ATTEMPT_TIMEOUT_MS 2000`, `AUTHORITY_RETRY_BACKOFF_MS 1000`, `AUTHORITY_REPLAY_WINDOW_MS 30000`,
+> `ISSUED_RETENTION_MS 60000`, `MAX_ISSUED_ROWS_PER_INSTALL 8`, `MAX_ISSUED_BYTES_PER_INSTALL 65536`,
+> `AUTHORITY_CHANNEL_FRAME_BYTES 8192`, …); idempotent-lookup-before-quota; synchronous logical expiry
+> (expired-not-swept never live, never counted); `pending_expired` (present+expired) vs `no_pending_row`
+> (absent); the issue reply raised to `challenge_document_b64` in an 8192 frame (the old 4 KiB could not
+> hold a 4096-byte doc + base64 + envelope).
+> **P1-2 — output-stream expiry/retention/cleanup complete.** **rev 26 (§4.10(f)):** three-phase lifecycle
+> (LIVE / tombstone `stream_expired` / swept `stream_unknown`) on a synchronous verdict; `OUTPUT_STREAM_TTL_MS
+> 360000` + `OUTPUT_STREAM_RETENTION_MS 360000` + `OUTPUT_STREAM_SWEEP_INTERVAL_MS 60000` + per-install
+> quota + FIFO-evict; the token is minted once (no re-mint post-expiry); the sweep never unlinks the
+> content-addressed output (pinned by the terminal record + receipt).
+> **P1-3 — expired challenges could pin staging quota.** **rev 26 (§4.10(a0)/§2.4):** a resource-admission
+> expiry gate refuses `challenge_expired` iff `now_ms > challenge_expires_at_ms` (before any publish/CAS,
+> no nonce consume, no acceptance stamp), and the staging quota counts only LIVE rows — so an expired/
+> replayed challenge occupies zero slots.
+> *(rev-18 → … → rev-25 findings remain closed; see the non-normative Appendix A. Track F swept the whole
+> doc for undefined constants / `e.g.` / prose-only reasons: all governed constants now literal; the
+> `EXECUTION_STARTING→EXECUTING` trigger + the `challenge_replay`/`acceptance_conflict`/`lease_not_ready`
+> producing gates are pinned.)*
 > **All contracts below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.**
 > STOP gates: `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31
 > not merged.
@@ -146,23 +161,45 @@ profile — NOT a base-lease superset**:
   profile** (`model_profile_id`) are explicit lease fields with real verifiers (§4.3): the
   launcher refuses any other executable/target UID (§4.7), and the recorder refuses a
   `model_profile_id` not in its allow-set.
-- **ONE model authority (P0 LOCKED — the config IS the profile).** `model_profile_id` is **NOT**
-  a free lease field: the executor reads the actual `engine_id`/`model`/`max_output_tokens`/
-  `temperature`/`top_p` from the `generation_config` FD (§4.7), so a lease `model_profile_id` that
-  is unbound to that config would let a signed lease declare "profile A" while the executor runs
-  "model B" — a cryptographically-valid but misrepresented execution identity. To make the config
-  the single authority, the supervisor owns a **deterministic model-profile registry**
-  `model_profile_registry: SHA256(JCS(generation_config)) → model_profile_id` (a locked, total map
-  over the accepted governed configs the §4.10(g) resolver can emit; one config-hash ⇒ exactly one
-  profile; unknown config-hash ⇒ `model_profile_unknown` refusal). **Before acceptance** the
-  supervisor parses+validates the **staged** `generation_config` bytes (§2.4), recomputes
-  `generation_config_sha256`, and **derives** `model_profile_id = model_profile_registry[hash]`;
-  `issue_governed_turn_lease` (§4.3) sets the lease `model_profile_id` to **exactly** that derived
-  value and the lease additionally binds `generation_config_sha256` (a signed field), so the
-  config↔profile link is cryptographic. `LiveRunStateProvider` (§7) re-derives the profile from the
-  challenge/lease `generation_config_sha256` and refuses unless `derive == lease.model_profile_id ==
-  the registry value` **and** `lease.generation_config_sha256 == challenge.generation_config_sha256
-  == the executed config's hash`; **any** model/engine/parameter mismatch Blocks **before launch**.
+- **ONE model authority (P0-2 LOCKED — identity is a DETERMINISTIC FUNCTION of the config, not a
+  lookup).** `model_profile_id` is **NOT** a free lease field and is **NOT** resolved through any
+  mutable map. The executor reads the actual `engine_id`/`model`/`max_output_tokens`/`temperature`/
+  `top_p` from the `generation_config` FD (§4.7); the model identity is therefore **defined** as a
+  pure, total function of the config's canonical hash — **no registry, no historical lookup, no
+  supervisor-owned mapping table**:
+  ```
+  model_profile_id = "cfg-sha256:" + generation_config_sha256
+  ```
+  where `generation_config_sha256 = SHA256(JCS(generation_config))` (the §4.10(g) flat string→string
+  object form). The result is `"cfg-sha256:"` (11 chars) + 64 lowercase-hex = **exactly 75 chars**,
+  within the `≤128` bound; `model_profile_id` MUST match `^cfg-sha256:[0-9a-f]{64}$`. Because identity
+  is a deterministic function of the signed config hash alone, it is **immutable and historically
+  verifiable forever from the signed lease/record bytes** — no external state can reinterpret or
+  invalidate a past execution's identity.
+- **Execution allowlist (an EXECUTION GATE, NOT an identity source — P0-2 LOCKED).** Whether a config
+  is *permitted to execute* is a **separate** supervisor decision from what its identity *is*. The
+  supervisor owns a **`GOVERNED_EXECUTION_ALLOWLIST`**: a set of `generation_config_sha256` values
+  (each `^[0-9a-f]{64}$`) it will launch, computed deterministically at supervisor start by
+  canonicalizing (JCS) + hashing every governed config it is configured to permit — at minimum the
+  frozen-default config, hash `732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22`,
+  plus the hash of each config a valid trusted-host override combination its environment resolves to
+  (§4.10(g)). It is frozen for the process lifetime (a change is a restart). **The allowlist decides
+  ONLY whether a config MAY execute; it MUST NOT map a hash to an identity, MUST NOT redefine the
+  identity formula, and MUST NOT be consulted by any identity derivation or by historical
+  verification (§7).**
+- **Before acceptance** the supervisor parses+validates the **staged** `generation_config` bytes
+  (§2.4), recomputes `generation_config_sha256`, asserts it equals the challenge's committed value (a
+  mismatch is `handle_not_challenge`, §2.4), **requires it ∈ `GOVERNED_EXECUTION_ALLOWLIST`** (a hash
+  not in the allowlist ⇒ `model_profile_unknown` Block, no lease, no launch — §4.5), and **derives
+  `model_profile_id = "cfg-sha256:" + generation_config_sha256`** by the formula only.
+  `issue_governed_turn_lease` (§4.3) sets the lease `model_profile_id` to exactly that derived value
+  and binds `generation_config_sha256` as a signed field. `validate_governed_turn_lease` (§4.3) and
+  `LiveRunStateProvider` (§7) **each independently recompute the formula + equality chain** and refuse
+  unless `lease.model_profile_id == "cfg-sha256:" + lease.generation_config_sha256` **and**
+  `lease.generation_config_sha256 == challenge.generation_config_sha256 == the executed config's
+  re-hashed bytes` — neither verifier consults the allowlist (§7 verifies identity, not
+  execution-permission), so a later allowlist change never touches a past record. Any
+  model/engine/parameter mismatch Blocks **before launch**.
 - The governed-turn lease **omits** the builder-only fields `repository`, `branch`,
   `worktree`, `head_sha`, `tree_identity`, and `protected_scope` — none has a verifier for a
   model turn. (If a future justified use reintroduces `protected_scope`, its type is an
@@ -207,7 +244,8 @@ The exact current contract (not history):
     desktop's, already pre-stored by the desktop in `receipt_challenges`, see the pre-store bullet
     below); it returns that `pending_challenge_id`. No signature is produced and no
     `brops.governed-turn-challenge.v1` payload exists yet. Reply
-    `brops.governed-challenge-create-pending-result.v1`. **Frame ≤ 4 KiB** each way.
+    `brops.governed-challenge-create-pending-result.v1`. **Frame ≤ `AUTHORITY_CHANNEL_FRAME_BYTES`
+    (8192, §2.1.1)** each way (the same authority-reply cap as the (B) issue reply).
   - **(B) `brops.governed-challenge-issue.v1`** (issue / sign — **signs exactly once**). The
     desktop-UI supplies **ONLY the `pending_challenge_id`** (never facts, never bytes). The authority
     **resolves the row from its OWN protected store**, **constructs the exact
@@ -216,8 +254,11 @@ The exact current contract (not history):
     config, copying the stored `*_sha256`/`requested_at_ms`/`run_id`/`task_id`/`request_nonce`, and
     stamping `challenge_issued_at_ms`/`challenge_expires_at_ms` from its own clock — **signs once**,
     **one-time-consumes** the pending row (`PENDING → ISSUED`, non-reusable), and returns the signed
-    `{payload,sig}` document. Reply `brops.governed-challenge-issue-result.v1`. **Frame ≤ 4 KiB** each
-    way (the signed document decodes ≤ 4096, matching `challenge_doc_b64` at §4.10(a0)/§4.10(g)).
+    `{payload,sig}` document. Reply `brops.governed-challenge-issue-result.v1`, carrying
+    `challenge_document_b64` (decoded ≤ `CHALLENGE_DOCUMENT_MAX_BYTES = 4096`); **reply frame ≤
+    `AUTHORITY_CHANNEL_FRAME_BYTES = 8192`** (worst case 5563 B, §2.1.1(g) — the old "≤ 4 KiB" could not
+    hold a 4096-byte document + base64 + envelope); **request frame ≤ `AUTHORITY_REQUEST_FRAME_BYTES =
+    4096`**. The same 8192 reply cap applies to `create-pending-result` (§2.1.1).
 - **Single trust invariant (LOCKED):** the caller **NEVER** supplies challenge bytes or a
   caller-chosen canonical payload; the authority **ALWAYS** builds the signed
   `brops.governed-turn-challenge.v1` payload from its **own stored row**. Turn facts enter the system
@@ -284,7 +325,8 @@ before any side effect):
 //   "reason": "peer_denied"|"malformed"|"field_invalid"|"timestamp_invalid"|"oversize"|"retry_conflict"|"quota_pending" }
 // (B) request:  { "protocol": "brops.governed-challenge-issue.v1", "pending_challenge_id": "<opaque string ≤128>" }
 // (B) reply (issued):   { "protocol": "brops.governed-challenge-issue-result.v1", "status": "issued",
-//   "challenge_document": { "payload": { … §4.1 … }, "sig": "<b64url Ed25519>" } }
+//   "challenge_document_b64": "<base64url of the EXACT signed {payload,sig} JCS bytes, decoded ≤ CHALLENGE_DOCUMENT_MAX_BYTES = 4096>" }
+//   (P1-1: base64url carriage — the desktop-UI places it directly into challenge_doc_b64 at §4.10(a0)/(g) with NO re-canonicalization; an inline object would risk a non-canonical re-serialization the §4.10(a0) canonicality gate rejects.)
 // (B) reply (refused):  { "protocol": "brops.governed-challenge-issue-result.v1", "status": "refused",
 //   "reason": "peer_denied"|"no_pending_row"|"pending_expired"|"key_unavailable"|"malformed" }
 //   (NOTE: an already-ISSUED row is NOT a refusal — it takes the idempotent replay path below and re-returns the stored `issued`.)
@@ -340,9 +382,8 @@ CREATE TABLE governed_pending_challenge (
   and is swept then. An `ISSUED` row is **terminal** and MUST **retain** its exact signed
   `issued_challenge_document` for byte-identical replay (the lost-`issue`-reply idempotency above) —
   so it is **NOT** governed by `PENDING_TTL`; it is retained for
-  **`ISSUED_RETENTION_MS = challenge_expiry_window + AUTHORITY_REPLAY_WINDOW_MS`** (≥ the signed
-  challenge's own `challenge_expires_at_ms − challenge_issued_at_ms` **plus** the create/issue
-  `MAX_AUTHORITY_RETRIES` window, §4.10(g)), measured from the row's **`issued_at_ms`** (the queryable
+  **`ISSUED_RETENTION_MS = 60000`** (`= CHALLENGE_TTL_MS 30000 + AUTHORITY_REPLAY_WINDOW_MS 30000`,
+  §2.1.1), measured from the row's **`issued_at_ms`** (the queryable
   column stamped in the CAS `PENDING → ISSUED` tx — NOT `created_at_ms`, since create-pending (A)
   precedes issue (B)), so replay is available for exactly as long as the challenge could still be
   legitimately submitted. **After `issued_at_ms + ISSUED_RETENTION_MS` the row + its stored document are
@@ -358,6 +399,76 @@ CREATE TABLE governed_pending_challenge (
   exceed the bound — a compromised desktop-UI cannot amass unbounded issued documents). A left-behind
   `ISSUED` row binds **no execution right** (it is not an acceptance-ledger row, §5) and cannot become a
   reusable turn, so this retention is safe.
+
+#### 2.1.1 Challenge-authority lifecycle constants + ordering (P1-1, LOCKED — literal values)
+
+All elapsed/timeout durations are MONOTONIC (§1); all `*_at_ms` are wall-clock. Every value nests inside
+the desktop `max_age_ms = 300000` (§1).
+
+| Constant | Literal | Meaning / counting |
+|---|---|---|
+| `CHALLENGE_TTL_MS` | `30000` | `challenge_expires_at_ms == challenge_issued_at_ms + CHALLENGE_TTL_MS` (§1 pins the "≤30000" bound to this literal) |
+| `PENDING_TTL_MS` | `30000` | PENDING-row life: `pending_expires_at_ms == created_at_ms + PENDING_TTL_MS` |
+| `MAX_AUTHORITY_ATTEMPTS` | `3` | total tries per authority message (**counts the first**); `MAX_AUTHORITY_RETRIES = 2` (retries only) |
+| `AUTHORITY_ATTEMPT_TIMEOUT_MS` | `2000` | per-attempt monotonic deadline for one authority reply |
+| `AUTHORITY_RETRY_BACKOFF_MS` | `1000` | **fixed** delay between attempts |
+| `AUTHORITY_REPLAY_WINDOW_MS` | `30000` | lost-reply byte-identical `issue` replay window after `issued_at_ms` |
+| `ISSUED_RETENTION_MS` | `60000` | `= CHALLENGE_TTL_MS + AUTHORITY_REPLAY_WINDOW_MS = 30000 + 30000`; ISSUED-row+document retention from `issued_at_ms` |
+| `MAX_ISSUED_ROWS_PER_INSTALL` | `8` | max logically-live ISSUED rows / install |
+| `MAX_ISSUED_BYTES_PER_INSTALL` | `65536` | max total stored `issued_challenge_document` bytes / install |
+| `PENDING_SWEEP_INTERVAL_MS` | `60000` | background + startup sweep cadence (physical delete within `2×` = 120000) |
+| `AUTHORITY_CHANNEL_FRAME_BYTES` | `8192` | max authority **reply** frame (issue-result / create-pending-result) |
+| `AUTHORITY_REQUEST_FRAME_BYTES` | `4096` | max authority **request** frame (untrusted-side oversize guard) |
+| `CHALLENGE_DOCUMENT_MAX_BYTES` | `4096` | decoded ceiling on the signed `{payload,sig}` document (= §4.10(a0)/(g) `decoded ≤ 4096`) |
+
+**Attempt budget:** `3×2000 + 2×1000 = 8000 ms`/hop; worst create→issue span `2×8000 = 16000 < PENDING_TTL_MS 30000`. ✔
+
+**(a) Idempotent-before-quota (LOCKED).** At create-pending (A): peer-auth+validate → **idempotent
+lookup FIRST** (resolve `UNIQUE(install_id,request_nonce)`, apply §2.1.1(b) logical-expiry): a
+logically-live identical row re-returns the SAME `pending_challenge_id` **with no quota check**; a live
+row with any differing fact ⇒ `retry_conflict`; a logically-expired-not-swept row for that nonce ⇒
+`retry_conflict` → **only when no row exists** does the quota check run (live-PENDING ≤ 2, live-(PENDING+ISSUED)
+≤ 8, stored bytes ≤ 65536, else `quota_pending`). A full quota can never break recovery of an existing
+identical request.
+
+**(b) Synchronous logical expiry (LOCKED).** On **every** create-pending lookup and **every** issue
+resolution, evaluate a fresh `now_ms` synchronously **before acting**: a PENDING row with `now_ms >
+pending_expires_at_ms` is logically expired (never issued/replayed as live); an ISSUED row with `now_ms >
+issued_at_ms + ISSUED_RETENTION_MS` is retention-expired (never replays its stored document) — even if
+the background sweep has not yet deleted it. Physical presence is never sufficient for liveness.
+
+**(c) Expired-not-swept excluded from live quotas (LOCKED).** The live-quota counts in (a) count only
+rows passing (b); sweep latency can never cause a spurious `quota_pending`.
+
+**(d) `pending_expired` vs `no_pending_row` (LOCKED — replaces the earlier line-337 wording).** At issue
+(B): a row **physically present but failing its logical-expiry predicate** (expired PENDING, OR
+retention-expired ISSUED) ⇒ `pending_expired`; **no row physically present** (never created, or swept) ⇒
+`no_pending_row`; a live PENDING ⇒ CAS→ISSUED + stamp `issued_at_ms` + sign once + store; a live ISSUED ⇒
+byte-identical replay.
+
+**(e) Physical cleanup is separate.** A `PENDING_SWEEP_INTERVAL_MS = 60000` sweep (+ startup pass)
+deletes PENDING rows past `pending_expires_at_ms` and ISSUED rows past `issued_at_ms + ISSUED_RETENTION_MS`
+within `2×PENDING_SWEEP_INTERVAL_MS = 120000` of eligibility. Logical expiry (b) governs correctness; the
+sweep only reclaims storage.
+
+**(f) `refused` terminal; only transport failures retryable (LOCKED — refines §4.10(g), cross-ref §4.10(h)).**
+Retryable (⇒ bounded idempotent retry, `MAX_AUTHORITY_ATTEMPTS = 3`): socket-unavailable / lost reply /
+transport-malformed (unparseable/oversize) frame. Terminal (⇒ `record_pre_verification_block`, never
+retried): any well-formed `status:"refused"` verdict (incl. `reason:"malformed"` — the authority telling
+us OUR request was malformed, distinct from a transport-malformed reply).
+
+**(g) Frame-fit byte math.** Real §4.1 payload worst case (all `≤128` strings at max, `*_sha256`=64hex,
+`_ms`=16 digits, `sig`=88 b64url) = **1634 B**, so `CHALLENGE_DOCUMENT_MAX_BYTES = 4096` keeps 2.5×
+headroom. The (B) issued reply must hold a document up to the 4096 ceiling: base64url(4096)=5464 chars +
+envelope (`{"protocol":…,"status":"issued","challenge_document_b64":"…"}` ≈99 B) ⇒ **≤ 5565 B**, which
+fits `AUTHORITY_CHANNEL_FRAME_BYTES = 8192` (headroom 2627 B). The old 4 KiB cap could not.
+
+**(h) Tests:** generated max-size issued frame (≤8192, >4096, proving the raise is necessary+sufficient);
+frame-cap boundaries (8192 accept / 8193 oversize; request 4096/4097; doc 4096/4097); every constant
+boundary (`pending_expires` +0/+1; `issued_at+ISSUED_RETENTION` +0/+1; quotas at 8/9, 65536/+1, 2/3);
+retry-cut (≤3 tries, 4th ⇒ terminal); quota-order (idempotent-before-quota at full quota); logical-expiry
+vs delayed sweep (expired ⇒ `pending_expired`, present); physically-swept ⇒ `no_pending_row`; lost-reply/
+transport-malformed ⇒ retry recovers, well-formed `refused` ⇒ terminal Block; byte-identical issue replay.
 - **Authority builds the payload itself:** at issue (B), from its protected row the authority
   **constructs** the exact `brops.governed-turn-challenge.v1` payload (§4.1), stamps
   `challenge_issued_at_ms`/`challenge_expires_at_ms`, and signs once (consuming the pending id). It
@@ -692,8 +803,14 @@ protocol:
   desktop ships only a placeholder policy hash (used only on the never-active Trusted path).
 - **Quota / expiry / crash (P1-3, LOCKED — exact numeric caps, no prose-only quota):** per
   `install_id` the supervisor enforces, fail-closed:
-  - **`MAX_CONCURRENT_GOVERNED_TURNS = 2`** in-flight `governed_turn_staging` rows (matches the
-    desktop `MAX_CONCURRENT_GENERATIONS = 2`, `ai.rs:212`); a 3rd `governed-turn-open` ⇒ `quota_turns`.
+  - **`MAX_CONCURRENT_GOVERNED_TURNS = 2`** **LIVE** `governed_turn_staging` rows per install (matches the
+    desktop `MAX_CONCURRENT_GENERATIONS = 2`, `ai.rs:212`); a 3rd concurrent **live** row on
+    `governed-turn-open` ⇒ `quota_turns`. **Live-count rule (P1-3, rev 26, LOCKED):** the count includes
+    only rows with `challenge_expires_at_ms ≥ now_ms` (the same resource-admission `now_ms` of §4.10(a0));
+    an expired row (`challenge_expires_at_ms < now_ms`) is **NOT counted**, whether or not the sweep has
+    unlinked it. Together with the §4.10(a0) expiry gate (which never *creates* an expired row), an expired
+    challenge can never occupy a slot even during the `≤ STAGING_CLEANUP_DEADLINE_MS` window before a
+    lagging sweep runs — closing the "expired challenge pins a staging slot" vector (P1-3).
   - **`MAX_STAGING_SESSIONS_PER_INSTALL = 6`** concurrent `governed_turn_staging_session` rows
     (= 2 turns × 3 artifacts); over ⇒ `quota_sessions`.
   - **`MAX_STAGING_CHUNKS = 46`** per session (above) ⇒ **`MAX_STAGING_FILES_PER_TURN = 49`** immutable
@@ -827,8 +944,8 @@ selects a **binary-pinned challenge-root anchor baked into the supervisor config
     "allowed_capabilities": ["INVOKE_GOVERNED_MODEL"],  // CLOSED; exactly this
     "max_tool_calls": 0,
     "launcher_executable_sha256": "<64hex>",            // pinned setuid launcher digest
-    "model_profile_id": "<string ≤128>",               // == model_profile_registry[generation_config_sha256] (supervisor-derived, §2 P0); NOT a free field
-    "generation_config_sha256": "<64hex>",             // == challenge #1 generation_config_sha256 == the executed config's hash; binds config↔profile in the signed lease
+    "model_profile_id": "cfg-sha256:<64hex>",          // == "cfg-sha256:" + generation_config_sha256 (deterministic formula, §2 P0-2); ^cfg-sha256:[0-9a-f]{64}$; NOT a free field, NOT a registry lookup
+    "generation_config_sha256": "<64hex>",             // == challenge #1 generation_config_sha256 == the executed config's hash; the SOLE input to the model_profile_id formula
     "lease_issued_at_ms": <int>, "lease_expires_at_ms": <int>,
     "challenge_accepted_at_ms": <int>,                  // supervisor-stamped (§5)
     "request_nonce": "<string ≤128>",                   // == challenge #1 request_nonce
@@ -843,11 +960,15 @@ selects a **binary-pinned challenge-root anchor baked into the supervisor config
   receipts/records/evidence). `verify_artifact` refuses any other signer.
 - **`issue_governed_turn_lease`:** the sole issuer; called **inside §5 step 4/6** with the
   accepted challenge, reserved `execution_attempt_id`, stamped `challenge_accepted_at_ms`, and
-  resolved registry bindings. **Model-profile derivation (P0 LOCKED):** it sets
-  `generation_config_sha256 = the accepted challenge's committed generation_config_sha256` and
-  `model_profile_id = model_profile_registry[generation_config_sha256]` (§2) — **never** a
-  free/caller-chosen value; an unknown config-hash ⇒ the acceptance Blocks (`model_profile_unknown`)
-  and no lease is issued. **Lease time is frozen, not issuer-chosen (P0-4, LOCKED):**
+  resolved registry bindings. **Model-profile derivation (P0-2 LOCKED — formula only):** it sets
+  `generation_config_sha256 = the accepted challenge's committed generation_config_sha256` (§5 step 4
+  has already re-verified this equals the INPUTS_READY staged config re-hash) and
+  `model_profile_id = "cfg-sha256:" + generation_config_sha256` — **never** a free/caller-chosen value
+  and **never** a lookup. **Execution-permission gate (separate from identity):** before deriving,
+  acceptance requires `generation_config_sha256 ∈ GOVERNED_EXECUTION_ALLOWLIST` (§2); a hash not in
+  the allowlist ⇒ the acceptance Blocks (`model_profile_unknown`, §4.5) and no lease is issued. The
+  allowlist gates launch; it does **not** feed the `model_profile_id` value. **Lease time is frozen,
+  not issuer-chosen (P0-4, LOCKED):**
   `lease_issued_at_ms == challenge_accepted_at_ms` (equality — the exact lease payload bytes are
   persisted in the same acceptance tx, §5 step 4) and `lease_expires_at_ms == lease_issued_at_ms
   + LEASE_DURATION_MS` where **`LEASE_DURATION_MS = 210000` (210 s)** — one locked constant, not
@@ -860,9 +981,12 @@ selects a **binary-pinned challenge-root anchor baked into the supervisor config
 - **`validate_governed_turn_lease`:** `verify_artifact` (issuer) → strict-decode the exact
   key set → return fields. Refuses a missing/extra key, non-int `_ms`, `schema != 1`,
   `nonce` length ∉ [16,128], `allowed_capabilities != ["INVOKE_GOVERNED_MODEL"]`,
-  `max_tool_calls != 0`, `generation_config_sha256` not `^[0-9a-f]{64}$`, and — the P0 binding —
-  `model_profile_id != model_profile_registry[generation_config_sha256]` (re-derived) or
-  `generation_config_sha256 != the bound challenge's generation_config_sha256`. **Separate** from the base `validate_execution_lease` (which would
+  `max_tool_calls != 0`, `generation_config_sha256` not `^[0-9a-f]{64}$`, `model_profile_id` not
+  `^cfg-sha256:[0-9a-f]{64}$`, and — the P0-2 binding, **recomputed independently by this validator** —
+  `model_profile_id != "cfg-sha256:" + generation_config_sha256` **or**
+  `generation_config_sha256 != the bound challenge's generation_config_sha256`. It does **NOT** consult
+  `GOVERNED_EXECUTION_ALLOWLIST` (execution-permission is an acceptance-time gate, not a lease-validity
+  or historical property). **Separate** from the base `validate_execution_lease` (which would
   reject the governed-turn keys as unexpected — a governed-turn lease presented to the base
   validator MUST be refused, tested).
 
@@ -930,17 +1054,32 @@ handle_missing, hash_mismatch, policy_mismatch, containment_missing, identity_de
 timestamp_invalid, oversize, malformed`) + the governed additions (`challenge_replay,
 acceptance_conflict, lease_not_ready, output_oversize, output_timeout, evidence_fork, stale_evidence,
 lease_expired, challenge_invalidated, retry_conflict, stream_unknown, stream_expired,
-stream_binding_mismatch, seq_out_of_range, model_profile_unknown`). `model_profile_unknown` (P0 — a
-staged `generation_config` whose `generation_config_sha256` has no entry in the supervisor
-model-profile registry, §2) is a **pre-launch acceptance Block** (`BLOCKED`; no lease is issued). `stale_evidence` (P0-2, §7 case A — a lower-`head_sequence`
+stream_binding_mismatch, seq_out_of_range, model_profile_unknown`). `model_profile_unknown` (P0-2 — a
+staged `generation_config` whose `generation_config_sha256` is **not a member of
+`GOVERNED_EXECUTION_ALLOWLIST`** (a config the supervisor is not configured to execute), §2) is a
+**pre-launch acceptance Block** (`BLOCKED`; no lease is issued, no launch) — not an identity failure
+(the identity `"cfg-sha256:"+generation_config_sha256` is always well-defined; already-signed historical
+records for a since-removed config stay verifiable, §7). `stale_evidence` (P0-2, §7 case A — a lower-`head_sequence`
 rolled-back/truncated head) is **distinct** from `evidence_fork` (a divergent-content fork, §7 cases
 B/D/E). The previously-prose-only reasons (`evidence_fork`/`stale_evidence` from §7, `lease_expired`/
 `EXPIRED` from the §7 lease-time invariants, acceptance-time `challenge_invalidated`, idempotency
 `retry_conflict`, output-stream `stream_expired`/`stream_binding_mismatch`) are now closed members —
-no reason is prose-only. (The §4.10 a0/a/b/c internal supervisor↔sidecar producer codes —
-`peer_denied`, `noncanonical`, `session_unknown`, `seq_mismatch`, `oversize_chunk`, … — live in
-their own per-message reply schemas; the desktop-facing relays carry the `GOVERNED_REFUSAL_REASONS`
-union per the relay literal-embed rule below.) A `signed` result REQUIRES both `envelope_jcs_b64` and
+no reason is prose-only. **Producing gates for the acceptance-time members (LOCKED):**
+`challenge_replay` = §5 acceptance CAS finds the `request_nonce` already ACCEPTED for a different
+`challenge_handle` (a supervisor-side replay); `acceptance_conflict` = the §5 `absent → ACCEPTED_PREPARED`
+CAS loses to a conflicting existing binding; `lease_not_ready` = the execute trigger (§4.10(d)) arrives
+before the row reaches `LEASE_READY`; `timestamp_invalid` additionally covers an **acceptance-time
+challenge-window expiry** — the §5/§7 predicate `challenge_issued_at_ms ≤ challenge_accepted_at_ms ≤
+challenge_expires_at_ms` failing at acceptance (distinct from the §4.10(a0) resource-admission
+`challenge_expired`, which is pre-row and internal). Each is produced at exactly one §5/§7 gate. (The §4.10(a0/a/b/c/d) and §2.1(A/B) internal producer codes —
+`peer_denied`, `noncanonical`, `session_unknown`, `seq_mismatch`, `oversize_chunk`, `no_staging_row`,
+`session_corrupt`, `challenge_expired`, `no_inputs_ready`, `field_invalid`, `pending_expired`,
+`key_unavailable`, `quota_*`, … — are a **DISJOINT namespace** from `GOVERNED_REFUSAL_REASONS` and are
+**never** added to it. They reach the desktop as a single durable Block via the §4.10(h) NON-SUCCESS
+DIAGNOSTIC (sidecar-driven hops) or the §4.10(g) backend-direct authority reply (authority hops), each
+mapped to a `governed_internal_refusal:{stage}:{upstream_reason}` bounded reason — **never** relayed as
+a `GOVERNED_REFUSAL_REASONS` verdict. Only a `signed` result or a `GOVERNED_REFUSAL_REASONS` `refused`
+verdict is relayed verbatim per the rule below.) A `signed` result REQUIRES both `envelope_jcs_b64` and
 `signature_b64`; anything else ⇒ the desktop Blocks.
 
 **Relay literal-embed rule (P1-4, LOCKED):** the two metadata-result relay reason enums — §4.6
@@ -1217,7 +1356,7 @@ handle (verify-by-handle-before-possession is impossible).
   "challenge_doc_b64": "<b64url of the EXACT signed challenge document JCS({payload,sig}), decoded ≤ 4096>" }
 // reply (opened): { "protocol": "brops.governed-turn-open-result.v1", "status": "opened", "challenge_handle": "<64hex>" }
 // reply (refused): { "protocol": "brops.governed-turn-open-result.v1", "status": "refused",
-//   "reason": "peer_denied"|"doc_oversize"|"malformed"|"noncanonical"|"handle_mismatch"|"registry_unknown"|"key_invalid"|"sig_invalid"|"context_mismatch"|"retry_conflict" }
+//   "reason": "peer_denied"|"doc_oversize"|"malformed"|"noncanonical"|"handle_mismatch"|"registry_unknown"|"key_invalid"|"sig_invalid"|"context_mismatch"|"challenge_expired"|"retry_conflict" }
 ```
 **OPEN-TIME PRELIMINARY verification (P0-3, LOCKED — this is NOT the final §7 predicate; the
 authoritative as-of-acceptance predicate runs at §5/§7 because `challenge_accepted_at_ms` does not
@@ -1233,15 +1372,31 @@ registry floor — the registry is NEVER supplied by the sidecar); verify `root_
 and the challenge `sig` under the resolved snapshot key, with key validity **as of
 `challenge_issued_at_ms`** (`valid_from_ms ≤ challenge_issued_at_ms ≤ valid_to_ms`, `revoked_at_ms
 IS NULL OR revoked_at_ms > challenge_issued_at_ms`); verify `run_id`/`task_id`/`install_id`/window
-context + recompute `request_sha256`; **atomically create-if-absent publish the EXACT
+context + recompute `request_sha256`; **RESOURCE-ADMISSION EXPIRY GATE (P1-3, rev 26, LOCKED — a
+resource gate, NOT the binding acceptance predicate):** *after* the challenge `sig` is verified (so
+`challenge_expires_at_ms`, a signed §4.1 field, is authenticated) and *before* any publish or CAS, read
+the supervisor **wall clock once → `now_ms`** and refuse **`challenge_expired`** iff **`now_ms >
+challenge_expires_at_ms`** (**inclusive boundary:** `now_ms == challenge_expires_at_ms` ADMITTED,
+`+1` REFUSED). This `now_ms` is a **resource-admission read only**: it is **NOT** persisted, is **NOT**
+`challenge_accepted_at_ms`, does **NOT** consume the nonce, does **NOT** create a row or execution right,
+and does **NOT** replace the §5/§7 as-of-acceptance predicate (which still independently re-reads the
+single §5 acceptance clock and re-checks the FULL validity/revocation window as-of
+`challenge_accepted_at_ms`). A `challenge_expired` refusal creates **NO staging row**, publishes nothing,
+consumes no nonce ⇒ an expired (or replayed-expired) challenge occupies **zero** staging quota.
+`challenge_expired` is an **§4.10(a0)-internal producer code**, **NOT** a `GOVERNED_REFUSAL_REASONS`
+member — routed to a terminal durable Block via the §4.10(h) diagnostic. Only if the gate passes:
+**atomically create-if-absent publish the EXACT
 `decoded_document_bytes`** into `store/sup/` (the §6 step-1 publish); CAS-create the
 `governed_turn_staging` row `absent→VERIFYING→UPLOADING` keyed
-`UNIQUE(install_id,request_nonce)`+`UNIQUE(challenge_handle)`; return `challenge_handle`. **No clock
-read, no nonce consume, no execution right — this only *admits* the turn to upload; the binding
-authority is the acceptance-time re-verification (§5).** Refused reasons: `peer_denied, doc_oversize,
+`UNIQUE(install_id,request_nonce)`+`UNIQUE(challenge_handle)`; return `challenge_handle`. **No ACCEPTANCE
+clock read (`challenge_accepted_at_ms` is NOT produced here — only the resource-admission `now_ms` above,
+which is discarded), no nonce consume, no execution right — this only *admits* the turn to upload; the
+binding authority is the acceptance-time re-verification (§5).** The gate is evaluated on **every** open
+(first AND idempotent re-open, P1-6). Refused reasons: `peer_denied, doc_oversize,
 malformed, noncanonical, handle_mismatch, registry_unknown, key_invalid, sig_invalid,
-context_mismatch, retry_conflict` (idempotent re-open, P1-6), plus `quota_turns` (P1-3: a 3rd
-concurrent `governed_turn_staging` row for the `install_id` — `MAX_CONCURRENT_GOVERNED_TURNS = 2`). The untrusted sidecar transports bytes
+context_mismatch, challenge_expired, retry_conflict` (idempotent re-open, P1-6), plus `quota_turns` (P1-3: a 3rd
+concurrent **LIVE** `governed_turn_staging` row for the `install_id` — `MAX_CONCURRENT_GOVERNED_TURNS = 2`;
+expired rows excluded, §2.4 live-count rule). The untrusted sidecar transports bytes
 only; the challenge signature + supervisor-resolved registry are the authority.
 
 **(a) `brops.governed-staging-open.v1`** — sidecar→supervisor (§2.4), **only after a successful
@@ -1315,8 +1470,15 @@ safe); a conflicting retry (session diverged / different declared digest) ⇒ `r
 **(d) `brops.governed-evidence-request.v1`** — sidecar→supervisor **execute/finalize trigger**
 (the message that, once the staging row is `INPUTS_READY`, asks the supervisor to run the
 governed turn and produce the signed result). Replaces the mis-named use of the v1
-`brops.evidence-request.v1` const on the governed path. Reply is `brops.governed-turn-result.v1` (e).
-Frame ≤ 4 KiB.
+`brops.evidence-request.v1` const on the governed path. **Reply is a tagged union (P0-1):** once a
+`governed_turn_acceptance` row exists, the acceptance/signer verdict is `brops.governed-turn-result.v1`
+(e — `signed` or a `GOVERNED_REFUSAL_REASONS` `refused`); a **pre-acceptance** gate failure (no
+`INPUTS_READY` staging row / peer / corrupt session) returns the internal
+`brops.governed-evidence-request-result.v1 {status:"refused", reason:
+"peer_denied"|"no_inputs_ready"|"session_corrupt"|"retry_conflict"|"malformed"}` — a **disjoint**
+namespace from `GOVERNED_REFUSAL_REASONS`, carried to the desktop as the §4.10(h) NON-SUCCESS DIAGNOSTIC
+(stage `evidence-request`) ⇒ one `governed_internal_refusal:*` Block; it creates **NO** acceptance row.
+Both replies use its `protocol` const discriminator. Frame ≤ 4 KiB.
 ```jsonc
 { "protocol": "brops.governed-evidence-request.v1",
   "install_id": "<string ≤128>", "challenge_handle": "<64hex>", "request_nonce": "<string ≤128>" }
@@ -1375,23 +1537,54 @@ encryption would require a separate future contract.
 
 **Durable mapping (P0-2, LOCKED — supervisor-owned `0700` DB, survives restart):**
 ```sql
+-- INSERT-ONCE (immutable after commit; never UPDATEd; only the sweep DELETEs). Logical state is DERIVED, not stored.
 CREATE TABLE governed_output_streams (
   output_stream_id     TEXT PRIMARY KEY,          -- 43-char base64url, 256-bit
+  install_id           TEXT NOT NULL,             -- (NEW P1-2) per-install quota + sweep grouping
   receipt_id           TEXT NOT NULL UNIQUE,
   execution_attempt_id TEXT NOT NULL UNIQUE,
-  output_handle        TEXT NOT NULL,             -- content-addressed store handle (store/rec)
-  output_bytes         INTEGER NOT NULL,
+  output_handle        TEXT NOT NULL,             -- content-addressed store/rec handle; a REFERENCE, NOT the retention owner (§2.3)
+  output_bytes         INTEGER NOT NULL,          -- 0..8388608
   output_sha256        TEXT NOT NULL,
-  created_at_ms        INTEGER NOT NULL,
-  expires_at_ms        INTEGER NOT NULL );        -- created_at_ms + OUTPUT_STREAM_TTL_MS
+  created_at_ms        INTEGER NOT NULL,          -- ≥ completed_at_ms
+  expires_at_ms        INTEGER NOT NULL,          -- created_at_ms + OUTPUT_STREAM_TTL_MS   (LOGICAL-expiry key: reads past this ⇒ stream_expired)
+  retained_until_ms    INTEGER NOT NULL );        -- (NEW P1-2) created_at_ms + OUTPUT_STREAM_TTL_MS + OUTPUT_STREAM_RETENTION_MS (PHYSICAL-sweep key)
+CREATE INDEX ix_gos_install ON governed_output_streams (install_id);
+CREATE INDEX ix_gos_retained ON governed_output_streams (retained_until_ms);
 ```
-The row is **durably committed BEFORE** the §4.10(e) result summary is returned; a supervisor
-restart preserves it, and a `COMPLETED` retry returns the **same** `output_stream_id`. Each read
-re-checks `output_handle`/length/hash and serves `store.read(output_handle)[seq·184320 …]` (the
-supervisor has group read on `store/rec`, §2.3). **`OUTPUT_STREAM_TTL_MS = 360000`** (the desktop
-`max_age_ms 300000` + `future_skew_ms 60000`, `receipt_store.rs`) — a stream must outlive the widest
-window in which the desktop may still accept the receipt; after `expires_at_ms` the supervisor
-returns `stream_expired`. No stream enumeration is ever exposed.
+The row is **durably committed BEFORE** the §4.10(e) result summary is returned; a supervisor restart
+preserves it. `output_stream_id` is minted **exactly once** (create-if-absent on `UNIQUE(receipt_id)`/
+`UNIQUE(execution_attempt_id)`), recorded in the §4.10(e) summary + terminal record, and a `COMPLETED`
+retry **re-reads, never re-mints** it. **Output-stream lifecycle (P1-2, LOCKED — three phases; the read/
+retry verdict is SYNCHRONOUS on every read, never dependent on the async sweep):** constants
+`OUTPUT_STREAM_TTL_MS = 360000` (logical), `OUTPUT_STREAM_RETENTION_MS = 360000` (tombstone window),
+`OUTPUT_STREAM_SWEEP_INTERVAL_MS = 60000`, `MAX_OUTPUT_STREAMS_PER_INSTALL = 64`,
+`MAX_OUTPUT_STREAM_BYTES_PER_INSTALL = 536870912` (= 512 MiB = 64×8 MiB). TTL proof: `now_sup ≤
+completed_at + max_age_ms(300000) + skew(60000) ≤ created_at + 360000`, nesting inside the desktop
+window (`receipt_store.rs:50-52`). Verdict order (per read/retry): row **absent** ⇒ `stream_unknown`
+(Phase 3, swept); `now_ms > expires_at_ms` ⇒ `stream_expired` (Phase 2, tombstone present) — **inclusive
+boundary**, `now_ms == expires_at_ms` LIVE; `receipt_id`/`execution_attempt_id` ≠ request ⇒
+`stream_binding_mismatch`; `seq` out of range ⇒ `seq_out_of_range`; else serve. **Phase 1 (pre-logical-
+expiry):** COMPLETED retry returns the SAME token; same `seq` byte-identical; restart re-drives from the
+durable row. **Phase 2 (post-logical-expiry, tombstone present):** **NEVER mint a replacement token** —
+a COMPLETED retry re-serves the same (now-expired) `output_stream_id`, every read returns the one
+deterministic `stream_expired`. **Phase 3 (post physical retention, row swept at `now_ms >
+retained_until_ms`):** reads ⇒ `stream_unknown` (the one-way `stream_expired → stream_unknown`
+transition, keyed on `retained_until_ms`); the terminal record stays the sole output authority so no
+result is lost. **Sweep:** a `OUTPUT_STREAM_SWEEP_INTERVAL_MS = 60000` background + startup pass DELETEs
+rows past `retained_until_ms` (within `2× = 120000` of eligibility) — **row only; it MUST NOT unlink the
+content-addressed `store/rec/<output_handle>`** (§2.3: the bytes are pinned by the terminal record §4.8 +
+execution receipt §4.7 that reference the handle, and are collected only by the store's own
+content-addressed GC when unreferenced — so output bytes OUTLIVE the stream row). **Quota (fail-closed,
+per install):** before inserting a new row, sweep this install's `retained_until_ms`-expired rows; if
+present-row count would reach `MAX_OUTPUT_STREAMS_PER_INSTALL = 64` or `Σ output_bytes` reach
+`MAX_OUTPUT_STREAM_BYTES_PER_INSTALL`, FIFO-evict the oldest by `created_at_ms` (evicted ⇒
+`stream_unknown` early — never a correctness loss, bytes remain) until both hold, then insert; a
+completing turn's stream is **always** created. No stream enumeration is ever exposed. **Tests:**
+restart-mid-pull; expiry boundary (`==` LIVE / `+1` expired); delayed-sweep (logically expired, row
+present ⇒ `stream_expired`, not `stream_unknown`); quota FIFO-evict; same-token COMPLETED retry;
+no-remint after expiry; tombstone-expiry ⇒ `stream_unknown` (one-way); concurrent reads; output-bytes
+outlive the swept stream (store GC collects only when unreferenced).
 
 **Supervisor hop — `brops.governed-turn-output-read.v1`** (sidecar→supervisor, one-req/one-resp
 `brops_socket`). Frame ≤ `MAX_FRAME_BYTES = 262144`.
@@ -1476,7 +1669,7 @@ here. No new principal handles the document.
   "system": "<string, UTF-8, ≤ 262144 bytes>",
   "history": [ { "role": "user"|"assistant"|"system", "content": "<string>" }, … ],
   "generation_config": {                 // ONE closed FLAT string→string object (P1-1 — every value a validated canonical STRING; NO JSON numbers)
-    "engine_id":         "<string, regex ^[A-Za-z0-9._-]{1,128}$ — e.g. brops.governed-engine.sidecar.v1>",
+    "engine_id":         "<string, regex ^[A-Za-z0-9._-]{1,128}$; the frozen default is exactly \"brops.governed-engine.sidecar.v1\" (§4.10(g) resolver, not overridable)>",
     "model":             "<string, regex ^[A-Za-z0-9._:-]{1,128}$>",
     "max_output_tokens": "<string, regex ^[1-9][0-9]{0,6}$  AND 1 ≤ int(v) ≤ 1048576>",
     "temperature":       "<string, regex ^[0-2]\\.[0-9]{2}$ AND 0 ≤ 100·intdigit + int(2 fraction digits) ≤ 200>",
@@ -1653,14 +1846,32 @@ fn resolve_governed_generation_config_v1b() -> Result<GovernedGenerationConfig, 
 ```
 that returns **all five** fields from **locked governed defaults / trusted host config only** (never the
 renderer, never the sidecar), validated **once** by the §4.10(g) flat-string→string regex + integer-range
-rules, then frozen into the immutable object: `engine_id` = the frozen `GOVERNED_GENERATION_CONFIG =
-"brops.governed-engine.sidecar.v1"` (`commands.rs:785`, reused verbatim as the engine id); `model` = a
-locked governed default (a NEW `GOVERNED_MODEL` const, e.g. `"claude-sonnet-5"` mirroring
-`DEFAULT_ANTHROPIC_MODEL` `ai.rs:26`, overridable ONLY by a **trusted host env** such as
-`BROPS_GOVERNED_MODEL`, never the renderer); `max_output_tokens` = a locked governed default string (a NEW
-`GOVERNED_MAX_OUTPUT_TOKENS` const within `1..1048576`); `temperature`/`top_p` = locked fixed-point
-default strings (NEW `GOVERNED_TEMPERATURE`/`GOVERNED_TOP_P` consts, e.g. `"0.00"`/`"1.00"` for
-deterministic governed output). The resolver's returned object is what `prepare_governed_turn_v1b`
+rules, then frozen into the immutable object. **The five FROZEN LITERAL default values (P0-2 LOCKED — no
+`e.g.`, no approximate value):**
+
+| field | literal default | const | source / justification |
+|---|---|---|---|
+| `engine_id` | `"brops.governed-engine.sidecar.v1"` | reuses `GOVERNED_GENERATION_CONFIG` (`commands.rs:785`) | the frozen governed-engine id, reused verbatim; **NOT overridable** (it pins the execution mechanism) |
+| `model` | `"claude-sonnet-5"` | `GOVERNED_MODEL` | mirrors `DEFAULT_ANTHROPIC_MODEL` (`ai.rs:26`) byte-for-byte |
+| `max_output_tokens` | `"4096"` | `GOVERNED_MAX_OUTPUT_TOKENS` | governed default; ungoverned `1024` (`ai.rs:1449`) truncates a governed reply; `4096` is a conservative deterministic ceiling within `1..1048576`, matches `^[1-9][0-9]{0,6}$` |
+| `temperature` | `"0.00"` | `GOVERNED_TEMPERATURE` | greedy/deterministic decode; matches `^[0-2]\.[0-9]{2}$`, hundredths `0` |
+| `top_p` | `"1.00"` | `GOVERNED_TOP_P` | full nucleus mass, pairs with `temperature="0.00"`; matches `^[01]\.[0-9]{2}$`, hundredths `100` |
+
+The default object canonicalizes to exactly
+`{"engine_id":"brops.governed-engine.sidecar.v1","max_output_tokens":"4096","model":"claude-sonnet-5","temperature":"0.00","top_p":"1.00"}`
+with `generation_config_sha256 = 732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22` and thus
+`model_profile_id = cfg-sha256:732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22`.
+**Trusted-host override contract (EXACT — P0-2 LOCKED):** overrides are read ONLY from the desktop
+backend's trusted host process environment (never renderer, never sidecar). Exactly **four** fields are
+overridable (`engine_id` is immutable, no override var): `model`←`BROPS_GOVERNED_MODEL` (`^[A-Za-z0-9._:-]{1,128}$`);
+`max_output_tokens`←`BROPS_GOVERNED_MAX_OUTPUT_TOKENS` (`^[1-9][0-9]{0,6}$` AND `1≤int≤1048576`);
+`temperature`←`BROPS_GOVERNED_TEMPERATURE` (`^[0-2]\.[0-9]{2}$` AND `0≤hundredths≤200`);
+`top_p`←`BROPS_GOVERNED_TOP_P` (`^[01]\.[0-9]{2}$` AND `0≤hundredths≤100`). An unset/empty var ⇒ the frozen
+literal default; a set-but-invalid value ⇒ the resolver returns `Err` and `governed_turn_execute`
+terminates the turn as an out-of-band Block (fail-closed, never silently defaulted); an override producing
+a hash not in `GOVERNED_EXECUTION_ALLOWLIST` ⇒ acceptance Block `model_profile_unknown` (§4.5), no lease
+(the identity is still well-defined; to run an overridden config its `SHA256(JCS(object))` must be added to
+the allowlist via a supervisor restart). The resolver's returned object is what `prepare_governed_turn_v1b`
 canonicalizes (`generation_config_jcs = JCS(object)` → `generation_config_sha256`), so a single trusted
 object flows the whole chain — the frozen opaque-string path (`GOVERNED_GENERATION_CONFIG` passed to the
 frozen `prepare_governed_turn(&str)`) is **untouched** (§2.2 KEEP+ADD); the resolver + its consts are new.
@@ -1721,17 +1932,20 @@ permitted shape — a frontend-exposed raw-field submit command is **forbidden**
 
 **Authority-channel failure boundary (P1-1 LOCKED — the post-pre-store authority hops are durable too).**
 The desktop↔sidecar terminal-durable-Block contract (§6.1) is **extended to the authority `AF_UNIX`
-hops**. After the `receipt_challenges` pre-store (step 2), EVERY failure of the authority channel —
-socket unavailable, a lost `create-pending` reply, a lost `issue` reply, an authority `refused` verdict,
-or a malformed/oversize/unparseable reply — has **exactly two** permitted outcomes inside
-`governed_turn_execute`, never a third:
-- **(a) bounded internal idempotent retry** with the **same live `GovernedTurnExecutionV1B`** — the §2.1
-  authority protocols are lost-reply-safe idempotent (a repeat `create-pending` with the same
-  `(install_id, request_nonce)` returns the SAME `pending_challenge_id`; a repeat `issue` with the same
-  `pending_challenge_id` re-returns the byte-identical stored `{payload,sig}`), so a retry from the
-  still-in-memory object recovers the same pending row / challenge and the chain continues — bounded by a
-  new `MAX_AUTHORITY_RETRIES` count and, once issued, the challenge's own validity window (before issue,
-  the pending row's `PENDING_TTL`, §2.1); OR
+hops**. After the `receipt_challenges` pre-store (step 2), EVERY failure of the authority channel has
+**exactly two** permitted outcomes inside `governed_turn_execute`, selected **deterministically by the
+failure class** (§2.1.1(f)), never a third:
+- **(a) bounded internal idempotent retry** — **only** for an **ambiguous transport failure** (socket
+  unavailable, a lost reply, or a transport-malformed/oversize/unparseable frame — no verdict received)
+  — with the **same live `GovernedTurnExecutionV1B`**: the §2.1 authority protocols are lost-reply-safe
+  idempotent (a repeat `create-pending` with the same `(install_id, request_nonce)` returns the SAME
+  `pending_challenge_id`; a repeat `issue` with the same `pending_challenge_id` re-returns the
+  byte-identical stored `{payload,sig}`), so a retry from the still-in-memory object recovers the same
+  pending row / challenge and the chain continues — bounded by `MAX_AUTHORITY_ATTEMPTS = 3` (=
+  `MAX_AUTHORITY_RETRIES 2` + the first attempt, §2.1.1), each attempt `AUTHORITY_ATTEMPT_TIMEOUT_MS =
+  2000` with `AUTHORITY_RETRY_BACKOFF_MS = 1000`; OR
+- an **explicit well-formed `status:"refused"` verdict** (any reason in the §2.1(A)/(B) closed sets,
+  incl. `reason:"malformed"`) is **TERMINAL, never retried** (a deterministic denial) → outcome (b);
 - **(b) terminal durable Block** — `record_pre_verification_block` (`receipt_store.rs:175-208`): consume
   the `request_nonce` + write **exactly one** durable `blocked` attempt (`StreamEvent::Blocked{reason}`);
   the nonce is spent (a later receipt on it ⇒ `Replay` Block).
@@ -1800,6 +2014,123 @@ is dispatched by its `protocol` const; a governed handler refuses any v1 `protoc
 each v1 handler refuses any `brops.governed-*` value — no shared schema file, enum, or
 required-key list.
 
+### 4.10(h) Internal upstream-refusal transport — the NON-SUCCESS DIAGNOSTIC (P0-1, LOCKED)
+
+**The gap this closes.** The §4.10(a0/a/b/c/d) supervisor↔sidecar sub-protocols and the §2.1
+challenge-authority `create-pending`/`issue` channel each produce a **closed set of per-protocol
+internal refusal reasons** (`peer_denied`, `noncanonical`, `sig_invalid`, `no_staging_row`,
+`session_corrupt`, `handle_not_challenge`, `seq_mismatch`, `digest_mismatch`, `quota_turns`/
+`quota_sessions`/`quota_bytes`/`quota_pending`, `field_invalid`, `pending_expired`, `key_unavailable`,
+`challenge_expired`, `no_inputs_ready`, and every other literal in the routing table below). These are
+**intentionally ABSENT** from the closed `GOVERNED_REFUSAL_REASONS` (§4.5) and remain a **disjoint
+namespace, never merged into it**. The sidecar originates **no** governed verdict: it may neither mint
+a `GOVERNED_REFUSAL_REASONS` reason nor emit a `signed` `bridge.governed-turn-result.v1`. Yet §5/§6.1
+require every internal refusal to reach the desktop as exactly one durable Block. This subsection is
+the single transport.
+
+**Two carriers, ONE terminal-Block sink.** An internal refusal reaches the desktop by exactly one of:
+- **Carrier 1 — sidecar NON-SUCCESS DIAGNOSTIC** for the **sidecar-driven** hops the one-shot submit
+  subprocess runs over `brops_socket` (§4.10(g) orchestrator: `governed-turn-open`, `staging-open`,
+  `staging-chunk`, `staging-final`, the pre-acceptance `evidence-request` gate). On a well-formed
+  internal `refused` reply the sidecar emits ONE diagnostic frame and exits 0.
+- **Carrier 2 — backend-direct authority reply** for the `challenge-authority-create-pending`/`issue`
+  hops `governed_turn_execute` calls directly over the authority `AF_UNIX` channel (never through the
+  sidecar); an explicit authority `refused` is consumed in-process and mapped to the same bounded
+  reason format.
+
+A **genuine governed verdict** — a `signed` `bridge.governed-turn-result.v1`, or a `refused` with a
+`GOVERNED_REFUSAL_REASONS` literal, or a `brops.governed-turn-output-read-result.v1` `refused` — is
+NOT an internal refusal: it is **relayed verbatim** (§4.5) and carried by neither carrier.
+
+**The diagnostic frame — `bridge.governed-turn-diagnostic.v1`.** A **distinct top-level discriminator**
+(the frozen `bridge.result` rejects it — no `protocol` key, `additionalProperties:false`; and
+`bridge.governed-turn-result.v1` rejects it — requires `ok`/`receipt`/`error`, all absent). It carries
+**transport/diagnostic data only, grants NO authority**, and can never satisfy the `signed` predicate
+(which REQUIRES `envelope_jcs_b64` + `signature_b64` + `output_stream_id`, §4.10(e)):
+```jsonc
+// sidecar → desktop, stdout, exactly one object; additionalProperties:false; required all three:
+{ "protocol": "bridge.governed-turn-diagnostic.v1",
+  "stage": "governed-turn-open" | "staging-open" | "staging-chunk" | "staging-final" | "evidence-request",
+  "upstream_reason": "<one literal from the per-stage set in the routing table>" }
+```
+- **Encoding:** compact UTF-8 JSON on stdout, strict-decoded (unknown-key + duplicate-key rejection),
+  exactly the shape above; no `ok`/`receipt`/`error`/`envelope_jcs_b64`/`signature_b64`/`output_stream_id`.
+- **`MAX_DIAGNOSTIC_BYTES = 256`** (a generated worst-case instance ≈121 B; CI asserts `len ≤ 256`).
+- **Exit status:** the submit subprocess writes the diagnostic and **exits 0** (identical to the
+  signed/refused paths — the verdict/diagnostic rides the payload, never the exit code);
+  `governed_turn_execute` classifies by the top-level `protocol` discriminator, never by exit code.
+
+**`governed_turn_execute` classification + terminal Block (P0-1, LOCKED).** After the one-shot submit
+subprocess exits, `governed_turn_execute` reads stdout under the existing `MAX_STDOUT_BYTES = 9 MiB`
+bound (`ai.rs:43,1394`) and classifies by the top-level `protocol`:
+1. `bridge.governed-turn-result.v1` + `ok==true` + `receipt` bearing `envelope_jcs_b64` +
+   `signature_b64` + non-null `output_stream_id` → **governed success**; proceed to the §4.10(f) pull +
+   §6.1 step-14 verify (the ONLY path that may persist a message/signed receipt, after full verify).
+2. `bridge.governed-turn-result.v1` + `ok==false` + `error.reason ∈ GOVERNED_REFUSAL_REASONS` →
+   **governed refused verdict**; one terminal Block via `record_pre_verification_block`, bounded reason
+   `governed_verdict_refused:{reason}`.
+3. `bridge.governed-turn-diagnostic.v1`, `len ≤ 256`, exact 3-field shape, `stage` + `upstream_reason`
+   in the closed sets → **internal refusal**; one terminal Block, bounded reason
+   `governed_internal_refusal:{stage}:{upstream_reason}`.
+4. **Anything else** (other/missing `protocol`, a frozen `bridge.result` fail frame, empty/unparseable
+   stdout, an oversize/unknown-stage/unknown-reason/extra-key diagnostic, a non-zero exit, or a
+   `GOVERNED_REFUSAL_REASONS` value under the wrong discriminator) → **pure transport failure**; one
+   terminal Block, bounded reason `governed_transport_failure:{detail}`. A malformed/oversize
+   diagnostic is thus treated exactly as a transport failure — it grants no authority.
+
+**Exactly once:** every non-success path (2/3/4) calls `record_pre_verification_block(&conn,
+&request_nonce, &bounded_reason, now_ms)` (`receipt_store.rs:175-208`) **exactly once**, in one
+`BEGIN IMMEDIATE` tx: consume the one-time `request_nonce`, write **exactly one** durable `blocked`
+attempt (reason ≤ `MAX_REASON_BYTES = 8192`, `receipt_store.rs:144`), emit `StreamEvent::Blocked{reason}`
+(`commands.rs:964`). **No message, signed receipt, output, or acceptance row is persisted.** The three
+bounded-reason prefixes — `governed_verdict_refused:` / `governed_internal_refusal:` /
+`governed_transport_failure:` — are **disjoint and machine-greppable**, so a verdict, an internal
+refusal, and a transport failure each produce ONE Block by **distinct, non-confusable** provenance, and
+**none is a signed verdict** (a signed verdict never reaches `record_pre_verification_block`).
+
+**Terminal vs. retryable (LOCKED — cross-ref §4.10(g) authority boundary + §2.1.1(f)).** An **explicit**
+authority/supervisor `refused` (well-formed internal `refused` on any hop, Carrier 1 or 2) is
+**TERMINAL and MUST NOT be retried**. Only an **ambiguous transport failure / lost reply** (socket
+unavailable, a lost reply with no verdict, a transport-malformed frame) may use **bounded idempotent
+retry**, and **only on the backend-direct authority hops** (§4.10(g)(a): repeat `create-pending` →
+same `pending_challenge_id`; repeat `issue` → byte-identical `{payload,sig}`), bounded by
+`MAX_AUTHORITY_ATTEMPTS = 3` (§2.1.1); exhaustion ⇒ the Carrier-2 terminal Block. Sidecar-driven hops
+have **no** per-hop retry (the submit subprocess is one-shot).
+
+**Complete routing table** (every literal internal reason appears in exactly one row):
+
+| Originating protocol | Internal reason(s) | Terminal/retryable | Carrier | Desktop outcome |
+|---|---|---|---|---|
+| §2.1(A) create-pending | `peer_denied,malformed,field_invalid,timestamp_invalid,oversize,retry_conflict,quota_pending` | Terminal | 2 (authority reply, stage `challenge-authority-create-pending`) | 1 Block · `governed_internal_refusal:challenge-authority-create-pending:{r}` |
+| §2.1 authority lost-reply/socket (no reason) | — (ambiguous) | Retryable (bounded, `MAX_AUTHORITY_ATTEMPTS`); exhaustion→Terminal | 2 (backend re-drive) | on exhaustion 1 Block · `governed_transport_failure:{detail}` |
+| §2.1(B) issue | `peer_denied,no_pending_row,pending_expired,key_unavailable,malformed` | Terminal | 2 (stage `challenge-authority-issue`) | 1 Block · `governed_internal_refusal:challenge-authority-issue:{r}` |
+| §4.10(a0) governed-turn-open | `peer_denied,doc_oversize,malformed,noncanonical,handle_mismatch,registry_unknown,key_invalid,sig_invalid,context_mismatch,challenge_expired,retry_conflict,quota_turns` | Terminal | 1 (stage `governed-turn-open`) | 1 Block · `governed_internal_refusal:governed-turn-open:{r}` |
+| §4.10(a) staging-open | `peer_denied,no_staging_row,artifact_invalid,digest_mismatch,oversize,retry_conflict,quota_sessions,quota_bytes,session_corrupt,malformed` | Terminal | 1 (stage `staging-open`) | 1 Block · `governed_internal_refusal:staging-open:{r}` |
+| §4.10(b) staging-chunk | `session_unknown,seq_mismatch,retry_conflict,oversize_chunk,oversize_frame,over_declared,nondeterministic_chunk,too_many_chunks,session_corrupt,malformed` | Terminal | 1 (stage `staging-chunk`) | 1 Block · `governed_internal_refusal:staging-chunk:{r}` |
+| §4.10(c) staging-final | `session_unknown,seq_mismatch,len_mismatch,sha_mismatch,handle_not_challenge,publish_divergent,retry_conflict,session_corrupt,malformed` | Terminal | 1 (stage `staging-final`) | 1 Block · `governed_internal_refusal:staging-final:{r}` |
+| §4.10(d) evidence-request pre-acceptance gate | `peer_denied,no_inputs_ready,session_corrupt,retry_conflict,malformed` | Terminal | 1 (stage `evidence-request`) | 1 Block · `governed_internal_refusal:evidence-request:{r}` |
+| §4.10(e)/§4.5 signer/supervisor final governed verdict | (the closed `GOVERNED_REFUSAL_REASONS` union) | Terminal (authoritative) | governed verdict, relayed verbatim | 1 Block · `governed_verdict_refused:{reason}` |
+| §4.10(f) output-read | `stream_unknown,stream_expired,stream_binding_mismatch,seq_out_of_range,malformed` | Terminal | governed verdict, relayed verbatim | pull cannot complete → 1 Block · `governed_output_read_refused:{reason}` |
+| any desktop↔sidecar local transport failure (§6.1) | — (no verdict frame) | Terminal (one-shot) | neither carrier (out-of-band Tauri error) | 1 Block · `governed_transport_failure:{detail}` |
+
+**§4.10(d) pre-acceptance reply (added).** Before a `governed_turn_acceptance` row exists, an
+`evidence-request` gate failure returns `brops.governed-evidence-request-result.v1 {status:"refused",
+reason: "peer_denied"|"no_inputs_ready"|"session_corrupt"|"retry_conflict"|"malformed"}` (`no_inputs_ready`
+= no `INPUTS_READY` staging row); these five are a disjoint namespace, carried via the diagnostic
+(stage `evidence-request`). Frame ≤ 4 KiB. Once a row exists, the acceptance/signer verdict is the
+`brops.governed-turn-result.v1` tagged union (e) — `signed` or a `GOVERNED_REFUSAL_REASONS` `refused`.
+
+**Tests (P0-1):** (1) for each Carrier-1 stage, inject each literal → exactly one diagnostic, exit 0,
+no `envelope_jcs_b64`/`signature_b64`; (2) each authority literal → one `governed_internal_refusal:*`
+Block, nonce consumed, no message/receipt, no sidecar diagnostic; (3) exactly one `blocked` row + zero
+message/receipt/acceptance rows on every non-success path; (4) explicit `refused` never re-driven; only
+authority lost-reply/socket retries (bounded) then terminal; (5) a run through an internal refusal, a
+`GOVERNED_REFUSAL_REASONS` verdict, and a transport failure yields three Blocks with disjoint prefixes;
+(6) a diagnostic fed to §7.1 is rejected before signature verify (no envelope/signature) — never a
+signed verdict; (7) oversize/unknown-stage/unknown-reason/extra-key diagnostic → `governed_transport_failure:*`;
+(8) replay on a consumed nonce ⇒ `Replay` Block; (9) static routing-completeness: every per-protocol
+reply enum literal appears in exactly one routing row.
+
 ---
 
 ## 5. Durable supervisor acceptance — state machine + outbox (P0-2)
@@ -1855,6 +2186,16 @@ closed set (DB `CHECK` above; `UNSEEN` = **absent/no-row**, never stored, so the
 `ACCEPTED_PREPARED` → `LEASE_READY` → `EXECUTION_STARTING` → `EXECUTING` → `COMPLETED`; terminal
 `BLOCKED`, `FAILED`, `EXPIRED`, `RECOVERY_REQUIRED`.
 
+**Non-terminal transition triggers (LOCKED — every edge names its trigger):** `ACCEPTED_PREPARED →
+LEASE_READY` = the signed governed-turn lease is published + re-hashed + `validate_governed_turn_lease`
+passes (§5 step 4/6); `LEASE_READY → EXECUTION_STARTING` = the §5 step-8a lease-expiry launch gate passes
+and the launcher is spawned (the last auto-launchable edge); **`EXECUTION_STARTING → EXECUTING` = the
+launcher confirms the child process is running AND its process metadata (`process_group_id`/`cgroup_id`)
+is durably persisted in the acceptance row** — the single event that flips STARTING→EXECUTING (before
+it, a crash is `RECOVERY_REQUIRED`; there is never an implicit or dual-destination edge); `EXECUTING →
+COMPLETED` = the terminal record exists + re-verifies; `EXECUTING → FAILED` = authoritative evidence the
+attempt produced no acceptable governed result.
+
 **Deterministic state-purpose matrix (P1-4, LOCKED — every condition maps to exactly ONE state; no
 slash/or alternatives):**
 - **`EXPIRED`** (terminal; predecessor `LEASE_READY` only): the ONLY destination of a pre-launch
@@ -1868,10 +2209,13 @@ slash/or alternatives):**
   never a crash-cut and never lease-expiry. **`UNSEEN` is NOT a predecessor (P1-5):** `UNSEEN` =
   absent/no-row is not a persisted state, so it cannot transition to a stored `BLOCKED` row. A
   **pre-acceptance** (pre-row) deterministic refusal — anything the supervisor rejects during
-  `brops.governed-turn-open.v1` / staging (§4.10(a0/a/b/c)), before a `governed_turn_acceptance` row
-  exists — creates **NO acceptance row**; it returns that path's own protocol reason
-  (`peer_denied`/`noncanonical`/`sig_invalid`/`no_staging_row`/`session_corrupt`/… ) and the desktop
-  renders it as a Block via the out-of-band relay (§4.5, §6.1 step 0/step 14). `BLOCKED` is reserved
+  `brops.governed-turn-open.v1` / staging / the `evidence-request` gate (§4.10(a0/a/b/c/d)), before a
+  `governed_turn_acceptance` row exists — creates **NO acceptance row**; it returns that path's own
+  internal protocol reason (`peer_denied`/`noncanonical`/`sig_invalid`/`challenge_expired`/`no_staging_row`/
+  `no_inputs_ready`/`session_corrupt`/… ), which the sidecar carries to the desktop as the §4.10(h)
+  NON-SUCCESS DIAGNOSTIC ⇒ one durable `governed_internal_refusal:*` Block via
+  `record_pre_verification_block` — **not** a `BLOCKED` acceptance-ledger row and **not** a
+  `GOVERNED_REFUSAL_REASONS` verdict. `BLOCKED` is reserved
   for a refusal decided **after** the row is `ACCEPTED_PREPARED`/`LEASE_READY`.
 - **`FAILED`** (terminal; predecessor `EXECUTING`): a known completed operational failure with
   authoritative evidence the attempt produced NO acceptable governed result.
@@ -2171,16 +2515,27 @@ is authority), then require, all fail-closed:
   record's `lease_id`/`lease_nonce`(==lease `nonce`)/`challenge_accepted_at_ms` +
   challenge/registry bindings equal the lease's; `allowed_capabilities ==
   ["INVOKE_GOVERNED_MODEL"]`, `max_tool_calls == 0`.
-- **Model-identity binding (P0 LOCKED — config ↔ profile ↔ lease):** the fetched lease's
-  `generation_config_sha256` **==** the challenge's committed `generation_config_sha256` (== the
-  staged/executed config's hash, already re-hashed by handle above); and the lease's
-  `model_profile_id` **==** `model_profile_registry[lease.generation_config_sha256]` (§2,
-  re-derived from the supervisor-owned deterministic registry). So the signed lease's declared model
-  profile is provably the one derived from the exact `generation_config` the executor read — a lease
-  claiming "profile A" over a "model B" config is refused **before** the envelope is minted (which,
-  per §6.1, is before the desktop accepts; a mismatch never reaches launch). (Tests: lease
-  `model_profile_id` ≠ registry-derived; lease `generation_config_sha256` ≠ challenge's; a config
-  whose hash is not in the registry ⇒ `model_profile_unknown` at acceptance, no lease — each refuses.)
+- **Model-identity binding (P0-2 LOCKED — formula recomputation, NO mutable lookup):** the isolated
+  signer **independently recomputes** the identity from the fetched lease's own signed bytes and
+  requires, all fail-closed: (1) `lease.model_profile_id` matches `^cfg-sha256:[0-9a-f]{64}$`;
+  (2) `lease.model_profile_id == "cfg-sha256:" + lease.generation_config_sha256` (the deterministic
+  formula, recomputed here — **not** re-derived from any registry or allowlist, neither of which the
+  signer reads); (3) `lease.generation_config_sha256 == challenge.generation_config_sha256` (the
+  challenge fetched + re-hashed by `challenge_handle` above); (4)
+  `challenge.generation_config_sha256 == the staged/executed config's hash` (already re-hashed from the
+  exact stored `generation_config` bytes by handle). So the signed lease's declared model profile is
+  provably the one derived from the exact `generation_config` the executor read; a lease claiming any
+  `model_profile_id ≠ "cfg-sha256:"+generation_config_sha256`, or a `generation_config_sha256 ≠` the
+  challenge's, is refused **before** the envelope is minted (per §6.1, before the desktop accepts; a
+  mismatch never reaches launch). **Historical stability (P0-2):** every input is a signed field (lease
+  payload + terminal record §4.8, both carrying `generation_config_sha256`) and the derivation is a
+  pure function of those bytes; the signer consults **no** `GOVERNED_EXECUTION_ALLOWLIST` and **no**
+  registry, so a change to the supervisor's allowlist / resolver defaults / overrides **after** a record
+  is signed cannot invalidate, fork, or reinterpret that record's identity — it re-derives identically
+  forever. (Tests: lease `model_profile_id ≠ "cfg-sha256:"+generation_config_sha256` → refuse; lease
+  `generation_config_sha256 ≠` challenge's → refuse; a config whose hash ∉ allowlist ⇒
+  `model_profile_unknown` at acceptance, no lease, never reaching §7; an allowlist mutated after
+  execution ⇒ the historical record still re-derives + verifies identically — §9 whole-chain test.)
 - **Lease-time invariants (P0-4/P1-5, all fail-closed):** on the fetched lease, `lease_issued_at_ms
   == challenge_accepted_at_ms` and `lease_expires_at_ms − lease_issued_at_ms == LEASE_DURATION_MS
   (210000)`; and the **complete** execution time-chain must fall **inside** the lease window:
@@ -2689,6 +3044,26 @@ The current normative design is §0–§9 above. This log is historical only.
   §4.10(g) "PENDING_TTL sweeps ISSUED" wording corrected. Fresh independent red-team over the rev-25 diff +
   real repo: no BLOCKER; the frozen 3b-1A/Wave-3a path + `model_profile_id`/lease/§7-provider cites
   byte-exact; `check_coordination` + `check_capabilities` GREEN live. NOT Architect-GREEN; 3b-1B code not started.
+- **rev 26 (this doc):** the FINAL CONSOLIDATED remediation of the rev-25 Architect Design RED
+  (**2 P0 · 3 P1** @ `bcd24fe`, exact-head CI #132 8/8 SUCCESS; rev-24 model-identity P0 + issued-cleanup P1
+  CONFIRMED CLOSED) via the mandated **parallel fan-out (Tracks A–F) + one integrator + a fresh independent
+  red-team over the whole §0–§9 + real code**. **P0-1 (§4.10(h))** internal a0/a/b/c/d + authority refusals
+  ride a NEW signature-free `bridge.governed-turn-diagnostic.v1{stage, upstream_reason}` (≤256 B) /
+  backend-direct authority reply → one `record_pre_verification_block` Block with a disjoint bounded-reason
+  prefix (`governed_internal_refusal:` vs `governed_verdict_refused:` vs `governed_transport_failure:`),
+  complete routing table, never confusable with a signed verdict; explicit `refused` terminal, only
+  transport retries. **P0-2 (§2/§4.3/§7)** identity is the pure formula `"cfg-sha256:"+generation_config_sha256`
+  (no mutable lookup); the registry becomes a non-identity `GOVERNED_EXECUTION_ALLOWLIST`; the 5-field
+  resolver frozen to exact literals + `BROPS_GOVERNED_*` override contract; §7 recomputes from signed bytes
+  so allowlist changes never reinterpret a past record. **P1-1 (§2.1.1)** canonical literal constants table;
+  idempotent-before-quota; synchronous logical expiry; `pending_expired` vs `no_pending_row`; issue reply →
+  `challenge_document_b64` in an 8192 frame. **P1-2 (§4.10(f))** three-phase output-stream lifecycle (LIVE/
+  tombstone/`stream_unknown`) + `retained_until_ms`/`install_id` DDL columns + sweep + per-install quota +
+  no-remint + output-bytes-outlive-stream. **P1-3 (§4.10(a0)/§2.4)** resource-admission `challenge_expired`
+  gate + live-only staging quota. Track F swept the doc: all governed constants now literal, `e.g.` removed,
+  the `EXECUTION_STARTING→EXECUTING` trigger + the `challenge_replay`/`acceptance_conflict`/`lease_not_ready`
+  producing gates pinned. Fresh independent red-team over the full §0–§9 + real repo: no BLOCKER;
+  `check_coordination` + `check_capabilities` GREEN live. NOT Architect-GREEN; 3b-1B code not started.
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 
