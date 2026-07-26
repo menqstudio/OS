@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "brops.governed-staging-chunk.v1"
+    },
+    "staging_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_b64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]*$",
+      "maxLength": 245760
+    }
+  },
+  "required": [
+    "protocol",
+    "staging_session_id",
+    "seq",
+    "bytes_b64"
+  ]
+}

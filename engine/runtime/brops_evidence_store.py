@@ -77,6 +77,13 @@ def _harden_dir(directory: pathlib.Path) -> pathlib.Path:
             raise EvidenceStoreError(
                 f"evidence store dir {resolved} is world-accessible; refusing"
             )
+        # Rev-26 custody model: shared principals get group read+traverse only.
+        # Group write on the directory would let the signer/other namespace owner
+        # create, rename or unlink artifacts and therefore breaks append-only custody.
+        if mode & stat.S_IWGRP:
+            raise EvidenceStoreError(
+                f"evidence store dir {resolved} is group-writable; refusing"
+            )
     return resolved
 
 

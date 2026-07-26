@@ -42,6 +42,7 @@ from brops_canonical import b64url, containment_evidence_bytes
 from brops_evidence_store import EvidenceStore
 from brops_live_runstate import LiveRunStateProvider
 from brops_supervisor_attest import load_attestation_key, produce_sign_request
+from brops_governed_supervisor import load_supervisor_from_env
 
 EVIDENCE_REQUEST_PROTOCOL = "brops.evidence-request.v1"
 SIGN_RESULT_PROTOCOL = "brops.sign-result.v1"
@@ -74,8 +75,13 @@ class SupervisorService:
         self.allowed_peer_uids = frozenset(
             int(x.strip()) for x in e.get("BROPS_SUPERVISOR_ALLOWED_PEER_UIDS", "").split(",") if x.strip()
         )
+        self.governed = load_supervisor_from_env(e) if e.get("BROPS_GOVERNED_DB") else None
 
     def handle(self, frame: dict[str, Any]) -> dict[str, Any]:
+        # New governed-v1B protocols are dispatched by a closed protocol set beside the
+        # frozen 3b-1A evidence-request handler.
+        if getattr(self, "governed", None) is not None and str(frame.get("protocol", "")).startswith("brops.governed-"):
+            return self.governed.handle(frame)
         # Accept ONLY the {run_id, execution_attempt_id} handle — never evidence (P0-2).
         if (
             not isinstance(frame, dict)

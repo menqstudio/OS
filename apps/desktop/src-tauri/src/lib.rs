@@ -63,6 +63,41 @@ fn secure_db_files(_db_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+
+/// Accept an operator-provisioned root-signed manifest before any governed turn.
+/// The root set is compiled into the binary; runtime configuration can choose only
+/// the signed manifest document, never the trust anchor. No webview command exposes
+/// this path. Missing provisioning leaves the desktop fail-closed; an explicitly
+/// present but invalid manifest aborts startup rather than silently using stale trust.
+fn provision_governed_manifest(
+    conn: &rusqlite::Connection,
+    app_data_dir: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let configured = std::env::var_os("BROPS_KEY_MANIFEST_PATH")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from);
+    let manifest_path = configured.unwrap_or_else(|| app_data_dir.join("brops-key-manifest.json"));
+    if !manifest_path.exists() {
+        return Ok(());
+    }
+
+    let pinned_json = option_env!("BROPS_PINNED_RECEIPT_ROOTS_JSON")
+        .ok_or("BROPS_PINNED_RECEIPT_ROOTS_JSON was not compiled into this build")?;
+    let roots = brops_core::manifest::PinnedRoots::from_json(pinned_json.as_bytes())
+        .map_err(|e| format!("compiled receipt roots are invalid: {e}"))?;
+    if roots.is_empty() {
+        return Err("compiled receipt root set is empty".into());
+    }
+    let document = std::fs::read(&manifest_path)?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .map_err(|_| "system clock is before the Unix epoch")?;
+    brops_core::manifest::accept_manifest(conn, &document, &roots, now_ms)
+        .map_err(|e| format!("governed key manifest was refused: {e}"))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -82,6 +117,10 @@ pub fn run() {
             let db_path = dir.join("brops.db");
             let conn = brops_core::db::open(db_path.to_string_lossy().as_ref())?;
             brops_core::repo::seed(&conn)?;
+            // Root-pinned manifest acceptance + anti-rollback happen before the
+            // connection is published as AppState. Invalid explicit provisioning
+            // aborts startup; absent provisioning simply keeps governed AI blocked.
+            provision_governed_manifest(&conn, &dir)?;
             secure_db_files(&db_path)?; // 0600 on db + WAL + SHM
             // T-011 crash recovery: settle any step execution claimed by a previous
             // (crashed) session fail-closed, so a durable claim can never wedge a run.

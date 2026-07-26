@@ -83,11 +83,12 @@ pub struct GovernedTurn<'a> {
 
 /// The durable outcome of verifying + recording one governed receipt.
 ///
-/// There is **no `TrustedVerified` variant** — Wave 3a cannot name "Verified" (design
-/// §6). A production-class key resolves to [`ReceiptOutcome::Blocked`] here, exactly
-/// as [`Wave3aTrustState`] has no `TrustedVerified` variant.
+/// Wave 3a reaches only DevelopmentUntrusted/Blocked. The additive Wave 3b verifier
+/// may return TrustedVerified after the full signer + manifest + attestation chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReceiptOutcome {
+    /// Wave 3b production acceptance after the full root-signed trust chain.
+    TrustedVerified { message_id: String, attempt_id: String },
     /// Accepted; rendered + persisted, badged development/untrusted. Carries the new
     /// message row and its evidence attempt row.
     DevelopmentUntrusted { message_id: String, attempt_id: String },

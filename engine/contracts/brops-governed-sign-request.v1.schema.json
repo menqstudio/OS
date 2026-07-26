@@ -1,0 +1,234 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "brops.governed-sign-request.v1"
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "attestation_protocol": {
+          "const": "brops.run-attestation.v1"
+        },
+        "supervisor_key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sig": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "maxLength": 86
+        }
+      },
+      "required": [
+        "attestation_protocol",
+        "supervisor_key_id",
+        "sig"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "execution_attempt_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "lease_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "request_nonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "receipt_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "install_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "supervisor_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "executor_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "runner_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "policy_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "policy_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "challenge_key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "challenge_registry_root_key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "decision": {
+          "const": "completed"
+        },
+        "requested_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "challenge_accepted_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "system_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "history_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "generation_config_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "output_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "containment_evidence_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "policy_bundle_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "lease_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "execution_receipt_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "challenge_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "challenge_registry_handle": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "challenge_registry_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "evidence_final_event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "challenge_registry_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence_event_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "evidence_last_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence_head_sequence": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run_id",
+        "execution_attempt_id",
+        "lease_id",
+        "task_id",
+        "request_nonce",
+        "receipt_id",
+        "workspace_id",
+        "install_id",
+        "supervisor_id",
+        "executor_id",
+        "runner_id",
+        "policy_id",
+        "policy_version",
+        "challenge_key_id",
+        "challenge_registry_root_key_id",
+        "decision",
+        "requested_at_ms",
+        "completed_at_ms",
+        "challenge_accepted_at_ms",
+        "system_handle",
+        "history_handle",
+        "generation_config_handle",
+        "output_handle",
+        "containment_evidence_handle",
+        "policy_bundle_handle",
+        "lease_handle",
+        "execution_receipt_handle",
+        "challenge_handle",
+        "challenge_registry_handle",
+        "challenge_registry_hash",
+        "evidence_final_event_hash",
+        "challenge_registry_epoch",
+        "evidence_event_count",
+        "evidence_last_sequence",
+        "evidence_head_sequence"
+      ]
+    }
+  },
+  "required": [
+    "protocol",
+    "attestation",
+    "evidence"
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "brops.governed-turn-challenge.v1"
+        },
+        "challenge_key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "install_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "supervisor_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "request_nonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "system_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "history_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "generation_config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "request_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "requested_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "challenge_issued_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "challenge_expires_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "protocol",
+        "challenge_key_id",
+        "run_id",
+        "task_id",
+        "workspace_id",
+        "install_id",
+        "supervisor_id",
+        "request_nonce",
+        "system_sha256",
+        "history_sha256",
+        "generation_config_sha256",
+        "request_sha256",
+        "requested_at_ms",
+        "challenge_issued_at_ms",
+        "challenge_expires_at_ms"
+      ]
+    },
+    "sig": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]*$",
+      "maxLength": 86
+    }
+  },
+  "required": [
+    "payload",
+    "sig"
+  ]
+}

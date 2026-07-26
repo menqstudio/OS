@@ -164,6 +164,7 @@ dependencies = [
 name = "brops"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "brops-core",
  "fs2",
  "reqwest 0.12.28",

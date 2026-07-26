@@ -4,8 +4,11 @@
 
 pub mod db;
 pub mod domain;
+pub mod manifest;
+pub mod governed_receipt;
 pub mod receipt;
 pub mod receipt_store;
+pub mod strict_json;
 pub mod repo;
 
 pub use domain::{

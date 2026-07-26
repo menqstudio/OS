@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "brops.governed-evidence-request.v1"
+    },
+    "install_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "challenge_handle": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "request_nonce": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "protocol",
+    "install_id",
+    "challenge_handle",
+    "request_nonce"
+  ]
+}

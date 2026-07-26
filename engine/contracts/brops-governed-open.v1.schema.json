@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "brops.governed-turn-open.v1"
+    },
+    "install_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "request_nonce": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "challenge_doc_b64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]*$",
+      "maxLength": 5462
+    }
+  },
+  "required": [
+    "protocol",
+    "install_id",
+    "request_nonce",
+    "challenge_doc_b64"
+  ]
+}

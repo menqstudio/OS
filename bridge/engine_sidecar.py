@@ -52,6 +52,7 @@ for _sub in ("runtime", "tools"):
         sys.path.insert(0, _p)
 
 from engine_adapter import run_governed_turn  # noqa: E402  (bridge/ on path above)
+from governed_v1b import SUBMIT as GOVERNED_SUBMIT, OUTPUT_READ_BRIDGE, submit as governed_submit, output_read as governed_output_read
 
 # Operator-provisioned state the real supervisor requires (none may come from the desktop).
 _PROVISION_ENV = (
@@ -279,6 +280,21 @@ def run(argv: list[str], stdin, stdout) -> int:
         task_id = request.get("task_id")
     except Exception as exc:  # noqa: BLE001 — any parse failure is fail-closed
         json.dump(_fail(task_id, f"invalid task-request on stdin: {exc}"), stdout)
+        return 0
+
+    # Additive v1B protocol dispatch.  The frozen bridge.task-request family below
+    # is byte-for-byte unchanged and cannot enter these handlers because it has no
+    # protocol discriminator.
+    protocol = request.get("protocol")
+    if protocol in (GOVERNED_SUBMIT, OUTPUT_READ_BRIDGE):
+        supervisor_socket = os.environ.get(_SUPERVISOR_SOCKET_ENV, "").strip()
+        if not supervisor_socket:
+            result = {"protocol": "bridge.governed-turn-diagnostic.v1", "stage": "transport", "upstream_reason": "supervisor_socket_unavailable"}
+        elif protocol == GOVERNED_SUBMIT:
+            result = governed_submit(request, supervisor_socket)
+        else:
+            result = governed_output_read(request, supervisor_socket)
+        json.dump(result, stdout, separators=(",", ":"), ensure_ascii=False)
         return 0
 
     # Self-test is a CLI-flag-only backdoor — deliberately NOT reachable via an

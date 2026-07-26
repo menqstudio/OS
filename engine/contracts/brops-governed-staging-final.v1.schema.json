@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "brops.governed-staging-final.v1"
+    },
+    "staging_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "protocol",
+    "staging_session_id",
+    "seq"
+  ]
+}

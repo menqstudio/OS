@@ -24,6 +24,7 @@ from typing import Any
 
 import brops_socket
 import brops_receipt_signer as signer
+import brops_governed_signer as governed_signer
 
 
 def _allowed_peer_uids(env=None) -> "frozenset[int]":
@@ -34,13 +35,22 @@ def _allowed_peer_uids(env=None) -> "frozenset[int]":
 
 def run(env=None, *, max_requests: int | None = None, ready=None) -> int:
     e = os.environ if env is None else env
-    components = signer.load_components(e)
+    legacy_components = signer.load_components(e)
+    governed_components = None
+    if e.get("BROPS_GOVERNED_RECORD_DIR"):
+        governed_components = governed_signer.load_governed_signer_components(e)
     socket_path = e["BROPS_SIGNER_SOCKET"]
     allowed = _allowed_peer_uids(e)
 
     def handle(frame: dict[str, Any]) -> dict[str, Any]:
-        # A fresh clock per request (skew bound is evaluated against it).
-        return signer.handle_sign_request(frame, components, int(time.time() * 1000))
+        # Protocol-disjoint dispatch: the frozen v1 handler never accepts governed-v1B
+        # and the governed handler never accepts the frozen family.
+        now_ms = int(time.time() * 1000)
+        if frame.get("protocol") == governed_signer.PROTOCOL:
+            if governed_components is None:
+                return {"protocol": governed_signer.RESULT_PROTOCOL, "status": "refused", "receipt_id": None, "reason": "malformed"}
+            return governed_signer.sign_governed(frame, governed_components, now_ms)
+        return signer.handle_sign_request(frame, legacy_components, now_ms)
 
     brops_socket.serve_forever(
         socket_path, handle, allowed_peer_uids=allowed, ready=ready, max_requests=max_requests

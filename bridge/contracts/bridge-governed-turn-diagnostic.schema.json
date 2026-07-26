@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "bridge.governed-turn-diagnostic.v1"
+    },
+    "stage": {
+      "enum": [
+        "governed-turn-open",
+        "staging-open",
+        "staging-chunk",
+        "staging-final",
+        "evidence-request"
+      ]
+    },
+    "upstream_reason": {
+      "type": "string",
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "protocol",
+    "stage",
+    "upstream_reason"
+  ]
+}

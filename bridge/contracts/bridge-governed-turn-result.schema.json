@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bridge.governed-turn-result.v1"
+        },
+        "ok": {
+          "const": true
+        },
+        "output_stream_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "receipt": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "key_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "status": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "exit_code": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "evidence": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "envelope_jcs_b64": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]*$",
+              "maxLength": 2848
+            },
+            "signature_b64": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]*$",
+              "maxLength": 86
+            },
+            "containment_evidence_b64": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]*$",
+                  "maxLength": 65536
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "attestation_evidence_jcs_b64": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]*$",
+              "maxLength": 4664
+            },
+            "attestation_signature_b64": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]*$",
+              "maxLength": 86
+            },
+            "supervisor_attestation_key_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "run_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "execution_attempt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "lease_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "challenge_accepted_at_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "challenge_handle": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "challenge_key_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "challenge_registry_handle": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "challenge_registry_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "challenge_registry_epoch": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "challenge_registry_root_key_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "lease_handle": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "execution_receipt_handle": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "output_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "output_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8388608
+            },
+            "evidence_event_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "evidence_last_sequence": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "evidence_head_sequence": {
+              "type": "integer"
+            },
+            "evidence_final_event_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "task_id",
+            "key_id",
+            "receipt_id",
+            "status",
+            "exit_code",
+            "evidence",
+            "envelope_jcs_b64",
+            "signature_b64",
+            "containment_evidence_b64",
+            "attestation_evidence_jcs_b64",
+            "attestation_signature_b64",
+            "supervisor_attestation_key_id",
+            "run_id",
+            "execution_attempt_id",
+            "lease_id",
+            "challenge_accepted_at_ms",
+            "challenge_handle",
+            "challenge_key_id",
+            "challenge_registry_handle",
+            "challenge_registry_hash",
+            "challenge_registry_epoch",
+            "challenge_registry_root_key_id",
+            "lease_handle",
+            "execution_receipt_handle",
+            "output_sha256",
+            "output_bytes",
+            "evidence_event_count",
+            "evidence_last_sequence",
+            "evidence_head_sequence",
+            "evidence_final_event_hash"
+          ]
+        },
+        "error": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "protocol",
+        "ok",
+        "output_stream_id",
+        "receipt",
+        "error"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bridge.governed-turn-result.v1"
+        },
+        "ok": {
+          "const": false
+        },
+        "output_stream_id": {
+          "type": "null"
+        },
+        "receipt": {
+          "type": "null"
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "enum": [
+                "malformed",
+                "attestation_invalid",
+                "handle_missing",
+                "hash_mismatch",
+                "challenge_invalidated",
+                "run_binding_invalid",
+                "policy_mismatch",
+                "identity_denied",
+                "lease_expired",
+                "stale_evidence",
+                "evidence_fork",
+                "challenge_replay",
+                "acceptance_conflict",
+                "lease_not_ready",
+                "output_oversize",
+                "output_timeout",
+                "retry_conflict",
+                "stream_unknown",
+                "stream_expired",
+                "stream_binding_mismatch",
+                "seq_out_of_range",
+                "model_profile_unknown"
+              ]
+            },
+            "receipt_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "reason",
+            "receipt_id"
+          ]
+        }
+      },
+      "required": [
+        "protocol",
+        "ok",
+        "output_stream_id",
+        "receipt",
+        "error"
+      ]
+    }
+  ]
+}

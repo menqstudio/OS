@@ -1,0 +1,111 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bridge.governed-turn-output-read-result.v1"
+        },
+        "ok": {
+          "const": true
+        },
+        "output_stream_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_b64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]*$",
+          "maxLength": 245760
+        },
+        "eof": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "protocol",
+        "ok",
+        "output_stream_id",
+        "seq",
+        "bytes_b64",
+        "eof",
+        "error"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "bridge.governed-turn-output-read-result.v1"
+        },
+        "ok": {
+          "const": false
+        },
+        "output_stream_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bytes_b64": {
+          "type": "null"
+        },
+        "eof": {
+          "type": "null"
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "enum": [
+                "stream_unknown",
+                "stream_expired",
+                "stream_binding_mismatch",
+                "seq_out_of_range",
+                "malformed"
+              ]
+            }
+          },
+          "required": [
+            "reason"
+          ]
+        }
+      },
+      "required": [
+        "protocol",
+        "ok",
+        "output_stream_id",
+        "seq",
+        "bytes_b64",
+        "eof",
+        "error"
+      ]
+    }
+  ]
+}

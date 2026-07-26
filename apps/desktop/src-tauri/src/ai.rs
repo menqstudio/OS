@@ -35,6 +35,7 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 // verification is pending — Receipt Protocol v1; the path is fail-closed until then.)
 const DEFAULT_GOVERNED_PYTHON: &str = "python";
 const DEFAULT_GOVERNED_SIDECAR: &str = "bridge/engine_sidecar.py";
+const DEFAULT_CHALLENGE_AUTHORITY_CLIENT: &str = "engine/tools/brops_challenge_authority_client.py";
 const GOVERNED_TASK_CLASS: &str = "standard-builder"; // engine bro_protected.STANDARD
 
 // Resource caps: the deadline bounds TIME, these bound BYTES, so a compromised /
@@ -42,6 +43,16 @@ const GOVERNED_TASK_CLASS: &str = "standard-builder"; // engine bro_protected.ST
 const MAX_ASSISTANT_OUTPUT: usize = 8 * 1024 * 1024; // 8 MiB of assistant text
 const MAX_STDOUT_BYTES: u64 = 9 * 1024 * 1024; // hard cap on a child's stdout stream
 const MAX_STDERR_BYTES: u64 = 64 * 1024; // 64 KiB of stderr
+
+// §4.10(h) LOCKED: the closed set of sidecar-driven hop stages a governed diagnostic may
+// carry. Any other `stage` (or a missing/oversize one) is classified as a transport failure.
+const GOVERNED_DIAGNOSTIC_STAGES: [&str; 5] = [
+    "governed-turn-open",
+    "staging-open",
+    "staging-chunk",
+    "staging-final",
+    "evidence-request",
+];
 const MAX_HTTP_BODY: usize = 8 * 1024 * 1024; // 8 MiB HTTP response body
 
 /// Read an HTTP response body up to `max` bytes, erroring past the cap so a
@@ -1277,6 +1288,367 @@ fn governed_request(prepared: &PreparedGovernedTurn) -> String {
 }
 
 /// A process-unique task id (monotonic counter + wall-clock nanos; no extra crate).
+
+/// Exact rev-26 generation configuration. All values are strings so its compact
+/// sorted-key JSON is byte-identical to the Python/JCS representation.
+pub fn governed_generation_config() -> std::collections::BTreeMap<String, String> {
+    [
+        ("engine_id", "brops.governed-engine.sidecar.v1"),
+        ("max_output_tokens", "4096"),
+        ("model", "claude-sonnet-5"),
+        ("temperature", "0.00"),
+        ("top_p", "1.00"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
+}
+
+pub const PINNED_GOVERNED_GENERATION_CONFIG_SHA256: &str =
+    "732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22";
+
+#[derive(Debug, Clone)]
+pub struct PreparedGovernedTurnV1B {
+    pub system: String,
+    pub history: Vec<ChatMsg>,
+    pub generation_config: std::collections::BTreeMap<String, String>,
+    pub run_id: String,
+    pub task_id: String,
+    pub context: GovernedRequestContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct GovernedV1BReceipt {
+    pub key_id: String,
+    pub receipt_id: String,
+    pub envelope_jcs_b64: String,
+    pub signature_b64: String,
+    pub attestation_evidence_jcs_b64: String,
+    pub attestation_signature_b64: String,
+    pub supervisor_attestation_key_id: String,
+    pub run_id: String,
+    pub execution_attempt_id: String,
+    pub lease_id: String,
+    pub task_id: String,
+    pub challenge_accepted_at_ms: u64,
+    pub challenge_handle: String,
+    pub challenge_key_id: String,
+    pub challenge_registry_handle: String,
+    pub challenge_registry_hash: String,
+    pub challenge_registry_epoch: u64,
+    pub challenge_registry_root_key_id: String,
+    pub lease_handle: String,
+    pub execution_receipt_handle: String,
+    pub output_sha256: String,
+    pub output_bytes: u64,
+    pub evidence_event_count: u64,
+    pub evidence_last_sequence: u64,
+    pub evidence_head_sequence: u64,
+    pub evidence_final_event_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GovernedV1BResult {
+    pub output_stream_id: String,
+    pub receipt: GovernedV1BReceipt,
+}
+
+/// Prepare the additive v1B request from one immutable source. The existing Wave-3a
+/// `PreparedGovernedTurn` remains unchanged for its frozen protocol tests.
+pub fn prepare_governed_turn_v1b(
+    system: &str,
+    messages: &[ChatMsg],
+    now_ms: u64,
+    workspace_id: &str,
+    install_id: &str,
+) -> Result<PreparedGovernedTurnV1B, String> {
+    validate_input(system, messages)?;
+    let history = trim_history(messages).to_vec();
+    let generation_config = governed_generation_config();
+    let config_bytes = serde_json::to_vec(&generation_config).map_err(|e| e.to_string())?;
+    let config_hash = brops_core::receipt::sha256_hex(&config_bytes);
+    if config_hash != PINNED_GOVERNED_GENERATION_CONFIG_SHA256 {
+        return Err("governed generation config hash drift".to_string());
+    }
+    Ok(PreparedGovernedTurnV1B {
+        system: system.to_string(),
+        history: history.clone(),
+        generation_config,
+        run_id: format!("run-{}", brops_core::id()),
+        task_id: format!("task-{}", brops_core::id()),
+        context: GovernedRequestContext {
+            workspace_id: workspace_id.to_string(),
+            install_id: install_id.to_string(),
+            request_nonce: brops_core::id(),
+            system_sha256: brops_core::receipt::sha256_hex(system.as_bytes()),
+            history_sha256: governed_history_sha256(&history),
+            generation_config_sha256: config_hash,
+            requested_at: now_ms.to_string(),
+        },
+    })
+}
+
+async fn run_json_tool(
+    python: &str,
+    script: &str,
+    request: &serde_json::Value,
+    timeout: Duration,
+    stdout_cap: u64,
+) -> Result<serde_json::Value, String> {
+    let request_bytes = serde_json::to_vec(request).map_err(|e| e.to_string())?;
+    let mut cmd = tokio::process::Command::new(python);
+    cmd.arg(script)
+        .env_remove("BRIDGE_SIDECAR_FAKE")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = cmd.spawn().map_err(|e| format!("could not run `{python} {script}`: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(&request_bytes).await;
+            let _ = stdin.shutdown().await;
+        });
+    }
+    let stdout = child.stdout.take().ok_or("tool stdout unavailable")?;
+    let stderr = child.stderr.take();
+    let stderr_task = tokio::spawn(async move {
+        let mut text = String::new();
+        if let Some(e) = stderr {
+            use tokio::io::AsyncReadExt;
+            let _ = e.take(MAX_STDERR_BYTES).read_to_string(&mut text).await;
+        }
+        text
+    });
+    let deadline = tokio::time::Instant::now() + timeout;
+    let (status, bytes) = tokio::time::timeout_at(deadline, async move {
+        use tokio::io::AsyncReadExt;
+        let mut bytes = Vec::new();
+        stdout.take(stdout_cap).read_to_end(&mut bytes).await.map_err(|e| e.to_string())?;
+        let status = child.wait().await.map_err(|e| e.to_string())?;
+        Ok::<_, String>((status, bytes))
+    })
+    .await
+    .map_err(|_| "governed tool timed out".to_string())??;
+    let stderr = tokio::time::timeout_at(deadline, stderr_task)
+        .await.ok().and_then(|v| v.ok()).unwrap_or_default();
+    if !status.success() {
+        return Err(format!("governed tool exited unsuccessfully: {}", stderr.trim()));
+    }
+    serde_json::from_slice(&bytes).map_err(|e| format!("governed tool returned malformed JSON: {e}"))
+}
+
+fn string_field<'a>(value: &'a serde_json::Value, field: &str) -> Result<&'a str, String> {
+    value.get(field).and_then(serde_json::Value::as_str)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("missing/invalid `{field}`"))
+}
+fn u64_field(value: &serde_json::Value, field: &str) -> Result<u64, String> {
+    value.get(field).and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("missing/invalid `{field}`"))
+}
+
+/// Call the dedicated authority's two-message API. Explicit refusal is terminal;
+/// the helper itself retries only ambiguous transport failures using rev-26's exact
+/// 3-attempt budget.
+pub async fn issue_governed_challenge_v1b(
+    prepared: &PreparedGovernedTurnV1B,
+) -> Result<String, String> {
+    let python = match resolve()? {
+        Provider::GovernedEngine { python, .. } => python,
+        _ => return Err("challenge authority requires the governed engine provider".to_string()),
+    };
+    let client = env_nonempty("BROPS_CHALLENGE_AUTHORITY_CLIENT")
+        .unwrap_or_else(|| DEFAULT_CHALLENGE_AUTHORITY_CLIENT.to_string());
+    let requested_at_ms = prepared.context.requested_at.parse::<u64>()
+        .map_err(|_| "prepared requested_at is invalid".to_string())?;
+    let create = serde_json::json!({
+        "protocol": "brops.governed-challenge-create-pending.v1",
+        "run_id": prepared.run_id,
+        "task_id": prepared.task_id,
+        "workspace_id": prepared.context.workspace_id,
+        "install_id": prepared.context.install_id,
+        "request_nonce": prepared.context.request_nonce,
+        "system_sha256": prepared.context.system_sha256,
+        "history_sha256": prepared.context.history_sha256,
+        "generation_config_sha256": prepared.context.generation_config_sha256,
+        "requested_at_ms": requested_at_ms,
+    });
+    let created = run_json_tool(&python, &client, &create, Duration::from_secs(9), 8_192).await
+        .map_err(|e| format!("governed_transport_failure:authority_create:{e}"))?;
+    if created.get("status").and_then(|v| v.as_str()) == Some("refused") {
+        return Err(format!("governed_internal_refusal:authority_create:{}",
+            created.get("reason").and_then(|v| v.as_str()).unwrap_or("malformed")));
+    }
+    if created.get("protocol").and_then(|v| v.as_str()) != Some("brops.governed-challenge-create-pending-result.v1")
+        || created.get("status").and_then(|v| v.as_str()) != Some("created") {
+        return Err("governed_transport_failure:authority_create:malformed_reply".to_string());
+    }
+    let pending = string_field(&created, "pending_challenge_id")?;
+    let issue = serde_json::json!({
+        "protocol": "brops.governed-challenge-issue.v1",
+        "pending_challenge_id": pending,
+    });
+    let issued = run_json_tool(&python, &client, &issue, Duration::from_secs(9), 8_192).await
+        .map_err(|e| format!("governed_transport_failure:authority_issue:{e}"))?;
+    if issued.get("status").and_then(|v| v.as_str()) == Some("refused") {
+        return Err(format!("governed_internal_refusal:authority_issue:{}",
+            issued.get("reason").and_then(|v| v.as_str()).unwrap_or("malformed")));
+    }
+    if issued.get("protocol").and_then(|v| v.as_str()) != Some("brops.governed-challenge-issue-result.v1")
+        || issued.get("status").and_then(|v| v.as_str()) != Some("issued") {
+        return Err("governed_transport_failure:authority_issue:malformed_reply".to_string());
+    }
+    Ok(string_field(&issued, "challenge_document_b64")?.to_string())
+}
+
+fn interpret_governed_v1b_result(doc: &serde_json::Value) -> Result<GovernedV1BResult, String> {
+    let protocol = doc.get("protocol").and_then(|v| v.as_str());
+    if protocol == Some("bridge.governed-turn-diagnostic.v1") {
+        // §4.10(h) rule 3: a well-formed internal-refusal diagnostic — `stage` in the closed
+        // 5-set and `upstream_reason` present & bounded → governed_internal_refusal. Anything
+        // else (unknown/oversize/missing stage or reason) → rule 4 transport failure; a
+        // diagnostic grants NO authority and can never be a signed verdict.
+        let stage = doc.get("stage").and_then(|v| v.as_str()).unwrap_or("");
+        let reason = doc.get("upstream_reason").and_then(|v| v.as_str()).unwrap_or("");
+        if GOVERNED_DIAGNOSTIC_STAGES.contains(&stage) && !reason.is_empty() && reason.len() <= 200 {
+            return Err(format!("governed_internal_refusal:{stage}:{reason}"));
+        }
+        return Err("governed_transport_failure:sidecar:malformed_diagnostic".to_string());
+    }
+    if protocol == Some("bridge.governed-turn-transport-failure.v1") {
+        let detail = doc.get("detail").and_then(|v| v.as_str()).unwrap_or("transport");
+        return Err(format!("governed_transport_failure:sidecar:{detail}"));
+    }
+    if protocol != Some("bridge.governed-turn-result.v1") {
+        return Err("governed_transport_failure:sidecar:malformed_protocol".to_string());
+    }
+    if doc.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let reason = doc.get("error").and_then(|e| e.get("reason")).and_then(|v| v.as_str()).unwrap_or("malformed");
+        return Err(format!("governed_verdict_refused:{reason}"));
+    }
+    let stream = string_field(doc, "output_stream_id")?.to_string();
+    let r = doc.get("receipt").and_then(|v| v.as_object()).ok_or("missing governed receipt")?;
+    let value = serde_json::Value::Object(r.clone());
+    Ok(GovernedV1BResult {
+        output_stream_id: stream,
+        receipt: GovernedV1BReceipt {
+            key_id: string_field(&value, "key_id")?.to_string(),
+            receipt_id: string_field(&value, "receipt_id")?.to_string(),
+            envelope_jcs_b64: string_field(&value, "envelope_jcs_b64")?.to_string(),
+            signature_b64: string_field(&value, "signature_b64")?.to_string(),
+            attestation_evidence_jcs_b64: string_field(&value, "attestation_evidence_jcs_b64")?.to_string(),
+            attestation_signature_b64: string_field(&value, "attestation_signature_b64")?.to_string(),
+            supervisor_attestation_key_id: string_field(&value, "supervisor_attestation_key_id")?.to_string(),
+            run_id: string_field(&value, "run_id")?.to_string(),
+            execution_attempt_id: string_field(&value, "execution_attempt_id")?.to_string(),
+            lease_id: string_field(&value, "lease_id")?.to_string(),
+            task_id: string_field(&value, "task_id")?.to_string(),
+            challenge_accepted_at_ms: u64_field(&value, "challenge_accepted_at_ms")?,
+            challenge_handle: string_field(&value, "challenge_handle")?.to_string(),
+            challenge_key_id: string_field(&value, "challenge_key_id")?.to_string(),
+            challenge_registry_handle: string_field(&value, "challenge_registry_handle")?.to_string(),
+            challenge_registry_hash: string_field(&value, "challenge_registry_hash")?.to_string(),
+            challenge_registry_epoch: u64_field(&value, "challenge_registry_epoch")?,
+            challenge_registry_root_key_id: string_field(&value, "challenge_registry_root_key_id")?.to_string(),
+            lease_handle: string_field(&value, "lease_handle")?.to_string(),
+            execution_receipt_handle: string_field(&value, "execution_receipt_handle")?.to_string(),
+            output_sha256: string_field(&value, "output_sha256")?.to_string(),
+            output_bytes: u64_field(&value, "output_bytes")?,
+            evidence_event_count: u64_field(&value, "evidence_event_count")?,
+            evidence_last_sequence: u64_field(&value, "evidence_last_sequence")?,
+            evidence_head_sequence: u64_field(&value, "evidence_head_sequence")?,
+            evidence_final_event_hash: string_field(&value, "evidence_final_event_hash")?.to_string(),
+        },
+    })
+}
+
+pub async fn governed_turn_v1b(
+    prepared: &PreparedGovernedTurnV1B,
+    challenge_document_b64: &str,
+) -> Result<GovernedV1BResult, String> {
+    let _permit = GenerationPermit::acquire()?;
+    let (python, sidecar) = match resolve()? {
+        Provider::GovernedEngine { python, sidecar } => (python, sidecar),
+        _ => return Err("governed_turn_v1b requires the governed engine provider".to_string()),
+    };
+    let history: Vec<serde_json::Value> = prepared.history.iter()
+        .map(|m| serde_json::json!({"content":m.content,"role":m.role}))
+        .collect();
+    let request = serde_json::json!({
+        "protocol": "bridge.governed-turn-submit.v1",
+        "task_id": prepared.task_id,
+        "challenge_doc_b64": challenge_document_b64,
+        "system": prepared.system,
+        "history": history,
+        "generation_config": prepared.generation_config,
+    });
+    let doc = run_json_tool(&python, &sidecar, &request, Duration::from_secs(125), MAX_STDOUT_BYTES).await
+        .map_err(|e| format!("governed_transport_failure:sidecar_submit:{e}"))?;
+    interpret_governed_v1b_result(&doc)
+}
+
+pub async fn pull_governed_output_v1b(result: &GovernedV1BResult) -> Result<Vec<u8>, String> {
+    let (python, sidecar) = match resolve()? {
+        Provider::GovernedEngine { python, sidecar } => (python, sidecar),
+        _ => return Err("governed output pull requires the governed engine provider".to_string()),
+    };
+    let mut output = Vec::with_capacity(result.receipt.output_bytes.min(MAX_ASSISTANT_OUTPUT as u64) as usize);
+    let mut seq: u64 = 0;
+    loop {
+        let request = serde_json::json!({
+            "protocol":"bridge.governed-turn-output-read.v1",
+            "output_stream_id":result.output_stream_id,
+            "receipt_id":result.receipt.receipt_id,
+            "execution_attempt_id":result.receipt.execution_attempt_id,
+            "seq":seq,
+        });
+        let doc = run_json_tool(&python, &sidecar, &request, Duration::from_secs(15), 300_000).await
+            .map_err(|e| format!("governed_transport_failure:output_pull:{e}"))?;
+        let protocol = doc.get("protocol").and_then(|v| v.as_str());
+        if protocol == Some("bridge.governed-turn-transport-failure.v1") {
+            let detail = doc.get("detail").and_then(|v| v.as_str()).unwrap_or("transport");
+            return Err(format!("governed_transport_failure:output_pull:{detail}"));
+        }
+        if protocol == Some("bridge.governed-turn-diagnostic.v1") {
+            // A diagnostic is not expected on the pull hop; grant no authority → transport failure.
+            return Err("governed_transport_failure:output_pull:unexpected_diagnostic".to_string());
+        }
+        if protocol != Some("bridge.governed-turn-output-read-result.v1") {
+            return Err("governed_transport_failure:output_pull:malformed_protocol".to_string());
+        }
+        if doc.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            // §4.10(f)/§4.10(h) routing: an output-read refusal is its OWN disjoint prefix,
+            // never a governed verdict (the signed verdict was already produced upstream).
+            let reason = doc.get("error").and_then(|e| e.get("reason")).and_then(|v| v.as_str()).unwrap_or("stream_unknown");
+            return Err(format!("governed_output_read_refused:{reason}"));
+        }
+        if u64_field(&doc, "seq")? != seq || string_field(&doc, "output_stream_id")? != result.output_stream_id {
+            return Err("governed_transport_failure:output_pull:binding_mismatch".to_string());
+        }
+        let chunk_wire = string_field(&doc, "bytes_b64")?;
+        use base64::Engine as _;
+        let chunk = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(chunk_wire.as_bytes())
+            .map_err(|_| "governed_transport_failure:output_pull:bad_base64".to_string())?;
+        if base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&chunk) != chunk_wire {
+            return Err("governed_transport_failure:output_pull:noncanonical_base64".to_string());
+        }
+        if output.len().saturating_add(chunk.len()) > MAX_ASSISTANT_OUTPUT {
+            return Err("governed_verdict_refused:output_oversize".to_string());
+        }
+        output.extend_from_slice(&chunk);
+        if doc.get("eof").and_then(|v| v.as_bool()) == Some(true) { break; }
+        seq = seq.checked_add(1).ok_or("output sequence overflow")?;
+        if seq > 46 { return Err("governed_transport_failure:output_pull:too_many_chunks".to_string()); }
+    }
+    if output.len() as u64 != result.receipt.output_bytes
+        || brops_core::receipt::sha256_hex(&output) != result.receipt.output_sha256 {
+        return Err("governed_verdict_refused:output_hash_mismatch".to_string());
+    }
+    Ok(output)
+}
+
 fn governed_task_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
