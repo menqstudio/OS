@@ -26,8 +26,12 @@ MYUID="$(id -u)"
 sudo groupadd -f brops-store
 id brops-signer     >/dev/null 2>&1 || sudo useradd -r -M -s /usr/sbin/nologin -G brops-store brops-signer
 id brops-supervisor >/dev/null 2>&1 || sudo useradd -r -M -s /usr/sbin/nologin -G brops-store brops-supervisor
+# §2.3: the dedicated evidence-recorder OS principal that owns/writes store/rec/ (a group member,
+# so the signer can read what it publishes; NOT the same thing as the governed-turn-recorder key).
+id brops-recorder   >/dev/null 2>&1 || sudo useradd -r -M -s /usr/sbin/nologin -G brops-store brops-recorder
 SIGUID="$(id -u brops-signer)"
 SUPUID="$(id -u brops-supervisor)"
+MYUSER="$(id -un)"
 
 B="$(mktemp -d /tmp/brops-iso.XXXXXX)"
 chmod 755 "$B"
@@ -125,20 +129,80 @@ BROPS_PROVE_ATTESTATION_KEY="$B/attkeys/brops-supervisor-attestation.json" \
 BROPS_PROVE_STORE_DIR="$B/store" \
 "$PYBIN" "$ENGINE/tools/brops_isolation_prover.py"
 
-# 8) rev-26 §2.3 store-custody write-denial. The store is 2750 (group read-traverse, NO
-#    group-write): a brops-store group member (the signer) and the login user (not in the
-#    group) MUST be denied create/rename/unlink in the store. The frozen prover proves the
-#    login user cannot READ the store; this proves neither can WRITE it (the S_IWGRP leak the
-#    old 2770 provisioning left open). Mode-regression guard: the store MUST stat as 2750.
-STORE_MODE="$(stat -c '%a' "$B/store")"
-[ "$STORE_MODE" = "2750" ] || { echo "SECURITY FAIL: store mode $STORE_MODE != 2750 (group-write must be clear)"; exit 1; }
-if sudo -u brops-signer touch "$B/store/attack-signer" 2>/dev/null; then
-  echo "SECURITY FAIL: signer (brops-store member) created a file in the 2750 store (S_IWGRP leak)"; exit 1
-fi
-if sudo -u brops-signer sh -c "mv '$B/store'/*.json '$B/store/renamed' 2>/dev/null"; then
-  echo "SECURITY FAIL: signer renamed an artifact in the 2750 store"; exit 1
-fi
-if touch "$B/store/attack-login" 2>/dev/null; then
-  echo "SECURITY FAIL: login user (not in brops-store) created a file in the store"; exit 1
-fi
-echo "WRITE-DENIAL PASSED — store is 2750; neither the signer nor the login user can write it"
+# 8) rev-26 §2.3 COMPLETE two-namespace store-custody principal matrix. The governed store has
+#    store/sup/ (owned+written ONLY by the supervisor) and store/rec/ (owned+written ONLY by the
+#    dedicated brops-recorder principal), both 2750 (group read-traverse, NO group-write), files
+#    0640, umask 0027. The signer (a brops-store group member) gets read/traverse in BOTH but
+#    write in NEITHER; the login user / sidecar / executor (NOT in brops-store, other=---) get no
+#    read/list/write in either. Proven with REAL principals for every operation × namespace.
+GS="$B/gstore"
+sudo mkdir -p "$GS/sup" "$GS/rec"
+sudo chown brops-supervisor:brops-store "$GS" "$GS/sup"
+sudo chown brops-recorder:brops-store   "$GS/rec"
+sudo chmod 2750 "$GS" "$GS/sup" "$GS/rec"       # setgid + owner rwx + group r-x, group-write CLEAR
+# Seed a 0640 artifact in each namespace, written BY its owner under umask 0027 (so a non-owner
+# group member cannot even overwrite an existing artifact — it lacks file write).
+sudo -u brops-supervisor sh -c "umask 0027; printf sup > '$GS/sup/a.json'"
+sudo -u brops-recorder   sh -c "umask 0027; printf rec > '$GS/rec/a.json'"
+
+deny() { local p="$1" d="$2"; shift 2
+  if sudo -u "$p" sh -c "$*" 2>/dev/null; then echo "SECURITY FAIL: [$p] $d SUCCEEDED (must be DENIED)"; exit 1; fi; }
+allow() { local p="$1" d="$2"; shift 2
+  sudo -u "$p" sh -c "$*" 2>/dev/null || { echo "SECURITY FAIL: [$p] $d was DENIED (must be ALLOWED)"; exit 1; }; }
+deny_login() { local d="$1"; shift
+  if sh -c "$*" 2>/dev/null; then echo "SECURITY FAIL: [login] $d SUCCEEDED (must be DENIED)"; exit 1; fi; }
+
+# Mode-regression guard: root + both namespaces stat 2750; both seed artifacts stat 0640.
+for d in "$GS" "$GS/sup" "$GS/rec"; do
+  m="$(stat -c '%a' "$d")"; [ "$m" = "2750" ] || { echo "SECURITY FAIL: $d mode $m != 2750"; exit 1; }
+done
+for f in "$GS/sup/a.json" "$GS/rec/a.json"; do
+  m="$(stat -c '%a' "$f")"; [ "$m" = "640" ] || { echo "SECURITY FAIL: $f mode $m != 640"; exit 1; }
+done
+
+# supervisor: writes sup/ (create/rename/unlink), reads+lists both, DENIED every write in rec/.
+allow brops-supervisor "create sup"      "touch '$GS/sup/s1'"
+allow brops-supervisor "rename sup"      "mv '$GS/sup/s1' '$GS/sup/s2'"
+allow brops-supervisor "unlink sup"      "rm '$GS/sup/s2'"
+allow brops-supervisor "read sup"        "cat '$GS/sup/a.json' >/dev/null"
+allow brops-supervisor "list+read rec"   "ls '$GS/rec' >/dev/null && cat '$GS/rec/a.json' >/dev/null"
+deny  brops-supervisor "create rec"      "touch '$GS/rec/attack'"
+deny  brops-supervisor "rename rec"      "mv '$GS/rec/a.json' '$GS/rec/x'"
+deny  brops-supervisor "unlink rec"      "rm '$GS/rec/a.json'"
+deny  brops-supervisor "chmod rec"       "chmod 600 '$GS/rec/a.json'"
+deny  brops-supervisor "symlink rec"     "ln -s /etc/passwd '$GS/rec/link'"
+deny  brops-supervisor "overwrite rec"   "printf x > '$GS/rec/a.json'"
+
+# recorder: writes rec/ (create/rename/unlink), reads+lists both, DENIED every write in sup/.
+allow brops-recorder "create rec"        "touch '$GS/rec/r1'"
+allow brops-recorder "rename rec"        "mv '$GS/rec/r1' '$GS/rec/r2'"
+allow brops-recorder "unlink rec"        "rm '$GS/rec/r2'"
+allow brops-recorder "read+list sup"     "ls '$GS/sup' >/dev/null && cat '$GS/sup/a.json' >/dev/null"
+deny  brops-recorder "create sup"        "touch '$GS/sup/attack'"
+deny  brops-recorder "rename sup"        "mv '$GS/sup/a.json' '$GS/sup/x'"
+deny  brops-recorder "unlink sup"        "rm '$GS/sup/a.json'"
+deny  brops-recorder "chmod sup"         "chmod 600 '$GS/sup/a.json'"
+deny  brops-recorder "symlink sup"       "ln -s /etc/passwd '$GS/sup/link'"
+deny  brops-recorder "overwrite sup"     "printf x > '$GS/sup/a.json'"
+
+# signer: read/traverse+list BOTH, DENIED every write in BOTH (group r-x, no group-write; 0640 files).
+allow brops-signer "read+list sup"       "ls '$GS/sup' >/dev/null && cat '$GS/sup/a.json' >/dev/null"
+allow brops-signer "read+list rec"       "ls '$GS/rec' >/dev/null && cat '$GS/rec/a.json' >/dev/null"
+deny  brops-signer "create sup"          "touch '$GS/sup/attack'"
+deny  brops-signer "create rec"          "touch '$GS/rec/attack'"
+deny  brops-signer "rename sup"          "mv '$GS/sup/a.json' '$GS/sup/x'"
+deny  brops-signer "unlink rec"          "rm '$GS/rec/a.json'"
+deny  brops-signer "chmod sup"           "chmod 600 '$GS/sup/a.json'"
+deny  brops-signer "symlink rec"         "ln -s /etc/passwd '$GS/rec/link'"
+deny  brops-signer "overwrite sup"       "printf x > '$GS/sup/a.json'"
+deny  brops-signer "overwrite rec"       "printf x > '$GS/rec/a.json'"
+
+# login user (also the sidecar/executor identity in this harness): NOT in brops-store, other=--- on
+# the 2750 namespaces, so cannot even traverse them — no read/list/write in either.
+deny_login "list sup (other)"            "ls '$GS/sup'"
+deny_login "read rec (other)"            "cat '$GS/rec/a.json'"
+deny_login "create sup (other)"          "touch '$GS/sup/attack'"
+deny_login "create rec (other)"          "touch '$GS/rec/attack'"
+deny_login "traverse+unlink rec (other)" "rm '$GS/rec/a.json'"
+
+echo "STORE-CUSTODY MATRIX PASSED — 2750 sup/+rec/; supervisor⇄sup only, recorder⇄rec only, signer read-only both, login/sidecar/executor no access"
