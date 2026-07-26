@@ -2,15 +2,14 @@
 
 > **STATUS (2026-07-25):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
 > CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
-> — the Architect reviewed the consolidated **rev 22** (@ live tip `4703351`, design content `a84ee12`;
-> exact-head CI #129 8/8 SUCCESS; CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-21
-> `PreparedGovernedTurnV1B`-lifecycle P0, and returned Design RED with 1 P0 · 1 P1 (P0-1
-> `governed_turn_execute` missing routing identities `conversation_id`/`run_id` + wrongly renderer-sourced
-> system/history/identities; P1-1 non-durable transport-failure retry), mandating a **read-only real-code
-> investigation + one integrator + a fresh independent red-team**; the addendum is now **rev 23
-> (CONSOLIDATED)** — a proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-22
-> design reviewed at live tip `4703351`/content `a84ee12`, exact-head CI #129 8/8 GREEN — evidence only;
-> resolve the live tip + Checks from GitHub). See
+> — the Architect reviewed the consolidated **rev 23** (@ `b89bab9`; exact-head CI #130 8/8 SUCCESS;
+> CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-22 routing-identities P0 + non-durable-transport-retry
+> P1, and returned Design RED with 1 P0 · 1 P1 (P0-1 backend single-source not constructible — `task_id`
+> absent from `PreparedGovernedTurnV1B` + no trusted 5-field generation_config source; P1-1 authority-channel
+> failure boundary still non-durable), mandating a **read-only real-code investigation + one integrator + a
+> fresh independent red-team**; the addendum is now **rev 24 (CONSOLIDATED)** — a proposed design-GREEN
+> candidate, **not yet Architect-GREEN, no code** (rev-23 reviewed HEAD `b89bab9`, exact-head CI #130 8/8
+> GREEN — evidence only; resolve the live tip + Checks from GitHub). See
 > `NEXT_CHAT.md` §0/§3 for the authoritative current state, STOP gates, and next action.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative

@@ -1,39 +1,45 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 23 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 24 — CONSOLIDATED)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 23 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 22's normative design was Architect-reviewed at the
-> live tip `47033511bbb44bf4ca174a34e3c92fd4780c069c` (exact-head CI **#129** 8/8 SUCCESS; the rev-22
-> design content is at `a84ee12`, also 8/8 GREEN — `4703351` was a coordination-only commit, so the
-> rev-22 normative design was unchanged — **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED**
-> the rev-21 `PreparedGovernedTurnV1B`-lifecycle P0 (rev 22's single `governed_turn_execute` backend
-> command), but returned RED with **1 P0 · 1 P1** on the same command's contract, and directed a
-> **read-only real-code investigation + one integrator + a fresh independent red-team, NOT a rewrite.**
-> rev 23 closes both in place:
-> **P0-1 — missing routing identities.** rev 22's `governed_turn_execute` inputs omitted `conversation_id`
-> (the `receipt_challenges` pre-store + the final accepted-output persist need it) and `run_id` (challenge
-> create-pending binds it), and wrongly listed `system`/`history`/`workspace_id`/`install_id`/
-> `generation_config` as renderer inputs — but the merged `stream_reply(conversation_id, agent, on_event)`
-> (`commands.rs:793-799`) takes **only** `conversation_id` + `agent` from the renderer and **resolves
-> `system`/`history` from the message store** (`commands.rs:801-815`) and `workspace_id`/`install_id`/
-> `generation_config`/`supervisor_id`/`policy_*` from the **`GOVERNED_*` backend constants**
-> (`commands.rs:780-787`); there is **no `run_id`** in the frozen governed path. **rev 23 (§4.10(g),
-> §6.1):** `governed_turn_execute(conversation_id, agent)` takes only those renderer inputs and constructs
-> a **backend-owned orchestration object `GovernedTurnExecutionV1B{conversation_id, run_id, task_id,
-> prepared: PreparedGovernedTurnV1B}`** — `run_id`/`task_id`/`request_nonce` backend-generated
-> (`brops_core::id()`/`governed_task_id()`), `system`/`history` resolved from the message store keyed by
-> `conversation_id`, identities/policy from the `GOVERNED_*` constants; the renderer re-sends none of them.
-> **P1-1 — the transport-failure retry contract was not durable.** rev 22 said a transport failure leaves
-> the nonce **not** consumed so the challenge "may be retried" — but after the command returns the
-> in-process prepared object / challenge document / pending id are gone, so nothing durable can resume,
-> and the merged path makes a transport failure a **terminal durable Block**. **rev 23 (§6.1 out-of-band
-> contract):** a transport failure is a **terminal durable Block** — `governed_turn_execute` calls
-> `record_pre_verification_block` (`receipt_store.rs:175-208`) which in ONE tx **consumes the
-> `request_nonce`** + writes a durable `blocked` evidence record (`StreamEvent::Blocked{reason}`); the
-> challenge/nonce is **not** retryable (a later receipt on that nonce ⇒ `Replay` Block). The "nonce not
-> consumed / retryable" claim is removed; the durable-orchestration-journal alternative is out of scope.
-> *(rev-18 → … → rev-22 findings — orchestrator ordering, generation_config canonicalization,
+> **STATUS: ❌ DESIGN RED being closed — rev 24 is a PROPOSED design-GREEN candidate, NOT
+> Architect-GREEN. 3b-1B code has NOT started.** rev 23 was Architect-reviewed at exact HEAD
+> `b89bab9b76273957848103b9812fdc9a9334c150` (exact-head CI **#130** 8/8 SUCCESS incl. both mandatory
+> Wave-3b gates — **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED** the rev-22 routing-
+> identities P0 + non-durable-transport-retry P1, but rev 23 opened **two next contract seams** (1 P0 · 1
+> P1), and directed a **read-only real-code investigation + one integrator + a fresh independent red-team,
+> NOT a rewrite.** rev 24 closes both in place:
+> **P0-1 — the backend single-source orchestration was not yet constructible.** (A) `task_id` lives in
+> `GovernedTurnExecutionV1B` but NOT in `PreparedGovernedTurnV1B`, so the rev-23 helper
+> `governed_turn_submit_prepared(&prepared, …)` could not derive the submit frame's required top-level
+> `task_id`. (B) the 5-field `generation_config` object had no trusted backend source — only the frozen
+> opaque string `GOVERNED_GENERATION_CONFIG` exists; `model`/`max_output_tokens`/`temperature`/`top_p`
+> were undefined. **rev 24 (§4.10(g)):** (A) the helper is
+> `governed_turn_submit_prepared(execution: &GovernedTurnExecutionV1B, challenge_document: &ChallengeDocument)`
+> — it takes the **whole** orchestration object and, before writing the frame, asserts `submit.task_id ==
+> execution.task_id == challenge.payload.task_id`, `challenge.payload.run_id == execution.run_id`, and
+> `SHA256(JCS(execution.prepared.generation_config)) == challenge.payload.generation_config_sha256`; (B) a
+> new `resolve_governed_generation_config_v1b() -> Result<GovernedGenerationConfig, String>` returns all
+> five fields from **locked governed defaults / trusted host config** (engine_id = the frozen
+> `GOVERNED_GENERATION_CONFIG`; new `GOVERNED_MODEL`/`GOVERNED_MAX_OUTPUT_TOKENS`/`GOVERNED_TEMPERATURE`/
+> `GOVERNED_TOP_P` consts), validated once; plus a whole-chain E2E test that the same `task_id`/`run_id`/
+> config-JCS flow authority row → challenge → submit → lease → record → envelope. The frozen
+> `prepare_governed_turn(&str)` opaque-string path is untouched (§2.2 KEEP+ADD).
+> **P1-1 — the challenge-authority failure boundary was still non-durable.** rev 23's terminal-durable-Block
+> contract covered only the desktop↔sidecar hops, not the authority `create-pending`/`issue` hops after the
+> `receipt_challenges` pre-store — an authority socket-unavailable / lost-create-reply / lost-issue-reply /
+> refusal / malformed reply could return the command with an **unconsumed** nonce while the in-memory object
+> is gone (rev 22's seam, one hop earlier). **rev 24 (§4.10(g) Authority-channel failure boundary):** after
+> pre-store, EVERY authority-channel failure has **exactly two** permitted outcomes — (a) **bounded internal
+> idempotent retry** with the same live `GovernedTurnExecutionV1B` (the §2.1 authority protocols are
+> lost-reply-safe idempotent, so a retry recovers the same `pending_challenge_id` / byte-identical
+> `{payload,sig}`), bounded by `MAX_AUTHORITY_RETRIES`; or (b) **terminal durable Block** via
+> `record_pre_verification_block` (consume the nonce + exactly one `blocked` attempt). No third outcome; a
+> left-behind authority `PENDING`/`ISSUED` row binds no execution right and its `PENDING_TTL` sweeps it. Tests:
+> authority-unavailable, lost create/issue replies, refusal, malformed — each recovers the same challenge or
+> terminal-consumes the nonce.
+> *(rev-18 → … → rev-23 findings — orchestrator ordering, generation_config canonicalization,
 > two-trust-model channel, nonce/`request_sha256` decoupling, generation_config hash-source split,
-> prepared-object lifecycle — remain closed; see the non-normative Appendix A.)*
+> prepared-object lifecycle, routing identities, non-durable transport-retry — remain closed; see the
+> non-normative Appendix A.)*
 > **All contracts below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.**
 > STOP gates: `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31
 > not merged.
@@ -1596,11 +1602,28 @@ struct GovernedTurnExecutionV1B {
 ```
 **Backend-resolved / -generated identities (NOT renderer-re-sent):** `system`/`history` are resolved
 server-side from the message store keyed by `conversation_id` (`repo::chat::list_messages`,
-`commands.rs:801-815`; `system` built from the sanitized `agent`); `workspace_id`/`install_id`/the
-`generation_config` engine-id/`supervisor_id`/`policy_id`/`policy_version` come from the `GOVERNED_*`
-backend constants (`commands.rs:780-787`); `request_nonce`/`run_id`/`task_id` are backend-generated
-(`brops_core::id()` / `governed_task_id()`). Owning this one object, `governed_turn_execute` performs in
-order:
+`commands.rs:801-815`; `system` built from the sanitized `agent`); `workspace_id`/`install_id`/
+`supervisor_id`/`policy_id`/`policy_version` come from the `GOVERNED_*` backend constants
+(`commands.rs:780-787`); `request_nonce`/`run_id`/`task_id` are backend-generated (`brops_core::id()` /
+`governed_task_id()`). **The full `generation_config` OBJECT has ONE trusted backend source (P0-1(B)
+LOCKED)** — a new
+```rust
+fn resolve_governed_generation_config_v1b() -> Result<GovernedGenerationConfig, String>
+```
+that returns **all five** fields from **locked governed defaults / trusted host config only** (never the
+renderer, never the sidecar), validated **once** by the §4.10(g) flat-string→string regex + integer-range
+rules, then frozen into the immutable object: `engine_id` = the frozen `GOVERNED_GENERATION_CONFIG =
+"brops.governed-engine.sidecar.v1"` (`commands.rs:785`, reused verbatim as the engine id); `model` = a
+locked governed default (a NEW `GOVERNED_MODEL` const, e.g. `"claude-sonnet-5"` mirroring
+`DEFAULT_ANTHROPIC_MODEL` `ai.rs:26`, overridable ONLY by a **trusted host env** such as
+`BROPS_GOVERNED_MODEL`, never the renderer); `max_output_tokens` = a locked governed default string (a NEW
+`GOVERNED_MAX_OUTPUT_TOKENS` const within `1..1048576`); `temperature`/`top_p` = locked fixed-point
+default strings (NEW `GOVERNED_TEMPERATURE`/`GOVERNED_TOP_P` consts, e.g. `"0.00"`/`"1.00"` for
+deterministic governed output). The resolver's returned object is what `prepare_governed_turn_v1b`
+canonicalizes (`generation_config_jcs = JCS(object)` → `generation_config_sha256`), so a single trusted
+object flows the whole chain — the frozen opaque-string path (`GOVERNED_GENERATION_CONFIG` passed to the
+frozen `prepare_governed_turn(&str)`) is **untouched** (§2.2 KEEP+ADD); the resolver + its consts are new.
+Owning this one object, `governed_turn_execute` performs in order:
 1. `prepare_governed_turn_v1b(…)` **once** (validate the config object; `generation_config_jcs =
    JCS(object)` + `generation_config_sha256` once; mint `request_nonce` once);
 2. `receipt_challenges` pre-store via `issue_challenge(&conn, &conversation_id, &prepared.issued_request(),
@@ -1609,14 +1632,20 @@ order:
 3. challenge **create-pending (A)** (carrying the backend `run_id` + turn facts) then **issue (B)** over
    the authority `AF_UNIX` channel (§2.1) — the orchestration object stays in the backend across both
    authority round-trips;
-4. **`governed_turn_submit_prepared(&prepared, challenge_document)`** — an **INTERNAL Rust helper, NOT
-   a `#[tauri::command]` and NOT in `generate_handler!`** — which builds the
-   `bridge.governed-turn-submit.v1` frame from **`&prepared`** (the validated object + its object-JCS
-   bytes) + `challenge_doc_b64` and spawns the one-shot governed sidecar exactly as
-   `ai.rs::governed_engine` does today (`ai.rs:1346-1412`: spawn, write the submit JSON to `stdin`
-   `:1369-1376`, read one reply from `stdout` `:1391-1399` bounded by `MAX_STDOUT_BYTES = 9 MiB :43`,
-   await exit), under the existing `MAX_CONCURRENT_GENERATIONS = 2` permit (`ai.rs:212`), returning the
-   **metadata-only** result;
+4. **`governed_turn_submit_prepared(execution: &GovernedTurnExecutionV1B, challenge_document: &ChallengeDocument)`**
+   — an **INTERNAL Rust helper, NOT a `#[tauri::command]` and NOT in `generate_handler!`** — takes the
+   **whole orchestration object** (so `task_id`/`run_id` are in scope; `PreparedGovernedTurnV1B` alone does
+   NOT carry `task_id`, P0-1(A)). It builds the `bridge.governed-turn-submit.v1` frame from
+   `execution.task_id` + `execution.prepared` (the validated system/history/`generation_config` object +
+   its object-JCS bytes) + the `challenge_document` (`challenge_doc_b64`). **Before it writes the frame it
+   asserts the exact cross-bindings (P0-1 LOCKED) — else terminal Block:** `submit.task_id ==
+   execution.task_id == challenge_document.payload.task_id`; `challenge_document.payload.run_id ==
+   execution.run_id`; `SHA256(JCS(execution.prepared.generation_config)) ==
+   challenge_document.payload.generation_config_sha256`. Then it spawns the one-shot governed sidecar
+   exactly as `ai.rs::governed_engine` does today (`ai.rs:1346-1412`: spawn, write the submit JSON to
+   `stdin` `:1369-1376`, read one reply from `stdout` `:1391-1399` bounded by `MAX_STDOUT_BYTES = 9 MiB
+   :43`, await exit), under the existing `MAX_CONCURRENT_GENERATIONS = 2` permit (`ai.rs:212`), returning
+   the **metadata-only** result;
 5. the **internal output-pull loop** (fresh one-shot sidecars per chunk, §4.10(f)) — also an internal
    backend function driven by `governed_turn_execute`, **not** a frontend-exposed command;
 6. build the final `Expected` from the **same** orchestration object and verify/persist
@@ -1631,10 +1660,16 @@ no mutable public copy of the object/JCS/context is exposed; every cross-stage r
 **read-only accessor**; and **before submit** the backend asserts
 `SHA256(prepared.generation_config_jcs) == prepared.context.generation_config_sha256` **and**
 `prepared.issued_request().request_sha256() == the pre-stored receipt_challenges.request_sha256` — a
-tampered/reconstructed object cannot reach submit. **Mandatory test (P0-1):** a frontend that mutates
+tampered/reconstructed object cannot reach submit. **Mandatory tests (P0-1):** (i) a frontend that mutates
 `generation_config`/`system`/`history` after `governed_turn_execute` begins **cannot** reach submit or
 alter the pre-stored request (there is no post-prepare frontend input path; the single in-process
-`PreparedGovernedTurnV1B` is the sole source of the submit bytes and the `Expected`). **Permitted
+`GovernedTurnExecutionV1B` is the sole source of the submit bytes and the `Expected`); (ii) a
+**whole-chain identity E2E**: the SAME `task_id`, `run_id`, and `generation_config` JCS bytes flow
+identically through the authority pending row → the signed §4.1 challenge → the
+`bridge.governed-turn-submit.v1` frame → the governed-turn lease (§4.3) → the terminal record (§4.8) →
+the isolated-signer receipt envelope (§4.9) — any divergence at any hop ⇒ terminal Block (the §4.10(a0)
+open-time `run_id`/`task_id` verify, the submit-time cross-binding asserts above, and the §7 `Expected`
+compare each catch it). **Permitted
 alternative (only if a future architecture must split the stages across processes):** a server-side
 **opaque `prepared_turn_id`** state machine — a bounded, TTL'd, supervisor-or-backend-owned store with
 closed transitions `PREPARED → CHALLENGED → SUBMITTED → FINALIZED`, one-time-consume, crash/retry
@@ -1642,6 +1677,33 @@ semantics; the frontend receives **only** the opaque id, and the authority reque
 final `Expected` are all produced from the **same stored immutable object**. 3b-1B mandates the
 single-backend-command form above; the `prepared_turn_id` state machine is the **only** other
 permitted shape — a frontend-exposed raw-field submit command is **forbidden**.
+
+**Authority-channel failure boundary (P1-1 LOCKED — the post-pre-store authority hops are durable too).**
+The desktop↔sidecar terminal-durable-Block contract (§6.1) is **extended to the authority `AF_UNIX`
+hops**. After the `receipt_challenges` pre-store (step 2), EVERY failure of the authority channel —
+socket unavailable, a lost `create-pending` reply, a lost `issue` reply, an authority `refused` verdict,
+or a malformed/oversize/unparseable reply — has **exactly two** permitted outcomes inside
+`governed_turn_execute`, never a third:
+- **(a) bounded internal idempotent retry** with the **same live `GovernedTurnExecutionV1B`** — the §2.1
+  authority protocols are lost-reply-safe idempotent (a repeat `create-pending` with the same
+  `(install_id, request_nonce)` returns the SAME `pending_challenge_id`; a repeat `issue` with the same
+  `pending_challenge_id` re-returns the byte-identical stored `{payload,sig}`), so a retry from the
+  still-in-memory object recovers the same pending row / challenge and the chain continues — bounded by a
+  new `MAX_AUTHORITY_RETRIES` count and, once issued, the challenge's own validity window (before issue,
+  the pending row's `PENDING_TTL`, §2.1); OR
+- **(b) terminal durable Block** — `record_pre_verification_block` (`receipt_store.rs:175-208`): consume
+  the `request_nonce` + write **exactly one** durable `blocked` attempt (`StreamEvent::Blocked{reason}`);
+  the nonce is spent (a later receipt on it ⇒ `Replay` Block).
+
+There is **no** third outcome that returns from the command with an **unconsumed** desktop nonce while
+the in-memory object is gone (that was the rev-22/rev-23 non-durable seam, one hop earlier). An
+authority-side `PENDING`/`ISSUED` row left behind by a terminal Block is harmless: it binds **no
+execution right** and its own `PENDING_TTL` sweeps it (§2.1), and it can never become a reusable/orphan
+logical turn because the desktop nonce is already consumed. **Mandatory tests (P1-1):**
+authority-socket-unavailable, lost `create-pending` reply, lost `issue` reply, explicit authority
+`refused`, and malformed authority reply — each MUST end in exactly one of the two outcomes: the same
+challenge recovered (idempotent retry) and the chain proceeds, **or** the nonce terminal-consumed with
+exactly one `blocked` attempt and no reusable turn.
 
 **Sidecar orchestrator (`bridge/engine_sidecar.py::run`, `:266-303`, a NEW dispatch branch beside the
 frozen `_real_callables`, `:232-260`).** On a `bridge.governed-turn-submit.v1` frame the one-shot
@@ -1940,12 +2002,19 @@ No output renders before step 14 commits.
    once → `receipt_challenges` pre-store (`issue_challenge(&conn, &conversation_id, …)`) → the §2.1
    authority **create-pending (with the backend `run_id`) + issue** calls (obtaining the signed challenge
    document **in the backend**, never via the webview) → the **internal**
-   `governed_turn_submit_prepared(&prepared, challenge_document)` helper, which spawns the one-shot
-   governed sidecar (as `ai.rs::governed_engine`) and writes a single **`bridge.governed-turn-submit.v1`**
-   frame carrying `{task_id, challenge_doc_b64, system, history, generation_config}` **derived from
-   `&prepared`** (no frontend re-serialize). The sidecar derives the three canonical input-byte blobs via
-   the governed-family formulas (system=raw UTF-8, history=JCS, generation_config=JCS of the closed config
-   object — §4.10(g)) and becomes the originator of steps 1–2. A local
+   `governed_turn_submit_prepared(execution: &GovernedTurnExecutionV1B, challenge_document: &ChallengeDocument)`
+   helper (takes the WHOLE orchestration object — `PreparedGovernedTurnV1B` alone does not carry `task_id`,
+   P0-1(A)), which — after asserting `submit.task_id == execution.task_id == challenge_document.payload.task_id`,
+   `challenge_document.payload.run_id == execution.run_id`, and
+   `SHA256(JCS(execution.prepared.generation_config)) == challenge_document.payload.generation_config_sha256`
+   (else terminal Block) — spawns the one-shot governed sidecar (as `ai.rs::governed_engine`) and writes a
+   single **`bridge.governed-turn-submit.v1`** frame carrying `{task_id, challenge_doc_b64, system, history,
+   generation_config}` **derived from `execution` (`task_id` from `execution.task_id`, the rest from
+   `execution.prepared`)** (no frontend re-serialize). The sidecar derives the three canonical input-byte
+   blobs via the governed-family formulas (system=raw UTF-8, history=JCS, generation_config=JCS of the closed
+   config object — §4.10(g)) and becomes the originator of steps 1–2. A post-pre-store authority-channel
+   failure follows the §4.10(g) Authority-channel failure boundary (bounded idempotent retry with the same
+   live `execution` OR terminal Block, P1-1); a local desktop↔sidecar
    spawn/socket/timeout/oversize-reply/unexpected-exit failure here is a **terminal durable Block**
    (`governed_turn_execute` → `record_pre_verification_block`: consume the nonce + write a `blocked`
    record, `StreamEvent::Blocked{reason}`; NOT retryable — P1-1); nothing downstream exists "by assumption".
@@ -2012,7 +2081,9 @@ No output renders before step 14 commits.
     → persist. A stale/rolled-back evidence head was already refused by the signer's durable
     head-floor (step 11, §7 P1-7). Only on commit does the desktop render.
 
-**Out-of-band transport-failure contract (P1-5, LOCKED — covers steps 0/13/14).** The
+**Out-of-band transport-failure contract (P1-1/P1-5, LOCKED — covers the desktop↔sidecar steps 0/13/14;
+the post-pre-store authority `create-pending`/`issue` hops have their own equally-durable boundary at
+§4.10(g) "Authority-channel failure boundary", P1-1).** The
 desktop↔sidecar hops (step 0 submit, step 13/14 output pull) run over one-shot Tauri subprocesses
 and an `AF_UNIX` socket that can fail *without* producing any governed reply frame. Distinct from a
 supervisor **verdict** (a `refused` reason from `GOVERNED_REFUSAL_REASONS`, which is authoritative
@@ -2523,6 +2594,28 @@ The current normative design is §0–§9 above. This log is historical only.
   independent red-team over the rev-23 diff + real repo: no BLOCKER; the frozen 3b-1A/Wave-3a `stream_reply`
   + `record_pre_verification_block` shapes proven cited byte-exact; `check_coordination` +
   `check_capabilities` GREEN live. NOT Architect-GREEN; 3b-1B code not started.
+- **rev 24 (this doc):** dual-finding closure of the rev-23 Architect Design RED (**1 P0 · 1 P1** @
+  `b89bab9`, exact-head CI #130 8/8 SUCCESS; the rev-22 routing-identities P0 + non-durable-transport-retry
+  P1 were CONFIRMED CLOSED) via a read-only real-code investigation + one integrator + a fresh independent
+  red-team. **P0-1** — the backend single-source orchestration was not constructible: (A) `task_id` lived
+  in `GovernedTurnExecutionV1B` but not `PreparedGovernedTurnV1B`, so `governed_turn_submit_prepared(&prepared,…)`
+  could not derive the submit frame's top-level `task_id`; (B) the 5-field `generation_config` object had no
+  trusted source (only the frozen opaque `GOVERNED_GENERATION_CONFIG` string). **rev 24 (§4.10(g)):** (A) the
+  helper becomes `governed_turn_submit_prepared(execution: &GovernedTurnExecutionV1B, challenge_document:
+  &ChallengeDocument)`, asserting `submit.task_id == execution.task_id == challenge.payload.task_id`,
+  `challenge.payload.run_id == execution.run_id`, `SHA256(JCS(execution.prepared.generation_config)) ==
+  challenge.payload.generation_config_sha256`; (B) a new `resolve_governed_generation_config_v1b()` returns
+  all five fields from locked governed defaults / trusted host config (engine_id = frozen
+  `GOVERNED_GENERATION_CONFIG`; new `GOVERNED_MODEL`/`GOVERNED_MAX_OUTPUT_TOKENS`/`GOVERNED_TEMPERATURE`/
+  `GOVERNED_TOP_P`), validated once; + a whole-chain E2E (same task_id/run_id/config-JCS through authority
+  row → challenge → submit → lease → record → envelope). **P1-1** — rev 23's terminal-durable-Block covered
+  only desktop↔sidecar hops; the authority `create-pending`/`issue` hops after pre-store could return with an
+  unconsumed nonce. **rev 24 (§4.10(g) Authority-channel failure boundary):** every post-pre-store authority
+  failure has exactly two outcomes — bounded idempotent retry with the same live `GovernedTurnExecutionV1B`
+  (lost-reply-safe §2.1 protocols) bounded by `MAX_AUTHORITY_RETRIES`, or `record_pre_verification_block`
+  (consume nonce + one `blocked` attempt); no orphan. Fresh independent red-team over the rev-24 diff + real
+  repo: no BLOCKER; frozen 3b-1A/Wave-3a + `stream_reply`/`record_pre_verification_block`/`DEFAULT_ANTHROPIC_MODEL`
+  cites byte-exact; `check_coordination` + `check_capabilities` GREEN live. NOT Architect-GREEN; 3b-1B code not started.
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 
