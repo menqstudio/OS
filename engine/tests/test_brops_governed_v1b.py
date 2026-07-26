@@ -29,6 +29,7 @@ from brops_governed_common import (
     PINNED_GENERATION_CONFIG_SHA256, STAGING_CHUNK_BYTES,
     b64url_encode, governed_generation_config_bytes, history_bytes, sha256_hex, system_bytes,
 )
+from brops_governed_recorder import RecorderComponents, record_governed_turn
 from brops_governed_signer import GovernedSignerComponents, sign_governed
 from brops_governed_supervisor import ChallengeRegistry, GovernedSupervisor, SupervisorConfig
 from governed_v1b import submit as sidecar_submit, output_read as sidecar_output_read
@@ -119,10 +120,22 @@ class GovernedV1BTests(unittest.TestCase):
             daemon=True,
         )
         self.signer_thread.start(); self.assertTrue(ready.wait(2))
+        # §2.3/§8: the separate evidence-recorder RUNNER (holds the evidence-recorder key, writes rec/).
+        self.recorder_socket = str(self.root / "recorder.sock")
+        rec_components = RecorderComponents(
+            rec_store=self.store.rec, evidence_recorder_key=self.evidence_recorder_key)
+        rec_ready = threading.Event()
+        self.recorder_thread = threading.Thread(
+            target=brops_socket.serve_forever,
+            args=(self.recorder_socket, lambda frame: record_governed_turn(frame, rec_components)),
+            kwargs={"allowed_peer_uids": None, "max_requests": None, "ready": rec_ready.set},
+            daemon=True,
+        )
+        self.recorder_thread.start(); self.assertTrue(rec_ready.wait(2))
         self.supervisor = GovernedSupervisor(
             db_path=self.root / "supervisor.db", store=self.store, registry=self.registry,
-            signer_socket=self.socket, attestation_key=self.attestation_key,
-            lease_key=self.lease_key, evidence_recorder_key=self.evidence_recorder_key,
+            signer_socket=self.socket, recorder_socket=self.recorder_socket,
+            attestation_key=self.attestation_key, lease_key=self.lease_key,
             governed_turn_recorder_key=self.governed_turn_recorder_key, config=config,
             clock_ms=lambda: self.now,
         )

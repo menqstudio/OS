@@ -186,24 +186,36 @@ deny  brops-recorder "chmod sup"         "chmod 600 '$GS/sup/a.json'"
 deny  brops-recorder "symlink sup"       "ln -s /etc/passwd '$GS/sup/link'"
 deny  brops-recorder "overwrite sup"     "printf x > '$GS/sup/a.json'"
 
-# signer: read/traverse+list BOTH, DENIED every write in BOTH (group r-x, no group-write; 0640 files).
+# signer: read/traverse+list BOTH, DENIED EVERY write op (create/overwrite/rename/unlink/chmod/
+# symlink) in BOTH namespaces — the signer is group r-x with no group-write, so it must never be
+# able to mutate either the supervisor's OR the recorder's evidence. Exhaustive: 6 write ops × 2 ns.
 allow brops-signer "read+list sup"       "ls '$GS/sup' >/dev/null && cat '$GS/sup/a.json' >/dev/null"
 allow brops-signer "read+list rec"       "ls '$GS/rec' >/dev/null && cat '$GS/rec/a.json' >/dev/null"
 deny  brops-signer "create sup"          "touch '$GS/sup/attack'"
 deny  brops-signer "create rec"          "touch '$GS/rec/attack'"
-deny  brops-signer "rename sup"          "mv '$GS/sup/a.json' '$GS/sup/x'"
-deny  brops-signer "unlink rec"          "rm '$GS/rec/a.json'"
-deny  brops-signer "chmod sup"           "chmod 600 '$GS/sup/a.json'"
-deny  brops-signer "symlink rec"         "ln -s /etc/passwd '$GS/rec/link'"
 deny  brops-signer "overwrite sup"       "printf x > '$GS/sup/a.json'"
 deny  brops-signer "overwrite rec"       "printf x > '$GS/rec/a.json'"
+deny  brops-signer "rename sup"          "mv '$GS/sup/a.json' '$GS/sup/x'"
+deny  brops-signer "rename rec"          "mv '$GS/rec/a.json' '$GS/rec/x'"
+deny  brops-signer "unlink sup"          "rm '$GS/sup/a.json'"
+deny  brops-signer "unlink rec"          "rm '$GS/rec/a.json'"
+deny  brops-signer "chmod sup"           "chmod 600 '$GS/sup/a.json'"
+deny  brops-signer "chmod rec"           "chmod 600 '$GS/rec/a.json'"
+deny  brops-signer "symlink sup"         "ln -s /etc/passwd '$GS/sup/link'"
+deny  brops-signer "symlink rec"         "ln -s /etc/passwd '$GS/rec/link'"
 
 # login user (also the sidecar/executor identity in this harness): NOT in brops-store, other=--- on
-# the 2750 namespaces, so cannot even traverse them — no read/list/write in either.
+# the 2750 namespaces, so cannot even traverse them — no read/list/write of ANY kind in either.
 deny_login "list sup (other)"            "ls '$GS/sup'"
+deny_login "list rec (other)"            "ls '$GS/rec'"
+deny_login "read sup (other)"            "cat '$GS/sup/a.json'"
 deny_login "read rec (other)"            "cat '$GS/rec/a.json'"
 deny_login "create sup (other)"          "touch '$GS/sup/attack'"
 deny_login "create rec (other)"          "touch '$GS/rec/attack'"
+deny_login "overwrite rec (other)"       "printf x > '$GS/rec/a.json'"
+deny_login "rename sup (other)"          "mv '$GS/sup/a.json' '$GS/sup/x'"
+deny_login "chmod rec (other)"           "chmod 600 '$GS/rec/a.json'"
+deny_login "symlink sup (other)"         "ln -s /etc/passwd '$GS/sup/link'"
 deny_login "traverse+unlink rec (other)" "rm '$GS/rec/a.json'"
 
 echo "STORE-CUSTODY MATRIX PASSED — 2750 sup/+rec/; supervisor⇄sup only, recorder⇄rec only, signer read-only both, login/sidecar/executor no access"

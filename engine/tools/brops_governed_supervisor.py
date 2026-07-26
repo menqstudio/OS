@@ -26,8 +26,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 
 import brops_socket
 from bro_signature import canonical_bytes
-from bro_evidence import event_hash as evidence_event_hash
-from broctl import sign_payload
 from brops_evidence_store import EvidenceStore, EvidenceStoreError, NamespacedEvidenceStore
 from brops_governed_common import (
     CHALLENGE_TTL_MS, EXECUTION_TIMEOUT_MS, ISSUED_RETENTION_MS,
@@ -260,20 +258,14 @@ def _db(path: os.PathLike[str] | str) -> sqlite3.Connection:
 
 class GovernedSupervisor:
     def __init__(self, *, db_path: os.PathLike[str] | str, store: EvidenceStore,
-                 registry: ChallengeRegistry, signer_socket: str,
+                 registry: ChallengeRegistry, signer_socket: str, recorder_socket: str,
                  attestation_key: Mapping[str, str], lease_key: Mapping[str, str],
-                 evidence_recorder_key: Mapping[str, str],
                  governed_turn_recorder_key: Mapping[str, str], config: SupervisorConfig,
                  clock_ms: Callable[[], int] | None = None,
                  monotonic: Callable[[], float] | None = None) -> None:
-        # §8 total authority separation: the two recorder authorities MUST be distinct keys, or a
-        # single compromise/misconfig (both keydirs pointing at one file) forges both artifacts.
-        # Checked before opening any resource so a misconfig fails fast and clean.
-        if (evidence_recorder_key["key_id"] == governed_turn_recorder_key["key_id"]
-                or evidence_recorder_key.get("private_key")
-                == governed_turn_recorder_key.get("private_key")):
-            raise ValueError(
-                "evidence-recorder and governed-turn-recorder keys must be distinct (§8)")
+        # §8/§2.3 total authority separation is now STRUCTURAL: the evidence-recorder key is held by
+        # the separate brops-recorder RUNNER process (which alone writes store/rec/); this supervisor
+        # holds ONLY the governed-turn-recorder key and reaches the recorder over recorder_socket.
         db_path = pathlib.Path(db_path)
         self.conn = _db(db_path)
         self.staging_root = db_path.parent / "governed-staging"
@@ -285,11 +277,11 @@ class GovernedSupervisor:
         self.signer_socket = signer_socket
         self.attestation_key = dict(attestation_key)
         self.lease_key = dict(lease_key)
-        # §8 authority separation (total): the evidence-recorder key signs the execution receipt +
-        # containment + evidence; the governed-turn-recorder key signs ONLY the terminal record.
-        # A single key must never sign both classes.
-        self.evidence_recorder_key = dict(evidence_recorder_key)
+        # §8 authority separation (total): the governed-turn-recorder key signs ONLY the terminal
+        # record here; the execution receipt + containment + evidence are signed by the SEPARATE
+        # brops-recorder runner (evidence-recorder key), reached over recorder_socket.
         self.governed_turn_recorder_key = dict(governed_turn_recorder_key)
+        self.recorder_socket = recorder_socket
         self.config = config
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
         self.monotonic = monotonic or time.monotonic
@@ -925,55 +917,32 @@ class GovernedSupervisor:
         # §5 — child ran; persist process metadata and flip EXECUTION_STARTING -> EXECUTING.
         self._set_acceptance(handle, "EXECUTING", self.clock_ms(),
                              process_group_id=attempt, cgroup_id="process-group:" + attempt)
-        output_handle = self.store.publish_rec(output)   # §2.3 recorder namespace (store/rec/)
-        containment = {
-            "artifact_type": "brops.governed-turn-containment.v1",
+        # §2.3/§8 — the evidence-recorder RUNNER (separate brops-recorder principal, over
+        # recorder_socket) writes ALL recorder-namespace artifacts to store/rec/ — output,
+        # containment, the evidence-recorder-signed execution receipt, and the signed bro_evidence
+        # chain — and returns their handles + the derived head. This supervisor neither writes
+        # store/rec/ nor holds the evidence-recorder key, so a compromised supervisor cannot forge
+        # recorder-namespace evidence.
+        rec_reply = brops_socket.request(self.recorder_socket, {
+            "protocol": "brops.governed-record-request.v1",
+            "output_b64": b64url_encode(output),
             "run_id": challenge["run_id"], "execution_attempt_id": attempt, "lease_id": lease_id,
+            "receipt_id": receipt_id, "task_id": challenge["task_id"], "agent_id": self.config.agent_id,
             "runner_id": self.config.runner_id, "executor_id": self.config.executor_id,
-            "cgroup_id": "process-group:" + attempt, "process_group_id": attempt,
-            "contained": True, "teardown_outcome": "contained", "measured_at_ms": finished_at,
-        }
-        containment_handle = self.store.publish_rec(canonical_bytes(containment))   # §2.3 rec/
-        execution_receipt_payload = {
-            "artifact_type": "brops.governed-turn-execution-receipt.v1",
-            "key_id": self.evidence_recorder_key["key_id"], "receipt_id": receipt_id,
-            "run_id": challenge["run_id"], "execution_attempt_id": attempt, "lease_id": lease_id,
-            "runner_id": self.config.runner_id, "executor_id": self.config.executor_id,
-            "exit_code": 0, "contained": True, "output_handle": output_handle,
-            "output_sha256": output_handle, "output_bytes": len(output),
-            "started_at_ms": started_at, "finished_at_ms": finished_at,
-        }
-        execution_receipt = _sign_document(execution_receipt_payload, self.evidence_recorder_key)
-        execution_receipt_handle = self.store.publish_rec(canonical_bytes(execution_receipt))   # §2.3 rec/
-        # §7 — persist a REAL bro_evidence chain (event + signed head) in the recorder namespace,
-        # signed by the evidence-recorder authority (bro_signature {payload,signature} format). The
-        # signer LOADS + VALIDATES this chain and derives the head scalars from it; the record/
-        # attestation evidence_* fields below are echoes the signer re-checks, never trusts.
-        evidence_dir = pathlib.Path(self.store.rec.root) / "evidence"   # §2.3 recorder namespace
-        evidence_dir.mkdir(parents=True, exist_ok=True)
-        if os.name == "posix":
-            os.chmod(evidence_dir, 0o2750)
-        evidence_event_id = str(uuid.uuid4())
-        issued_at_epoch = now // 1000
-        event_payload = {
-            "artifact_type": "evidence-event", "key_id": self.evidence_recorder_key["key_id"],
-            "event_id": evidence_event_id, "sequence": 1, "previous_event_hash": None,
-            "task_id": challenge["task_id"], "event_type": "governed-turn-completed",
-            "agent_id": self.config.agent_id, "payload_hash": output_handle,
-            "issued_at_epoch": issued_at_epoch,
-        }
-        event_hash = evidence_event_hash(event_payload)
-        head_payload = {
-            "artifact_type": "evidence-head", "key_id": self.evidence_recorder_key["key_id"],
-            "task_id": challenge["task_id"], "final_event_hash": event_hash,
-            "event_count": 1, "last_sequence": 1, "head_sequence": 1,
-            "issued_at_epoch": issued_at_epoch,
-        }
-        _ev_priv = self.evidence_recorder_key["private_key"]
-        (evidence_dir / f"{evidence_event_id}.json").write_text(
-            json.dumps(sign_payload(_ev_priv, event_payload)), encoding="utf-8")
-        (evidence_dir / f"{challenge['task_id']}.head.json").write_text(
-            json.dumps(sign_payload(_ev_priv, head_payload)), encoding="utf-8")
+            "started_at_ms": started_at, "finished_at_ms": finished_at, "issued_at_epoch": now // 1000,
+        }, timeout=30)
+        if not isinstance(rec_reply, Mapping) or rec_reply.get("status") != "recorded":
+            verdict = self._refused(TURN_RESULT, "run_binding_invalid", receipt_id=receipt_id)
+            self._set_acceptance(handle, "FAILED", self.clock_ms(),
+                                 result_json=canonical_bytes(verdict).decode("utf-8"),
+                                 failure_reason="run_binding_invalid")
+            return verdict
+        output_handle = rec_reply["output_handle"]
+        containment = rec_reply["containment"]
+        containment_handle = rec_reply["containment_handle"]
+        execution_receipt_handle = rec_reply["execution_receipt_handle"]
+        evidence_event_id = rec_reply["evidence_event_id"]
+        event_hash = rec_reply["evidence_final_event_hash"]
         record_payload = {
             "artifact_type": "brops.governed-turn-record.v1", "key_id": self.governed_turn_recorder_key["key_id"],
             "run_id": challenge["run_id"], "execution_attempt_id": attempt,
@@ -1191,9 +1160,9 @@ def load_supervisor_from_env(env: Mapping[str, str] | None = None) -> GovernedSu
     return GovernedSupervisor(
         db_path=e["BROPS_GOVERNED_DB"], store=NamespacedEvidenceStore(e["BROPS_EVIDENCE_STORE_DIR"]),
         registry=registry, signer_socket=e["BROPS_SIGNER_SOCKET"],
+        recorder_socket=e["BROPS_RECORDER_SOCKET"],
         attestation_key=load_attestation_key(e["BROPS_SUPERVISOR_ATTESTATION_KEYDIR"]),
         lease_key=_key(e["BROPS_LEASE_ISSUER_KEYDIR"], "brops-governed-lease-issuer.json"),
-        evidence_recorder_key=_key(e["BROPS_EVIDENCE_RECORDER_KEYDIR"], "brops-governed-evidence-recorder.json"),
         governed_turn_recorder_key=_key(e["BROPS_GOVERNED_TURN_RECORDER_KEYDIR"], "brops-governed-turn-recorder.json"),
         config=config,
     )

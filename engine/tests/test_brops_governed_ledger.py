@@ -82,9 +82,9 @@ class LedgerTests(unittest.TestCase):
         )
         sup = GovernedSupervisor(
             db_path=self.root / f"sup-{id(config)}.db", store=self.store, registry=self.registry,
-            signer_socket=str(self.root / "unused.sock"),
+            signer_socket=str(self.root / "unused.sock"), recorder_socket=str(self.root / "unused-rec.sock"),
             attestation_key=_keypair("att")[0], lease_key=_keypair("lease")[0],
-            evidence_recorder_key=_keypair("ev")[0], governed_turn_recorder_key=_keypair("gt")[0],
+            governed_turn_recorder_key=_keypair("gt")[0],
             config=config, clock_ms=lambda: self.now,
         )
         self._sups.append(sup)
@@ -188,23 +188,6 @@ class LedgerTests(unittest.TestCase):
         row = self._row(sup, h)
         self.assertEqual(row["state"], "LEASE_READY")
         self.assertIsNotNone(row["lease_handle"])   # deterministically re-signed + published
-
-    def test_recorder_keys_must_be_distinct(self):
-        # §8: constructing a supervisor with the SAME key for both recorder authorities is refused.
-        from brops_governed_supervisor import GovernedSupervisor
-        config = SupervisorConfig(
-            workspace_id="ws", install_id="install", supervisor_id="sup", executor_id="exec",
-            runner_id="runner", agent_id="Bro", session_id="session", policy_id="policy",
-            policy_version="1", policy_bundle=b"policy bundle", launcher_executable_sha256="a" * 64,
-            executor_command=(sys.executable, "-c", "pass"),
-            generation_config_allowlist=frozenset({CFG_HASH}), record_dir=self.root / "records")
-        dup = _keypair("dup-recorder")[0]
-        with self.assertRaises(ValueError):
-            GovernedSupervisor(
-                db_path=self.root / "distinct.db", store=self.store, registry=self.registry,
-                signer_socket=str(self.root / "u.sock"), attestation_key=_keypair("a")[0],
-                lease_key=_keypair("l")[0], evidence_recorder_key=dup,
-                governed_turn_recorder_key=dup, config=config, clock_ms=lambda: self.now)
 
     def test_recover_expires_stale_lease_ready_but_keeps_valid(self):
         sup = self._supervisor()
