@@ -65,6 +65,15 @@ review. **Independently verified as genuinely absent** (not audit artifacts):
    frontend-exposed governed command; the partial folded the flow into the frozen Wave-3a `stream_reply`
    branch instead. Security is contained (all inputs backend-resolved, already capability-gated, 66-command
    gate intact), but it is a frozen-path / design-conformance deviation to reconcile.
+5. **§2.3 `2750` store-custody hardening (group read-only, refuse `S_IWGRP`)** — rev-26 §2.3 (lines
+   600–617) tightens the evidence-store ACL to `2750` and requires refusing a group-writable store dir.
+   The partial implemented this, but it is **incompatible with the frozen-GREEN 3b-1A isolation test**
+   (`test_brops_isolation.py::test_store_allows_a_group_shared_but_not_world_dir` asserts `0770` is
+   allowed) **and the 3b-1A signer isolation proof** (`engine/ci/isolation_proof.sh`, which provisions a
+   group-writable store). Landing §2.3 requires inverting those frozen 3b-1A security proofs to the new
+   model — a design-gated change (rev-26 is not Architect-GREEN) provable only on the Linux isolation
+   harness. The store code is therefore restored to the frozen 3b-1A behavior for this RC; §2.3
+   store-custody is deferred pending design-GREEN + a coordinated update of the 3b-1A proof/test.
 
 Lower-severity deferrals (defense-in-depth / completeness, current behavior is safe): `load_snapshot`
 root-signature re-verification on use; the `BROPS_GOVERNED_*` override resolver; `PreparedGovernedTurnV1B`
