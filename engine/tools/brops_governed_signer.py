@@ -64,8 +64,13 @@ class GovernedSignerComponents:
     supervisor_attestation_key_id: str
     lease_issuer_pubkey_hex: str
     lease_issuer_key_id: str
-    recorder_pubkey_hex: str
-    recorder_key_id: str
+    # §8 authority separation: the execution receipt is verified under the evidence-recorder key,
+    # the terminal record under the governed-turn-recorder key. A record signed by the
+    # evidence-recorder key (or a receipt by the governed-turn-recorder key) fails its own key_id pin.
+    evidence_recorder_pubkey_hex: str
+    evidence_recorder_key_id: str
+    governed_turn_recorder_pubkey_hex: str
+    governed_turn_recorder_key_id: str
     challenge_root_pubkeys_hex: Mapping[str, str]
     record_dir: pathlib.Path
     allowed_executor_ids: frozenset[str]
@@ -199,11 +204,11 @@ def sign_governed(request: Mapping[str, Any], c: GovernedSignerComponents, now_m
         )
         execution_receipt = _signed_payload(
             execution_receipt_doc, artifact_type="brops.governed-turn-execution-receipt.v1",
-            key_id=c.recorder_key_id, pubkey_hex=c.recorder_pubkey_hex,
+            key_id=c.evidence_recorder_key_id, pubkey_hex=c.evidence_recorder_pubkey_hex,
         )
         record = _signed_payload(
             record_doc, artifact_type="brops.governed-turn-record.v1",
-            key_id=c.recorder_key_id, pubkey_hex=c.recorder_pubkey_hex,
+            key_id=c.governed_turn_recorder_key_id, pubkey_hex=c.governed_turn_recorder_pubkey_hex,
         )
 
         system = c.store.read(evidence["system_handle"])
@@ -349,8 +354,10 @@ def load_governed_signer_components(env: Mapping[str, str] | None = None) -> Gov
         supervisor_attestation_key_id=e["BROPS_SUPERVISOR_ATTESTATION_KEY_ID"].strip(),
         lease_issuer_pubkey_hex=e["BROPS_LEASE_ISSUER_PUBKEY"].strip(),
         lease_issuer_key_id=e["BROPS_LEASE_ISSUER_KEY_ID"].strip(),
-        recorder_pubkey_hex=e["BROPS_RECORDER_PUBKEY"].strip(),
-        recorder_key_id=e["BROPS_RECORDER_KEY_ID"].strip(),
+        evidence_recorder_pubkey_hex=e["BROPS_EVIDENCE_RECORDER_PUBKEY"].strip(),
+        evidence_recorder_key_id=e["BROPS_EVIDENCE_RECORDER_KEY_ID"].strip(),
+        governed_turn_recorder_pubkey_hex=e["BROPS_GOVERNED_TURN_RECORDER_PUBKEY"].strip(),
+        governed_turn_recorder_key_id=e["BROPS_GOVERNED_TURN_RECORDER_KEY_ID"].strip(),
         challenge_root_pubkeys_hex={str(k): str(v) for k, v in roots.items()},
         record_dir=pathlib.Path(e["BROPS_GOVERNED_RECORD_DIR"]),
         allowed_executor_ids=frozenset(x.strip() for x in e["BROPS_ALLOWED_EXECUTOR_IDS"].split(",") if x.strip()),

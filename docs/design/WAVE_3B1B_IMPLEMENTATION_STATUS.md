@@ -1,11 +1,23 @@
-# Wave 3b-1B — implementation status (RC branch `impl/wave-3b1b-execution-binding`)
+# Wave 3b-1B — implementation status (WIP branch `impl/wave-3b1b-execution-binding`)
 
-> **STATUS:** Release-candidate for the 3b-1B **execution→receipt binding** trust chain, built on
-> the ChatGPT partial (`OS_PARTIAL_HANDOFF_2026-07-26`, sha256 `b043ae3b…`) applied onto the exact
-> rev-26 canonical base `6ebeca88627640eef8effe576b3d388417cb4949`. **NOT design-GREEN, NOT merged.**
-> The five rev-26 canonical documentation files are **unchanged** — this file is an additive
-> design→code status map, not a design edit. The normative source of truth remains
-> [`WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`](./WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md).
+> **STATUS: WORK IN PROGRESS — implementation checkpoint, NOT a release candidate, NOT for merge.**
+> The five required rev-26 mechanisms are being implemented **in place** (they are NOT deferrable
+> Tier-2 follow-ups). Built on the ChatGPT partial (`OS_PARTIAL_HANDOFF_2026-07-26`, sha256
+> `b043ae3b…`) applied onto the exact rev-26 base `6ebeca88627640eef8effe576b3d388417cb4949`. The five
+> rev-26 canonical docs are **unchanged**; this file is an additive design→code status map. Normative
+> source: [`WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`](./WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md).
+
+## Required-mechanism status (must all be GREEN under enforcing tests before this is an RC)
+
+| # | Mechanism | Status |
+|---|---|---|
+| §8 | dual-key authority separation (evidence-recorder vs governed-turn-recorder; supervisor+signer) | **IMPLEMENTED** — split across supervisor signing + signer verification + env; key-confusion refusal tests GREEN |
+| §5 | durable acceptance ledger + outbox + idempotency + restart/crash recovery | IN PROGRESS |
+| §7 | durable evidence-head anti-rollback floor + A–E CAS/fork/replay matrix + real evidence chain | IN PROGRESS |
+| §2.3 | `2750` store custody (`S_IWGRP` refusal) + additive isolation test/proof write-denial | IN PROGRESS |
+| §4.10(g) | exact frontend `governed_turn_execute` command (unfold from `stream_reply`) + 4-inventory wiring | IN PROGRESS |
+
+Then: full normative test matrix, one real end-to-end proof, exact-head CI + Linux isolation GREEN, and a fresh zero-trust audit.
 
 ## Provenance + scope
 

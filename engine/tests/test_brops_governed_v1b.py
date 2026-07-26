@@ -56,7 +56,8 @@ class GovernedV1BTests(unittest.TestCase):
         self.root_key, root_pub = keypair("challenge-root")
         self.attestation_key, attestation_pub = keypair("supervisor-attest")
         self.lease_key, lease_pub = keypair("lease-k1")
-        self.recorder_key, recorder_pub = keypair("recorder-k1")
+        self.evidence_recorder_key, evidence_recorder_pub = keypair("evidence-recorder-k1")
+        self.governed_turn_recorder_key, governed_turn_recorder_pub = keypair("governed-turn-recorder-k1")
         self.signer_key, signer_pub = keypair("receipt-k1")
         self.signer_pub = signer_pub
         registry_payload = {
@@ -102,7 +103,8 @@ class GovernedV1BTests(unittest.TestCase):
             supervisor_attestation_pubkey_hex=attestation_pub.hex(),
             supervisor_attestation_key_id="supervisor-attest",
             lease_issuer_pubkey_hex=lease_pub.hex(), lease_issuer_key_id="lease-k1",
-            recorder_pubkey_hex=recorder_pub.hex(), recorder_key_id="recorder-k1",
+            evidence_recorder_pubkey_hex=evidence_recorder_pub.hex(), evidence_recorder_key_id="evidence-recorder-k1",
+            governed_turn_recorder_pubkey_hex=governed_turn_recorder_pub.hex(), governed_turn_recorder_key_id="governed-turn-recorder-k1",
             challenge_root_pubkeys_hex={"challenge-root": root_pub.hex()},
             record_dir=self.record_dir,
             allowed_executor_ids=frozenset({"exec"}), allowed_runner_ids=frozenset({"runner"}),
@@ -120,7 +122,8 @@ class GovernedV1BTests(unittest.TestCase):
         self.supervisor = GovernedSupervisor(
             db_path=self.root / "supervisor.db", store=self.store, registry=self.registry,
             signer_socket=self.socket, attestation_key=self.attestation_key,
-            lease_key=self.lease_key, recorder_key=self.recorder_key, config=config,
+            lease_key=self.lease_key, evidence_recorder_key=self.evidence_recorder_key,
+            governed_turn_recorder_key=self.governed_turn_recorder_key, config=config,
             clock_ms=lambda: self.now,
         )
         self.authority = ChallengeAuthority(

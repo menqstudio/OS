@@ -239,7 +239,8 @@ class GovernedSupervisor:
     def __init__(self, *, db_path: os.PathLike[str] | str, store: EvidenceStore,
                  registry: ChallengeRegistry, signer_socket: str,
                  attestation_key: Mapping[str, str], lease_key: Mapping[str, str],
-                 recorder_key: Mapping[str, str], config: SupervisorConfig,
+                 evidence_recorder_key: Mapping[str, str],
+                 governed_turn_recorder_key: Mapping[str, str], config: SupervisorConfig,
                  clock_ms: Callable[[], int] | None = None,
                  monotonic: Callable[[], float] | None = None) -> None:
         db_path = pathlib.Path(db_path)
@@ -253,7 +254,11 @@ class GovernedSupervisor:
         self.signer_socket = signer_socket
         self.attestation_key = dict(attestation_key)
         self.lease_key = dict(lease_key)
-        self.recorder_key = dict(recorder_key)
+        # §8 authority separation (total): the evidence-recorder key signs the execution receipt +
+        # containment + evidence; the governed-turn-recorder key signs ONLY the terminal record.
+        # A single key must never sign both classes.
+        self.evidence_recorder_key = dict(evidence_recorder_key)
+        self.governed_turn_recorder_key = dict(governed_turn_recorder_key)
         self.config = config
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
         self.monotonic = monotonic or time.monotonic
@@ -794,18 +799,18 @@ class GovernedSupervisor:
         containment_handle = self.store.publish(canonical_bytes(containment))
         execution_receipt_payload = {
             "artifact_type": "brops.governed-turn-execution-receipt.v1",
-            "key_id": self.recorder_key["key_id"], "receipt_id": receipt_id,
+            "key_id": self.evidence_recorder_key["key_id"], "receipt_id": receipt_id,
             "run_id": challenge["run_id"], "execution_attempt_id": attempt, "lease_id": lease_id,
             "runner_id": self.config.runner_id, "executor_id": self.config.executor_id,
             "exit_code": 0, "contained": True, "output_handle": output_handle,
             "output_sha256": output_handle, "output_bytes": len(output),
             "started_at_ms": started_at, "finished_at_ms": finished_at,
         }
-        execution_receipt = _sign_document(execution_receipt_payload, self.recorder_key)
+        execution_receipt = _sign_document(execution_receipt_payload, self.evidence_recorder_key)
         execution_receipt_handle = self.store.publish(canonical_bytes(execution_receipt))
         event_hash = sha256_hex(canonical_bytes({"attempt": attempt, "output_handle": output_handle, "finished_at_ms": finished_at}))
         record_payload = {
-            "artifact_type": "brops.governed-turn-record.v1", "key_id": self.recorder_key["key_id"],
+            "artifact_type": "brops.governed-turn-record.v1", "key_id": self.governed_turn_recorder_key["key_id"],
             "run_id": challenge["run_id"], "execution_attempt_id": attempt,
             "task_id": challenge["task_id"], "agent_id": self.config.agent_id, "session_id": self.config.session_id,
             "workspace_id": self.config.workspace_id, "install_id": self.config.install_id,
@@ -831,7 +836,7 @@ class GovernedSupervisor:
             "evidence_final_event_hash": event_hash, "evidence_event_count": 1,
             "evidence_last_sequence": 0, "evidence_head_sequence": 0, "completed_at_ms": finished_at,
         }
-        record_doc = _sign_document(record_payload, self.recorder_key)
+        record_doc = _sign_document(record_payload, self.governed_turn_recorder_key)
         record_bytes = canonical_bytes(record_doc)
         record_handle = self.store.publish(record_bytes)
         self.config.record_dir.mkdir(parents=True, exist_ok=True)
@@ -1020,6 +1025,7 @@ def load_supervisor_from_env(env: Mapping[str, str] | None = None) -> GovernedSu
         registry=registry, signer_socket=e["BROPS_SIGNER_SOCKET"],
         attestation_key=load_attestation_key(e["BROPS_SUPERVISOR_ATTESTATION_KEYDIR"]),
         lease_key=_key(e["BROPS_LEASE_ISSUER_KEYDIR"], "brops-governed-lease-issuer.json"),
-        recorder_key=_key(e["BROPS_RECORDER_KEYDIR"], "brops-governed-recorder.json"),
+        evidence_recorder_key=_key(e["BROPS_EVIDENCE_RECORDER_KEYDIR"], "brops-governed-evidence-recorder.json"),
+        governed_turn_recorder_key=_key(e["BROPS_GOVERNED_TURN_RECORDER_KEYDIR"], "brops-governed-turn-recorder.json"),
         config=config,
     )
