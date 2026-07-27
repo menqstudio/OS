@@ -27,6 +27,7 @@
 //! wiring are pure and unit-tested on any platform.
 
 mod chain_executor;
+mod chain_hops;
 
 use brops_core::broker_orchestrator::{BrokerIds, GovernedExecutor};
 use brops_core::governed_message_store::AcceptedOutput;
