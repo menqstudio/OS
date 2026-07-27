@@ -15,6 +15,7 @@ pub mod broker_turns;
 pub mod broker_orchestrator;
 pub mod governed_output_stream;
 pub mod governed_verification;
+pub mod windows_broker;
 pub mod supervisor_ledger;
 pub mod repo;
 
