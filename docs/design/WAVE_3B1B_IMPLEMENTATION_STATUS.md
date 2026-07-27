@@ -58,8 +58,10 @@ Both previously-tracked infrastructure gaps are now implemented in this branch a
    `NamespacedEvidenceStore` (`store/sup/` supervisor-written, `store/rec/` recorder-written). Writes to
    `store/rec/` are NOT done by the supervisor — they are delegated over an AF_UNIX socket to the
    dedicated **`brops-recorder` runner** (`brops_governed_recorder.py` / `brops_recorder_service.py`),
-   a separate process/principal that alone holds the evidence-recorder key and alone writes `rec/`; a
-   compromised supervisor can neither write `rec/` (OS ACLs) nor mint recorder-signed evidence (no key).
+   a separate process/principal that alone holds the evidence-recorder key, alone OWNS execution (it
+   launches the contained executor, reads its output pipe, measures teardown), and alone writes `rec/`;
+   a compromised supervisor can neither write `rec/` (OS ACLs) nor mint recorder-signed evidence (no
+   key) nor substitute the output (it never sees the bytes — see the trust-boundary section, Q1).
    The Linux isolation job proves the complete principal × operation × namespace matrix with real
    `brops-recorder`, supervisor, signer, and login principals (create/overwrite/rename/unlink/chmod/
    symlink-attack/list/read — signer exhaustively denied every write in BOTH namespaces), with a
@@ -69,24 +71,26 @@ Both previously-tracked infrastructure gaps are now implemented in this branch a
 ## Trust boundary + known limitations (honest — do NOT overclaim)
 
 An independent zero-trust audit (compromised-supervisor threat model) confirmed the custody wall and
-signature isolation are sound, and surfaced two limitations that this document states plainly so the
-receipt is never read as proving more than it does:
+signature isolation are sound. Its central finding — that the recorder was a *blind notary* over
+supervisor-asserted output — has since been CLOSED by moving execution ownership into the recorder,
+per the rev-26 §0 principal hierarchy. What remains is stated plainly so the receipt is never
+over-read:
 
-- **The recorder is a NOTARY, not an execution monitor.** `record_governed_turn` signs the output
-  bytes the supervisor hands it and records fixed containment/exit facts (`contained=True`,
-  `exit_code=0`); it does NOT independently launch the executor, measure a cgroup/process group, or
-  otherwise prove that a contained execution actually occurred. In rev-26 the **supervisor remains the
-  trusted containment monitor** — the two-principal split defends *evidence-recorder key custody and
-  chain integrity* (a compromised supervisor cannot forge recorder signatures or write `rec/`), NOT
-  the proposition "a contained execution happened". A fully-compromised supervisor, for a turn the
-  desktop legitimately challenged, could substitute output bytes and obtain a genuine
-  recorder-signed receipt over them (the challenge pins `system`/`history`/`generation_config`, but
-  not the not-yet-existing output). **Executor-authenticated output** (the executor signing its own
-  output so substitution is detectable) is a FUTURE item and is explicitly NOT claimed done here.
-  What IS enforced: the receipt, the signed evidence event, and the output are now cryptographically
-  bound to one task — the signer refuses unless `execution_receipt.task_id == record.task_id`, the
-  event's `task_id` matches, and the event's `payload_hash` equals the output the signer itself
-  hashes — so the recorder's three co-produced artifacts cannot be recombined with foreign parts.
+- **The recorder OWNS execution (audit Q1 — CLOSED, CI-verified).** Per the rev-26 §0 hierarchy
+  (addendum lines 71-77: the evidence-recorder runner "owns the executor pidfd/cgroup + output pipe +
+  teardown measurement"; the executor "holds NO key"), `brops_governed_recorder` now launches the
+  contained executor itself via the setuid launcher, reads the output pipe DIRECTLY, and MEASURES
+  teardown (sweeps the executor's process group and confirms it is empty → `contained`/`escaped`)
+  rather than asserting it. The supervisor sends only the INPUT handles; it never sees the output
+  bytes and cannot substitute them. So the entity that signs the execution receipt is the entity that
+  observed the execution — the binding is authoritative, not notarized. The receipt, the signed
+  evidence event, and the output are additionally bound to one task (the signer refuses unless
+  `execution_receipt.task_id == record.task_id`, the event's `task_id` matches, and the event's
+  `payload_hash` equals the output the signer itself hashes). Proven by the Linux governance-runtime
+  E2E (supervisor→recorder→signer) + POSIX recorder-core execution tests. Remaining trust
+  assumptions, faithful to the ratified §0 threat model: a compromised **recorder** (which holds the
+  evidence-recorder key AND runs the executor) or admin/root/kernel are OUT of §0 and not defended
+  here; the in-scope adversary is the **sidecar** (same login user), which owns neither principal.
 - **The §7 A–E floor is exercised only at single-event scope today.** The recorder currently mints a
   one-event chain per turn (`head_sequence=1`), so only bootstrap + branch B (same-sequence) fire;
   branches C/D (multi-event advance / prefix-extension) and `min_head_sequence` are retained for a
