@@ -974,10 +974,10 @@ class GovernedSupervisor:
         self.sweep_output_streams(created)
         # §4.10(f): a completing turn's stream is ALWAYS created. If admitting it would breach
         # the per-install row or byte quota, FIFO-evict the oldest present rows first.
-        self._evict_output_streams_for_admission(install, len(output), created)
+        self._evict_output_streams_for_admission(install, output_bytes, created)
         result = {
             "protocol": TURN_RESULT, "status": "signed", "receipt_id": receipt_id,
-            "output_stream_id": stream_id, "output_bytes": len(output), "output_sha256": output_handle,
+            "output_stream_id": stream_id, "output_bytes": output_bytes, "output_sha256": output_handle,
             "envelope_jcs_b64": signed["envelope_jcs_b64"], "signature_b64": signed["signature_b64"],
             "key_id": signed["key_id"],
             "attestation_evidence_jcs_b64": signed["attestation_evidence_jcs_b64"],
@@ -1005,7 +1005,7 @@ class GovernedSupervisor:
                    output_stream_id,receipt_id,execution_attempt_id,output_handle,output_bytes,
                    output_sha256,created_at_ms,expires_at_ms,retained_until_ms,install_id,tombstone)
                    VALUES(?,?,?,?,?,?,?,?,?,?,0)""",
-                (stream_id, receipt_id, attempt, output_handle, len(output), output_handle,
+                (stream_id, receipt_id, attempt, output_handle, output_bytes, output_handle,
                  created, created + OUTPUT_STREAM_TTL_MS,
                  created + OUTPUT_STREAM_TTL_MS + OUTPUT_STREAM_RETENTION_MS, install),
             )
