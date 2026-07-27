@@ -37,6 +37,11 @@ export const ru: Record<DictKey, string> = {
   'top.theme': 'Переключить тему',
   'top.notifications': 'Уведомления',
   'top.approvals': 'Согласования',
+  'top.account': 'Аккаунт',
+
+  'a11y.skipToContent': 'Перейти к содержимому',
+  'a11y.primaryNav': 'Основная навигация',
+  'a11y.toolbar': 'Быстрые действия',
 
   'state.loading': 'Загрузка…',
   'state.empty': 'Здесь пока ничего нет',

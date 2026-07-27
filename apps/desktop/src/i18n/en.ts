@@ -35,6 +35,11 @@ export const en = {
   'top.theme': 'Toggle theme',
   'top.notifications': 'Notifications',
   'top.approvals': 'Approvals',
+  'top.account': 'Account',
+
+  'a11y.skipToContent': 'Skip to content',
+  'a11y.primaryNav': 'Main navigation',
+  'a11y.toolbar': 'Quick actions',
 
   'state.loading': 'Loading…',
   'state.empty': 'Nothing here yet',
