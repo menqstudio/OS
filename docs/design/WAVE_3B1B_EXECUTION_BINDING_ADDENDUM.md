@@ -1,10 +1,12 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 28 — closes the rev-27 Architect design RED: 2 P0 + 4 P1)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 29 — closes the rev-28 Architect design RED: 3 P0 + 1 P1)
 
-> **STATUS: ❌ DESIGN RED. Last reviewed candidate = rev-27 = Architect design RED (2 P0 + 4 P1 at exact
-> HEAD `0e41ef6cfe2e6991881ab36b9afb2d6caa0cd7c8`; CI run 30275888743 9/9 GREEN — CI ≠ design GREEN).
-> CURRENT candidate = rev-28 = PENDING re-audit (the remediation below; it does NOT inherit the rev-27
+> **STATUS: ❌ DESIGN RED. Last reviewed candidate = rev-28 = Architect design RED (3 P0 + 1 P1 at exact
+> HEAD `c9680f53a34766bde455f60d849ca55a08caf174`; CI run 30280738223 9/9 GREEN — CI ≠ design GREEN).
+> CURRENT candidate = rev-29 = PENDING re-audit (the remediation below; it does NOT inherit the rev-28
 > verdict). No Architect-approved or merged 3b-1B implementation exists; PR #32 holds UNAPPROVED
-> Draft/WIP code with no authority over the design (adapt only after design-GREEN). rev-26 was also RED.**
+> Draft/WIP code with no authority over the design (adapt only after design-GREEN). rev-26/rev-27 were also RED.**
+>
+> **rev-29 closes the rev-28 Architect design RED (3 P0 + 1 P1 @ `c9680f5`).** **P0-1 (§0, §2.1, §4.10(g), §6.1, §7.1) — propagate the renderer → trusted verifier/BROKER service → challenge-authority split through the ENTIRE normative contract** (rev-28 declared the nine-role table but the topology diagram + §2.1 peer/nonce/return-path + §4.10(g) `governed_turn_execute` + §6.1/§7.1 still named ONE in-process desktop/Tauri principal): a global terminology binding resolves every *trusted-actor* "desktop"/"backend" reference to the broker service (never the renderer); the topology diagram is now three-tier; the challenge-authority IPC allowlists **only the broker UID** and **DENIES the renderer/login UID**; **only the broker** supplies create-pending facts/`request_nonce`/issue and receives the signed challenge; `PreparedGovernedTurnV1B` + receipt DB + pinned manifest + final verification + accepted-output persistence live **only** in the broker; `governed_turn_execute` is a **broker-service operation** and the Tauri command a **THIN proxy** carrying only `{conversation_id, agent?}`; a NORMATIVE renderer↔broker IPC schema (peer auth, frame limits, timeout, replay/idempotency, errors) is defined; **only the broker emits the committed UI-safe result**. **P0-2 (§2.5) — TCB integrity floor** expanded so `TCB_ARTIFACTS` includes the broker + challenge-authority executables/config/policy/unit-files/IPC-policy/manifest-config/loaded-libs; both services require root/TCB ownership + non-writability + start-time SHA-256 pin + fail-closed `verify_tcb_integrity()` + UID/SID + peer-auth verification (7 negative tests: login-writable/modified broker or authority binary/config, writable ancestor, wrong owner/SID, fake broker cannot forge Verified ⇒ governed mode DISABLED). **P0-3 (§2.7, §4.7) — FD survival across BOTH exec boundaries:** the RECORDER (before `execve(launcher)`) maps the 3 inputs + output to FDs 3–6, `dup2/dup3`s, CLEARS `FD_CLOEXEC` on 3–6, redirects 0/1/2 to inert, `close_range(7,…)`, `execve`s with empty env; the LAUNCHER (before `fexecve(executor)`) verifies exactly 3–6 (mode/inode/offset/store-binding), re-clears CLOEXEC, rejects any unexpected FD, opens the executor image `O_NOFOLLOW|O_RDONLY|O_CLOEXEC`, runs the locked privilege drop, `fexecve`s with **only** 3–6 surviving (7 integration/negative tests). **P1-1 —** canonical state synchronized (rev-28 reviewed = RED, rev-29 = PENDING_REAUDIT, blockers = these 3 P0 + 1 P1) across `config/current_state.json`, `NEXT_CHAT.md`, `PROJECT_STATE.md`, `TASKS.md`, this banner, and the PR #31 body. A fresh adversarial red-team over the remediation package caught 3 residual gaps (a mismatched retitle anchor + two un-rebound references at §4.10(g)/§2.1) — all fixed before commit.**
 > The consolidated closure history (rev 25 → rev 26) follows; the rev-27 → rev-28 closure is summarized in
 > the rev-28 banner block further below and in Appendix A. rev 25 was Architect-reviewed at exact HEAD
 > `bcd24fe0d5af0a33fc72ca7eaee35b8f1f12be1a` (exact-head CI **#132** 8/8 SUCCESS incl. both mandatory
@@ -113,9 +115,15 @@ record**. No unsigned run-state JSON is ever signing authority. The model execut
 recorder (below), holding **no signing key**.
 
 ```
-desktop-UI/backend CLIENT (untrusted producer; NO key/store)
-  → desktop-challenge-authority (dedicated UID; owns challenge key + pending store; authenticates
-        the client, §2.1) ── issues signed challenge ──┐
+untrusted RENDERER / LOGIN PROCESS (webview + message handlers; interactive login identity; NO
+      key/store/DB/manifest/trust-state; sends the broker ONLY a closed {conversation_id, agent?})
+  → TRUSTED DESKTOP VERIFIER / BROKER SERVICE (dedicated service UID/SID; SEPARATE process from the
+      renderer; owns receipt DB + pinned manifest + PreparedGovernedTurnV1B + final verification +
+      accepted-output persistence; resolves system/history/config/IDs itself; the ONLY caller of the
+      authority and the ONLY emitter of the committed UI-safe result, §4.10(g))
+    → desktop-challenge-authority (dedicated UID; owns challenge key + pending store; allowlists ONLY
+          the broker UID, DENIES the renderer/login UID, §2.1) ── issues signed challenge BACK TO THE
+          BROKER (never the renderer); the broker then drives the governed submit ──┐
                                                         ▼
 supervisor (owns the acceptance ledger §5 + the governed-turn lease issuer + the
             governed-turn-recorder key; signs the TERMINAL RECORD only)
@@ -176,6 +184,24 @@ supervisor (#5), recorder (#6), executor (#8), signer (#9)**. The **renderer (#1
 login role**, not a service UID (it is *supposed* to be the low-trust identity). The **launcher (#7) is
 a root/TCB-owned setuid file** (§2.5), not a service UID. The `governed-turn-recorder` remains a
 supervisor-held key class, not an OS principal (§8).
+
+**Normative terminology binding (rev-28 P0-1 — LOCKED; resolves the whole contract to ONE topology).**
+Throughout the CURRENT normative body of this addendum (§1–§9), wherever the text says **"the desktop"**,
+**"the desktop backend"**, **"desktop-UI"**, or **"backend"/"backend execution"** as the *trusted* actor
+that owns the `receipt_challenges`/receipt DB, mints or pre-stores the `request_nonce`, calls the
+challenge authority, builds the `PreparedGovernedTurnV1B`, runs final verification/acceptance, or emits
+the committed result, it **DENOTES the trusted desktop verifier/BROKER service (role #2 — a dedicated
+service UID/SID in its OWN process, separate from the renderer)**, and **NEVER** the renderer/login/webview
+process. The renderer/login process (role #1) is a **thin proxy** that may send the broker **only** a
+closed `{conversation_id, agent?}` command and render the broker's committed reply; it owns/accesses **no**
+key, receipt DB, pinned manifest, prepared object, hash, nonce, challenge authority, sidecar/supervisor/
+signer socket, or verification verdict (§4.10(g)). The authenticated challenge-authority IPC allowlists
+**only the broker UID** and **DENIES** the renderer/login UID (§2.1); the signed challenge returns to the
+**broker**, never to the renderer. This single topology —
+`renderer/login → (narrow authenticated IPC) → broker → (authenticated IPC) → challenge-authority →
+sidecar/supervisor/signer governed chain` — is authoritative wherever any older in-process desktop/Tauri
+phrasing survives; such phrasing is a wording residue, not a second architecture. (Historical Appendix A
+is non-normative and may keep the old model.)
 
 **Trusted-verifier/broker compromise is OUT of scope (it is the TCB final authority).** The `Verified`
 UI/persistence guarantee is *defined by* the broker; if the broker itself is compromised the guarantee
@@ -382,23 +408,36 @@ This section closes it.
 
 - **TCB binary set (LOCKED).** The trusted-computing-base executables are: the **supervisor**, the
   **evidence-recorder runner**, the **privileged setuid launcher**, the **contained model executor**,
-  and the **isolated receipt signer** — plus every file that steers them: their **config / policy
-  bundles**, the **`GOVERNED_EXECUTION_ALLOWLIST`** source, the key-manifest/root-anchor, and the
-  systemd/service unit files. Call this set `TCB_ARTIFACTS`.
+  the **isolated receipt signer**, the **trusted desktop verifier/broker service** executable, and the
+  **`desktop-challenge-authority`** executable — plus every file that steers them: their **config /
+  policy bundles** (**including both the broker's and the challenge-authority's config / policy**), the
+  **broker IPC / peer-auth policy**, the **`desktop-challenge-authority` IPC / peer-auth policy**, the
+  **broker pinned-manifest configuration**, **every library / plugin loaded into either trusted process**
+  (the broker or the challenge-authority), the **`GOVERNED_EXECUTION_ALLOWLIST`** source, the
+  key-manifest/root-anchor, and the systemd/service unit files (**including both services' unit files**).
+  Call this set `TCB_ARTIFACTS`.
 - **Ownership + non-writability floor (NORMATIVE).** Every path in `TCB_ARTIFACTS`, **and every
   ancestor directory up to `/`**, MUST be **owned by a dedicated TCB principal** (`root` or a
   dedicated `brops-admin` that is NOT any runtime principal) and **MUST NOT be writable** — by mode
   bits **or** POSIX ACL **or** group membership — by the interactive login user or by the
-  `sidecar` / `desktop-UI` / `supervisor` / `recorder` / `executor` / `signer` runtime UIDs. (The
+  `verifier/broker` / `challenge-authority` / `sidecar` / `desktop-UI` / `supervisor` / `recorder` /
+  `executor` / `signer` runtime UIDs. (The
   runtime principals get **read/execute only**; the private-key store keeps its existing owner-only
   ACL, §2.3.) A writable ancestor directory is treated as writable (a rename/replace vector).
 - **Start-time verification `verify_tcb_integrity()` (fail-closed).** At supervisor start (before it
   will issue **any** governed-turn lease) the supervisor, from a **root-owned pin manifest**, holds
   the expected `sha256` of **every** `TCB_ARTIFACT` and: (a) `fstat`s each opened `fd` (`O_NOFOLLOW`,
   never a path re-lookup) and refuses unless owner ∈ TCB principals and no write bit/ACL for any
-  runtime/login UID; (b) re-hashes each binary/config and refuses on any mismatch. Failure ⇒ governed
-  real-mode is **DISABLED** (the platform gate §0.1 reports unsupported; every governed turn Blocks) —
-  never a partial/degraded launch.
+  runtime/login UID; (b) re-hashes each binary/config and refuses on any mismatch; (c) verifies the
+  **trusted verifier/broker** and **`desktop-challenge-authority`** executables, their config/policy,
+  their IPC/peer-auth policy, and (for the broker) the **pinned-manifest configuration** are each
+  **present**, **TCB-owned**, **non-writable** (by mode/ACL/group/writable-ancestor for any runtime or
+  login UID) and **hash-matched to the exact start-time SHA-256 pin**, and confirms **each of the two
+  services runs under its own expected service UID/SID** (Windows: SID; POSIX: UID) with the expected
+  **peer-auth policy** in force. Failure of **any** clause — including either service's binary, config,
+  or policy being **missing**, **writable**, or **hash-mismatched**, a **wrong service UID/SID**, or a
+  **peer-auth-policy mismatch** ⇒ governed real-mode is **DISABLED** (the platform gate §0.1 reports
+  unsupported; every governed turn Blocks) — never a partial/degraded launch.
 - **Lease-time + exec-time re-binding.** `issue_governed_turn_lease` sets `launcher_executable_sha256`
   **and** `executor_executable_sha256` to the start-time TCB pins; `validate_governed_turn_lease` (§4.3)
   refuses a lease naming any other digest; and the launcher **re-hashes the executor image it is about
@@ -407,7 +446,15 @@ This section closes it.
 - **Negative tests (normative, §9).** login-user-writable executor image ⇒ start refused; executor
   bytes swapped after pinning (hash mismatch at `fexecve`) ⇒ `tcb_integrity_violation` Block, no
   receipt; wrong-owner launcher / signer / config ⇒ start refused; a writable **ancestor directory**
-  of any TCB path ⇒ start refused; a lease naming an unpinned `executor_executable_sha256` ⇒ Block.
+  of any TCB path ⇒ start refused; a lease naming an unpinned `executor_executable_sha256` ⇒ Block;
+  **login-writable trusted verifier/broker binary ⇒ governed mode DISABLED**; **modified
+  (hash-mismatched) broker binary ⇒ governed mode DISABLED**; **login-writable
+  `desktop-challenge-authority` binary or config ⇒ governed mode DISABLED**; **modified (hash-mismatched)
+  challenge-authority binary or config ⇒ governed mode DISABLED**; **a writable ancestor directory of
+  either service's binary/config ⇒ governed mode DISABLED**; **a wrong service owner / SID / UID for the
+  broker or challenge-authority ⇒ governed mode DISABLED**; **a fake broker (not the pinned, TCB-owned
+  binary running under the expected service UID/SID) cannot create, persist, or display a `Verified`
+  result.**
 
 ### 2.6 Distinct-principal provisioning linchpin (P0 — no single-UID collapse, NORMATIVE)
 
@@ -509,16 +556,46 @@ root/TCB-owned setuid helper, not a persistent runtime UID**. Every field is fix
 - **Allowed argv / env:** a **fixed, closed** argv (lease handle + the pinned executor index + the
   cgroup path); **environment fully cleared** (no inheritance) so no `LD_PRELOAD`/`PATH`/`BROPS_*`
   influence. Any extra/unknown argv or a non-empty env ⇒ refuse.
-- **Inherited FDs — SURVIVAL (P0-2 correction).** The executor's I/O channel is FDs **3/4/5/6** (three
-  read-only inputs + the write-only output, §4.7). These MUST **survive both** exec boundaries
-  (recorder-child → `execve(launcher)`, and launcher → `fexecve(executor)`), so on **each** of the four
-  FDs the launcher **explicitly CLEARS `FD_CLOEXEC`** (`fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC)`) — the
-  rev-27 text wrongly set `O_CLOEXEC` on them, which would have closed the executor's only I/O at exec.
-  Every **other** inherited FD is closed (`close_range(7, ~0U, 0)`) or marked close-on-exec. The launcher
-  verifies each kept input FD is `O_RDONLY` `S_ISREG` offset-0 store inode and FD 6 is the output pipe.
-  The **executor-image FD** is opened `O_NOFOLLOW|O_RDONLY|O_CLOEXEC`, used **only** by `fexecve`, and is
-  closed by a successful exec (it is NOT one of FDs 3–6). A data FD 3–6 that arrives marked `FD_CLOEXEC`
-  and cannot be cleared, or any unexpected extra FD, ⇒ **refuse before signing any receipt**.
+- **Inherited FDs — SURVIVAL across BOTH exec boundaries (P0-3 correction, NORMATIVE).** The executor's
+  I/O channel is FDs **3/4/5/6** (three read-only inputs + the write-only output, §4.7). They MUST
+  **survive both** exec boundaries — recorder-child → `execve(launcher)` **and** launcher →
+  `fexecve(executor)` — and FD survival is prepared by the **recorder BEFORE it launches the setuid
+  helper**. The rev-27 text was un-implementable: it described only the launcher acting (a setuid helper
+  can only clear `FD_CLOEXEC` on descriptors it *already* inherited, so nothing survives the *first*
+  boundary unless the recorder prepares it), and it wrongly set `O_CLOEXEC` on the data FDs, which would
+  have closed the executor's only I/O at exec. The two-sided contract is LOCKED:
+  - **RECORDER — before `execve(launcher)` (the first boundary):**
+    1. **Map** the three read-only input descriptors and the write-only output descriptor onto the
+       **exact numbers 3, 4, 5 and 6** (`system`→3, `history`→4, `generation_config`→5, output-pipe→6);
+       never assume an inherited number.
+    2. Perform the renumber with **`dup2`/`dup3`** (or an equivalent atomic descriptor move).
+    3. **Explicitly CLEAR `FD_CLOEXEC`** on each of FDs **3–6** (`fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC)`)
+       so they cross `execve(launcher)` instead of being closed at exec.
+    4. **Close or redirect FDs 0/1/2** to approved **inert** endpoints (`/dev/null` or a controlled log
+       sink) so the child inherits no interactive/ambient stdio.
+    5. **Close every FD ≥ 7** (`close_range(7, ~0U, 0)`), **except** an explicitly defined
+       executor-image / launcher-bootstrap handle **where the platform requires the recorder to pass
+       one** — on Linux Model A none is required (the launcher opens the executor image itself, below),
+       so nothing above FD 6 survives.
+    6. **`execve` the launcher with the fixed, closed argv and a fully EMPTY environment** (§ "Allowed
+       argv / env") — no inherited `LD_PRELOAD`/`PATH`/`BROPS_*`.
+  - **LAUNCHER — before `fexecve(executor)` (the second boundary):**
+    1. **Verify EXACTLY FDs 3–6 exist** with the correct access mode, inode/type, offset and store
+       binding: FDs 3/4/5 each `O_RDONLY` + `S_ISREG` + offset 0 + backed by a `brops-store` store inode
+       (size ≤ its per-artifact ceiling, §4.7), and FD 6 the write-only output pipe.
+    2. **Explicitly confirm — and, if needed, re-clear — `FD_CLOEXEC`** on each of FDs 3–6 so they also
+       cross `fexecve`; a data FD 3–6 that arrives marked `FD_CLOEXEC` and cannot be cleared ⇒ refuse.
+    3. **Reject any unexpected FD** — including an uncontrolled 0/1/2, or any FD ≥ 7, or anything outside
+       the exact set {3,4,5,6} ⇒ refuse.
+    4. **Open the executor image separately** with **`O_NOFOLLOW|O_RDONLY|O_CLOEXEC`** (it is NOT one of
+       FDs 3–6, is used **only** by `fexecve`, and is closed by a successful exec).
+    5. Perform the **locked privilege-drop sequence** (steps 2–10 of the sequence above).
+    6. **`fexecve` the verified executor image with ONLY the approved data descriptors (3–6) surviving**
+       — every other descriptor already closed or close-on-exec.
+  Any failure on either side — a data FD 3–6 arriving `FD_CLOEXEC` that cannot be cleared, a missing /
+  wrong-mode / wrong-inode/type / wrong-offset / wrong-store-binding data FD, an uncontrolled 0/1/2, or
+  any unexpected extra FD ⇒ **refuse before signing any receipt**: no exec, and **no**
+  receipt/evidence/terminal record.
 - **Real executable integration test (NORMATIVE, §9).** A tiny **pinned** test executor that reads all
   three input FDs to EOF and writes a known output through FD 6 MUST run successfully through the real
   recorder → launcher → `fexecve` path (proving FD survival + the privilege drop actually work), and the
@@ -567,18 +644,19 @@ The exact current contract (not history):
   challenges from) and the authority private key are owned by the authority's **own dedicated
   OS principal (UID/SID)**, mode owner-only (`0700`). **The sidecar UID can neither read, nor
   write, nor list** it — so it can neither exfiltrate the key nor tamper a row directly.
-- **Distinct principals:** the **desktop-UI principal MUST be a UID distinct from the
-  sidecar** principal. Where a platform cannot provide that separation, governed real-mode is
+- **Distinct principals:** the **trusted verifier/broker principal MUST be a UID distinct from the
+  renderer/login identity AND from the sidecar** principal — the authority's only accepted peer is the
+  broker UID (§0). Where a platform cannot provide that separation, governed real-mode is
   **FAIL-CLOSED** on that platform (mirrors the Windows-broker stance, §0).
 - **Creation channel (TWO explicit messages, ONE canonical trust model — P1-2 LOCKED):**
   pending-challenge rows are created and challenges are issued **only** through the
   **authority-owned `AF_UNIX` channel**; on Linux the authority authenticates the peer with
-  **`SO_PEERCRED`, allowlisting the exact desktop-UI UID** — the sidecar UID is denied on both
-  messages. The channel carries exactly two request/reply protocols, and **neither ever carries
+  **`SO_PEERCRED`, allowlisting the exact trusted verifier/broker UID** — the **renderer/login UID and
+  the sidecar UID are DENIED** on both messages. The channel carries exactly two request/reply protocols, and **neither ever carries
   challenge bytes or a caller-chosen canonical payload** (this replaces the rev-18 "facts **or**
   row-id" disjunction, which left the implementer a choice between two trust models):
   - **(A) `brops.governed-challenge-create-pending.v1`** (create-pending / propose — **does NOT
-    sign**). The desktop-UI supplies the **DESKTOP-minted `request_nonce`** (the ratified Wave-3a
+    sign**). The **broker** supplies the **BROKER-minted `request_nonce`** (the ratified Wave-3a
     nonce — `prepare_governed_turn_v1b` → `brops_core::id()` UUIDv4; see §4.10(g)) **plus the structured
     authoritative turn facts** (`run_id`/`task_id` + `workspace_id`/`install_id` context +
     `system_sha256`/`history_sha256`/`generation_config_sha256`/`requested_at_ms`). It does **NOT**
@@ -589,13 +667,13 @@ The exact current contract (not history):
     envelope with `request_nonce` **inside** the hashed bytes), and **stores the supplied nonce + the
     recomputed `request_sha256` + facts verbatim in its OWN protected pending-challenge row**, minting
     **only** a **fresh opaque `pending_challenge_id`** (it NEVER mints the `request_nonce` — that is the
-    desktop's, already pre-stored by the desktop in `receipt_challenges`, see the pre-store bullet
+    broker's, already pre-stored by the broker in `receipt_challenges`, see the pre-store bullet
     below); it returns that `pending_challenge_id`. No signature is produced and no
     `brops.governed-turn-challenge.v1` payload exists yet. Reply
     `brops.governed-challenge-create-pending-result.v1`. **Frame ≤ `AUTHORITY_CHANNEL_FRAME_BYTES`
     (8192, §2.1.1)** each way (the same authority-reply cap as the (B) issue reply).
   - **(B) `brops.governed-challenge-issue.v1`** (issue / sign — **signs exactly once**). The
-    desktop-UI supplies **ONLY the `pending_challenge_id`** (never facts, never bytes). The authority
+    **broker** supplies **ONLY the `pending_challenge_id`** (never facts, never bytes). The authority
     **resolves the row from its OWN protected store**, **constructs the exact
     `brops.governed-turn-challenge.v1` payload (§4.1) itself** — selecting `challenge_key_id` from its
     active registry key, filling `workspace_id`/`install_id`/`supervisor_id` from its own trusted
@@ -616,7 +694,7 @@ The exact current contract (not history):
   same message. (This closes the `create_pending(arbitrary_bytes) → sign(id)` oracle: (A) stores only
   strictly-validated fixed-shape hashes/ids — never free bytes — and (B) signs only what the authority
   itself assembled.)
-- **Desktop nonce authority + `receipt_challenges` pre-store (P0-1 LOCKED — preserves the ratified
+- **Broker nonce authority + `receipt_challenges` pre-store (P0-1 LOCKED — "desktop" in this subsection DENOTES the trusted verifier/BROKER service, which owns `receipt_challenges`; NEVER the renderer/login process — preserves the ratified
   Wave-3a contract).** The `request_nonce` is minted by the **desktop**, and `request_sha256` is the
   SHA-256 of the canonical request **envelope that CONTAINS that nonce** — so the two are, by
   construction, ONE pair from ONE request. This is the already-merged Wave-3a model and MUST NOT be
@@ -655,8 +733,8 @@ The exact current contract (not history):
   desktop consume fails / supervisor mismatch (both Block); a create-pending carrying a `request_sha256`
   field ⇒ `malformed`.
 
-Creation-channel schemas (both on the authority-owned `AF_UNIX` + `SO_PEERCRED` desktop-UI-UID
-channel; `additionalProperties:false`, unknown-field + duplicate-key rejection, schema-validated
+Creation-channel schemas (both on the authority-owned `AF_UNIX` + `SO_PEERCRED` **broker-UID**
+channel — the renderer/login UID is denied; `additionalProperties:false`, unknown-field + duplicate-key rejection, schema-validated
 before any side effect):
 ```jsonc
 // (A) request:  (carries the DESKTOP-minted request_nonce + envelope fields; NO caller request_sha256 — the authority recomputes it)
@@ -674,7 +752,7 @@ before any side effect):
 // (B) request:  { "protocol": "brops.governed-challenge-issue.v1", "pending_challenge_id": "<opaque string ≤128>" }
 // (B) reply (issued):   { "protocol": "brops.governed-challenge-issue-result.v1", "status": "issued",
 //   "challenge_document_b64": "<base64url of the EXACT signed {payload,sig} JCS bytes, decoded ≤ CHALLENGE_DOCUMENT_MAX_BYTES = 4096>" }
-//   (P1-1: base64url carriage — the desktop-UI places it directly into challenge_doc_b64 at §4.10(a0)/(g) with NO re-canonicalization; an inline object would risk a non-canonical re-serialization the §4.10(a0) canonicality gate rejects.)
+//   (P1-1: base64url carriage — the BROKER places it directly into challenge_doc_b64 at §4.10(a0)/(g) with NO re-canonicalization; an inline object would risk a non-canonical re-serialization the §4.10(a0) canonicality gate rejects.)
 // (B) reply (refused):  { "protocol": "brops.governed-challenge-issue-result.v1", "status": "refused",
 //   "reason": "peer_denied"|"no_pending_row"|"pending_expired"|"key_unavailable"|"malformed" }
 //   (NOTE: an already-ISSUED row is NOT a refusal — it takes the idempotent replay path below and re-returns the stored `issued`.)
@@ -683,7 +761,7 @@ The authority's **protected pending-challenge store** (owner-only `0700`, §2.3)
 ```sql
 CREATE TABLE governed_pending_challenge (
   pending_challenge_id     TEXT PRIMARY KEY,          -- opaque, authority-minted (≥128-bit random)
-  request_nonce            TEXT NOT NULL,             -- DESKTOP-minted (brops_core::id() UUIDv4, prepare_governed_turn_v1b §4.10(g)); pre-stored by the desktop in receipt_challenges BEFORE (A); the authority stores it verbatim, NEVER mints it (feeds §4.1 request_nonce)
+  request_nonce            TEXT NOT NULL,             -- BROKER-minted (brops_core::id() UUIDv4, prepare_governed_turn_v1b §4.10(g)); pre-stored by the BROKER in receipt_challenges BEFORE (A); the authority stores it verbatim, NEVER mints it (feeds §4.1 request_nonce)
   run_id TEXT NOT NULL, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL, install_id TEXT NOT NULL,
   supervisor_id            TEXT NOT NULL,             -- authority's OWN config, never caller-supplied
   system_sha256 TEXT NOT NULL, history_sha256 TEXT NOT NULL,
@@ -699,7 +777,7 @@ CREATE TABLE governed_pending_challenge (
   UNIQUE(install_id, request_nonce),                  -- nonce one-time per install (mirrors §4.10(a0))
   UNIQUE(install_id, request_sha256) );               -- idempotency key: one pending row per identical request
 ```
-- **Validation (A):** peer UID == allowlisted desktop-UI UID else `peer_denied`; strict UTF-8 JSON +
+- **Validation (A):** peer UID == allowlisted **trusted verifier/broker UID** (a renderer/login UID ⇒ `peer_denied`) else `peer_denied`; strict UTF-8 JSON +
   `additionalProperties:false` + duplicate-key rejection + exact required set
   `[protocol,run_id,task_id,workspace_id,install_id,request_nonce,system_sha256,history_sha256,generation_config_sha256,requested_at_ms]`
   else `malformed` (a caller-supplied `request_sha256` is an unknown field ⇒ `malformed`, since the
@@ -744,7 +822,7 @@ CREATE TABLE governed_pending_challenge (
   `PENDING` rows per `install_id` (existing `quota_pending`), and at most `MAX_ISSUED_ROWS_PER_INSTALL`
   live `ISSUED` rows / `MAX_ISSUED_BYTES_PER_INSTALL` total stored `issued_challenge_document` bytes per
   `install_id` (a new create-pending refuses `quota_pending` when the sum of live PENDING+ISSUED would
-  exceed the bound — a compromised desktop-UI cannot amass unbounded issued documents). A left-behind
+  exceed the bound — a defense-in-depth resource floor bounding issued-document accumulation independent of caller trust; the only create-pending caller is the broker, whose compromise is out of scope, §0). A left-behind
   `ISSUED` row binds **no execution right** (it is not an acceptance-ledger row, §5) and cannot become a
   reusable turn, so this retention is safe.
 
@@ -822,16 +900,18 @@ transport-malformed ⇒ retry recovers, well-formed `refused` ⇒ terminal Block
   `challenge_issued_at_ms`/`challenge_expires_at_ms`, and signs once (consuming the pending id). It
   never signs caller-supplied bytes/fields.
 - **Return path (P0-1, closes the "by-assumption" document carriage):** the authority returns the
-  **exact signed `{payload,sig}` document bytes** to the desktop-UI **in the reply on the same
-  authenticated `AF_UNIX` channel** — the desktop-UI is the only `SO_PEERCRED`-allowlisted peer, so
-  no other principal receives it. The desktop-UI (which now holds the document bytes) base64url-
+  **exact signed `{payload,sig}` document bytes** to the **trusted verifier/broker** **in the reply on the same
+  authenticated `AF_UNIX` channel** — the **broker** is the only `SO_PEERCRED`-allowlisted peer (the
+  renderer/login UID is denied), so **the signed challenge NEVER reaches the renderer** and no other
+  principal receives it. The **broker** (which now holds the document bytes) base64url-
   encodes them into `challenge_doc_b64` and passes them to the sidecar **only** via the
   `bridge.governed-turn-submit.v1` ingress frame (§4.10(g), §6.1 step 0). The sidecar first sees the
   document here; it can neither mint nor alter it (the canonicality gate + `challenge_handle` re-hash
   at §4.10(a0) bind the exact bytes). No step delivers the document "by assumption".
-- **How desktop facts cross the boundary without giving the sidecar the same capability:** the
-  desktop-UI principal (a **distinct UID**) is the only peer the `SO_PEERCRED` allowlist
-  admits; it hands the structured facts over the authenticated channel **at create-pending (A)**,
+- **How broker facts cross the boundary without giving the sidecar the same capability:** the
+  **trusted verifier/broker** principal (a **distinct UID**, never the renderer/login UID) is the only
+  peer the `SO_PEERCRED` allowlist admits; it hands the structured facts over the authenticated channel
+  **at create-pending (A)**,
   and at issue (B) supplies only the `pending_challenge_id`, while the authority
   writes its **own** store. The sidecar (a different UID) is denied the channel by
   `SO_PEERCRED` **and** the store by file ownership — so it can present neither facts the
@@ -1199,7 +1279,7 @@ everywhere; §4 gives the exact key sets.
 
 | # | Artifact / protocol | Producer | Signer / authority | Verifier / consumer | Time unit | Handle formula | Durable owner | Replay/idempotency key | Key cross-bindings |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | `brops.governed-turn-challenge.v1` | desktop-UI **challenge-authority** | `desktop-challenge-authority` key (`challenge_key_id`) | supervisor §5; `LiveRunStateProvider` §7 | ms | `challenge_handle = SHA256(JCS({payload,sig}))` | supervisor store (published §6) | `request_nonce` (one-time) | binds `run_id`/`task_id`/context + `*_sha256` |
+| 1 | `brops.governed-turn-challenge.v1` | broker → **challenge-authority** | `desktop-challenge-authority` key (`challenge_key_id`) | supervisor §5; `LiveRunStateProvider` §7 | ms | `challenge_handle = SHA256(JCS({payload,sig}))` | supervisor store (published §6) | `request_nonce` (one-time) | binds `run_id`/`task_id`/context + `*_sha256` |
 | 2 | `brops.challenge-key-registry.v1` | operator (root-signed) | challenge-**root** anchor (`root_key_id`) | supervisor §5; provider §7 | ms | `challenge_registry_handle = SHA256(JCS({payload,root_sig}))` | supervisor store | `registry_epoch` + `registry_hash` (anti-rollback) | `registry_hash = SHA256(JCS(payload))` (identity, ≠ handle) |
 | 3 | acceptance-ledger row (§5) | supervisor | — (durable DB, not signed) | supervisor (recovery); provider (indirect) | ms | — | supervisor acceptance DB (`0700`) | `UNIQUE(install_id,request_nonce)`, `UNIQUE(challenge_handle)`, `UNIQUE(execution_attempt_id)` | holds lease_payload bytes + state |
 | 4 | `brops.governed-turn-lease.v1` | supervisor **governed-turn lease issuer** | lease-issuer key | recorder; supervisor; provider §7 | ms | `lease_handle = SHA256(JCS({payload,signature}))` | supervisor store | `nonce` (lease) + `execution_attempt_id` | binds challenge #1 via `challenge_handle`/`challenge_key_id` + registry #2 + `challenge_accepted_at_ms` |
@@ -1510,9 +1590,9 @@ the `BEGIN IMMEDIATE` tx commits (§6.1 step 14). Negative tests: substitution, 
 truncation, appended byte, Unicode-normalization (NFC/NFKC), CRLF conversion, invalid-UTF8→U+FFFD,
 wrong-length, and a tampered/mis-ordered/short/replayed-stream chunk (each MUST Block).
 
-**Authority rule (LOCKED, P0-3) — the desktop verifies SIGNATURES, it does NOT read the
+**Authority rule (LOCKED, P0-3) — the BROKER verifies SIGNATURES, it does NOT read the
 protected store.** The protected store is on the engine host, group-`brops-store`, and is
-**not readable by the desktop principal** (§2.3); the desktop may also be a different runtime/
+**not readable by the broker principal** (§2.3); the broker may also be a different runtime/
 host. So the **deep protected-store verification** (fetch record/lease/receipt/challenge/
 registry/containment/head **by handle**, re-hash, re-verify each signature, cross-check
 bindings) is performed by the **isolated signer's `LiveRunStateProvider`** (§6.1 step 11, §7),
@@ -1554,7 +1634,11 @@ duplicate-key rejection; verified by **`verify_governed_turn_receipt`** (NOT
 
 **Input FDs + OUTPUT BOUND (P1-6, canonical):** FDs `3`/`4`/`5` are **read-only regular-file
 descriptors** to the exact content-addressed `system`/`history`/`generation_config` bytes (no
-length prefix); FD `6` is the write-only output pipe. The launcher validates each input FD is
+length prefix); FD `6` is the write-only output pipe. **These four descriptors MUST survive BOTH exec
+boundaries: the recorder maps them onto the exact numbers 3/4/5/6 (`dup2`/`dup3`), clears `FD_CLOEXEC`
+on each, redirects 0/1/2 to inert endpoints, and closes every FD ≥ 7 BEFORE `execve`ing the launcher
+(§2.7 "Inherited FDs — SURVIVAL across BOTH exec boundaries"); the launcher then re-confirms/clears
+`FD_CLOEXEC` on 3–6 before `fexecve`.** The launcher validates each input FD is
 `O_RDONLY`, `S_ISREG`, offset 0, size ≤ the per-artifact ceiling (system ≤256 KiB, history
 ≤8 MiB, generation_config ≤64 KiB), backed by a `brops-store` store inode; it closes every
 other FD, validates the pinned `launcher_executable_sha256` + fixed caller/target UID, drops
@@ -2019,10 +2103,10 @@ the signed challenge document or the raw input bytes **to the sidecar**. The fro
 `required:[task_id,task_class,rationale,system,history,request]`, no `challenge_doc_b64`, no discriminator) cannot be extended
 (3b-1A positive control depends on it byte-for-byte), so 3b-1B ADDS a **new** ingress frame in a
 new schema file `bridge/contracts/bridge-governed-turn-submit.schema.json`. **Challenge-document
-carriage (Track E risk #2):** §2.1 already has the desktop-UI as the challenge authority's only
-AF_UNIX peer; the authority returns the signed `{payload,sig}` document to the desktop-UI in that
-same reply, and the desktop-UI (holding the raw bytes) base64url-encodes it into `challenge_doc_b64`
-here. No new principal handles the document.
+carriage (Track E risk #2):** §2.1 already has the **trusted verifier/broker service** as the challenge
+authority's only AF_UNIX peer; the authority returns the signed `{payload,sig}` document **to the broker**
+(never to the renderer) in that same reply, and the **broker** (holding the raw bytes) base64url-encodes
+it into `challenge_doc_b64` here. No new principal handles the document.
 
 **Request (desktop → one-shot sidecar `stdin`, one JSON object):**
 ```json
@@ -2171,17 +2255,53 @@ row, the authority `governed_pending_challenge` row, the §4.1 challenge payload
 raw-string hash appears **nowhere** on the 3b-1B path.
 
 **ONE trusted Rust orchestration command `governed_turn_execute` (P0-1 LOCKED — the
-`PreparedGovernedTurnV1B` lifecycle NEVER crosses the frontend/webview boundary).** Submit is **NOT**
+`PreparedGovernedTurnV1B` lifecycle NEVER crosses the frontend/webview boundary).**
+
+**Principal binding (rev-28 P0-1 — this is a BROKER-SERVICE operation, NOT an in-process renderer/Tauri
+authority).** `governed_turn_execute` and every step below execute **inside the trusted desktop
+verifier/BROKER service process** (dedicated service UID/SID, §0 role #2), which alone owns the receipt
+DB, the pinned manifest, the `PreparedGovernedTurnV1B` object, all hashes/nonces, the challenge-authority/
+sidecar/supervisor/signer sockets, and the final verification verdict. Throughout §4.10(g), §6.1 and
+§7/§7.1 the words "backend"/"backend execution"/"the desktop" (as the trusted producer/verifier) denote
+**this broker service process**, never the renderer/webview. The renderer/login process holds a **thin
+`#[tauri::command]` proxy** that does **nothing** but forward a **closed `{conversation_id, agent?}`**
+command to the broker over the renderer↔broker IPC (below) and render the broker's committed reply; the
+proxy **may carry ONLY `conversation_id` + an optional authorized `agent` identifier** and **may NOT own
+or access** the receipt DB, the pinned manifest, the prepared object, any hash/nonce, the challenge
+authority, the sidecar/supervisor/signer sockets, or any verification-verdict construction. **Only the
+broker** — after its verification transaction commits and the accepted output is persisted — **emits the
+final UI-safe committed result** back to the renderer proxy; a renderer can never fabricate one.
+
+**Renderer↔broker IPC (rev-28 P0-1 — NORMATIVE, the sole renderer→broker channel).** The proxy reaches
+the broker over an authenticated local IPC (Linux `AF_UNIX` + `SO_PEERCRED`; Windows named-pipe token-SID,
+§0.W). **Peer auth:** the broker verifies the connecting peer is the interactive login/renderer identity
+and refuses any other peer; the renderer symmetrically pins the broker peer UID/SID. **Request:** exactly
+one frame `brops.renderer-governed-turn.v1 { "protocol", "conversation_id": "<string ≤128>", "agent":
+"<string ≤128, optional>" }` — `additionalProperties:false`, unknown-field + duplicate-key rejection,
+request frame ≤ `RENDERER_IPC_FRAME_BYTES = 8192`; any `system`/`history`/`generation_config`/hash/nonce/
+`run_id`/`task_id`/prepared-object/verdict/receipt field present ⇒ `malformed` (the broker resolves them
+itself from trusted state, never from the renderer). **Reply:** the closed committed-result frame
+`brops.renderer-governed-turn-result.v1 { "protocol", "status": "committed"|"blocked", "conversation_id",
+"reason"? }` (UI-safe; carries NO store handle, key, envelope, hash, nonce, or verdict internals).
+**Timeout / replay / idempotency:** at most one in-flight governed turn per `conversation_id` — a duplicate
+request while one is live re-attaches to the same turn (idempotent on `conversation_id`), never starting a
+second; the proxy applies a bounded overall deadline and, on any transport failure or timeout, surfaces a
+`blocked` result WITHOUT retrying the turn (the broker's `request_nonce` consume /
+`record_pre_verification_block` is the durable authority, below). **Error behavior:** the renderer proxy
+originates **no** verdict and **no** signed artifact; a malformed/oversized/wrong-peer request is refused
+by the broker with `blocked`+`malformed`/`peer_denied` and no side effect. Submit is **NOT**
 a separate frontend-invoked Tauri command that re-accepts raw fields: that would sever the single
 immutable object at the Tauri boundary (the object cannot survive to submit/`Expected` without a
 webview re-serialize/reconstruct, re-opening the split-authority — a frontend-supplied
 `system`/`history`/`generation_config` could then differ from the already-pre-stored `request_sha256`
 ⇒ fail-closed Block). Instead 3b-1B adds **exactly one** frontend-exposed governed
-`#[tauri::command]` — **`governed_turn_execute`** (the sole NEW entry in `generate_handler!`,
-`apps/desktop/src-tauri/src/lib.rs:95-166`) — that **mirrors the merged single-backend-command shape of
+`#[tauri::command]` — a **thin renderer-side proxy** (the sole NEW entry in `generate_handler!`,
+`apps/desktop/src-tauri/src/lib.rs:95-166`) that carries **only** `{conversation_id, agent?}` to the
+broker over the renderer↔broker IPC above and owns none of the orchestration — while the **broker-service**
+orchestration **`governed_turn_execute`** it invokes **mirrors the merged single-backend-command shape of
 `stream_reply`** (`commands.rs:794`, which today already does prepare → `issue_challenge` pre-store →
 `governed_turn` execute → build `Expected` → `verify_and_record_receipt` in ONE backend execution,
-`commands.rs:844-935`). It takes ONLY the **renderer-owned inputs** — **`conversation_id`** (the active
+`commands.rs:844-935`), now executed **inside the broker service process** (§0 role #2), never the webview. It takes ONLY the **renderer-owned inputs** — **`conversation_id`** (the active
 conversation) and optional **`agent`** — exactly like the merged `stream_reply(conversation_id, agent,
 on_event)` (`commands.rs:793-799`); it does **NOT** accept `system`/`history`/`workspace_id`/`install_id`/
 `generation_config`/`run_id`/`task_id` from the renderer (those are backend-resolved or backend-generated,
@@ -2269,8 +2389,7 @@ Owning this one object, `governed_turn_execute` performs in order:
    re-supplied by the renderer.
 **No post-prepare webview round-trip (LOCKED):** after step 1, `system`/`history`/`generation_config`/
 its hashes/`context`/`conversation_id`/`run_id` are **never** re-serialized to, or re-accepted from, the
-frontend; the only frontend interactions are the initial `governed_turn_execute(conversation_id, agent)`
-call and the final rendered result. **Encapsulation enforcement (P0-1 LOCKED):** `PreparedGovernedTurnV1B` fields are **private**;
+frontend; the only renderer interactions are the initial **thin-proxy Tauri command** carrying **only** `{conversation_id, agent?}` to the broker (the renderer does **not** invoke `governed_turn_execute` — that is a BROKER-SERVICE operation, §0/§4.10(g); the renderer never names the prepared object, its hashes, nonces or the verdict) and the final broker-emitted committed result, rendered read-only. **Encapsulation enforcement (P0-1 LOCKED):** `PreparedGovernedTurnV1B` fields are **private**;
 no mutable public copy of the object/JCS/context is exposed; every cross-stage read is via a
 **read-only accessor**; and **before submit** the backend asserts
 `SHA256(prepared.generation_config_jcs) == prepared.context.generation_config_sha256` **and**
@@ -2742,11 +2861,12 @@ access.
 ### 6.1 The COMPLETE end-to-end order (LOCKED, P1-5) — through the isolated signer + desktop
 
 No output renders before step 14 commits.
-0. **Desktop backend governed orchestration (P0-1, §4.10(g)):** the frontend invokes the **one**
-   governed Tauri command **`governed_turn_execute(conversation_id, agent)`** — the ONLY renderer inputs
-   (mirroring `stream_reply(conversation_id, agent, on_event)`); `system`/`history`/`workspace_id`/
-   `install_id`/`generation_config`/`run_id`/`task_id` are backend-resolved or -generated, never renderer
-   inputs. In **one backend execution owning a single backend orchestration object
+0. **Broker-service governed orchestration (P0-1, §4.10(g)):** the renderer's **thin Tauri proxy** forwards
+   the closed `{conversation_id, agent?}` command to the **broker service** over the renderer↔broker IPC
+   (§4.10(g)); the **broker** runs **`governed_turn_execute(conversation_id, agent)`** — the ONLY renderer
+   inputs (mirroring `stream_reply(conversation_id, agent, on_event)`); `system`/`history`/`workspace_id`/
+   `install_id`/`generation_config`/`run_id`/`task_id` are broker-resolved or -generated, never renderer
+   inputs. In **one broker-service execution owning a single backend orchestration object
    `GovernedTurnExecutionV1B{conversation_id, run_id, task_id, prepared}`** it: resolve `system`/`history`
    from the message store keyed by `conversation_id` + the `GOVERNED_*` constants → `prepare_governed_turn_v1b`
    once → `receipt_challenges` pre-store (`issue_challenge(&conn, &conversation_id, …)`) → the §2.1
@@ -2819,7 +2939,7 @@ No output renders before step 14 commits.
     **through the sidecar** via idempotent **`brops.governed-turn-output-read.v1`** reads
     (§4.10(f)) and reassembles the bytes; the signed envelope's `output_sha256`/`output_bytes`
     (not the transport `output_stream_id`) is the authority.
-14. **Desktop final acceptance (P0-3 ordering):** FIRST, **outside** any DB transaction, obtain
+14. **Broker final acceptance (P0-3 ordering — inside the broker service, §0 role #2):** FIRST, **outside** any DB transaction, obtain
     the output bytes by driving the §4.10(f) pull loop (reassemble into a bounded ≤ 8 MiB
     buffer) and verify the envelope signature + attestation, then assert `len(bytes) ==
     envelope.output_bytes` **and** `SHA256(bytes) == envelope.output_sha256` (raw bytes, **no
@@ -2829,7 +2949,7 @@ No output renders before step 14 commits.
     only (invalid UTF-8 ⇒ Block) → consume the one-time `request_nonce` (`receipt_challenges`) →
     assert `receipt_id` global uniqueness (`receipt_ids_seen`) → check receipt freshness (`_ms`)
     → persist. A stale/rolled-back evidence head was already refused by the signer's durable
-    head-floor (step 11, §7 P1-7). Only on commit does the desktop render.
+    head-floor (step 11, §7 P1-7). Only on commit does the broker emit the committed UI-safe result to the renderer proxy to render.
 
 **Out-of-band transport-failure contract (P1-1/P1-5, LOCKED — covers the desktop↔sidecar steps 0/13/14;
 the post-pre-store authority `create-pending`/`issue` hops have their own equally-durable boundary at
@@ -3062,10 +3182,10 @@ is authority), then require, all fail-closed:
 `RunState` is built from the verified signed record only. On success the signer mints the
 `brops.governed-receipt-envelope.v1` (§4.9); on any failure it returns `refused` (§4.5).
 
-### 7.1 Desktop acceptance (§6.1 step 14) — signatures only, NO store access
+### 7.1 Broker acceptance (§6.1 step 14) — signatures only, NO store access
 
-The desktop verifies the **isolated-signer envelope** (§4.9) + the **supervisor attestation**,
-equality-checks the transport echoes, and binds the real Wave-3a desktop replay primitives —
+The **trusted verifier/broker service** (§0 role #2 — NOT the renderer/login process) verifies the **isolated-signer envelope** (§4.9) + the **supervisor attestation**,
+equality-checks the transport echoes, and binds the real Wave-3a broker-owned replay primitives —
 all without reaching the protected store. **Ordering (P0-3):** the envelope-signature +
 attestation verification and the **output fetch/reassemble/hash happen FIRST, OUTSIDE the DB
 transaction** (the §4.10(f) pull loop is network/subprocess I/O and must never run while holding
