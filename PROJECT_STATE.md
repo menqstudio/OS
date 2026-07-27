@@ -3,7 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացum:** 2026-07-27 (Phase 0 MERGED `b6c6712`; PR #31 rebased; rev-29 = Architect design **RED** (1 P0 + 3 P1 @ `1a79bc2`); **rev-30** remediation submitted for re-audit).
+**Last updated · Վերջին թարմացum:** 2026-07-27 (Phase 0 MERGED `b6c6712`; PR #31 rebased; rev-29 = Architect design **RED** (1 P0 + 3 P1 @ `1a79bc2`); **rev-30** remediation submitted for re-audit; 3b-1B implementation started on `impl/wave-3b1b-rev30` (contract/store/FD/privilege/TCB/authority/schema slices, cargo+py verified; WIP, NOT code-audited)).
 
 <!-- CURRENT_STATE: the single authoritative present-tense truth. Tokens are validated against config/current_state.json.status_tokens by tools/check_coordination.py. Historical prose is inside HISTORY markers and is NOT current. -->
 > **▶ CURRENT STATE — the one authoritative present-tense truth.** Tokens:
