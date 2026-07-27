@@ -6,6 +6,8 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 **Նոր session? Ասե՞լ են «գնա ռեպո կարդա ՄԴները»։ Սա ամբողջ onboarding-ն ա։
 Արա ԱՌԱՋԻՆԸ, բացառություն չկա — հետո պատրաստ ես, ավել բացատրություն պետք չի։**
 
+> **Active front (as of 2026-07-27):** `main` = `df3c0ac` (baseline-at-sync — resolve the live HEAD each session). Wave 3a COMPLETE; Wave 3b-0 design MERGED (PR #30). **Live work = Wave 3b-1** on **PR #31** `feat/wave-3b1-isolated-signer` (3b-1A code Architect Code GREEN + 3b-1B **rev-26 design candidate, PENDING re-audit — not GREEN**), with a **3b-1B WIP implementation in PR #32** `impl/wave-3b1b-execution-binding` (Draft — NOT an RC; CI 8/8 but CI≠audit-green). Do NOT say "no 3b-1B code exists"; do NOT merge until PR #31 rev-26 is Architect design-GREEN at exact HEAD. Machine-readable truth: [`config/current_state.json`](./config/current_state.json).
+
 ---
 
 ## ✅ Do exactly this · Արա ուղիղ սա

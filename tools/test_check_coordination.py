@@ -1,6 +1,7 @@
 """Tests for tools/check_coordination.py — the coordination-docs CI gate."""
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import tempfile
@@ -37,6 +38,278 @@ def _good_docs(root: pathlib.Path) -> None:
         "Where we are: everything is fine and this body is long enough.\n",
         encoding="utf-8",
     )
+
+
+BRANCH_31 = "feat/wave-3b1-isolated-signer"
+BRANCH_32 = "impl/wave-3b1b-execution-binding"
+
+
+def _default_state() -> dict:
+    return {
+        "sync": {"baseline_main_head_at_sync": "a" * 40},
+        "active": {"wave": "3b-1B", "task": "T-017", "branch": BRANCH_31},
+        "prs": [
+            {"number": 31, "branch": BRANCH_31, "base": "main", "role": "design",
+             "draft": False, "merge_state": "open", "parent_pr": None, "code_verdict": "GREEN"},
+            {"number": 32, "branch": BRANCH_32, "base": BRANCH_31, "role": "implementation",
+             "draft": True, "merge_state": "open", "parent_pr": 31, "is_rc": False},
+        ],
+        "waves": {"3b-1B": {"status": "design_pending_reaudit_code_wip", "code_exists": True, "impl_pr": 32}},
+        "design_gate": {"current_candidate_gate": "PENDING_REAUDIT", "last_architect_verdict": "RED"},
+        "status_tokens": {
+            "CURRENT_ACTIVE_TASK": "T-017",
+            "CURRENT_DESIGN_GATE": "PENDING_REAUDIT",
+            "CURRENT_VERIFY_SEAM": "complete",
+        },
+        "stop_gates": ["no production Verified until the chain is exact-head GREEN"],
+        "next_action_by_carrier": {"open": "re-audit + merge PR #33", "merged": "rebase PR #31"},
+    }
+
+
+_TOKENS = "`CURRENT_ACTIVE_TASK: T-017` `CURRENT_DESIGN_GATE: PENDING_REAUDIT` `CURRENT_VERIFY_SEAM: complete`"
+
+
+def _doc_mentioning_both(extra="") -> str:
+    return (f"Active: PR #31 (`{BRANCH_31}`) + PR #32 (`{BRANCH_32}`), task T-017. {_TOKENS} {extra}\n")
+
+
+def _state_repo(root: pathlib.Path, *, current_state="DEFAULT",
+                next_chat=None, project_state=None, tasks=None) -> None:
+    """A realistic coordination repo whose human docs reference BOTH active PRs + branches + task."""
+    _good_docs(root)
+    (root / "config").mkdir(parents=True, exist_ok=True)
+    if current_state != "OMIT":
+        cs = _default_state() if current_state == "DEFAULT" else current_state
+        (root / "config/current_state.json").write_text(json.dumps(cs), encoding="utf-8")
+    (root / "NEXT_CHAT.md").write_text(
+        next_chat if next_chat is not None else _doc_mentioning_both(), encoding="utf-8")
+    (root / "PROJECT_STATE.md").write_text(
+        project_state if project_state is not None else
+        "# state\n\n**Last updated:** today\n\n" + _doc_mentioning_both(), encoding="utf-8")
+    (root / "TASKS.md").write_text(
+        tasks if tasks is not None else
+        f"> tokens {_TOKENS}\n\n"
+        "| ID | Task | By | Status | PR |\n"
+        f"| **T-017** | wave 3b-1 | me | In-Progress | PR #31 `{BRANCH_31}` + PR #32 `{BRANCH_32}` |\n",
+        encoding="utf-8")
+
+
+class SemanticGateTests(unittest.TestCase):
+    def _tmp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return pathlib.Path(d.name)
+
+    def test_good_state_repo_passes(self):
+        root = self._tmp(); _state_repo(root)
+        self.assertEqual(cc.check(root), [])
+
+    def test_rejects_missing_current_state(self):
+        root = self._tmp(); _state_repo(root, current_state="OMIT")
+        self.assertTrue(any("missing config/current_state.json" in p for p in cc.check(root)))
+
+    def test_rejects_open_impl_pr_without_code_exists(self):
+        root = self._tmp()
+        cs = _default_state(); cs["waves"]["3b-1B"]["code_exists"] = False
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("code_exists is not true" in p for p in cc.check(root)))
+
+    def test_rejects_rc_while_gate_not_green(self):
+        # PR #32 is_rc=true while the design gate is PENDING_REAUDIT (not GREEN) — CI-green ≠ audit-green.
+        root = self._tmp()
+        cs = _default_state(); cs["prs"][1]["is_rc"] = True
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("is_rc=true but design_gate" in p and "not GREEN" in p for p in cc.check(root)))
+
+    def test_rejects_bad_baseline_head(self):
+        root = self._tmp()
+        cs = _default_state(); cs["sync"]["baseline_main_head_at_sync"] = "not-a-sha"
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("baseline_main_head_at_sync must be a 40-hex" in p for p in cc.check(root)))
+
+    def test_rejects_bad_gate_enum(self):
+        root = self._tmp()
+        cs = _default_state(); cs["design_gate"]["current_candidate_gate"] = "kinda-green"
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("current_candidate_gate must be one of" in p for p in cc.check(root)))
+
+    def test_rejects_child_base_mismatch(self):
+        # PR #32 base must equal parent PR #31's branch.
+        root = self._tmp()
+        cs = _default_state(); cs["prs"][1]["base"] = "main"  # should be BRANCH_31
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("base 'main' != parent PR #31 branch" in p for p in cc.check(root)))
+
+    def test_rejects_parent_pr_missing(self):
+        root = self._tmp()
+        cs = _default_state(); cs["prs"][1]["parent_pr"] = 99  # not in prs[]
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("parent_pr #99 is not listed" in p for p in cc.check(root)))
+
+    def test_rejects_active_branch_not_open_pr(self):
+        root = self._tmp()
+        cs = _default_state(); cs["active"]["branch"] = "some/other-branch"
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("does not correspond to any OPEN PR branch" in p for p in cc.check(root)))
+
+    def test_rejects_doc_missing_second_pr(self):
+        # THE Owner blind spot: a doc names PR #31 but omits the equally-active PR #32 -> must reject.
+        root = self._tmp()
+        _state_repo(root, next_chat=f"Active: PR #31 (`{BRANCH_31}`), task T-017.\n")
+        self.assertTrue(any("NEXT_CHAT.md" in p and "active PR #32" in p for p in cc.check(root)))
+
+    def test_rejects_doc_not_referencing_active_branch(self):
+        root = self._tmp()
+        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\nPR #31 + PR #32, task T-017.\n")
+        self.assertTrue(any("PROJECT_STATE.md" in p and "active branch" in p for p in cc.check(root)))
+
+    def test_rejects_doc_missing_active_task(self):
+        root = self._tmp()
+        _state_repo(root, tasks="| ID |\n| **T-999** | x | me | Done | PR #31 " + BRANCH_31 + " PR #32 " + BRANCH_32 + " |\n")
+        self.assertTrue(any("TASKS.md" in p and "active task 'T-017'" in p for p in cc.check(root)))
+
+    def test_substantive_change_requires_state_update(self):
+        root = self._tmp(); _state_repo(root)
+        probs = cc.check(root, changed=["engine/tools/brops_receipt_signer.py"])
+        self.assertTrue(any("did not update" in p for p in probs))
+
+    def test_substantive_change_with_full_sync_ok(self):
+        root = self._tmp(); _state_repo(root)
+        probs = cc.check(root, changed=[
+            "engine/tools/brops_receipt_signer.py", "config/current_state.json",
+            "NEXT_CHAT.md", "PROJECT_STATE.md", "TASKS.md"])
+        self.assertEqual([], probs)
+
+    def test_current_state_change_requires_all_human_mirrors(self):
+        # Owner rule: touching the machine anchor without syncing all three human mirrors is a desync.
+        root = self._tmp(); _state_repo(root)
+        probs = cc.check(root, changed=["config/current_state.json", "NEXT_CHAT.md"])  # missing 2 mirrors
+        self.assertTrue(any("checkpoint desync" in p for p in probs))
+
+    def test_rejects_missing_status_token(self):
+        # NEXT_CHAT omits the tokens -> every token is flagged missing.
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both().replace(_TOKENS, ""))
+        self.assertTrue(any("NEXT_CHAT.md" in p and "missing status token" in p for p in cc.check(root)))
+
+    def test_rejects_current_region_contradiction(self):
+        # Token says verify-seam complete, but the CURRENT region also calls it pending -> contradiction.
+        root = self._tmp()
+        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\n"
+                    + _doc_mentioning_both("The verify-seam is still pending."))
+        self.assertTrue(any("PROJECT_STATE.md" in p and "pending" in p for p in cc.check(root)))
+
+    def test_history_region_pending_is_excluded(self):
+        # The SAME 'verify-seam pending' phrase inside HISTORY markers must NOT be flagged.
+        root = self._tmp()
+        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\n"
+                    + _doc_mentioning_both()
+                    + "\n<!-- HISTORY_BEGIN -->\nOld note: the verify-seam was still pending.\n<!-- HISTORY_END -->\n")
+        self.assertFalse(any("contradict" in p or ("verify" in p.lower() and "pending" in p)
+                             for p in cc.check(root)))
+
+    def test_rejects_unterminated_history_block(self):
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both() + "\n<!-- HISTORY_BEGIN -->\ndangling\n")
+        self.assertTrue(any("without a matching" in p for p in cc.check(root)))
+
+    def test_rejects_rev26_red_in_current_region(self):
+        # A PENDING_REAUDIT candidate may not be called rev-26 design RED (that was an earlier rev).
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both("The rev-26 design RED verdict stands."))
+        self.assertTrue(any("rev-26 design verdict" in p for p in cc.check(root)))
+
+    def test_rev26_red_in_history_is_excluded(self):
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both()
+                    + "\n<!-- HISTORY_BEGIN -->\nrev-26 design RED (old note)\n<!-- HISTORY_END -->\n")
+        self.assertFalse(any("rev-26 design verdict" in p for p in cc.check(root)))
+
+    def test_conditional_until_green_is_allowed(self):
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both("Do NOT merge until rev-26 is design-GREEN."))
+        self.assertFalse(any("rev-26 design verdict" in p for p in cc.check(root)))
+
+    def test_rejects_missing_carrier_transition(self):
+        root = self._tmp()
+        cs = _default_state()
+        cs["current_workflow_pr"] = {"number": 33, "branch": "chore/phase0-repository-truth", "head": "a" * 40}
+        # no carrier_transition -> flagged
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("carrier_transition' is missing" in p for p in cc.check(root)))
+
+    # --- P0-1: strengthened carrier-resolution gate --------------------------------------------------
+    def _carrier_state(self) -> dict:
+        cs = _default_state()
+        cs["current_workflow_pr"] = {"number": 33, "branch": "chore/phase0-repository-truth", "head": "b" * 40}
+        cs["carrier_transition"] = {
+            "carrier_pr": 33,
+            "pre_merge": {"gate": "PR33_REAUDIT", "carrier_state": "open", "phase_0": "in_progress"},
+            "post_merge": {"gate": "REBASE_PR31", "carrier_state": "merged", "phase_0": "done"},
+        }
+        cs["product_roadmap"] = {"phase_0": {"if_carrier_open": "in_progress", "if_carrier_merged": "done"}}
+        cs["status_tokens"].update({
+            "CARRIER_IF_OPEN_GATE": "PR33_REAUDIT", "CARRIER_IF_MERGED_GATE": "REBASE_PR31",
+            "CARRIER_IF_OPEN_PHASE0": "in_progress", "CARRIER_IF_MERGED_PHASE0": "done"})
+        return cs
+
+    def test_rejects_missing_structured_carrier_token(self):
+        # a carrier PR exists but the structured CARRIER_IF_OPEN_GATE token is absent -> flagged.
+        root = self._tmp()
+        cs = self._carrier_state(); del cs["status_tokens"]["CARRIER_IF_OPEN_GATE"]
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("status_tokens.CARRIER_IF_OPEN_GATE missing" in p for p in cc.check(root)))
+
+    def test_rejects_structured_carrier_token_mismatch(self):
+        # the structured token must equal the transition anchor; a wrong value is flagged.
+        root = self._tmp()
+        cs = self._carrier_state(); cs["status_tokens"]["CARRIER_IF_MERGED_GATE"] = "WRONG_GATE"
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("CARRIER_IF_MERGED_GATE" in p and "!= carrier_transition.post_merge.gate" in p
+                            for p in cc.check(root)))
+
+    # The ACTUAL long sentences the Owner found escaping the old proximity regex.
+    def test_rejects_unconditional_reaudit_merge_it(self):
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both(
+            "Next permitted action: finish + re-audit PR #33 (repository truth) → merge it → rebase PR #31."))
+        self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
+
+    def test_rejects_unconditional_pr33_not_merged(self):
+        root = self._tmp()
+        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\n"
+                    + _doc_mentioning_both("PR #33 is PENDING re-audit (not merged)."))
+        self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
+
+    def test_rejects_unconditional_pr33_reaudit_then_merge(self):
+        root = self._tmp()
+        _state_repo(root, tasks=f"> tokens {_TOKENS}\n\nCorrect next sequence: PR #33 re-audit → merge.\n\n"
+                    "| ID | Task | By | Status | PR |\n"
+                    f"| **T-017** | wave 3b-1 | me | In-Progress | PR #31 `{BRANCH_31}` + PR #32 `{BRANCH_32}` |\n")
+        self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
+
+    def test_allows_transition_aware_carrier_sentence(self):
+        # the corrected transition-aware form (IF OPEN … / IF MERGED …) must NOT be flagged.
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both(
+            "Resolve PR #33 live: IF OPEN → obtain repository-truth GREEN and merge PR #33; "
+            "IF MERGED → rebase PR #31 onto main."))
+        self.assertFalse(any("unconditional carrier sentence" in p for p in cc.check(root)))
+
+    def test_carrier_prose_scan_excludes_history(self):
+        # the same unconditional sentence inside HISTORY markers must NOT be flagged.
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both()
+                    + "\n<!-- HISTORY_BEGIN -->\nOld: re-audit PR #33 → merge it.\n<!-- HISTORY_END -->\n")
+        self.assertFalse(any("unconditional carrier sentence" in p for p in cc.check(root)))
+
+    def test_manifest_missing_active_doc_is_flagged(self):
+        root = self._tmp(); _state_repo(root)
+        (root / "docs/design").mkdir(parents=True, exist_ok=True)
+        (root / "docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md").write_text("design", encoding="utf-8")
+        (root / "config/canonical-read-manifest.json").write_text(
+            json.dumps({"paths": ["NEXT_CHAT.md"]}), encoding="utf-8")  # omits the design doc
+        self.assertTrue(any("not in the startup read set" in p for p in cc.check(root)))
 
 
 class CheckCoordinationTests(unittest.TestCase):
