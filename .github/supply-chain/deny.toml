@@ -20,16 +20,34 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/RustSec/advisory-db"]
 # Fail closed: any security vulnerability is a hard error (this is the "fail on high+"
 # lever - RustSec advisories are security-severity by definition).
-version = 2
 yanked = "deny"
 # Advisory IDs consciously waived. Keep in sync with
 # .github/supply-chain/cargo-audit-ignore.txt. Each entry needs a triage comment.
 ignore = [
-    # none — add "RUSTSEC-XXXX-NNNN" with a triage note only for a real advisory match.
+    # unmaintained/unsound warnings on TRANSITIVE deps, no fix at the pinned Tauri 2
+    # version (NOT vulnerabilities). Tracked: Tauri GTK4 migration / dep refresh.
+    # gtk-rs 0.18 GTK3 stack (Tauri Linux backend):
+    "RUSTSEC-2024-0413", # atk
+    "RUSTSEC-2024-0416", # atk-sys
+    "RUSTSEC-2024-0412", # gdk
+    "RUSTSEC-2024-0418", # gdk-sys
+    "RUSTSEC-2024-0411", # gdkwayland-sys
+    "RUSTSEC-2024-0417", # gdkx11
+    "RUSTSEC-2024-0414", # gdkx11-sys
+    "RUSTSEC-2024-0415", # gtk
+    "RUSTSEC-2024-0420", # gtk-sys
+    "RUSTSEC-2024-0419", # gtk3-macros
+    "RUSTSEC-2024-0429", # glib (unsound)
+    # other unmaintained transitive deps:
+    "RUSTSEC-2024-0370", # proc-macro-error
+    "RUSTSEC-2025-0081", # unic-char-property
+    "RUSTSEC-2025-0075", # unic-char-range
+    "RUSTSEC-2025-0080", # unic-common
+    "RUSTSEC-2025-0100", # unic-ucd-ident
+    "RUSTSEC-2025-0098", # unic-ucd-version
 ]
 
 [licenses]
-version = 2
 # Explicit allowlist of SPDX license expressions permitted in the dependency graph.
 # Anything not on this list is a hard error (fail closed on unknown/unvetted licenses).
 allow = [

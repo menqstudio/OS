@@ -88,11 +88,13 @@ jobs:
         # deny.toml sets [advisories] vulnerability = "deny" (advisories), plus bans/licenses/
         # sources policy. --all-features so optional-feature-gated deps are scanned.
         run: |
+          # cargo-deny >=0.18 dropped the post-`check` --config form; place the policy
+          # next to the manifest so it is auto-discovered (robust across CLI changes).
+          cp "${SUPPLY_CHAIN_DIR}/deny.toml" apps/desktop/src-tauri/deny.toml
           cargo deny \
             --manifest-path apps/desktop/src-tauri/Cargo.toml \
             --all-features \
             check \
-            --config "${SUPPLY_CHAIN_DIR}/deny.toml" \
             advisories bans licenses sources
 
   pip-audit:

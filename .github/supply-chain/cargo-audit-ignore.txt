@@ -1,3 +1,23 @@
-# RustSec advisory IDs consciously waived. One ID per line, each with a triage note.
-# EMPTY: no real advisory currently applies to apps/desktop/src-tauri/Cargo.lock.
-# (RUSTSEC-2026-0109 was a CVSS-4.0 advisory-DB PARSE error in the pinned tools, not a match — fixed by upgrading cargo-audit/cargo-deny.)
+# RustSec advisory IDs consciously waived. One ID per line; parser strips `# ...`.
+# ALL entries below are `unmaintained`/`unsound` warnings on TRANSITIVE deps with no fix
+# at the pinned Tauri 2 version (NOT vulnerabilities). Tracked: revisit on the Tauri GTK4
+# migration / dependency refresh. Keep in sync with deny.toml [advisories].ignore.
+# --- gtk-rs 0.18 GTK3 stack (Tauri Linux webkit2gtk backend) ---
+RUSTSEC-2024-0413  # atk
+RUSTSEC-2024-0416  # atk-sys
+RUSTSEC-2024-0412  # gdk
+RUSTSEC-2024-0418  # gdk-sys
+RUSTSEC-2024-0411  # gdkwayland-sys
+RUSTSEC-2024-0417  # gdkx11
+RUSTSEC-2024-0414  # gdkx11-sys
+RUSTSEC-2024-0415  # gtk
+RUSTSEC-2024-0420  # gtk-sys
+RUSTSEC-2024-0419  # gtk3-macros
+RUSTSEC-2024-0429  # glib (unsound)
+# --- other unmaintained transitive deps ---
+RUSTSEC-2024-0370  # proc-macro-error — unmaintained build-time macro helper (transitive)
+RUSTSEC-2025-0081  # unic-char-property — unmaintained unicode table (transitive)
+RUSTSEC-2025-0075  # unic-char-range — unmaintained unicode table (transitive)
+RUSTSEC-2025-0080  # unic-common — unmaintained unicode table (transitive)
+RUSTSEC-2025-0100  # unic-ucd-ident — unmaintained unicode table (transitive)
+RUSTSEC-2025-0098  # unic-ucd-version — unmaintained unicode table (transitive)
