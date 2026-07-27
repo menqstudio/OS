@@ -1,11 +1,13 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 29 — closes the rev-28 Architect design RED: 3 P0 + 1 P1)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 30 — closes the rev-29 Architect design RED: 1 P0 + 3 P1)
 
-> **STATUS: ❌ DESIGN RED. Last reviewed candidate = rev-28 = Architect design RED (3 P0 + 1 P1 at exact
-> HEAD `c9680f53a34766bde455f60d849ca55a08caf174`; CI run 30280738223 9/9 GREEN — CI ≠ design GREEN).
-> CURRENT candidate = rev-29 = PENDING re-audit (the remediation below; it does NOT inherit the rev-28
+> **STATUS: ❌ DESIGN RED. Last reviewed candidate = rev-29 = Architect design RED (1 P0 + 3 P1 at exact
+> HEAD `1a79bc28ba89d78fc547b9f17b4fb94cdea81abe`; CI run 30297820594 9/9 GREEN — CI ≠ design GREEN).
+> CURRENT candidate = rev-30 = PENDING re-audit (the remediation below; it does NOT inherit the rev-29
 > verdict). No Architect-approved or merged 3b-1B implementation exists; PR #32 holds UNAPPROVED
-> Draft/WIP code with no authority over the design (adapt only after design-GREEN). rev-26/rev-27 were also RED.**
+> Draft/WIP code with no authority over the design (adapt only after design-GREEN). rev-26/rev-27/rev-28 were also RED.**
 >
+>
+> **rev-30 closes the rev-29 Architect design RED (1 P0 + 3 P1 @ `1a79bc2`).** **P0 — exact broker-committed output delivery path (§4.10(g)):** the renderer↔broker reply frame `brops.renderer-governed-turn-result.v1` now returns the broker-produced immutable UI projection `message{message_id, role:"assistant", author, body, created_at_ms, trust_state:"trusted_verified"}` on commit (and NO `message` on `blocked`, with a CLOSED `reason` enum); the returned `body` is the exact strict-UTF8 bytes whose length+SHA-256 matched the signed envelope; `message_id/body/trust_state` equal the row the broker verification tx committed (in-tx re-read; any mismatch ⇒ fail-closed `commit_readback_mismatch`); only the broker tx creates the verified message/trust state; no renderer command (incl. generic chat writes) can create/mutate/mark it; output-bytes == persisted body == returned body is equality-tested; forged renderer events can never render Verified; +positive/negative E2E delivery tests. **P1-1 — request correlation + payload-aware idempotency:** a NON-authoritative `client_request_id: UUIDv4` on the request (grants no signing/verification authority); the broker mints its OWN `broker_turn_id` + `request_nonce`; idempotency keyed on the exact `{client_request_id, conversation_id, agent}` (live-duplicate reattach; same id + different conversation/agent ⇒ `retry_conflict`; a different request while the conversation has a live turn ⇒ explicit `turn_in_progress`, NOT silent reattach — replaces the old 'idempotent on conversation_id' rule); every reply echoes both IDs; a late reply from a timed-out request cannot satisfy a newer one; +disconnect/reconnect/duplicate/conflicting-agent/late-reply tests. **P1-2 — complete the 0/1/2 stdio lifecycle (§2.7):** the recorder OPENS controlled inert endpoints for FDs 0/1/2; the launcher verifies 0/1/2 are exactly the approved inert endpoints, rejects interactive/inherited/unexpected stdio, closes 0/1/2 or sets `FD_CLOEXEC` before `fexecve`, and confirms ONLY 3–6 survive into the executor; +a real `/proc/self/fd` enumeration test proving only 3–6 are inherited. **P1-3 —** canonical state synchronized (rev-29 reviewed = RED, rev-30 = PENDING_REAUDIT, blockers = this 1 P0 + 3 P1) across `config/current_state.json`, `NEXT_CHAT.md`, `PROJECT_STATE.md`, `TASKS.md`, this banner, and the PR #31 body. A fresh adversarial red-team over the package caught 2 residual gaps (bracketing 'carry ONLY' prose vs the new `client_request_id`; an undeclared closed `reason` enum) — both fixed before commit.**
 > **rev-29 closes the rev-28 Architect design RED (3 P0 + 1 P1 @ `c9680f5`).** **P0-1 (§0, §2.1, §4.10(g), §6.1, §7.1) — propagate the renderer → trusted verifier/BROKER service → challenge-authority split through the ENTIRE normative contract** (rev-28 declared the nine-role table but the topology diagram + §2.1 peer/nonce/return-path + §4.10(g) `governed_turn_execute` + §6.1/§7.1 still named ONE in-process desktop/Tauri principal): a global terminology binding resolves every *trusted-actor* "desktop"/"backend" reference to the broker service (never the renderer); the topology diagram is now three-tier; the challenge-authority IPC allowlists **only the broker UID** and **DENIES the renderer/login UID**; **only the broker** supplies create-pending facts/`request_nonce`/issue and receives the signed challenge; `PreparedGovernedTurnV1B` + receipt DB + pinned manifest + final verification + accepted-output persistence live **only** in the broker; `governed_turn_execute` is a **broker-service operation** and the Tauri command a **THIN proxy** carrying only `{conversation_id, agent?}`; a NORMATIVE renderer↔broker IPC schema (peer auth, frame limits, timeout, replay/idempotency, errors) is defined; **only the broker emits the committed UI-safe result**. **P0-2 (§2.5) — TCB integrity floor** expanded so `TCB_ARTIFACTS` includes the broker + challenge-authority executables/config/policy/unit-files/IPC-policy/manifest-config/loaded-libs; both services require root/TCB ownership + non-writability + start-time SHA-256 pin + fail-closed `verify_tcb_integrity()` + UID/SID + peer-auth verification (7 negative tests: login-writable/modified broker or authority binary/config, writable ancestor, wrong owner/SID, fake broker cannot forge Verified ⇒ governed mode DISABLED). **P0-3 (§2.7, §4.7) — FD survival across BOTH exec boundaries:** the RECORDER (before `execve(launcher)`) maps the 3 inputs + output to FDs 3–6, `dup2/dup3`s, CLEARS `FD_CLOEXEC` on 3–6, redirects 0/1/2 to inert, `close_range(7,…)`, `execve`s with empty env; the LAUNCHER (before `fexecve(executor)`) verifies exactly 3–6 (mode/inode/offset/store-binding), re-clears CLOEXEC, rejects any unexpected FD, opens the executor image `O_NOFOLLOW|O_RDONLY|O_CLOEXEC`, runs the locked privilege drop, `fexecve`s with **only** 3–6 surviving (7 integration/negative tests). **P1-1 —** canonical state synchronized (rev-28 reviewed = RED, rev-29 = PENDING_REAUDIT, blockers = these 3 P0 + 1 P1) across `config/current_state.json`, `NEXT_CHAT.md`, `PROJECT_STATE.md`, `TASKS.md`, this banner, and the PR #31 body. A fresh adversarial red-team over the remediation package caught 3 residual gaps (a mismatched retitle anchor + two un-rebound references at §4.10(g)/§2.1) — all fixed before commit.**
 > The consolidated closure history (rev 25 → rev 26) follows; the rev-27 → rev-28 closure is summarized in
 > the rev-28 banner block further below and in Appendix A. rev 25 was Architect-reviewed at exact HEAD
@@ -571,8 +573,13 @@ root/TCB-owned setuid helper, not a persistent runtime UID**. Every field is fix
     2. Perform the renumber with **`dup2`/`dup3`** (or an equivalent atomic descriptor move).
     3. **Explicitly CLEAR `FD_CLOEXEC`** on each of FDs **3–6** (`fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC)`)
        so they cross `execve(launcher)` instead of being closed at exec.
-    4. **Close or redirect FDs 0/1/2** to approved **inert** endpoints (`/dev/null` or a controlled log
-       sink) so the child inherits no interactive/ambient stdio.
+    4. **Open controlled INERT endpoints and MAP them onto FDs 0/1/2** (symmetric with the 3–6 map
+       above — a defined inert state, never "just closed" and never interactive). `open("/dev/null",
+       O_RDONLY)` for FD 0 and `/dev/null` (or a controlled append-only log sink) `O_WRONLY` for FDs 1
+       and 2; `dup2`/`dup3` those inert endpoints onto the **exact numbers 0, 1 and 2** (**replacing**
+       any inherited interactive/ambient stdio), and **explicitly CLEAR `FD_CLOEXEC`** on 0/1/2 so the
+       launcher **inherits the known-inert stdio and can verify it** at the second boundary — the child
+       never sees interactive, inherited, or absent stdio.
     5. **Close every FD ≥ 7** (`close_range(7, ~0U, 0)`), **except** an explicitly defined
        executor-image / launcher-bootstrap handle **where the platform requires the recorder to pass
        one** — on Linux Model A none is required (the launcher opens the executor image itself, below),
@@ -585,21 +592,31 @@ root/TCB-owned setuid helper, not a persistent runtime UID**. Every field is fix
        (size ≤ its per-artifact ceiling, §4.7), and FD 6 the write-only output pipe.
     2. **Explicitly confirm — and, if needed, re-clear — `FD_CLOEXEC`** on each of FDs 3–6 so they also
        cross `fexecve`; a data FD 3–6 that arrives marked `FD_CLOEXEC` and cannot be cleared ⇒ refuse.
-    3. **Reject any unexpected FD** — including an uncontrolled 0/1/2, or any FD ≥ 7, or anything outside
-       the exact set {3,4,5,6} ⇒ refuse.
+    3. **Verify and NEUTRALIZE stdio — FDs 0/1/2 (symmetric with the 3–6 verification).** Confirm 0, 1
+       and 2 are **EXACTLY** the approved inert endpoints the recorder mapped — FD 0 `O_RDONLY`, FDs 1/2
+       `O_WRONLY`, each backed by `/dev/null` (or the controlled log-sink inode) and **never** a
+       tty/pty, socket, pipe, or any interactive/inherited/ambient stdio; interactive, inherited,
+       missing, or otherwise-unexpected stdio ⇒ refuse. Then, **BEFORE `fexecve`, CLOSE FDs 0/1/2 (or
+       set `FD_CLOEXEC` on each)** so the inert stdio does **NOT** cross the second boundary into the
+       executor. **Reject** any FD ≥ 7, or anything outside the exact set {0,1,2,3,4,5,6} ⇒ refuse —
+       after this step **only FDs 3–6** survive into the executor.
     4. **Open the executor image separately** with **`O_NOFOLLOW|O_RDONLY|O_CLOEXEC`** (it is NOT one of
        FDs 3–6, is used **only** by `fexecve`, and is closed by a successful exec).
     5. Perform the **locked privilege-drop sequence** (steps 2–10 of the sequence above).
     6. **`fexecve` the verified executor image with ONLY the approved data descriptors (3–6) surviving**
        — every other descriptor already closed or close-on-exec.
   Any failure on either side — a data FD 3–6 arriving `FD_CLOEXEC` that cannot be cleared, a missing /
-  wrong-mode / wrong-inode/type / wrong-offset / wrong-store-binding data FD, an uncontrolled 0/1/2, or
-  any unexpected extra FD ⇒ **refuse before signing any receipt**: no exec, and **no**
+  wrong-mode / wrong-inode/type / wrong-offset / wrong-store-binding data FD, a non-inert / interactive
+  / inherited FD 0/1/2 (not the approved inert endpoints), stdio that cannot be neutralized before the
+  second boundary, or any unexpected extra FD ⇒ **refuse before signing any receipt**: no exec, and **no**
   receipt/evidence/terminal record.
-- **Real executable integration test (NORMATIVE, §9).** A tiny **pinned** test executor that reads all
-  three input FDs to EOF and writes a known output through FD 6 MUST run successfully through the real
-  recorder → launcher → `fexecve` path (proving FD survival + the privilege drop actually work), and the
-  full negative matrix below MUST fail closed.
+- **Real executable integration test (NORMATIVE, §9).** A tiny **pinned** test executor that (a) on
+  entry **enumerates `/proc/self/fd` and asserts the open descriptor set is EXACTLY {3,4,5,6}** —
+  proving FDs 0/1/2 were neutralized and every FD ≥ 7 closed before `fexecve`, i.e. **only** the four
+  data descriptors were inherited — and (b) reads all three input FDs to EOF and writes a known output
+  through FD 6 MUST run successfully through the real recorder → launcher → `fexecve` path (proving FD
+  survival + stdio neutralization + the privilege drop actually work), and the full negative matrix
+  below MUST fail closed.
 - **Target executable + UID:** the **pinned** `executor_executable_sha256` image (from the lease,
   §4.3) run as the fixed **executor UID**. No arbitrary target executable, target UID, or argument
   selection — both are validated against the lease before any privilege use.
@@ -619,7 +636,10 @@ root/TCB-owned setuid helper, not a persistent runtime UID**. Every field is fix
   FD (via explicit `STARTUPINFOEX` handle list) / pinned-image / restricted-token rules.
 - **Confused-deputy / oracle negative matrix (normative, §9):** wrong caller UID (≠ recorder) ⇒ refuse;
   extra group / residual supplementary groups after the drop ⇒ refuse; extra argv / non-empty env /
-  extra inherited FD ⇒ refuse; a data FD 3–6 arriving `FD_CLOEXEC` (would close the executor I/O) ⇒
+  extra inherited FD ⇒ refuse; interactive / inherited / non-inert stdio on FDs 0/1/2 (a tty/pty,
+  socket, pipe, or anything that is NOT the approved inert `/dev/null`/log-sink endpoint) ⇒ refuse; any
+  0/1/2 (or other non-{3,4,5,6}) descriptor left surviving into the executor ⇒ refuse; a data FD 3–6
+  arriving `FD_CLOEXEC` (would close the executor I/O) ⇒
   refuse; wrong executor UID **or** GID ⇒ refuse; target executable ≠ pinned `executor_executable_sha256`
   ⇒ refuse; writable/login-owned executor image ⇒ refuse; residual **effective/permitted/inheritable/
   ambient/bounding** capability after the drop ⇒ refuse; a failed `setgroups`/`setresgid`/`setresuid`/
@@ -2264,9 +2284,9 @@ DB, the pinned manifest, the `PreparedGovernedTurnV1B` object, all hashes/nonces
 sidecar/supervisor/signer sockets, and the final verification verdict. Throughout §4.10(g), §6.1 and
 §7/§7.1 the words "backend"/"backend execution"/"the desktop" (as the trusted producer/verifier) denote
 **this broker service process**, never the renderer/webview. The renderer/login process holds a **thin
-`#[tauri::command]` proxy** that does **nothing** but forward a **closed `{conversation_id, agent?}`**
+`#[tauri::command]` proxy** that does **nothing** but forward a **closed `{conversation_id, agent?, client_request_id}`**
 command to the broker over the renderer↔broker IPC (below) and render the broker's committed reply; the
-proxy **may carry ONLY `conversation_id` + an optional authorized `agent` identifier** and **may NOT own
+proxy **may carry ONLY `conversation_id`, an optional authorized `agent` identifier, and a non-authoritative `client_request_id` correlation token (§4.10(g) request frame)** and **may NOT own
 or access** the receipt DB, the pinned manifest, the prepared object, any hash/nonce, the challenge
 authority, the sidecar/supervisor/signer sockets, or any verification-verdict construction. **Only the
 broker** — after its verification transaction commits and the accepted output is persisted — **emits the
@@ -2275,18 +2295,76 @@ final UI-safe committed result** back to the renderer proxy; a renderer can neve
 **Renderer↔broker IPC (rev-28 P0-1 — NORMATIVE, the sole renderer→broker channel).** The proxy reaches
 the broker over an authenticated local IPC (Linux `AF_UNIX` + `SO_PEERCRED`; Windows named-pipe token-SID,
 §0.W). **Peer auth:** the broker verifies the connecting peer is the interactive login/renderer identity
-and refuses any other peer; the renderer symmetrically pins the broker peer UID/SID. **Request:** exactly
+and refuses any other peer; the renderer symmetrically pins the broker peer UID/SID. **Request (P1-1 — adds a NON-authoritative correlation token):** exactly
 one frame `brops.renderer-governed-turn.v1 { "protocol", "conversation_id": "<string ≤128>", "agent":
-"<string ≤128, optional>" }` — `additionalProperties:false`, unknown-field + duplicate-key rejection,
-request frame ≤ `RENDERER_IPC_FRAME_BYTES = 8192`; any `system`/`history`/`generation_config`/hash/nonce/
-`run_id`/`task_id`/prepared-object/verdict/receipt field present ⇒ `malformed` (the broker resolves them
-itself from trusted state, never from the renderer). **Reply:** the closed committed-result frame
-`brops.renderer-governed-turn-result.v1 { "protocol", "status": "committed"|"blocked", "conversation_id",
-"reason"? }` (UI-safe; carries NO store handle, key, envelope, hash, nonce, or verdict internals).
-**Timeout / replay / idempotency:** at most one in-flight governed turn per `conversation_id` — a duplicate
-request while one is live re-attaches to the same turn (idempotent on `conversation_id`), never starting a
-second; the proxy applies a bounded overall deadline and, on any transport failure or timeout, surfaces a
-`blocked` result WITHOUT retrying the turn (the broker's `request_nonce` consume /
+"<string ≤128, optional>", "client_request_id": "<UUIDv4 string>" }` — `additionalProperties:false`,
+unknown-field + duplicate-key rejection, request frame ≤ `RENDERER_IPC_FRAME_BYTES = 8192`; any
+`system`/`history`/`generation_config`/hash/nonce/`run_id`/`task_id`/`broker_turn_id`/`request_nonce`/
+prepared-object/verdict/receipt field present ⇒ `malformed` (the broker resolves them itself from trusted
+state, never from the renderer). **`client_request_id` is a NON-authoritative renderer-supplied
+correlation token ONLY** — it MUST match
+`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` (else `malformed`) and grants **no**
+signing, verification, or persistence authority whatsoever; it never enters
+`request_sha256`/`IssuedRequest`/`Expected` and never selects or creates a receipt/trust row. On accepting
+the request the **broker mints its OWN authoritative identities** — `broker_turn_id = brops_core::id()`
+(UUIDv4, the durable turn identity) and the `request_nonce` (the §4.10(g) `prepare_governed_turn_v1b`
+step-1 nonce) — which the renderer can neither supply nor influence.
+
+**Reply (P0 — broker-committed output delivery, LOCKED single model).** The broker returns exactly one
+closed frame carrying the **broker-produced immutable UI projection** of the verified+persisted turn. On a
+committed turn:
+`brops.renderer-governed-turn-result.v1 { "protocol", "status": "committed", "client_request_id",
+"broker_turn_id", "conversation_id", "message": { "message_id", "role": "assistant", "author", "body",
+"created_at_ms", "trust_state": "trusted_verified" } }`. On a refused/blocked turn the frame carries **NO**
+`message` object:
+`brops.renderer-governed-turn-result.v1 { "protocol", "status": "blocked", "client_request_id",
+"broker_turn_id", "conversation_id", "reason" }` — where **`reason` is a CLOSED enum ∈ {`malformed`, `peer_denied`, `retry_conflict`, `turn_in_progress`, `commit_readback_mismatch`, `upstream_blocked`}** (any other value is a protocol violation). Every reply (committed **or** blocked) echoes the
+request's `client_request_id` and the broker's `broker_turn_id`; the frame is UI-safe and carries NO store
+handle, key, envelope, hash, nonce, or verdict internals. **Delivery invariants (P0 — NORMATIVE):**
+- The returned `message.body` is the **exact strict-UTF8-decoded bytes** whose byte-`length` AND `SHA-256`
+  matched the signed accepted-output envelope (§4.7/§6.1); any decode/length/hash disagreement ⇒ the turn
+  fails closed as `blocked`, never a committed frame.
+- `message.message_id`, `message.body`, and `message.trust_state` **equal the exact row the broker
+  verification transaction committed** — the broker re-reads the committed row inside the same transaction
+  boundary and, on ANY mismatch between the persisted row and the accepted output, **FAILS CLOSED**
+  (`blocked`+`commit_readback_mismatch`, no committed frame emitted).
+- **ONLY the broker verification transaction** creates the verified message and sets
+  `trust_state:"trusted_verified"`. The renderer **NEVER** reads or writes the broker receipt/trust DB
+  directly, **cannot** create/edit/mark a message `trusted_verified`, and **cannot** mint or forge this
+  frame. Pre-existing generic renderer-side chat WRITE commands (draft/edit/delete/insert) operate only on
+  renderer-local chat state and **cannot mutate a broker-verified message or its trust state** — the
+  broker-owned verified row is not writable through any renderer command path.
+- The renderer **receives and renders ONLY** this broker-produced projection; `trusted_verified` is
+  displayed as "Verified" **solely** from a broker-emitted committed frame authenticated over the
+  peer-pinned IPC (§ Peer auth) — a forged or renderer-originated event can **never** render a message as
+  Verified.
+- **Output-bytes equality is test-enforced:** the bytes the executor wrote through FD 6 (§2.7/§4.7) ==
+  the persisted `message.body` == the `body` returned in this frame (one byte string compared for equality
+  end-to-end); a break anywhere fails the turn closed.
+**Timeout / replay / idempotency (P1-1 — payload-aware correlation; REPLACES the prior "idempotent on
+`conversation_id` re-attach" rule, which is now wrong).** The broker keys idempotency on the **exact
+normalized tuple `{client_request_id, conversation_id, agent}`** (the validated `conversation_id` +
+sanitized `agent` + lowercase-canonical `client_request_id`), mapped to the authoritative `broker_turn_id`:
+- An **identical LIVE duplicate** (same `{client_request_id, conversation_id, agent}` while that turn is
+  still in flight) **re-attaches to the SAME `broker_turn_id`** and never starts a second turn — the
+  duplicate reply echoes that same `broker_turn_id`.
+- The **same `client_request_id` with a DIFFERENT `conversation_id` or `agent`** ⇒ `blocked`+`retry_conflict`
+  (a correlation token may not be reused across a different conversation or agent); no new turn is started.
+- A **DIFFERENT request** (new `client_request_id`) **while the conversation already has a live turn** ⇒
+  explicit `blocked`+`turn_in_progress` — **NOT** silent re-attachment: at most one in-flight governed turn
+  per `conversation_id` is still enforced, but a mismatched correlation is refused explicitly rather than
+  folded into the existing turn.
+- **Every reply echoes `client_request_id` + `broker_turn_id`**, so the proxy binds each reply to the
+  request it issued; a **LATE reply from an earlier timed-out/abandoned request cannot satisfy a newer
+  request** — the proxy accepts a reply only when BOTH echoed `client_request_id` and `broker_turn_id`
+  match the still-outstanding request and drops any reply whose pair is stale.
+- Correlation IDs (`client_request_id`, `broker_turn_id`) grant **NO** signing, verification, or
+  persistence authority (§ Request above); the broker's `request_nonce` consume /
+  `record_pre_verification_block` remains the durable single authority.
+The proxy applies a bounded overall deadline and, on any transport failure or timeout, surfaces a `blocked`
+result WITHOUT retrying the turn; on reconnect it MAY re-issue the **same** `client_request_id` to
+re-attach to a still-live `broker_turn_id` (idempotent live re-attach) or to learn the committed/blocked
+outcome, never to start a duplicate turn (the broker's `request_nonce` consume /
 `record_pre_verification_block` is the durable authority, below). **Error behavior:** the renderer proxy
 originates **no** verdict and **no** signed artifact; a malformed/oversized/wrong-peer request is refused
 by the broker with `blocked`+`malformed`/`peer_denied` and no side effect. Submit is **NOT**

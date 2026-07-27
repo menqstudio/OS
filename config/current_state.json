@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS. NOT a live GitHub oracle: synced against a baseline, goes stale as PRs merge. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI and fails closed on mismatch. Phase 0 (repository-truth) is DONE (PR #33 merged, b6c6712). Active: Wave 3b-1 on PR #31 — LAST REVIEWED candidate rev-28 = Architect design RED (3 P0 + 1 P1) at exact HEAD c9680f5; CURRENT candidate rev-29 = PENDING_REAUDIT (remediation, not yet reviewed). Update this file in the same commit as any state change.",
+  "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS. NOT a live GitHub oracle: synced against a baseline, goes stale as PRs merge. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI and fails closed on mismatch. Phase 0 (repository-truth) is DONE (PR #33 merged, b6c6712). Active: Wave 3b-1 on PR #31 — LAST REVIEWED candidate rev-29 = Architect design RED (1 P0 + 3 P1) at exact HEAD 1a79bc2; CURRENT candidate rev-30 = PENDING_REAUDIT (remediation, not yet reviewed). Update this file in the same commit as any state change.",
   "sync": {
     "baseline_main_head_at_sync": "b6c6712cf9e12e5c6989f93e68e70c248722d011",
     "snapshot_branch": "feat/wave-3b1-isolated-signer",
@@ -11,9 +11,9 @@
     "number": 31,
     "branch": "feat/wave-3b1-isolated-signer",
     "base": "main",
-    "role": "design-audit carrier (carries this snapshot + the rev-29 addendum)",
+    "role": "design-audit carrier (carries this snapshot + the rev-30 addendum)",
     "exact_candidate_source": "The exact audited head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #31 body. check_repo_state requires event head == live headRefOid == marker. A new commit invalidates the old candidate until the marker is updated and the edited-event CI re-runs. NOT in prs[].",
-    "note": "PR #31 = 3b-1A isolated-signer boundary CODE (Architect Code GREEN) + the 3b-1B design-lock addendum. The addendum's last reviewed candidate rev-28 is Architect design RED (3 P0 + 1 P1 at c9680f5); rev-29 remediates it and is re-submitted (PENDING_REAUDIT). Do NOT merge until design-GREEN at the exact head."
+    "note": "PR #31 = 3b-1A isolated-signer boundary CODE (Architect Code GREEN) + the 3b-1B design-lock addendum. The addendum's last reviewed candidate rev-29 is Architect design RED (1 P0 + 3 P1 at 1a79bc2); rev-30 remediates it and is re-submitted (PENDING_REAUDIT). Do NOT merge until design-GREEN at the exact head."
   },
   "carrier_transition": {
     "carrier_pr": 31,
@@ -54,8 +54,8 @@
     "CURRENT_ACTIVE_WAVE": "3b-1B",
     "CURRENT_PHASE0": "done",
     "CURRENT_DESIGN_GATE": "PENDING_REAUDIT",
-    "CURRENT_DESIGN_CANDIDATE": "rev-29",
-    "CURRENT_LAST_REVIEWED": "rev-28",
+    "CURRENT_DESIGN_CANDIDATE": "rev-30",
+    "CURRENT_LAST_REVIEWED": "rev-29",
     "CURRENT_LAST_VERDICT": "RED",
     "CURRENT_DESIGN_PR": "31",
     "CURRENT_IMPL_PR": "32",
@@ -68,28 +68,28 @@
     "CURRENT_GOVERNED_ROUNDTRIP": "complete"
   },
   "design_gate": {
-    "candidate": "rev-29 (docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) carried on PR #31",
-    "candidate_head_note": "The exact audit HEAD is PR #31's current live head, recorded in the PR body AUDIT_CANDIDATE_HEAD marker. rev-29 remediates the rev-28 RED and is re-submitted for the Architect design audit at that exact head.",
-    "last_reviewed_candidate": "rev-28",
+    "candidate": "rev-30 (docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) carried on PR #31",
+    "candidate_head_note": "The exact audit HEAD is PR #31's current live head, recorded in the PR body AUDIT_CANDIDATE_HEAD marker. rev-30 remediates the rev-29 RED and is re-submitted for the Architect design audit at that exact head.",
+    "last_reviewed_candidate": "rev-29",
     "last_architect_verdict": "RED",
-    "last_architect_verdict_scope": "rev-28 at exact HEAD c9680f53a34766bde455f60d849ca55a08caf174 — 3 P0 + 1 P1 (CI run 30280738223 9/9 GREEN; CI is NOT design GREEN). Predecessors rev-26 and rev-27 were also RED.",
-    "current_candidate": "rev-29",
+    "last_architect_verdict_scope": "rev-29 at exact HEAD 1a79bc28ba89d78fc547b9f17b4fb94cdea81abe — 1 P0 + 3 P1 (CI run 30297820594 9/9 GREEN; CI is NOT design GREEN). Predecessors rev-26, rev-27 and rev-28 were also RED.",
+    "current_candidate": "rev-30",
     "current_candidate_gate": "PENDING_REAUDIT",
-    "note": "current_candidate rev-29 is UNREVIEWED (PENDING_REAUDIT). It does NOT inherit the rev-28 RED verdict; that verdict is recorded as last_architect_verdict on last_reviewed_candidate rev-28.",
+    "note": "current_candidate rev-30 is UNREVIEWED (PENDING_REAUDIT). It does NOT inherit the rev-29 RED verdict; that verdict is recorded as last_architect_verdict on last_reviewed_candidate rev-29.",
     "open_blockers": {
-      "note": "Architect design RED on rev-28 (3 P0 + 1 P1). rev-29 remediates these; re-audit pending. These are the ONLY open design blockers.",
+      "note": "Architect design RED on rev-29 (1 P0 + 3 P1). rev-30 remediates these; re-audit pending. These are the ONLY open design blockers.",
       "p0": [
-        "P0-1 propagate the renderer -> trusted verifier/BROKER service -> challenge-authority split through the ENTIRE normative contract. rev-28 declared the nine-role table but the topology diagram + §2.1 (peer-auth/caller/nonce/return-path) + §4.10(g) (governed_turn_execute) + §6.1/§7.1 still named ONE in-process desktop/Tauri principal. rev-29: a global terminology binding resolves every trusted-actor 'desktop'/'backend' reference to the broker service (never the renderer); the topology diagram is three-tier; the challenge-authority IPC allowlists ONLY the broker UID and DENIES the renderer/login UID; ONLY the broker supplies create-pending facts/request_nonce/issue and receives the signed challenge; PreparedGovernedTurnV1B + receipt DB + pinned manifest + final verification + accepted-output persistence live ONLY in the broker; governed_turn_execute is a broker-service operation and the Tauri command a THIN proxy carrying only {conversation_id, agent?}; a NORMATIVE renderer<->broker IPC schema (peer auth, frame limits, timeout, replay/idempotency, errors) is defined; ONLY the broker emits the committed UI-safe result. All stale normative references removed (historical Appendix A keeps the old model).",
-        "P0-2 include the broker and challenge-authority in the TCB integrity floor (§2.5). rev-29 expands TCB_ARTIFACTS to include the trusted verifier/broker + desktop-challenge-authority executables, their config/policy, service/unit files, IPC policies, broker pinned-manifest config, and every loaded library/plugin; both services require root/TCB ownership + non-writability (mode/ACL/group/ancestor) + start-time SHA-256 pin + fail-closed verify_tcb_integrity() + service UID/SID verification + peer-auth policy verification; 7 negative tests (login-writable/modified broker or authority binary/config, writable ancestor, wrong owner/SID/UID, fake broker cannot create/persist/display Verified) => governed mode DISABLED.",
-        "P0-3 define FD survival across BOTH exec boundaries (§2.7, §4.7). rev-29 splits the contract: the RECORDER (before execve(launcher)) maps the 3 inputs + output to FDs 3-6, dup2/dup3s, explicitly CLEARS FD_CLOEXEC on 3-6, redirects 0/1/2 to inert endpoints, close_range(7,~0), execve with fixed argv + empty env; the LAUNCHER (before fexecve(executor)) verifies EXACTLY FDs 3-6 (mode/inode/type/offset/store-binding), re-confirms/clears FD_CLOEXEC on 3-6, rejects any unexpected FD incl. 0/1/2, opens the executor image O_NOFOLLOW|O_RDONLY|O_CLOEXEC, performs the locked privilege drop, fexecve with ONLY 3-6 surviving; 7 integration/negative tests (survive recorder->launcher; survive launcher->executor; tiny executor reads 3 inputs + writes FD6; CLOEXEC before either boundary => fail closed; unexpected stdio/extra FD => fail closed; every failure => no receipt/evidence/record)."
+        "P0 define the exact broker-committed output delivery path (§4.10(g)). rev-29's renderer<->broker reply frame carried only {protocol, status, conversation_id, reason?} — insufficient for the renderer to obtain the exact verified+persisted message. rev-30 locks ONE model: brops.renderer-governed-turn-result.v1 returns the broker-produced immutable UI projection message{message_id, role:assistant, author, body, created_at_ms, trust_state:trusted_verified} on commit (NO message on blocked; a CLOSED reason enum). The returned body is the exact strict-UTF8 bytes whose length+SHA-256 matched the signed accepted-output envelope; message_id/body/trust_state equal the row the broker verification tx committed (in-tx re-read; any mismatch => fail-closed commit_readback_mismatch); ONLY the broker tx creates the verified message + trust_state; the renderer never reads/writes the trust DB and no renderer command (incl. generic chat writes) can create/edit/mark it; output-bytes == persisted body == returned body is equality-tested; forged renderer events can never render Verified; blocked turns return no assistant message. +positive/negative E2E delivery tests."
       ],
       "p1": [
-        "P1-1 synchronize canonical state: last reviewed = rev-28, last verdict = RED, current candidate = rev-29, rev-29 gate = PENDING_REAUDIT, open blockers = these 3 P0 + 1 P1, next action = implement this remediation, push, update marker, edited-event CI, re-audit. DONE here across config/current_state.json, NEXT_CHAT.md, PROJECT_STATE.md, TASKS.md, the addendum banner/history, and the PR #31 body."
+        "P1-1 add exact IPC request correlation + payload-aware idempotency. A NON-authoritative client_request_id (UUIDv4) on the request grants no signing/verification authority; the broker mints its OWN authoritative broker_turn_id + request_nonce. Idempotency is keyed on the exact normalized {client_request_id, conversation_id, agent}: identical live duplicate => reattach to the same broker_turn_id; same client_request_id with a different conversation or agent => retry_conflict; a different request while the conversation already has a live turn => explicit turn_in_progress (NOT silent reattachment — replaces the old 'idempotent on conversation_id' rule); every reply echoes client_request_id + broker_turn_id; a late reply from an earlier timed-out request cannot satisfy a newer request. +disconnect/reconnect/duplicate/conflicting-agent/late-reply tests.",
+        "P1-2 complete the stdin/stdout/stderr (FDs 0/1/2) lifecycle (§2.7). The recorder OPENS controlled inert endpoints for 0/1/2, then maps + clears FD_CLOEXEC on 3-6, then launches the helper. The launcher verifies 0/1/2 are exactly the approved inert endpoints, rejects interactive/inherited/unexpected stdio, closes 0/1/2 or sets FD_CLOEXEC on them BEFORE fexecve, and confirms ONLY 3-6 survive into the executor. +a real executor test that enumerates /proc/self/fd and proves only FDs 3-6 are inherited.",
+        "P1-3 synchronize canonical state (last reviewed = rev-29 RED, current candidate = rev-30, gate = PENDING_REAUDIT, blockers = this 1 P0 + 3 P1, next action = implement rev-30 -> push -> marker -> edited-event CI -> re-audit). DONE here across config/current_state.json, NEXT_CHAT.md, PROJECT_STATE.md, TASKS.md, the addendum banner/history, and the PR #31 body."
       ]
     },
     "preaudit_preparation": {
       "verdict": "CLOSED (independent preparation review only — NOT the Architect verdict). The 3 preparation-P0 were closed in rev-26.",
-      "note": "Preparation closure is NOT the design gate. The Architect design verdict on the last reviewed candidate (rev-28) is RED; the open blockers are the 3 P0 + 1 P1 above."
+      "note": "Preparation closure is NOT the design gate. The Architect design verdict on the last reviewed candidate (rev-29) is RED; the open blockers are the 1 P0 + 3 P1 above."
     }
   },
   "waves": {
@@ -109,11 +109,11 @@
       "note": "isolated-signer boundary code; Architect Code GREEN; on PR #31"
     },
     "3b-1B": {
-      "status": "design_red_rev28_code_unapproved_wip",
+      "status": "design_red_rev29_code_unapproved_wip",
       "code_exists": true,
       "impl_pr": 32,
       "design_pr": 31,
-      "note": "Design last-reviewed rev-28 = Architect RED (3 P0 + 1 P1 at c9680f5); rev-29 remediates, re-audit pending. NO Architect-approved or merged 3b-1B implementation exists. PR #32 holds UNAPPROVED Draft/WIP code with no authority over the design; adapt only after design GREEN."
+      "note": "Design last-reviewed rev-29 = Architect RED (1 P0 + 3 P1 at 1a79bc2); rev-30 remediates, re-audit pending. NO Architect-approved or merged 3b-1B implementation exists. PR #32 holds UNAPPROVED Draft/WIP code with no authority over the design; adapt only after design GREEN."
     },
     "3b-2": {
       "status": "not_started",
@@ -154,13 +154,13 @@
   },
   "next_action_by_carrier": {
     "_note": "PR #31 carrier_transition branches (both required when carrier_transition is modeled).",
-    "open": "PR #31 is OPEN (design RED): the rev-28 Architect design RED (3 P0 + 1 P1) is remediated as rev-29 (P0-1 propagate the renderer/broker/authority split through the whole normative contract; P0-2 broker+authority in TCB_ARTIFACTS; P0-3 two-boundary FD survival contract; P1-1 canonical sync); push the new exact head, update the AUDIT_CANDIDATE_HEAD marker, run edited-event CI, and re-submit rev-29 for the Architect design audit. Do NOT merge until design-GREEN at the exact head, then implemented + code-audit GREEN + CI GREEN.",
+    "open": "PR #31 is OPEN (design RED): the rev-29 Architect design RED (1 P0 + 3 P1) is remediated as rev-30 (P0 broker-committed output delivery path; P1-1 request correlation + payload-aware idempotency; P1-2 0/1/2 stdio lifecycle; P1-3 canonical sync); push the new exact head, update the AUDIT_CANDIDATE_HEAD marker, run edited-event CI, and re-submit rev-30 for the Architect design audit. Do NOT merge until design-GREEN at the exact head, then implemented + code-audit GREEN + CI GREEN.",
     "merged": "PR #31 MERGED (only after design-GREEN + implementation + code-audit GREEN): verify the actual main commit + main-push CI, update Phase/Wave state, rebase PR #32 onto the approved implementation sequence, and re-sync this snapshot (remove current_workflow_pr #31, set the new active state) so main is never self-stale."
   },
-  "next_action": "Remediate the rev-28 Architect design RED (3 P0 + 1 P1) as rev-29 on PR #31 (DONE); push the new exact head; update the AUDIT_CANDIDATE_HEAD marker; run edited-event CI; re-submit rev-29 for the Architect design audit at that exact head. PR #31 remains unmerged; PR #32 stays Draft and frozen.",
+  "next_action": "Remediate the rev-29 Architect design RED (1 P0 + 3 P1) as rev-30 on PR #31 (DONE); push the new exact head; update the AUDIT_CANDIDATE_HEAD marker; run edited-event CI; re-submit rev-30 for the Architect design audit at that exact head. PR #31 remains unmerged; PR #32 stays Draft and frozen.",
   "stop_gates": [
     "NoTrustedManifest stays fail-closed; NO production trusted_verified until the complete real trust chain is exact-head zero-trust GREEN.",
-    "PR #31 3b-1B design: last-reviewed rev-28 = Architect design RED (3 P0 + 1 P1 at c9680f5); rev-29 (current candidate) is PENDING_REAUDIT and does NOT inherit the verdict. It must NOT merge until design-GREEN at the exact head, then implemented + code-audit GREEN + CI GREEN.",
+    "PR #31 3b-1B design: last-reviewed rev-29 = Architect design RED (1 P0 + 3 P1 at 1a79bc2); rev-30 (current candidate) is PENDING_REAUDIT and does NOT inherit the verdict. It must NOT merge until design-GREEN at the exact head, then implemented + code-audit GREEN + CI GREEN.",
     "No Architect-approved or merged 3b-1B implementation exists. PR #32 holds UNAPPROVED Draft/WIP 3b-1B code with NO authority over the design; rebased + adapted ONLY AFTER the design is GREEN and stays frozen from architectural expansion.",
     "CI-green is NOT design/audit-green; a passing unit test is NOT a working install; a Linux isolation proof is NOT a Windows production proof (the Windows broker remains a release blocker)."
   ]
