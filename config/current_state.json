@@ -1,26 +1,31 @@
 {
   "schema": 2,
-  "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS. This is NOT a live GitHub oracle: it is synced against a baseline and goes stale the moment a PR merges. tools/check_coordination.py checks the human docs agree with this snapshot; tools/check_repo_state.py verifies the snapshot against LIVE GitHub in CI (open/merged/draft/head/base) and fails closed on mismatch. Update this file in the same commit as any state change.",
+  "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS. NOT a live GitHub oracle: synced against a baseline, goes stale as PRs merge. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI and fails closed on mismatch. Phase 0 (repository-truth) is DONE (PR #33 merged, b6c6712). Active: Wave 3b-1 on PR #31 — LAST REVIEWED candidate rev-29 = Architect design RED (1 P0 + 3 P1) at exact HEAD 1a79bc2; CURRENT candidate rev-30 = PENDING_REAUDIT (remediation, not yet reviewed). Update this file in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "df3c0aca80cbe4a5537a9fdd53e16e26541c9c19",
-    "snapshot_branch": "chore/phase0-repository-truth",
-    "live_main_resolution": "Resolve the ACTUAL default-branch (main) HEAD from git/GitHub at session start. baseline_main_head_at_sync is only the SHA this snapshot was synced against; it becomes stale as PRs merge. On a push to main, CI requires this baseline to be an ANCESTOR of the pushed HEAD (never that a merged carrier PR stays open) — so merging the carrier PR #33 cannot make main CI red.",
-    "verification": "CI job repo-state (tools/check_repo_state.py) is EXACT-HEAD fail-closed: durable PRs in prs[] must match live GitHub head/state/draft/base exactly (head drift => RED); on a pull_request the event base sha must equal baseline_main_head_at_sync; on a main push the baseline must be an ancestor of the pushed head. The repository-truth CARRIER PR is current_workflow_pr (NOT in prs[]), so merging it never leaves a recorded-open-but-merged PR."
+    "baseline_main_head_at_sync": "b6c6712cf9e12e5c6989f93e68e70c248722d011",
+    "snapshot_branch": "feat/wave-3b1-isolated-signer",
+    "live_main_resolution": "Resolve the ACTUAL main HEAD from git/GitHub at session start. baseline_main_head_at_sync is the SHA this snapshot was synced against (main right after PR #33 merged). On a pull_request whose base is main, check_repo_state requires the event base sha == this baseline (stale => RED, forcing a rebase/resync).",
+    "verification": "CI job repo-state (tools/check_repo_state.py) is EXACT-HEAD fail-closed. The EXTERNAL durable PRs in prs[] must match live GitHub head/state/draft/base exactly (drift => RED). The current_workflow_pr (PR #31) is exact-head-anchored OUT-OF-BAND by its PR-body 'AUDIT_CANDIDATE_HEAD: <sha>' marker (event head == live headRefOid == marker; zero/duplicate/malformed/stale => RED). PR #31's carrier_transition models the eventual merge (OPEN => design-audit gate; MERGED => verify main + rebase PR #32) so a future main push can never leave main self-stale. Nothing is exempt from exact-head verification."
   },
   "current_workflow_pr": {
-    "number": 33,
-    "branch": "chore/phase0-repository-truth",
+    "number": 31,
+    "branch": "feat/wave-3b1-isolated-signer",
     "base": "main",
-    "sync_parent": "6e26dc6efd0f4daf68add26016cda1f205bfe975",
-    "exact_candidate_source": "The EXACT audited candidate head is the `AUDIT_CANDIDATE_HEAD: <40-hex>` marker in the PR #33 body (out-of-band mutable metadata, set to the live head after the final push). check_repo_state requires event head == live headRefOid == PR-body marker (no descendant slack). sync_parent above is only a historical lineage note, NOT the exact candidate.",
-    "role": "repository-truth carrier",
-    "note": "The PR carrying this snapshot. Deliberately NOT in prs[] (so merging it cannot create a recorded-open-but-merged self-red). Verified live via the exact-head anchor (event==live==PR-body marker). Do NOT merge until the repository-truth re-audit is GREEN."
+    "role": "design-audit carrier (carries this snapshot + the rev-30 addendum)",
+    "exact_candidate_source": "The exact audited head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #31 body. check_repo_state requires event head == live headRefOid == marker. A new commit invalidates the old candidate until the marker is updated and the edited-event CI re-runs. NOT in prs[].",
+    "note": "PR #31 = 3b-1A isolated-signer boundary CODE (Architect Code GREEN) + the 3b-1B design-lock addendum. The addendum's last reviewed candidate rev-29 is Architect design RED (1 P0 + 3 P1 at 1a79bc2); rev-30 remediates it and is re-submitted (PENDING_REAUDIT). Do NOT merge until design-GREEN at the exact head."
   },
   "carrier_transition": {
-    "carrier_pr": 33,
-    "pre_merge": {"gate": "PR33_REAUDIT", "carrier_state": "open", "phase_0": "in_progress"},
-    "post_merge": {"gate": "REBASE_PR31", "carrier_state": "merged", "phase_0": "done"},
-    "note": "The carrier's transition is modeled explicitly so main is never knowingly stale. On a pull_request CI run the pre_merge state applies (carrier open, gate PR33_REAUDIT). On a push to main, check_repo_state resolves PR #33 live; if MERGED it REQUIRES this post_merge block to already be correct (gate REBASE_PR31, carrier merged, phase_0 done) — so the same merged content already declares the post-merge truth and main-push CI is GREEN without a second sync PR."
+    "carrier_pr": 31,
+    "pre_merge": {
+      "gate": "PR31_DESIGN_AUDIT",
+      "carrier_state": "open"
+    },
+    "post_merge": {
+      "gate": "VERIFY_MAIN_REBASE_PR32",
+      "carrier_state": "merged"
+    },
+    "note": "P1-4 transition model for the design-audit carrier. WHILE OPEN the gate is the Architect design audit (then implementation + code audit). Gate names are snapshot-declared (generic; not the Phase-0 carrier's gate values). PR #31 is NOT mergeable now (design RED). On the eventual main push, check_repo_state resolves PR #31 live; if MERGED it REQUIRES post_merge (carrier_state merged + a non-empty gate + next_action_by_carrier.merged) to already be declared, so main is never left self-stale (the Phase-0 self-stale condition cannot recur)."
   },
   "active": {
     "wave": "3b-1B",
@@ -28,20 +33,6 @@
     "branch": "feat/wave-3b1-isolated-signer"
   },
   "prs": [
-    {
-      "number": 31,
-      "branch": "feat/wave-3b1-isolated-signer",
-      "base": "main",
-      "head": "6ebeca88627640eef8effe576b3d388417cb4949",
-      "role": "design",
-      "draft": false,
-      "merge_state": "open",
-      "parent_pr": null,
-      "contains": "3b-1A isolated-signer boundary CODE (recorded Architect Code GREEN) + the 3b-1B rev-26 design-lock addendum (design candidate, PENDING re-audit)",
-      "code_verdict": "GREEN",
-      "code_verdict_scope": "3b-1A isolated-signer boundary only",
-      "ci": "8/8 SUCCESS at head (CI-green is NOT design/audit-green)"
-    },
     {
       "number": 32,
       "branch": "impl/wave-3b1b-execution-binding",
@@ -52,81 +43,125 @@
       "merge_state": "open",
       "parent_pr": 31,
       "is_rc": false,
-      "contains": "3b-1B authoritative execution->receipt binding WIP implementation: acceptance ledger/outbox/recovery, evidence-head anti-rollback floor, dual-key separation, recorder-owned execution, principal isolation, two-namespace store, desktop verifier, Linux isolation/E2E proof.",
-      "ci": "8/8 SUCCESS at head (CI-green is NOT design/audit-green)",
-      "note": "Draft/WIP checkpoint. NOT an RC, NOT merge-ready, has NOT passed a fresh exact-head zero-trust audit."
+      "contains": "UNAPPROVED Draft/WIP 3b-1B code with NO authority over the design; rebased + adapted ONLY AFTER the design is Architect design-GREEN. Predates PR #31's rebase and still needs its own rebase.",
+      "ci": "8/8 SUCCESS at head 0e7ee1a (pre-rebase; CI-green is NOT design/audit-green)",
+      "note": "Draft/WIP checkpoint. NOT an RC, NOT Architect-approved. Frozen from architectural expansion until the design is GREEN."
     }
   ],
   "status_tokens": {
-    "_note": "The current-state block of NEXT_CHAT.md, PROJECT_STATE.md and TASKS.md must contain each of these `KEY: value` tokens verbatim; tools/check_coordination.py fails closed on any mismatch. This is the machine-checkable single source that prevents contradictory present-tense prose.",
+    "_note": "The current region of NEXT_CHAT.md, PROJECT_STATE.md and TASKS.md must contain each of these `KEY: value` tokens verbatim; tools/check_coordination.py fails closed on any mismatch.",
     "CURRENT_ACTIVE_TASK": "T-017",
     "CURRENT_ACTIVE_WAVE": "3b-1B",
+    "CURRENT_PHASE0": "done",
     "CURRENT_DESIGN_GATE": "PENDING_REAUDIT",
+    "CURRENT_DESIGN_CANDIDATE": "rev-30",
+    "CURRENT_LAST_REVIEWED": "rev-29",
+    "CURRENT_LAST_VERDICT": "RED",
     "CURRENT_DESIGN_PR": "31",
     "CURRENT_IMPL_PR": "32",
     "CURRENT_IMPL_STATE": "WIP",
-    "CURRENT_REPO_TRUTH_PR": "33",
-    "CURRENT_PRE_MERGE_GATE": "PR33_REAUDIT",
-    "CURRENT_POST_MERGE_GATE": "REBASE_PR31",
-    "CARRIER_IF_OPEN_GATE": "PR33_REAUDIT",
-    "CARRIER_IF_MERGED_GATE": "REBASE_PR31",
-    "CARRIER_IF_OPEN_PHASE0": "in_progress",
-    "CARRIER_IF_MERGED_PHASE0": "done",
+    "CARRIER_IF_OPEN_GATE": "PR31_DESIGN_AUDIT",
+    "CARRIER_IF_MERGED_GATE": "VERIFY_MAIN_REBASE_PR32",
     "CURRENT_PRODUCTION_VERIFIED": "false",
     "CURRENT_VERIFY_SEAM": "complete",
     "CURRENT_RECEIPT_PLUMBING": "complete",
     "CURRENT_GOVERNED_ROUNDTRIP": "complete"
   },
   "design_gate": {
-    "candidate": "rev-26 (docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) carried on PR #31",
-    "candidate_head_note": "The exact audit HEAD is NOT 6ebeca8: after PR #33 merges, PR #31 is rebased onto the repaired main, changing its HEAD. rev-26 is submitted for audit on that NEW exact HEAD.",
+    "candidate": "rev-30 (docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) carried on PR #31",
+    "candidate_head_note": "The exact audit HEAD is PR #31's current live head, recorded in the PR body AUDIT_CANDIDATE_HEAD marker. rev-30 remediates the rev-29 RED and is re-submitted for the Architect design audit at that exact head.",
+    "last_reviewed_candidate": "rev-29",
     "last_architect_verdict": "RED",
-    "last_architect_verdict_scope": "a PRIOR 3b-1B design revision. rev-26 itself has NOT received an Architect verdict.",
+    "last_architect_verdict_scope": "rev-29 at exact HEAD 1a79bc28ba89d78fc547b9f17b4fb94cdea81abe — 1 P0 + 3 P1 (CI run 30297820594 9/9 GREEN; CI is NOT design GREEN). Predecessors rev-26, rev-27 and rev-28 were also RED.",
+    "current_candidate": "rev-30",
     "current_candidate_gate": "PENDING_REAUDIT",
-    "preaudit_preparation": {
-      "verdict": "RED (independent preparation review only — NOT the Architect's verdict)",
+    "note": "current_candidate rev-30 is UNREVIEWED (PENDING_REAUDIT). It does NOT inherit the rev-29 RED verdict; that verdict is recorded as last_architect_verdict on last_reviewed_candidate rev-29.",
+    "open_blockers": {
+      "note": "Architect design RED on rev-29 (1 P0 + 3 P1). rev-30 remediates these; re-audit pending. These are the ONLY open design blockers.",
       "p0": [
-        "TCB code integrity: the lease pins launcher_executable_sha256 but NOT executor_executable_sha256, and no contract requires TCB binaries to be root-owned / non-writable by the in-scope login user -> a sidecar can swap the executor/launcher binary and obtain a genuinely-signed forged trusted_verified.",
-        "Distinct-UID linchpin never specified for the desktop's own sidecar (a child inherits the backend UID); on a single-UID desktop the whole ACL/principal-separation model collapses.",
-        "Windows (the primary platform) has ZERO normative design; 'fail-closed on Windows' is unenforced prose, not a specified+tested runtime gate."
+        "P0 define the exact broker-committed output delivery path (§4.10(g)). rev-29's renderer<->broker reply frame carried only {protocol, status, conversation_id, reason?} — insufficient for the renderer to obtain the exact verified+persisted message. rev-30 locks ONE model: brops.renderer-governed-turn-result.v1 returns the broker-produced immutable UI projection message{message_id, role:assistant, author, body, created_at_ms, trust_state:trusted_verified} on commit (NO message on blocked; a CLOSED reason enum). The returned body is the exact strict-UTF8 bytes whose length+SHA-256 matched the signed accepted-output envelope; message_id/body/trust_state equal the row the broker verification tx committed (in-tx re-read; any mismatch => fail-closed commit_readback_mismatch); ONLY the broker tx creates the verified message + trust_state; the renderer never reads/writes the trust DB and no renderer command (incl. generic chat writes) can create/edit/mark it; output-bytes == persisted body == returned body is equality-tested; forged renderer events can never render Verified; blocked turns return no assistant message. +positive/negative E2E delivery tests."
       ],
       "p1": [
-        "Desktop manifest / root-anchor schema+rotation+anti-rollback not specified in this normative source.",
-        "Supervisor/signer environment + config-file integrity (BROPS_GOVERNED_*, policy bundle sha) not protected from the in-scope user.",
-        "30s challenge TTL vs large (8 MiB) staged upload can deterministically block a legitimate turn."
-      ],
-      "remediate_in": "Phase 1 (edit rev-26 addendum in place on the rebased PR #31) BEFORE the real Architect audit."
+        "P1-1 add exact IPC request correlation + payload-aware idempotency. A NON-authoritative client_request_id (UUIDv4) on the request grants no signing/verification authority; the broker mints its OWN authoritative broker_turn_id + request_nonce. Idempotency is keyed on the exact normalized {client_request_id, conversation_id, agent}: identical live duplicate => reattach to the same broker_turn_id; same client_request_id with a different conversation or agent => retry_conflict; a different request while the conversation already has a live turn => explicit turn_in_progress (NOT silent reattachment — replaces the old 'idempotent on conversation_id' rule); every reply echoes client_request_id + broker_turn_id; a late reply from an earlier timed-out request cannot satisfy a newer request. +disconnect/reconnect/duplicate/conflicting-agent/late-reply tests.",
+        "P1-2 complete the stdin/stdout/stderr (FDs 0/1/2) lifecycle (§2.7). The recorder OPENS controlled inert endpoints for 0/1/2, then maps + clears FD_CLOEXEC on 3-6, then launches the helper. The launcher verifies 0/1/2 are exactly the approved inert endpoints, rejects interactive/inherited/unexpected stdio, closes 0/1/2 or sets FD_CLOEXEC on them BEFORE fexecve, and confirms ONLY 3-6 survive into the executor. +a real executor test that enumerates /proc/self/fd and proves only FDs 3-6 are inherited.",
+        "P1-3 synchronize canonical state (last reviewed = rev-29 RED, current candidate = rev-30, gate = PENDING_REAUDIT, blockers = this 1 P0 + 3 P1, next action = implement rev-30 -> push -> marker -> edited-event CI -> re-audit). DONE here across config/current_state.json, NEXT_CHAT.md, PROJECT_STATE.md, TASKS.md, the addendum banner/history, and the PR #31 body."
+      ]
+    },
+    "preaudit_preparation": {
+      "verdict": "CLOSED (independent preparation review only — NOT the Architect verdict). The 3 preparation-P0 were closed in rev-26.",
+      "note": "Preparation closure is NOT the design gate. The Architect design verdict on the last reviewed candidate (rev-29) is RED; the open blockers are the 1 P0 + 3 P1 above."
     }
   },
   "waves": {
-    "3a": {"status": "complete", "code_exists": true, "note": "slices 1/2/3 merged (6c920d0, 9b214e5, 8a580028); verify-seam + receipt-plumbing wired fail-closed; migrations through 0014, SCHEMA_VERSION=14"},
-    "3b-0": {"status": "design_green_merged", "code_exists": false, "note": "isolated-signer design rev 5, Architect DESIGN GREEN (def7711), merged via PR #30 (df3c0ac); design-only"},
-    "3b-1A": {"status": "code_green", "code_exists": true, "note": "isolated-signer boundary code; Architect Code GREEN; on PR #31"},
-    "3b-1B": {"status": "design_pending_reaudit_code_wip", "code_exists": true, "impl_pr": 32, "design_pr": 31, "note": "rev-26 design PENDING re-audit (not GREEN); WIP implementation exists in PR #32 (Draft, not an RC)"},
-    "3b-2": {"status": "not_started", "code_exists": false},
-    "3b-3": {"status": "not_started", "code_exists": false}
+    "3a": {
+      "status": "complete",
+      "code_exists": true,
+      "note": "slices 1/2/3 merged (6c920d0, 9b214e5, 8a580028); migrations through 0014, SCHEMA_VERSION=14"
+    },
+    "3b-0": {
+      "status": "design_green_merged",
+      "code_exists": false,
+      "note": "isolated-signer design rev 5, Architect DESIGN GREEN (def7711), merged via PR #30 (df3c0ac)"
+    },
+    "3b-1A": {
+      "status": "code_green",
+      "code_exists": true,
+      "note": "isolated-signer boundary code; Architect Code GREEN; on PR #31"
+    },
+    "3b-1B": {
+      "status": "design_red_rev29_code_unapproved_wip",
+      "code_exists": true,
+      "impl_pr": 32,
+      "design_pr": 31,
+      "note": "Design last-reviewed rev-29 = Architect RED (1 P0 + 3 P1 at 1a79bc2); rev-30 remediates, re-audit pending. NO Architect-approved or merged 3b-1B implementation exists. PR #32 holds UNAPPROVED Draft/WIP code with no authority over the design; adapt only after design GREEN."
+    },
+    "3b-2": {
+      "status": "not_started",
+      "code_exists": false
+    },
+    "3b-3": {
+      "status": "not_started",
+      "code_exists": false
+    }
   },
   "closed_stale_prs": [
-    {"number": 13, "reason": "superseded: obsolete self-asserted receipt.verified model; 0012_message_receipt.sql collides with canonical 0012_approval_provenance.sql; nothing salvageable (badge/blocked UI already on main)"},
-    {"number": 12, "reason": "superseded after salvage: nine docs/impl/PHASE_*.md are stale proposals; the two useful test files (ui.test.tsx, enums.test.ts) carried forward on chore/phase0-repository-truth"}
+    {
+      "number": 13,
+      "reason": "superseded: obsolete self-asserted receipt.verified model; migration collision"
+    },
+    {
+      "number": 12,
+      "reason": "superseded after salvage: stale proposal docs; two useful test files carried forward"
+    }
+  ],
+  "merged_prs": [
+    {
+      "number": 33,
+      "reason": "Phase 0 repository-truth remediation + semantic/live-truth exact-head gates; Owner-approved GREEN at exact 45f3793; squash-merged to main (b6c6712)."
+    },
+    {
+      "number": 30,
+      "reason": "Wave 3b-0 isolated-signer design (Architect GREEN rev 5, def7711); merged df3c0ac."
+    }
   ],
   "product_roadmap": {
-    "note": "MASTER_EXECUTION_ROADMAP.md v1.0 Locked. The security spine above is a subset. The whole app is NOT finished.",
-    "phase_0": {"if_carrier_open": "in_progress", "if_carrier_merged": "done", "resolve": "phase_0 is transition-aware: resolve carrier PR #33 live — OPEN => in_progress, MERGED => done. main-push CI (check_repo_state) enforces if_carrier_merged==done."},
+    "note": "MASTER_EXECUTION_ROADMAP.md v1.0 Locked. The security spine is a subset. The whole v1 app is NOT finished — a large multi-wave build remains (Phases 1-10). Every governed 'Verified' path is blocked behind the 3b-1B design + Wave 3b security chain.",
+    "phase_0": "done",
     "phase_1": "in_progress",
     "phases_2_to_10": "not_done",
-    "ai_entry_points_governed": "only the main governed-chat seam today; run-steps / Ask Bro / conversation-reply / automations / group chat / integrations are NOT yet governed (tracked open blockers)",
-    "windows_production_isolation": "not_done (Linux-only isolation proofs exist; Windows is a release blocker)"
+    "ai_entry_points_governed": "only the main governed-chat seam runs the chain (fail-closed, no trusted_verified). stream_run_step / stream_ask / reply_in_conversation + stream_reply's real-provider fallthrough are UNGOVERNED (tracked; inventory gate on branch ci/ai-surface-inventory-gate, queued).",
+    "windows_production_isolation": "not_done (Linux-only isolation proofs exist; Windows is a release blocker — rev-28 §0.W + docs/design/WINDOWS_BROKER_DESIGN.md queued on branch docs/windows-broker-design)."
   },
   "next_action_by_carrier": {
-    "open": "PR #33 is OPEN: obtain repository-truth GREEN on the EXACT candidate (the PR-body AUDIT_CANDIDATE_HEAD) and merge PR #33. Do NOT merge until re-audit GREEN.",
-    "merged": "PR #33 is MERGED: verify main CI (post-merge), rebase PR #31 onto the repaired main, resolve PR #31's NEW exact HEAD, remediate rev-26's 3 preparation-P0, then submit rev-26 for the Architect design audit on that new HEAD."
+    "_note": "PR #31 carrier_transition branches (both required when carrier_transition is modeled).",
+    "open": "PR #31 is OPEN (design RED): the rev-29 Architect design RED (1 P0 + 3 P1) is remediated as rev-30 (P0 broker-committed output delivery path; P1-1 request correlation + payload-aware idempotency; P1-2 0/1/2 stdio lifecycle; P1-3 canonical sync); push the new exact head, update the AUDIT_CANDIDATE_HEAD marker, run edited-event CI, and re-submit rev-30 for the Architect design audit. Do NOT merge until design-GREEN at the exact head, then implemented + code-audit GREEN + CI GREEN.",
+    "merged": "PR #31 MERGED (only after design-GREEN + implementation + code-audit GREEN): verify the actual main commit + main-push CI, update Phase/Wave state, rebase PR #32 onto the approved implementation sequence, and re-sync this snapshot (remove current_workflow_pr #31, set the new active state) so main is never self-stale."
   },
+  "next_action": "Remediate the rev-29 Architect design RED (1 P0 + 3 P1) as rev-30 on PR #31 (DONE); push the new exact head; update the AUDIT_CANDIDATE_HEAD marker; run edited-event CI; re-submit rev-30 for the Architect design audit at that exact head. PR #31 remains unmerged; PR #32 stays Draft and frozen.",
   "stop_gates": [
-    "NoTrustedManifest stays fail-closed; NO production 'Verified'/trusted_verified until the complete real trust chain is exact-head zero-trust GREEN.",
-    "PR #31 rev-26 3b-1B design must NOT merge until it is Architect design-GREEN at exact HEAD, implemented, code-audit GREEN, and CI GREEN. rev-26 is PENDING re-audit and has an open preparation-RED (3 P0).",
-    "PR #32 is a Draft/WIP checkpoint: do NOT merge; do NOT call it an RC; freeze it from architectural expansion beyond rev-26 until the design verdict is GREEN.",
-    "PR #33 (repository truth): WHILE OPEN, do NOT merge until its re-audit is GREEN on the exact candidate; ONCE MERGED, the gate becomes REBASE_PR31 (see next_action_by_carrier).",
-    "CI-green is NOT audit-green; a passing unit test is NOT a working install; a Linux isolation proof is NOT a Windows production proof."
+    "NoTrustedManifest stays fail-closed; NO production trusted_verified until the complete real trust chain is exact-head zero-trust GREEN.",
+    "PR #31 3b-1B design: last-reviewed rev-29 = Architect design RED (1 P0 + 3 P1 at 1a79bc2); rev-30 (current candidate) is PENDING_REAUDIT and does NOT inherit the verdict. It must NOT merge until design-GREEN at the exact head, then implemented + code-audit GREEN + CI GREEN.",
+    "No Architect-approved or merged 3b-1B implementation exists. PR #32 holds UNAPPROVED Draft/WIP 3b-1B code with NO authority over the design; rebased + adapted ONLY AFTER the design is GREEN and stays frozen from architectural expansion.",
+    "CI-green is NOT design/audit-green; a passing unit test is NOT a working install; a Linux isolation proof is NOT a Windows production proof (the Windows broker remains a release blocker)."
   ]
 }

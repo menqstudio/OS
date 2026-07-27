@@ -51,7 +51,38 @@ def _receipt_of(outcome: Any) -> Receipt:
         # boolean; trust is the desktop's signature check, never a bridge claim.
         "envelope_jcs_b64": getattr(outcome, "receipt_envelope_jcs_b64", None),
         "signature_b64": getattr(outcome, "receipt_signature_b64", None),
+        # Wave 3b (design §4.2): the exact containment-evidence bytes (base64url) so the
+        # desktop can persist + re-check `containment_evidence_sha256`. Carried on the
+        # bridge result, NOT the signer's 64 KiB IPC frame; capped at 64 KiB here.
+        "containment_evidence_b64": _bounded_b64(
+            getattr(outcome, "receipt_containment_evidence_b64", None)
+        ),
+        # Wave 3b (design §4.2, P1-6): the durable forensic-attestation record, so the
+        # desktop can persist + later re-verify receipt<->run (which supervisor attested
+        # what) WITHOUT the runtime. Non-authoritative transport — the desktop re-verifies
+        # the attestation against its manifest attestation key before trusting it.
+        "attestation_evidence_jcs_b64": getattr(outcome, "receipt_attestation_evidence_jcs_b64", None),
+        "attestation_signature_b64": getattr(outcome, "receipt_attestation_signature_b64", None),
+        "supervisor_attestation_key_id": getattr(outcome, "receipt_supervisor_attestation_key_id", None),
+        "run_id": getattr(outcome, "receipt_run_id", None),
+        "execution_attempt_id": getattr(outcome, "receipt_execution_attempt_id", None),
+        "lease_id": getattr(outcome, "receipt_lease_id", None),
     }
+
+
+# Containment-bytes transport cap (design §4.2): 64 KiB of base64url on the bridge result.
+_MAX_CONTAINMENT_B64 = 64 * 1024
+
+
+def _bounded_b64(value: Any) -> str | None:
+    """Pass a base64url string through only if within the transport cap; otherwise drop
+    it to None (fail-closed — a missing artifact just means the desktop can't re-check it,
+    it never fabricates one). Non-strings become None."""
+    if not isinstance(value, str) or value == "":
+        return None
+    if len(value.encode("utf-8")) > _MAX_CONTAINMENT_B64:
+        return None
+    return value
 
 
 def run_governed_turn(

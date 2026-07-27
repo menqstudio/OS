@@ -94,6 +94,9 @@ def compare_external_prs(snapshot: dict, live: dict) -> list[str]:
         elif pr.get("base") and pr["base"] != base_branch:
             failures.append(f"PR #{n}: snapshot base={pr['base']!r} but GitHub base={base_branch!r}")
         # EXACT head: both sides must be 40-hex; drift is a FAILURE (forces re-sync), missing live is RED.
+        # NOTE: the PR that CARRIES this snapshot is NOT listed in prs[] — it is the current_workflow_pr,
+        # exact-head-anchored out-of-band by its PR-body AUDIT_CANDIDATE_HEAD marker (verify_carrier_exact_head).
+        # So every entry HERE is an external durable PR and is fully exact-head-verified (nothing is exempt).
         snap_head = pr.get("head", "")
         live_head = lv.get("headRefOid")
         if not _is_sha(snap_head):
@@ -216,8 +219,10 @@ def verify_carrier_exact_head(event_head, live_head, body_marker) -> list[str]:
 
 def verify_carrier_post_merge(carrier_live: dict | None, snapshot: dict) -> list[str]:
     """On a push to main, resolve the carrier live. Fail closed if it cannot be resolved (can't prove
-    which transition branch applies). If MERGED, the snapshot's post_merge state + phase_0 + merged
-    next_action must already be correct so main is NOT knowingly stale. Pure/testable."""
+    which transition branch applies). If MERGED, the snapshot's post_merge branch must ALREADY declare
+    the post-merge truth (carrier_state 'merged' + a non-empty gate + a merged next-action) so main is
+    NOT knowingly stale — the exact anti-self-stale rule. Gate NAMES are snapshot-declared (generic
+    across a repository-truth carrier and a design-audit carrier), not hard-coded. Pure/testable."""
     ct = snapshot.get("carrier_transition") or {}
     post = ct.get("post_merge") or {}
     if not isinstance(carrier_live, dict) or carrier_live.get("state") is None:
@@ -225,14 +230,10 @@ def verify_carrier_post_merge(carrier_live: dict | None, snapshot: dict) -> list
     failures: list[str] = []
     if carrier_live.get("state") == "MERGED":
         if post.get("carrier_state") != "merged":
-            failures.append("carrier MERGED but carrier_transition.post_merge.carrier_state != 'merged'")
-        if post.get("gate") != "REBASE_PR31":
-            failures.append(f"carrier MERGED but post_merge.gate is {post.get('gate')!r}, expected 'REBASE_PR31'")
-        if post.get("phase_0") != "done":
-            failures.append(f"carrier MERGED but post_merge.phase_0 is {post.get('phase_0')!r}, expected 'done'")
-        phase0 = (snapshot.get("product_roadmap") or {}).get("phase_0")
-        if isinstance(phase0, dict) and phase0.get("if_carrier_merged") != "done":
-            failures.append("carrier MERGED but product_roadmap.phase_0.if_carrier_merged != 'done'")
+            failures.append("carrier is live-MERGED but carrier_transition.post_merge.carrier_state != 'merged' "
+                            "— canonical state still describes the carrier as open/pending (self-stale main)")
+        if not (isinstance(post.get("gate"), str) and post.get("gate")):
+            failures.append("carrier MERGED but carrier_transition.post_merge.gate is missing/empty")
         na = snapshot.get("next_action_by_carrier") or {}
         if not na.get("merged"):
             failures.append("carrier MERGED but next_action_by_carrier.merged is missing")
@@ -242,9 +243,9 @@ def verify_carrier_post_merge(carrier_live: dict | None, snapshot: dict) -> list
 def verify_carrier_state(carrier_live: dict | None, snapshot: dict) -> list[str]:
     """Enumerate the carrier's allowed live states and validate the MATCHING transition branch.
     Fail-closed: unresolved / missing / unknown live state => RED (we can't classify pre vs post
-    merge). OPEN validates the pre_merge branch; MERGED validates the post_merge branch. This runs on
-    BOTH the pull_request event (carrier expected OPEN) and the main push (expected MERGED), so a
-    malformed / unexpected live carrier state can never fail-open. Pure/testable."""
+    merge). OPEN validates the pre_merge branch; MERGED validates the post_merge branch. Gate NAMES are
+    snapshot-declared (a repository-truth carrier and a design-audit carrier use different gate strings),
+    so this validates STRUCTURE (carrier_state + a non-empty gate), not a hard-coded value. Pure/testable."""
     if not isinstance(carrier_live, dict) or carrier_live.get("state") is None:
         return ["carrier PR live state unresolved/missing — cannot classify pre/post-merge (fail-closed)"]
     state = carrier_live.get("state")
@@ -258,13 +259,8 @@ def verify_carrier_state(carrier_live: dict | None, snapshot: dict) -> list[str]
     failures: list[str] = []
     if pre.get("carrier_state") != "open":
         failures.append("carrier OPEN but carrier_transition.pre_merge.carrier_state != 'open'")
-    if pre.get("gate") != "PR33_REAUDIT":
-        failures.append(f"carrier OPEN but pre_merge.gate is {pre.get('gate')!r}, expected 'PR33_REAUDIT'")
-    if pre.get("phase_0") != "in_progress":
-        failures.append(f"carrier OPEN but pre_merge.phase_0 is {pre.get('phase_0')!r}, expected 'in_progress'")
-    phase0 = (snapshot.get("product_roadmap") or {}).get("phase_0")
-    if isinstance(phase0, dict) and phase0.get("if_carrier_open") != "in_progress":
-        failures.append("carrier OPEN but product_roadmap.phase_0.if_carrier_open != 'in_progress'")
+    if not (isinstance(pre.get("gate"), str) and pre.get("gate")):
+        failures.append("carrier OPEN but carrier_transition.pre_merge.gate is missing/empty")
     return failures
 
 
@@ -369,16 +365,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     failures += compare_external_prs(snap, fetch_live(numbers))
 
-    # Carrier EXACT-head anchor on a pull_request: event head == live headRefOid == PR-body marker,
-    # plus the enumerated carrier-state check (OPEN => the pre_merge branch must be the active truth).
+    # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
+    # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The
+    # merge-transition check (verify_carrier_state) applies ONLY when the snapshot models a
+    # carrier_transition (the repository-truth carrier that merges to repair main). A design-audit
+    # carrier (e.g. PR #31) has no transition block and needs only the exact-head anchor.
+    models_transition = isinstance(snap.get("carrier_transition"), dict)
     if event is not None and carrier_no is not None:
         cl = fetch_carrier(carrier_no)
         event_head = ((event.get("pull_request") or {}).get("head") or {}).get("sha")
         failures += verify_carrier_exact_head(event_head, (cl or {}).get("headRefOid"),
                                               parse_audit_candidate((cl or {}).get("body")))
-        failures += verify_carrier_state(cl, snap)
+        if models_transition:
+            failures += verify_carrier_state(cl, snap)
     # Carrier state on a main push (fail-closed if unresolvable/unknown; MERGED => post_merge branch).
-    if on_main_push and carrier_no is not None:
+    if on_main_push and carrier_no is not None and models_transition:
         failures += verify_carrier_state(fetch_carrier(carrier_no), snap)
 
     if failures:

@@ -1,21 +1,22 @@
 {
-  "schema": 2,
-  "purpose": "menqstudio/OS root canonical startup read order. Every new session (Claude or ChatGPT) reads these IN ORDER, IN FULL, before acting. GitHub is the single source of truth; a textual 'I read it' is not evidence. Mirrors the human-facing START_HERE.md / CLAUDE.md startup law in machine-readable form. (The engine/ half has its own engine/config/canonical-read-manifest.json with engine-relative paths — that is a separate track.)",
   "paths": [
     "NEXT_CHAT.md",
     "START_HERE.md",
+    "AGENTS.md",
     "CLAUDE.md",
     "PROJECT_STATE.md",
     "TASKS.md",
     "OWNERS.md",
     "docs/ARCHITECTURE.md",
     "MASTER_EXECUTION_ROADMAP.md",
+    "apps/desktop/SECURITY.md",
     "docs/design/WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md",
     "docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md",
-    "apps/desktop/SECURITY.md",
+    "docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md",
+    "docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md",
     "config/current_state.json"
   ],
   "current_state_pointer": "NEXT_CHAT.md",
   "machine_state_pointer": "config/current_state.json",
-  "notes": "NEXT_CHAT.md holds the exact current branch/PR/HEAD/blockers/next-action and must be updated in the same commit as any state change; config/current_state.json is the machine-readable mirror the human docs must agree with (tools/check_coordination.py validates the agreement). PROJECT_STATE.md and TASKS.md are the live coordination board. Do not add stale or nonexistent paths here. The Wave 3b-1 normative docs (WAVE_3B1_EXECUTION_BINDING_MAP.md, WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) live on PR #31's branch and are added here only when 3b-1 merges to main."
+  "notes": "AGENTS.md and START_HERE.md are equivalent doorways (AGENTS.md is a GitHub/Codex convenience shim that redirects to START_HERE.md). NEXT_CHAT.md §3 holds the exact current branch/PR/HEAD/blockers/next-action and must be updated in the same commit as any state change; config/current_state.json is the machine-readable mirror the human docs must agree with (tools/check_coordination.py validates the agreement, tools/check_repo_state.py verifies it against live GitHub). PROJECT_STATE.md and TASKS.md are the live coordination board. The Wave 3b design chain: WAVE_3B_ISOLATED_SIGNER_DESIGN.md (Architect-GREEN, isolated-signer/manifest) -> WAVE_3B1_EXECUTION_BINDING_MAP.md (3b-1 re-scope) -> WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md (3b-1B design-lock, PENDING Architect re-audit at the exact HEAD, NOT GREEN). Every path here is asserted to exist by the coordination gate. Do not add stale or nonexistent paths here."
 }
