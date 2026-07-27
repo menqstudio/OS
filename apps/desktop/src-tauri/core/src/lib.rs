@@ -6,6 +6,14 @@ pub mod db;
 pub mod domain;
 pub mod receipt;
 pub mod receipt_store;
+pub mod governed_turn_ipc;
+pub mod governed_message_store;
+pub mod fd_lifecycle;
+pub mod privilege_drop;
+pub mod tcb_integrity;
+pub mod broker_turns;
+pub mod broker_orchestrator;
+pub mod governed_output_stream;
 pub mod repo;
 
 pub use domain::{

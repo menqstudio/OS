@@ -3,8 +3,7 @@
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
-**Last updated · Վերջին թարմացum:** 2026-07-27 (Phase 0 MERGED `b6c6712`; PR #31 rebased; rev-26 Architect design **RED** (2 P0 + 3 P1); rev-27 remediation submitted for re-audit).
-
+**Last updated · Վերջին թարմացum:** 2026-07-27 (Phase 0 MERGED `b6c6712`; PR #31 rebased; rev-26 Architect design **RED** (2 P0 + 3 P1); rev-27 remediation submitted for re-audit; 3b-1B governed-chain implementation (contract/store/idempotency/orchestrator/FD/privilege/TCB/output-stream/authority/schema/renderer-proxy slices, cargo+py+vitest verified) on impl/wave-3b1b-core).
 <!-- CURRENT_STATE: the single authoritative present-tense truth. Tokens are validated against config/current_state.json.status_tokens by tools/check_coordination.py. Historical prose is inside HISTORY markers and is NOT current. -->
 > **▶ CURRENT STATE — the one authoritative present-tense truth.** Tokens:
 > `CURRENT_ACTIVE_TASK: T-017` · `CURRENT_ACTIVE_WAVE: 3b-1B` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: PENDING_REAUDIT` · `CURRENT_DESIGN_CANDIDATE: rev-28` · `CURRENT_LAST_REVIEWED: rev-27` · `CURRENT_LAST_VERDICT: RED` · `CURRENT_DESIGN_PR: 31` · `CURRENT_IMPL_PR: 32` · `CURRENT_IMPL_STATE: WIP` · `CARRIER_IF_OPEN_GATE: PR31_DESIGN_AUDIT` · `CARRIER_IF_MERGED_GATE: VERIFY_MAIN_REBASE_PR32` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
