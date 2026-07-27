@@ -11,6 +11,7 @@ pub mod governed_message_store;
 pub mod fd_lifecycle;
 pub mod privilege_drop;
 pub mod broker_turns;
+pub mod broker_orchestrator;
 pub mod tcb_integrity;
 pub mod repo;
 
