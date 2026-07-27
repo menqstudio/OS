@@ -1,0 +1,23 @@
+[package]
+name = "brops-launcher"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "BroPS privileged Model-A launcher (rev-30 §2.7): verify the executor FD set + privilege-drop final state, then fexecve the pinned image. Real syscalls are Linux-only; the fail-closed decision core is pure and tested on any host."
+
+[[bin]]
+name = "brops-launcher"
+path = "src/main.rs"
+
+[dependencies]
+# The launcher reuses the already-landed pure decision logic (rev-30 §2.7): the
+# FD-set contract and the privilege-drop order/final-state verifiers. It NEVER
+# re-implements those rules — it calls them so the launcher and the recorder-side
+# checks are governed by exactly one source of truth.
+brops-core = { path = "../core" }
+
+# The actual dup2/fcntl/setresuid/capset/fexecve syscalls exist only on Linux
+# (Model A, §2.7/§4.7). libc is pulled in ONLY on Linux; the Windows/other-host
+# build stays pure-std and fails closed at runtime.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
