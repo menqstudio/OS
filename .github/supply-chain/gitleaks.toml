@@ -1,0 +1,46 @@
+# gitleaks.toml - secret-scan configuration for menqstudio/OS.
+#
+# Consumed by .github/workflows/supply-chain.yml job `gitleaks`. Extends the tool's
+# built-in ruleset (so all upstream detectors stay active) and layers repo-specific
+# allowlisting on top. gitleaks fails the job closed (--exit-code 1) on any finding
+# that is NOT allowlisted here.
+
+title = "menqstudio/OS gitleaks config"
+
+# Inherit gitleaks' maintained default rules; this file only ADDS allowlist scope
+# and any repo-specific rules. Do not disable the default detectors wholesale.
+[extend]
+useDefault = true
+
+# Global allowlist: paths and regexes that are known-safe (fixtures, test vectors,
+# vendored lockfiles, documentation examples). Anything matched here is not reported.
+[allowlist]
+description = "Repo-wide false-positive suppression (fixtures, lockfiles, docs samples)."
+paths = [
+    # Lockfiles: pinned hashes/integrity strings trip entropy heuristics, not secrets.
+    '''apps/desktop/package-lock\.json''',
+    '''.*Cargo\.lock$''',
+    '''engine/requirements-ci\.txt''',
+    # Test fixtures and sample data - deliberately fake credentials live here.
+    '''.*/tests?/.*fixtures?/.*''',
+    '''.*/testdata/.*''',
+    # engine test suite: test_secrets.py IS the secret-detector's unit test (it feeds
+    # deliberate AKIA/JWT/RSA-PRIVATE-KEY vectors into bro_secrets.contains_secret);
+    # test_stop_and_audit.py carries a fake API-key token for the stop/audit flow.
+    # These are test vectors, not live credentials.
+    '''engine/tests/.*''',
+    # This config's own example tokens.
+    '''\.github/supply-chain/.*''',
+]
+regexes = [
+    # Obvious placeholders used throughout docs and tests.
+    '''(?i)(example|dummy|sample|placeholder|changeme|redacted|xxxx+)''',
+    '''AKIAEXAMPLE[A-Z0-9]*''',
+    '''0{16,}''',
+    # BRO_OPERATOR_ROOT_PUBKEY committed in engine/.github/workflows/verify.yml — this is
+    # the operator root PUBLIC key (the CI registry pin), safe by design to commit. The
+    # generic-api-key detector trips on the 64-hex string; allow this exact public value.
+    '''7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c''',
+]
+# Commit SHAs known to contain only rotated/example secrets can be listed here.
+commits = []
