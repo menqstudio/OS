@@ -56,13 +56,21 @@ def _default_state() -> dict:
         ],
         "waves": {"3b-1B": {"status": "design_pending_reaudit_code_wip", "code_exists": True, "impl_pr": 32}},
         "design_gate": {"current_candidate_gate": "PENDING_REAUDIT", "last_architect_verdict": "RED"},
+        "status_tokens": {
+            "CURRENT_ACTIVE_TASK": "T-017",
+            "CURRENT_DESIGN_GATE": "PENDING_REAUDIT",
+            "CURRENT_VERIFY_SEAM": "complete",
+        },
         "stop_gates": ["no production Verified until the chain is exact-head GREEN"],
         "next_action": "re-audit + merge PR #33, rebase PR #31, then submit rev-26 for audit",
     }
 
 
+_TOKENS = "`CURRENT_ACTIVE_TASK: T-017` `CURRENT_DESIGN_GATE: PENDING_REAUDIT` `CURRENT_VERIFY_SEAM: complete`"
+
+
 def _doc_mentioning_both(extra="") -> str:
-    return (f"Active: PR #31 (`{BRANCH_31}`) + PR #32 (`{BRANCH_32}`), task T-017. {extra}\n")
+    return (f"Active: PR #31 (`{BRANCH_31}`) + PR #32 (`{BRANCH_32}`), task T-017. {_TOKENS} {extra}\n")
 
 
 def _state_repo(root: pathlib.Path, *, current_state="DEFAULT",
@@ -80,6 +88,7 @@ def _state_repo(root: pathlib.Path, *, current_state="DEFAULT",
         "# state\n\n**Last updated:** today\n\n" + _doc_mentioning_both(), encoding="utf-8")
     (root / "TASKS.md").write_text(
         tasks if tasks is not None else
+        f"> tokens {_TOKENS}\n\n"
         "| ID | Task | By | Status | PR |\n"
         f"| **T-017** | wave 3b-1 | me | In-Progress | PR #31 `{BRANCH_31}` + PR #32 `{BRANCH_32}` |\n",
         encoding="utf-8")
@@ -176,6 +185,33 @@ class SemanticGateTests(unittest.TestCase):
         root = self._tmp(); _state_repo(root)
         probs = cc.check(root, changed=["config/current_state.json", "NEXT_CHAT.md"])  # missing 2 mirrors
         self.assertTrue(any("checkpoint desync" in p for p in probs))
+
+    def test_rejects_missing_status_token(self):
+        # NEXT_CHAT omits the tokens -> every token is flagged missing.
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both().replace(_TOKENS, ""))
+        self.assertTrue(any("NEXT_CHAT.md" in p and "missing status token" in p for p in cc.check(root)))
+
+    def test_rejects_current_region_contradiction(self):
+        # Token says verify-seam complete, but the CURRENT region also calls it pending -> contradiction.
+        root = self._tmp()
+        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\n"
+                    + _doc_mentioning_both("The verify-seam is still pending."))
+        self.assertTrue(any("PROJECT_STATE.md" in p and "pending" in p for p in cc.check(root)))
+
+    def test_history_region_pending_is_excluded(self):
+        # The SAME 'verify-seam pending' phrase inside HISTORY markers must NOT be flagged.
+        root = self._tmp()
+        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\n"
+                    + _doc_mentioning_both()
+                    + "\n<!-- HISTORY_BEGIN -->\nOld note: the verify-seam was still pending.\n<!-- HISTORY_END -->\n")
+        self.assertFalse(any("contradict" in p or ("verify" in p.lower() and "pending" in p)
+                             for p in cc.check(root)))
+
+    def test_rejects_unterminated_history_block(self):
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both() + "\n<!-- HISTORY_BEGIN -->\ndangling\n")
+        self.assertTrue(any("without a matching" in p for p in cc.check(root)))
 
     def test_manifest_missing_active_doc_is_flagged(self):
         root = self._tmp(); _state_repo(root)

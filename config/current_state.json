@@ -4,8 +4,15 @@
   "sync": {
     "baseline_main_head_at_sync": "df3c0aca80cbe4a5537a9fdd53e16e26541c9c19",
     "snapshot_branch": "chore/phase0-repository-truth",
-    "live_main_resolution": "Resolve the ACTUAL default-branch (main) HEAD from git/GitHub at session start. baseline_main_head_at_sync is only the SHA this snapshot was written against; it becomes stale as soon as any PR (including PR #33) merges. Do NOT treat it as the permanently-current main HEAD.",
-    "verification": "CI job repo-state (tools/check_repo_state.py) compares the prs[] snapshot below against live GitHub and fails closed if a PR marked open is actually merged/closed, if draft state differs, or if head/base branch differs."
+    "live_main_resolution": "Resolve the ACTUAL default-branch (main) HEAD from git/GitHub at session start. baseline_main_head_at_sync is only the SHA this snapshot was synced against; it becomes stale as PRs merge. On a push to main, CI requires this baseline to be an ANCESTOR of the pushed HEAD (never that a merged carrier PR stays open) — so merging the carrier PR #33 cannot make main CI red.",
+    "verification": "CI job repo-state (tools/check_repo_state.py) is EXACT-HEAD fail-closed: durable PRs in prs[] must match live GitHub head/state/draft/base exactly (head drift => RED); on a pull_request the event base sha must equal baseline_main_head_at_sync; on a main push the baseline must be an ancestor of the pushed head. The repository-truth CARRIER PR is current_workflow_pr (NOT in prs[]), so merging it never leaves a recorded-open-but-merged PR."
+  },
+  "current_workflow_pr": {
+    "number": 33,
+    "branch": "chore/phase0-repository-truth",
+    "base": "main",
+    "role": "repository-truth carrier",
+    "note": "The PR carrying this snapshot. Deliberately NOT in prs[] (so merging it cannot create a recorded-open-but-merged self-red). Verified live from the GitHub Actions event, not from a stored head. Do NOT merge until the repository-truth re-audit is GREEN."
   },
   "active": {
     "wave": "3b-1B",
@@ -17,7 +24,7 @@
       "number": 31,
       "branch": "feat/wave-3b1-isolated-signer",
       "base": "main",
-      "head_at_last_sync": "6ebeca88627640eef8effe576b3d388417cb4949",
+      "head": "6ebeca88627640eef8effe576b3d388417cb4949",
       "role": "design",
       "draft": false,
       "merge_state": "open",
@@ -25,34 +32,38 @@
       "contains": "3b-1A isolated-signer boundary CODE (recorded Architect Code GREEN) + the 3b-1B rev-26 design-lock addendum (design candidate, PENDING re-audit)",
       "code_verdict": "GREEN",
       "code_verdict_scope": "3b-1A isolated-signer boundary only",
-      "ci": "8/8 SUCCESS at head_at_last_sync (CI-green is NOT design/audit-green)"
+      "ci": "8/8 SUCCESS at head (CI-green is NOT design/audit-green)"
     },
     {
       "number": 32,
       "branch": "impl/wave-3b1b-execution-binding",
       "base": "feat/wave-3b1-isolated-signer",
-      "head_at_last_sync": "0e7ee1af0b96ca768cabe43c71d9caec30230430",
+      "head": "0e7ee1af0b96ca768cabe43c71d9caec30230430",
       "role": "implementation",
       "draft": true,
       "merge_state": "open",
       "parent_pr": 31,
       "is_rc": false,
       "contains": "3b-1B authoritative execution->receipt binding WIP implementation: acceptance ledger/outbox/recovery, evidence-head anti-rollback floor, dual-key separation, recorder-owned execution, principal isolation, two-namespace store, desktop verifier, Linux isolation/E2E proof.",
-      "ci": "8/8 SUCCESS at head_at_last_sync (CI-green is NOT design/audit-green)",
+      "ci": "8/8 SUCCESS at head (CI-green is NOT design/audit-green)",
       "note": "Draft/WIP checkpoint. NOT an RC, NOT merge-ready, has NOT passed a fresh exact-head zero-trust audit."
-    },
-    {
-      "number": 33,
-      "branch": "chore/phase0-repository-truth",
-      "base": "main",
-      "head_at_last_sync": "PENDING (this PR is being amended; resolve live)",
-      "role": "repository-truth",
-      "draft": false,
-      "merge_state": "open",
-      "parent_pr": null,
-      "note": "Phase-0 repository-truth remediation. Do NOT merge until the repository-truth re-audit is GREEN."
     }
   ],
+  "status_tokens": {
+    "_note": "The current-state block of NEXT_CHAT.md, PROJECT_STATE.md and TASKS.md must contain each of these `KEY: value` tokens verbatim; tools/check_coordination.py fails closed on any mismatch. This is the machine-checkable single source that prevents contradictory present-tense prose.",
+    "CURRENT_ACTIVE_TASK": "T-017",
+    "CURRENT_ACTIVE_WAVE": "3b-1B",
+    "CURRENT_DESIGN_GATE": "PENDING_REAUDIT",
+    "CURRENT_DESIGN_PR": "31",
+    "CURRENT_IMPL_PR": "32",
+    "CURRENT_IMPL_STATE": "WIP",
+    "CURRENT_REPO_TRUTH_PR": "33",
+    "CURRENT_NEXT_GATE": "PR33_REAUDIT",
+    "CURRENT_PRODUCTION_VERIFIED": "false",
+    "CURRENT_VERIFY_SEAM": "complete",
+    "CURRENT_RECEIPT_PLUMBING": "complete",
+    "CURRENT_GOVERNED_ROUNDTRIP": "complete"
+  },
   "design_gate": {
     "candidate": "rev-26 (docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) carried on PR #31",
     "candidate_head_note": "The exact audit HEAD is NOT 6ebeca8: after PR #33 merges, PR #31 is rebased onto the repaired main, changing its HEAD. rev-26 is submitted for audit on that NEW exact HEAD.",

@@ -77,6 +77,18 @@ MERGE_STATES = ("open", "merged", "closed")
 PR_ROLES = ("design", "implementation", "repository-truth", "release")
 GATE_STATES = ("NOT_SUBMITTED", "PENDING_REAUDIT", "YELLOW", "RED", "GREEN")
 VERDICTS = ("NONE", "YELLOW", "RED", "GREEN")
+# --- contradiction gate (Phase-0 correction) -----------------------------------------------------
+# Explicitly-marked historical prose is EXCLUDED from current-state validation. Everything outside
+# these markers is "current" and must be internally consistent with the status tokens.
+HISTORY_BEGIN = "<!-- HISTORY_BEGIN -->"
+HISTORY_END = "<!-- HISTORY_END -->"
+# a subject the status tokens mark "complete" must NOT be described as pending in the CURRENT region.
+_PENDING_WORDS = r"(pending|not done|still open|not started|not yet done|still pending|are open|remain open)"
+SUBJECT_PROSE = {
+    "CURRENT_VERIFY_SEAM": r"verify.?seam",
+    "CURRENT_RECEIPT_PLUMBING": r"receipt.?plumbing",
+    "CURRENT_GOVERNED_ROUNDTRIP": r"governed round.?trip",
+}
 
 
 def _read(root: pathlib.Path, rel: str) -> str | None:
@@ -256,6 +268,85 @@ def _check_manifest_active_docs(root: pathlib.Path) -> list[str]:
             for d in ACTIVE_WAVE_DOCS if (root / d).exists() and d not in paths]
 
 
+def _current_region(text: str) -> str:
+    """The doc text with every <!-- HISTORY_BEGIN -->..<!-- HISTORY_END --> span removed. Current-state
+    validation + the contradiction scan run ONLY on this region, so historical/audit prose (which may
+    legitimately say 'pending') is excluded and cannot contradict the present-tense truth."""
+    out, i = [], 0
+    while True:
+        b = text.find(HISTORY_BEGIN, i)
+        if b == -1:
+            out.append(text[i:])
+            break
+        out.append(text[i:b])
+        e = text.find(HISTORY_END, b)
+        if e == -1:                       # unterminated history block: drop the rest, and flag elsewhere
+            break
+        i = e + len(HISTORY_END)
+    return "".join(out)
+
+
+def _check_status_tokens(root: pathlib.Path) -> list[str]:
+    """Every human state doc's CURRENT region must contain each `KEY: value` status token from
+    config/current_state.json.status_tokens verbatim. This turns present-tense status into a single
+    machine-checked source, so the docs cannot silently disagree with the anchor (or each other)."""
+    problems: list[str] = []
+    if _read(root, "NEXT_CHAT.md") is None:
+        return problems
+    data = _load_json(root, CURRENT_STATE_JSON)
+    if not isinstance(data, dict):
+        return problems
+    tokens = data.get("status_tokens")
+    if not isinstance(tokens, dict):
+        return [f"{CURRENT_STATE_JSON}: missing 'status_tokens' object (contradiction gate needs it)"]
+    wanted = {k: v for k, v in tokens.items() if not k.startswith("_")}
+    for doc in STATE_DOCS:
+        txt = _read(root, doc)
+        if txt is None:
+            continue  # missing-doc already reported elsewhere
+        if HISTORY_BEGIN in txt and HISTORY_END not in txt:
+            problems.append(f"{doc}: {HISTORY_BEGIN} without a matching {HISTORY_END}")
+        region = _current_region(txt)
+        for key, val in wanted.items():
+            if not re.search(rf"{re.escape(key)}\s*[:=]\s*{re.escape(str(val))}\b", region):
+                problems.append(f"{doc}: CURRENT region is missing status token '{key}: {val}' "
+                                f"(must match {CURRENT_STATE_JSON}.status_tokens)")
+    return problems
+
+
+def _check_current_contradictions(root: pathlib.Path) -> list[str]:
+    """In each doc's CURRENT region, a subject the tokens mark 'complete' must not also be described as
+    pending, and a PENDING_REAUDIT design gate must not be described as design-GREEN. Catches the exact
+    'verify-seam DONE and verify-seam pending in the same file' drift the Owner flagged."""
+    problems: list[str] = []
+    if _read(root, "NEXT_CHAT.md") is None:
+        return problems
+    data = _load_json(root, CURRENT_STATE_JSON)
+    tokens = (data.get("status_tokens") if isinstance(data, dict) else None) or {}
+    for doc in STATE_DOCS:
+        txt = _read(root, doc)
+        if txt is None:
+            continue
+        region = _current_region(txt)
+        for token_key, subject_re in SUBJECT_PROSE.items():
+            if str(tokens.get(token_key)).lower() == "complete":
+                pat = rf"{subject_re}[^.\n]{{0,80}}?{_PENDING_WORDS}"
+                if re.search(pat, region, re.I):
+                    problems.append(f"{doc}: CURRENT region calls '{token_key}' pending, but the status "
+                                    f"token says complete (contradictory present-tense claim)")
+        if str(tokens.get("CURRENT_DESIGN_GATE")) == "PENDING_REAUDIT":
+            for m in re.finditer(r"rev.?26[^.\n]{0,60}?(design[- ]?GREEN|exact-head (RED|GREEN))", region, re.I):
+                pre = region[max(0, m.start() - 45):m.start()].lower()
+                # a conditional/instruction ("do NOT merge UNTIL rev-26 is design-GREEN") is not an
+                # assertion that rev-26 HAS a verdict — only flag a bare positive claim.
+                if any(w in pre for w in ("until", "unless", "once ", "when ", "after ", "before ", "requires")):
+                    continue
+                problems.append(f"{doc}: CURRENT region asserts a rev-26 design verdict while the gate is "
+                                f"PENDING_REAUDIT (rev-26 has no exact-head verdict)")
+                break
+    return problems
+
+
 def _check_state_sync(changed: list[str]) -> list[str]:
     """PR-aware. (a) a substantive code/schema/design change must touch a state file. (b) if the
     machine anchor current_state.json changes, all three human mirrors must be synced in the SAME PR
@@ -335,6 +426,8 @@ def check(root: pathlib.Path, *, changed: list[str] | None = None) -> list[str]:
     problems += _check_current_state(root)
     problems += _check_docs_reference_state(root)
     problems += _check_manifest_active_docs(root)
+    problems += _check_status_tokens(root)
+    problems += _check_current_contradictions(root)
 
     # 8. PR-aware (Phase 0.2): a substantive code/schema/design change must update the state docs in
     #    the same PR. Runs only when a diff file list is supplied (a PR run); skipped on push/local.

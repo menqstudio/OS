@@ -10,6 +10,9 @@
 
 **Status values · Status-ի արժեքներ:** `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`
 
+<!-- CURRENT_STATE: authoritative present-tense tokens, validated against config/current_state.json.status_tokens. Task rows below are the working log; the current truth is these tokens. -->
+> **▶ CURRENT STATE tokens:** `CURRENT_ACTIVE_TASK: T-017` · `CURRENT_ACTIVE_WAVE: 3b-1B` · `CURRENT_DESIGN_GATE: PENDING_REAUDIT` · `CURRENT_DESIGN_PR: 31` · `CURRENT_IMPL_PR: 32` · `CURRENT_IMPL_STATE: WIP` · `CURRENT_REPO_TRUTH_PR: 33` · `CURRENT_NEXT_GATE: PR33_REAUDIT` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+
 > **Execution source:** the phase-by-phase plan lives in
 > [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md). Each roadmap task should get a row here
 > when someone claims it. · Կատарման աղբյուրը՝ `MASTER_EXECUTION_ROADMAP.md`։
