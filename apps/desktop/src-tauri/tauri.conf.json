@@ -32,6 +32,12 @@
       "icons/128x128@2x.png",
       "icons/icon.png",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "menq studio",
+    "category": "Productivity",
+    "shortDescription": "Bro's Personal Space — a local-first governed-AI desktop workspace.",
+    "longDescription": "BroPS is a local-first desktop workspace where every AI turn runs through a governed, cryptographically-verified trust chain (isolated signer + supervised execution) before it is shown as Verified. No cloud lock-in; your data stays on your machine.",
+    "copyright": "(c) 2026 menq studio",
+    "homepage": "https://github.com/menqstudio/OS"
   }
 }
