@@ -91,8 +91,9 @@ jobs:
           cargo deny \
             --manifest-path apps/desktop/src-tauri/Cargo.toml \
             --all-features \
+            check \
             --config "${SUPPLY_CHAIN_DIR}/deny.toml" \
-            check advisories bans licenses sources
+            advisories bans licenses sources
 
   pip-audit:
     name: Python - pip-audit (PyPI advisories)
@@ -184,8 +185,9 @@ jobs:
           # Rust: CycloneDX SBOM for the Tauri host workspace.
           cargo cyclonedx \
             --manifest-path apps/desktop/src-tauri/Cargo.toml \
-            --format json \
-            --override-filename "$GITHUB_WORKSPACE/sbom/rust"
+            --format json
+          # cargo-cyclonedx writes <crate>.cdx.json next to each manifest; collect them.
+          find apps/desktop/src-tauri -name "*.cdx.json" -exec cp {} sbom/ \;
           # npm: generate from the lockfile only (no install needed) via the pinned
           # CycloneDX npm generator.
           npx --yes @cyclonedx/cyclonedx-npm@1.19.3 \
@@ -234,6 +236,7 @@ jobs:
         run: |
           gitleaks detect \
             --source . \
+            --no-git \
             --config "${SUPPLY_CHAIN_DIR}/gitleaks.toml" \
             --redact \
             --no-banner \
@@ -246,6 +249,7 @@ jobs:
         run: |
           gitleaks detect \
             --source . \
+            --no-git \
             --config "${SUPPLY_CHAIN_DIR}/gitleaks.toml" \
             --log-opts "${BASE_SHA}..${HEAD_SHA}" \
             --redact \
