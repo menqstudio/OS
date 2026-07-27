@@ -202,3 +202,24 @@ export type RunStepEvent =
   | { type: 'done' }
   | { type: 'approvalRequired'; approvalId: string }
   | { type: 'error'; message: string };
+
+// --- Wave 3b-1B: governed-turn thin proxy to the trusted broker service -------------------------
+// The renderer sends the broker ONLY the closed {conversation_id, agent?, client_request_id} command
+// via the `governed_turn_execute` #[tauri::command] (a thin proxy forwarding to the broker service over
+// the platform IPC); the committed/blocked reply is parsed + validated read-only. The renderer can never
+// forge a `trusted_verified` result — see services/governedTurn.ts.
+import {
+  runGovernedTurn as runGovernedTurnCore,
+  type GovernedTurnRequest, type GovernedTurnResult,
+} from './governedTurn';
+
+/** Real broker transport: invoke the thin-proxy `governed_turn_execute` Tauri command. */
+async function brokerTransport(request: GovernedTurnRequest): Promise<unknown> {
+  return invoke('governed_turn_execute', { request });
+}
+
+/** Run a governed turn through the trusted broker service. `agent` is an optional authorized identifier;
+ *  the broker resolves system/history/config/IDs itself — the renderer supplies none of them. */
+export function governedTurn(conversationId: string, agent?: string): Promise<GovernedTurnResult> {
+  return runGovernedTurnCore(conversationId, agent, brokerTransport, () => crypto.randomUUID());
+}
