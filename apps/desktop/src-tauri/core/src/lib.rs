@@ -7,6 +7,7 @@ pub mod domain;
 pub mod receipt;
 pub mod receipt_store;
 pub mod governed_turn_ipc;
+pub mod governed_message_store;
 pub mod repo;
 
 pub use domain::{
