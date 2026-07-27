@@ -18,6 +18,7 @@ pub mod governed_verification;
 pub mod windows_broker;
 pub mod ipc_framing;
 pub mod real_ids;
+pub mod broker_client;
 pub mod supervisor_ledger;
 pub mod repo;
 
