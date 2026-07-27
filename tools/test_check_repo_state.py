@@ -183,15 +183,24 @@ class CarrierPostMergeTests(unittest.TestCase):
         snap["next_action_by_carrier"] = {"open": "x", "merged": "y"}
         self.assertEqual(rs.verify_carrier_post_merge({"state": "MERGED"}, snap), [])
 
-    def test_merged_with_wrong_gate_fails(self):
-        snap = _snapshot(); snap["carrier_transition"]["post_merge"]["gate"] = "PR33_REAUDIT"
+    def test_merged_with_empty_gate_fails(self):
+        # gate NAME is snapshot-declared (generic); an EMPTY/missing post_merge gate is RED.
+        snap = _snapshot(); snap["next_action_by_carrier"] = {"open": "x", "merged": "y"}
+        snap["carrier_transition"]["post_merge"]["gate"] = ""
         f = rs.verify_carrier_post_merge({"state": "MERGED"}, snap)
-        self.assertTrue(any("REBASE_PR31" in p for p in f))
+        self.assertTrue(any("post_merge.gate is missing/empty" in p for p in f))
 
-    def test_merged_with_stale_phase0_fails(self):
-        snap = _snapshot(); snap["carrier_transition"]["post_merge"]["phase_0"] = "in_progress"
+    def test_merged_self_stale_carrier_state_fails(self):
+        # anti-self-stale: live-MERGED but the snapshot still says the carrier is not merged -> RED.
+        snap = _snapshot(); snap["next_action_by_carrier"] = {"open": "x", "merged": "y"}
+        snap["carrier_transition"]["post_merge"]["carrier_state"] = "open"
         f = rs.verify_carrier_post_merge({"state": "MERGED"}, snap)
-        self.assertTrue(any("phase_0" in p for p in f))
+        self.assertTrue(any("self-stale main" in p for p in f))
+
+    def test_merged_missing_merged_next_action_fails(self):
+        snap = _snapshot(); snap["next_action_by_carrier"] = {"open": "x"}  # no merged
+        self.assertTrue(any("next_action_by_carrier.merged is missing" in p
+                            for p in rs.verify_carrier_post_merge({"state": "MERGED"}, snap)))
 
     def test_unresolvable_carrier_fails_closed(self):
         # P0-3: None must be a FAILURE, not a no-op.
@@ -213,13 +222,14 @@ class CarrierStateTests(unittest.TestCase):
     def test_open_correct_pre_merge_is_green(self):
         self.assertEqual(rs.verify_carrier_state({"state": "OPEN"}, self._snap_full()), [])
 
-    def test_open_wrong_pre_merge_gate_fails(self):
-        snap = self._snap_full(); snap["carrier_transition"]["pre_merge"]["gate"] = "SOMETHING_ELSE"
-        self.assertTrue(any("PR33_REAUDIT" in p for p in rs.verify_carrier_state({"state": "OPEN"}, snap)))
+    def test_open_empty_pre_merge_gate_fails(self):
+        snap = self._snap_full(); snap["carrier_transition"]["pre_merge"]["gate"] = ""
+        self.assertTrue(any("pre_merge.gate is missing/empty" in p for p in rs.verify_carrier_state({"state": "OPEN"}, snap)))
 
-    def test_open_wrong_phase0_fails(self):
-        snap = self._snap_full(); snap["product_roadmap"]["phase_0"]["if_carrier_open"] = "done"
-        self.assertTrue(any("if_carrier_open" in p for p in rs.verify_carrier_state({"state": "OPEN"}, snap)))
+    def test_open_any_declared_gate_ok(self):
+        # a design-audit carrier declares its OWN gate name (not the Phase-0 value) — must pass.
+        snap = self._snap_full(); snap["carrier_transition"]["pre_merge"]["gate"] = "PR31_DESIGN_AUDIT"
+        self.assertEqual(rs.verify_carrier_state({"state": "OPEN"}, snap), [])
 
     def test_unresolved_carrier_state_fails_closed(self):
         self.assertTrue(any("unresolved/missing" in p for p in rs.verify_carrier_state(None, self._snap_full())))
@@ -233,8 +243,8 @@ class CarrierStateTests(unittest.TestCase):
         self.assertEqual(rs.verify_carrier_state({"state": "MERGED"}, self._snap_full()), [])
 
     def test_merged_delegates_to_post_merge_red(self):
-        snap = self._snap_full(); snap["carrier_transition"]["post_merge"]["gate"] = "WRONG"
-        self.assertTrue(any("REBASE_PR31" in p for p in rs.verify_carrier_state({"state": "MERGED"}, snap)))
+        snap = self._snap_full(); snap["carrier_transition"]["post_merge"]["gate"] = ""
+        self.assertTrue(any("post_merge.gate is missing/empty" in p for p in rs.verify_carrier_state({"state": "MERGED"}, snap)))
 
 
 class WorkflowTriggerTests(unittest.TestCase):
