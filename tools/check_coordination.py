@@ -215,6 +215,22 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
                 problems.append(f"{CURRENT_STATE_JSON}: PR #{pr.get('number')} is_rc=true but design_gate is {gate!r}, not GREEN (CI-green is not audit-green)")
             if pr.get("code_verdict") != "GREEN":
                 problems.append(f"{CURRENT_STATE_JSON}: PR #{pr.get('number')} is_rc=true but its code_verdict is not GREEN")
+    # carrier transition: the pre/post-merge states must be explicitly modeled so main is never
+    # knowingly stale after the carrier merges (checked live by tools/check_repo_state.py on main push).
+    ct = data.get("carrier_transition")
+    if data.get("current_workflow_pr") is not None:
+        if not isinstance(ct, dict):
+            problems.append(f"{CURRENT_STATE_JSON}: a current_workflow_pr exists but 'carrier_transition' is missing")
+        else:
+            for phase, want_gate, want_carrier in (("pre_merge", None, "open"), ("post_merge", "REBASE_PR31", "merged")):
+                blk = ct.get(phase)
+                if not isinstance(blk, dict):
+                    problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase} block missing")
+                    continue
+                if want_carrier and blk.get("carrier_state") != want_carrier:
+                    problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.carrier_state must be {want_carrier!r}")
+                if want_gate and blk.get("gate") != want_gate:
+                    problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.gate must be {want_gate!r}")
     return problems
 
 
@@ -335,14 +351,16 @@ def _check_current_contradictions(root: pathlib.Path) -> list[str]:
                     problems.append(f"{doc}: CURRENT region calls '{token_key}' pending, but the status "
                                     f"token says complete (contradictory present-tense claim)")
         if str(tokens.get("CURRENT_DESIGN_GATE")) == "PENDING_REAUDIT":
-            for m in re.finditer(r"rev.?26[^.\n]{0,60}?(design[- ]?GREEN|exact-head (RED|GREEN))", region, re.I):
+            # a PENDING_REAUDIT candidate must not be described in the current region as having ANY
+            # exact verdict — neither GREEN nor RED (the RED verdicts belonged to earlier revisions).
+            for m in re.finditer(r"rev.?26[^.\n]{0,60}?(design[- ]?(RED|GREEN)|exact-head[- ]?(RED|GREEN))", region, re.I):
                 pre = region[max(0, m.start() - 45):m.start()].lower()
                 # a conditional/instruction ("do NOT merge UNTIL rev-26 is design-GREEN") is not an
                 # assertion that rev-26 HAS a verdict — only flag a bare positive claim.
                 if any(w in pre for w in ("until", "unless", "once ", "when ", "after ", "before ", "requires")):
                     continue
                 problems.append(f"{doc}: CURRENT region asserts a rev-26 design verdict while the gate is "
-                                f"PENDING_REAUDIT (rev-26 has no exact-head verdict)")
+                                f"PENDING_REAUDIT (rev-26 has no exact-head verdict; earlier revs' RED is history)")
                 break
     return problems
 

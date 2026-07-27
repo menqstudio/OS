@@ -76,16 +76,24 @@ def compare_external_prs(snapshot: dict, live: dict) -> list[str]:
     return failures
 
 
-def verify_pr_event(event: dict, snapshot: dict) -> list[str]:
-    """Fail-closed exact checks against the CURRENT workflow PR's event payload. Pure/testable.
-    event = github `pull_request` event dict. Enforces: base SHA == baseline (when base is main),
-    base branch match, and (if the snapshot declares an expected current PR) number/branch match."""
+def verify_pr_event(event: dict, snapshot: dict, is_ancestor=None) -> list[str]:
+    """Fail-closed checks against the CURRENT workflow (carrier) PR's event payload. Pure/testable.
+    Enforces: base SHA == baseline (when base is main); carrier number/branch/base match; and the
+    carrier HEAD is bound — the live PR head must equal, or descend from, current_workflow_pr.head.
+
+    Head binding note (honest): a commit cannot contain its own git hash, so current_workflow_pr.head
+    records the exact candidate sync-tip and the live PR head must be that sha OR a descendant of it
+    (`is_ancestor(recorded, live)`), i.e. the running candidate is cryptographically on the recorded
+    lineage. Bit-exact when the branch is frozen for audit; a divergent/unrelated head fails closed."""
+    if is_ancestor is None:
+        is_ancestor = lambda a, b: False  # noqa: E731  (no git in the pure/test path -> exact-only)
     failures: list[str] = []
     pr = event.get("pull_request") or {}
     base = pr.get("base") or {}
     head = pr.get("head") or {}
     base_ref = base.get("ref")
     base_sha = base.get("sha")
+    head_sha = head.get("sha")
     baseline = (snapshot.get("sync") or {}).get("baseline_main_head_at_sync")
     if base_ref == "main":
         if not _is_sha(base_sha):
@@ -93,7 +101,6 @@ def verify_pr_event(event: dict, snapshot: dict) -> list[str]:
         elif baseline != base_sha:
             failures.append(f"snapshot baseline_main_head_at_sync {str(baseline)[:7]} != PR base sha "
                             f"{str(base_sha)[:7]} — the snapshot is stale vs its base; rebase/re-sync")
-    # if the snapshot declares the expected current carrier PR, the event must match it
     cw = snapshot.get("current_workflow_pr") or {}
     if cw:
         if cw.get("number") is not None and pr.get("number") != cw.get("number"):
@@ -102,6 +109,33 @@ def verify_pr_event(event: dict, snapshot: dict) -> list[str]:
             failures.append(f"event head branch {head.get('ref')!r} != snapshot current_workflow_pr branch {cw.get('branch')!r}")
         if cw.get("base") and base_ref and cw.get("base") != base_ref:
             failures.append(f"event base {base_ref!r} != snapshot current_workflow_pr base {cw.get('base')!r}")
+        # carrier HEAD binding (exact-or-descendant of the recorded candidate).
+        recorded = cw.get("head")
+        if not _is_sha(recorded):
+            failures.append(f"current_workflow_pr.head must be an exact 40-hex sha, got {recorded!r}")
+        elif _is_sha(head_sha) and head_sha != recorded and not is_ancestor(recorded, head_sha):
+            failures.append(f"event head {head_sha[:7]} is not the recorded carrier candidate "
+                            f"{recorded[:7]} nor a descendant of it (carrier head unbound / divergent)")
+    return failures
+
+
+def verify_carrier_post_merge(carrier_live: dict, snapshot: dict) -> list[str]:
+    """On a push to main, the carrier PR has (usually) just merged. If GitHub reports it MERGED, the
+    snapshot's carrier_transition.post_merge must be the semantically-correct post-merge state — so the
+    same merged content already declares gate=REBASE_PR31 / carrier=merged / phase_0=done and main is
+    NOT knowingly stale. Pure/testable. carrier_live = {'state': 'MERGED'|...} or None."""
+    failures: list[str] = []
+    ct = snapshot.get("carrier_transition") or {}
+    post = ct.get("post_merge") or {}
+    if carrier_live is None:
+        return []  # cannot resolve the carrier live -> the external-PR/ancestor checks still guard
+    if carrier_live.get("state") == "MERGED":
+        if post.get("carrier_state") != "merged":
+            failures.append("carrier is MERGED on GitHub but carrier_transition.post_merge.carrier_state != 'merged'")
+        if post.get("gate") != "REBASE_PR31":
+            failures.append(f"carrier merged but post_merge.gate is {post.get('gate')!r}, expected 'REBASE_PR31'")
+        if post.get("phase_0") != "done":
+            failures.append(f"carrier merged but post_merge.phase_0 is {post.get('phase_0')!r}, expected 'done'")
     return failures
 
 
@@ -165,15 +199,16 @@ def main(argv: list[str] | None = None) -> int:
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     failures: list[str] = []
 
-    # (a) CI event-context exact checks (no gh needed).
+    # (a) CI event-context checks.
+    on_main_push = event_name == "push" and os.environ.get("GITHUB_REF") == "refs/heads/main"
     if event_name == "pull_request" and event_path:
         try:
             event = json.loads(pathlib.Path(event_path).read_text(encoding="utf-8"))
-            failures += verify_pr_event(event, snap)
+            failures += verify_pr_event(event, snap, is_ancestor=_git_is_ancestor)
         except (OSError, ValueError) as exc:
             if in_ci:
                 failures.append(f"cannot read GITHUB_EVENT_PATH: {exc}")
-    elif event_name == "push" and os.environ.get("GITHUB_REF") == "refs/heads/main":
+    elif on_main_push:
         pushed = os.environ.get("GITHUB_SHA", "")
         baseline = (snap.get("sync") or {}).get("baseline_main_head_at_sync", "")
         failures += verify_main_push(pushed, baseline, _git_is_ancestor)
@@ -192,6 +227,13 @@ def main(argv: list[str] | None = None) -> int:
         print("SKIPPED (online PR checks): gh unavailable locally; event-context checks passed. CI is the wall.")
         return 0
     failures += compare_external_prs(snap, fetch_live(numbers))
+
+    # (c) On a main push, resolve the carrier PR live and require the snapshot's post-merge transition
+    #     to already be semantically correct (so merged main is not knowingly stale).
+    if on_main_push:
+        carrier = (snap.get("current_workflow_pr") or {}).get("number")
+        if carrier is not None:
+            failures += verify_carrier_post_merge(fetch_live([carrier]).get(carrier), snap)
 
     if failures:
         print("RED: config/current_state.json disagrees with live GitHub / CI context —", file=sys.stderr)

@@ -213,6 +213,31 @@ class SemanticGateTests(unittest.TestCase):
         _state_repo(root, next_chat=_doc_mentioning_both() + "\n<!-- HISTORY_BEGIN -->\ndangling\n")
         self.assertTrue(any("without a matching" in p for p in cc.check(root)))
 
+    def test_rejects_rev26_red_in_current_region(self):
+        # A PENDING_REAUDIT candidate may not be called rev-26 design RED (that was an earlier rev).
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both("The rev-26 design RED verdict stands."))
+        self.assertTrue(any("rev-26 design verdict" in p for p in cc.check(root)))
+
+    def test_rev26_red_in_history_is_excluded(self):
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both()
+                    + "\n<!-- HISTORY_BEGIN -->\nrev-26 design RED (old note)\n<!-- HISTORY_END -->\n")
+        self.assertFalse(any("rev-26 design verdict" in p for p in cc.check(root)))
+
+    def test_conditional_until_green_is_allowed(self):
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both("Do NOT merge until rev-26 is design-GREEN."))
+        self.assertFalse(any("rev-26 design verdict" in p for p in cc.check(root)))
+
+    def test_rejects_missing_carrier_transition(self):
+        root = self._tmp()
+        cs = _default_state()
+        cs["current_workflow_pr"] = {"number": 33, "branch": "chore/phase0-repository-truth", "head": "a" * 40}
+        # no carrier_transition -> flagged
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("carrier_transition' is missing" in p for p in cc.check(root)))
+
     def test_manifest_missing_active_doc_is_flagged(self):
         root = self._tmp(); _state_repo(root)
         (root / "docs/design").mkdir(parents=True, exist_ok=True)

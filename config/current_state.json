@@ -11,8 +11,16 @@
     "number": 33,
     "branch": "chore/phase0-repository-truth",
     "base": "main",
+    "head": "6e26dc6efd0f4daf68add26016cda1f205bfe975",
+    "head_binding": "Exact candidate sync-tip. A commit cannot contain its own hash, so the live PR head must EQUAL this sha or be a DESCENDANT of it (git ancestor check) — the running candidate is cryptographically on this lineage; a divergent/unrelated head fails closed. Bit-exact when the branch is frozen for audit.",
     "role": "repository-truth carrier",
-    "note": "The PR carrying this snapshot. Deliberately NOT in prs[] (so merging it cannot create a recorded-open-but-merged self-red). Verified live from the GitHub Actions event, not from a stored head. Do NOT merge until the repository-truth re-audit is GREEN."
+    "note": "The PR carrying this snapshot. Deliberately NOT in prs[] (so merging it cannot create a recorded-open-but-merged self-red). Verified live from the GitHub Actions event + head binding. Do NOT merge until the repository-truth re-audit is GREEN."
+  },
+  "carrier_transition": {
+    "carrier_pr": 33,
+    "pre_merge": {"gate": "PR33_REAUDIT", "carrier_state": "open", "phase_0": "in_progress"},
+    "post_merge": {"gate": "REBASE_PR31", "carrier_state": "merged", "phase_0": "done"},
+    "note": "The carrier's transition is modeled explicitly so main is never knowingly stale. On a pull_request CI run the pre_merge state applies (carrier open, gate PR33_REAUDIT). On a push to main, check_repo_state resolves PR #33 live; if MERGED it REQUIRES this post_merge block to already be correct (gate REBASE_PR31, carrier merged, phase_0 done) — so the same merged content already declares the post-merge truth and main-push CI is GREEN without a second sync PR."
   },
   "active": {
     "wave": "3b-1B",
@@ -58,7 +66,8 @@
     "CURRENT_IMPL_PR": "32",
     "CURRENT_IMPL_STATE": "WIP",
     "CURRENT_REPO_TRUTH_PR": "33",
-    "CURRENT_NEXT_GATE": "PR33_REAUDIT",
+    "CURRENT_PRE_MERGE_GATE": "PR33_REAUDIT",
+    "CURRENT_POST_MERGE_GATE": "REBASE_PR31",
     "CURRENT_PRODUCTION_VERIFIED": "false",
     "CURRENT_VERIFY_SEAM": "complete",
     "CURRENT_RECEIPT_PLUMBING": "complete",

@@ -18,11 +18,20 @@ MAIN = "df3c0aca80cbe4a5537a9fdd53e16e26541c9c19"
 NEWMAIN = "1111111111111111111111111111111111111111"
 
 
+CARRIER_HEAD = "2222222222222222222222222222222222222222"
+
+
 def _snapshot():
     # NOTE: the carrier PR (#33) is deliberately NOT in prs[] — only durable project PRs.
     return {
         "sync": {"baseline_main_head_at_sync": MAIN},
-        "current_workflow_pr": {"number": 33, "branch": "chore/phase0-repository-truth", "base": "main"},
+        "current_workflow_pr": {"number": 33, "branch": "chore/phase0-repository-truth",
+                                "base": "main", "head": CARRIER_HEAD},
+        "carrier_transition": {
+            "carrier_pr": 33,
+            "pre_merge": {"gate": "PR33_REAUDIT", "carrier_state": "open", "phase_0": "in_progress"},
+            "post_merge": {"gate": "REBASE_PR31", "carrier_state": "merged", "phase_0": "done"},
+        },
         "prs": [
             {"number": 31, "branch": "feat/wave-3b1-isolated-signer", "base": "main",
              "draft": False, "merge_state": "open", "head": HEAD_31},
@@ -72,12 +81,27 @@ class ExternalPrTests(unittest.TestCase):
 
 
 class PrEventTests(unittest.TestCase):
-    def _event(self, base_sha=MAIN, base_ref="main", head_ref="chore/phase0-repository-truth", number=33):
+    def _event(self, base_sha=MAIN, base_ref="main", head_ref="chore/phase0-repository-truth",
+               number=33, head_sha=CARRIER_HEAD):
         return {"pull_request": {"number": number, "base": {"ref": base_ref, "sha": base_sha},
-                                 "head": {"ref": head_ref, "sha": "abc"}}}
+                                 "head": {"ref": head_ref, "sha": head_sha}}}
 
-    def test_base_sha_matches_baseline_passes(self):
+    def test_exact_carrier_head_passes(self):
         self.assertEqual(rs.verify_pr_event(self._event(), _snapshot()), [])
+
+    def test_descendant_carrier_head_passes(self):
+        # a head that descends from the recorded candidate is on the lineage -> GREEN.
+        f = rs.verify_pr_event(self._event(head_sha=NEWMAIN), _snapshot(), is_ancestor=lambda a, b: True)
+        self.assertEqual(f, [])
+
+    def test_divergent_carrier_head_fails(self):
+        f = rs.verify_pr_event(self._event(head_sha=NEWMAIN), _snapshot(), is_ancestor=lambda a, b: False)
+        self.assertTrue(any("carrier head unbound" in p or "not the recorded carrier candidate" in p for p in f))
+
+    def test_missing_carrier_head_fails(self):
+        snap = _snapshot(); del snap["current_workflow_pr"]["head"]
+        self.assertTrue(any("current_workflow_pr.head must be an exact 40-hex" in p
+                            for p in rs.verify_pr_event(self._event(), snap)))
 
     def test_stale_baseline_vs_pr_base_fails(self):
         f = rs.verify_pr_event(self._event(base_sha=NEWMAIN), _snapshot())
@@ -90,6 +114,24 @@ class PrEventTests(unittest.TestCase):
     def test_wrong_head_branch_fails(self):
         f = rs.verify_pr_event(self._event(head_ref="some/other"), _snapshot())
         self.assertTrue(any("head branch" in p for p in f))
+
+
+class CarrierPostMergeTests(unittest.TestCase):
+    def test_merged_with_correct_post_merge_is_green(self):
+        self.assertEqual(rs.verify_carrier_post_merge({"state": "MERGED"}, _snapshot()), [])
+
+    def test_merged_with_wrong_gate_fails(self):
+        snap = _snapshot(); snap["carrier_transition"]["post_merge"]["gate"] = "PR33_REAUDIT"
+        f = rs.verify_carrier_post_merge({"state": "MERGED"}, snap)
+        self.assertTrue(any("REBASE_PR31" in p for p in f))
+
+    def test_merged_with_stale_phase0_fails(self):
+        snap = _snapshot(); snap["carrier_transition"]["post_merge"]["phase_0"] = "in_progress"
+        f = rs.verify_carrier_post_merge({"state": "MERGED"}, snap)
+        self.assertTrue(any("phase_0" in p for p in f))
+
+    def test_open_carrier_is_noop(self):
+        self.assertEqual(rs.verify_carrier_post_merge({"state": "OPEN"}, _snapshot()), [])
 
 
 class MainPushTests(unittest.TestCase):
