@@ -35,6 +35,11 @@ import sys
 MERGE_MAP = {"open": "OPEN", "merged": "MERGED", "closed": "CLOSED"}
 _GH_FIELDS = "state,isDraft,headRefName,baseRefName,headRefOid"
 _HEX40 = "0123456789abcdef"
+# Live GitHub `state` values we accept for a DURABLE PR. Anything else (null, "", unknown) is RED.
+_LIVE_PR_STATES = ("OPEN", "MERGED", "CLOSED")
+# The carrier's transition model only has two live states: OPEN (pre-merge) and MERGED (post-merge).
+# A CLOSED-unmerged / null / unknown carrier state is fail-closed RED (we can't classify the branch).
+ALLOWED_CARRIER_STATES = ("OPEN", "MERGED")
 
 
 def _is_sha(s) -> bool:
@@ -47,44 +52,117 @@ def load_snapshot(root: pathlib.Path) -> dict:
 
 def compare_external_prs(snapshot: dict, live: dict) -> list[str]:
     """EXACT-head fail-closed for the durable project PRs in prs[]. `live` maps pr_number ->
-    {state,isDraft,headRefName,baseRefName,headRefOid} or None. Pure/offline-testable."""
+    {state,isDraft,headRefName,baseRefName,headRefOid} or None. Pure/offline-testable.
+
+    Every durable live field must EXIST and be VALID; a missing / null / empty / malformed / unknown
+    live value is RED (fail-closed) — we never skip a comparison because a live value is falsy. That
+    'skip on falsy' is the exact fail-open the Owner flagged: a missing headRefName / isDraft / base
+    would otherwise pass silently."""
     failures: list[str] = []
     for pr in snapshot.get("prs", []):
         if not isinstance(pr, dict) or pr.get("number") is None:
             continue
         n = pr["number"]
         lv = live.get(n)
-        if lv is None:
+        if not isinstance(lv, dict):
             failures.append(f"PR #{n}: live GitHub state unresolved — cannot verify (fail-closed)")
             continue
+        # state: must be a known GitHub PR state, then must match the snapshot.
+        state = lv.get("state")
         want = MERGE_MAP.get(pr.get("merge_state"))
-        if want and lv.get("state") != want:
-            failures.append(f"PR #{n}: snapshot merge_state={pr.get('merge_state')!r} but GitHub={lv.get('state')!r}")
-        if pr.get("draft") is not None and bool(pr.get("draft")) != bool(lv.get("isDraft")):
-            failures.append(f"PR #{n}: snapshot draft={pr.get('draft')} but GitHub isDraft={lv.get('isDraft')}")
-        if pr.get("branch") and lv.get("headRefName") and pr["branch"] != lv["headRefName"]:
-            failures.append(f"PR #{n}: snapshot branch={pr['branch']!r} but GitHub head branch={lv['headRefName']!r}")
-        if pr.get("base") and lv.get("baseRefName") and pr["base"] != lv["baseRefName"]:
-            failures.append(f"PR #{n}: snapshot base={pr['base']!r} but GitHub base={lv['baseRefName']!r}")
-        # EXACT head: drift is now a FAILURE (forces re-sync), not a warning.
+        if state not in _LIVE_PR_STATES:
+            failures.append(f"PR #{n}: live GitHub state missing/unknown: {state!r} (fail-closed)")
+        elif want is None:
+            failures.append(f"PR #{n}: snapshot merge_state invalid: {pr.get('merge_state')!r}")
+        elif state != want:
+            failures.append(f"PR #{n}: snapshot merge_state={pr.get('merge_state')!r} but GitHub={state!r}")
+        # isDraft: must be a real boolean (a missing/null value must NOT collapse to False).
+        is_draft = lv.get("isDraft")
+        if is_draft not in (True, False):
+            failures.append(f"PR #{n}: live GitHub isDraft missing/not boolean: {is_draft!r} (fail-closed)")
+        elif pr.get("draft") is not None and bool(pr.get("draft")) != bool(is_draft):
+            failures.append(f"PR #{n}: snapshot draft={pr.get('draft')} but GitHub isDraft={is_draft}")
+        # headRefName / baseRefName: must be present non-empty strings (missing => RED, not skip).
+        head_branch = lv.get("headRefName")
+        if not (isinstance(head_branch, str) and head_branch):
+            failures.append(f"PR #{n}: live GitHub headRefName missing/empty: {head_branch!r} (fail-closed)")
+        elif pr.get("branch") and pr["branch"] != head_branch:
+            failures.append(f"PR #{n}: snapshot branch={pr['branch']!r} but GitHub head branch={head_branch!r}")
+        base_branch = lv.get("baseRefName")
+        if not (isinstance(base_branch, str) and base_branch):
+            failures.append(f"PR #{n}: live GitHub baseRefName missing/empty: {base_branch!r} (fail-closed)")
+        elif pr.get("base") and pr["base"] != base_branch:
+            failures.append(f"PR #{n}: snapshot base={pr['base']!r} but GitHub base={base_branch!r}")
+        # EXACT head: both sides must be 40-hex; drift is a FAILURE (forces re-sync), missing live is RED.
         snap_head = pr.get("head", "")
-        live_head = lv.get("headRefOid", "")
+        live_head = lv.get("headRefOid")
         if not _is_sha(snap_head):
             failures.append(f"PR #{n}: snapshot 'head' must be an exact 40-hex sha, got {snap_head!r}")
-        elif live_head and snap_head != live_head:
+        if not _is_sha(live_head):
+            failures.append(f"PR #{n}: live GitHub headRefOid missing/not 40-hex: {live_head!r} (fail-closed)")
+        if _is_sha(snap_head) and _is_sha(live_head) and snap_head != live_head:
             failures.append(f"PR #{n}: snapshot head {snap_head[:7]} != live head {live_head[:7]} "
                             f"(exact-head drift — re-sync current_state.json in the same PR)")
     return failures
 
 
-_MARKER_RE = re.compile(r"AUDIT_CANDIDATE_HEAD:\s*([0-9a-f]{40})")
+_MARKER_KEYWORD_RE = re.compile(r"AUDIT_CANDIDATE_HEAD", re.I)
+_MARKER_RE = re.compile(r"AUDIT_CANDIDATE_HEAD:\s*([0-9a-f]{40})\b")
 
 
 def parse_audit_candidate(body) -> str | None:
+    """Fail-closed: return the exact audited head ONLY if the PR body contains EXACTLY ONE marker
+    keyword AND that marker is a valid 40-hex sha. Zero markers, DUPLICATE markers, or a malformed
+    (non-40-hex) marker all return None — which is RED at the call site. A duplicate/ambiguous marker
+    must never silently pick one; that would let an attacker append a second marker to smuggle a head."""
     if not isinstance(body, str):
         return None
+    if len(_MARKER_KEYWORD_RE.findall(body)) != 1:   # zero or duplicate keyword occurrences => fail-closed
+        return None
     m = _MARKER_RE.search(body)
-    return m.group(1) if m else None
+    return m.group(1) if m else None                 # single keyword but malformed sha => None (RED)
+
+
+def pull_request_trigger_types(workflow_yaml: str) -> set:
+    """Extract `on.pull_request.types` from a workflow YAML with a minimal, stdlib-only indent scan
+    (no PyYAML dependency in CI). Returns the set of declared trigger types (empty if none listed).
+    Used by the deterministic test that proves `edited` stays in the trigger — a PR-body edit (which
+    is where the AUDIT_CANDIDATE_HEAD marker lives) must start a fresh repo-state verification run."""
+    lines = workflow_yaml.splitlines()
+    out: set = set()
+    n = len(lines)
+    i = 0
+    while i < n:
+        if lines[i].strip() == "pull_request:":
+            pr_indent = len(lines[i]) - len(lines[i].lstrip())
+            j = i + 1
+            collecting = False
+            while j < n:
+                lj = lines[j]
+                if not lj.strip():
+                    j += 1
+                    continue
+                indent = len(lj) - len(lj.lstrip())
+                if indent <= pr_indent:
+                    break  # dedented out of the pull_request block
+                s = lj.strip()
+                if s.startswith("types:"):
+                    collecting = True
+                    rest = s[len("types:"):].strip()
+                    if rest.startswith("["):          # inline list form: types: [a, b, c]
+                        for tok in rest.strip("[]").split(","):
+                            t = tok.strip().strip("'\"")
+                            if t:
+                                out.add(t)
+                        collecting = False
+                elif collecting and s.startswith("- "):
+                    out.add(s[2:].strip().strip("'\""))
+                elif collecting:
+                    collecting = False
+                j += 1
+            break
+        i += 1
+    return out
 
 
 def verify_pr_event(event: dict, snapshot: dict) -> list[str]:
@@ -158,6 +236,35 @@ def verify_carrier_post_merge(carrier_live: dict | None, snapshot: dict) -> list
         na = snapshot.get("next_action_by_carrier") or {}
         if not na.get("merged"):
             failures.append("carrier MERGED but next_action_by_carrier.merged is missing")
+    return failures
+
+
+def verify_carrier_state(carrier_live: dict | None, snapshot: dict) -> list[str]:
+    """Enumerate the carrier's allowed live states and validate the MATCHING transition branch.
+    Fail-closed: unresolved / missing / unknown live state => RED (we can't classify pre vs post
+    merge). OPEN validates the pre_merge branch; MERGED validates the post_merge branch. This runs on
+    BOTH the pull_request event (carrier expected OPEN) and the main push (expected MERGED), so a
+    malformed / unexpected live carrier state can never fail-open. Pure/testable."""
+    if not isinstance(carrier_live, dict) or carrier_live.get("state") is None:
+        return ["carrier PR live state unresolved/missing — cannot classify pre/post-merge (fail-closed)"]
+    state = carrier_live.get("state")
+    if state not in ALLOWED_CARRIER_STATES:
+        return [f"carrier PR live state {state!r} is not an allowed carrier state {ALLOWED_CARRIER_STATES} "
+                f"(fail-closed — expected OPEN pre-merge or MERGED post-merge)"]
+    if state == "MERGED":
+        return verify_carrier_post_merge(carrier_live, snapshot)
+    # OPEN: the pre_merge branch must be the active truth.
+    pre = (snapshot.get("carrier_transition") or {}).get("pre_merge") or {}
+    failures: list[str] = []
+    if pre.get("carrier_state") != "open":
+        failures.append("carrier OPEN but carrier_transition.pre_merge.carrier_state != 'open'")
+    if pre.get("gate") != "PR33_REAUDIT":
+        failures.append(f"carrier OPEN but pre_merge.gate is {pre.get('gate')!r}, expected 'PR33_REAUDIT'")
+    if pre.get("phase_0") != "in_progress":
+        failures.append(f"carrier OPEN but pre_merge.phase_0 is {pre.get('phase_0')!r}, expected 'in_progress'")
+    phase0 = (snapshot.get("product_roadmap") or {}).get("phase_0")
+    if isinstance(phase0, dict) and phase0.get("if_carrier_open") != "in_progress":
+        failures.append("carrier OPEN but product_roadmap.phase_0.if_carrier_open != 'in_progress'")
     return failures
 
 
@@ -262,15 +369,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     failures += compare_external_prs(snap, fetch_live(numbers))
 
-    # Carrier EXACT-head anchor on a pull_request: event head == live headRefOid == PR-body marker.
+    # Carrier EXACT-head anchor on a pull_request: event head == live headRefOid == PR-body marker,
+    # plus the enumerated carrier-state check (OPEN => the pre_merge branch must be the active truth).
     if event is not None and carrier_no is not None:
         cl = fetch_carrier(carrier_no)
         event_head = ((event.get("pull_request") or {}).get("head") or {}).get("sha")
         failures += verify_carrier_exact_head(event_head, (cl or {}).get("headRefOid"),
                                               parse_audit_candidate((cl or {}).get("body")))
-    # Carrier post-merge on a main push (fail-closed if unresolvable).
+        failures += verify_carrier_state(cl, snap)
+    # Carrier state on a main push (fail-closed if unresolvable/unknown; MERGED => post_merge branch).
     if on_main_push and carrier_no is not None:
-        failures += verify_carrier_post_merge(fetch_carrier(carrier_no), snap)
+        failures += verify_carrier_state(fetch_carrier(carrier_no), snap)
 
     if failures:
         print("RED: config/current_state.json disagrees with live GitHub / CI context —", file=sys.stderr)

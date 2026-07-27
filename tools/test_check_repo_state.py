@@ -79,6 +79,31 @@ class ExternalPrTests(unittest.TestCase):
         snap = _snapshot(); snap["prs"][0]["head"] = "PENDING"
         self.assertTrue(any("PR #31" in p and "40-hex" in p for p in rs.compare_external_prs(snap, _live_ok())))
 
+    # --- P1: malformed / missing live metadata must be RED (no skip-on-falsy fail-open) -------------
+    def test_null_live_head_fails_closed(self):
+        live = _live_ok(); live[31]["headRefOid"] = None
+        self.assertTrue(any("PR #31" in p and "headRefOid" in p for p in rs.compare_external_prs(_snapshot(), live)))
+
+    def test_missing_live_head_branch_fails_closed(self):
+        live = _live_ok(); live[31]["headRefName"] = ""
+        self.assertTrue(any("PR #31" in p and "headRefName" in p for p in rs.compare_external_prs(_snapshot(), live)))
+
+    def test_missing_live_base_fails_closed(self):
+        live = _live_ok(); del live[32]["baseRefName"]
+        self.assertTrue(any("PR #32" in p and "baseRefName" in p for p in rs.compare_external_prs(_snapshot(), live)))
+
+    def test_null_live_state_fails_closed(self):
+        live = _live_ok(); live[31]["state"] = None
+        self.assertTrue(any("PR #31" in p and "state missing/unknown" in p for p in rs.compare_external_prs(_snapshot(), live)))
+
+    def test_unknown_live_state_fails_closed(self):
+        live = _live_ok(); live[31]["state"] = "LOCKED"
+        self.assertTrue(any("PR #31" in p and "state missing/unknown" in p for p in rs.compare_external_prs(_snapshot(), live)))
+
+    def test_null_live_isdraft_fails_closed(self):
+        live = _live_ok(); live[32]["isDraft"] = None
+        self.assertTrue(any("PR #32" in p and "isDraft" in p for p in rs.compare_external_prs(_snapshot(), live)))
+
 
 class PrEventTests(unittest.TestCase):
     def _event(self, base_sha=MAIN, base_ref="main", head_ref="chore/phase0-repository-truth",
@@ -133,6 +158,23 @@ class CarrierExactHeadTests(unittest.TestCase):
         self.assertEqual(rs.parse_audit_candidate(f"body\nAUDIT_CANDIDATE_HEAD: {CARRIER_HEAD}\nmore"), CARRIER_HEAD)
         self.assertIsNone(rs.parse_audit_candidate("no marker here"))
 
+    # --- P0-2: parse_audit_candidate must fail closed on zero / duplicate / malformed markers -------
+    def test_parse_duplicate_marker_fails_closed(self):
+        body = f"AUDIT_CANDIDATE_HEAD: {CARRIER_HEAD}\nsome text\nAUDIT_CANDIDATE_HEAD: {NEWMAIN}"
+        self.assertIsNone(rs.parse_audit_candidate(body))  # ambiguous: never silently pick one
+
+    def test_parse_malformed_marker_fails_closed(self):
+        self.assertIsNone(rs.parse_audit_candidate("AUDIT_CANDIDATE_HEAD: not-a-40-hex-sha"))
+
+    def test_parse_zero_marker_is_none(self):
+        self.assertIsNone(rs.parse_audit_candidate("release notes with no marker at all"))
+
+    def test_duplicate_marker_makes_exact_head_red(self):
+        # a duplicate marker -> parse None -> the exact-head anchor is RED.
+        marker = rs.parse_audit_candidate(f"AUDIT_CANDIDATE_HEAD: {CARRIER_HEAD}\nAUDIT_CANDIDATE_HEAD: {CARRIER_HEAD}")
+        self.assertTrue(any("AUDIT_CANDIDATE_HEAD" in p
+                            for p in rs.verify_carrier_exact_head(CARRIER_HEAD, CARRIER_HEAD, marker)))
+
 
 class CarrierPostMergeTests(unittest.TestCase):
     def test_merged_with_correct_post_merge_is_green(self):
@@ -157,6 +199,66 @@ class CarrierPostMergeTests(unittest.TestCase):
 
     def test_open_carrier_is_noop(self):
         self.assertEqual(rs.verify_carrier_post_merge({"state": "OPEN"}, _snapshot()), [])
+
+
+class CarrierStateTests(unittest.TestCase):
+    """P1: the carrier's live state is explicitly enumerated; unresolved/unknown => RED; OPEN validates
+    the pre_merge branch, MERGED the post_merge branch."""
+    def _snap_full(self):
+        snap = _snapshot()
+        snap["product_roadmap"] = {"phase_0": {"if_carrier_open": "in_progress", "if_carrier_merged": "done"}}
+        snap["next_action_by_carrier"] = {"open": "x", "merged": "y"}
+        return snap
+
+    def test_open_correct_pre_merge_is_green(self):
+        self.assertEqual(rs.verify_carrier_state({"state": "OPEN"}, self._snap_full()), [])
+
+    def test_open_wrong_pre_merge_gate_fails(self):
+        snap = self._snap_full(); snap["carrier_transition"]["pre_merge"]["gate"] = "SOMETHING_ELSE"
+        self.assertTrue(any("PR33_REAUDIT" in p for p in rs.verify_carrier_state({"state": "OPEN"}, snap)))
+
+    def test_open_wrong_phase0_fails(self):
+        snap = self._snap_full(); snap["product_roadmap"]["phase_0"]["if_carrier_open"] = "done"
+        self.assertTrue(any("if_carrier_open" in p for p in rs.verify_carrier_state({"state": "OPEN"}, snap)))
+
+    def test_unresolved_carrier_state_fails_closed(self):
+        self.assertTrue(any("unresolved/missing" in p for p in rs.verify_carrier_state(None, self._snap_full())))
+        self.assertTrue(any("unresolved/missing" in p for p in rs.verify_carrier_state({"state": None}, self._snap_full())))
+
+    def test_unknown_carrier_state_fails_closed(self):
+        f = rs.verify_carrier_state({"state": "CLOSED"}, self._snap_full())
+        self.assertTrue(any("not an allowed carrier state" in p for p in f))
+
+    def test_merged_delegates_to_post_merge_green(self):
+        self.assertEqual(rs.verify_carrier_state({"state": "MERGED"}, self._snap_full()), [])
+
+    def test_merged_delegates_to_post_merge_red(self):
+        snap = self._snap_full(); snap["carrier_transition"]["post_merge"]["gate"] = "WRONG"
+        self.assertTrue(any("REBASE_PR31" in p for p in rs.verify_carrier_state({"state": "MERGED"}, snap)))
+
+
+class WorkflowTriggerTests(unittest.TestCase):
+    """P0-2: prove `edited` (and the other required types) stay in the real pull_request trigger, so a
+    PR-body AUDIT_CANDIDATE_HEAD edit starts a fresh repo-state run; plus the pure-parser forms."""
+    def _real_yaml(self):
+        return (pathlib.Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    def test_required_types_present_in_real_workflow(self):
+        types = rs.pull_request_trigger_types(self._real_yaml())
+        for required in ("opened", "reopened", "synchronize", "edited", "ready_for_review"):
+            self.assertIn(required, types, f"pull_request trigger is missing '{required}'")
+
+    def test_parser_block_list_form(self):
+        y = "on:\n  pull_request:\n    types:\n      - opened\n      - edited\n"
+        self.assertEqual(rs.pull_request_trigger_types(y), {"opened", "edited"})
+
+    def test_parser_inline_list_form(self):
+        y = "on:\n  pull_request:\n    types: [opened, edited, synchronize]\n"
+        self.assertEqual(rs.pull_request_trigger_types(y), {"opened", "edited", "synchronize"})
+
+    def test_parser_detects_missing_edited(self):
+        y = "on:\n  pull_request:\n    types:\n      - opened\n      - synchronize\n\npermissions:\n  contents: read\n"
+        self.assertNotIn("edited", rs.pull_request_trigger_types(y))
 
 
 class MainPushTests(unittest.TestCase):

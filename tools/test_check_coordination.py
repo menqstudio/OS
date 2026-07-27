@@ -238,6 +238,71 @@ class SemanticGateTests(unittest.TestCase):
         _state_repo(root, current_state=cs)
         self.assertTrue(any("carrier_transition' is missing" in p for p in cc.check(root)))
 
+    # --- P0-1: strengthened carrier-resolution gate --------------------------------------------------
+    def _carrier_state(self) -> dict:
+        cs = _default_state()
+        cs["current_workflow_pr"] = {"number": 33, "branch": "chore/phase0-repository-truth", "head": "b" * 40}
+        cs["carrier_transition"] = {
+            "carrier_pr": 33,
+            "pre_merge": {"gate": "PR33_REAUDIT", "carrier_state": "open", "phase_0": "in_progress"},
+            "post_merge": {"gate": "REBASE_PR31", "carrier_state": "merged", "phase_0": "done"},
+        }
+        cs["product_roadmap"] = {"phase_0": {"if_carrier_open": "in_progress", "if_carrier_merged": "done"}}
+        cs["status_tokens"].update({
+            "CARRIER_IF_OPEN_GATE": "PR33_REAUDIT", "CARRIER_IF_MERGED_GATE": "REBASE_PR31",
+            "CARRIER_IF_OPEN_PHASE0": "in_progress", "CARRIER_IF_MERGED_PHASE0": "done"})
+        return cs
+
+    def test_rejects_missing_structured_carrier_token(self):
+        # a carrier PR exists but the structured CARRIER_IF_OPEN_GATE token is absent -> flagged.
+        root = self._tmp()
+        cs = self._carrier_state(); del cs["status_tokens"]["CARRIER_IF_OPEN_GATE"]
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("status_tokens.CARRIER_IF_OPEN_GATE missing" in p for p in cc.check(root)))
+
+    def test_rejects_structured_carrier_token_mismatch(self):
+        # the structured token must equal the transition anchor; a wrong value is flagged.
+        root = self._tmp()
+        cs = self._carrier_state(); cs["status_tokens"]["CARRIER_IF_MERGED_GATE"] = "WRONG_GATE"
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("CARRIER_IF_MERGED_GATE" in p and "!= carrier_transition.post_merge.gate" in p
+                            for p in cc.check(root)))
+
+    # The ACTUAL long sentences the Owner found escaping the old proximity regex.
+    def test_rejects_unconditional_reaudit_merge_it(self):
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both(
+            "Next permitted action: finish + re-audit PR #33 (repository truth) → merge it → rebase PR #31."))
+        self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
+
+    def test_rejects_unconditional_pr33_not_merged(self):
+        root = self._tmp()
+        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\n"
+                    + _doc_mentioning_both("PR #33 is PENDING re-audit (not merged)."))
+        self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
+
+    def test_rejects_unconditional_pr33_reaudit_then_merge(self):
+        root = self._tmp()
+        _state_repo(root, tasks=f"> tokens {_TOKENS}\n\nCorrect next sequence: PR #33 re-audit → merge.\n\n"
+                    "| ID | Task | By | Status | PR |\n"
+                    f"| **T-017** | wave 3b-1 | me | In-Progress | PR #31 `{BRANCH_31}` + PR #32 `{BRANCH_32}` |\n")
+        self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
+
+    def test_allows_transition_aware_carrier_sentence(self):
+        # the corrected transition-aware form (IF OPEN … / IF MERGED …) must NOT be flagged.
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both(
+            "Resolve PR #33 live: IF OPEN → obtain repository-truth GREEN and merge PR #33; "
+            "IF MERGED → rebase PR #31 onto main."))
+        self.assertFalse(any("unconditional carrier sentence" in p for p in cc.check(root)))
+
+    def test_carrier_prose_scan_excludes_history(self):
+        # the same unconditional sentence inside HISTORY markers must NOT be flagged.
+        root = self._tmp()
+        _state_repo(root, next_chat=_doc_mentioning_both()
+                    + "\n<!-- HISTORY_BEGIN -->\nOld: re-audit PR #33 → merge it.\n<!-- HISTORY_END -->\n")
+        self.assertFalse(any("unconditional carrier sentence" in p for p in cc.check(root)))
+
     def test_manifest_missing_active_doc_is_flagged(self):
         root = self._tmp(); _state_repo(root)
         (root / "docs/design").mkdir(parents=True, exist_ok=True)

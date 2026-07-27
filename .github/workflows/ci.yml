@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `edited` and `ready_for_review` are REQUIRED: the exact audited head is anchored out-of-band in
+    # the PR body (`AUDIT_CANDIDATE_HEAD: <sha>`). A body edit must start a fresh repo-state run so the
+    # exact-head check re-reads the marker — the default pull_request trigger does NOT fire on `edited`.
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - ready_for_review
 
 permissions:
   contents: read

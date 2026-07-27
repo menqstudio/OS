@@ -89,6 +89,41 @@ SUBJECT_PROSE = {
     "CURRENT_RECEIPT_PLUMBING": r"receipt.?plumbing",
     "CURRENT_GOVERNED_ROUNDTRIP": r"governed round.?trip",
 }
+# Structured carrier-resolution tokens: every CURRENT block must carry ALL four (both transition
+# branches), and each must equal the corresponding anchor field. Because they live in status_tokens
+# they are ALSO required verbatim in every human doc's CURRENT region (via _check_status_tokens) — so
+# a plain proximity regex is no longer the only defense: the machine-checked structured block is.
+CARRIER_RESOLUTION_TOKENS = {
+    "CARRIER_IF_OPEN_GATE": ("carrier_transition", "pre_merge", "gate"),
+    "CARRIER_IF_MERGED_GATE": ("carrier_transition", "post_merge", "gate"),
+    "CARRIER_IF_OPEN_PHASE0": ("product_roadmap", "phase_0", "if_carrier_open"),
+    "CARRIER_IF_MERGED_PHASE0": ("product_roadmap", "phase_0", "if_carrier_merged"),
+}
+# a carrier-action / carrier-state phrase that goes STALE the moment PR #33 merges. Any of these near a
+# bare "PR #33" mention, unguarded by an IF-OPEN/IF-MERGED transition marker on the same line, is RED.
+_CARRIER_UNCONDITIONAL = re.compile(
+    r"not( yet)? merged|un-?merged|awaiting[ -]?re-?audit|pending[ -]?re-?audit|"
+    r"→\s*merge|->\s*merge|merge it\b|merge PR ?#?33|"
+    r"re-?audit[^.\n]{0,8}(→|->|then\b)|re-?audit\s+PR ?#?33|PR ?#?33[^.\n]{0,25}re-?audit",
+    re.I)
+_CARRIER_GUARD = re.compile(r"\b(if open|while open|if merged|when open|when merged|if pr ?#?33 is open)\b", re.I)
+# strong clause boundaries: a sentence end, a blank line, a bullet, a numbered item, or a table pipe.
+# We scope the carrier scan to a single CLAUSE (robust to markdown hard-wrapping), so a guarded
+# transition sentence is fine while a SEPARATE unconditional sentence in the same block is still caught.
+_STRONG_BOUNDARY = re.compile(r"\.\s|!\s|\?\s|\n\s*\n|\n\s*>?\s*[-*]\s|\n\s*\d+\.\s|\|")
+
+
+def _dig(data, path):
+    d = data
+    for k in path:
+        d = d.get(k) if isinstance(d, dict) else None
+    return d
+
+
+def _prose_only(region: str) -> str:
+    """Drop structured `CURRENT_*: value` / `CARRIER_*: value` tokens so the carrier prose scan does not
+    trip over the machine tokens themselves (which legitimately contain 'PR33', 'REAUDIT', 'merge')."""
+    return re.sub(r"`?(CURRENT|CARRIER)_[A-Z0-9_]+`?\s*[:=]\s*`?[^`\n·]*`?", " ", region)
 
 
 def _read(root: pathlib.Path, rel: str) -> str | None:
@@ -239,6 +274,19 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
         na = data.get("next_action_by_carrier")
         if not (isinstance(na, dict) and na.get("open") and na.get("merged")):
             problems.append(f"{CURRENT_STATE_JSON}: next_action_by_carrier must have both 'open' and 'merged' branches")
+        # every CURRENT block must carry the structured carrier-resolution block (both branches), and
+        # each token must equal the transition anchor. This is the machine-checked replacement for the
+        # proximity regex — it is required, not merely proximity-detected.
+        tokens = data.get("status_tokens") if isinstance(data.get("status_tokens"), dict) else {}
+        for tk, path in CARRIER_RESOLUTION_TOKENS.items():
+            want = _dig(data, path)
+            got = tokens.get(tk)
+            if got is None:
+                problems.append(f"{CURRENT_STATE_JSON}: status_tokens.{tk} missing — a carrier PR exists, "
+                                f"so every CURRENT block must carry the structured carrier-resolution token")
+            elif want is not None and str(got) != str(want):
+                problems.append(f"{CURRENT_STATE_JSON}: status_tokens.{tk}={got!r} != {'.'.join(path)}={want!r} "
+                                f"(structured carrier-resolution token must match the transition anchor)")
     return problems
 
 
@@ -358,15 +406,27 @@ def _check_current_contradictions(root: pathlib.Path) -> list[str]:
                 if re.search(pat, region, re.I):
                     problems.append(f"{doc}: CURRENT region calls '{token_key}' pending, but the status "
                                     f"token says complete (contradictory present-tense claim)")
-        # the carrier's merge-state must be described conditionally: an unconditional "PR #33 is not
-        # merged / awaiting" goes stale the moment it merges. Allow it only under an IF-OPEN/until guard.
-        for m in re.finditer(r"PR ?#?33[^.\n]{0,45}?(not( yet)? merged|un-?merged|awaiting[- ]?re-?audit)", region, re.I):
-            pre = region[max(0, m.start() - 60):m.start()].lower()
-            if any(w in pre for w in ("if open", "while open", "until", "unless", "when open", "open:", "if pr #33 is open")):
-                continue
-            problems.append(f"{doc}: CURRENT region unconditionally says PR #33 is not merged/awaiting — use "
-                            f"transition-aware wording (IF OPEN … / IF MERGED …) so it can't go stale on merge")
-            break
+        # the carrier's state/next-action must be described conditionally: any unconditional carrier
+        # sentence (PR #33 not merged / awaiting re-audit / re-audit→merge / merge PR #33) goes stale
+        # the moment it merges. We scan the PROSE (structured tokens stripped) for a carrier-action
+        # phrase near a bare "PR #33" mention that is NOT guarded by an IF-OPEN/IF-MERGED transition
+        # marker earlier on the SAME line. This catches "next action is re-audit/merge PR #33" phrasings
+        # a proximity "PR #33 … not merged" regex misses.
+        prose = _prose_only(region)
+        for m in re.finditer(r"PR ?#?33\b", prose, re.I):
+            # the mention's CLAUSE = text between the nearest strong boundaries on each side. A clause
+            # that is a transition-aware statement contains an IF-OPEN/IF-MERGED marker; a standalone
+            # unconditional sentence is its own clause with no such marker.
+            starts = [b.end() for b in _STRONG_BOUNDARY.finditer(prose, 0, m.start())]
+            clause_start = starts[-1] if starts else 0
+            nxt = _STRONG_BOUNDARY.search(prose, m.end())
+            clause_end = nxt.start() if nxt else len(prose)
+            clause = prose[clause_start:clause_end]
+            if _CARRIER_UNCONDITIONAL.search(clause) and not _CARRIER_GUARD.search(clause):
+                problems.append(f"{doc}: CURRENT region has an unconditional carrier sentence about PR #33 "
+                                f"(merge / re-audit / not-merged) not guarded by an IF OPEN / IF MERGED "
+                                f"transition marker — make every carrier-current statement transition-aware")
+                break
         if str(tokens.get("CURRENT_DESIGN_GATE")) == "PENDING_REAUDIT":
             # a PENDING_REAUDIT candidate must not be described in the current region as having ANY
             # exact verdict — neither GREEN nor RED (the RED verdicts belonged to earlier revisions).
