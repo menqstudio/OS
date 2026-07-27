@@ -1,4 +1,4 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 26 — CONSOLIDATED)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 26 — CONSOLIDATED; preparation-P0 closed)
 
 > **STATUS: ❌ DESIGN RED being closed — rev 26 is a PROPOSED design-GREEN candidate, NOT
 > Architect-GREEN. 3b-1B code has NOT started.** rev 25 was Architect-reviewed at exact HEAD
@@ -48,6 +48,21 @@
 > **All contracts below are OPEN until the Architect returns design-GREEN at the exact pushed HEAD.**
 > STOP gates: `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31
 > not merged.
+>
+> **Preparation-P0 closure (independent prep review, NOT the Architect verdict — closed on this HEAD
+> before the audit; PR #31 rebased onto the repaired `main` `b6c6712`):**
+> **P0-a TCB code-integrity floor (§2.5, §4.3, §4.7):** the lease now pins `executor_executable_sha256`
+> as well as the launcher; the launcher re-hashes the executor image and `fexecve`s the exact verified
+> `fd`; **all** TCB binaries + config must be TCB-owned and non-writable by any runtime/login UID,
+> verified fail-closed at start (`verify_tcb_integrity()`) — so a same-login-user sidecar can no longer
+> swap a TCB binary and obtain a genuinely-signed `trusted_verified` (`tcb_integrity_violation`).
+> **P0-b distinct-principal linchpin (§2.6):** the **sidecar's own** dedicated UID is now a checked
+> requirement; `verify_distinct_principals()` refuses (fail-closed) unless all seven runtime UIDs are
+> set, pairwise-distinct, and ≠ the login UID — no single-UID collapse.
+> **P0-c enforced platform gate + Windows normative (§0.1, §0.W):** `platform_governed_execution_supported()`
+> is a tested runtime gate (not prose); Windows real-mode is DISABLED (gate false) until a Windows broker
+> is separately Architect-audited, with the broker's required primitives specified. New refusal reasons
+> `tcb_integrity_violation` + `platform_unsupported`; new §9 test matrix.
 
 > **DESIGN-ONLY.** No 3b-1B code ships until this addendum is Architect-GREEN. It reuses the
 > existing lease / containment / receipt / evidence authorities — **no parallel executor**.
@@ -88,6 +103,58 @@ Threat scope (from the ratified base design): sidecar RCE at the **same login us
 IN scope; admin/root/kernel is OUT of scope. Where a platform cannot separate the
 desktop-UI principal from the sidecar UID, governed real-mode is **FAIL-CLOSED** on that
 platform (Windows is fail-closed until its broker is separately audited).
+
+### 0.1 Platform capability gate (P0 — ENFORCED + TESTED, not prose, fail-closed)
+
+"Fail-closed on unsupported platforms" is only real if it is a **runtime gate with a test**, not a
+sentence. The supervisor evaluates a single normative predicate
+**`platform_governed_execution_supported()`** at start and **enables governed real-mode only if it
+returns true**. It returns true **iff ALL** of the following primitives are present *and verified*:
+
+1. **Distinct OS principals** — `verify_distinct_principals()` passes (§2.6): all seven runtime UIDs
+   set, pairwise-distinct, and ≠ the interactive login UID.
+2. **Local-IPC peer authentication** — an `SO_PEERCRED`-equivalent that authenticates the connecting
+   process's UID against an exact allowlist on the authority + supervisor sockets (§2.1, §2.3).
+3. **File-ownership / ACL isolation** — the receipt-key store (§2.3 `store/keys/`) and the protected
+   evidence store are enforceable owner-only / owner-write-shared-read against the in-scope login/
+   sidecar UIDs.
+4. **Privilege-dropping verified exec** — a `setuid(executor)+fexecve` (drop-caps, run-the-exact-
+   verified-`fd`) primitive for the launcher (§4.7).
+5. **TCB code integrity** — `verify_tcb_integrity()` passes (§2.5): every TCB binary/config is
+   TCB-owned and non-writable by any runtime/login UID, and matches its start-time pin.
+
+If **any** primitive is absent or unverified, `platform_governed_execution_supported()` returns
+**false** ⇒ the supervisor issues **NO governed-turn lease**, every governed turn resolves to
+**Blocked** (dev/blocked only, `NoTrustedManifest`-equivalent), and the desktop **never** renders
+`trusted_verified`. There is no partial/degraded governed mode. **Test (normative, §9):** a platform
+shim that reports any single primitive missing ⇒ the gate returns false ⇒ a governed turn Blocks with
+no lease; the all-present Linux fixture ⇒ the gate returns true and the §2.1 isolation proofs run.
+
+### 0.W Windows (primary platform) — normative stance + broker target
+
+**Linux is the currently-audited platform** (dedicated UIDs, `AF_UNIX` + `SO_PEERCRED`, setuid
+launcher + `fexecve`, POSIX ownership/ACL, `engine/ci/isolation_proof.sh`). **Windows real-mode is
+DISABLED by the §0.1 gate today** — `platform_governed_execution_supported()` returns **false** on
+Windows, so governed turns are fail-closed (dev/blocked, never Verified) until a Windows broker is
+designed **and passes its own Architect audit**. This is not a TODO gap in the trust chain: it is an
+explicit, tested refusal.
+
+A future **Windows governed-execution broker** MUST provide equivalents for each §0.1 primitive
+(normative target, audited separately before it may flip the gate true on Windows):
+- **Distinct principals** — a dedicated **service account / SID per principal** (or an isolated
+  service with a per-principal **restricted token / AppContainer**); none may be the interactive user.
+- **Peer authentication** — named-pipe peer identity via `GetNamedPipeClientProcessId` →
+  `OpenProcessToken` → **token-SID allowlist** (the `SO_PEERCRED` equivalent); reject any other SID.
+- **Ownership / ACL isolation** — **NTFS ACLs** that DENY write to the interactive user (and every
+  non-owning runtime SID) on the key store, the protected store, **and all TCB binaries/config**;
+  owner = a TCB principal (TrustedInstaller-class / `brops-admin`).
+- **Privilege-separated verified exec** — `CreateProcessAsUser` under the executor's **restricted
+  token**, launching an image whose **hash + Authenticode + ACL** are verified before launch and which
+  is **not writable by the login user** (the `fexecve`/TCB-integrity equivalent).
+- **TCB code integrity** — **WDAC/AppLocker** (or signature + ACL) so the login user cannot substitute
+  any TCB binary.
+
+Until that broker exists and is Architect-audited, the gate stays **false** on Windows.
 
 ---
 
@@ -204,6 +271,73 @@ profile — NOT a base-lease superset**:
   `worktree`, `head_sha`, `tree_identity`, and `protected_scope` — none has a verifier for a
   model turn. (If a future justified use reintroduces `protected_scope`, its type is an
   **array of exact non-pattern paths**, never a string.)
+
+### 2.5 TCB binary & config integrity (P0 — code-integrity floor, NORMATIVE)
+
+A pinned digest in the lease only proves *which* image the launcher is *told* to run — it does
+**nothing** if the sidecar (compromised, same login user) can **overwrite that image on disk**.
+Pinning `launcher_executable_sha256` while leaving the **executor** image unpinned and any TCB
+binary **login-user-writable** is a forge path: the sidecar swaps the executor (or launcher, signer,
+supervisor) binary and obtains a **genuinely-signed** `trusted_verified` for attacker-chosen output.
+This section closes it.
+
+- **TCB binary set (LOCKED).** The trusted-computing-base executables are: the **supervisor**, the
+  **evidence-recorder runner**, the **privileged setuid launcher**, the **contained model executor**,
+  and the **isolated receipt signer** — plus every file that steers them: their **config / policy
+  bundles**, the **`GOVERNED_EXECUTION_ALLOWLIST`** source, the key-manifest/root-anchor, and the
+  systemd/service unit files. Call this set `TCB_ARTIFACTS`.
+- **Ownership + non-writability floor (NORMATIVE).** Every path in `TCB_ARTIFACTS`, **and every
+  ancestor directory up to `/`**, MUST be **owned by a dedicated TCB principal** (`root` or a
+  dedicated `brops-admin` that is NOT any runtime principal) and **MUST NOT be writable** — by mode
+  bits **or** POSIX ACL **or** group membership — by the interactive login user or by the
+  `sidecar` / `desktop-UI` / `supervisor` / `recorder` / `executor` / `signer` runtime UIDs. (The
+  runtime principals get **read/execute only**; the private-key store keeps its existing owner-only
+  ACL, §2.3.) A writable ancestor directory is treated as writable (a rename/replace vector).
+- **Start-time verification `verify_tcb_integrity()` (fail-closed).** At supervisor start (before it
+  will issue **any** governed-turn lease) the supervisor, from a **root-owned pin manifest**, holds
+  the expected `sha256` of **every** `TCB_ARTIFACT` and: (a) `fstat`s each opened `fd` (`O_NOFOLLOW`,
+  never a path re-lookup) and refuses unless owner ∈ TCB principals and no write bit/ACL for any
+  runtime/login UID; (b) re-hashes each binary/config and refuses on any mismatch. Failure ⇒ governed
+  real-mode is **DISABLED** (the platform gate §0.1 reports unsupported; every governed turn Blocks) —
+  never a partial/degraded launch.
+- **Lease-time + exec-time re-binding.** `issue_governed_turn_lease` sets `launcher_executable_sha256`
+  **and** `executor_executable_sha256` to the start-time TCB pins; `validate_governed_turn_lease` (§4.3)
+  refuses a lease naming any other digest; and the launcher **re-hashes the executor image it is about
+  to run and `fexecve`s the exact verified `fd`** (§4.7) so the bytes hashed are the bytes executed
+  (no path-relookup TOCTOU). The recorder binds both digests into the signed execution receipt (§4.7).
+- **Negative tests (normative, §9).** login-user-writable executor image ⇒ start refused; executor
+  bytes swapped after pinning (hash mismatch at `fexecve`) ⇒ `tcb_integrity_violation` Block, no
+  receipt; wrong-owner launcher / signer / config ⇒ start refused; a writable **ancestor directory**
+  of any TCB path ⇒ start refused; a lease naming an unpinned `executor_executable_sha256` ⇒ Block.
+
+### 2.6 Distinct-principal provisioning linchpin (P0 — no single-UID collapse, NORMATIVE)
+
+Every ACL, `SO_PEERCRED` allowlist, and file-ownership boundary in this design assumes the runtime
+principals are **different OS UIDs**. If provisioning quietly lands two of them on the **same UID**
+— most dangerously the **`sidecar`** sharing the interactive **login UID** or the **desktop-UI/
+challenge-authority** UID — the entire separation model silently collapses (the attacker *is* the
+authority / *owns* the store). The base design named "distinct UIDs" but never made the **sidecar's
+own** distinct UID a **checked** linchpin. It is now.
+
+- **Distinct-UID requirement (NORMATIVE).** `desktop-UI/challenge-authority`, `sidecar`,
+  `supervisor`, `evidence-recorder runner`, `privileged launcher`, `contained executor`, and
+  `isolated signer` MUST each run as a **dedicated OS UID**, **pairwise distinct**, and **all
+  distinct from the interactive login user**. In particular the **sidecar** (`engine_sidecar.py`,
+  compromised-in-scope) runs as its **own** dedicated UID — never the login UID, never the
+  desktop-UI UID, never a UID that shares the challenge-authority socket ACL or the `store/` ACL — and
+  a process it spawns MUST NOT inherit a UID carrying any of those grants.
+- **Provisioning (operator/installer, NORMATIVE).** Installation MUST create these dedicated service
+  accounts (e.g. `brops-sidecar`, `brops-supervisor`, `brops-recorder`, `brops-launcher`,
+  `brops-executor`, `brops-signer`, `brops-challenge`) and start each component under its account;
+  it MUST NOT fall back to the login user for any of them.
+- **Start-time verification `verify_distinct_principals()` (fail-closed).** At start the supervisor
+  resolves the effective UID configured for every principal and refuses to enable governed real-mode
+  unless **all are present, pairwise-distinct, and ≠ the interactive login UID**. On a single-UID host
+  (a developer laptop, or a mis-provisioned install) the check fails ⇒ the platform gate (§0.1) reports
+  **unsupported** ⇒ every governed turn is **FAIL-CLOSED** (no lease, `NoTrustedManifest`-equivalent).
+- **Negative tests (normative, §9).** any two principals sharing a UID ⇒ Block; `sidecar` UID == login
+  UID ⇒ Block; `sidecar` UID == desktop-UI UID ⇒ Block; any principal UID unset/defaulted to login ⇒
+  Block; a passing 7-distinct-UID fixture ⇒ the four §2.1 same-user isolation proofs still hold.
 
 ### 2.1 Challenge-authority trust boundary + creation channel (P0-2, NORMATIVE — no oracle)
 
@@ -944,6 +1078,7 @@ selects a **binary-pinned challenge-root anchor baked into the supervisor config
     "allowed_capabilities": ["INVOKE_GOVERNED_MODEL"],  // CLOSED; exactly this
     "max_tool_calls": 0,
     "launcher_executable_sha256": "<64hex>",            // pinned setuid launcher digest
+    "executor_executable_sha256": "<64hex>",            // pinned CONTAINED MODEL EXECUTOR digest (P0 — TCB code-integrity floor, §2.5); the launcher re-hashes the executor image and refuses to setuid+exec on any mismatch (§4.7)
     "model_profile_id": "cfg-sha256:<64hex>",          // == "cfg-sha256:" + generation_config_sha256 (deterministic formula, §2 P0-2); ^cfg-sha256:[0-9a-f]{64}$; NOT a free field, NOT a registry lookup
     "generation_config_sha256": "<64hex>",             // == challenge #1 generation_config_sha256 == the executed config's hash; the SOLE input to the model_profile_id formula
     "lease_issued_at_ms": <int>, "lease_expires_at_ms": <int>,
@@ -981,7 +1116,10 @@ selects a **binary-pinned challenge-root anchor baked into the supervisor config
 - **`validate_governed_turn_lease`:** `verify_artifact` (issuer) → strict-decode the exact
   key set → return fields. Refuses a missing/extra key, non-int `_ms`, `schema != 1`,
   `nonce` length ∉ [16,128], `allowed_capabilities != ["INVOKE_GOVERNED_MODEL"]`,
-  `max_tool_calls != 0`, `generation_config_sha256` not `^[0-9a-f]{64}$`, `model_profile_id` not
+  `max_tool_calls != 0`, `generation_config_sha256` not `^[0-9a-f]{64}$`,
+  `launcher_executable_sha256` or `executor_executable_sha256` not `^[0-9a-f]{64}$` **or not equal to the
+  supervisor's start-time TCB pin for that binary** (§2.5 — a lease may only name the exact audited
+  launcher + executor images), `model_profile_id` not
   `^cfg-sha256:[0-9a-f]{64}$`, and — the P0-2 binding, **recomputed independently by this validator** —
   `model_profile_id != "cfg-sha256:" + generation_config_sha256` **or**
   `generation_config_sha256 != the bound challenge's generation_config_sha256`. It does **NOT** consult
@@ -1054,7 +1192,12 @@ handle_missing, hash_mismatch, policy_mismatch, containment_missing, identity_de
 timestamp_invalid, oversize, malformed`) + the governed additions (`challenge_replay,
 acceptance_conflict, lease_not_ready, output_oversize, output_timeout, evidence_fork, stale_evidence,
 lease_expired, challenge_invalidated, retry_conflict, stream_unknown, stream_expired,
-stream_binding_mismatch, seq_out_of_range, model_profile_unknown`). `model_profile_unknown` (P0-2 — a
+stream_binding_mismatch, seq_out_of_range, model_profile_unknown, tcb_integrity_violation,
+platform_unsupported`). **`tcb_integrity_violation`** (P0 — the launcher's exec-time executor re-hash /
+owner / non-writable check failed, §2.5, §4.7) and **`platform_unsupported`** (P0 — the §0.1 platform
+gate / `verify_distinct_principals()` / `verify_tcb_integrity()` refused at start, §0.1, §2.5, §2.6) are
+both **pre-record Blocks**: no lease is issued (or no exec occurs), no receipt/evidence/terminal record
+is produced, and the desktop renders dev/blocked, never `trusted_verified`. `model_profile_unknown` (P0-2 — a
 staged `generation_config` whose `generation_config_sha256` is **not a member of
 `GOVERNED_EXECUTION_ALLOWLIST`** (a config the supervisor is not configured to execute), §2) is a
 **pre-launch acceptance Block** (`BLOCKED`; no lease is issued, no launch) — not an identity failure
@@ -1201,7 +1344,13 @@ length prefix); FD `6` is the write-only output pipe. The launcher validates eac
 `O_RDONLY`, `S_ISREG`, offset 0, size ≤ the per-artifact ceiling (system ≤256 KiB, history
 ≤8 MiB, generation_config ≤64 KiB), backed by a `brops-store` store inode; it closes every
 other FD, validates the pinned `launcher_executable_sha256` + fixed caller/target UID, drops
-caps, then `setuid(executor)+exec`. The executor reads each input to EOF and writes only its
+caps, then **(P0 — TCB code-integrity floor, §2.5) re-hashes the on-disk executor image it is
+about to run and refuses unless it equals the lease's `executor_executable_sha256`**, verifies the
+executor image is owned by the TCB principal + not writable by the in-scope login/sidecar UID
+(`O_NOFOLLOW`, `fstat` the opened `fd` — never a path re-lookup), and only then
+`setuid(executor)+exec`s that same verified `fd` (via `fexecve`, so the bytes hashed are the bytes
+executed — no TOCTOU). Any mismatch/writable-image/owner check ⇒ **no exec, no receipt**, refused
+reason **`tcb_integrity_violation`** (§4.5). The executor reads each input to EOF and writes only its
 reply. **The output channel is BOUNDED:**
 - **`MAX_OUTPUT_BYTES = 8 MiB`** (8388608; matches the desktop's real `MAX_ASSISTANT_OUTPUT`/
   `MAX_HTTP_BODY`, `ai.rs`). The recorder reads FD 6 into a **bounded** buffer with a hard
@@ -2788,6 +2937,19 @@ capability overgrant, ledger replay/conflict, crash-cut recovery, historical key
 transport-only echo mismatch). Engine + isolation exact-head CI GREEN. **STOP unchanged:**
 `NoTrustedManifest`, no production "Verified".
 
+**TCB-integrity + principal + platform-gate matrix (P0 — §0.1, §2.5, §2.6, NEW in rev 26 prep-P0
+closure).** (a) login-user-writable executor image ⇒ `verify_tcb_integrity()` refuses at start (no
+governed mode); (b) executor bytes swapped after pinning ⇒ launcher `fexecve` re-hash mismatch ⇒
+`tcb_integrity_violation` Block, **no receipt**; (c) wrong-owner launcher / signer / config, or a
+writable **ancestor directory** of any TCB path ⇒ start refused; (d) a lease naming any
+`launcher_executable_sha256` / `executor_executable_sha256` other than the start-time pins ⇒
+`validate_governed_turn_lease` rejects; (e) any two principals sharing a UID, or `sidecar` UID ==
+login/desktop-UI UID, or an unset principal UID ⇒ `verify_distinct_principals()` Block; (f) a platform
+shim reporting any single §0.1 primitive missing ⇒ `platform_governed_execution_supported()` == false
+⇒ governed turn Blocks with **no lease**; (g) on a non-supported platform (Windows today) the gate is
+false and the desktop renders dev/blocked, **never** `trusted_verified`; (h) the all-present 7-distinct-
+UID Linux fixture ⇒ the gate is true and the four §2.1 same-login-user isolation proofs still hold.
+
 ---
 
 ## Appendix A — NON-NORMATIVE revision history (does not define current contracts)
@@ -3064,6 +3226,19 @@ The current normative design is §0–§9 above. This log is historical only.
   the `EXECUTION_STARTING→EXECUTING` trigger + the `challenge_replay`/`acceptance_conflict`/`lease_not_ready`
   producing gates pinned. Fresh independent red-team over the full §0–§9 + real repo: no BLOCKER;
   `check_coordination` + `check_capabilities` GREEN live. NOT Architect-GREEN; 3b-1B code not started.
+- **rev 26 preparation-P0 closure (this doc; rebased onto the repaired `main` `b6c6712` after Phase-0
+  PR #33 merged):** three preparation-review P0 (independent, NOT the Architect verdict) closed on this
+  HEAD before the audit. **P0-a — TCB code-integrity floor (§2.5, §4.3, §4.7):** lease pins
+  `executor_executable_sha256` alongside the launcher; the launcher re-hashes the executor and
+  `fexecve`s the exact verified `fd` (no TOCTOU); every TCB binary/config must be TCB-owned +
+  non-writable by any runtime/login UID, verified fail-closed at start (`verify_tcb_integrity()`);
+  new refusal `tcb_integrity_violation`. **P0-b — distinct-principal linchpin (§2.6):** the sidecar's
+  own dedicated UID is now checked; `verify_distinct_principals()` refuses unless all seven runtime UIDs
+  are set, pairwise-distinct, and ≠ the login UID (no single-UID collapse). **P0-c — enforced platform
+  gate + Windows normative (§0.1, §0.W):** `platform_governed_execution_supported()` is a tested runtime
+  gate (five primitives), Windows real-mode stays DISABLED (gate false) until a separately-audited
+  Windows broker exists (required primitives specified); new refusal `platform_unsupported`; new §9
+  TCB/principal/platform test matrix. Still NOT Architect-GREEN; 3b-1B code not started.
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 

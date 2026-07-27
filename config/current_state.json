@@ -65,13 +65,13 @@
     "last_architect_verdict_scope": "a PRIOR 3b-1B design revision. rev-26 itself has NOT received an Architect verdict.",
     "current_candidate_gate": "PENDING_REAUDIT",
     "preaudit_preparation": {
-      "verdict": "RED (independent preparation review only — NOT the Architect's verdict); being remediated on this branch before the audit",
-      "p0": [
-        "TCB code integrity: the lease pins launcher_executable_sha256 but NOT executor_executable_sha256, and no contract requires TCB binaries to be root-owned / non-writable by the in-scope login user -> a sidecar can swap the executor/launcher binary and obtain a genuinely-signed forged trusted_verified.",
-        "Distinct-UID linchpin never specified for the desktop's own sidecar (a child inherits the backend UID); on a single-UID desktop the whole ACL/principal-separation model collapses.",
-        "Windows (the primary platform) has ZERO normative design; 'fail-closed on Windows' is unenforced prose, not a specified+tested runtime gate."
+      "verdict": "CLOSED on this HEAD (independent preparation review only — NOT the Architect's verdict). The 3 preparation-P0 are remediated in docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md; rev-26 is now ready to submit for the Architect design audit.",
+      "p0_closed": [
+        "TCB code integrity (P0-a) -> CLOSED §2.5/§4.3/§4.7: lease pins executor_executable_sha256 as well as the launcher; the launcher re-hashes the executor and fexecve's the exact verified fd; every TCB binary/config must be TCB-owned + non-writable by any runtime/login UID, verified fail-closed at start (verify_tcb_integrity()); new refusal tcb_integrity_violation.",
+        "Distinct-UID sidecar linchpin (P0-b) -> CLOSED §2.6: the sidecar's own dedicated UID is a checked requirement; verify_distinct_principals() refuses unless all seven runtime UIDs are set, pairwise-distinct, and != the login UID (no single-UID collapse).",
+        "Windows normative + enforced platform gate (P0-c) -> CLOSED §0.1/§0.W: platform_governed_execution_supported() is a tested runtime gate (5 primitives); Windows real-mode stays DISABLED (gate false) until a separately-audited Windows broker exists (required primitives specified); new refusal platform_unsupported; new §9 test matrix."
       ],
-      "remediate_in": "This branch (edit rev-26 addendum in place) BEFORE the real Architect audit."
+      "note": "Preparation review closed. NOT Architect-GREEN. rev-26 is submitted for the Architect design audit at PR #31's exact HEAD; only the Architect's exact-head verdict is the gate."
     }
   },
   "waves": {
