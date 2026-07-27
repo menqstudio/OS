@@ -24,14 +24,17 @@ implementation are blocked; everything below is independent.
 | `ci/ai-surface-inventory-gate` | main (b6c6712) | security CI | Claude | 9 unit tests + gate GREEN locally | `tools/`, `apps/desktop/src-tauri/ai-surface-policy.json` | ✅ verified, queued |
 | `docs/windows-broker-design` | main (b6c6712) | security design | Claude | adversarial review (6 findings closed) | `docs/design/` only | ✅ verified, queued |
 | `backup/pr31-pre-rebase-6ebeca8` | — | safety backup of PR #31 pre-rebase head | Claude | n/a | none | 🔒 backup ref |
-| `ci/supply-chain-gate` | main | supply-chain CI | Claude | YAML parse + filter compile + adversarial review | `.github/` only | ⏳ wave-3 building |
-| `ui/design-system` | main | theme/tokens/contrast | Claude | `tools/check_contrast.py` + unittest | `apps/desktop/src/theme/`, `tools/` | ⏳ wave-3 building |
-| `ui/modal-a11y` | main | accessibility | Claude | vitest + testing-library + axe | `apps/desktop/src/components/ui.tsx` | ⏳ wave-3 building |
-| `docs/pr32-rebase-map` | main | analysis (no arch change) | Claude | review | `docs/design/` only | ⏳ wave-3 building |
-| `docs/windows-broker-impl-plan` | main | security design | Claude | review | `docs/design/` only | ⏳ wave-3 building |
+| `ci/supply-chain-gate` | main | supply-chain CI | Claude | YAML parses + npm filter compiles (verified locally) | `.github/` only | ✅ verified, queued |
+| `ui/design-system` | main | theme/tokens/contrast | Claude | contrast gate + unittest pass; shipped tokens pass AA (verified) | `apps/desktop/src/theme/`, `tools/` | ✅ verified, queued |
+| `ui/modal-a11y` | main | accessibility | Claude | vitest + axe | `apps/desktop/src/components/ui.tsx` (full-file replace) | ⏸ HELD — full ui.tsx replace needs careful manual merge (preserve all exports) |
+| `docs/pr32-rebase-map` | main | analysis + Windows impl plan | Claude | completeness check | `docs/design/` only | ✅ queued (PR32 map + Windows impl plan) |
+| (folded into `docs/pr32-rebase-map`) | — | Windows broker impl plan | Claude | — | — | ✅ queued |
 
 ## Admission rule
 A branch is admitted to the queue only after: it builds, its tests/self-verification pass, and an
 independent adversarial review returns CLEAN. Flawed/incomplete artifacts are held (not queued) — see the
 session log. No branch may modify files that would collide with PR #31 (`config/current_state.json`, the
 3b-1B addendum, the coordination checkers) — those move only through PR #31.
+
+## In flight
+- **Product-UI page wave** (21 pages, one agent each, build+review) is running; verified pages will be queued to `ui/pages-*` branches after a frontend typecheck. Modal a11y held for manual merge.
