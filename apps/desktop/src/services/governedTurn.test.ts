@@ -32,8 +32,8 @@ describe('renderer governed-turn thin proxy', () => {
     expect(req.protocol).toBe(REQUEST_PROTOCOL);
     expect(req.client_request_id).toBe(CRID);
     // no system/history/config/hash/nonce/broker_turn_id can leak from the renderer
-    expect(req as Record<string, unknown>).not.toHaveProperty('system');
-    expect(req as Record<string, unknown>).not.toHaveProperty('broker_turn_id');
+    expect(req as unknown as Record<string, unknown>).not.toHaveProperty('system');
+    expect(req as unknown as Record<string, unknown>).not.toHaveProperty('broker_turn_id');
   });
 
   it('omits agent when not provided', () => {
