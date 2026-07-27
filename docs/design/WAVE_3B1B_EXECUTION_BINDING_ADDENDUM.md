@@ -1,7 +1,12 @@
-# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 27 — closes the rev-26 Architect design RED: 2 P0 + 3 P1)
+# Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 28 — closes the rev-27 Architect design RED: 2 P0 + 4 P1)
 
-> **STATUS: ❌ DESIGN RED being closed — rev 26 is a PROPOSED design-GREEN candidate, NOT
-> Architect-GREEN. 3b-1B code has NOT started.** rev 25 was Architect-reviewed at exact HEAD
+> **STATUS: ❌ DESIGN RED. Last reviewed candidate = rev-27 = Architect design RED (2 P0 + 4 P1 at exact
+> HEAD `0e41ef6cfe2e6991881ab36b9afb2d6caa0cd7c8`; CI run 30275888743 9/9 GREEN — CI ≠ design GREEN).
+> CURRENT candidate = rev-28 = PENDING re-audit (the remediation below; it does NOT inherit the rev-27
+> verdict). No Architect-approved or merged 3b-1B implementation exists; PR #32 holds UNAPPROVED
+> Draft/WIP code with no authority over the design (adapt only after design-GREEN). rev-26 was also RED.**
+> The consolidated closure history (rev 25 → rev 26) follows; the rev-27 → rev-28 closure is summarized in
+> the rev-28 banner block further below and in Appendix A. rev 25 was Architect-reviewed at exact HEAD
 > `bcd24fe0d5af0a33fc72ca7eaee35b8f1f12be1a` (exact-head CI **#132** 8/8 SUCCESS incl. both mandatory
 > Wave-3b gates — **CI GREEN ≠ design GREEN**); the Architect **CONFIRMED CLOSED** the rev-24 model-identity
 > P0 + issued-row-cleanup P1, and returned the **FINAL CONSOLIDATED remediation, 2 P0 · 3 P1**, mandating a
@@ -49,22 +54,32 @@
 > STOP gates: `NoTrustedManifest` unchanged, no production "Verified", 3b-2/3b-3 not started, PR #31
 > not merged.
 >
-> **rev-27 closes the rev-26 Architect design RED (2 P0 + 3 P1 @ `b604cbc`).** **P0-1 (§0, §2.1, §2.6):**
-> the contradictory "desktop-UI/challenge-authority" is split — the design now has **eight** principals;
-> the **desktop-UI/backend client** is an untrusted request producer owning **no** challenge key/store,
-> the **`desktop-challenge-authority`** is a separate service/principal (own UID/SID) whose key + pending
-> store are unreadable/unlistable/unwritable by the client, login user, sidecar, and every other
-> principal; desktop→authority IPC authenticates the exact client principal; the **three threat actors**
-> (login user / renderer-client / dedicated **sidecar SERVICE UID** — NOT "same-login-user") are stated
-> separately; `verify_distinct_principals()` now checks the **seven runtime service UIDs** (the launcher
-> is excluded, see P0-2). **P0-2 (§2.7):** the launcher is LOCKED to **Model A** — a root/TCB-owned
-> setuid helper (mode 4750), invoked ONLY by the recorder, effective identity root/TCB, **not** a
-> persistent runtime UID; fixed closed argv + cleared env + fixed FD set; drops all caps then permanently
-> to the executor UID and `fexecve`s the pinned verified image; full owner/UID/cap/exec/teardown +
-> Linux+Windows mapping + confused-deputy/oracle negative matrix (§9). **P1-1/P1-2/P1-3** (canonical-state
-> one-truth reconciliation, PR #31 exact-head AUDIT_CANDIDATE_HEAD marker with the self_carrier exemption
-> removed, and the honest "no Architect-approved 3b-1B code" claim) are closed in `config/current_state.json`
-> + the 3 doc mirrors + the PR body + the checkers. **NOT Architect-GREEN; re-audit pending.**
+> **rev-28 closes the rev-27 Architect design RED (2 P0 + 4 P1 @ `0e41ef6`).** **P0-1 (§0, §2.1, §2.6):**
+> rev-27 wrongly folded the **trusted Rust/Tauri backend** (the final cryptographic verifier + persistence
+> authority) into the "untrusted client" — impossible, since a compromised renderer and a compromised
+> final verifier cannot be the same principal. rev-28 defines **nine roles** and splits three identities:
+> **Renderer/session UI** (interactive login identity, fully untrusted, owns no key/DB/manifest/trust-state,
+> reaches only the broker via a closed `{conversation_id, agent?}` command); **Trusted desktop
+> verifier/broker** (dedicated service UID/SID, separate process from the renderer, owns the receipt DB +
+> pinned manifest + orchestration + final verification, resolves system/history/config/IDs itself, never
+> accepts renderer-supplied hashes/objects/verdicts/receipt fields); **`desktop-challenge-authority`**
+> (separate dedicated UID/SID, owns the challenge key/store, accepts create-pending/issue **only from the
+> broker UID**). Broker-compromise is stated **out of scope** (it is the TCB final authority). The **seven
+> runtime service UIDs** `verify_distinct_principals()` checks are broker/authority/sidecar/supervisor/
+> recorder/executor/signer; the renderer is the login role and the launcher is a root/TCB helper. Renderer
+> denial tests added (§9). **P0-2 (§2.7/§4.7):** the launcher is made **executable + privilege-safe** —
+> the data **FDs 3–6 have `FD_CLOEXEC` explicitly CLEARED** so they survive both exec boundaries (rev-27
+> wrongly set `O_CLOEXEC`, which would have closed the executor's I/O); the **exact privilege-drop syscall
+> sequence** is locked (verify → root cgroup setup → `setgroups([])` → `setresgid` → drop bounding/ambient
+> caps via **`CAP_SETPCAP`** → `setresuid` → clear all cap sets → verify unprivileged → `PR_SET_NO_NEW_PRIVS`
+> → `fexecve`); a setuid-root helper is acknowledged to **start fully privileged** (not "only CAP_SETUID/
+> CAP_SETGID"); a **real executable integration test** + full negative matrix are required.
+> **P1-1** the obsolete "same-login-user sidecar" wording is removed from the normative §2.1/§2.5 (3-actor
+> model). **P1-2** canonical state uses separate `last_reviewed_candidate`/`last_architect_verdict`/
+> `current_candidate`/`current_candidate_gate` fields (rev-28 does not inherit the rev-27 verdict). **P1-3**
+> this banner + top STATUS identify rev-28. **P1-4** PR #31 gains a `carrier_transition` (OPEN ⇒ design/
+> impl/code-audit gate; MERGED ⇒ verify main + rebase PR #32) + a main-push anti-self-stale check (checker
+> generalized to snapshot-declared gate names). **NOT Architect-GREEN; re-audit pending.**
 >
 > **Preparation-P0 closure (independent prep review, NOT the Architect verdict — closed in rev-26 on the
 > prior HEAD; PR #31 rebased onto the repaired `main` `b6c6712`):**
@@ -115,54 +130,75 @@ supervisor (owns the acceptance ledger §5 + the governed-turn lease issuer + th
 [peer of supervisor only] ISOLATED RECEIPT SIGNER (dedicated signer UID; holds the receipt key)
 ```
 
-**Principal topology (rev-27, P0-1 — EIGHT distinct security principals).** The rev-26 design
-conflated "desktop-UI/challenge-authority" into one identity, which is contradictory (it cannot be
-both the untrusted request producer AND the trusted authority that owns the challenge key). rev-27
-splits them into **eight** principals:
+**Principal topology (rev-28, P0-1 — split the RENDERER from the trusted desktop VERIFIER/BROKER).**
+rev-27 wrongly folded the trusted Rust/Tauri backend (the final cryptographic verifier + persistence
+authority) into the "untrusted client." That is impossible: a compromised renderer and a compromised
+final verifier cannot be the same threat principal — if the final verifier is compromised it can just
+bypass verification and display/persist a fake `Verified`. rev-28 defines **nine roles**; the trusted
+verifier/broker is a distinct principal from the renderer.
 
-1. **desktop-UI/backend CLIENT** — renderer + Tauri/backend host. An **untrusted request producer**:
-   it may propose a governed turn but owns **NO** challenge key and **NO** authority store, and is
-   authenticated (never trusted) by the challenge authority. (Threat actor B.)
-2. **`desktop-challenge-authority`** — a **separate service/principal** with its own dedicated
-   UID/SID. Owns the challenge signing key + the pending-challenge store; both are **unreadable /
-   unlistable / unwritable** by the desktop-UI client, the interactive login user, the sidecar, and
-   every other runtime principal. Accepts only the fixed create-pending / issue protocols over an
-   authenticated local IPC that verifies the exact desktop-client principal (§2.1).
-3. **`sidecar`** — the `engine_sidecar` service under its **own dedicated service UID** (NOT the
-   login user, NOT the desktop-UI client). RCE here is threat actor C.
-4. **`supervisor`** — owns the acceptance ledger §5 + the governed-turn lease issuer + the
-   governed-turn-recorder key; signs the TERMINAL RECORD only.
-5. **evidence-recorder runner** (`brops-recorder`) — dedicated recorder UID; holds the
-   evidence-recorder key; owns the executor pidfd/cgroup + output pipe + teardown; the **only**
-   caller of the privileged launcher.
-6. **privileged launcher** — **NOT a persistent runtime service UID** (P0-2, Model A): a
-   **root/TCB-owned setuid helper**, invoked only by the recorder; effective privileged identity
-   root/TCB; drops to the executor and `fexecve`s the verified image (§2.5, §4.7).
-7. **contained model executor** — dedicated executor UID; NO key/store access; 3 read-only input
-   FDs + 1 write-only output FD, nothing else (§2).
-8. **isolated receipt signer** — dedicated signer UID; holds the receipt-signing key; its only peer
-   is the supervisor over direct ACL'd IPC.
+1. **Renderer / session UI** — the webview + its message handlers. Runs under the **interactive login
+   identity** (Actors A/B). **Fully untrusted:** owns **no** key, receipt DB, pinned manifest, trust
+   state or authority store; **cannot directly reach** the challenge authority, sidecar, supervisor or
+   signer. It may send the broker only a **closed command** (e.g. `{conversation_id, agent?}`) — never
+   `system`/`history`/`config`/hashes/nonces/prepared objects/verdicts/receipt fields.
+2. **Trusted desktop verifier / BROKER** — a **dedicated service UID/SID**, a **separate process from
+   the renderer** (the Tauri app is split: the webview is the renderer; the broker is a separate local
+   service). This is the one trusted Rust orchestration + **final verification** path: it owns the
+   local `receipt_challenges` / `receipt_verification_attempts` / `receipt_ids_seen` DB + the pinned
+   manifest state; **resolves `system`/`history`/`generation_config`/workspace/install/run/task IDs
+   itself from trusted backend state** given only the closed renderer command; builds the immutable
+   `PreparedGovernedTurnV1B`; issues the challenge (via the authority); verifies the isolated-signer
+   envelope + supervisor attestation; consumes the nonce; enforces receipt-id uniqueness + freshness;
+   **persists accepted output; and permits rendering only after the verification transaction commits.**
+   It **never** accepts renderer-supplied hashes, prepared objects, verdicts or receipt fields.
+3. **`desktop-challenge-authority`** — a **separate dedicated UID/SID**. Owns the challenge signing key
+   + the pending-challenge store; both **unreadable/unlistable/unwritable** by the renderer/login user,
+   the broker's *data* is separate, the sidecar, and every other principal. Accepts **create-pending /
+   issue only from the trusted verifier/broker UID** (never the renderer/login UID), over an
+   authenticated local IPC that verifies the exact broker principal (§2.1).
+4. **`sidecar`** — the `engine_sidecar` service under its **own dedicated service UID** (NOT login, NOT
+   renderer, NOT broker). RCE here is threat actor C.
+5. **`supervisor`** — acceptance ledger §5 + governed-turn lease issuer + governed-turn-recorder key;
+   signs the TERMINAL RECORD only.
+6. **evidence-recorder runner** (`brops-recorder`) — dedicated recorder UID; evidence-recorder key;
+   owns the executor pidfd/cgroup + output pipe + teardown; the **only** caller of the launcher.
+7. **privileged launcher** — **NOT a service UID** (P0-2, Model A): a **root/TCB-owned setuid helper**,
+   invoked only by the recorder; effective identity root/TCB; drops to the executor and `fexecve`s the
+   verified image (§2.5, §2.7, §4.7).
+8. **contained model executor** — dedicated executor UID; NO key/store access; 3 read-only input FDs +
+   1 write-only output FD, nothing else (§2).
+9. **isolated receipt signer** — dedicated signer UID; receipt-signing key; only peer is the supervisor.
 
-The **`governed-turn-recorder` is NOT a distinct OS principal** — it is a supervisor-held
-**signing-key authority** (an `ARTIFACT_AUTHORITY` key class owned by the `brops-supervisor`
-principal) that signs the terminal record only (§8, P1-5); do not confuse it with the
-`brops-recorder` OS principal (#5). **`verify_distinct_principals()` (§2.6) checks the SEVEN runtime
-service UIDs (#1–#5, #7, #8) are pairwise-distinct and ≠ the interactive login UID; the launcher (#6)
-is verified separately as a root/TCB-owned setuid file (§2.5), never as a runtime UID.**
+**The SEVEN runtime service UIDs** that `verify_distinct_principals()` (§2.6) requires pairwise-distinct
+and **≠ the interactive login UID** are: **verifier/broker (#2), challenge-authority (#3), sidecar (#4),
+supervisor (#5), recorder (#6), executor (#8), signer (#9)**. The **renderer (#1) is the interactive
+login role**, not a service UID (it is *supposed* to be the low-trust identity). The **launcher (#7) is
+a root/TCB-owned setuid file** (§2.5), not a service UID. The `governed-turn-recorder` remains a
+supervisor-held key class, not an OS principal (§8).
 
-**Threat model (rev-27, P0-1 — three DISTINCT actors, each defined by the identity it possesses):**
-- **Actor A — malicious interactive login user:** possesses the login UID. OUT of the TCB; must be
-  DENIED read/list/write to every authority/key/store/TCB asset (POSIX/NTFS ownership + ACL, §2.5).
-- **Actor B — compromised desktop renderer/client:** possesses the **desktop-UI/backend client**
-  identity (#1). An untrusted request producer only — owns no key/store; authenticated, never
-  trusted, by the challenge authority; cannot mint or read a challenge.
-- **Actor C — RCE inside the dedicated `sidecar` SERVICE UID:** possesses the **sidecar service
-  UID** (#3), **NOT** the login UID. It can trigger a run and relay the final receipt (transport
-  only), but cannot connect the signer socket, read any key/store, or make any authority sign
-  caller-supplied evidence.
-admin / root / kernel is OUT of scope. A compromise of the dedicated sidecar SERVICE UID (Actor C)
-is **not** "same-login-user RCE": the attacker holds the sidecar service identity, not the login
-user's — the two are separate rows in the denial matrix (§9). Where a platform cannot provide these
+**Trusted-verifier/broker compromise is OUT of scope (it is the TCB final authority).** The `Verified`
+UI/persistence guarantee is *defined by* the broker; if the broker itself is compromised the guarantee
+is void — therefore the broker is **inside the TCB**, protected by the same distinct-UID + TCB-binary
++ ACL controls as the signer/supervisor, and its compromise is out of scope exactly as `root`/kernel
+is. What IS in scope is a **compromised renderer** (Actor B) trying to reach *past* the broker: it
+cannot, because the broker is a separate service principal the renderer can only address through the
+closed command, and the renderer holds no key/DB/authority handle.
+
+**Threat model (rev-28 — three DISTINCT actors):**
+- **Actor A — malicious interactive login user:** holds the login UID. OUT of the TCB; DENIED
+  read/list/write to every authority/key/store/TCB asset (POSIX/NTFS ownership + ACL, §2.5).
+- **Actor B — compromised renderer / session UI:** holds the login identity via the renderer process.
+  Owns no key/DB/manifest/trust-state; can send the broker only the closed command; cannot reach the
+  challenge authority / sidecar / supervisor / signer, cannot supply any authoritative input, cannot
+  forge a `Verified` message (only the broker's committed verification transaction creates one).
+- **Actor C — RCE inside the dedicated `sidecar` SERVICE UID:** holds the **sidecar service UID**,
+  **NOT** the login UID and **NOT** the broker. It can trigger a run + relay the final receipt
+  (transport only), but cannot connect the signer socket, read any key/store, or make any authority
+  sign caller-supplied evidence.
+admin / root / kernel — and the trusted verifier/broker, challenge authority, supervisor and signer
+identities — are OUT of scope. A sidecar-SERVICE-UID compromise (Actor C) is **not** "same-login-user
+RCE" (separate identity; separate denial-matrix rows, §9). Where a platform cannot provide these
 distinct principals + peer auth + ACL isolation, governed real-mode is **FAIL-CLOSED** (Windows is
 fail-closed until its broker (§0.W) is separately audited).
 
@@ -337,7 +373,8 @@ profile — NOT a base-lease superset**:
 ### 2.5 TCB binary & config integrity (P0 — code-integrity floor, NORMATIVE)
 
 A pinned digest in the lease only proves *which* image the launcher is *told* to run — it does
-**nothing** if the sidecar (compromised, same login user) can **overwrite that image on disk**.
+**nothing** if the sidecar (compromised — the **dedicated sidecar SERVICE UID**, Actor C, NOT the login
+user) can **overwrite that image on disk**.
 Pinning `launcher_executable_sha256` while leaving the **executor** image unpinned and any TCB
 binary **login-user-writable** is a forge path: the sidecar swaps the executor (or launcher, signer,
 supervisor) binary and obtains a **genuinely-signed** `trusted_verified` for attacker-chosen output.
@@ -376,37 +413,49 @@ This section closes it.
 
 Every ACL, `SO_PEERCRED` allowlist, and file-ownership boundary in this design assumes the runtime
 principals are **different OS UIDs**. If provisioning quietly lands two of them on the **same UID**
-— most dangerously the **`sidecar`** sharing the interactive **login UID**, or the **desktop-UI
-client** sharing the **`desktop-challenge-authority`** UID — the entire separation model silently
-collapses (the attacker *is* the authority / *owns* the store). The base design named "distinct UIDs"
-but never split the desktop-UI client from the challenge authority (P0-1) nor made the **sidecar's
-own** distinct UID a **checked** linchpin. Both are now checked.
+— most dangerously the **renderer/login** identity sharing the **trusted verifier/broker** UID, the
+**broker** sharing the **`desktop-challenge-authority`** UID, or the **`sidecar`** sharing any of them
+— the entire separation model silently collapses (the attacker *is* the final verifier / *is* the
+authority / *owns* the store). rev-28 splits the renderer from the trusted verifier/broker (P0-1) and
+keeps the sidecar's own distinct UID a **checked** linchpin.
 
-- **The SEVEN runtime service UIDs (NORMATIVE, P0-1).** `desktop-UI/backend client`,
+- **The SEVEN runtime service UIDs (NORMATIVE, P0-1, rev-28).** `trusted desktop verifier/broker`,
   `desktop-challenge-authority`, `sidecar`, `supervisor`, `evidence-recorder runner`,
   `contained executor`, and `isolated signer` MUST each run as a **dedicated OS UID**, **pairwise
-  distinct**, and **all ≠ the interactive login UID**. The **privileged launcher is NOT in this set**
-  — under Model A (P0-2) it is a **root/TCB-owned setuid file**, not a persistent runtime UID, verified
-  separately by `verify_tcb_integrity()` (§2.5). In particular: the **desktop-UI client** (Actor B)
-  runs as its own UID and is **never** the challenge-authority UID (it owns no key/store); the
-  **sidecar** (Actor C) runs as its own UID — never the login UID, never the desktop-UI or authority
-  UID, never a UID sharing the challenge-authority socket ACL or the `store/` ACL — and a process it
-  spawns MUST NOT inherit a UID carrying any of those grants.
+  distinct**, and **all ≠ the interactive login UID**. The **renderer/session UI is NOT a service UID**
+  — it *is* the interactive login role (the low-trust identity, Actor B); it must therefore be **≠ every
+  one of the seven** (the check enforces `login UID ∉ {the seven}`, which is exactly the renderer
+  being distinct from the broker/authority/etc.). The **privileged launcher is NOT in this set** —
+  under Model A (P0-2/§2.7) it is a **root/TCB-owned setuid file**, verified by `verify_tcb_integrity()`
+  (§2.5). In particular: the **trusted verifier/broker** (#2) runs as its own service UID and is
+  **never** the login/renderer UID (a compromised renderer can never *become* the final verifier) nor
+  the challenge-authority UID; the **challenge authority** (#3) is its own UID and accepts IPC only from
+  the broker UID; the **sidecar** (Actor C) runs as its own UID — never login/renderer/broker/authority,
+  never a UID sharing the authority socket ACL or the `store/` ACL — and a process it spawns MUST NOT
+  inherit a UID carrying any of those grants.
 - **Provisioning (operator/installer, NORMATIVE).** Installation MUST create these dedicated service
-  accounts (e.g. `brops-desktop-client`, `brops-challenge`, `brops-sidecar`, `brops-supervisor`,
-  `brops-recorder`, `brops-executor`, `brops-signer`) and start each component under its account; and
-  install the launcher as a **root/TCB-owned** setuid binary. It MUST NOT fall back to the login user
-  for any of them.
+  accounts (e.g. `brops-verifier`, `brops-challenge`, `brops-sidecar`, `brops-supervisor`,
+  `brops-recorder`, `brops-executor`, `brops-signer`), run the **renderer under the interactive login
+  identity** (never a service account), start each service component under its own account, and install
+  the launcher as a **root/TCB-owned** setuid binary. It MUST NOT run any of the seven services as the
+  login user, and MUST NOT run the broker in-process with the renderer.
 - **Start-time verification `verify_distinct_principals()` (fail-closed).** At start the supervisor
-  resolves the effective UID configured for the **seven runtime principals** and refuses to enable
-  governed real-mode unless **all are present, pairwise-distinct, and ≠ the interactive login UID**
-  (the launcher's root/TCB ownership is checked by `verify_tcb_integrity()`, §2.5). On a single-UID
-  host (a developer laptop, or a mis-provisioned install) the check fails ⇒ the platform gate (§0.1)
-  reports **unsupported** ⇒ every governed turn is **FAIL-CLOSED** (no lease, `NoTrustedManifest`-equiv).
-- **Negative tests (normative, §9).** any two of the seven runtime principals sharing a UID ⇒ Block;
-  `sidecar` UID == login UID ⇒ Block; `desktop-UI client` UID == `desktop-challenge-authority` UID ⇒
-  Block; any of the seven unset/defaulted to login ⇒ Block; a passing 7-distinct-UID fixture (+ a
-  root/TCB launcher) ⇒ the §2.1 client-vs-authority + same-service-UID isolation proofs still hold.
+  resolves the effective UID configured for the **seven runtime service principals** and refuses to
+  enable governed real-mode unless **all are present, pairwise-distinct, and ≠ the interactive login
+  UID** (so the renderer/login identity equals none of them; the launcher's root/TCB ownership is
+  checked by `verify_tcb_integrity()`, §2.5). On a single-UID host (a developer laptop or a
+  mis-provisioned install) the check fails ⇒ the platform gate (§0.1) reports **unsupported** ⇒ every
+  governed turn is **FAIL-CLOSED** (no lease, `NoTrustedManifest`-equivalent).
+- **Negative tests (normative, §9).** any two of the seven service principals sharing a UID ⇒ Block;
+  `verifier/broker` UID == login/renderer UID ⇒ Block; `broker` UID == `challenge-authority` UID ⇒
+  Block; `sidecar` UID == login UID ⇒ Block; any of the seven unset/defaulted to login ⇒ Block;
+  **renderer-isolation:** the renderer (login UID) cannot read/write/list the verifier DB or manifest,
+  cannot call the challenge-authority IPC, cannot reach the sidecar/supervisor/signer IPC, cannot supply
+  `system`/`history`/`config`/hashes/nonces/receipt fields, and a forged renderer "Verified" event
+  cannot create a verified message (only the broker's committed verification tx does); the broker
+  accepts only the closed renderer command and resolves all authoritative inputs itself. A passing
+  7-distinct-service-UID fixture (+ a distinct login/renderer identity + a root/TCB launcher) ⇒ these
+  proofs all hold.
 
 ### 2.7 Privileged launcher — LOCKED to Model A (P0-2, NORMATIVE)
 
@@ -422,24 +471,58 @@ root/TCB-owned setuid helper, not a persistent runtime UID**. Every field is fix
   checks its real UID/gid on entry (`getresuid`) and refuses (`tcb_integrity_violation`) unless the
   caller is exactly the recorder. No other principal — sidecar, desktop-UI, supervisor, signer, login
   user — may invoke it (mode `0` for other; group-exec limited to the recorder group).
-- **Real / effective / saved UID:** on entry real = recorder, effective = `root`/TCB (setuid). It
-  immediately **drops all capabilities except the minimum** needed to `setuid(executor)` +
-  `setgid`/`setgroups` + create the cgroup/process-group, performs those, then **permanently drops to
-  the executor UID** (`setresuid(executor,executor,executor)`, `setresgid`, `setgroups([])`; assert
-  no capability retained) **before** `fexecve`. There is no persistent launcher process/UID.
-- **Capabilities / privileges:** exactly `{CAP_SETUID, CAP_SETGID}` (+ cgroup write to the pre-created
-  recorder-owned cgroup); everything else dropped (`no_new_privs` set; bounding set cleared). No
-  `CAP_DAC_OVERRIDE`, no `CAP_SYS_ADMIN`, no network.
+- **Bootstrap privilege (P0-2 correction).** A setuid-root helper starts **fully privileged** (effective
+  UID root, a full effective/permitted capability set). It is therefore **wrong** to claim it "has only
+  `{CAP_SETUID, CAP_SETGID}`"; it must *reduce to* those and then to zero. The exact reduction is the
+  locked sequence below. Removing the **bounding** set requires **`CAP_SETPCAP`** (held at entry as
+  root); the final state is **zero capabilities in every set**.
+- **Exact privilege-drop syscall sequence (LOCKED, P0-2 — order is load-bearing).** GID/groups MUST be
+  changed **before** the UID drop (after dropping to the executor UID the process can no longer change
+  its groups/GID). The sequence:
+  1. **Entry:** real UID = recorder, effective/saved UID = root (setuid); verify `getresuid`/`getresgid`
+     ⇒ caller is exactly the recorder; verify immutable argv, empty environment, the exact FD set (below),
+     the lease, all hashes, the cgroup path, and the target executor UID/GID. Any mismatch ⇒ refuse
+     (`tcb_integrity_violation`), **no exec, no receipt**.
+  2. Perform all **root-required** cgroup / process-group / rlimit setup.
+  3. `setgroups([])` — clear **all** supplementary groups.
+  4. `setresgid(exec_gid, exec_gid, exec_gid)` — real/effective/saved GID = executor GID.
+  5. Drop the **capability bounding set** (and ambient set) to empty using **`CAP_SETPCAP`**
+     (`prctl(PR_CAPBSET_DROP, …)` for every cap; clear `PR_CAP_AMBIENT`), while still UID-root so the op
+     is permitted.
+  6. `setresuid(exec_uid, exec_uid, exec_uid)` — real/effective/saved UID = executor UID (drops the
+     effective/permitted caps that root implied).
+  7. `capset()` the effective/permitted/inheritable sets to **zero** (belt-and-suspenders; bounding +
+     ambient already empty).
+  8. **Verify** (fail-closed) `getresuid`/`getresgid` == (exec, exec, exec), `getgroups()` == empty, and
+     **all five capability sets (eff/perm/inh/bounding/ambient) == 0**; any residual ⇒ abort, no exec.
+  9. `prctl(PR_SET_NO_NEW_PRIVS, 1)`.
+  10. Normalize signal dispositions/mask, `umask`, and resource limits as required.
+  11. `fexecve(executor_fd, fixed_argv, empty_env)` with **only FDs 3–6** open.
+  A failure at **any** step ⇒ abort before exec; the recorder tears down the cgroup (SIGKILL) and
+  produces **no** receipt/evidence/record.
+- **Capabilities / privileges (final):** **zero** in every set after step 8; `no_new_privs` set;
+  bounding + ambient empty. During the sequence only `{CAP_SETPCAP, CAP_SETUID, CAP_SETGID}` (+ the
+  root privilege for cgroup setup) are actually used; no `CAP_DAC_OVERRIDE`, `CAP_SYS_ADMIN`, or network.
 - **IPC / direct-exec boundary:** **direct exec**, not an IPC service. The recorder `fork`s and the
-  child `execve`s the launcher with a fixed argv/FD set — there is no launcher socket, no request
-  parsing, no confused-deputy service surface.
-- **Allowed argv / env:** a **fixed, closed** argv (lease handle + the pinned executor path index +
-  the cgroup path); **environment is fully cleared** (`environ` emptied; no inheritance) so no
-  `LD_PRELOAD`/`PATH`/`BROPS_*` influence. Any extra/unknown argv or a non-empty env ⇒ refuse.
-- **Inherited FDs:** exactly the **three read-only input FDs + one write-only output FD** (§4.7) and
-  nothing else; the launcher `close_range()`s all others and verifies each kept FD is `O_RDONLY`
-  `S_ISREG` offset-0 store inode (inputs) / the output pipe. `O_CLOEXEC` is set so nothing leaks past
-  `fexecve`.
+  child `execve`s the launcher with a fixed argv/FD set — no launcher socket, no request parsing, no
+  confused-deputy service surface.
+- **Allowed argv / env:** a **fixed, closed** argv (lease handle + the pinned executor index + the
+  cgroup path); **environment fully cleared** (no inheritance) so no `LD_PRELOAD`/`PATH`/`BROPS_*`
+  influence. Any extra/unknown argv or a non-empty env ⇒ refuse.
+- **Inherited FDs — SURVIVAL (P0-2 correction).** The executor's I/O channel is FDs **3/4/5/6** (three
+  read-only inputs + the write-only output, §4.7). These MUST **survive both** exec boundaries
+  (recorder-child → `execve(launcher)`, and launcher → `fexecve(executor)`), so on **each** of the four
+  FDs the launcher **explicitly CLEARS `FD_CLOEXEC`** (`fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC)`) — the
+  rev-27 text wrongly set `O_CLOEXEC` on them, which would have closed the executor's only I/O at exec.
+  Every **other** inherited FD is closed (`close_range(7, ~0U, 0)`) or marked close-on-exec. The launcher
+  verifies each kept input FD is `O_RDONLY` `S_ISREG` offset-0 store inode and FD 6 is the output pipe.
+  The **executor-image FD** is opened `O_NOFOLLOW|O_RDONLY|O_CLOEXEC`, used **only** by `fexecve`, and is
+  closed by a successful exec (it is NOT one of FDs 3–6). A data FD 3–6 that arrives marked `FD_CLOEXEC`
+  and cannot be cleared, or any unexpected extra FD, ⇒ **refuse before signing any receipt**.
+- **Real executable integration test (NORMATIVE, §9).** A tiny **pinned** test executor that reads all
+  three input FDs to EOF and writes a known output through FD 6 MUST run successfully through the real
+  recorder → launcher → `fexecve` path (proving FD survival + the privilege drop actually work), and the
+  full negative matrix below MUST fail closed.
 - **Target executable + UID:** the **pinned** `executor_executable_sha256` image (from the lease,
   §4.3) run as the fixed **executor UID**. No arbitrary target executable, target UID, or argument
   selection — both are validated against the lease before any privilege use.
@@ -457,21 +540,27 @@ root/TCB-owned setuid helper, not a persistent runtime UID**. Every field is fix
   **hash + Authenticode + NTFS ACL (non-writable by login/runtime SIDs)** before launch; the launcher
   helper binary is ACL'd non-writable + WDAC/AppLocker-pinned. Same closed argv / cleared env / fixed
   FD (via explicit `STARTUPINFOEX` handle list) / pinned-image / restricted-token rules.
-- **Confused-deputy / oracle negative matrix (normative, §9):** caller ≠ recorder ⇒ refuse; extra
-  argv / non-empty env / extra inherited FD ⇒ refuse; target executable ≠ pinned hash ⇒ refuse;
-  target UID ≠ executor ⇒ refuse; writable/login-owned executor image ⇒ refuse; attempt to retain a
-  capability past the drop ⇒ refuse; a path-swap between hash and exec (TOCTOU) ⇒ caught by `fexecve`
-  of the hashed fd. The launcher can be coerced into **no** action other than "run this exact pinned
-  image as the executor with these exact FDs, or refuse."
+- **Confused-deputy / oracle negative matrix (normative, §9):** wrong caller UID (≠ recorder) ⇒ refuse;
+  extra group / residual supplementary groups after the drop ⇒ refuse; extra argv / non-empty env /
+  extra inherited FD ⇒ refuse; a data FD 3–6 arriving `FD_CLOEXEC` (would close the executor I/O) ⇒
+  refuse; wrong executor UID **or** GID ⇒ refuse; target executable ≠ pinned `executor_executable_sha256`
+  ⇒ refuse; writable/login-owned executor image ⇒ refuse; residual **effective/permitted/inheritable/
+  ambient/bounding** capability after the drop ⇒ refuse; a failed `setgroups`/`setresgid`/`setresuid`/
+  `prctl`/`capset` ⇒ refuse; image hash/owner/mode/path swap ⇒ refuse; cgroup mismatch ⇒ refuse;
+  `fexecve` failure ⇒ refuse. **Every** failure yields **no receipt/evidence/terminal record**. The
+  launcher can be coerced into **no** action other than "run this exact pinned image as the executor,
+  with these exact FDs, fully unprivileged, or refuse." (§4.7 mirrors the exec-boundary FD rules.)
 
 ### 2.1 Challenge-authority trust boundary + creation channel (P0-2, NORMATIVE — no oracle)
 
-The sidecar is compromised-in-scope (same login user). The desktop signed challenge
-(artifact #1) is minted by a **dedicated `desktop-challenge-authority`** that is neither a
-`sign(payload)` oracle nor a `create_pending(arbitrary_bytes) → sign(id)` two-step oracle (the
-mandated create-pending/issue split below is **not** such an oracle: create-pending stores only
-strictly-validated fixed-shape hashes/ids — never arbitrary bytes — and issue signs only what the
-authority itself assembles from its own row).
+The sidecar is compromised-in-scope as a **dedicated sidecar SERVICE UID** (Actor C — **NOT** the login
+user), and the renderer (Actor B, login identity) is separately untrusted. The desktop signed challenge
+(artifact #1) is minted by a **dedicated `desktop-challenge-authority`** whose create-pending/issue IPC
+is accepted **only from the trusted desktop verifier/broker UID** (never the renderer/login UID, never
+the sidecar) and which is neither a `sign(payload)` oracle nor a `create_pending(arbitrary_bytes) →
+sign(id)` two-step oracle (the mandated create-pending/issue split below is **not** such an oracle:
+create-pending stores only strictly-validated fixed-shape hashes/ids — never arbitrary bytes — and issue
+signs only what the authority itself assembles from its own row).
 The exact current contract (not history):
 
 - **Store ownership:** the **pending-challenge store** (the trusted rows the authority builds
@@ -3075,22 +3164,30 @@ shim reporting any single §0.1 primitive missing ⇒ `platform_governed_executi
 false and the desktop renders dev/blocked, **never** `trusted_verified`; (h) the all-present 7-distinct-
 UID Linux fixture ⇒ the gate is true and the four §2.1 same-service-UID isolation proofs still hold.
 
-**Principal-topology + launcher-model matrix (P0 — §0/§2.6/§2.7, rev-27, P0-1 + P0-2).** (i) the
-**desktop-UI client** UID == the **`desktop-challenge-authority`** UID ⇒ `verify_distinct_principals()`
-Block (the client can never be the authority — P0-1); (j) Actor B (desktop-UI client identity) attempts
-to read/list/write the challenge key or pending store ⇒ DENIED by ownership+ACL; can neither mint nor
-read a challenge; (k) Actor C (dedicated **sidecar service UID**, NOT the login UID) attempts to connect
-the signer socket / read any key or store / make an authority sign caller-supplied evidence ⇒ DENIED
-(peer-auth + ACL); it may only trigger a run + relay the final receipt; (l) the seven runtime principals
-must be pairwise-distinct AND ≠ login (any collision ⇒ Block); (m) **launcher Model A:** caller ≠ the
-recorder ⇒ refuse; extra argv / non-empty env / extra inherited FD ⇒ refuse; target executable ≠ pinned
-`executor_executable_sha256` ⇒ refuse; target UID ≠ executor ⇒ refuse; a retained capability past the
-privilege drop ⇒ refuse; the launcher binary is root/TCB-owned mode-4750 (not a runtime UID) ⇒
-`verify_tcb_integrity()` confirms, `verify_distinct_principals()` does NOT count it; (n) each of the 3
-threat actors (A login user / B renderer-client / C sidecar-service-UID) × each protected asset (auth
-key, pending store, receipt key, protected evidence store, TCB binaries) ⇒ DENIED with the stated
-enforcing mechanism (the Linux mechanism here; the equivalent Windows SID denial matrix is specified in
-§0.W).
+**Principal-topology + launcher-model matrix (P0 — §0/§2.6/§2.7, rev-28, P0-1 + P0-2).** (i) the
+**trusted verifier/broker** UID == the login/renderer UID, or == the **`desktop-challenge-authority`**
+UID ⇒ `verify_distinct_principals()` Block (a compromised renderer can never *become* the final verifier;
+the broker can never be the authority — P0-1); (j) **renderer-isolation (Actor B, login identity):**
+the renderer cannot read/write/list the verifier DB or pinned manifest, cannot call the challenge-
+authority IPC, cannot reach the sidecar/supervisor/signer IPC, cannot supply `system`/`history`/`config`/
+hashes/nonces/receipt fields, and a forged renderer "Verified" event **cannot** create a verified message
+(only the broker's committed verification tx does) — the broker accepts only the closed
+`{conversation_id, agent?}` command and resolves all authoritative inputs itself; (k) Actor C (dedicated
+**sidecar service UID**, NOT login, NOT broker) attempts to connect the signer socket / read any key or
+store / make an authority sign caller-supplied evidence ⇒ DENIED (peer-auth + ACL); it may only trigger
+a run + relay the final receipt; (l) the seven runtime **service** principals must be pairwise-distinct
+AND ≠ login (any collision ⇒ Block); (m) **launcher Model A:** wrong caller UID (≠ recorder), extra
+argv / non-empty env / extra inherited FD, a data FD 3–6 arriving `FD_CLOEXEC` (would close executor I/O),
+target executable ≠ pinned `executor_executable_sha256`, target UID **or** GID ≠ executor, residual
+supplementary groups or residual eff/perm/inh/ambient/bounding capability after the drop, a failed
+`setgroups`/`setresgid`/`setresuid`/`prctl`/`capset`, image hash/owner/mode/path swap, cgroup mismatch,
+`fexecve` failure ⇒ each refuses with **no receipt**; the launcher binary is root/TCB-owned mode-4750
+(not a runtime UID) ⇒ `verify_tcb_integrity()` confirms, `verify_distinct_principals()` does NOT count it;
+the **success** path (a tiny pinned executor reading FDs 3/4/5 and writing FD 6) MUST run end-to-end
+(FD survival + privilege drop proven); (n) each of the 3 threat actors (A login user / B renderer / C
+sidecar-service-UID) × each protected asset (auth key, pending store, receipt/attestation keys, protected
+evidence store, verifier DB + manifest, TCB binaries) ⇒ DENIED with the stated enforcing mechanism (the
+Linux mechanism here; the equivalent Windows SID denial matrix is specified in §0.W).
 
 ---
 
@@ -3404,6 +3501,31 @@ The current normative design is §0–§9 above. This log is historical only.
   **P1-3** global "no code" claims corrected: no Architect-approved or merged 3b-1B implementation exists;
   PR #32 is unapproved Draft/WIP with no authority over the design; adapt only after design GREEN. Still
   NOT Architect-GREEN; no Architect-approved 3b-1B implementation.
+- **rev 28 (this doc) — closes the rev-27 Architect design RED (2 P0 + 4 P1 @ exact HEAD `0e41ef6`, CI
+  run 30275888743 9/9 GREEN; CI ≠ design GREEN).** **P0-1 (§0/§2.1/§2.6)** — rev-27 wrongly folded the
+  trusted Rust/Tauri backend (final verifier + persistence authority) into the untrusted client. rev-28
+  splits **Renderer/session UI** (interactive login identity, fully untrusted, no key/DB/manifest/trust-
+  state, reaches only the broker via a closed `{conversation_id, agent?}` command), **Trusted desktop
+  verifier/broker** (dedicated service UID/SID, separate process, owns the receipt DB + pinned manifest +
+  orchestration + final verification, resolves all authoritative inputs itself, never accepts renderer-
+  supplied hashes/objects/verdicts/receipt fields), and **`desktop-challenge-authority`** (separate UID/
+  SID, accepts create-pending/issue only from the broker UID). Broker-compromise stated OUT of scope (TCB
+  final authority). `verify_distinct_principals()` checks the seven runtime service UIDs (broker/authority/
+  sidecar/supervisor/recorder/executor/signer); renderer = login role, launcher = root/TCB helper. Renderer
+  denial tests added. **P0-2 (§2.7/§4.7)** — launcher made executable + privilege-safe: the data FDs 3–6
+  have `FD_CLOEXEC` explicitly CLEARED (survive both exec boundaries; rev-27's `O_CLOEXEC` would have closed
+  the executor I/O); the exact privilege-drop syscall sequence is locked (verify → root cgroup setup →
+  `setgroups([])` → `setresgid` → drop bounding/ambient caps via `CAP_SETPCAP` → `setresuid` → clear all cap
+  sets → verify unprivileged → `PR_SET_NO_NEW_PRIVS` → `fexecve`); a setuid-root helper starts fully
+  privileged (corrected); a real executable integration test + full negative matrix required. **P1-1** the
+  obsolete "same-login-user sidecar" wording removed from the normative §2.1/§2.5 (3-actor model; history
+  wording stays in this appendix). **P1-2** canonical state uses separate last_reviewed_candidate /
+  last_architect_verdict / current_candidate / current_candidate_gate fields (rev-28 does not inherit the
+  rev-27 verdict). **P1-3** banner + top STATUS identify rev-28; removed "rev-26 is the proposed candidate"
+  and "3b-1B code has NOT started". **P1-4** PR #31 gains a carrier_transition (OPEN ⇒ design/impl/code-
+  audit gate; MERGED ⇒ verify main + rebase PR #32) + a main-push anti-self-stale check; the checkers were
+  generalized to snapshot-declared gate names so a design-audit carrier's transition validates without the
+  Phase-0 gate values. Still NOT Architect-GREEN; no Architect-approved 3b-1B implementation.
 
 ## Appendix B — consistency-audit matrices (verification aids, non-normative)
 

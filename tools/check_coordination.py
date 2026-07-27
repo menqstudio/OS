@@ -96,8 +96,6 @@ SUBJECT_PROSE = {
 CARRIER_RESOLUTION_TOKENS = {
     "CARRIER_IF_OPEN_GATE": ("carrier_transition", "pre_merge", "gate"),
     "CARRIER_IF_MERGED_GATE": ("carrier_transition", "post_merge", "gate"),
-    "CARRIER_IF_OPEN_PHASE0": ("product_roadmap", "phase_0", "if_carrier_open"),
-    "CARRIER_IF_MERGED_PHASE0": ("product_roadmap", "phase_0", "if_carrier_merged"),
 }
 # a carrier-action / carrier-state phrase that goes STALE the moment PR #33 merges. Any of these near a
 # bare "PR #33" mention, unguarded by an IF-OPEN/IF-MERGED transition marker on the same line, is RED.
@@ -281,21 +279,19 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
             if not isinstance(ct, dict):
                 problems.append(f"{CURRENT_STATE_JSON}: carrier_transition must be an object when present")
             else:
-                for phase, want_gate, want_carrier in (("pre_merge", None, "open"), ("post_merge", "REBASE_PR31", "merged")):
+                # gate NAMES are snapshot-declared (a repository-truth carrier and a design-audit carrier
+                # use different gate strings); validate STRUCTURE — carrier_state + a non-empty gate.
+                for phase, want_carrier in (("pre_merge", "open"), ("post_merge", "merged")):
                     blk = ct.get(phase)
                     if not isinstance(blk, dict):
                         problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase} block missing")
                         continue
-                    if want_carrier and blk.get("carrier_state") != want_carrier:
+                    if blk.get("carrier_state") != want_carrier:
                         problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.carrier_state must be {want_carrier!r}")
-                    if want_gate and blk.get("gate") != want_gate:
-                        problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.gate must be {want_gate!r}")
-            # when a merge-transition IS modeled, its current fields must be transition-aware + the
-            # structured CARRIER_IF_* tokens must be present and match the anchor.
-            phase0 = (data.get("product_roadmap") or {}).get("phase_0")
-            if not (isinstance(phase0, dict) and phase0.get("if_carrier_open") and phase0.get("if_carrier_merged")):
-                problems.append(f"{CURRENT_STATE_JSON}: product_roadmap.phase_0 must be transition-aware "
-                                f"{{if_carrier_open, if_carrier_merged}} when carrier_transition is modeled")
+                    if not (isinstance(blk.get("gate"), str) and blk.get("gate").strip()):
+                        problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.gate must be a non-empty string")
+            # when a merge-transition IS modeled, the structured CARRIER_IF_* gate tokens must be present
+            # and match the anchor, and next_action_by_carrier must carry both branches.
             na = data.get("next_action_by_carrier")
             if not (isinstance(na, dict) and na.get("open") and na.get("merged")):
                 problems.append(f"{CURRENT_STATE_JSON}: next_action_by_carrier must have both 'open' and 'merged' branches when carrier_transition is modeled")
@@ -449,17 +445,20 @@ def _check_current_contradictions(root: pathlib.Path) -> list[str]:
                                 f"(merge / re-audit / not-merged) not guarded by an IF OPEN / IF MERGED "
                                 f"transition marker — make every carrier-current statement transition-aware")
                 break
-        if str(tokens.get("CURRENT_DESIGN_GATE")) == "PENDING_REAUDIT":
-            # a PENDING_REAUDIT candidate must not be described in the current region as having ANY
-            # exact verdict — neither GREEN nor RED (the RED verdicts belonged to earlier revisions).
-            for m in re.finditer(r"rev.?26[^.\n]{0,60}?(design[- ]?(RED|GREEN)|exact-head[- ]?(RED|GREEN))", region, re.I):
+        candidate = str(tokens.get("CURRENT_DESIGN_CANDIDATE") or "").strip()
+        if str(tokens.get("CURRENT_DESIGN_GATE")) == "PENDING_REAUDIT" and candidate:
+            # the CURRENT (unreviewed) candidate must not be described in the current region as having an
+            # exact-head verdict — neither GREEN nor RED. PRIOR reviewed candidates (last_reviewed) MAY be
+            # stated as RED (that's history/fact); only a claim about THIS candidate is forbidden.
+            cand_re = re.escape(candidate).replace(r"\-", r".?").replace(r"\ ", r".?")
+            for m in re.finditer(rf"{cand_re}[^.\n]{{0,60}}?(design[- ]?(RED|GREEN)|exact-head[- ]?(RED|GREEN))", region, re.I):
                 pre = region[max(0, m.start() - 45):m.start()].lower()
-                # a conditional/instruction ("do NOT merge UNTIL rev-26 is design-GREEN") is not an
-                # assertion that rev-26 HAS a verdict — only flag a bare positive claim.
+                # a conditional/instruction ("do NOT merge UNTIL rev-28 is design-GREEN") is not an
+                # assertion that the candidate HAS a verdict — only flag a bare positive claim.
                 if any(w in pre for w in ("until", "unless", "once ", "when ", "after ", "before ", "requires")):
                     continue
-                problems.append(f"{doc}: CURRENT region asserts a rev-26 design verdict while the gate is "
-                                f"PENDING_REAUDIT (rev-26 has no exact-head verdict; earlier revs' RED is history)")
+                problems.append(f"{doc}: CURRENT region asserts a {candidate} design verdict while the gate is "
+                                f"PENDING_REAUDIT ({candidate} is the current candidate and has no exact-head verdict yet)")
                 break
     return problems
 

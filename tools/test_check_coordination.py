@@ -59,6 +59,7 @@ def _default_state() -> dict:
         "status_tokens": {
             "CURRENT_ACTIVE_TASK": "T-017",
             "CURRENT_DESIGN_GATE": "PENDING_REAUDIT",
+            "CURRENT_DESIGN_CANDIDATE": "rev-26",
             "CURRENT_VERIFY_SEAM": "complete",
         },
         "stop_gates": ["no production Verified until the chain is exact-head GREEN"],
@@ -66,7 +67,8 @@ def _default_state() -> dict:
     }
 
 
-_TOKENS = "`CURRENT_ACTIVE_TASK: T-017` `CURRENT_DESIGN_GATE: PENDING_REAUDIT` `CURRENT_VERIFY_SEAM: complete`"
+_TOKENS = ("`CURRENT_ACTIVE_TASK: T-017` `CURRENT_DESIGN_GATE: PENDING_REAUDIT` "
+           "`CURRENT_DESIGN_CANDIDATE: rev-26` `CURRENT_VERIFY_SEAM: complete`")
 
 
 def _doc_mentioning_both(extra="") -> str:
@@ -259,17 +261,16 @@ class SemanticGateTests(unittest.TestCase):
 
     # --- P0-1: strengthened carrier-resolution gate --------------------------------------------------
     def _carrier_state(self) -> dict:
+        # a merge-transition carrier declares its OWN gate names (generic, not hard-coded).
         cs = _default_state()
-        cs["current_workflow_pr"] = {"number": 33, "branch": "chore/phase0-repository-truth", "head": "b" * 40}
+        cs["current_workflow_pr"] = {"number": 33, "branch": "chore/phase0-repository-truth", "base": "main"}
         cs["carrier_transition"] = {
             "carrier_pr": 33,
-            "pre_merge": {"gate": "PR33_REAUDIT", "carrier_state": "open", "phase_0": "in_progress"},
-            "post_merge": {"gate": "REBASE_PR31", "carrier_state": "merged", "phase_0": "done"},
+            "pre_merge": {"gate": "PR33_REAUDIT", "carrier_state": "open"},
+            "post_merge": {"gate": "REBASE_PR31", "carrier_state": "merged"},
         }
-        cs["product_roadmap"] = {"phase_0": {"if_carrier_open": "in_progress", "if_carrier_merged": "done"}}
         cs["status_tokens"].update({
-            "CARRIER_IF_OPEN_GATE": "PR33_REAUDIT", "CARRIER_IF_MERGED_GATE": "REBASE_PR31",
-            "CARRIER_IF_OPEN_PHASE0": "in_progress", "CARRIER_IF_MERGED_PHASE0": "done"})
+            "CARRIER_IF_OPEN_GATE": "PR33_REAUDIT", "CARRIER_IF_MERGED_GATE": "REBASE_PR31"})
         return cs
 
     def test_rejects_missing_structured_carrier_token(self):
