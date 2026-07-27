@@ -15,36 +15,59 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import signal
+import subprocess
 import tempfile
+import time
 import uuid
+import sys
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bro_evidence import event_hash as evidence_event_hash
 from bro_signature import canonical_bytes
 from broctl import sign_payload
-from brops_evidence_store import EvidenceStore
+from brops_evidence_store import NamespacedEvidenceStore
 from brops_governed_common import (
-    GovernedProtocolError, MAX_OUTPUT_BYTES, b64url_decode, b64url_encode,
+    EXECUTION_TIMEOUT_MS, GovernedProtocolError, MAX_OUTPUT_BYTES, b64url_encode,
     require_exact_keys, require_id,
 )
 
 PROTOCOL = "brops.governed-record-request.v1"
 RESULT_PROTOCOL = "brops.governed-record-result.v1"
 
+# The recorder now OWNS execution (rev-26 §0 principal hierarchy): the supervisor sends only the
+# INPUT handles + turn metadata; the recorder launches the contained executor via the setuid
+# launcher, reads its output pipe directly, and measures teardown itself — so the entity that signs
+# the execution receipt is the same entity that observed the execution. The supervisor never sees
+# the output bytes and cannot substitute them. It does NOT send output_b64 anymore.
 _REQUEST_KEYS = frozenset({
-    "protocol", "output_b64", "run_id", "execution_attempt_id", "lease_id", "receipt_id",
-    "task_id", "agent_id", "runner_id", "executor_id", "started_at_ms", "finished_at_ms",
-    "issued_at_epoch",
+    "protocol", "run_id", "execution_attempt_id", "lease_id", "receipt_id",
+    "task_id", "agent_id", "runner_id", "executor_id",
+    "system_handle", "history_handle", "generation_config_handle", "issued_at_epoch",
 })
+
+_DEFAULT_LAUNCHER = pathlib.Path(__file__).with_name("brops_executor_launcher.py")
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 
 @dataclass(frozen=True)
 class RecorderComponents:
-    rec_store: EvidenceStore                 # store/rec/, owned + written by THIS principal
+    # The recorder reads the supervisor-written inputs from sup/ and writes its own artifacts to
+    # rec/, so it holds the whole namespaced store (not just rec/). It also holds the PINNED executor
+    # command + launcher — taken from the recorder's OWN config, never from the request, so a
+    # compromised supervisor cannot choose what binary runs.
+    store: NamespacedEvidenceStore
     evidence_recorder_key: Mapping[str, str]
+    executor_command: tuple = ()
+    launcher_path: pathlib.Path = _DEFAULT_LAUNCHER
+    clock_ms: Callable[[], int] = _now_ms
+    monotonic: Callable[[], float] = time.monotonic
 
 
 def _sign_document(payload: Mapping[str, Any], key: Mapping[str, str]) -> dict[str, Any]:
@@ -77,9 +100,82 @@ def _atomic_write_json(path: pathlib.Path, obj: Any) -> None:
                 pass
 
 
+def _measure_teardown(pgid: int) -> tuple[bool, str]:
+    """Sweep any survivors of the executor's process group, then confirm the group is empty. The
+    recorder OWNS the group (it launched the executor under setsid), so this is a real measurement,
+    not an assertion: contained iff no process of the group survives teardown. POSIX-only (the FD /
+    process-group model is Linux; on other platforms execution is not the tested path)."""
+    if os.name != "posix":
+        return True, "contained"
+    try:
+        os.killpg(pgid, signal.SIGKILL)     # sweep stragglers the executor may have spawned
+    except ProcessLookupError:
+        pass                                # group already empty
+    try:
+        os.killpg(pgid, 0)                  # probe: any members left?
+    except ProcessLookupError:
+        return True, "contained"            # ESRCH → nothing survived → contained
+    return False, "escaped"                 # something is still alive after teardown
+
+
+def _run_executor(c: RecorderComponents, system_handle: str, history_handle: str,
+                  config_handle: str) -> tuple[bytes, int, int, bool, str]:
+    """Launch the pinned contained executor via the setuid launcher, read its output pipe DIRECTLY,
+    and measure teardown. The recorder (this principal) owns the whole execution; the supervisor
+    never touches the output bytes and cannot substitute them. Uses the executor command PINNED in
+    the recorder's own config, never a supervisor-supplied one. Raises GovernedProtocolError on any
+    operational failure so the caller can refuse fail-closed."""
+    if not c.executor_command:
+        raise GovernedProtocolError("model_profile_unknown")
+    start_ms = c.clock_ms(); start_mono = c.monotonic()
+    # §2.3: the inputs live in sup/ (supervisor-written); resolve each to its holding namespace and
+    # open READ-ONLY. The recorder can read sup/ (group member) but never writes it.
+    fds = [os.open(c.store.path(h), os.O_RDONLY)
+           for h in (system_handle, history_handle, config_handle)]
+    env = os.environ.copy()
+    env.update({
+        "BROPS_LAUNCH_SYSTEM_FD": str(fds[0]),
+        "BROPS_LAUNCH_HISTORY_FD": str(fds[1]),
+        "BROPS_LAUNCH_CONFIG_FD": str(fds[2]),
+    })
+    command = (os.environ.get("PYTHON", sys.executable), str(c.launcher_path), *c.executor_command)
+
+    def _preexec() -> None:
+        os.setsid()
+
+    try:
+        proc = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=env, pass_fds=tuple(fds), preexec_fn=_preexec if os.name == "posix" else None,
+        )
+        try:
+            output, _stderr = proc.communicate(timeout=EXECUTION_TIMEOUT_MS / 1000)
+        except subprocess.TimeoutExpired:
+            _measure_teardown(proc.pid)     # SIGKILL the runaway group
+            proc.communicate()
+            raise GovernedProtocolError("output_timeout")
+        contained, teardown_outcome = _measure_teardown(proc.pid)
+        if proc.returncode != 0:
+            raise GovernedProtocolError("run_binding_invalid")
+        if len(output) > MAX_OUTPUT_BYTES:
+            raise GovernedProtocolError("output_oversize")
+        elapsed = (c.monotonic() - start_mono) * 1000
+        if elapsed >= EXECUTION_TIMEOUT_MS:
+            raise GovernedProtocolError("output_timeout")
+        return output, start_ms, c.clock_ms(), contained, teardown_outcome
+    finally:
+        for fd in fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 def record_governed_turn(request: Mapping[str, Any], c: RecorderComponents) -> dict[str, Any]:
-    """Write the recorder-namespace artifacts + evidence chain for one governed turn, signed by the
-    evidence-recorder key, and return their handles. Fail-closed on any malformed request."""
+    """OWN one governed turn's execution and evidence: launch the contained executor, read its
+    output, measure teardown, then write the output + measured containment + evidence-recorder-signed
+    execution receipt + signed bro_evidence chain to store/rec/, returning their handles + the
+    execution timing. Fail-closed on any malformed request or operational failure."""
     try:
         require_exact_keys(request, _REQUEST_KEYS, "governed record request")
         if request["protocol"] != PROTOCOL:
@@ -92,40 +188,47 @@ def record_governed_turn(request: Mapping[str, Any], c: RecorderComponents) -> d
         agent_id = require_id(request["agent_id"], "agent_id")
         runner_id = require_id(request["runner_id"], "runner_id")
         executor_id = require_id(request["executor_id"], "executor_id")
-        for field in ("started_at_ms", "finished_at_ms", "issued_at_epoch"):
-            if isinstance(request[field], bool) or not isinstance(request[field], int):
-                raise GovernedProtocolError(f"{field} must be an integer")
-        started = request["started_at_ms"]; finished = request["finished_at_ms"]
+        system_handle = require_id(request["system_handle"], "system_handle")
+        history_handle = require_id(request["history_handle"], "history_handle")
+        config_handle = require_id(request["generation_config_handle"], "generation_config_handle")
+        if isinstance(request["issued_at_epoch"], bool) or not isinstance(request["issued_at_epoch"], int):
+            raise GovernedProtocolError("issued_at_epoch must be an integer")
         issued_at_epoch = request["issued_at_epoch"]
-        output = b64url_decode(request["output_b64"], max_bytes=MAX_OUTPUT_BYTES)
     except (GovernedProtocolError, KeyError, TypeError, ValueError) as exc:
         return {"protocol": RESULT_PROTOCOL, "status": "refused", "reason": f"malformed:{exc}"}
 
+    # OWN the execution: launch the contained executor, read its output pipe, measure teardown.
+    try:
+        output, started, finished, contained, teardown_outcome = _run_executor(
+            c, system_handle, history_handle, config_handle)
+    except GovernedProtocolError as exc:
+        return {"protocol": RESULT_PROTOCOL, "status": "refused", "reason": str(exc)}
+
     key_id = c.evidence_recorder_key["key_id"]
     priv = c.evidence_recorder_key["private_key"]
-    output_handle = c.rec_store.publish(output)
+    output_handle = c.store.rec.publish(output)
     containment = {
         "artifact_type": "brops.governed-turn-containment.v1",
         "run_id": run_id, "execution_attempt_id": attempt, "lease_id": lease_id,
         "runner_id": runner_id, "executor_id": executor_id,
         "cgroup_id": "process-group:" + attempt, "process_group_id": attempt,
-        "contained": True, "teardown_outcome": "contained", "measured_at_ms": finished,
+        "contained": contained, "teardown_outcome": teardown_outcome, "measured_at_ms": finished,
     }
-    containment_handle = c.rec_store.publish(canonical_bytes(containment))
+    containment_handle = c.store.rec.publish(canonical_bytes(containment))
     execution_receipt_payload = {
         "artifact_type": "brops.governed-turn-execution-receipt.v1",
         "key_id": key_id, "receipt_id": receipt_id, "task_id": task_id,
         "run_id": run_id, "execution_attempt_id": attempt, "lease_id": lease_id,
         "runner_id": runner_id, "executor_id": executor_id,
-        "exit_code": 0, "contained": True, "output_handle": output_handle,
+        "exit_code": 0, "contained": contained, "output_handle": output_handle,
         "output_sha256": output_handle, "output_bytes": len(output),
         "started_at_ms": started, "finished_at_ms": finished,
     }
     execution_receipt = _sign_document(execution_receipt_payload, c.evidence_recorder_key)
-    execution_receipt_handle = c.rec_store.publish(canonical_bytes(execution_receipt))
+    execution_receipt_handle = c.store.rec.publish(canonical_bytes(execution_receipt))
 
     # §7 — a REAL signed bro_evidence chain in store/rec/evidence/ (evidence-recorder authority).
-    evidence_dir = pathlib.Path(c.rec_store.root) / "evidence"
+    evidence_dir = pathlib.Path(c.store.rec.root) / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
         os.chmod(evidence_dir, 0o2750)
@@ -150,6 +253,7 @@ def record_governed_turn(request: Mapping[str, Any], c: RecorderComponents) -> d
     return {
         "protocol": RESULT_PROTOCOL, "status": "recorded",
         "output_handle": output_handle, "output_bytes": len(output),
+        "started_at_ms": started, "finished_at_ms": finished,
         "containment": containment, "containment_handle": containment_handle,
         "execution_receipt_handle": execution_receipt_handle,
         "evidence_event_id": evidence_event_id, "evidence_final_event_hash": final_event_hash,
@@ -161,8 +265,11 @@ def load_recorder_components(env: Mapping[str, str]) -> RecorderComponents:
     def _key(directory: str, name: str) -> dict[str, str]:
         data = json.loads((pathlib.Path(directory) / name).read_text(encoding="utf-8"))
         return {"key_id": data["key_id"], "private_key": data["private_key"]}
+    launcher = env.get("BROPS_LAUNCHER_PATH")
     return RecorderComponents(
-        rec_store=EvidenceStore(pathlib.Path(env["BROPS_EVIDENCE_STORE_DIR"]) / "rec"),
+        store=NamespacedEvidenceStore(pathlib.Path(env["BROPS_EVIDENCE_STORE_DIR"])),
         evidence_recorder_key=_key(env["BROPS_EVIDENCE_RECORDER_KEYDIR"],
                                    "brops-governed-evidence-recorder.json"),
+        executor_command=tuple(json.loads(env["BROPS_EXECUTOR_COMMAND"])),
+        launcher_path=pathlib.Path(launcher) if launcher else _DEFAULT_LAUNCHER,
     )

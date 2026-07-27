@@ -11,9 +11,7 @@ import os
 import pathlib
 import secrets
 import shlex
-import signal
 import sqlite3
-import subprocess
 import tempfile
 import time
 import hashlib
@@ -30,7 +28,7 @@ from brops_evidence_store import EvidenceStore, EvidenceStoreError, NamespacedEv
 from brops_governed_common import (
     CHALLENGE_TTL_MS, EXECUTION_TIMEOUT_MS, ISSUED_RETENTION_MS,
     LEASE_DURATION_MS, MAX_CONCURRENT_GOVERNED_TURNS, MAX_GENERATION_CONFIG_BYTES,
-    MAX_MESSAGE_BYTES, MAX_OUTPUT_BYTES, MAX_OUTPUT_STREAM_ROWS_PER_INSTALL,
+    MAX_MESSAGE_BYTES, MAX_OUTPUT_STREAM_ROWS_PER_INSTALL,
     MAX_OUTPUT_STREAM_BYTES_PER_INSTALL,
     MAX_STAGING_CHUNKS, MAX_SYSTEM_BYTES, MIN_LAUNCH_REMAINING_MS,
     OUTPUT_STREAM_RETENTION_MS, OUTPUT_STREAM_TTL_MS, STAGING_CHUNK_BYTES,
@@ -691,51 +689,9 @@ class GovernedSupervisor:
                 self.conn.execute("UPDATE governed_turn_staging SET state='INPUTS_READY' WHERE challenge_handle=?", (row["challenge_handle"],))
         return {"protocol": STAGING_FINAL_RESULT, "status": "published", "artifact": row["artifact"], "handle": published, "inputs_ready": ready}
 
-    def _run_executor(self, *, system_handle: str, history_handle: str, config_handle: str) -> tuple[bytes, int, int]:
-        if not self.config.executor_command:
-            raise GovernedProtocolError("model_profile_unknown")
-        start_ms = self.clock_ms(); start_mono = self.monotonic()
-        system_path = self.store.path(system_handle)   # §2.3: resolve to the holding namespace (sup/)
-        history_path = self.store.path(history_handle)
-        config_path = self.store.path(config_handle)
-        fds = [os.open(p, os.O_RDONLY) for p in (system_path, history_path, config_path)]
-        env = os.environ.copy()
-        env.update({
-            "BROPS_LAUNCH_SYSTEM_FD": str(fds[0]),
-            "BROPS_LAUNCH_HISTORY_FD": str(fds[1]),
-            "BROPS_LAUNCH_CONFIG_FD": str(fds[2]),
-        })
-        launcher = pathlib.Path(__file__).with_name("brops_executor_launcher.py")
-        command = (os.environ.get("PYTHON", os.sys.executable), str(launcher), *self.config.executor_command)
-
-        def _preexec() -> None:
-            os.setsid()
-
-        try:
-            proc = subprocess.Popen(
-                command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, env=env, pass_fds=tuple(fds), preexec_fn=_preexec if os.name == "posix" else None,
-            )
-            try:
-                output, _stderr = proc.communicate(timeout=EXECUTION_TIMEOUT_MS / 1000)
-            except subprocess.TimeoutExpired:
-                if os.name == "posix":
-                    os.killpg(proc.pid, signal.SIGKILL)
-                else:
-                    proc.kill()
-                proc.communicate()
-                raise GovernedProtocolError("output_timeout")
-            if proc.returncode != 0:
-                raise GovernedProtocolError("run_binding_invalid")
-            if len(output) > MAX_OUTPUT_BYTES:
-                raise GovernedProtocolError("output_oversize")
-            elapsed = (self.monotonic() - start_mono) * 1000
-            if elapsed >= EXECUTION_TIMEOUT_MS:
-                raise GovernedProtocolError("output_timeout")
-            return output, start_ms, self.clock_ms()
-        finally:
-            for fd in fds:
-                os.close(fd)
+    # NOTE: execution (launching the contained executor, reading its output pipe, measuring teardown)
+    # is no longer done here — it is OWNED by the evidence-recorder RUNNER (rev-26 §0 principal
+    # hierarchy). See brops_governed_recorder._run_executor. The supervisor sends only INPUT handles.
 
     def _attest(self, evidence: Mapping[str, Any]) -> dict[str, Any]:
         private = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(self.attestation_key["private_key"]))
@@ -898,46 +854,50 @@ class GovernedSupervisor:
                                  result_json=canonical_bytes(verdict).decode("utf-8"),
                                  failure_reason="lease_expired")
             return verdict
-        # §5 step 9 — persist EXECUTION_STARTING BEFORE launching (no auto-relaunch past this point).
+        # §5 step 9 — persist EXECUTION_STARTING BEFORE the recorder launches (no auto-relaunch past
+        # this point). §0/§2.3/§8 — execution itself is OWNED by the evidence-recorder RUNNER (separate
+        # brops-recorder principal): this supervisor sends ONLY the INPUT handles + turn metadata; the
+        # recorder launches the contained executor, reads its output pipe directly, measures teardown,
+        # and writes ALL store/rec/ artifacts (output, measured containment, the evidence-recorder-signed
+        # execution receipt, the signed bro_evidence chain). The supervisor never sees the output bytes,
+        # so it cannot substitute them, and it neither writes store/rec/ nor holds the recorder key.
         self._set_acceptance(handle, "EXECUTION_STARTING", self.clock_ms())
         try:
-            output, started_at, finished_at = self._run_executor(
-                system_handle=turn["system_handle"], history_handle=turn["history_handle"],
-                config_handle=turn["generation_config_handle"],
-            )
-        except GovernedProtocolError as exc:
-            reason = str(exc) if str(exc) in GOVERNED_REFUSAL_REASONS else "run_binding_invalid"
+            rec_reply = brops_socket.request(self.recorder_socket, {
+                "protocol": "brops.governed-record-request.v1",
+                "run_id": challenge["run_id"], "execution_attempt_id": attempt, "lease_id": lease_id,
+                "receipt_id": receipt_id, "task_id": challenge["task_id"], "agent_id": self.config.agent_id,
+                "runner_id": self.config.runner_id, "executor_id": self.config.executor_id,
+                "system_handle": turn["system_handle"], "history_handle": turn["history_handle"],
+                "generation_config_handle": turn["generation_config_handle"], "issued_at_epoch": now // 1000,
+            }, timeout=EXECUTION_TIMEOUT_MS / 1000 + 30)
+        except Exception:
+            # AMBIGUOUS: the recorder may have launched/completed the execution before the transport
+            # failed. Leave the row at EXECUTION_STARTING so recover() resolves it to RECOVERY_REQUIRED,
+            # never a clean FAILED that would allow relaunch of a possibly-completed turn.
+            return self._refused(TURN_RESULT, "run_binding_invalid", receipt_id=receipt_id)
+        if isinstance(rec_reply, Mapping) and rec_reply.get("status") == "refused":
+            # DETERMINISTIC operational failure the recorder observed (timeout/oversize/nonzero exit):
+            # durable FAILED + verdict, safe not to relaunch.
+            reason = rec_reply.get("reason")
+            reason = reason if reason in GOVERNED_REFUSAL_REASONS else "run_binding_invalid"
             verdict = self._refused(TURN_RESULT, reason, receipt_id=receipt_id)
-            # Deterministic operational failure (timeout/oversize/etc.) ⇒ FAILED + durable verdict; an
-            # AMBIGUOUS crash instead leaves the row at EXECUTION_STARTING for recover() → RECOVERY_REQUIRED.
             self._set_acceptance(handle, "FAILED", self.clock_ms(),
                                  result_json=canonical_bytes(verdict).decode("utf-8"),
                                  failure_reason=reason)
             return verdict
-        # §5 — child ran; persist process metadata and flip EXECUTION_STARTING -> EXECUTING.
-        self._set_acceptance(handle, "EXECUTING", self.clock_ms(),
-                             process_group_id=attempt, cgroup_id="process-group:" + attempt)
-        # §2.3/§8 — the evidence-recorder RUNNER (separate brops-recorder principal, over
-        # recorder_socket) writes ALL recorder-namespace artifacts to store/rec/ — output,
-        # containment, the evidence-recorder-signed execution receipt, and the signed bro_evidence
-        # chain — and returns their handles + the derived head. This supervisor neither writes
-        # store/rec/ nor holds the evidence-recorder key, so a compromised supervisor cannot forge
-        # recorder-namespace evidence.
-        rec_reply = brops_socket.request(self.recorder_socket, {
-            "protocol": "brops.governed-record-request.v1",
-            "output_b64": b64url_encode(output),
-            "run_id": challenge["run_id"], "execution_attempt_id": attempt, "lease_id": lease_id,
-            "receipt_id": receipt_id, "task_id": challenge["task_id"], "agent_id": self.config.agent_id,
-            "runner_id": self.config.runner_id, "executor_id": self.config.executor_id,
-            "started_at_ms": started_at, "finished_at_ms": finished_at, "issued_at_epoch": now // 1000,
-        }, timeout=30)
         if not isinstance(rec_reply, Mapping) or rec_reply.get("status") != "recorded":
             verdict = self._refused(TURN_RESULT, "run_binding_invalid", receipt_id=receipt_id)
             self._set_acceptance(handle, "FAILED", self.clock_ms(),
                                  result_json=canonical_bytes(verdict).decode("utf-8"),
                                  failure_reason="run_binding_invalid")
             return verdict
+        # §5 — the recorder ran the child + recorded it; flip EXECUTION_STARTING -> EXECUTING.
+        self._set_acceptance(handle, "EXECUTING", self.clock_ms(),
+                             process_group_id=attempt, cgroup_id="process-group:" + attempt)
         output_handle = rec_reply["output_handle"]
+        output_bytes = rec_reply["output_bytes"]
+        finished_at = rec_reply["finished_at_ms"]
         containment = rec_reply["containment"]
         containment_handle = rec_reply["containment_handle"]
         execution_receipt_handle = rec_reply["execution_receipt_handle"]
@@ -962,7 +922,7 @@ class GovernedSupervisor:
             "challenge_registry_hash": self.registry.payload_hash,
             "challenge_registry_epoch": self.registry.payload["registry_epoch"],
             "challenge_registry_root_key_id": self.registry.payload["root_key_id"],
-            "output_sha256": output_handle, "output_bytes": len(output),
+            "output_sha256": output_handle, "output_bytes": output_bytes,
             "policy_id": self.config.policy_id, "policy_version": self.config.policy_version,
             "policy_bundle_sha256": self.policy_bundle_handle,
             "containment_evidence_sha256": containment_handle, "containment_event_id": str(uuid.uuid4()),

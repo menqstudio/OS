@@ -120,10 +120,13 @@ class GovernedV1BTests(unittest.TestCase):
             daemon=True,
         )
         self.signer_thread.start(); self.assertTrue(ready.wait(2))
-        # §2.3/§8: the separate evidence-recorder RUNNER (holds the evidence-recorder key, writes rec/).
+        # §2.3/§8/§0: the separate evidence-recorder RUNNER OWNS execution — it holds the
+        # evidence-recorder key, launches the contained executor via the launcher, reads its output,
+        # measures teardown, and writes rec/. The supervisor sends only INPUT handles.
         self.recorder_socket = str(self.root / "recorder.sock")
         rec_components = RecorderComponents(
-            rec_store=self.store.rec, evidence_recorder_key=self.evidence_recorder_key)
+            store=self.store, evidence_recorder_key=self.evidence_recorder_key,
+            executor_command=(sys.executable, str(executor)), clock_ms=lambda: self.now)
         rec_ready = threading.Event()
         self.recorder_thread = threading.Thread(
             target=brops_socket.serve_forever,
