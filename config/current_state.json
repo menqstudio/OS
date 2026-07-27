@@ -17,12 +17,12 @@
       "number": 31,
       "branch": "feat/wave-3b1-isolated-signer",
       "base": "main",
-      "head": "c9680f53a34766bde455f60d849ca55a08caf174",
+      "head": "65c00bf60f8ba5d619361702e04a0d24ae37ae42",
       "role": "design",
       "draft": false,
       "merge_state": "open",
       "parent_pr": null,
-      "contains": "3b-1A isolated-signer boundary CODE (Architect Code GREEN) + the 3b-1B design-lock addendum. Design last-reviewed candidate rev-27 = Architect design RED (2 P0 + 4 P1); current candidate rev-28 = PENDING re-audit at this head.",
+      "contains": "3b-1A isolated-signer boundary CODE (Architect Code GREEN) + the 3b-1B design-lock addendum rev-30, which is Architect DESIGN GREEN (relayed by Owner) at this exact head.",
       "code_verdict": "GREEN",
       "code_verdict_scope": "3b-1A isolated-signer boundary only",
       "ci": "GREEN at head (CI-green is NOT design/audit-green)"
@@ -63,7 +63,7 @@
   },
   "design_gate": {
     "candidate": "rev-28 (docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) carried on PR #31",
-    "candidate_head_note": "The exact audit HEAD is PR #31's live head c9680f5, recorded in the PR #31 body AUDIT_CANDIDATE_HEAD marker.",
+    "candidate_head_note": "The exact audit HEAD is PR #31's live head 65c00bf, recorded in the PR #31 body AUDIT_CANDIDATE_HEAD marker.",
     "last_reviewed_candidate": "rev-27",
     "last_architect_verdict": "RED",
     "last_architect_verdict_scope": "rev-27 at exact HEAD 0e41ef6 — 2 P0 + 4 P1. Predecessor rev-26 was also RED.",
@@ -72,20 +72,56 @@
     "note": "rev-28 is UNREVIEWED (PENDING_REAUDIT); it does NOT inherit the rev-27 RED verdict."
   },
   "waves": {
-    "3a": {"status": "complete", "code_exists": true, "note": "slices 1/2/3 merged; migrations through 0014"},
-    "3b-0": {"status": "design_green_merged", "code_exists": false, "note": "isolated-signer design rev 5 GREEN, merged PR #30"},
-    "3b-1A": {"status": "code_green", "code_exists": true, "note": "isolated-signer boundary code; Architect Code GREEN; on PR #31"},
-    "3b-1B": {"status": "design_red_rev27_code_unapproved_wip", "code_exists": true, "impl_pr": 32, "design_pr": 31, "note": "Design last-reviewed rev-27 = Architect RED; rev-28 pending. No Architect-approved 3b-1B implementation exists; PR #32 is unapproved Draft/WIP."},
-    "3b-2": {"status": "not_started", "code_exists": false},
-    "3b-3": {"status": "not_started", "code_exists": false}
+    "3a": {
+      "status": "complete",
+      "code_exists": true,
+      "note": "slices 1/2/3 merged; migrations through 0014"
+    },
+    "3b-0": {
+      "status": "design_green_merged",
+      "code_exists": false,
+      "note": "isolated-signer design rev 5 GREEN, merged PR #30"
+    },
+    "3b-1A": {
+      "status": "code_green",
+      "code_exists": true,
+      "note": "isolated-signer boundary code; Architect Code GREEN; on PR #31"
+    },
+    "3b-1B": {
+      "status": "design_red_rev27_code_unapproved_wip",
+      "code_exists": true,
+      "impl_pr": 32,
+      "design_pr": 31,
+      "note": "Design last-reviewed rev-27 = Architect RED; rev-28 pending. No Architect-approved 3b-1B implementation exists; PR #32 is unapproved Draft/WIP."
+    },
+    "3b-2": {
+      "status": "not_started",
+      "code_exists": false
+    },
+    "3b-3": {
+      "status": "not_started",
+      "code_exists": false
+    }
   },
   "closed_stale_prs": [
-    {"number": 13, "reason": "superseded"},
-    {"number": 12, "reason": "superseded after salvage"}
+    {
+      "number": 13,
+      "reason": "superseded"
+    },
+    {
+      "number": 12,
+      "reason": "superseded after salvage"
+    }
   ],
   "merged_prs": [
-    {"number": 33, "reason": "Phase 0 repository-truth remediation; Owner-approved GREEN at 45f3793; merged b6c6712."},
-    {"number": 30, "reason": "Wave 3b-0 isolated-signer design GREEN; merged df3c0ac."}
+    {
+      "number": 33,
+      "reason": "Phase 0 repository-truth remediation; Owner-approved GREEN at 45f3793; merged b6c6712."
+    },
+    {
+      "number": 30,
+      "reason": "Wave 3b-0 isolated-signer design GREEN; merged df3c0ac."
+    }
   ],
   "product_roadmap": {
     "note": "MASTER_EXECUTION_ROADMAP.md v1.0 Locked. Whole v1 app NOT finished — large multi-wave build remains. Every governed 'Verified' path is blocked behind the 3b-1B design + Wave 3b chain.",
@@ -100,7 +136,7 @@
     "open": "n/a",
     "merged": "n/a"
   },
-  "next_action": "Await the Architect design re-audit of PR #31 rev-28 at c9680f5. Meanwhile build/queue dependency-safe work stacked on this re-synced base. Do NOT merge this branch to main until PR #31 merges (stacked order).",
+  "next_action": "PR #31 rev-30 is Architect DESIGN GREEN at 65c00bf; 3b-1B implementation underway (impl/wave-3b1b-core). Meanwhile build/queue dependency-safe work stacked on this re-synced base. Do NOT merge this branch to main until PR #31 merges (stacked order).",
   "stop_gates": [
     "NoTrustedManifest stays fail-closed; NO production trusted_verified until the trust chain is exact-head zero-trust GREEN.",
     "PR #31 3b-1B design: last-reviewed rev-27 = Architect RED (2 P0 + 4 P1); rev-28 PENDING. Do NOT merge until design-GREEN at the exact head, then implemented + code-audit GREEN + CI GREEN.",
