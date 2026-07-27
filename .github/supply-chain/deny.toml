@@ -67,12 +67,18 @@ allow = [
 confidence-threshold = 0.9
 # Per-crate license clarifications go here if a crate ships an ambiguous license file.
 exceptions = []
+# First-party workspace crates (brops, brops-core) are unpublished (publish = false) — they are the
+# thing being audited, not third-party deps — so exclude them from the license allowlist check.
+private = { ignore = true }
 
 [bans]
 # Deny-by-severity for duplicate/unwanted crates. `warn` on multiple-versions keeps
 # the job green while surfacing drift; flip to "deny" once the graph is deduplicated.
 multiple-versions = "warn"
 wildcards = "deny"
+# Internal path deps (brops-core = { path = "core" }) carry no version req; permit the wildcard
+# ONLY for local path deps — registry wildcards stay denied.
+allow-wildcard-paths = true
 # Crates that must never appear in the graph (add known-bad or policy-forbidden crates).
 deny = [
     # { name = "openssl", reason = "prefer rustls; no system OpenSSL in the host crate" },
