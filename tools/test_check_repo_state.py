@@ -86,22 +86,8 @@ class PrEventTests(unittest.TestCase):
         return {"pull_request": {"number": number, "base": {"ref": base_ref, "sha": base_sha},
                                  "head": {"ref": head_ref, "sha": head_sha}}}
 
-    def test_exact_carrier_head_passes(self):
+    def test_ok_event_passes(self):
         self.assertEqual(rs.verify_pr_event(self._event(), _snapshot()), [])
-
-    def test_descendant_carrier_head_passes(self):
-        # a head that descends from the recorded candidate is on the lineage -> GREEN.
-        f = rs.verify_pr_event(self._event(head_sha=NEWMAIN), _snapshot(), is_ancestor=lambda a, b: True)
-        self.assertEqual(f, [])
-
-    def test_divergent_carrier_head_fails(self):
-        f = rs.verify_pr_event(self._event(head_sha=NEWMAIN), _snapshot(), is_ancestor=lambda a, b: False)
-        self.assertTrue(any("carrier head unbound" in p or "not the recorded carrier candidate" in p for p in f))
-
-    def test_missing_carrier_head_fails(self):
-        snap = _snapshot(); del snap["current_workflow_pr"]["head"]
-        self.assertTrue(any("current_workflow_pr.head must be an exact 40-hex" in p
-                            for p in rs.verify_pr_event(self._event(), snap)))
 
     def test_stale_baseline_vs_pr_base_fails(self):
         f = rs.verify_pr_event(self._event(base_sha=NEWMAIN), _snapshot())
@@ -116,9 +102,44 @@ class PrEventTests(unittest.TestCase):
         self.assertTrue(any("head branch" in p for p in f))
 
 
+class CarrierExactHeadTests(unittest.TestCase):
+    def test_exact_triple_equality_passes(self):
+        self.assertEqual(rs.verify_carrier_exact_head(CARRIER_HEAD, CARRIER_HEAD, CARRIER_HEAD), [])
+
+    def test_descendant_with_old_marker_fails(self):
+        # a new commit advances the event/live head; the PR-body marker is still the old sha -> RED.
+        f = rs.verify_carrier_exact_head(NEWMAIN, NEWMAIN, CARRIER_HEAD)
+        self.assertTrue(any("AUDIT_CANDIDATE_HEAD" in p for p in f))
+
+    def test_event_differs_from_live_fails(self):
+        f = rs.verify_carrier_exact_head(CARRIER_HEAD, NEWMAIN, CARRIER_HEAD)
+        self.assertTrue(any("live GitHub head" in p for p in f))
+
+    def test_missing_event_head_fails(self):
+        self.assertTrue(any("event PR head" in p for p in rs.verify_carrier_exact_head(None, CARRIER_HEAD, CARRIER_HEAD)))
+
+    def test_non_hex_event_head_fails(self):
+        self.assertTrue(any("event PR head" in p for p in rs.verify_carrier_exact_head("abc", CARRIER_HEAD, CARRIER_HEAD)))
+
+    def test_missing_body_marker_fails(self):
+        self.assertTrue(any("AUDIT_CANDIDATE_HEAD marker missing" in p
+                            for p in rs.verify_carrier_exact_head(CARRIER_HEAD, CARRIER_HEAD, None)))
+
+    def test_unresolved_live_head_fails(self):
+        self.assertTrue(any("live GitHub carrier head" in p
+                            for p in rs.verify_carrier_exact_head(CARRIER_HEAD, None, CARRIER_HEAD)))
+
+    def test_parse_marker(self):
+        self.assertEqual(rs.parse_audit_candidate(f"body\nAUDIT_CANDIDATE_HEAD: {CARRIER_HEAD}\nmore"), CARRIER_HEAD)
+        self.assertIsNone(rs.parse_audit_candidate("no marker here"))
+
+
 class CarrierPostMergeTests(unittest.TestCase):
     def test_merged_with_correct_post_merge_is_green(self):
-        self.assertEqual(rs.verify_carrier_post_merge({"state": "MERGED"}, _snapshot()), [])
+        snap = _snapshot()
+        snap["product_roadmap"] = {"phase_0": {"if_carrier_open": "in_progress", "if_carrier_merged": "done"}}
+        snap["next_action_by_carrier"] = {"open": "x", "merged": "y"}
+        self.assertEqual(rs.verify_carrier_post_merge({"state": "MERGED"}, snap), [])
 
     def test_merged_with_wrong_gate_fails(self):
         snap = _snapshot(); snap["carrier_transition"]["post_merge"]["gate"] = "PR33_REAUDIT"
@@ -129,6 +150,10 @@ class CarrierPostMergeTests(unittest.TestCase):
         snap = _snapshot(); snap["carrier_transition"]["post_merge"]["phase_0"] = "in_progress"
         f = rs.verify_carrier_post_merge({"state": "MERGED"}, snap)
         self.assertTrue(any("phase_0" in p for p in f))
+
+    def test_unresolvable_carrier_fails_closed(self):
+        # P0-3: None must be a FAILURE, not a no-op.
+        self.assertTrue(any("could not be resolved" in p for p in rs.verify_carrier_post_merge(None, _snapshot())))
 
     def test_open_carrier_is_noop(self):
         self.assertEqual(rs.verify_carrier_post_merge({"state": "OPEN"}, _snapshot()), [])

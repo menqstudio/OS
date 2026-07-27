@@ -154,7 +154,7 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
         return [f"missing {CURRENT_STATE_JSON} (machine-readable current-state anchor)"]
     if data == "MALFORMED" or not isinstance(data, dict):
         return [f"{CURRENT_STATE_JSON}: invalid JSON object"]
-    for field in ("sync", "active", "prs", "waves", "design_gate", "stop_gates", "next_action"):
+    for field in ("sync", "active", "prs", "waves", "design_gate", "stop_gates", "next_action_by_carrier"):
         if field not in data:
             problems.append(f"{CURRENT_STATE_JSON}: missing required field '{field}'")
     sync = data.get("sync") if isinstance(data.get("sync"), dict) else {}
@@ -231,6 +231,14 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
                     problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.carrier_state must be {want_carrier!r}")
                 if want_gate and blk.get("gate") != want_gate:
                     problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.gate must be {want_gate!r}")
+        # every carrier-current field must be TRANSITION-AWARE, not an unconditional pre-merge value.
+        phase0 = (data.get("product_roadmap") or {}).get("phase_0")
+        if not (isinstance(phase0, dict) and phase0.get("if_carrier_open") and phase0.get("if_carrier_merged")):
+            problems.append(f"{CURRENT_STATE_JSON}: product_roadmap.phase_0 must be transition-aware "
+                            f"{{if_carrier_open, if_carrier_merged}}, not an unconditional value")
+        na = data.get("next_action_by_carrier")
+        if not (isinstance(na, dict) and na.get("open") and na.get("merged")):
+            problems.append(f"{CURRENT_STATE_JSON}: next_action_by_carrier must have both 'open' and 'merged' branches")
     return problems
 
 
@@ -350,6 +358,15 @@ def _check_current_contradictions(root: pathlib.Path) -> list[str]:
                 if re.search(pat, region, re.I):
                     problems.append(f"{doc}: CURRENT region calls '{token_key}' pending, but the status "
                                     f"token says complete (contradictory present-tense claim)")
+        # the carrier's merge-state must be described conditionally: an unconditional "PR #33 is not
+        # merged / awaiting" goes stale the moment it merges. Allow it only under an IF-OPEN/until guard.
+        for m in re.finditer(r"PR ?#?33[^.\n]{0,45}?(not( yet)? merged|un-?merged|awaiting[- ]?re-?audit)", region, re.I):
+            pre = region[max(0, m.start() - 60):m.start()].lower()
+            if any(w in pre for w in ("if open", "while open", "until", "unless", "when open", "open:", "if pr #33 is open")):
+                continue
+            problems.append(f"{doc}: CURRENT region unconditionally says PR #33 is not merged/awaiting — use "
+                            f"transition-aware wording (IF OPEN … / IF MERGED …) so it can't go stale on merge")
+            break
         if str(tokens.get("CURRENT_DESIGN_GATE")) == "PENDING_REAUDIT":
             # a PENDING_REAUDIT candidate must not be described in the current region as having ANY
             # exact verdict — neither GREEN nor RED (the RED verdicts belonged to earlier revisions).

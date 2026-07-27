@@ -62,7 +62,7 @@ def _default_state() -> dict:
             "CURRENT_VERIFY_SEAM": "complete",
         },
         "stop_gates": ["no production Verified until the chain is exact-head GREEN"],
-        "next_action": "re-audit + merge PR #33, rebase PR #31, then submit rev-26 for audit",
+        "next_action_by_carrier": {"open": "re-audit + merge PR #33", "merged": "rebase PR #31"},
     }
 
 

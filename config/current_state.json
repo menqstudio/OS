@@ -11,10 +11,10 @@
     "number": 33,
     "branch": "chore/phase0-repository-truth",
     "base": "main",
-    "head": "6e26dc6efd0f4daf68add26016cda1f205bfe975",
-    "head_binding": "Exact candidate sync-tip. A commit cannot contain its own hash, so the live PR head must EQUAL this sha or be a DESCENDANT of it (git ancestor check) — the running candidate is cryptographically on this lineage; a divergent/unrelated head fails closed. Bit-exact when the branch is frozen for audit.",
+    "sync_parent": "6e26dc6efd0f4daf68add26016cda1f205bfe975",
+    "exact_candidate_source": "The EXACT audited candidate head is the `AUDIT_CANDIDATE_HEAD: <40-hex>` marker in the PR #33 body (out-of-band mutable metadata, set to the live head after the final push). check_repo_state requires event head == live headRefOid == PR-body marker (no descendant slack). sync_parent above is only a historical lineage note, NOT the exact candidate.",
     "role": "repository-truth carrier",
-    "note": "The PR carrying this snapshot. Deliberately NOT in prs[] (so merging it cannot create a recorded-open-but-merged self-red). Verified live from the GitHub Actions event + head binding. Do NOT merge until the repository-truth re-audit is GREEN."
+    "note": "The PR carrying this snapshot. Deliberately NOT in prs[] (so merging it cannot create a recorded-open-but-merged self-red). Verified live via the exact-head anchor (event==live==PR-body marker). Do NOT merge until the repository-truth re-audit is GREEN."
   },
   "carrier_transition": {
     "carrier_pr": 33,
@@ -108,18 +108,21 @@
   ],
   "product_roadmap": {
     "note": "MASTER_EXECUTION_ROADMAP.md v1.0 Locked. The security spine above is a subset. The whole app is NOT finished.",
-    "phase_0": "in_progress",
+    "phase_0": {"if_carrier_open": "in_progress", "if_carrier_merged": "done", "resolve": "phase_0 is transition-aware: resolve carrier PR #33 live — OPEN => in_progress, MERGED => done. main-push CI (check_repo_state) enforces if_carrier_merged==done."},
     "phase_1": "in_progress",
     "phases_2_to_10": "not_done",
     "ai_entry_points_governed": "only the main governed-chat seam today; run-steps / Ask Bro / conversation-reply / automations / group chat / integrations are NOT yet governed (tracked open blockers)",
     "windows_production_isolation": "not_done (Linux-only isolation proofs exist; Windows is a release blocker)"
   },
+  "next_action_by_carrier": {
+    "open": "PR #33 is OPEN: obtain repository-truth GREEN on the EXACT candidate (the PR-body AUDIT_CANDIDATE_HEAD) and merge PR #33. Do NOT merge until re-audit GREEN.",
+    "merged": "PR #33 is MERGED: verify main CI (post-merge), rebase PR #31 onto the repaired main, resolve PR #31's NEW exact HEAD, remediate rev-26's 3 preparation-P0, then submit rev-26 for the Architect design audit on that new HEAD."
+  },
   "stop_gates": [
     "NoTrustedManifest stays fail-closed; NO production 'Verified'/trusted_verified until the complete real trust chain is exact-head zero-trust GREEN.",
     "PR #31 rev-26 3b-1B design must NOT merge until it is Architect design-GREEN at exact HEAD, implemented, code-audit GREEN, and CI GREEN. rev-26 is PENDING re-audit and has an open preparation-RED (3 P0).",
     "PR #32 is a Draft/WIP checkpoint: do NOT merge; do NOT call it an RC; freeze it from architectural expansion beyond rev-26 until the design verdict is GREEN.",
-    "PR #33 (repository truth) must NOT merge until its re-audit is GREEN.",
+    "PR #33 (repository truth): WHILE OPEN, do NOT merge until its re-audit is GREEN on the exact candidate; ONCE MERGED, the gate becomes REBASE_PR31 (see next_action_by_carrier).",
     "CI-green is NOT audit-green; a passing unit test is NOT a working install; a Linux isolation proof is NOT a Windows production proof."
-  ],
-  "next_action": "Finish + re-audit PR #33 (repository truth) -> CI GREEN -> merge PR #33 -> verify the new main HEAD + push CI -> rebase PR #31 onto the repaired main -> sync #31 docs + this file -> resolve PR #31's NEW exact HEAD -> exact-head CI -> remediate rev-26's 3 preparation-P0 in place -> submit rev-26 for the Architect design audit on that NEW HEAD. No merges until an exact-head verdict."
+  ]
 }
