@@ -19,6 +19,7 @@ pub mod windows_broker;
 pub mod ipc_framing;
 pub mod real_ids;
 pub mod broker_client;
+pub mod key_manifest;
 pub mod supervisor_ledger;
 pub mod repo;
 
