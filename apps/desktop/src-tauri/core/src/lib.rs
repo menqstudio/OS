@@ -6,6 +6,7 @@ pub mod db;
 pub mod domain;
 pub mod receipt;
 pub mod receipt_store;
+pub mod governed_turn_ipc;
 pub mod repo;
 
 pub use domain::{
