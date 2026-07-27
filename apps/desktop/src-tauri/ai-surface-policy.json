@@ -1,0 +1,44 @@
+{
+  "_purpose": "AI-entry-point inventory (Wave 3b security posture). Every Tauri command in commands.rs that reaches the model provider (ai::generate / ai::generate_stream / ai::governed_turn) MUST be listed here with an honest classification. A command 'reaches' a provider either by calling it DIRECTLY or by calling a NON-command pub helper (defined in the same file) that calls it, resolved ONE call-hop deep — so a new ungoverned surface cannot hide the provider call behind a helper. tools/check_ai_surfaces.py fails CI closed on any unclassified provider-reaching command, stale entry, a policy entry that is not a #[tauri::command], an untracked non-governed surface, or a 'governed' surface that actually reaches a generic provider entry (directly or via a helper). This is inventory + drift-prevention only; it does NOT change the security architecture and does NOT assert any surface is governed that is not.",
+  "governance_states": {
+    "governed": "routes ONLY through ai::governed_turn (full governed chain: challenge -> prepare -> execute -> verify -> persist); MUST NOT reach the generic ai::generate / ai::generate_stream, whether directly or one call-hop through a pub helper.",
+    "ungoverned_tracked": "reaches a generic provider entry today (directly or via a one-hop pub helper); carries a 'tracking' reference to the task/wave that will govern or gate it. Honest current state while Wave 3b (isolated trusted signer) is pending.",
+    "excluded": "deliberately outside the production governed set (e.g. dev-only), with 'tracking'."
+  },
+  "_resolution": "Provider reachability is resolved one call-hop deep: command -> (optional) non-command pub helper in commands.rs -> ai::generate / ai::generate_stream / ai::governed_turn. Helpers themselves are NOT policy entries (only #[tauri::command] fns are surfaces); they are resolution inputs. Deeper chains (helper -> helper -> provider) are out of scope of this gate by design.",
+  "generic_provider_entrypoints": ["ai::generate", "ai::generate_stream"],
+  "governed_entrypoint": "ai::governed_turn",
+  "surfaces": [
+    {
+      "command": "stream_reply",
+      "governance": "ungoverned_tracked",
+      "calls": ["governed_turn", "generate_stream"],
+      "tracking": "T-017 / Wave 3b-1B (rev-26, PR #31 PENDING Architect design audit). Governed path via ai::governed_turn is primary; the ai::generate_stream fallthrough is the ungoverned provider path (Wave 1 made it opt-in via BROPS_ALLOW_UNGOVERNED, fail-closed by default). Reclassify to 'governed' only after the generic fallthrough is removed/gated when Wave 3b lands zero-trust.",
+      "note": "Main governed-chat seam. NoTrustedManifest fail-closed means production still Blocks; no trusted_verified yet."
+    },
+    {
+      "command": "stream_run_step",
+      "governance": "ungoverned_tracked",
+      "calls": ["generate_stream"],
+      "tracking": "T-017 / Wave 3b-1B — run-step execution is NOT yet governed; must route through governed_turn_execute once the governed authority entry is completed (PR #32, gated on rev-26 design-GREEN)."
+    },
+    {
+      "command": "stream_ask",
+      "governance": "ungoverned_tracked",
+      "calls": ["generate_stream"],
+      "tracking": "T-017 / Wave 3b-1B — Ask Bro is NOT yet governed; to be routed through the single governed authority entry. Its held answer is persisted by save_ask_to_chat (server-owned one-time result_id, T-013)."
+    },
+    {
+      "command": "reply_in_conversation",
+      "governance": "ungoverned_tracked",
+      "calls": ["generate"],
+      "tracking": "T-017 / Wave 3b-1B — conversation-reply is NOT yet governed; must route through the single governed authority entry."
+    }
+  ],
+  "related_persistence_surfaces": [
+    {
+      "command": "save_ask_to_chat",
+      "note": "Persists the AI answer produced by stream_ask (does not itself call the provider). Provenance-guarded via a server-generated one-time result_id (T-013); tracked under stream_ask. Not enforced by the provider-call gate because it invokes no provider entry."
+    }
+  ]
+}

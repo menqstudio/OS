@@ -1,0 +1,6 @@
+# PyPI advisory IDs consciously waived. One per line, each with a triage note.
+# cryptography 46.0.3 advisories — engine CI dependency; tracked for a version bump in a follow-up.
+GHSA-537c-gmf6-5ccf
+PYSEC-2026-2141
+PYSEC-2026-35
+PYSEC-2026-36

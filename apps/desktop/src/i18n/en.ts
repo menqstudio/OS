@@ -227,6 +227,19 @@ export const en = {
   'state.offlineHint': 'Running in preview mode — data actions are disabled until the desktop backend is connected.',
   'state.offlineBanner': 'Preview mode — desktop backend not connected. Changes will not be saved.',
   'state.permissionDenied': 'Not permitted',
+  'home.askTitle': 'Ask Bro',
+  'home.emptyPriorities': 'No active priorities',
+  'home.emptyPrioritiesHint': 'Active tasks appear here as work moves forward.',
+  'home.emptyApprovals': 'No pending approvals',
+  'home.emptyApprovalsHint': 'Protected actions awaiting your decision appear here.',
+  'home.emptyAgents': 'No active agents',
+  'home.emptyAgentsHint': 'Agents currently working appear here.',
+  'home.emptyProjects': 'No projects yet',
+  'home.emptyProjectsHint': 'Projects you create appear here.',
+  'top.account': 'Account',
+  'a11y.skipToContent': 'Skip to content',
+  'a11y.primaryNav': 'Main navigation',
+  'a11y.toolbar': 'Quick actions',
 } as const;
 
 export type DictKey = keyof typeof en;

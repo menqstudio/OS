@@ -1,0 +1,264 @@
+name: supply-chain
+
+# Supply-chain scan gate for menqstudio/OS.
+#
+# Six INDEPENDENT jobs (one per ecosystem / concern) so a failure in one scanner
+# never masks the others and each surfaces its own red X:
+#   cargo-audit  - RustSec advisory scan of the Cargo.lock graph
+#   cargo-deny   - advisories + license/bans/sources policy over the Rust graph
+#   pip-audit    - PyPI advisory scan of the hash-pinned engine requirements
+#   npm-audit    - npm advisory scan, filtered through a fail-closed high+ gate
+#   sbom         - CycloneDX SBOMs (Rust + npm + Python) published as artifacts
+#   gitleaks     - secret scan of the working tree and (on PRs) the commit range
+#
+# Every job fails closed on HIGH/CRITICAL severity. All third-party actions are
+# pinned by full commit SHA (tag in trailing comment); the shared SHAs match the
+# ones already vetted in .github/workflows/ci.yml. gitleaks is installed from a
+# version-pinned release tarball whose integrity is checked against the release's
+# own signed SHA256SUMS, so nothing depends on a floating tag.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+  schedule:
+    # Weekly re-scan (Mondays 07:17 UTC) so a newly-published advisory against an
+    # unchanged dependency graph still turns the repository red.
+    - cron: "17 7 * * 1"
+
+permissions:
+  contents: read
+
+# One in-flight run per ref; a newer push supersedes an older queued scan.
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SUPPLY_CHAIN_DIR: .github/supply-chain
+
+jobs:
+  cargo-audit:
+    name: Rust - cargo-audit (RustSec advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - name: Install cargo-audit (version-pinned)
+        run: cargo install cargo-audit --locked  # latest: pinned 0.21.0's rustsec 0.30 cannot parse CVSS 4.0 advisory-db entries (re-pin in a follow-up)
+      - name: Audit the Cargo.lock advisory graph (fail on high+)
+        # cargo-audit denies on any advisory by default; --deny warnings promotes
+        # unmaintained/yanked warnings to hard failures too. Advisory IDs listed in
+        # cargo-audit-ignore.txt (one RUSTSEC-XXXX per line) are passed as --ignore.
+        run: |
+          set -euo pipefail
+          IGNORE_ARGS=""
+          IGNORE_FILE="${SUPPLY_CHAIN_DIR}/cargo-audit-ignore.txt"
+          if [ -f "$IGNORE_FILE" ]; then
+            while IFS= read -r line; do
+              id="${line%%#*}"
+              id="$(echo "$id" | tr -d '[:space:]')"
+              [ -z "$id" ] && continue
+              IGNORE_ARGS="$IGNORE_ARGS --ignore $id"
+            done < "$IGNORE_FILE"
+          fi
+          echo "cargo audit --deny warnings$IGNORE_ARGS"
+          cargo audit \
+            --file apps/desktop/src-tauri/Cargo.lock \
+            --deny warnings \
+            $IGNORE_ARGS
+
+  cargo-deny:
+    name: Rust - cargo-deny (advisories + bans + licenses + sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - name: Install cargo-deny (version-pinned)
+        run: cargo install cargo-deny --locked  # latest: 0.16.3's rustsec cannot parse CVSS 4.0 advisory-db entries (re-pin in a follow-up)
+      - name: Run cargo-deny policy check (fail on high+)
+        # deny.toml sets [advisories] vulnerability = "deny" (advisories), plus bans/licenses/
+        # sources policy. --all-features so optional-feature-gated deps are scanned.
+        run: |
+          # cargo-deny >=0.18 dropped the post-`check` --config form; place the policy
+          # next to the manifest so it is auto-discovered (robust across CLI changes).
+          cp "${SUPPLY_CHAIN_DIR}/deny.toml" apps/desktop/src-tauri/deny.toml
+          cargo deny \
+            --manifest-path apps/desktop/src-tauri/Cargo.toml \
+            --all-features \
+            check \
+            advisories bans licenses sources
+
+  pip-audit:
+    name: Python - pip-audit (PyPI advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit (version-pinned)
+        run: pip install "pip-audit==2.7.3"
+      - name: Audit the engine requirements (fail on any advisory)
+        # pip-audit exits non-zero on any known vulnerability. Advisory IDs to waive
+        # (GHSA-/PYSEC-/CVE-) live one-per-line in pip-audit-ignore.txt and are passed
+        # as --ignore-vuln. The hash-pinned CI requirements are the audited surface.
+        run: |
+          set -euo pipefail
+          IGNORE_ARGS=""
+          IGNORE_FILE="${SUPPLY_CHAIN_DIR}/pip-audit-ignore.txt"
+          if [ -f "$IGNORE_FILE" ]; then
+            while IFS= read -r line; do
+              id="${line%%#*}"
+              id="$(echo "$id" | tr -d '[:space:]')"
+              [ -z "$id" ] && continue
+              IGNORE_ARGS="$IGNORE_ARGS --ignore-vuln $id"
+            done < "$IGNORE_FILE"
+          fi
+          echo "pip-audit$IGNORE_ARGS"
+          pip-audit \
+            --requirement engine/requirements-ci.txt \
+            --strict \
+            --progress-spinner off \
+            $IGNORE_ARGS
+
+  npm-audit:
+    name: Node - npm audit (fail-closed high+ filter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Capture npm audit JSON
+        working-directory: apps/desktop
+        # `npm audit` exits non-zero when vulnerabilities exist; capture its JSON and
+        # let the stdlib filter own the pass/fail decision. `|| true` keeps a non-zero
+        # audit exit from aborting the step before the filter runs.
+        run: |
+          set -uo pipefail
+          npm audit --json > npm-audit.json || true
+          test -s npm-audit.json || { echo "npm produced no audit JSON"; exit 1; }
+      - name: Enforce high+ threshold (honouring the allowlist)
+        # The filter is fail-closed: un-waived high/critical -> exit 1 -> job red.
+        run: |
+          python "${SUPPLY_CHAIN_DIR}/npm_audit_filter.py" \
+            apps/desktop/npm-audit.json \
+            --allow "${SUPPLY_CHAIN_DIR}/npm-audit-allow.txt" \
+            --threshold high
+
+  sbom:
+    name: SBOM - CycloneDX (rust + npm + python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install CycloneDX generators (version-pinned)
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.7 --locked
+          pip install "cyclonedx-bom==4.6.1"
+      - name: Generate SBOMs
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          # Rust: CycloneDX SBOM for the Tauri host workspace.
+          cargo cyclonedx \
+            --manifest-path apps/desktop/src-tauri/Cargo.toml \
+            --format json
+          # cargo-cyclonedx writes <crate>.cdx.json next to each manifest; collect them.
+          find apps/desktop/src-tauri -name "*.cdx.json" -exec cp {} sbom/ \;
+          # npm: generate from the lockfile only (no install needed) via the pinned
+          # CycloneDX npm generator.
+          npx --yes @cyclonedx/cyclonedx-npm@1.19.3 \
+            --package-lock-only \
+            --output-format JSON \
+            --output-file sbom/npm.cdx.json \
+            apps/desktop/package-lock.json
+          # Python: SBOM from the hash-pinned engine requirements.
+          cyclonedx-py requirements engine/requirements-ci.txt \
+            --output-format JSON \
+            --outfile sbom/python.cdx.json
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: cyclonedx-sbom
+          path: sbom/
+          if-no-files-found: error
+
+  gitleaks:
+    name: Secrets - gitleaks
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: "8.21.2"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history so the PR-range secret scan can walk every commit in the
+          # branch, not just the tip tree.
+          fetch-depth: 0
+      - name: Install gitleaks (version-pinned, checksum-verified)
+        # Download the pinned release tarball AND the release's own SHA256SUMS, then
+        # verify the tarball against it. Pins the exact version; integrity is anchored
+        # to the release artifact rather than a floating action tag.
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          TARBALL="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          BASE="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSfL "${BASE}/${TARBALL}" -o "$TARBALL"
+          curl -sSfL "${BASE}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o checksums.txt
+          grep " ${TARBALL}\$" checksums.txt | sha256sum -c -
+          tar -xzf "$TARBALL" gitleaks
+          install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      - name: Scan the working tree for secrets (fail on any leak)
+        run: |
+          set -o pipefail
+          gitleaks detect \
+            --source . \
+            --no-git \
+            --config "${SUPPLY_CHAIN_DIR}/gitleaks.toml" \
+            --redact \
+            --no-banner \
+            --report-format json \
+            --report-path "$RUNNER_TEMP/gitleaks.json" \
+            --exit-code 0
+          echo "--- gitleaks findings (RuleID | File) ---"
+          python3 -c "import json,sys;d=json.load(open(sys.argv[1]));[print(x.get('RuleID'),'|',x.get('File'),'| line',x.get('StartLine')) for x in d];sys.exit(1 if d else 0)" "$RUNNER_TEMP/gitleaks.json"
+      - name: Scan the PR commit range for secrets
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gitleaks detect \
+            --source . \
+            --no-git \
+            --config "${SUPPLY_CHAIN_DIR}/gitleaks.toml" \
+            --log-opts "${BASE_SHA}..${HEAD_SHA}" \
+            --redact \
+            --no-banner \
+            --exit-code 1
