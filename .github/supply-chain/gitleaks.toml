@@ -24,6 +24,11 @@ paths = [
     # Test fixtures and sample data - deliberately fake credentials live here.
     '''.*/tests?/.*fixtures?/.*''',
     '''.*/testdata/.*''',
+    # engine test suite: test_secrets.py IS the secret-detector's unit test (it feeds
+    # deliberate AKIA/JWT/RSA-PRIVATE-KEY vectors into bro_secrets.contains_secret);
+    # test_stop_and_audit.py carries a fake API-key token for the stop/audit flow.
+    # These are test vectors, not live credentials.
+    '''engine/tests/.*''',
     # This config's own example tokens.
     '''\.github/supply-chain/.*''',
 ]
@@ -32,6 +37,10 @@ regexes = [
     '''(?i)(example|dummy|sample|placeholder|changeme|redacted|xxxx+)''',
     '''AKIAEXAMPLE[A-Z0-9]*''',
     '''0{16,}''',
+    # BRO_OPERATOR_ROOT_PUBKEY committed in engine/.github/workflows/verify.yml — this is
+    # the operator root PUBLIC key (the CI registry pin), safe by design to commit. The
+    # generic-api-key detector trips on the 64-hex string; allow this exact public value.
+    '''7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c''',
 ]
 # Commit SHAs known to contain only rotated/example secrets can be listed here.
 commits = []
