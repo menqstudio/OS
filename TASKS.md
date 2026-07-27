@@ -13,6 +13,8 @@
 <!-- CURRENT_STATE: authoritative present-tense tokens, validated against config/current_state.json.status_tokens. Task rows below are the working log; the current truth is these tokens. -->
 > **▶ CURRENT STATE tokens:** `CURRENT_ACTIVE_TASK: T-017` · `CURRENT_ACTIVE_WAVE: 3b-1B` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: PENDING_REAUDIT` · `CURRENT_DESIGN_CANDIDATE: rev-28` · `CURRENT_LAST_REVIEWED: rev-27` · `CURRENT_LAST_VERDICT: RED` · `CURRENT_DESIGN_PR: 31` · `CURRENT_IMPL_PR: 32` · `CURRENT_IMPL_STATE: WIP` · `CARRIER_IF_OPEN_GATE: PR31_DESIGN_AUDIT` · `CARRIER_IF_MERGED_GATE: VERIFY_MAIN_REBASE_PR32` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
 
+> **Impl note (3b-1B):** the governed-chain implementation core (contract/store/idempotency/orchestrator/ledger/verification/FD/privilege/launcher/authority/renderer-proxy) is landing on `impl/wave-3b1b-core` (PR #46), built against PR #31 (head `65c00bf`); WIP, cargo+py+vitest verified, not code-audited.
+
 > **Execution source:** the phase-by-phase plan lives in
 > [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md). Each roadmap task should get a row here
 > when someone claims it. · Կատарման աղբյուրը՝ `MASTER_EXECUTION_ROADMAP.md`։
