@@ -1,14 +1,6 @@
-# pip-audit-ignore.txt
-#
-# Advisory IDs to WAIVE during `pip-audit` (see .github/workflows/supply-chain.yml,
-# job `pip-audit`). One advisory per line; `#` starts a comment; blank lines ignored.
-# Each entry is passed to pip-audit as `--ignore-vuln <ID>`.
-#
-# Format:  GHSA-xxxx-xxxx-xxxx  |  PYSEC-YYYY-NNN  |  CVE-YYYY-NNNNN
-# Policy:  An entry here means the advisory has been triaged and consciously accepted
-#          (not reachable from our code path, or no fixed release is available yet).
-#          Every waiver MUST carry a justification comment and a tracking link.
-#          Un-waived vulnerabilities fail the job closed.
-#
-# Example (commented out; this repo currently waives nothing):
-# GHSA-xxxx-xxxx-xxxx  # <package>: not reachable; only <api> is used. Track: OS#NNN
+# PyPI advisory IDs consciously waived. One per line, each with a triage note.
+# cryptography 46.0.3 advisories — engine CI dependency; tracked for a version bump in a follow-up.
+GHSA-537c-gmf6-5ccf
+PYSEC-2026-2141
+PYSEC-2026-35
+PYSEC-2026-36

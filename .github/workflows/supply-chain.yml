@@ -234,13 +234,18 @@ jobs:
           gitleaks version
       - name: Scan the working tree for secrets (fail on any leak)
         run: |
+          set -o pipefail
           gitleaks detect \
             --source . \
             --no-git \
             --config "${SUPPLY_CHAIN_DIR}/gitleaks.toml" \
             --redact \
             --no-banner \
-            --exit-code 1
+            --report-format json \
+            --report-path "$RUNNER_TEMP/gitleaks.json" \
+            --exit-code 0
+          echo "--- gitleaks findings (RuleID | File) ---"
+          python3 -c "import json,sys;d=json.load(open(sys.argv[1]));[print(x.get('RuleID'),'|',x.get('File'),'| line',x.get('StartLine')) for x in d];sys.exit(1 if d else 0)" "$RUNNER_TEMP/gitleaks.json"
       - name: Scan the PR commit range for secrets
         if: ${{ github.event_name == 'pull_request' }}
         env:
