@@ -62,6 +62,7 @@ allow = [
     "Unicode-DFS-2016",
     "MPL-2.0",
     "CC0-1.0",
+    "CDLA-Permissive-2.0", # permissive data license (Mozilla CA-roots bundle); OSI-style permissive
 ]
 # Below this confidence, cargo-deny refuses to guess a license -> hard error.
 confidence-threshold = 0.9
