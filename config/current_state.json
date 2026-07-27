@@ -2,8 +2,7 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI. Phase 0 (repository-truth) DONE (PR #33). Wave 3b-1: the 3b-1B execution-binding DESIGN is Architect DESIGN GREEN (rev-30) and MERGED to main via PR #31 (with the 3b-1A isolated-signer boundary code, Architect Code GREEN). The 3b-1B IMPLEMENTATION is WIP on PR #46 (not code-audited); the dependency-safe quality/CI gates are integrated. NoTrustedManifest stays fail-closed; no production trusted_verified until the full 3b-1 chain is code-audit GREEN + 3b-2/3b-3 land. Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "b6c6712cf9e12e5c6989f93e68e70c248722d011",
-    "snapshot_branch": "feat/wave-3b1-isolated-signer",
+    "baseline_main_head_at_sync": "9c1b901380de0d05220134347b2e0a447a986daa",
     "live_main_resolution": "Resolve the ACTUAL main HEAD from git/GitHub at session start. baseline_main_head_at_sync is the SHA this snapshot was synced against (main right after PR #33 merged). On a pull_request whose base is main, check_repo_state requires the event base sha == this baseline (stale => RED, forcing a rebase/resync).",
     "verification": "CI job repo-state (tools/check_repo_state.py) is EXACT-HEAD fail-closed against the baseline. No design-audit carrier is active (PR #31 merged); prs[] is empty (no moving-target exact-head PR is tracked). Nothing is exempt from the baseline check."
   },
