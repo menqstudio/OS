@@ -95,11 +95,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history so the semantic gate can diff origin/<base>...HEAD on a PR and enforce
+          # "a substantive code/schema/design change must update the state docs in the same PR".
+          # On push/local (no GITHUB_BASE_REF) the diff check degrades to skip.
+          fetch-depth: 0
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
-      # Stdlib only — no dependencies. Fail-closed: malformed / structurally
-      # inconsistent coordination docs cannot merge.
+      # Stdlib only — no dependencies. Fail-closed: malformed / structurally / semantically
+      # inconsistent coordination docs cannot merge (structure + machine-readable current_state.json
+      # anchor + docs-reference-active-PR + PR-diff state-doc drift guard).
       - name: Coordination-docs consistency gate
         run: python tools/check_coordination.py
       - name: Gate self-tests
