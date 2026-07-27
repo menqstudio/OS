@@ -93,6 +93,12 @@ def compare_external_prs(snapshot: dict, live: dict) -> list[str]:
             failures.append(f"PR #{n}: live GitHub baseRefName missing/empty: {base_branch!r} (fail-closed)")
         elif pr.get("base") and pr["base"] != base_branch:
             failures.append(f"PR #{n}: snapshot base={pr['base']!r} but GitHub base={base_branch!r}")
+        # A SELF-CARRIER pr is the PR that carries this very snapshot: its own commit changes its own
+        # head, so the head can NOT be pinned exactly inside the file it commits (a commit cannot contain
+        # its own hash). We therefore skip ONLY the head-drift check for it (documented, auditable) while
+        # still verifying its state/draft/branch/base live. Every EXTERNAL durable PR stays exact-head.
+        if pr.get("self_carrier") is True:
+            continue
         # EXACT head: both sides must be 40-hex; drift is a FAILURE (forces re-sync), missing live is RED.
         snap_head = pr.get("head", "")
         live_head = lv.get("headRefOid")

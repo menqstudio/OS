@@ -540,6 +540,61 @@
         "structured-read-allowlist",
         "containment-bypass-regression"
       ]
+    },
+    {
+      "id": "brops-receipt-signer",
+      "path": "tests/test_brops_receipt_signer.py",
+      "covers": [
+        "content-addressed-store",
+        "atomic-concurrent-publish",
+        "signer-end-to-end",
+        "signer-refusal-matrix"
+      ]
+    },
+    {
+      "id": "brops-parity",
+      "path": "tests/test_brops_parity.py",
+      "covers": [
+        "artifact-formula-parity",
+        "receipt-envelope-parity",
+        "manifest-payload-parity"
+      ]
+    },
+    {
+      "id": "brops-isolation",
+      "path": "tests/test_brops_isolation.py",
+      "covers": [
+        "store-key-custody-posix",
+        "supervisor-no-oracle",
+        "signer-process-boundary"
+      ]
+    },
+    {
+      "id": "brops-protocol",
+      "path": "tests/test_brops_protocol.py",
+      "covers": [
+        "framed-length-prefix",
+        "bounded-frame-cap",
+        "strict-decode-duplicate-unknown"
+      ]
+    },
+    {
+      "id": "brops-live-runstate",
+      "path": "tests/test_brops_live_runstate.py",
+      "covers": [
+        "authoritative-lease-validation",
+        "passing-receipt-verification",
+        "evidence-chain-and-containment"
+      ]
+    },
+    {
+      "id": "brops-services",
+      "path": "tests/test_brops_services.py",
+      "covers": [
+        "signer-service-framed-roundtrip",
+        "peer-uid-acl-denial",
+        "supervisor-only-run-handle"
+      ]
     }
   ]
 }

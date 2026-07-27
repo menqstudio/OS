@@ -104,6 +104,17 @@ class ExternalPrTests(unittest.TestCase):
         live = _live_ok(); live[32]["isDraft"] = None
         self.assertTrue(any("PR #32" in p and "isDraft" in p for p in rs.compare_external_prs(_snapshot(), live)))
 
+    # --- self-carrier: the PR carrying this snapshot can't pin its own head -> skip ONLY head drift ---
+    def test_self_carrier_skips_head_drift(self):
+        snap = _snapshot(); snap["prs"][0]["self_carrier"] = True; snap["prs"][0]["head"] = "PENDING"
+        live = _live_ok(); live[31]["headRefOid"] = NEWMAIN  # live head advanced/differs from snapshot
+        self.assertEqual(rs.compare_external_prs(snap, live), [])  # head-drift skipped, rest matches
+
+    def test_self_carrier_still_checks_state(self):
+        snap = _snapshot(); snap["prs"][0]["self_carrier"] = True
+        live = _live_ok(); live[31]["state"] = "MERGED"  # snapshot says open -> still RED
+        self.assertTrue(any("PR #31" in p and "MERGED" in p for p in rs.compare_external_prs(snap, live)))
+
 
 class PrEventTests(unittest.TestCase):
     def _event(self, base_sha=MAIN, base_ref="main", head_ref="chore/phase0-repository-truth",
