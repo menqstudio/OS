@@ -11,8 +11,11 @@
     "docs/ARCHITECTURE.md",
     "MASTER_EXECUTION_ROADMAP.md",
     "docs/design/WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md",
-    "apps/desktop/SECURITY.md"
+    "docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md",
+    "apps/desktop/SECURITY.md",
+    "config/current_state.json"
   ],
   "current_state_pointer": "NEXT_CHAT.md",
-  "notes": "NEXT_CHAT.md holds the exact current branch/PR/HEAD/blockers/next-action and must be updated in the same commit as any state change. PROJECT_STATE.md and TASKS.md are the live coordination board. Do not add stale or nonexistent paths here."
+  "machine_state_pointer": "config/current_state.json",
+  "notes": "NEXT_CHAT.md holds the exact current branch/PR/HEAD/blockers/next-action and must be updated in the same commit as any state change; config/current_state.json is the machine-readable mirror the human docs must agree with (tools/check_coordination.py validates the agreement). PROJECT_STATE.md and TASKS.md are the live coordination board. Do not add stale or nonexistent paths here. The Wave 3b-1 normative docs (WAVE_3B1_EXECUTION_BINDING_MAP.md, WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) live on PR #31's branch and are added here only when 3b-1 merges to main."
 }

@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "purpose": "Single machine-readable current-state anchor for menqstudio/OS. The human-facing canonical docs (NEXT_CHAT.md, PROJECT_STATE.md, TASKS.md) MUST agree with this file; tools/check_coordination.py validates that agreement. Update this file in the same commit as any state change. GitHub is the single source of truth.",
+  "generated_note": "Timestamps/dates are recorded as verified facts, not machine time. main_head and PR HEADs are exact git SHAs verified via git rev-parse / gh at the time of writing.",
+  "main_head": "df3c0aca80cbe4a5537a9fdd53e16e26541c9c19",
+  "active_wave": "3b-1B",
+  "active_task": "T-017",
+  "active_branch": "feat/wave-3b1-isolated-signer",
+  "prs": [
+    {
+      "number": 31,
+      "branch": "feat/wave-3b1-isolated-signer",
+      "base": "main",
+      "head": "6ebeca88627640eef8effe576b3d388417cb4949",
+      "role": "design-lock + 3b-1A code",
+      "draft": false,
+      "contains": "3b-1A isolated-signer boundary CODE (recorded Architect Code GREEN) + the 3b-1B rev-26 design-lock addendum (design candidate)",
+      "design_verdict": "RED",
+      "design_verdict_note": "rev-26 3b-1B design is NOT Architect-GREEN; a fresh exact-head Architect design audit is the required next gate (Phase 1).",
+      "code_verdict": "GREEN",
+      "code_verdict_note": "applies to the 3b-1A isolated-signer boundary only; recorded as Architect Code GREEN.",
+      "ci": "rev-26 design-candidate CI recorded 8/8 SUCCESS (CI-green is NOT design/audit-green)",
+      "merge_state": "open",
+      "parent_pr": null
+    },
+    {
+      "number": 32,
+      "branch": "impl/wave-3b1b-execution-binding",
+      "base": "feat/wave-3b1-isolated-signer",
+      "head": "0e7ee1af0b96ca768cabe43c71d9caec30230430",
+      "role": "implementation",
+      "draft": true,
+      "contains": "3b-1B authoritative execution->receipt binding WIP implementation (~20 commits): acceptance ledger/outbox/recovery, evidence-head anti-rollback floor, dual-key separation, recorder-owned execution, supervisor/recorder/signer OS-principal separation, two-namespace protected evidence store, challenge authority, desktop governed receipt verifier, Linux isolation/E2E proof.",
+      "design_verdict": "RED",
+      "code_verdict": null,
+      "ci": "exact-head 8/8 GREEN (CI-green is NOT design/audit-green)",
+      "merge_state": "open",
+      "is_rc": false,
+      "note": "Draft / WIP checkpoint. NOT a release candidate. NOT merge-ready. Has NOT passed a fresh exact-head zero-trust audit.",
+      "parent_pr": 31
+    }
+  ],
+  "waves": {
+    "3a": {"status": "complete", "note": "slices 1/2/3 merged (6c920d0, 9b214e5, 8a580028); fail-closed verify-seam + receipt-plumbing wired; migrations through 0014, SCHEMA_VERSION=14"},
+    "3b-0": {"status": "design_green_merged", "note": "isolated-signer design rev 5, Architect DESIGN GREEN (def7711), merged via PR #30 (df3c0ac)"},
+    "3b-1A": {"status": "code_green", "note": "isolated-signer boundary code; Architect Code GREEN; on PR #31"},
+    "3b-1B": {"status": "design_red_code_wip", "code_exists": true, "impl_pr": 32, "design_pr": 31, "note": "rev-26 design NOT Architect-GREEN; WIP implementation exists in PR #32 (Draft, not an RC)"},
+    "3b-2": {"status": "not_started"},
+    "3b-3": {"status": "not_started"}
+  },
+  "product_roadmap": {
+    "note": "MASTER_EXECUTION_ROADMAP.md v1.0 Locked. The security spine above is a subset. The whole app is NOT finished.",
+    "phase_0": "done",
+    "phase_1": "in_progress",
+    "phases_2_to_10": "not_done"
+  },
+  "stop_gates": [
+    "NoTrustedManifest stays fail-closed; NO production 'Verified'/trusted_verified until the complete real trust chain is exact-head zero-trust GREEN.",
+    "PR #31 rev-26 3b-1B design must NOT merge until it is Architect design-GREEN at exact HEAD, implemented, code-audit GREEN, and CI GREEN.",
+    "PR #32 is a Draft/WIP checkpoint: do NOT merge; do NOT call it an RC.",
+    "Do NOT build new architecture beyond rev-26 while its design review is pending.",
+    "CI-green is NOT audit-green; a passing unit test is NOT a working install; a Linux isolation proof is NOT a Windows production proof."
+  ],
+  "next_action": "Phase 0 repository-truth remediation (this branch), then Phase 1: submit PR #31 rev-26 at exact HEAD 6ebeca8 for a fresh Architect design audit. No merges until an exact-head verdict."
+}

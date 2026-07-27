@@ -3,20 +3,24 @@
 - **Purpose:** Record notable repository changes, most recent first.
 - **Scope:** Documentation and, later, released application changes. Future work is in [ROADMAP.md](docs/ROADMAP.md).
 - **Owner:** Gev.
-- **Last updated:** 2026-07-22.
+- **Last updated:** 2026-07-27.
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository. Since the monorepo merge into `menqstudio/OS`, cockpit changes also flow through the OS-level security-remediation waves; the exact live state (branch/PR/blockers) is the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).
 
 ## 2026-07-22 — OS-monorepo security remediation (Waves 1–3a)
 
-Closing the Challenger Deep audit's P0/P1 findings, on top of the merged desktop app. Enforced model: [SECURITY.md](SECURITY.md). Schema is now **v13** (migrations through 0013); `cargo test -p brops-core` GREEN (**69 tests**). All merged security PRs passed independent zero-trust re-audits.
+Closing the Challenger Deep audit's P0/P1 findings, on top of the merged desktop app. Enforced model: [SECURITY.md](SECURITY.md). Schema is now **v14** (migrations through 0014); `cargo test -p brops-core` GREEN (**89 tests** at 3a completion). All merged security PRs passed independent zero-trust re-audits.
 
 - **Wave 1 — provider fail-closed** (T-012, PR #15 `15384cb`): no silent governed→ungoverned fallback; ungoverned only via `BROPS_ALLOW_UNGOVERNED=1`; honest 3-state provider status.
 - **Wave 2a — webview message provenance** (T-013, PR #16 `d85dcba`): `post_message` roles restricted to `["user"]`; server-held answer via one-time `result_id`.
 - **T-010 — Tauri capability boundary** (PR #19 `7d537c3`): deny-by-default manifest over all 65 commands; L2 hard-deletes denied; CI invariant `tools/check_capabilities.py`.
 - **T-011 — durable approval + native confirmation** (PR #20/#21, merge `7638a64`): migrations 0012/0013; restart-safe self-approval; native-only approval; nonce compare-and-consume; atomic pre-dispatch execution claim; crash recovery; enforced single-instance lock.
 - **Wave 3 — Receipt Protocol v1 design rev 4** (PR #23 `35a6ab5`): Ed25519 signed per-turn receipt, desktop = final verifier, fail-closed. Architect + Owner GREEN.
-- **Wave 3a slice 1 — receipt protocol core** (`brops-core::receipt`), **PR #24 MERGED** (approved HEAD `c51031e`, merge commit `6c920d0`): RFC 8785 JCS, strict decode, verify-only `verify_strict`, type-state `parse→verify→bind→resolve_3a` chain, `IssuedRequest` request-hash recompute, private-field `ResolvedManifestKey`, `Wave3aTrustState` (no "Verified" variant). **Zero-trust GREEN** after three RED rounds (`a873501`/`aa4dc01`/`f5b6ffe`), CI 7/7 GREEN, 69 core tests. Slice 2 (storage/migration 0014) not started.
+- **Wave 3a slice 1 — receipt protocol core** (`brops-core::receipt`), **PR #24 MERGED** (approved HEAD `c51031e`, merge commit `6c920d0`): RFC 8785 JCS, strict decode, verify-only `verify_strict`, type-state `parse→verify→bind→resolve_3a` chain, `IssuedRequest` request-hash recompute, private-field `ResolvedManifestKey`, `Wave3aTrustState` (no "Verified" variant). **Zero-trust GREEN** after three RED rounds (`a873501`/`aa4dc01`/`f5b6ffe`), CI 7/7 GREEN, 69 core tests.
+- **Wave 3a slice 2 — receipt storage & atomicity** (T-015, **PR #26 MERGED** `9b214e5`, approved HEAD `64c2372`): migration **0014** (`SCHEMA_VERSION`=14) — `receipt_verification_attempts`, one-time challenge nonce bound to `request_sha256`, `receipt_ids_seen` replay ledger; atomic `BEGIN IMMEDIATE` verify→consume→persist; tri-state `outcome {trusted_verified|development_untrusted|blocked}`; `blocked` never becomes a message. Zero-trust GREEN after 2 RED rounds; 83 core tests.
+- **Wave 3a slice 3 — transport wiring + receipt trust UI** (T-016, **PR #28 MERGED** `8a580028`, approved HEAD `dee6661`): the desktop CALLS the merged verifier on a real governed turn, fail-closed (`issue_challenge`→`verify_and_record_receipt(&NoTrustedManifest)`→Blocked, no double-post); single `PreparedGovernedTurn` source; structured `system`+`history` bridge authority; dev/blocked badges; JCS cross-language parity + e2e. **Wave 3a COMPLETE.** core **89** / host **42** / bridge **35** / frontend **6** green.
+- **Wave 3b-0 — isolated-signer design** (design-only, **PR #30 MERGED** `df3c0ac`, Architect DESIGN GREEN rev 5 `def7711`): [`docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](../../docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md). No code.
+- **Wave 3b-1 — IN PROGRESS (not merged, not an RC):** **PR #31** (`feat/wave-3b1-isolated-signer`) — 3b-1A isolated-signer boundary code (Architect Code GREEN) + the 3b-1B rev-26 design-lock addendum (**NOT Architect-GREEN**). **PR #32** (`impl/wave-3b1b-execution-binding`, base PR #31, **Draft/WIP**) — 3b-1B authoritative execution→receipt binding implementation; exact-head CI 8/8 GREEN (CI-green is NOT design/audit-green). No production "Verified" yet (`NoTrustedManifest` stays fail-closed). See [`config/current_state.json`](../../config/current_state.json).
 
 ## 2026-07-19 — Security hardening (audit remediation)
 
