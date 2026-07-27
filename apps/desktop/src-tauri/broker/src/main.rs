@@ -26,6 +26,8 @@
 //! exits non-zero (governed real mode disabled — fail closed). The DB-schema init and the governed-turn
 //! wiring are pure and unit-tested on any platform.
 
+mod chain_executor;
+
 use brops_core::broker_orchestrator::{BrokerIds, GovernedExecutor};
 use brops_core::governed_message_store::AcceptedOutput;
 use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};
