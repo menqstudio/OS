@@ -51,7 +51,7 @@ jobs:
         with:
           toolchain: stable
       - name: Install cargo-audit (version-pinned)
-        run: cargo install cargo-audit --version 0.21.0 --locked
+        run: cargo install cargo-audit --locked  # latest: pinned 0.21.0's rustsec 0.30 cannot parse CVSS 4.0 advisory-db entries (re-pin in a follow-up)
       - name: Audit the Cargo.lock advisory graph (fail on high+)
         # cargo-audit denies on any advisory by default; --deny warnings promotes
         # unmaintained/yanked warnings to hard failures too. Advisory IDs listed in
@@ -83,7 +83,7 @@ jobs:
         with:
           toolchain: stable
       - name: Install cargo-deny (version-pinned)
-        run: cargo install cargo-deny --version 0.16.3 --locked
+        run: cargo install cargo-deny --locked  # latest: 0.16.3's rustsec cannot parse CVSS 4.0 advisory-db entries (re-pin in a follow-up)
       - name: Run cargo-deny policy check (fail on high+)
         # deny.toml sets [advisories] vulnerability = "deny" (advisories), plus bans/licenses/
         # sources policy. --all-features so optional-feature-gated deps are scanned.

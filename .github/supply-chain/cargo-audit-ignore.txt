@@ -1,4 +1,3 @@
-# RustSec advisory IDs consciously waived (fail-closed everywhere else). One ID per line.
-# Each MUST carry a triage note. Keep in sync with deny.toml [advisories].ignore.
-RUSTSEC-2026-0109  # tracked: transitive Rust advisory surfaced by the new gate; waived to unblock,
-                   # pending a Cargo update in a dedicated follow-up (not in the governed trust path).
+# RustSec advisory IDs consciously waived. One ID per line, each with a triage note.
+# EMPTY: no real advisory currently applies to apps/desktop/src-tauri/Cargo.lock.
+# (RUSTSEC-2026-0109 was a CVSS-4.0 advisory-DB PARSE error in the pinned tools, not a match — fixed by upgrading cargo-audit/cargo-deny.)

@@ -25,7 +25,7 @@ yanked = "deny"
 # Advisory IDs consciously waived. Keep in sync with
 # .github/supply-chain/cargo-audit-ignore.txt. Each entry needs a triage comment.
 ignore = [
-    "RUSTSEC-2026-0109", # tracked: waived to unblock the new gate; Cargo update follow-up.
+    # none — add "RUSTSEC-XXXX-NNNN" with a triage note only for a real advisory match.
 ]
 
 [licenses]
