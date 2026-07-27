@@ -1,0 +1,22 @@
+# npm-audit-allow.txt
+#
+# Allowlist consumed by .github/supply-chain/npm_audit_filter.py (job `npm-audit`).
+# One token per line; `#` starts a comment (inline comments allowed); blank lines ignored.
+# Matching is case-insensitive.
+#
+# A high/critical finding is WAIVED when ANY of these identifying tokens matches it:
+#   - the vulnerable package name              e.g.  tough-cookie
+#   - the npm advisory numeric source id       e.g.  1103907
+#   - the GHSA advisory id                      e.g.  GHSA-72xf-g2v4-qvf3
+#   - the advisory URL                         e.g.  https://github.com/advisories/GHSA-72xf-g2v4-qvf3
+#   - the advisory title
+#
+# Prefer the GHSA id (most precise). A bare package name waives EVERY current and
+# future advisory for that package - use it sparingly.
+#
+# Policy: every waiver is a consciously accepted risk and MUST carry a justification
+#         comment and a tracking link. Un-waived high/critical vulnerabilities fail
+#         the job closed.
+#
+# Example (commented out; this repo currently waives nothing):
+# GHSA-72xf-g2v4-qvf3  # esbuild dev-server SSRF; dev-only dependency, not shipped. Track: OS#NNN

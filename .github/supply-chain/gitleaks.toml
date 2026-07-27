@@ -1,0 +1,37 @@
+# gitleaks.toml - secret-scan configuration for menqstudio/OS.
+#
+# Consumed by .github/workflows/supply-chain.yml job `gitleaks`. Extends the tool's
+# built-in ruleset (so all upstream detectors stay active) and layers repo-specific
+# allowlisting on top. gitleaks fails the job closed (--exit-code 1) on any finding
+# that is NOT allowlisted here.
+
+title = "menqstudio/OS gitleaks config"
+
+# Inherit gitleaks' maintained default rules; this file only ADDS allowlist scope
+# and any repo-specific rules. Do not disable the default detectors wholesale.
+[extend]
+useDefault = true
+
+# Global allowlist: paths and regexes that are known-safe (fixtures, test vectors,
+# vendored lockfiles, documentation examples). Anything matched here is not reported.
+[allowlist]
+description = "Repo-wide false-positive suppression (fixtures, lockfiles, docs samples)."
+paths = [
+    # Lockfiles: pinned hashes/integrity strings trip entropy heuristics, not secrets.
+    '''apps/desktop/package-lock\.json''',
+    '''.*Cargo\.lock$''',
+    '''engine/requirements-ci\.txt''',
+    # Test fixtures and sample data - deliberately fake credentials live here.
+    '''.*/tests?/.*fixtures?/.*''',
+    '''.*/testdata/.*''',
+    # This config's own example tokens.
+    '''\.github/supply-chain/.*''',
+]
+regexes = [
+    # Obvious placeholders used throughout docs and tests.
+    '''(?i)(example|dummy|sample|placeholder|changeme|redacted|xxxx+)''',
+    '''AKIAEXAMPLE[A-Z0-9]*''',
+    '''0{16,}''',
+]
+# Commit SHAs known to contain only rotated/example secrets can be listed here.
+commits = []

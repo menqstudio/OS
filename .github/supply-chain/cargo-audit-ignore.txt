@@ -1,0 +1,14 @@
+# cargo-audit-ignore.txt
+#
+# RustSec advisory IDs to WAIVE during `cargo audit` (see .github/workflows/supply-chain.yml,
+# job `cargo-audit`). One advisory per line; `#` starts a comment; blank lines ignored.
+# Each entry is passed to cargo-audit as `--ignore <ID>`.
+#
+# Format:  RUSTSEC-YYYY-NNNN
+# Policy:  An entry here means the advisory has been triaged and consciously accepted
+#          (not exploitable in our usage, or no fixed upstream release exists yet).
+#          Every waiver MUST carry a justification comment and, ideally, a tracking link.
+#          Un-waived high/critical advisories fail the job closed.
+#
+# Example (commented out; this repo currently waives nothing):
+# RUSTSEC-2024-0384  # instant unmaintained; pulled only by a dev-dependency, no runtime path. Track: OS#NNN
