@@ -2,7 +2,7 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — RE-SYNCED to main after PR #33 merged (baseline b6c6712). This is the canonical base for dependency-safe queued branches while PR #31's exact-head design re-audit is pending. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI. Do NOT merge to main until PR #31 (the security design) merges (per the stacked-merge order). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "b6c6712cf9e12e5c6989f93e68e70c248722d011",
+    "baseline_main_head_at_sync": "9c1b901380de0d05220134347b2e0a447a986daa",
     "snapshot_branch": "chore/main-resync",
     "live_main_resolution": "baseline_main_head_at_sync is the current main HEAD (after PR #33 merged). On a pull_request whose base is main, check_repo_state requires the event base sha == this baseline; branches STACKED on chore/main-resync target this branch (not main), so the baseline check is skipped for them and they inherit this re-synced state.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed: the durable PRs in prs[] (#31, #32) must match live GitHub head/state/draft/base exactly. There is NO carrier here (the Phase-0 repository-truth carrier PR #33 is merged); PR #31's OWN exact-head re-audit is anchored on its own branch via its PR-body AUDIT_CANDIDATE_HEAD marker (see PR #31). Nothing is exempt."
@@ -10,38 +10,9 @@
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "feat/wave-3b1-isolated-signer"
+    "branch": "impl/wave-3b1b-core"
   },
-  "prs": [
-    {
-      "number": 31,
-      "branch": "feat/wave-3b1-isolated-signer",
-      "base": "main",
-      "head": "65c00bf60f8ba5d619361702e04a0d24ae37ae42",
-      "role": "design",
-      "draft": false,
-      "merge_state": "open",
-      "parent_pr": null,
-      "contains": "3b-1A isolated-signer boundary CODE (Architect Code GREEN) + the 3b-1B design-lock addendum rev-30, which is Architect DESIGN GREEN (relayed by Owner) at this exact head.",
-      "code_verdict": "GREEN",
-      "code_verdict_scope": "3b-1A isolated-signer boundary only",
-      "ci": "GREEN at head (CI-green is NOT design/audit-green)"
-    },
-    {
-      "number": 32,
-      "branch": "impl/wave-3b1b-execution-binding",
-      "base": "feat/wave-3b1-isolated-signer",
-      "head": "0e7ee1af0b96ca768cabe43c71d9caec30230430",
-      "role": "implementation",
-      "draft": true,
-      "merge_state": "open",
-      "parent_pr": 31,
-      "is_rc": false,
-      "contains": "UNAPPROVED Draft/WIP 3b-1B code with NO authority over the design; adapt only after design-GREEN.",
-      "ci": "8/8 SUCCESS at head 0e7ee1a (pre-rebase; CI-green is NOT design/audit-green)",
-      "note": "Draft/WIP checkpoint, frozen from architectural expansion until the design is GREEN."
-    }
-  ],
+  "prs": [],
   "status_tokens": {
     "_note": "Every human state doc's CURRENT region must contain each KEY: value token. No carrier tokens here (Phase-0 carrier PR #33 is merged); the CARRIER_IF_* tokens are retained as plain tokens describing PR #31's own OPEN/MERGED transition (validated on PR #31's branch, not here).",
     "CURRENT_ACTIVE_TASK": "T-017",
@@ -54,8 +25,6 @@
     "CURRENT_DESIGN_PR": "31",
     "CURRENT_IMPL_PR": "32",
     "CURRENT_IMPL_STATE": "WIP",
-    "CARRIER_IF_OPEN_GATE": "PR31_DESIGN_AUDIT",
-    "CARRIER_IF_MERGED_GATE": "VERIFY_MAIN_REBASE_PR32",
     "CURRENT_PRODUCTION_VERIFIED": "false",
     "CURRENT_VERIFY_SEAM": "complete",
     "CURRENT_RECEIPT_PLUMBING": "complete",
@@ -131,16 +100,23 @@
     "ai_entry_points_governed": "only the main governed-chat seam runs the chain (fail-closed, no trusted_verified); stream_run_step / stream_ask / reply_in_conversation + stream_reply fallthrough UNGOVERNED (tracked).",
     "windows_production_isolation": "not_done (Linux-only proofs; Windows release blocker — see docs/windows-broker-design + WINDOWS_BROKER_IMPL_PLAN)."
   },
-  "next_action_by_carrier": {
-    "_note": "No merge-carrier active. Single next action below.",
-    "open": "n/a",
-    "merged": "n/a"
-  },
   "next_action": "PR #31 rev-30 is Architect DESIGN GREEN at 65c00bf; 3b-1B implementation underway (impl/wave-3b1b-core). Meanwhile build/queue dependency-safe work stacked on this re-synced base. Do NOT merge this branch to main until PR #31 merges (stacked order).",
   "stop_gates": [
     "NoTrustedManifest stays fail-closed; NO production trusted_verified until the trust chain is exact-head zero-trust GREEN.",
     "PR #31 3b-1B design: last-reviewed rev-27 = Architect RED (2 P0 + 4 P1); rev-28 PENDING. Do NOT merge until design-GREEN at the exact head, then implemented + code-audit GREEN + CI GREEN.",
     "No Architect-approved or merged 3b-1B implementation exists. PR #32 is UNAPPROVED Draft/WIP with no authority over the design.",
     "CI-green is NOT design/audit-green; Linux isolation proof is NOT a Windows production proof (Windows broker is a release blocker)."
-  ]
+  ],
+  "current_workflow_pr": {
+    "number": 46,
+    "branch": "impl/wave-3b1b-core",
+    "base": "chore/main-resync",
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #46 body. check_repo_state requires event head == live headRefOid == marker.",
+    "note": "PR #46 = the 3b-1B implementation (WIP, ~300 tests, NOT Architect code-audited). Design rev-30 is GREEN + merged to main (PR #31)."
+  },
+  "next_action_by_carrier": {
+    "_note": "PR #46 self-carrier (the implementation snapshot). No merge-transition modeled; #46 merges only after Architect CODE-audit GREEN + Linux end-to-end proof.",
+    "open": "implement + Linux end-to-end proof + code-audit",
+    "merged": "n/a until code-audit GREEN"
+  }
 }
