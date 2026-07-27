@@ -48,6 +48,10 @@
     "3b-2": {"status": "not_started"},
     "3b-3": {"status": "not_started"}
   },
+  "closed_stale_prs": [
+    {"number": 13, "reason": "superseded: obsolete self-asserted receipt.verified model; 0012_message_receipt.sql collides with canonical 0012_approval_provenance.sql; nothing salvageable (badge/blocked UI already on main)"},
+    {"number": 12, "reason": "superseded after salvage: nine docs/impl/PHASE_*.md are stale proposals; the two useful test files (ui.test.tsx, enums.test.ts) carried forward on chore/phase0-repository-truth"}
+  ],
   "product_roadmap": {
     "note": "MASTER_EXECUTION_ROADMAP.md v1.0 Locked. The security spine above is a subset. The whole app is NOT finished.",
     "phase_0": "done",
