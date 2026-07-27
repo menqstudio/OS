@@ -1,0 +1,6 @@
+{
+  "//": "Bundle-size performance budget. Per Vite entry: max INITIAL gzipped payload (KB) -- the entry chunk plus its transitively-imported chunks and CSS, i.e. everything the webview downloads before first paint. Enforced by tools/check_bundle_budget.py in the perf-budget CI job. Measured 'index' payload at authoring time was ~91 KB gzip; 130 KB leaves headroom while still catching a ~40% regression. Raise a ceiling only with a deliberate, reviewed reason.",
+  "entries": {
+    "index": { "max_gzip_kb": 130 }
+  }
+}
