@@ -1,0 +1,17 @@
+[package]
+name = "brops-executor"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "BroPS contained model executor (rev-30 §2/§2.7): the tiny pinned image the launcher fexecve's. It reads its three read-only input FDs (3=system, 4=history, 5=generation_config) to EOF and writes its output to the write-only FD 6, then exits 0 — holding NO key/store/network and opening nothing else. Real FD I/O is Linux-only; the output-binding core is pure and unit-tested on any host."
+
+[[bin]]
+name = "brops-executor"
+path = "src/main.rs"
+
+[dependencies]
+# The executor reuses the already-landed hashing convention (rev-30 §4.0a / §5 manifest
+# contract) so the deterministic input→output binding it emits shares ONE source of truth
+# with the receipt/store side — it never re-implements SHA-256. No key, no store handle, no
+# socket: brops-core is the ONLY dependency, and only its pure `sha256_hex` is used.
+brops-core = { path = "../core" }

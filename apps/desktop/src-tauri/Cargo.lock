@@ -178,6 +178,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "brops-broker"
+version = "0.1.0"
+dependencies = [
+ "brops-core",
+ "libc",
+ "rusqlite",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "brops-core"
 version = "0.1.0"
 dependencies = [
@@ -190,6 +201,13 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "brops-executor"
+version = "0.1.0"
+dependencies = [
+ "brops-core",
 ]
 
 [[package]]

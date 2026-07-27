@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "launcher"]
+members = ["core", "launcher", "executor", "broker"]
 
 [package]
 name = "brops"

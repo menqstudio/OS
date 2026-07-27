@@ -1,0 +1,25 @@
+[package]
+name = "brops-broker"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "BroPS trusted broker service as a SEPARATE binary crate (rev-30 §0 role #2, §4.10(g)): opens the receipt/broker SQLite DB, binds the renderer→broker AF_UNIX listener, authenticates each connecting peer, and drives one governed turn per connection via brops-core::broker_orchestrator::run_governed_turn. The socket/peer-cred path is Linux-only; every other host fails closed."
+
+[[bin]]
+name = "brops-broker"
+path = "src/main.rs"
+
+[dependencies]
+# The broker reuses the already-landed governed-turn control flow, framing, peer
+# auth, and the four SQLite schemas. It NEVER re-implements those rules — it wires
+# the transport around brops-core so the broker and the recorder-side checks share
+# ONE source of truth.
+brops-core = { path = "../core" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1"
+sha2 = "0.10"
+
+# SO_PEERCRED / getsockopt live only on Linux. libc is pulled in ONLY on Linux;
+# the Windows/other-host build stays pure-std and fails closed at runtime.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
