@@ -93,13 +93,10 @@ def compare_external_prs(snapshot: dict, live: dict) -> list[str]:
             failures.append(f"PR #{n}: live GitHub baseRefName missing/empty: {base_branch!r} (fail-closed)")
         elif pr.get("base") and pr["base"] != base_branch:
             failures.append(f"PR #{n}: snapshot base={pr['base']!r} but GitHub base={base_branch!r}")
-        # A SELF-CARRIER pr is the PR that carries this very snapshot: its own commit changes its own
-        # head, so the head can NOT be pinned exactly inside the file it commits (a commit cannot contain
-        # its own hash). We therefore skip ONLY the head-drift check for it (documented, auditable) while
-        # still verifying its state/draft/branch/base live. Every EXTERNAL durable PR stays exact-head.
-        if pr.get("self_carrier") is True:
-            continue
         # EXACT head: both sides must be 40-hex; drift is a FAILURE (forces re-sync), missing live is RED.
+        # NOTE: the PR that CARRIES this snapshot is NOT listed in prs[] — it is the current_workflow_pr,
+        # exact-head-anchored out-of-band by its PR-body AUDIT_CANDIDATE_HEAD marker (verify_carrier_exact_head).
+        # So every entry HERE is an external durable PR and is fully exact-head-verified (nothing is exempt).
         snap_head = pr.get("head", "")
         live_head = lv.get("headRefOid")
         if not _is_sha(snap_head):
@@ -375,16 +372,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     failures += compare_external_prs(snap, fetch_live(numbers))
 
-    # Carrier EXACT-head anchor on a pull_request: event head == live headRefOid == PR-body marker,
-    # plus the enumerated carrier-state check (OPEN => the pre_merge branch must be the active truth).
+    # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
+    # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The
+    # merge-transition check (verify_carrier_state) applies ONLY when the snapshot models a
+    # carrier_transition (the repository-truth carrier that merges to repair main). A design-audit
+    # carrier (e.g. PR #31) has no transition block and needs only the exact-head anchor.
+    models_transition = isinstance(snap.get("carrier_transition"), dict)
     if event is not None and carrier_no is not None:
         cl = fetch_carrier(carrier_no)
         event_head = ((event.get("pull_request") or {}).get("head") or {}).get("sha")
         failures += verify_carrier_exact_head(event_head, (cl or {}).get("headRefOid"),
                                               parse_audit_candidate((cl or {}).get("body")))
-        failures += verify_carrier_state(cl, snap)
+        if models_transition:
+            failures += verify_carrier_state(cl, snap)
     # Carrier state on a main push (fail-closed if unresolvable/unknown; MERGED => post_merge branch).
-    if on_main_push and carrier_no is not None:
+    if on_main_push and carrier_no is not None and models_transition:
         failures += verify_carrier_state(fetch_carrier(carrier_no), snap)
 
     if failures:

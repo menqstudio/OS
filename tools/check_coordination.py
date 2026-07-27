@@ -219,9 +219,15 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
         if pr.get("merge_state") == "open":
             open_branches.add(pr.get("branch"))
     ab = active.get("branch")
-    if ab and ab not in open_branches:
-        problems.append(f"{CURRENT_STATE_JSON}: active.branch {ab!r} does not correspond to any OPEN PR branch")
-    # relationships: parent PR exists in prs[]; child base == parent branch; open impl PR ⇒ code exists.
+    # the active branch may be an OPEN durable PR branch OR the current_workflow_pr's branch (the PR that
+    # carries this snapshot — e.g. the design-audit carrier PR #31, which is not listed in prs[]).
+    cw_branch = (data.get("current_workflow_pr") or {}).get("branch") if isinstance(data.get("current_workflow_pr"), dict) else None
+    if ab and ab not in open_branches and ab != cw_branch:
+        problems.append(f"{CURRENT_STATE_JSON}: active.branch {ab!r} does not correspond to any OPEN PR branch "
+                        f"or the current_workflow_pr branch")
+    # relationships: parent PR exists in prs[] OR is the current_workflow_pr (the carrier, not in prs[]);
+    # child base == parent branch; open impl PR ⇒ code exists.
+    cw_pr = data.get("current_workflow_pr") if isinstance(data.get("current_workflow_pr"), dict) else {}
     for pr in prs:
         if not isinstance(pr, dict):
             continue
@@ -229,8 +235,10 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
         parent = pr.get("parent_pr")
         if parent is not None:
             p = pr_by_num.get(parent)
+            if p is None and cw_pr.get("number") == parent:
+                p = cw_pr  # the parent is the carrier PR (e.g. #32's parent #31 is the design-audit carrier)
             if p is None:
-                problems.append(f"{CURRENT_STATE_JSON}: PR #{num} parent_pr #{parent} is not listed in prs[]")
+                problems.append(f"{CURRENT_STATE_JSON}: PR #{num} parent_pr #{parent} is not listed in prs[] or the current_workflow_pr")
             elif pr.get("base") != p.get("branch"):
                 problems.append(f"{CURRENT_STATE_JSON}: PR #{num} base {pr.get('base')!r} != parent PR #{parent} branch {p.get('branch')!r}")
         if pr.get("role") == "implementation" and pr.get("merge_state") != "merged":
@@ -250,43 +258,57 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
                 problems.append(f"{CURRENT_STATE_JSON}: PR #{pr.get('number')} is_rc=true but design_gate is {gate!r}, not GREEN (CI-green is not audit-green)")
             if pr.get("code_verdict") != "GREEN":
                 problems.append(f"{CURRENT_STATE_JSON}: PR #{pr.get('number')} is_rc=true but its code_verdict is not GREEN")
-    # carrier transition: the pre/post-merge states must be explicitly modeled so main is never
-    # knowingly stale after the carrier merges (checked live by tools/check_repo_state.py on main push).
-    ct = data.get("carrier_transition")
-    if data.get("current_workflow_pr") is not None:
-        if not isinstance(ct, dict):
-            problems.append(f"{CURRENT_STATE_JSON}: a current_workflow_pr exists but 'carrier_transition' is missing")
+    # current_workflow_pr = the PR that carries this snapshot (the exact-head "carrier"). Its exact head
+    # is anchored out-of-band by the PR-body AUDIT_CANDIDATE_HEAD marker (verified live by
+    # tools/check_repo_state.py: event head == live headRefOid == marker). It MUST carry number+branch+base.
+    cw = data.get("current_workflow_pr")
+    if cw is not None:
+        if not isinstance(cw, dict):
+            problems.append(f"{CURRENT_STATE_JSON}: current_workflow_pr must be an object")
         else:
-            for phase, want_gate, want_carrier in (("pre_merge", None, "open"), ("post_merge", "REBASE_PR31", "merged")):
-                blk = ct.get(phase)
-                if not isinstance(blk, dict):
-                    problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase} block missing")
-                    continue
-                if want_carrier and blk.get("carrier_state") != want_carrier:
-                    problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.carrier_state must be {want_carrier!r}")
-                if want_gate and blk.get("gate") != want_gate:
-                    problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.gate must be {want_gate!r}")
-        # every carrier-current field must be TRANSITION-AWARE, not an unconditional pre-merge value.
-        phase0 = (data.get("product_roadmap") or {}).get("phase_0")
-        if not (isinstance(phase0, dict) and phase0.get("if_carrier_open") and phase0.get("if_carrier_merged")):
-            problems.append(f"{CURRENT_STATE_JSON}: product_roadmap.phase_0 must be transition-aware "
-                            f"{{if_carrier_open, if_carrier_merged}}, not an unconditional value")
-        na = data.get("next_action_by_carrier")
-        if not (isinstance(na, dict) and na.get("open") and na.get("merged")):
-            problems.append(f"{CURRENT_STATE_JSON}: next_action_by_carrier must have both 'open' and 'merged' branches")
-        # every CURRENT block must carry the structured carrier-resolution block (both branches), and
-        # each token must equal the transition anchor. This is the machine-checked replacement for the
-        # proximity regex — it is required, not merely proximity-detected.
-        tokens = data.get("status_tokens") if isinstance(data.get("status_tokens"), dict) else {}
-        for tk, path in CARRIER_RESOLUTION_TOKENS.items():
-            want = _dig(data, path)
-            got = tokens.get(tk)
-            if got is None:
-                problems.append(f"{CURRENT_STATE_JSON}: status_tokens.{tk} missing — a carrier PR exists, "
-                                f"so every CURRENT block must carry the structured carrier-resolution token")
-            elif want is not None and str(got) != str(want):
-                problems.append(f"{CURRENT_STATE_JSON}: status_tokens.{tk}={got!r} != {'.'.join(path)}={want!r} "
-                                f"(structured carrier-resolution token must match the transition anchor)")
+            for f in ("number", "branch", "base"):
+                if cw.get(f) in (None, ""):
+                    problems.append(f"{CURRENT_STATE_JSON}: current_workflow_pr.{f} is required")
+            if cw.get("number") in {p.get("number") for p in prs if isinstance(p, dict)}:
+                problems.append(f"{CURRENT_STATE_JSON}: current_workflow_pr #{cw.get('number')} must NOT also be "
+                                f"listed in prs[] (a self-carrier cannot exact-head-verify itself; it uses the "
+                                f"PR-body AUDIT_CANDIDATE_HEAD marker instead)")
+        # carrier_transition models a MERGE-to-main transition (needed for the repository-truth carrier so
+        # main is never knowingly stale post-merge). It is OPTIONAL: a design-audit carrier (e.g. PR #31)
+        # does not merge to repair main and needs no transition block. Validate it ONLY when present.
+        ct = data.get("carrier_transition")
+        if ct is not None:
+            if not isinstance(ct, dict):
+                problems.append(f"{CURRENT_STATE_JSON}: carrier_transition must be an object when present")
+            else:
+                for phase, want_gate, want_carrier in (("pre_merge", None, "open"), ("post_merge", "REBASE_PR31", "merged")):
+                    blk = ct.get(phase)
+                    if not isinstance(blk, dict):
+                        problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase} block missing")
+                        continue
+                    if want_carrier and blk.get("carrier_state") != want_carrier:
+                        problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.carrier_state must be {want_carrier!r}")
+                    if want_gate and blk.get("gate") != want_gate:
+                        problems.append(f"{CURRENT_STATE_JSON}: carrier_transition.{phase}.gate must be {want_gate!r}")
+            # when a merge-transition IS modeled, its current fields must be transition-aware + the
+            # structured CARRIER_IF_* tokens must be present and match the anchor.
+            phase0 = (data.get("product_roadmap") or {}).get("phase_0")
+            if not (isinstance(phase0, dict) and phase0.get("if_carrier_open") and phase0.get("if_carrier_merged")):
+                problems.append(f"{CURRENT_STATE_JSON}: product_roadmap.phase_0 must be transition-aware "
+                                f"{{if_carrier_open, if_carrier_merged}} when carrier_transition is modeled")
+            na = data.get("next_action_by_carrier")
+            if not (isinstance(na, dict) and na.get("open") and na.get("merged")):
+                problems.append(f"{CURRENT_STATE_JSON}: next_action_by_carrier must have both 'open' and 'merged' branches when carrier_transition is modeled")
+            tokens = data.get("status_tokens") if isinstance(data.get("status_tokens"), dict) else {}
+            for tk, path in CARRIER_RESOLUTION_TOKENS.items():
+                want = _dig(data, path)
+                got = tokens.get(tk)
+                if got is None:
+                    problems.append(f"{CURRENT_STATE_JSON}: status_tokens.{tk} missing — carrier_transition is "
+                                    f"modeled, so every CURRENT block must carry the structured carrier-resolution token")
+                elif want is not None and str(got) != str(want):
+                    problems.append(f"{CURRENT_STATE_JSON}: status_tokens.{tk}={got!r} != {'.'.join(path)}={want!r} "
+                                    f"(structured carrier-resolution token must match the transition anchor)")
     return problems
 
 

@@ -230,13 +230,32 @@ class SemanticGateTests(unittest.TestCase):
         _state_repo(root, next_chat=_doc_mentioning_both("Do NOT merge until rev-26 is design-GREEN."))
         self.assertFalse(any("rev-26 design verdict" in p for p in cc.check(root)))
 
-    def test_rejects_missing_carrier_transition(self):
+    def test_marker_carrier_without_transition_ok(self):
+        # a DESIGN-AUDIT self-carrier (e.g. PR #31): current_workflow_pr set, NOT in prs[], no
+        # carrier_transition (it does not merge to repair main) — exact-head anchored by its PR-body
+        # AUDIT_CANDIDATE_HEAD marker instead. Must pass; carrier_transition is OPTIONAL.
         root = self._tmp()
         cs = _default_state()
-        cs["current_workflow_pr"] = {"number": 33, "branch": "chore/phase0-repository-truth", "head": "a" * 40}
-        # no carrier_transition -> flagged
+        cs["prs"] = [dict(cs["prs"][1])]                       # keep only the external #32 (parent #31)
+        cs["current_workflow_pr"] = {"number": 31, "branch": BRANCH_31, "base": "main"}
+        cs["active"]["branch"] = BRANCH_31                     # active branch == carrier branch (not in prs[])
         _state_repo(root, current_state=cs)
-        self.assertTrue(any("carrier_transition' is missing" in p for p in cc.check(root)))
+        self.assertEqual(cc.check(root), [])
+
+    def test_rejects_current_workflow_pr_missing_base(self):
+        root = self._tmp()
+        cs = _default_state()
+        cs["current_workflow_pr"] = {"number": 31, "branch": BRANCH_31}   # no base
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("current_workflow_pr.base is required" in p for p in cc.check(root)))
+
+    def test_rejects_carrier_also_in_prs(self):
+        # the self-carrier cannot ALSO be an exact-head-checked durable PR in prs[].
+        root = self._tmp()
+        cs = _default_state()
+        cs["current_workflow_pr"] = {"number": 31, "branch": BRANCH_31, "base": "main"}  # #31 is also in prs[]
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("must NOT also be" in p and "#31" in p for p in cc.check(root)))
 
     # --- P0-1: strengthened carrier-resolution gate --------------------------------------------------
     def _carrier_state(self) -> dict:
