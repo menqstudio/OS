@@ -8,6 +8,7 @@ pub mod receipt;
 pub mod receipt_store;
 pub mod governed_turn_ipc;
 pub mod governed_message_store;
+pub mod fd_lifecycle;
 pub mod repo;
 
 pub use domain::{
