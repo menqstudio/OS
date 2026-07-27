@@ -7,9 +7,18 @@ enforcement — a deterministic, offline, fail-closed check that CI runs on ever
 malformed or structurally-inconsistent coordination docs **cannot merge**. It mirrors
 the engine's `bro_docs_freshness.py` posture: green on structure, hard-fail otherwise.
 
-It intentionally checks only what is *deterministic and offline* (structure, presence,
-vocabulary). "Did you update PROJECT_STATE after this code change" is the Stop-hook's
-job (git-diff aware, Claude-side). Together: hook = early reminder, CI = universal wall.
+Two layers:
+  - STRUCTURAL (always, offline): canonical files present, roadmap 0..10 x 16 sections,
+    balanced fences, TASKS status vocabulary, PROJECT_STATE freshness line.
+  - SEMANTIC + PR-AWARE (Phase 0.2, strengthened): validate the machine-readable anchor
+    config/current_state.json (schema 2) — closed enums, PR parent/child relationships,
+    design-gate state, is_rc requires design-GREEN; require every human state doc to
+    reference EVERY active PR + branch + task; and (on a PR diff) require a substantive
+    change to sync the state files. So "did you update the state after this change" is NO
+    LONGER only the Claude-side Stop-hook's job — CI now enforces it deterministically.
+  - LIVE GITHUB (separate, tools/check_repo_state.py, CI): compares the current_state.json
+    PR snapshot against live GitHub (open/merged/draft/base) and fails closed on mismatch,
+    so a merged PR recorded as "open" cannot pass. This file stays offline-only by design.
 
 Usage:  python tools/check_coordination.py [--root DIR]
 Exit 0 + "GREEN: ..." when consistent; exit 1 + the problems otherwise.
@@ -63,6 +72,11 @@ SUBSTANTIVE_GLOBS = (
     "*.rs", "*.sql", "*capabilit*", "*/contracts/*", "*.contract.json",
     "docs/design/*", "config/canonical-read-manifest.json", "config/current_state.json",
 )
+# closed enums for config/current_state.json (schema 2).
+MERGE_STATES = ("open", "merged", "closed")
+PR_ROLES = ("design", "implementation", "repository-truth", "release")
+GATE_STATES = ("NOT_SUBMITTED", "PENDING_REAUDIT", "YELLOW", "RED", "GREEN")
+VERDICTS = ("NONE", "YELLOW", "RED", "GREEN")
 
 
 def _read(root: pathlib.Path, rel: str) -> str | None:
@@ -116,8 +130,10 @@ def _changed_files(base_ref: str) -> list[str] | None:
 
 
 def _check_current_state(root: pathlib.Path) -> list[str]:
-    """config/current_state.json is the machine-readable truth anchor. Required + internally
-    consistent whenever this is a real coordination repo (has NEXT_CHAT.md)."""
+    """config/current_state.json (schema 2) is the machine-readable truth SNAPSHOT. Validate its
+    structure + internal relationships + closed enums whenever this is a real coordination repo. Note:
+    it is a snapshot synced against a baseline, NOT a live GitHub oracle — the live comparison is
+    tools/check_repo_state.py (CI). Here we only check what is deterministic offline."""
     problems: list[str] = []
     if _read(root, "NEXT_CHAT.md") is None:
         return problems  # not a real coordination repo (offline unit-test fixtures) — skip
@@ -126,59 +142,108 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
         return [f"missing {CURRENT_STATE_JSON} (machine-readable current-state anchor)"]
     if data == "MALFORMED" or not isinstance(data, dict):
         return [f"{CURRENT_STATE_JSON}: invalid JSON object"]
-    for field in ("main_head", "active_wave", "active_task", "active_branch",
-                  "prs", "waves", "stop_gates", "next_action"):
+    for field in ("sync", "active", "prs", "waves", "design_gate", "stop_gates", "next_action"):
         if field not in data:
             problems.append(f"{CURRENT_STATE_JSON}: missing required field '{field}'")
-    head = data.get("main_head", "")
+    sync = data.get("sync") if isinstance(data.get("sync"), dict) else {}
+    # A BASELINE head (honest snapshot), not a "live main_head" that goes stale on the next merge.
+    head = sync.get("baseline_main_head_at_sync", "")
     if not (isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40}", head)):
-        problems.append(f"{CURRENT_STATE_JSON}: main_head must be a 40-hex sha, got {head!r}")
+        problems.append(f"{CURRENT_STATE_JSON}: sync.baseline_main_head_at_sync must be a 40-hex sha, got {head!r}")
+    active = data.get("active") if isinstance(data.get("active"), dict) else {}
     waves = data.get("waves") if isinstance(data.get("waves"), dict) else {}
+    aw = active.get("wave")
+    if aw is not None and aw not in waves:
+        problems.append(f"{CURRENT_STATE_JSON}: active.wave {aw!r} is not present in waves{{}}")
     prs = data.get("prs") if isinstance(data.get("prs"), list) else []
+    pr_by_num: dict = {}
+    open_branches: set = set()
     for pr in prs:
         if not isinstance(pr, dict):
             continue
         num = pr.get("number")
-        ms = pr.get("merge_state")
-        if ms not in ("open", "merged", "closed"):
-            problems.append(f"{CURRENT_STATE_JSON}: PR #{num} merge_state must be open|merged|closed, got {ms!r}")
-        if pr.get("is_rc") is True and pr.get("design_verdict") == "RED":
-            problems.append(f"{CURRENT_STATE_JSON}: PR #{num} is_rc=true while design_verdict is RED (CI-green is not audit-green)")
-        if pr.get("role") == "implementation" and ms != "merged":
-            w = waves.get(data.get("active_wave"), {})
+        pr_by_num[num] = pr
+        if pr.get("merge_state") not in MERGE_STATES:
+            problems.append(f"{CURRENT_STATE_JSON}: PR #{num} merge_state must be one of {MERGE_STATES}, got {pr.get('merge_state')!r}")
+        if pr.get("draft") not in (True, False):
+            problems.append(f"{CURRENT_STATE_JSON}: PR #{num} draft must be true/false")
+        if pr.get("role") not in PR_ROLES:
+            problems.append(f"{CURRENT_STATE_JSON}: PR #{num} role must be one of {PR_ROLES}, got {pr.get('role')!r}")
+        if pr.get("merge_state") == "open":
+            open_branches.add(pr.get("branch"))
+    ab = active.get("branch")
+    if ab and ab not in open_branches:
+        problems.append(f"{CURRENT_STATE_JSON}: active.branch {ab!r} does not correspond to any OPEN PR branch")
+    # relationships: parent PR exists in prs[]; child base == parent branch; open impl PR ⇒ code exists.
+    for pr in prs:
+        if not isinstance(pr, dict):
+            continue
+        num = pr.get("number")
+        parent = pr.get("parent_pr")
+        if parent is not None:
+            p = pr_by_num.get(parent)
+            if p is None:
+                problems.append(f"{CURRENT_STATE_JSON}: PR #{num} parent_pr #{parent} is not listed in prs[]")
+            elif pr.get("base") != p.get("branch"):
+                problems.append(f"{CURRENT_STATE_JSON}: PR #{num} base {pr.get('base')!r} != parent PR #{parent} branch {p.get('branch')!r}")
+        if pr.get("role") == "implementation" and pr.get("merge_state") != "merged":
+            w = waves.get(aw, {})
             if not (isinstance(w, dict) and w.get("code_exists") is True):
-                problems.append(
-                    f"{CURRENT_STATE_JSON}: open implementation PR #{num} exists but "
-                    f"waves[{data.get('active_wave')!r}].code_exists is not true "
-                    f"(docs would wrongly imply 'no code exists')")
+                problems.append(f"{CURRENT_STATE_JSON}: open implementation PR #{num} but waves[{aw!r}].code_exists is not true")
+    # design gate: closed enums; a PENDING_REAUDIT candidate cannot also be an RC / claimed GREEN.
+    dg = data.get("design_gate") if isinstance(data.get("design_gate"), dict) else {}
+    gate = dg.get("current_candidate_gate")
+    if gate is not None and gate not in GATE_STATES:
+        problems.append(f"{CURRENT_STATE_JSON}: design_gate.current_candidate_gate must be one of {GATE_STATES}, got {gate!r}")
+    if dg.get("last_architect_verdict") is not None and dg.get("last_architect_verdict") not in VERDICTS:
+        problems.append(f"{CURRENT_STATE_JSON}: design_gate.last_architect_verdict must be one of {VERDICTS}")
+    for pr in prs:
+        if isinstance(pr, dict) and pr.get("is_rc") is True:
+            if gate != "GREEN":
+                problems.append(f"{CURRENT_STATE_JSON}: PR #{pr.get('number')} is_rc=true but design_gate is {gate!r}, not GREEN (CI-green is not audit-green)")
+            if pr.get("code_verdict") != "GREEN":
+                problems.append(f"{CURRENT_STATE_JSON}: PR #{pr.get('number')} is_rc=true but its code_verdict is not GREEN")
     return problems
 
 
+def _active_ref_prs(data: dict) -> list[dict]:
+    """The OPEN design+implementation PRs of the active wave that every state doc must name (all of
+    them, not merely one). The repository-truth PR is excluded from the must-reference set."""
+    return [pr for pr in (data.get("prs") or [])
+            if isinstance(pr, dict) and pr.get("merge_state") == "open"
+            and pr.get("role") in ("design", "implementation") and pr.get("number") is not None]
+
+
 def _check_docs_reference_state(root: pathlib.Path) -> list[str]:
-    """The three human state docs must each reference the active branch + an active open PR from the
-    anchor, and the active task must appear somewhere. This is what catches 'docs never mention the
-    live PR' drift — robustly, without fragile full-text contradiction scanning of preserved history."""
+    """Every human state doc must reference EVERY active (design+impl) open PR + its branch, plus the
+    active branch and active task. Referencing only one of two active PRs is the exact blind spot that
+    let 'docs never mention PR #32' pass — now rejected."""
     problems: list[str] = []
     if _read(root, "NEXT_CHAT.md") is None:
         return problems
     data = _load_json(root, CURRENT_STATE_JSON)
     if not isinstance(data, dict):
-        return problems  # absence/malformed already reported by _check_current_state
-    branch = data.get("active_branch", "")
-    task = data.get("active_task", "")
-    open_prs = [str(pr.get("number")) for pr in data.get("prs", [])
-                if isinstance(pr, dict) and pr.get("merge_state") == "open" and pr.get("number") is not None]
+        return problems
+    active = data.get("active") if isinstance(data.get("active"), dict) else {}
+    branch = active.get("branch", "")
+    task = active.get("task", "")
+    must_ref = _active_ref_prs(data)
     for doc in STATE_DOCS:
         txt = _read(root, doc)
         if txt is None:
             problems.append(f"missing current-state doc: {doc}")
             continue
+        for pr in must_ref:
+            n = pr.get("number")
+            if f"#{n}" not in txt:
+                problems.append(f"{doc}: does not reference active PR #{n} (per {CURRENT_STATE_JSON})")
+            b = pr.get("branch")
+            if b and b not in txt:
+                problems.append(f"{doc}: does not reference PR #{n}'s branch '{b}'")
         if branch and branch not in txt:
-            problems.append(f"{doc}: does not reference the active branch '{branch}' (per {CURRENT_STATE_JSON})")
-        if open_prs and not any((f"#{n}" in txt) for n in open_prs):
-            problems.append(f"{doc}: does not reference any active open PR {open_prs} (per {CURRENT_STATE_JSON})")
-    if task and not any(task in (_read(root, d) or "") for d in STATE_DOCS):
-        problems.append(f"active task {task} (per {CURRENT_STATE_JSON}) is referenced in none of {STATE_DOCS}")
+            problems.append(f"{doc}: does not reference the active branch '{branch}'")
+        if task and task not in txt:
+            problems.append(f"{doc}: does not reference the active task '{task}'")
     return problems
 
 
@@ -191,13 +256,22 @@ def _check_manifest_active_docs(root: pathlib.Path) -> list[str]:
             for d in ACTIVE_WAVE_DOCS if (root / d).exists() and d not in paths]
 
 
-def _check_code_touch_state(changed: list[str]) -> list[str]:
+def _check_state_sync(changed: list[str]) -> list[str]:
+    """PR-aware. (a) a substantive code/schema/design change must touch a state file. (b) if the
+    machine anchor current_state.json changes, all three human mirrors must be synced in the SAME PR
+    (touching only one arbitrary state doc is insufficient — the checkpoint must stay coherent)."""
+    problems: list[str] = []
     substantive = [f for f in changed if _glob_hit(f, SUBSTANTIVE_GLOBS)]
-    touched_state = [f for f in changed if f in STATE_DOCS or f == CURRENT_STATE_JSON]
-    if substantive and not touched_state:
-        return [f"substantive change ({', '.join(sorted(substantive)[:5])}) did not update any of "
-                f"{STATE_DOCS} or {CURRENT_STATE_JSON} in the same PR (state-doc drift guard)"]
-    return []
+    state_touched = [f for f in changed if f in STATE_DOCS or f == CURRENT_STATE_JSON]
+    if substantive and not state_touched:
+        problems.append(f"substantive change ({', '.join(sorted(substantive)[:5])}) did not update any "
+                        f"state file ({CURRENT_STATE_JSON} / {STATE_DOCS}) in the same PR")
+    if CURRENT_STATE_JSON in changed:
+        missing = [d for d in STATE_DOCS if d not in changed]
+        if missing:
+            problems.append(f"{CURRENT_STATE_JSON} changed but its human mirrors were not synced in the "
+                            f"same PR: {missing} (checkpoint desync)")
+    return problems
 
 
 def check(root: pathlib.Path, *, changed: list[str] | None = None) -> list[str]:
@@ -265,7 +339,7 @@ def check(root: pathlib.Path, *, changed: list[str] | None = None) -> list[str]:
     # 8. PR-aware (Phase 0.2): a substantive code/schema/design change must update the state docs in
     #    the same PR. Runs only when a diff file list is supplied (a PR run); skipped on push/local.
     if changed is not None:
-        problems += _check_code_touch_state(changed)
+        problems += _check_state_sync(changed)
 
     return problems
 

@@ -112,6 +112,29 @@ jobs:
         working-directory: tools
         run: python -m unittest test_check_coordination
 
+  repo-state:
+    name: Repo-state · live GitHub truth verifier
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # Offline unit tests of the pure compare() (merged-called-open, draft/branch/base mismatch, ...).
+      - name: compare() self-tests
+        working-directory: tools
+        run: python -m unittest test_check_repo_state
+      # LIVE, fail-closed: verify config/current_state.json against real GitHub PR state. A merged PR
+      # still recorded 'open' (the volatile-snapshot failure mode) fails this job. gh auto-auths via
+      # the workflow token.
+      - name: Live GitHub truth check (fail-closed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/check_repo_state.py
+
   capabilities:
     name: Capability · inventory gate (T-010)
     runs-on: ubuntu-latest

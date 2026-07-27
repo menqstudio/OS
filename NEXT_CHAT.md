@@ -14,7 +14,7 @@
 
 ## 1. Identity
 
-- **Repository:** `menqstudio/OS` — a governed AI-operations desktop: a safe cockpit (`apps/desktop/`, Tauri) on a contained governance engine (`engine/`, Python). Every AI action flows `lease → gate → sandbox → signed receipt`; no direct ungoverned model execution.
+- **Repository:** `menqstudio/OS` — a governed AI-operations desktop: a safe cockpit (`apps/desktop/`, Tauri) on a contained governance engine (`engine/`, Python). **Target invariant (being built toward, NOT yet fully true):** every production AI action follows the governed chain `lease → gate → sandbox → signed receipt`. **Today:** only the main governed-chat seam is wired to that chain (fail-closed under `NoTrustedManifest` — production "Verified" not yet available); the remaining AI entry points (run-steps, Ask Bro, conversation-reply, automations, group chat, integrations) are **tracked open blockers**, not yet governed.
 - **Owner:** 👑 **Gev** (`menqstudio`, ohanyan.88@gmail.com). Armenian-speaking — reply in Armenian by default; English only for code/identifiers/commands.
 - **Roles ([`OWNERS.md`](./OWNERS.md)):**
   - 🔨 **Claude** — Builder / Implementer. Writes code, tests, commits, opens PRs.
@@ -39,11 +39,11 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 ## 3. Current work — exact pointers
 
 > **CURRENT STATE (authoritative; machine-mirror: [`config/current_state.json`](./config/current_state.json)).**
-> `main` = **`df3c0ac`**. **Wave 3a is COMPLETE** (slices 1/2/3 merged). **Wave 3b-0 design is DONE and MERGED via PR #30** (merge commit `df3c0ac`) — no longer "in progress." Active work now:
+> `main` = **`df3c0ac`** (baseline-at-sync — resolve the live `main` HEAD each session; this goes stale on the next merge). **Active task: T-017** (Wave 3b-1). **Wave 3a is COMPLETE** (slices 1/2/3 merged). **Wave 3b-0 design is DONE and MERGED via PR #30** (merge commit `df3c0ac`) — no longer "in progress." Active work now:
 > - **PR #31** (`feat/wave-3b1-isolated-signer`, base `main`, HEAD `6ebeca8`, open): the **3b-1A** isolated-signer boundary **code is Architect Code GREEN**; it also carries the **3b-1B rev-26 design-lock addendum**, which is **NOT Architect-GREEN** (design candidate — a fresh exact-head Architect design audit is the required next gate).
 > - **PR #32** (`impl/wave-3b1b-execution-binding`, base PR #31, HEAD `0e7ee1a`, **Draft/WIP**): a large **3b-1B implementation EXISTS here** (acceptance ledger, evidence-head floor, dual-key separation, recorder-owned execution, principal isolation, two-namespace store, desktop verifier). Exact-head CI is **8/8 GREEN**, but **CI-green is NOT design/audit-green**: PR #32 is **NOT an RC, NOT merge-ready**, and has not passed a fresh exact-head zero-trust audit.
 > - **Do NOT** say "no 3b-1B code exists" (it does — PR #32). **Do NOT** call PR #32 an RC. **Do NOT** merge either PR until PR #31 rev-26 is Architect design-GREEN at exact HEAD. `NoTrustedManifest` stays fail-closed; no production "Verified" yet.
-> - **Next permitted action:** submit PR #31 rev-26 at exact HEAD `6ebeca8` for a fresh Architect design audit.
+> - **Next permitted action:** finish + re-audit PR #33 (repository truth) → merge it → rebase PR #31 onto the repaired `main` → resolve PR #31's **NEW** exact HEAD → submit rev-26 for the Architect design audit **on that new HEAD** (NOT `6ebeca8`, which predates the rebase). rev-26's design gate is **PENDING re-audit** (the prior 3b-1B design rev was Architect-RED; rev-26 has not itself been re-audited).
 >
 > The narrative below is the accurate 3b-0 design-review HISTORY (rev 1→5); it ends at the 3b-0 gate. Read the block above for the post-3b-0 reality.
 
@@ -51,14 +51,17 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 
 | | |
 |---|---|
-| **Next task** | **Phase 0 repository-truth remediation** (in progress), then **Phase 1: submit PR #31 rev-26 at exact HEAD `6ebeca8` for a fresh Architect design audit.** 3b-1 = **3b-1A** (isolated-signer boundary, **Code GREEN** on PR #31) + **3b-1B** (authoritative execution→receipt binding; **rev-26 design NOT GREEN**; WIP code in **PR #32**, Draft, not an RC). Only after 3b-1B is design-GREEN + implemented + code-audit GREEN + CI GREEN does 3b-1 merge; then 3b-2 (manifest/anchor/anti-rollback) → 3b-3 (resolver + first production `trusted_verified`). `NoTrustedManifest` stays fail-closed until the full chain is exact-head zero-trust GREEN. |
+| **Next task** | **Phase 0 repository-truth remediation** — repaired in **PR #33** (`chore/phase0-repository-truth`), **not yet merged** (pending repository-truth re-audit GREEN). **Corrected sequence** (the rev-26 audit HEAD is NOT `6ebeca8` — rebasing #31 onto the repaired main changes its HEAD): fix PR #33 blockers → CI GREEN → repo-truth re-audit GREEN → **merge PR #33** → verify new `main` HEAD + push CI → **rebase PR #31 onto the new main** (so its branch carries the repaired truth + new checker) → sync #31 docs + `current_state.json` → resolve the **NEW exact PR #31 HEAD** → exact-head CI → **submit rev-26 for Architect design audit on that NEW HEAD.** 3b-1 = **3b-1A** (isolated-signer boundary, **Code GREEN** on PR #31) + **3b-1B** (execution→receipt binding; **rev-26 design candidate — PENDING re-audit, not GREEN**; WIP code in **PR #32**, Draft, not an RC). Only after 3b-1B is design-GREEN + implemented + code-audit GREEN + CI GREEN does 3b-1 merge; then 3b-2 → 3b-3 (first production `trusted_verified`). `NoTrustedManifest` stays fail-closed until the full chain is exact-head zero-trust GREEN. |
 | **Just merged** | **PR #30 — Wave 3b-0 isolated-signer DESIGN (design-only) MERGED** to `main` (merge commit `df3c0ac`), Architect DESIGN GREEN on rev 5 (`def7711`). Prior: **T-016 / slice 3 — PR #28** (approved HEAD `dee6661`, merge commit `8a580028`) wired the desktop verifier into a real governed turn fail-closed (`issue_challenge`→`verify_and_record_receipt(&NoTrustedManifest)`→Blocked). |
-| **Baseline (main `df3c0ac`)** | `brops-core` host **42** + bridge **35** py + frontend **6** = **89 tests** green (as recorded at 3a completion), clippy-clean; migrations through **0014**, `SCHEMA_VERSION = 14`; `tools/check_coordination.py` + `tools/check_capabilities.py` GREEN. (PR #31/#32 add further engine/host tests on their branches — see `config/current_state.json`.) |
+| **Baseline (main `df3c0ac`)** | Test suites (each separate, they do NOT sum): `brops-core` **89**, host `brops` **42**, bridge **35** py, frontend **6** — all green (as recorded at 3a completion); clippy-clean; migrations through **0014**, `SCHEMA_VERSION = 14`; `tools/check_coordination.py` + `tools/check_capabilities.py` GREEN. (PR #31/#32 add further engine/host tests on their branches — see `config/current_state.json`.) |
 
 > **Wave 3a is COMPLETE** — slices 1, 2, 3 all GREEN + merged (`git log main` → `6c920d0`, `9b214e5`, `8a580028`).
 > The desktop now issues a nonce challenge, runs the governed turn buffered, and verifies the signed receipt
 > (fail-closed: no trusted key yet ⇒ Blocked). The isolated signer + provisioned manifest + production
-> "Verified" are **Wave 3b** (§10, the next task) — **do not present any Wave 3b item as implemented.**
+> "Verified" are **Wave 3b**. Precise status (do NOT flatten to "not implemented" OR to "done"): **Wave
+> 3b-1B WIP code EXISTS in PR #32** — but it is **not merged, not an RC, not production-authoritative**,
+> and **production `trusted_verified` remains unavailable** (`NoTrustedManifest` fail-closed). Wave 3b-2
+> and 3b-3 are **not started**.
 
 ## 4. Merged baseline (Done — verify via `git log main`)
 

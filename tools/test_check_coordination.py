@@ -40,41 +40,48 @@ def _good_docs(root: pathlib.Path) -> None:
     )
 
 
+BRANCH_31 = "feat/wave-3b1-isolated-signer"
+BRANCH_32 = "impl/wave-3b1b-execution-binding"
+
+
 def _default_state() -> dict:
     return {
-        "main_head": "a" * 40, "active_wave": "3b-1B", "active_task": "T-017",
-        "active_branch": "feat/wave-3b1-isolated-signer",
+        "sync": {"baseline_main_head_at_sync": "a" * 40},
+        "active": {"wave": "3b-1B", "task": "T-017", "branch": BRANCH_31},
         "prs": [
-            {"number": 31, "role": "design-lock + 3b-1A code", "merge_state": "open", "design_verdict": "RED"},
-            {"number": 32, "role": "implementation", "merge_state": "open", "design_verdict": "RED", "is_rc": False},
+            {"number": 31, "branch": BRANCH_31, "base": "main", "role": "design",
+             "draft": False, "merge_state": "open", "parent_pr": None, "code_verdict": "GREEN"},
+            {"number": 32, "branch": BRANCH_32, "base": BRANCH_31, "role": "implementation",
+             "draft": True, "merge_state": "open", "parent_pr": 31, "is_rc": False},
         ],
-        "waves": {"3b-1B": {"status": "design_red_code_wip", "code_exists": True, "impl_pr": 32}},
+        "waves": {"3b-1B": {"status": "design_pending_reaudit_code_wip", "code_exists": True, "impl_pr": 32}},
+        "design_gate": {"current_candidate_gate": "PENDING_REAUDIT", "last_architect_verdict": "RED"},
         "stop_gates": ["no production Verified until the chain is exact-head GREEN"],
-        "next_action": "submit PR #31 rev-26 for a fresh Architect design audit",
+        "next_action": "re-audit + merge PR #33, rebase PR #31, then submit rev-26 for audit",
     }
+
+
+def _doc_mentioning_both(extra="") -> str:
+    return (f"Active: PR #31 (`{BRANCH_31}`) + PR #32 (`{BRANCH_32}`), task T-017. {extra}\n")
 
 
 def _state_repo(root: pathlib.Path, *, current_state="DEFAULT",
                 next_chat=None, project_state=None, tasks=None) -> None:
-    """A realistic coordination repo: structural docs + NEXT_CHAT + the machine-readable anchor, all
-    consistent, so the semantic layer engages (it skips when NEXT_CHAT.md is absent)."""
+    """A realistic coordination repo whose human docs reference BOTH active PRs + branches + task."""
     _good_docs(root)
     (root / "config").mkdir(parents=True, exist_ok=True)
     if current_state != "OMIT":
         cs = _default_state() if current_state == "DEFAULT" else current_state
         (root / "config/current_state.json").write_text(json.dumps(cs), encoding="utf-8")
     (root / "NEXT_CHAT.md").write_text(
-        next_chat if next_chat is not None else
-        "Active: PR #31 / PR #32 on `feat/wave-3b1-isolated-signer`, task T-017.\n",
-        encoding="utf-8")
+        next_chat if next_chat is not None else _doc_mentioning_both(), encoding="utf-8")
     (root / "PROJECT_STATE.md").write_text(
         project_state if project_state is not None else
-        "# state\n\n**Last updated:** today\n\nPR #31 on `feat/wave-3b1-isolated-signer` (T-017).\n",
-        encoding="utf-8")
+        "# state\n\n**Last updated:** today\n\n" + _doc_mentioning_both(), encoding="utf-8")
     (root / "TASKS.md").write_text(
         tasks if tasks is not None else
         "| ID | Task | By | Status | PR |\n"
-        "| **T-017** | wave 3b-1 | me | In-Progress | PR #31 `feat/wave-3b1-isolated-signer` |\n",
+        f"| **T-017** | wave 3b-1 | me | In-Progress | PR #31 `{BRANCH_31}` + PR #32 `{BRANCH_32}` |\n",
         encoding="utf-8")
 
 
@@ -98,44 +105,77 @@ class SemanticGateTests(unittest.TestCase):
         _state_repo(root, current_state=cs)
         self.assertTrue(any("code_exists is not true" in p for p in cc.check(root)))
 
-    def test_rejects_rc_while_design_red(self):
+    def test_rejects_rc_while_gate_not_green(self):
+        # PR #32 is_rc=true while the design gate is PENDING_REAUDIT (not GREEN) — CI-green ≠ audit-green.
         root = self._tmp()
-        cs = _default_state(); cs["prs"][1]["is_rc"] = True  # PR #32 design RED + is_rc
+        cs = _default_state(); cs["prs"][1]["is_rc"] = True
         _state_repo(root, current_state=cs)
-        self.assertTrue(any("is_rc=true while design_verdict is RED" in p for p in cc.check(root)))
+        self.assertTrue(any("is_rc=true but design_gate" in p and "not GREEN" in p for p in cc.check(root)))
 
-    def test_rejects_bad_main_head(self):
+    def test_rejects_bad_baseline_head(self):
         root = self._tmp()
-        cs = _default_state(); cs["main_head"] = "not-a-sha"
+        cs = _default_state(); cs["sync"]["baseline_main_head_at_sync"] = "not-a-sha"
         _state_repo(root, current_state=cs)
-        self.assertTrue(any("main_head must be a 40-hex" in p for p in cc.check(root)))
+        self.assertTrue(any("baseline_main_head_at_sync must be a 40-hex" in p for p in cc.check(root)))
 
-    def test_rejects_doc_not_referencing_active_pr(self):
-        # NEXT_CHAT names the branch + task but NOT the live PR number -> the exact "docs never mention
-        # the active PR" drift (main was frozen at 3b-0 and never named PR #31/#32).
+    def test_rejects_bad_gate_enum(self):
         root = self._tmp()
-        _state_repo(root, next_chat="Active branch `feat/wave-3b1-isolated-signer`, task T-017.\n")
-        self.assertTrue(any("NEXT_CHAT.md" in p and "active open PR" in p for p in cc.check(root)))
+        cs = _default_state(); cs["design_gate"]["current_candidate_gate"] = "kinda-green"
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("current_candidate_gate must be one of" in p for p in cc.check(root)))
+
+    def test_rejects_child_base_mismatch(self):
+        # PR #32 base must equal parent PR #31's branch.
+        root = self._tmp()
+        cs = _default_state(); cs["prs"][1]["base"] = "main"  # should be BRANCH_31
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("base 'main' != parent PR #31 branch" in p for p in cc.check(root)))
+
+    def test_rejects_parent_pr_missing(self):
+        root = self._tmp()
+        cs = _default_state(); cs["prs"][1]["parent_pr"] = 99  # not in prs[]
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("parent_pr #99 is not listed" in p for p in cc.check(root)))
+
+    def test_rejects_active_branch_not_open_pr(self):
+        root = self._tmp()
+        cs = _default_state(); cs["active"]["branch"] = "some/other-branch"
+        _state_repo(root, current_state=cs)
+        self.assertTrue(any("does not correspond to any OPEN PR branch" in p for p in cc.check(root)))
+
+    def test_rejects_doc_missing_second_pr(self):
+        # THE Owner blind spot: a doc names PR #31 but omits the equally-active PR #32 -> must reject.
+        root = self._tmp()
+        _state_repo(root, next_chat=f"Active: PR #31 (`{BRANCH_31}`), task T-017.\n")
+        self.assertTrue(any("NEXT_CHAT.md" in p and "active PR #32" in p for p in cc.check(root)))
 
     def test_rejects_doc_not_referencing_active_branch(self):
         root = self._tmp()
-        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\nPR #31, task T-017.\n")
+        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\nPR #31 + PR #32, task T-017.\n")
         self.assertTrue(any("PROJECT_STATE.md" in p and "active branch" in p for p in cc.check(root)))
+
+    def test_rejects_doc_missing_active_task(self):
+        root = self._tmp()
+        _state_repo(root, tasks="| ID |\n| **T-999** | x | me | Done | PR #31 " + BRANCH_31 + " PR #32 " + BRANCH_32 + " |\n")
+        self.assertTrue(any("TASKS.md" in p and "active task 'T-017'" in p for p in cc.check(root)))
 
     def test_substantive_change_requires_state_update(self):
         root = self._tmp(); _state_repo(root)
         probs = cc.check(root, changed=["engine/tools/brops_receipt_signer.py"])
         self.assertTrue(any("did not update" in p for p in probs))
 
-    def test_substantive_change_with_state_update_ok(self):
+    def test_substantive_change_with_full_sync_ok(self):
         root = self._tmp(); _state_repo(root)
-        probs = cc.check(root, changed=["engine/tools/brops_receipt_signer.py", "NEXT_CHAT.md"])
-        self.assertFalse(any("did not update" in p for p in probs))
+        probs = cc.check(root, changed=[
+            "engine/tools/brops_receipt_signer.py", "config/current_state.json",
+            "NEXT_CHAT.md", "PROJECT_STATE.md", "TASKS.md"])
+        self.assertEqual([], probs)
 
-    def test_current_state_edit_alone_is_a_valid_state_touch(self):
+    def test_current_state_change_requires_all_human_mirrors(self):
+        # Owner rule: touching the machine anchor without syncing all three human mirrors is a desync.
         root = self._tmp(); _state_repo(root)
-        probs = cc.check(root, changed=["config/current_state.json"])
-        self.assertFalse(any("did not update" in p for p in probs))
+        probs = cc.check(root, changed=["config/current_state.json", "NEXT_CHAT.md"])  # missing 2 mirrors
+        self.assertTrue(any("checkpoint desync" in p for p in probs))
 
     def test_manifest_missing_active_doc_is_flagged(self):
         root = self._tmp(); _state_repo(root)
