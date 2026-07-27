@@ -20,6 +20,7 @@ pub mod ipc_framing;
 pub mod real_ids;
 pub mod broker_client;
 pub mod key_manifest;
+pub mod production_trust;
 pub mod supervisor_ledger;
 pub mod repo;
 
