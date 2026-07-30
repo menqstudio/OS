@@ -33,7 +33,7 @@ from challenge_authority import (
     AuthorityConfig,
     ChallengeAuthorityError,
     PendingStore,
-    issue_challenge,
+    issue_challenge_document,
     peer_is_broker,
     validate_create_pending,
 )
@@ -185,18 +185,27 @@ def dispatch(
     op = request.get("op")
     if op == OP_CREATE_PENDING:
         # Pass the wire body (minus the routing key) straight to the fixed-shape
-        # validator: an arbitrary/extra field is REJECTED, never silently
-        # dropped, so hostile bytes cannot ride in past the trust door (§2.1).
+        # validator: an arbitrary/extra field (including a caller-supplied
+        # request_sha256) is REJECTED, never silently dropped, so hostile bytes
+        # cannot ride in past the trust door (§2.1).
         fields = {k: v for k, v in request.items() if k != "op"}
         validated = validate_create_pending(fields)
-        pending_id = store.create_pending(validated)
-        return {"ok": True, "op": OP_CREATE_PENDING, "pending_challenge_id": pending_id}
+        now = clock_ms()
+        pending_id, pending_expires_at_ms = store.create_pending(validated, now)
+        return {
+            "ok": True,
+            "op": OP_CREATE_PENDING,
+            "pending_challenge_id": pending_id,
+            "pending_expires_at_ms": pending_expires_at_ms,
+        }
     if op == OP_ISSUE:
         pending_id = request.get("pending_challenge_id")
         if not isinstance(pending_id, str) or not pending_id:
             raise ChallengeAuthorityError("issue requires a pending_challenge_id string")
-        row = store.consume(pending_id)
-        challenge = issue_challenge(row, config, sign_fn, clock_ms)
+        # The authority resolves + issues from its OWN store: it signs a live
+        # PENDING row ONCE (persisting the exact document) or replays a live
+        # ISSUED row's stored document byte-for-byte (§2.1.1(d)/(f)).
+        challenge = issue_challenge_document(store, pending_id, config, sign_fn, clock_ms)
         return {"ok": True, "op": OP_ISSUE, "challenge": challenge}
     raise ChallengeAuthorityError("unknown op %r" % (op,))
 
@@ -231,6 +240,11 @@ def handle_connection(
         reply = dispatch(request, store, config, sign_fn, clock_ms)
     except (FrameError, ChallengeAuthorityError, ValueError, UnicodeDecodeError) as exc:
         reply = {"ok": False, "error": str(exc)}
+        # Surface the typed §2.1 refusal reason (e.g. no_pending_row vs
+        # pending_expired vs retry_conflict) when the core supplied one.
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, str) and reason:
+            reply["reason"] = reason
 
     _try_write(conn, reply)
     return reply

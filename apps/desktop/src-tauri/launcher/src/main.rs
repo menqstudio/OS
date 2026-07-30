@@ -344,6 +344,13 @@ mod linux {
     // as the boundary constant so the fstat'd-fd owner check accepts exactly the two TCB principals.
     const TCB_OWNER_BROPS_ADMIN_UID: u32 = 500;
 
+    // §4.7 per-artifact ceiling: a store-input inode (fd 3/4/5) must be a regular file no larger than this.
+    // An over-ceiling inode is NOT accepted as a valid store input (the fail-closed gate refuses it), which
+    // bounds the bytes the executor can be handed as a single artifact. 8 MiB is a sane §4.7-style ceiling
+    // for a proof/artifact inode; small proof inputs pass unchanged. TODO: source the exact ceiling from the
+    // lease/store policy once that field is plumbed through.
+    const MAX_STORE_INPUT_BYTES: u64 = 8 * 1024 * 1024;
+
     pub fn real_main() -> Result<(), Refusal> {
         // (1) Fixed, closed argv: lease handle + pinned executor image + cgroup path. Any other shape, or a
         //     non-empty environment, is a confused-deputy signal ⇒ refuse.
@@ -497,18 +504,34 @@ mod linux {
             if fd == dirfd {
                 continue; // exclude ONLY the enumeration handle — NOT by /proc link target
             }
-            let link = match fs::read_link(format!("/proc/self/fd/{fd}")) {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
+            // Finding 1 (fail CLOSED on an un-inspectable inherited fd): a numeric fd that is NOT the
+            // excluded dirfd whose `/proc/self/fd` symlink cannot be read must ABORT the launch — never
+            // `continue` (that silently DROPPED an inherited fd >= 7 so it escaped the exact-{0..6} gate: a
+            // fail-open). The "." / ".." / non-numeric parse skip above stays a `continue`; only these
+            // post-numeric read errors fail closed, mirroring how the fdinfo read below fails closed.
+            let link = fs::read_link(format!("/proc/self/fd/{fd}"))
+                .map_err(|_| Refusal::Proc("fd-readlink"))?;
             let info = fs::read_to_string(format!("/proc/self/fdinfo/{fd}"))
                 .ok()
                 .and_then(|c| parse_fdinfo(&c))
                 .ok_or(Refusal::Proc("fdinfo"))?;
             let target = link.to_string_lossy().into_owned();
-            let is_regular = fs::metadata(format!("/proc/self/fd/{fd}"))
-                .map(|m| m.is_file())
-                .unwrap_or(false);
+
+            // Finding 2 (honest store-inode fact, no path re-lookup): determine "regular store inode" by
+            // `fstat` of the HELD fd (never `fs::metadata(path)` — that is a TOCTOU re-lookup that only
+            // checked is_file()) AND bound it by the §4.7 per-artifact ceiling. A store input must be a
+            // regular file (S_ISREG) whose size is <= MAX_STORE_INPUT_BYTES; a non-regular or over-ceiling
+            // inode yields is_regular_store_inode=false, so the pure verifier's StoreInput branch refuses it.
+            // Small proof inputs pass unchanged. (O_RDONLY + offset-0 are supplied by the other fields.)
+            // TODO: bind st_dev to the lease's store device (full brops-store-namespace inode binding).
+            // SAFETY: `fd` is a live inherited descriptor; fstat gets a valid out-pointer to a plain C stat.
+            let mut st: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe { libc::fstat(fd, &mut st) } != 0 {
+                return Err(Refusal::Proc("fd-fstat"));
+            }
+            let is_regular_store_inode = (st.st_mode & S_IFMT_MASK) == S_IFREG_BITS
+                && st.st_size >= 0
+                && (st.st_size as u64) <= MAX_STORE_INPUT_BYTES;
 
             let inert = target == "/dev/null";
             out.push(FdFacts {
@@ -518,9 +541,13 @@ mod linux {
                 // interactive/inherited for the fail-closed 0/1/2 check.
                 is_interactive_or_inherited: !inert,
                 read_only: info.accmode == 0,
-                is_regular_store_inode: is_regular,
+                is_regular_store_inode,
                 offset_zero: info.pos == 0,
                 is_output_pipe: target.starts_with("pipe:"),
+                // Finding 3: fd 6 must be the WRITE-ONLY output pipe — set write_only from the parsed
+                // fdinfo accmode (1 == O_WRONLY), NOT from the `pipe:` link prefix. The verifier's
+                // OutputPipe branch now requires this (mirroring read_only for StoreInput).
+                write_only: info.accmode == 1,
                 cloexec: info.cloexec,
             });
         }
@@ -692,6 +719,7 @@ mod tests {
             is_regular_store_inode: false,
             offset_zero: false,
             is_output_pipe: false,
+            write_only: false,
             cloexec: false,
         }
     }
@@ -704,6 +732,7 @@ mod tests {
             is_regular_store_inode: true,
             offset_zero: true,
             is_output_pipe: false,
+            write_only: false,
             cloexec: false,
         }
     }
@@ -716,6 +745,7 @@ mod tests {
             is_regular_store_inode: false,
             offset_zero: false,
             is_output_pipe: true,
+            write_only: true,
             cloexec: false,
         }
     }
@@ -734,6 +764,7 @@ mod tests {
             is_regular_store_inode: false,
             offset_zero: false,
             is_output_pipe: false,
+            write_only: false,
             cloexec: false,
         }
     }

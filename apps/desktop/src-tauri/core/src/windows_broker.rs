@@ -61,10 +61,13 @@ pub struct ImageFacts {
 }
 
 /// The pinned expectation for the executor image (from the root-owned pin).
+///
+/// NOTE: there is deliberately NO `require_authenticode` toggle. Design §2.7 Windows-equivalent mandates
+/// `hash + Authenticode + NTFS ACL` UNCONDITIONALLY before launch, so a valid Authenticode signature is a
+/// non-negotiable floor — [`verify_image`] always enforces it and cannot be configured off.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageVerificationSpec {
     pub expected_sha256: String,
-    pub require_authenticode: bool,
 }
 
 /// The named-pipe peer-auth policy for the challenge-authority pipe (§2.1 Windows mapping).
@@ -147,8 +150,9 @@ pub fn authorize_authority_peer(
     Ok(())
 }
 
-/// Verify the executor image before `CreateProcessAsUser`: exact hash, valid Authenticode (if required),
-/// and NOT writable by the login user or any runtime SID.
+/// Verify the executor image before `CreateProcessAsUser`: exact hash, valid Authenticode (ALWAYS required,
+/// §2.7), and NOT writable by the login user or any runtime SID. Authenticode is a mandatory floor: an image
+/// without a valid Authenticode signature fails closed regardless of spec configuration — there is no opt-out.
 pub fn verify_image(spec: &ImageVerificationSpec, facts: &ImageFacts) -> Result<(), WindowsBrokerViolation> {
     if facts.writable_by_login_or_runtime {
         return Err(WindowsBrokerViolation::ImageWritableByUntrusted);
@@ -156,7 +160,7 @@ pub fn verify_image(spec: &ImageVerificationSpec, facts: &ImageFacts) -> Result<
     if facts.sha256 != spec.expected_sha256 {
         return Err(WindowsBrokerViolation::ImageHashMismatch);
     }
-    if spec.require_authenticode && !facts.authenticode_valid {
+    if !facts.authenticode_valid {
         return Err(WindowsBrokerViolation::ImageAuthenticodeInvalid);
     }
     Ok(())
@@ -252,11 +256,26 @@ mod tests {
 
     #[test]
     fn image_verification_fails_closed() {
-        let spec = ImageVerificationSpec { expected_sha256: "abc".into(), require_authenticode: true };
+        let spec = ImageVerificationSpec { expected_sha256: "abc".into() };
+        // Fully valid image (hash + authenticode + good ACL) launches.
         assert!(verify_image(&spec, &ImageFacts { sha256: "abc".into(), authenticode_valid: true, writable_by_login_or_runtime: false }).is_ok());
         assert_eq!(verify_image(&spec, &ImageFacts { sha256: "abc".into(), authenticode_valid: true, writable_by_login_or_runtime: true }), Err(WindowsBrokerViolation::ImageWritableByUntrusted));
         assert_eq!(verify_image(&spec, &ImageFacts { sha256: "WRONG".into(), authenticode_valid: true, writable_by_login_or_runtime: false }), Err(WindowsBrokerViolation::ImageHashMismatch));
         assert_eq!(verify_image(&spec, &ImageFacts { sha256: "abc".into(), authenticode_valid: false, writable_by_login_or_runtime: false }), Err(WindowsBrokerViolation::ImageAuthenticodeInvalid));
+    }
+
+    #[test]
+    fn image_without_authenticode_is_rejected_even_with_matching_hash_and_acl() {
+        // Regression (P1, §2.7): Authenticode is a MANDATORY floor and can no longer be toggled off. Even
+        // when the hash matches AND the NTFS ACL is non-writable AND (formerly) a `require_authenticode`
+        // flag would have been false, an image whose Authenticode signature is not valid MUST fail closed.
+        // The `require_authenticode` toggle has been removed entirely, so no spec configuration can accept
+        // an unsigned / non-Authenticode image.
+        let spec = ImageVerificationSpec { expected_sha256: "abc".into() };
+        assert_eq!(
+            verify_image(&spec, &ImageFacts { sha256: "abc".into(), authenticode_valid: false, writable_by_login_or_runtime: false }),
+            Err(WindowsBrokerViolation::ImageAuthenticodeInvalid)
+        );
     }
 
     #[test]

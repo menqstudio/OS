@@ -41,7 +41,13 @@ from governed_supervisor import (  # noqa: E402
     SupervisorConfig,
     accept_open,
     launch_gate,
+    recompute_request_sha256,
 )
+
+# The supervisor's OWN canonical (brops.request.v1) recompute is the injected
+# binding seam — genuinely independent of the authority (it re-derives from the
+# challenge payload's own fields).
+_recompute_request_sha256 = recompute_request_sha256
 
 # A stand-in challenge signing key. In production the challenge authority holds
 # an isolated key; here a fixed secret makes the hmac deterministic and offline.
@@ -55,19 +61,6 @@ NOW = 1_000_000  # fixed epoch-ms clock for the deterministic cases.
 
 def _canonical(payload) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
-def _recompute_request_sha256(payload) -> str:
-    """Re-derive request_sha256 from the challenge's OWN fields (the injected
-    binding seam). A real supervisor recomputes the governed-request digest; here
-    we hash a canonical subset so the test's valid doc round-trips exactly."""
-    basis = {
-        "request_nonce": payload["request_nonce"],
-        "conversation_id": payload["conversation_id"],
-        "install_id": payload["install_id"],
-        "workspace_id": payload["workspace_id"],
-    }
-    return hashlib.sha256(_canonical(basis)).hexdigest()
 
 
 def _verify_sig(message: bytes, sig: str) -> bool:
@@ -95,17 +88,23 @@ def _config():
 
 
 def _valid_payload(issued=NOW, ttl=30_000):
-    """A well-formed challenge payload whose request_sha256 re-derives from its own
-    fields (so an honest re-derivation matches)."""
+    """A well-formed §4.1 challenge payload whose request_sha256 re-derives from
+    its own fields via the canonical brops.request.v1 envelope (so an honest
+    re-derivation matches)."""
     payload = {
         "protocol": CHALLENGE_PROTOCOL,
         "challenge_key_id": "chal-key-2026-07",
-        "request_nonce": "nonce-abc-123",
-        "request_sha256": "",  # filled below from the recompute seam
-        "conversation_id": "conv-1",
-        "install_id": "install-1",
+        "run_id": "run-1",
+        "task_id": "task-1",
         "workspace_id": "ws-1",
+        "install_id": "install-1",
         "supervisor_id": "sup-1",
+        "request_nonce": "nonce-abc-123",
+        "system_sha256": "a" * 64,
+        "history_sha256": "b" * 64,
+        "generation_config_sha256": "c" * 64,
+        "request_sha256": "",  # filled below from the recompute seam
+        "requested_at_ms": 1_700_000_000_000,
         "challenge_issued_at_ms": issued,
         "challenge_expires_at_ms": issued + ttl,
     }
@@ -169,10 +168,10 @@ class AcceptOpenBindingTests(unittest.TestCase):
         self.assertEqual(result.reason, REFUSE_REQUEST_SHA256_MISMATCH)
 
     def test_tampered_field_breaks_rederivation(self):
-        # Change a field that feeds the digest (and re-sign) -> the stored
-        # request_sha256 no longer re-derives -> mismatch, never a lease.
+        # Change a field that feeds the digest (and re-sign) WITHOUT updating the
+        # stored request_sha256 -> it no longer re-derives -> mismatch, no lease.
         payload = _valid_payload()
-        payload["conversation_id"] = "conv-TAMPERED"  # digest basis changed
+        payload["system_sha256"] = "d" * 64  # digest basis changed, hash stale
         result = _accept(_signed_doc(payload), now=NOW)
         self.assertIsInstance(result, Refusal)
         self.assertEqual(result.reason, REFUSE_REQUEST_SHA256_MISMATCH)

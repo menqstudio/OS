@@ -1,13 +1,16 @@
-"""Offline tests for the AF_UNIX challenge-authority server wiring (rev-30 §2.1).
+"""Offline tests for the AF_UNIX challenge-authority server wiring (rev-30 §2.1 / §2.1.1).
 
 No real socket, no keys, no OS trust chain: a ``FakeConn`` supplies the peer uid
 and a byte buffer, the store is a plain dict, the clock is fixed, and signing is
-a stub. These exercise the three normative wiring behaviours:
+a stub. These exercise the normative wiring behaviours:
 
   * a non-broker peer is DENIED before any frame is read (renderer/sidecar);
   * an oversize length-prefixed frame is refused (fail-closed on bounds);
   * a valid create-pending frame dispatches into the pure core and returns the
-    minted pending_challenge_id.
+    minted pending_challenge_id + pending_expires_at_ms;
+  * a caller-supplied request_sha256 is refused as malformed;
+  * an issue replays a live ISSUED row byte-for-byte; an unknown id surfaces
+    ``no_pending_row`` and an expired row ``pending_expired`` in the reply.
 """
 
 import pathlib
@@ -20,6 +23,9 @@ sys.path.insert(0, str(ROOT / "runtime"))
 import json  # noqa: E402
 
 from challenge_authority import (  # noqa: E402
+    PENDING_TTL_MS,
+    REASON_NO_PENDING_ROW,
+    REASON_PENDING_EXPIRED,
     AuthorityConfig,
     PendingStore,
 )
@@ -27,6 +33,7 @@ from challenge_authority_server import (  # noqa: E402
     LENGTH_PREFIX_BYTES,
     MAX_FRAME_BYTES,
     OP_CREATE_PENDING,
+    OP_ISSUE,
     dispatch,
     handle_connection,
     read_frame,
@@ -38,19 +45,22 @@ RENDERER_UID = 1000
 SIDECAR_UID = 4004
 
 VALID_FIELDS = {
-    "request_nonce": "550e8400-e29b-41d4-a716-446655440000",
-    "request_sha256": "a" * 64,
-    "conversation_id": "conv-123",
+    "run_id": "run-1",
+    "task_id": "task-1",
+    "workspace_id": "ws-1",
     "install_id": "install-xyz",
+    "request_nonce": "550e8400-e29b-41d4-a716-446655440000",
+    "system_sha256": "a" * 64,
+    "history_sha256": "b" * 64,
+    "generation_config_sha256": "c" * 64,
+    "requested_at_ms": 1_700_000_000_000,
 }
+
+NOW = 1_000_000
 
 
 def _config():
-    return AuthorityConfig(
-        challenge_key_id="key-2026-07",
-        workspace_id="ws-1",
-        supervisor_id="sup-1",
-    )
+    return AuthorityConfig(challenge_key_id="key-2026-07", supervisor_id="sup-1")
 
 
 def _frame(obj) -> bytes:
@@ -90,7 +100,7 @@ def _sign_fn(_data: bytes) -> str:
 
 
 def _clock():
-    return 1_000_000
+    return NOW
 
 
 class PeerDenyTests(unittest.TestCase):
@@ -151,6 +161,7 @@ class DispatchTests(unittest.TestCase):
         self.assertTrue(reply["ok"])
         self.assertEqual(reply["op"], OP_CREATE_PENDING)
         self.assertEqual(reply["pending_challenge_id"], "pending-abc")
+        self.assertEqual(reply["pending_expires_at_ms"], NOW + PENDING_TTL_MS)
         # The row landed in the store with the broker-supplied nonce verbatim.
         stored = store.get("pending-abc")
         self.assertEqual(stored["request_nonce"], VALID_FIELDS["request_nonce"])
@@ -164,13 +175,49 @@ class DispatchTests(unittest.TestCase):
         )
         pid = created["pending_challenge_id"]
         issued = dispatch(
-            {"op": "issue", "pending_challenge_id": pid},
+            {"op": OP_ISSUE, "pending_challenge_id": pid},
             store, _config(), _sign_fn, _clock,
         )
         self.assertTrue(issued["ok"])
         challenge = issued["challenge"]
         self.assertEqual(challenge["payload"]["request_nonce"], VALID_FIELDS["request_nonce"])
+        self.assertEqual(challenge["payload"]["run_id"], "run-1")
         self.assertEqual(challenge["sig"], "sig-deadbeef")
+
+    def test_issue_replays_stored_document_byte_for_byte(self):
+        store = PendingStore(id_fn=lambda: "pending-replay")
+        dispatch({"op": OP_CREATE_PENDING, **VALID_FIELDS}, store, _config(), _sign_fn, _clock)
+        first = dispatch(
+            {"op": OP_ISSUE, "pending_challenge_id": "pending-replay"},
+            store, _config(), _sign_fn, lambda: NOW,
+        )
+        replay = dispatch(
+            {"op": OP_ISSUE, "pending_challenge_id": "pending-replay"},
+            store, _config(), _sign_fn, lambda: NOW + 20_000,
+        )
+        self.assertEqual(
+            json.dumps(first["challenge"], sort_keys=True),
+            json.dumps(replay["challenge"], sort_keys=True),
+        )
+
+    def test_issue_unknown_id_surfaces_no_pending_row(self):
+        conn = FakeConn(
+            BROKER_UID, inbound=_frame({"op": OP_ISSUE, "pending_challenge_id": "ghost"})
+        )
+        reply = handle_connection(conn, BROKER_UID, PendingStore(), _config(), _sign_fn, _clock)
+        self.assertFalse(reply["ok"])
+        self.assertEqual(reply["reason"], REASON_NO_PENDING_ROW)
+
+    def test_issue_expired_pending_surfaces_pending_expired(self):
+        store = PendingStore(id_fn=lambda: "pending-exp")
+        dispatch({"op": OP_CREATE_PENDING, **VALID_FIELDS}, store, _config(), _sign_fn, lambda: NOW)
+        late = NOW + PENDING_TTL_MS + 1
+        conn = FakeConn(
+            BROKER_UID, inbound=_frame({"op": OP_ISSUE, "pending_challenge_id": "pending-exp"})
+        )
+        reply = handle_connection(conn, BROKER_UID, store, _config(), _sign_fn, lambda: late)
+        self.assertFalse(reply["ok"])
+        self.assertEqual(reply["reason"], REASON_PENDING_EXPIRED)
 
     def test_unknown_op_rejected(self):
         conn = FakeConn(BROKER_UID, inbound=_frame({"op": "delete-everything"}))
@@ -182,6 +229,13 @@ class DispatchTests(unittest.TestCase):
         conn = FakeConn(BROKER_UID, inbound=_frame(bad))
         reply = handle_connection(conn, BROKER_UID, PendingStore(), _config(), _sign_fn, _clock)
         self.assertFalse(reply["ok"])
+
+    def test_caller_request_sha256_in_create_pending_rejected(self):
+        bad = {"op": OP_CREATE_PENDING, **VALID_FIELDS, "request_sha256": "a" * 64}
+        conn = FakeConn(BROKER_UID, inbound=_frame(bad))
+        reply = handle_connection(conn, BROKER_UID, PendingStore(), _config(), _sign_fn, _clock)
+        self.assertFalse(reply["ok"])
+        self.assertIn("request_sha256", reply["error"])
 
 
 class ServeLoopTests(unittest.TestCase):

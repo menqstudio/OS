@@ -30,6 +30,9 @@ pub struct FdFacts {
     pub is_regular_store_inode: bool,
     pub offset_zero: bool,
     pub is_output_pipe: bool,
+    /// True iff this descriptor was opened `O_WRONLY` — required for the fd-6 output pipe (§2.7: fd 6 is
+    /// the WRITE-ONLY output pipe). Set from `fdinfo` accmode (== 1), NOT from the `pipe:` link prefix alone.
+    pub write_only: bool,
     /// True iff `FD_CLOEXEC` is set — for data FDs 3–6 that is fatal (they must survive exec).
     pub cloexec: bool,
 }
@@ -93,7 +96,9 @@ pub fn verify_launcher_fd_set(observed: &[FdFacts]) -> Result<(), FdViolation> {
                 }
             }
             FdRole::OutputPipe => {
-                if !f.is_output_pipe {
+                // §2.7: fd 6 must be the WRITE-ONLY output pipe — require both the pipe shape AND O_WRONLY
+                // (mirrors how StoreInput requires read_only). A read/write or read-only pipe is refused.
+                if !(f.is_output_pipe && f.write_only) {
                     return Err(FdViolation::BadOutput);
                 }
                 if f.cloexec {
@@ -111,15 +116,15 @@ mod tests {
 
     fn inert(fd: i32) -> FdFacts {
         FdFacts { fd, is_inert_endpoint: true, is_interactive_or_inherited: false, read_only: false,
-            is_regular_store_inode: false, offset_zero: false, is_output_pipe: false, cloexec: false }
+            is_regular_store_inode: false, offset_zero: false, is_output_pipe: false, write_only: false, cloexec: false }
     }
     fn store(fd: i32) -> FdFacts {
         FdFacts { fd, is_inert_endpoint: false, is_interactive_or_inherited: false, read_only: true,
-            is_regular_store_inode: true, offset_zero: true, is_output_pipe: false, cloexec: false }
+            is_regular_store_inode: true, offset_zero: true, is_output_pipe: false, write_only: false, cloexec: false }
     }
     fn output() -> FdFacts {
         FdFacts { fd: 6, is_inert_endpoint: false, is_interactive_or_inherited: false, read_only: false,
-            is_regular_store_inode: false, offset_zero: false, is_output_pipe: true, cloexec: false }
+            is_regular_store_inode: false, offset_zero: false, is_output_pipe: true, write_only: true, cloexec: false }
     }
     fn good() -> Vec<FdFacts> {
         vec![inert(0), inert(1), inert(2), store(3), store(4), store(5), output()]
@@ -177,6 +182,15 @@ mod tests {
     fn rejects_a_bad_output_pipe() {
         let mut s = good();
         s[6].is_output_pipe = false;
+        assert_eq!(verify_launcher_fd_set(&s), Err(FdViolation::BadOutput));
+    }
+
+    #[test]
+    fn rejects_a_non_write_only_output_pipe() {
+        // §2.7: fd 6 must be O_WRONLY. A pipe that is read/write or read-only (write_only=false) is refused
+        // even though its link target is a pipe (Finding 3: accmode must be enforced, not just the shape).
+        let mut s = good();
+        s[6].write_only = false;
         assert_eq!(verify_launcher_fd_set(&s), Err(FdViolation::BadOutput));
     }
 }

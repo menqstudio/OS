@@ -39,6 +39,7 @@ Only the Python standard library is used.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Tuple, Union
@@ -61,20 +62,31 @@ MIN_LAUNCH_REMAINING_MS = 180_000
 # re-checks the cap so a challenge claiming a longer life than policy is malformed.
 MAX_CHALLENGE_TTL_MS = 30_000
 
-# The fixed, exhaustive shape of the challenge payload the supervisor will trust.
+# The fixed, exhaustive shape of the challenge payload the supervisor will trust
+# — the §4.1 ``brops.governed-turn-challenge.v1`` set (MIRRORS the shape the
+# challenge authority builds in ``challenge_authority.issue_challenge``).
 # Anything outside this set (extra keys, missing keys, wrong types) is malformed.
 CHALLENGE_PAYLOAD_FIELDS: Tuple[str, ...] = (
     "protocol",
     "challenge_key_id",
-    "request_nonce",
-    "request_sha256",
-    "conversation_id",
-    "install_id",
+    "run_id",
+    "task_id",
     "workspace_id",
+    "install_id",
     "supervisor_id",
+    "request_nonce",
+    "system_sha256",
+    "history_sha256",
+    "generation_config_sha256",
+    "request_sha256",
+    "requested_at_ms",
     "challenge_issued_at_ms",
     "challenge_expires_at_ms",
 )
+
+# The canonical request-envelope protocol whose SHA-256 IS ``request_sha256``
+# (mirrors ``challenge_authority.REQUEST_ENVELOPE_PROTOCOL`` / §2.2).
+REQUEST_ENVELOPE_PROTOCOL = "brops.request.v1"
 
 # The fixed, exhaustive shape of the signed envelope.
 CHALLENGE_DOC_FIELDS: Tuple[str, ...] = ("payload", "sig")
@@ -174,6 +186,41 @@ def _canonical_bytes(payload: Mapping[str, Any]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def recompute_request_sha256(payload: Mapping[str, Any]) -> str:
+    """Independently RE-DERIVE ``request_sha256`` from the challenge payload's OWN
+    fields via the canonical ``brops.request.v1`` request-envelope formula.
+
+    This is the supervisor's OWN recompute (§2.1 / §4.10(a0)): byte-identical to
+    ``challenge_authority.recompute_request_sha256`` /
+    ``isolated_signer._recompute_request_sha256`` /
+    ``receipt.rs::request_envelope_sha256`` — an 8-field JCS envelope with
+    ``request_nonce`` inside the hashed bytes and ``requested_at`` as the
+    decimal-ms STRING. Because it reads the component hashes + ids + nonce +
+    timestamp straight from the signed payload, a challenge whose transported
+    ``request_sha256`` was forged (≠ the digest of its own fields) is caught in
+    phase B (``request_sha256_mismatch``). It is passed to ``accept_open`` as the
+    ``recompute_request_sha256`` seam.
+    """
+    envelope = {
+        "protocol": REQUEST_ENVELOPE_PROTOCOL,
+        "workspace_id": payload["workspace_id"],
+        "install_id": payload["install_id"],
+        "request_nonce": payload["request_nonce"],
+        "system_sha256": payload["system_sha256"],
+        "history_sha256": payload["history_sha256"],
+        "generation_config_sha256": payload["generation_config_sha256"],
+        "requested_at": str(payload["requested_at_ms"]),
+    }
+    canonical = json.dumps(
+        envelope,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Supervisor trusted config (the fields the supervisor, not the caller, fills in).
 # ---------------------------------------------------------------------------
@@ -252,13 +299,18 @@ def _validate_challenge_doc(challenge_doc: Any) -> Tuple[Mapping[str, Any], str]
     if payload["protocol"] != CHALLENGE_PROTOCOL:
         raise _Refuse(REFUSE_MALFORMED, "unexpected protocol %r" % (payload["protocol"],))
 
-    for field in ("challenge_key_id", "request_nonce", "conversation_id", "install_id",
-                  "workspace_id", "supervisor_id"):
+    for field in ("challenge_key_id", "run_id", "task_id", "workspace_id",
+                  "install_id", "supervisor_id", "request_nonce"):
         if not _nonempty_str(payload[field]):
             raise _Refuse(REFUSE_MALFORMED, "%s must be a non-empty string" % field)
 
-    if not _is_sha256_hex(payload["request_sha256"]):
-        raise _Refuse(REFUSE_MALFORMED, "request_sha256 must be 64 hex characters")
+    for field in ("system_sha256", "history_sha256", "generation_config_sha256",
+                  "request_sha256"):
+        if not _is_sha256_hex(payload[field]):
+            raise _Refuse(REFUSE_MALFORMED, "%s must be 64 hex characters" % field)
+
+    if not _is_int(payload["requested_at_ms"]):
+        raise _Refuse(REFUSE_MALFORMED, "requested_at_ms must be an int")
 
     issued = payload["challenge_issued_at_ms"]
     expires = payload["challenge_expires_at_ms"]
