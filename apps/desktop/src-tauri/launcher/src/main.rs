@@ -227,6 +227,78 @@ pub fn image_owner_mode_ok(st_mode: u32, st_uid: u32, brops_admin_uid: u32) -> b
 }
 
 // ---------------------------------------------------------------------------------------------------
+// The validated lease (§4.3) — the launch parameters the launcher TAKES (never chooses): the recorder
+// principal permitted to invoke it, the unprivileged executor identity to drop to, and the executor image
+// hash pin. Parsed from the lease handle (argv[0]). A strict std-only `key=value` body — NO serde in a
+// setuid-root binary (minimal attack surface). Pure + host-independent so it is unit-tested on any OS.
+// ---------------------------------------------------------------------------------------------------
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lease {
+    /// The ONLY principal permitted to invoke the setuid launcher — matched against the launcher's REAL
+    /// uid/gid at §2.7 step 1. In production the supervisor issues (and signs) this lease.
+    pub recorder_uid: u32,
+    pub recorder_gid: u32,
+    /// The unprivileged identity the launcher drops to before `fexecve` (§2.7).
+    pub executor_uid: u32,
+    pub executor_gid: u32,
+    /// The pinned SHA-256 (lowercase hex) of the executor image bytes — the launcher re-hashes the OPENED
+    /// image fd and refuses on any mismatch (§2.5 content pin / §2.7 image identity).
+    pub executor_executable_sha256: String,
+}
+
+/// Parse a strict `key=value` lease body. Fail-closed: EXACTLY the five required keys, each present once,
+/// uids/gids base-10 `u32`, the digest 64 lowercase-hex chars; any missing / duplicate / unknown key or
+/// malformed value ⇒ `None`. Blank/whitespace-only lines are ignored.
+pub fn parse_lease(content: &str) -> Option<Lease> {
+    let mut recorder_uid: Option<u32> = None;
+    let mut recorder_gid: Option<u32> = None;
+    let mut executor_uid: Option<u32> = None;
+    let mut executor_gid: Option<u32> = None;
+    let mut sha: Option<String> = None;
+
+    fn set_u32(slot: &mut Option<u32>, v: &str) -> Option<()> {
+        if slot.is_some() {
+            return None; // duplicate key ⇒ fail closed
+        }
+        *slot = Some(v.parse::<u32>().ok()?);
+        Some(())
+    }
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (k, v) = line.split_once('=')?;
+        let (k, v) = (k.trim(), v.trim());
+        match k {
+            "recorder_uid" => set_u32(&mut recorder_uid, v)?,
+            "recorder_gid" => set_u32(&mut recorder_gid, v)?,
+            "executor_uid" => set_u32(&mut executor_uid, v)?,
+            "executor_gid" => set_u32(&mut executor_gid, v)?,
+            "executor_executable_sha256" => {
+                if sha.is_some()
+                    || v.len() != 64
+                    || !v.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                {
+                    return None;
+                }
+                sha = Some(v.to_string());
+            }
+            _ => return None, // unknown key ⇒ fail closed
+        }
+    }
+
+    Some(Lease {
+        recorder_uid: recorder_uid?,
+        recorder_gid: recorder_gid?,
+        executor_uid: executor_uid?,
+        executor_gid: executor_gid?,
+        executor_executable_sha256: sha?,
+    })
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Entry point.
 // ---------------------------------------------------------------------------------------------------
 
@@ -267,49 +339,36 @@ mod linux {
     use std::io::Read;
     use std::os::unix::io::{FromRawFd, IntoRawFd};
 
-    // The executor identity is bound by the validated lease (§4.3). Lease parsing lands in a separate
-    // slice; the launcher NEVER chooses these — they are validated inputs. Pinned here as the boundary
-    // constant so the drop target is explicit and testable.
-    const EXECUTOR_UID: u32 = 5007;
-    const EXECUTOR_GID: u32 = 5007;
-
-    // The provisioned evidence-recorder runner principal (§2.6): the ONLY identity permitted to invoke this
-    // setuid-root launcher (its REAL uid/gid, inherited from the caller). Like EXECUTOR_UID/GID these are
-    // validated inputs the launcher never chooses.
-    // TODO: bind the recorder uid/gid from the validated lease if it carries them; pinned here as the
-    // boundary constant so the §2.7 step-1 invoker gate EXISTS and fails closed until then.
-    const RECORDER_UID: u32 = 5006;
-    const RECORDER_GID: u32 = 5006;
-
-    // The dedicated `brops-admin` TCB owner uid (§2.5): root(0) or brops-admin may own the executor image.
-    // TODO: bind from the root-owned TcbPinManifest (`owner_uids[BropsAdmin]`) / validated lease; pinned as
-    // the boundary constant so the fstat'd-fd owner check accepts exactly the two TCB principals.
+    // The dedicated `brops-admin` TCB owner uid (§2.5): root(0) or brops-admin may own the executor image
+    // AND the lease file. TODO: bind from the root-owned TcbPinManifest (`owner_uids[BropsAdmin]`); pinned
+    // as the boundary constant so the fstat'd-fd owner check accepts exactly the two TCB principals.
     const TCB_OWNER_BROPS_ADMIN_UID: u32 = 500;
 
-    // The pinned SHA-256 (lowercase hex) of the contained-executor image bytes (§2.5 `contained-executor.bin`
-    // content pin / §2.7 image identity). A validated lease/pin-manifest input the launcher never chooses.
-    // TODO: bind from the validated lease (`executor_executable_sha256`) / TcbPinManifest — the placeholder
-    // below makes the re-hash gate fail closed until the real digest is provisioned.
-    const EXECUTOR_IMAGE_SHA256_PIN: &str =
-        "0000000000000000000000000000000000000000000000000000000000000000";
-
     pub fn real_main() -> Result<(), Refusal> {
-        // (0) §2.7 step 1 — INVOKER GATE. Before ANY fd/priv/exec work, confirm the process that execve'd
-        //     this setuid-root launcher is the provisioned evidence-recorder runner. A setuid-root binary
-        //     starts with euid=0 but INHERITS the caller's REAL uid/gid, so getresuid/getresgid reveal who
-        //     actually invoked us; any non-recorder invoker is a confused-deputy ⇒ fail closed (no receipt).
-        verify_invoker_is_recorder()?;
-
         // (1) Fixed, closed argv: lease handle + pinned executor image + cgroup path. Any other shape, or a
         //     non-empty environment, is a confused-deputy signal ⇒ refuse.
         let args: Vec<String> = std::env::args().skip(1).collect();
         if args.len() != 3 || std::env::vars_os().next().is_some() {
             return Err(Refusal::BadArgv);
         }
+        let lease_handle = &args[0];
         let executor_image = &args[1];
-        let (exec_uid, exec_gid) = (EXECUTOR_UID, EXECUTOR_GID);
 
-        // (2) Verify the inherited descriptor table BEFORE any drop or exec (§2.7 launcher step 1–3).
+        // (2) Read + integrity-verify the VALIDATED lease (§4.3). The launcher takes the invoker identity,
+        //     the executor drop-target identity, and the executor image hash pin FROM the lease — it never
+        //     chooses them. The lease file must be a regular, TCB-owned (root/brops-admin), non-writable
+        //     file so a non-TCB principal cannot forge those pins (same §2.5 floor as the image; the
+        //     supervisor-signed lease that also binds turn/nonce freshness is the documented next slice).
+        let lease = read_and_verify_lease(lease_handle)?;
+        let (exec_uid, exec_gid) = (lease.executor_uid, lease.executor_gid);
+
+        // (3) §2.7 step 1 — INVOKER GATE, bound to the lease's recorder principal. Before ANY drop/exec,
+        //     confirm the process that execve'd this setuid-root launcher is the recorder the lease names. A
+        //     setuid-root binary starts euid=0 but INHERITS the caller's REAL uid/gid, so getresuid/
+        //     getresgid reveal who actually invoked us; any other invoker is a confused-deputy ⇒ fail closed.
+        verify_invoker_is_recorder(lease.recorder_uid, lease.recorder_gid)?;
+
+        // (4) Verify the inherited descriptor table BEFORE any drop or exec (§2.7 launcher step 1–3).
         let observed = collect_fd_facts()?;
         verify_launcher_fd_set(&observed)?;
 
@@ -332,19 +391,56 @@ mod linux {
         let post = parse_status(&status).ok_or(Refusal::Proc("status-parse"))?;
         verify_final_state(&post, exec_uid, exec_gid)?;
 
-        // (7) Open the executor image O_RDONLY|O_NOFOLLOW|O_CLOEXEC (NOT one of 3–6), then bind exec-time
+        // (9) Open the executor image O_RDONLY|O_NOFOLLOW|O_CLOEXEC (NOT one of 3–6), then bind exec-time
         //     integrity to THAT exact fd: fstat it (regular, TCB-owned, non-writable) AND re-hash its bytes
         //     against the lease `executor_executable_sha256` pin, and fexecve the SAME fd — the bytes hashed
         //     are the bytes executed, with no path re-lookup. Any mismatch ⇒ ImageIntegrity (no exec).
-        let image_fd = open_executor_image(executor_image)?;
+        let image_fd = open_executor_image(executor_image, &lease.executor_executable_sha256)?;
         fexecve_pinned(image_fd, executor_image)?; // returns ONLY on failure
         Err(Refusal::Syscall("fexecve"))
     }
 
-    /// §2.7 step-1 invoker gate: the launcher is setuid-root but must ONLY ever be invoked BY the
-    /// provisioned evidence-recorder runner. `getresuid`/`getresgid` expose the REAL uid/gid inherited from
-    /// the caller; both MUST equal the recorder principal or we refuse before any privilege/exec work.
-    fn verify_invoker_is_recorder() -> Result<(), Refusal> {
+    /// Read + integrity-verify the validated lease at `path` (§4.3). Opens `O_RDONLY|O_NOFOLLOW|O_CLOEXEC`,
+    /// fstats the OPENED fd, and requires a regular, TCB-owned (root/brops-admin), non group/other-writable
+    /// file (so a non-TCB principal cannot forge the pins — same floor as the executor image), then parses
+    /// the strict `key=value` body. Any open/stat/ownership/parse failure ⇒ fail closed (no exec).
+    fn read_and_verify_lease(path: &str) -> Result<Lease, Refusal> {
+        let c = CString::new(path).map_err(|_| Refusal::TcbIntegrity("lease-path"))?;
+        // SAFETY: open with a valid NUL-terminated path; flags are constants.
+        let fd = unsafe {
+            libc::open(
+                c.as_ptr(),
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(Refusal::TcbIntegrity("lease-open"));
+        }
+        // fstat the EXACT opened fd (never a metadata(path) re-lookup): regular, TCB-owned, non-writable.
+        // SAFETY: fd is a live descriptor; fstat gets a valid out-pointer to a plain C `stat`.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut st) } != 0 {
+            unsafe { libc::close(fd) };
+            return Err(Refusal::TcbIntegrity("lease-fstat"));
+        }
+        if !image_owner_mode_ok(st.st_mode, st.st_uid, TCB_OWNER_BROPS_ADMIN_UID) {
+            unsafe { libc::close(fd) };
+            return Err(Refusal::TcbIntegrity("lease-owner-mode"));
+        }
+        // SAFETY: we own `fd` exclusively; the File takes ownership and closes it on drop (we do NOT exec
+        // the lease, so — unlike the image path — we let it close here).
+        let mut f = unsafe { fs::File::from_raw_fd(fd) };
+        let mut body = String::new();
+        if f.read_to_string(&mut body).is_err() {
+            return Err(Refusal::TcbIntegrity("lease-read"));
+        }
+        parse_lease(&body).ok_or(Refusal::TcbIntegrity("lease-parse"))
+    }
+
+    /// §2.7 step-1 invoker gate: the launcher is setuid-root but must ONLY ever be invoked BY the recorder
+    /// principal the validated lease names. `getresuid`/`getresgid` expose the REAL uid/gid inherited from
+    /// the caller; both MUST equal `recorder_uid`/`recorder_gid` or we refuse before any privilege/exec work.
+    fn verify_invoker_is_recorder(recorder_uid: u32, recorder_gid: u32) -> Result<(), Refusal> {
         let mut ruid: libc::uid_t = 0;
         let mut euid: libc::uid_t = 0;
         let mut suid: libc::uid_t = 0;
@@ -359,9 +455,9 @@ mod linux {
         if unsafe { libc::getresgid(&mut rgid, &mut egid, &mut sgid) } != 0 {
             return Err(Refusal::Syscall("getresgid"));
         }
-        // Only the REAL uid/gid identify the invoker (euid/egid are the setuid-root target). Bind both.
-        // TODO: bind RECORDER_UID/RECORDER_GID from the validated lease rather than the boundary constant.
-        if ruid != RECORDER_UID || rgid != RECORDER_GID {
+        // Only the REAL uid/gid identify the invoker (euid/egid are the setuid-root target). Bind both to
+        // the recorder principal the validated lease authorizes.
+        if ruid != recorder_uid || rgid != recorder_gid {
             return Err(Refusal::TcbIntegrity("invoker-not-recorder"));
         }
         Ok(())
@@ -517,7 +613,7 @@ mod linux {
         }
     }
 
-    fn open_executor_image(path: &str) -> Result<i32, Refusal> {
+    fn open_executor_image(path: &str, expected_sha256: &str) -> Result<i32, Refusal> {
         let c = CString::new(path).map_err(|_| Refusal::ImageIntegrity)?;
         // SAFETY: open with a valid NUL-terminated path; flags are constants.
         let fd = unsafe {
@@ -557,7 +653,7 @@ mod linux {
             return Err(Refusal::ImageIntegrity);
         }
         let fd = f.into_raw_fd();
-        if brops_core::receipt::sha256_hex(&bytes) != EXECUTOR_IMAGE_SHA256_PIN {
+        if brops_core::receipt::sha256_hex(&bytes) != expected_sha256 {
             unsafe { libc::close(fd) };
             return Err(Refusal::ImageIntegrity);
         }
@@ -853,5 +949,53 @@ mod tests {
     fn parse_status_fails_closed_on_missing_cap_line() {
         let raw = dropped_status().replace("CapAmb:\t0000000000000000\n", "");
         assert_eq!(parse_status(&raw), None);
+    }
+
+    // ---- parse_lease -------------------------------------------------------------------------------
+    fn good_lease_body() -> String {
+        format!(
+            "recorder_uid=5005\nrecorder_gid=5005\nexecutor_uid=5007\nexecutor_gid=5007\n\
+             executor_executable_sha256={}\n",
+            "ab".repeat(32) // 64 lowercase-hex chars
+        )
+    }
+
+    #[test]
+    fn parse_lease_reads_a_well_formed_lease() {
+        let l = parse_lease(&good_lease_body()).expect("parses");
+        assert_eq!(l.recorder_uid, 5005);
+        assert_eq!(l.recorder_gid, 5005);
+        assert_eq!(l.executor_uid, 5007);
+        assert_eq!(l.executor_gid, 5007);
+        assert_eq!(l.executor_executable_sha256, "ab".repeat(32));
+        // blank lines + surrounding whitespace around key/value are tolerated
+        let padded = format!(
+            "\n  recorder_uid = 5005 \nrecorder_gid=5005\n\nexecutor_uid=5007\nexecutor_gid=5007\n  executor_executable_sha256 = {}  \n",
+            "ab".repeat(32)
+        );
+        assert_eq!(parse_lease(&padded), parse_lease(&good_lease_body()));
+    }
+
+    #[test]
+    fn parse_lease_fails_closed_on_missing_dup_unknown_or_bad_fields() {
+        // missing a required key (no executor_gid)
+        let missing = "recorder_uid=5005\nrecorder_gid=5005\nexecutor_uid=5007\n\
+                       executor_executable_sha256=".to_string()
+            + &"ab".repeat(32);
+        assert_eq!(parse_lease(&missing), None);
+        // duplicate key
+        let dup = format!("{}recorder_uid=6000\n", good_lease_body());
+        assert_eq!(parse_lease(&dup), None);
+        // unknown key
+        let unknown = format!("{}rogue_key=1\n", good_lease_body());
+        assert_eq!(parse_lease(&unknown), None);
+        // non-numeric uid
+        assert_eq!(parse_lease(&good_lease_body().replace("5005", "root")), None);
+        // digest wrong length
+        assert_eq!(parse_lease(&good_lease_body().replace(&"ab".repeat(32), "abcd")), None);
+        // digest non-hex / uppercase (must be lowercase hex)
+        assert_eq!(parse_lease(&good_lease_body().replace(&"ab".repeat(32), &"AB".repeat(32))), None);
+        // a line without '='
+        assert_eq!(parse_lease(&format!("{}garbage\n", good_lease_body())), None);
     }
 }
