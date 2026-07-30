@@ -18,7 +18,7 @@
 //! injected parameter — no clock, socket, or global state. Tests open `Connection::open_in_memory()` and
 //! drive the full lifecycle offline.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, ErrorCode};
 
 use crate::governed_turn_ipc::{
     decide_idempotency, IdempotencyDecision, IdempotencyKey, LiveTurn, ValidatedRequest,
@@ -58,6 +58,12 @@ impl TurnState {
 pub enum StoreError {
     /// An underlying rusqlite / SQLite failure (open, prepare, execute, or a PK/CHECK violation).
     Db(rusqlite::Error),
+    /// [`record_new`] hit the partial UNIQUE `idx_broker_turns_one_live` index: a `live` turn already
+    /// exists for this `conversation_id`. This is the DB-level, race-safe form of the
+    /// [`IdempotencyDecision::TurnInProgress`] verdict — the caller maps it to the same fail-closed
+    /// `turn_in_progress` reply. Distinct from [`StoreError::Db`] so a benign concurrency loser is never
+    /// leaked as a generic infrastructure fault.
+    TurnInProgress,
     /// [`settle`] was asked to move a turn to a non-terminal (`live`) state.
     NotTerminal,
     /// [`settle`] found no `live` row for the given `broker_turn_id` (already settled, or unknown id).
@@ -68,6 +74,9 @@ impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StoreError::Db(e) => write!(f, "broker_turns store db error: {e}"),
+            StoreError::TurnInProgress => {
+                write!(f, "a live broker turn already exists for this conversation")
+            }
             StoreError::NotTerminal => write!(f, "settle requires a terminal (committed|blocked) state"),
             StoreError::NotLive => write!(f, "no live broker turn for the given broker_turn_id"),
         }
@@ -99,7 +108,14 @@ impl From<rusqlite::Error> for StoreError {
 /// - `request_nonce` — the broker-minted one-time nonce (stored verbatim; the store never mints it).
 ///
 /// A partial index keeps the hot `state='live'` scan (the idempotency read path) cheap even as terminal
-/// rows accumulate.
+/// rows accumulate. That partial index is additionally **UNIQUE** on `conversation_id`: it is the
+/// DB-level enforcement of the rev-30 §4.10(g) one-live-turn-per-conversation invariant. Without it the
+/// `decide` (read of `state='live'`) → `record_new` (INSERT) pair is a non-atomic check-then-insert: two
+/// concurrent requests for one conversation could both observe no live turn and both INSERT distinct
+/// `broker_turn_id`s (no PK conflict), forking two live turns. The partial UNIQUE index makes the second
+/// such INSERT fail at the DB, so the invariant no longer rests on the broker's single-threaded accept
+/// loop alone. Because it is partial (`WHERE state='live'`), terminal (committed/blocked) rows are exempt,
+/// so a settled conversation can start a fresh live turn.
 pub fn create_schema(conn: &Connection) -> Result<(), StoreError> {
     conn.execute_batch(
         r#"
@@ -112,7 +128,7 @@ pub fn create_schema(conn: &Connection) -> Result<(), StoreError> {
             created_at_ms     INTEGER NOT NULL,
             request_nonce     TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_broker_turns_live
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_broker_turns_one_live
             ON broker_turns (conversation_id)
             WHERE state = 'live';
         "#,
@@ -124,8 +140,18 @@ pub fn create_schema(conn: &Connection) -> Result<(), StoreError> {
 ///
 /// `broker_turn_id` and `request_nonce` are BROKER-minted and passed in — this store never derives them
 /// from the renderer request (rev-30 §4.10(g) authority boundary). `key` is the validated normalized
-/// tuple; `now_ms` is the injected clock. The `broker_turn_id` PRIMARY KEY makes a repeated insert of the
-/// same id fail loudly ([`StoreError::Db`]) rather than silently forking a second live row.
+/// tuple; `now_ms` is the injected clock.
+///
+/// Two distinct DB constraints guard this INSERT:
+/// - the `broker_turn_id` PRIMARY KEY makes a repeated insert of the same id fail loudly
+///   ([`StoreError::Db`]) rather than silently forking a live row (extended code `SQLITE_CONSTRAINT_PRIMARYKEY`);
+/// - the partial UNIQUE `idx_broker_turns_one_live` index makes a *second live turn for the same
+///   conversation* fail at INSERT (extended code `SQLITE_CONSTRAINT_UNIQUE`). That specific violation is
+///   mapped to the typed [`StoreError::TurnInProgress`] so a benign concurrency loser is reported as
+///   "turn in progress" (fail-closed, race-safe) rather than a generic infrastructure fault.
+///
+/// This closes the non-atomic check-then-insert window: even if two callers both saw no live turn in
+/// [`decide`], only one INSERT can win; the other gets [`StoreError::TurnInProgress`].
 pub fn record_new(
     conn: &Connection,
     key: &IdempotencyKey,
@@ -145,8 +171,26 @@ pub fn record_new(
             now_ms,
             request_nonce,
         ],
-    )?;
+    )
+    .map_err(map_record_new_error)?;
     Ok(())
+}
+
+/// Classify a `record_new` INSERT failure. Only a UNIQUE-constraint violation (the partial
+/// `idx_broker_turns_one_live` index firing on a second live turn for the same conversation) becomes the
+/// typed [`StoreError::TurnInProgress`]; every other failure — including a PRIMARY KEY collision on a
+/// duplicate `broker_turn_id`, a CHECK violation, or an I/O fault — stays [`StoreError::Db`].
+fn map_record_new_error(e: rusqlite::Error) -> StoreError {
+    if let rusqlite::Error::SqliteFailure(ref info, _) = e {
+        // SQLITE_CONSTRAINT_UNIQUE (2067) is the partial unique-index (one-live-per-conversation)
+        // violation; SQLITE_CONSTRAINT_PRIMARYKEY (1555) is a duplicate broker_turn_id and must stay Db.
+        if info.code == ErrorCode::ConstraintViolation
+            && info.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+        {
+            return StoreError::TurnInProgress;
+        }
+    }
+    StoreError::Db(e)
 }
 
 /// The currently-live turns, reconstructed as slice-1 [`LiveTurn`] values so
@@ -338,9 +382,45 @@ mod tests {
         let conn = store();
         let r = req("conv-1", Some("agent-x"), CRID);
         record_new(&conn, &r.idempotency_key(), "bt-1", "nonce-1", 1_000).unwrap();
-        // Re-inserting the same broker_turn_id must fail (PK), never silently fork a live row.
-        let err = record_new(&conn, &r.idempotency_key(), "bt-1", "nonce-2", 2_000);
+        // Re-inserting the same broker_turn_id must fail (PK), never silently fork a live row. We use a
+        // DIFFERENT conversation so the one-live-per-conversation UNIQUE index does not also fire — this
+        // isolates the PRIMARY KEY guard, which stays a generic StoreError::Db (extended code 1555),
+        // distinct from the TurnInProgress mapping reserved for the unique-live violation (2067).
+        let other = req("conv-2", Some("agent-x"), CRID2);
+        let err = record_new(&conn, &other.idempotency_key(), "bt-1", "nonce-2", 2_000);
         assert!(matches!(err, Err(StoreError::Db(_))));
+    }
+
+    #[test]
+    fn second_live_turn_same_conversation_is_rejected_by_unique_index() {
+        let conn = store();
+        // First live turn for conv-1.
+        let r = req("conv-1", Some("agent-x"), CRID);
+        record_new(&conn, &r.idempotency_key(), "bt-1", "nonce-1", 1_000).unwrap();
+
+        // A DIFFERENT broker_turn_id (no PK collision) but the SAME conversation, while bt-1 is still
+        // live. This is exactly the check-then-insert race: without the partial UNIQUE index both would
+        // INSERT and fork two live turns. It must instead fail at the DB with the TYPED TurnInProgress
+        // (the unique-constraint violation), never Ok and never a generic StoreError::Db.
+        let dup = req("conv-1", Some("agent-x"), CRID2);
+        let err = record_new(&conn, &dup.idempotency_key(), "bt-2", "nonce-2", 2_000);
+        assert!(
+            matches!(err, Err(StoreError::TurnInProgress)),
+            "expected typed TurnInProgress from the one-live-per-conversation unique index, got {err:?}"
+        );
+
+        // And no second live row was forked: conv-1 still has exactly one live turn, still bt-1.
+        let live = live_turns(&conn).unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].broker_turn_id, "bt-1");
+
+        // Once bt-1 settles, the conversation is free again: a fresh live turn now inserts cleanly
+        // (the index is partial on state='live', so the terminal row does not block it).
+        settle(&conn, "bt-1", TurnState::Committed).unwrap();
+        record_new(&conn, &dup.idempotency_key(), "bt-2", "nonce-2", 3_000).unwrap();
+        let live = live_turns(&conn).unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].broker_turn_id, "bt-2");
     }
 
     #[test]

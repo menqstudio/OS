@@ -55,6 +55,10 @@ pub enum Refusal {
     Priv(PrivViolation),
     /// The executor image failed start/exec-time integrity (owner/mode/hash vs the lease pin).
     ImageIntegrity,
+    /// A TCB-identity precondition failed BEFORE any privilege drop or exec — e.g. the process that
+    /// invoked this setuid-root launcher is not the provisioned evidence-recorder runner (the §2.7 step-1
+    /// real UID/GID invoker gate). Fail-closed: no drop, no exec, no receipt.
+    TcbIntegrity(&'static str),
     /// A privilege-drop or exec syscall failed (the name identifies which).
     Syscall(&'static str),
 }
@@ -203,6 +207,26 @@ pub fn parse_status(content: &str) -> Option<FinalState> {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Pure exec-image owner/mode predicate — host-independent so it is unit-testable on any OS. It is fed the
+// `st_mode`/`st_uid` an `fstat` of the OPENED executor fd reports (never a `metadata(path)` re-lookup).
+// ---------------------------------------------------------------------------------------------------
+/// `<sys/stat.h>` mode masks, as host-independent literals so this predicate compiles/tests on any OS.
+const S_IFMT_MASK: u32 = 0o170000;
+const S_IFREG_BITS: u32 = 0o100000;
+const GROUP_OTHER_WRITE_BITS: u32 = 0o022;
+
+/// The exec-image owner/mode floor (§2.5 image content owner/mode + §2.7 image identity): `true` iff the
+/// fstat'd image is a **regular file**, owned by a dedicated TCB principal (`root(0)` or the provisioned
+/// `brops-admin`), and has **no group/other write bit**. Pure: the caller supplies the `st_mode`/`st_uid`
+/// from an `fstat` of the OPENED fd (never a `metadata(path)` re-lookup — no TOCTOU).
+pub fn image_owner_mode_ok(st_mode: u32, st_uid: u32, brops_admin_uid: u32) -> bool {
+    let is_regular = (st_mode & S_IFMT_MASK) == S_IFREG_BITS;
+    let group_or_other_writable = (st_mode & GROUP_OTHER_WRITE_BITS) != 0;
+    let owner_is_tcb = st_uid == 0 || st_uid == brops_admin_uid;
+    is_regular && owner_is_tcb && !group_or_other_writable
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Entry point.
 // ---------------------------------------------------------------------------------------------------
 
@@ -238,9 +262,10 @@ fn run() -> i32 {
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString};
     use std::fs;
-    use std::os::unix::ffi::OsStrExt;
+    use std::io::Read;
+    use std::os::unix::io::{FromRawFd, IntoRawFd};
 
     // The executor identity is bound by the validated lease (§4.3). Lease parsing lands in a separate
     // slice; the launcher NEVER chooses these — they are validated inputs. Pinned here as the boundary
@@ -248,7 +273,33 @@ mod linux {
     const EXECUTOR_UID: u32 = 5007;
     const EXECUTOR_GID: u32 = 5007;
 
+    // The provisioned evidence-recorder runner principal (§2.6): the ONLY identity permitted to invoke this
+    // setuid-root launcher (its REAL uid/gid, inherited from the caller). Like EXECUTOR_UID/GID these are
+    // validated inputs the launcher never chooses.
+    // TODO: bind the recorder uid/gid from the validated lease if it carries them; pinned here as the
+    // boundary constant so the §2.7 step-1 invoker gate EXISTS and fails closed until then.
+    const RECORDER_UID: u32 = 5006;
+    const RECORDER_GID: u32 = 5006;
+
+    // The dedicated `brops-admin` TCB owner uid (§2.5): root(0) or brops-admin may own the executor image.
+    // TODO: bind from the root-owned TcbPinManifest (`owner_uids[BropsAdmin]`) / validated lease; pinned as
+    // the boundary constant so the fstat'd-fd owner check accepts exactly the two TCB principals.
+    const TCB_OWNER_BROPS_ADMIN_UID: u32 = 500;
+
+    // The pinned SHA-256 (lowercase hex) of the contained-executor image bytes (§2.5 `contained-executor.bin`
+    // content pin / §2.7 image identity). A validated lease/pin-manifest input the launcher never chooses.
+    // TODO: bind from the validated lease (`executor_executable_sha256`) / TcbPinManifest — the placeholder
+    // below makes the re-hash gate fail closed until the real digest is provisioned.
+    const EXECUTOR_IMAGE_SHA256_PIN: &str =
+        "0000000000000000000000000000000000000000000000000000000000000000";
+
     pub fn real_main() -> Result<(), Refusal> {
+        // (0) §2.7 step 1 — INVOKER GATE. Before ANY fd/priv/exec work, confirm the process that execve'd
+        //     this setuid-root launcher is the provisioned evidence-recorder runner. A setuid-root binary
+        //     starts with euid=0 but INHERITS the caller's REAL uid/gid, so getresuid/getresgid reveal who
+        //     actually invoked us; any non-recorder invoker is a confused-deputy ⇒ fail closed (no receipt).
+        verify_invoker_is_recorder()?;
+
         // (1) Fixed, closed argv: lease handle + pinned executor image + cgroup path. Any other shape, or a
         //     non-empty environment, is a confused-deputy signal ⇒ refuse.
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -281,33 +332,79 @@ mod linux {
         let post = parse_status(&status).ok_or(Refusal::Proc("status-parse"))?;
         verify_final_state(&post, exec_uid, exec_gid)?;
 
-        // (7) Open the executor image O_NOFOLLOW|O_RDONLY|O_CLOEXEC (NOT one of 3–6), confirm it is a
-        //     regular, root/TCB-owned, non-writable file, then fexecve THAT exact fd. The full re-hash vs
-        //     the lease pin lands with the integrity slice; owner/mode is the fail-closed guard here.
+        // (7) Open the executor image O_RDONLY|O_NOFOLLOW|O_CLOEXEC (NOT one of 3–6), then bind exec-time
+        //     integrity to THAT exact fd: fstat it (regular, TCB-owned, non-writable) AND re-hash its bytes
+        //     against the lease `executor_executable_sha256` pin, and fexecve the SAME fd — the bytes hashed
+        //     are the bytes executed, with no path re-lookup. Any mismatch ⇒ ImageIntegrity (no exec).
         let image_fd = open_executor_image(executor_image)?;
         fexecve_pinned(image_fd, executor_image)?; // returns ONLY on failure
         Err(Refusal::Syscall("fexecve"))
     }
 
+    /// §2.7 step-1 invoker gate: the launcher is setuid-root but must ONLY ever be invoked BY the
+    /// provisioned evidence-recorder runner. `getresuid`/`getresgid` expose the REAL uid/gid inherited from
+    /// the caller; both MUST equal the recorder principal or we refuse before any privilege/exec work.
+    fn verify_invoker_is_recorder() -> Result<(), Refusal> {
+        let mut ruid: libc::uid_t = 0;
+        let mut euid: libc::uid_t = 0;
+        let mut suid: libc::uid_t = 0;
+        // SAFETY: three valid out-pointers; getresuid writes the real/effective/saved uids.
+        if unsafe { libc::getresuid(&mut ruid, &mut euid, &mut suid) } != 0 {
+            return Err(Refusal::Syscall("getresuid"));
+        }
+        let mut rgid: libc::gid_t = 0;
+        let mut egid: libc::gid_t = 0;
+        let mut sgid: libc::gid_t = 0;
+        // SAFETY: three valid out-pointers; getresgid writes the real/effective/saved gids.
+        if unsafe { libc::getresgid(&mut rgid, &mut egid, &mut sgid) } != 0 {
+            return Err(Refusal::Syscall("getresgid"));
+        }
+        // Only the REAL uid/gid identify the invoker (euid/egid are the setuid-root target). Bind both.
+        // TODO: bind RECORDER_UID/RECORDER_GID from the validated lease rather than the boundary constant.
+        if ruid != RECORDER_UID || rgid != RECORDER_GID {
+            return Err(Refusal::TcbIntegrity("invoker-not-recorder"));
+        }
+        Ok(())
+    }
+
     /// Enumerate `/proc/self/fd` and build the observed [`FdFacts`] table for the §2.7 verifier.
+    ///
+    /// The enumeration handle is captured as an EXACT fd number (`dirfd`) and is the ONLY descriptor
+    /// excluded from the observed set. Every OTHER descriptor outside the {0..6} contract — regardless of
+    /// its `/proc/self/fd` link target — is reported, so `verify_launcher_fd_set` flags any inherited fd ≥ 7
+    /// (e.g. a non-CLOEXEC handle onto `/proc/self/mem` or `/proc/sysrq-trigger`) as `UnexpectedFd`. The
+    /// prior path-prefix filter that skipped any `/proc/`-target fd was a §2.7 bypass and is removed.
     fn collect_fd_facts() -> Result<Vec<FdFacts>, Refusal> {
+        let dir_path = CString::new("/proc/self/fd").map_err(|_| Refusal::Proc("fd-dir"))?;
+        // SAFETY: opendir on a valid NUL-terminated path; the stream is closed exactly once below.
+        let dirp = unsafe { libc::opendir(dir_path.as_ptr()) };
+        if dirp.is_null() {
+            return Err(Refusal::Proc("fd-dir"));
+        }
+        // The EXACT descriptor opendir enumerates through — the only fd excluded from `observed`, so the
+        // readdir handle is not itself falsely flagged while everything else must reach the verifier.
+        let dirfd = unsafe { libc::dirfd(dirp) };
+
         let mut out = Vec::new();
-        let dir = fs::read_dir("/proc/self/fd").map_err(|_| Refusal::Proc("fd-dir"))?;
-        for entry in dir {
-            let entry = entry.map_err(|_| Refusal::Proc("fd-entry"))?;
-            let name = entry.file_name();
-            let fd: i32 = match name.to_str().and_then(|s| s.parse().ok()) {
+        loop {
+            // SAFETY: dirp is a live stream; readdir yields NULL at end-of-directory.
+            let ent = unsafe { libc::readdir(dirp) };
+            if ent.is_null() {
+                break;
+            }
+            // SAFETY: `ent` is a valid dirent for this iteration; `d_name` is a NUL-terminated field.
+            let name = unsafe { CStr::from_ptr((*ent).d_name.as_ptr()) };
+            let fd: i32 = match name.to_str().ok().and_then(|s| s.parse().ok()) {
                 Some(n) => n,
-                None => continue,
+                None => continue, // "." / ".." / non-numeric
             };
-            // Skip the directory handle read_dir itself holds open.
+            if fd == dirfd {
+                continue; // exclude ONLY the enumeration handle — NOT by /proc link target
+            }
             let link = match fs::read_link(format!("/proc/self/fd/{fd}")) {
                 Ok(l) => l,
                 Err(_) => continue,
             };
-            if link.as_os_str().as_bytes().starts_with(b"/proc/") {
-                continue;
-            }
             let info = fs::read_to_string(format!("/proc/self/fdinfo/{fd}"))
                 .ok()
                 .and_then(|c| parse_fdinfo(&c))
@@ -330,6 +427,10 @@ mod linux {
                 is_output_pipe: target.starts_with("pipe:"),
                 cloexec: info.cloexec,
             });
+        }
+        // SAFETY: dirp came from opendir and is closed exactly once here (this also closes `dirfd`).
+        unsafe {
+            libc::closedir(dirp);
         }
         Ok(out)
     }
@@ -428,18 +529,35 @@ mod linux {
         if fd < 0 {
             return Err(Refusal::ImageIntegrity);
         }
-        // Exec-time integrity guard: the image must be a regular, root-owned, non-group/other-writable file.
-        // The full re-hash vs the lease pin lands with the integrity slice.
-        let md = match fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) => {
-                unsafe { libc::close(fd) };
-                return Err(Refusal::ImageIntegrity);
-            }
-        };
-        use std::os::unix::fs::MetadataExt;
-        let writable_by_nonowner = md.mode() & 0o022 != 0;
-        if !md.is_file() || md.uid() != 0 || writable_by_nonowner {
+
+        // Exec-time integrity is bound to the EXACT descriptor we hold and will exec — never a
+        // `fs::metadata(path)` re-lookup (which could resolve a DIFFERENT inode than the held fd: TOCTOU).
+        // (a) fstat the OPENED fd: require a regular, TCB-owned (root or brops-admin), non group/other
+        //     writable file.
+        // SAFETY: fd is a live descriptor; fstat is handed a valid out-pointer to a plain C `stat`.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut st) } != 0 {
+            unsafe { libc::close(fd) };
+            return Err(Refusal::ImageIntegrity);
+        }
+        if !image_owner_mode_ok(st.st_mode, st.st_uid, TCB_OWNER_BROPS_ADMIN_UID) {
+            unsafe { libc::close(fd) };
+            return Err(Refusal::ImageIntegrity);
+        }
+
+        // (b) Re-hash the EXACT bytes behind the held fd and bind them to the lease pin. Read through a File
+        //     wrapper, then RECLAIM the raw fd (`into_raw_fd`) so the SAME descriptor stays open for
+        //     fexecve — the bytes hashed are the bytes executed. A freshly O_RDONLY-opened fd is at offset
+        //     0, so read_to_end consumes the whole image.
+        // SAFETY: we own `fd` exclusively; from_raw_fd takes ownership, into_raw_fd hands it back without
+        // closing. On the read-error path the `File` is dropped, closing the fd (fail closed).
+        let mut f = unsafe { fs::File::from_raw_fd(fd) };
+        let mut bytes = Vec::new();
+        if f.read_to_end(&mut bytes).is_err() {
+            return Err(Refusal::ImageIntegrity);
+        }
+        let fd = f.into_raw_fd();
+        if brops_core::receipt::sha256_hex(&bytes) != EXECUTOR_IMAGE_SHA256_PIN {
             unsafe { libc::close(fd) };
             return Err(Refusal::ImageIntegrity);
         }
@@ -508,6 +626,21 @@ mod tests {
     fn good_fds() -> Vec<FdFacts> {
         vec![inert(0), inert(1), inert(2), store(3), store(4), store(5), output()]
     }
+    /// An inherited fd whose `/proc/self/fd` link points INTO `/proc` (e.g. `/proc/self/mem`): NOT the
+    /// approved /dev/null endpoint, NOT a store inode, NOT the output pipe — exactly what the fixed
+    /// `collect_fd_facts` now records for such a descriptor (the old path-prefix filter used to DROP it).
+    fn proc_fd(fd: i32) -> FdFacts {
+        FdFacts {
+            fd,
+            is_inert_endpoint: false,
+            is_interactive_or_inherited: true,
+            read_only: true,
+            is_regular_store_inode: false,
+            offset_zero: false,
+            is_output_pipe: false,
+            cloexec: false,
+        }
+    }
 
     const EXEC_UID: u32 = 5007;
     const EXEC_GID: u32 = 5007;
@@ -547,6 +680,39 @@ mod tests {
         let mut f = good_facts();
         f.observed_fds.push(store(7)); // fd >= 7 present
         assert_eq!(evaluate_launch(&f), Err(Refusal::Fd(FdViolation::UnexpectedFd(7))));
+    }
+
+    #[test]
+    fn gate_flags_a_proc_target_fd_ge7_as_unexpected() {
+        // Regression (Finding 1): a non-CLOEXEC inherited fd >= 7 whose /proc/self/fd link targets /proc
+        // (e.g. /proc/self/mem or /proc/sysrq-trigger) MUST be observed and flagged. The old collector
+        // dropped any /proc-target fd via a path-prefix filter, hiding it from the verifier; the fixed
+        // collector excludes only its own readdir dirfd, so every fd outside {0..6} reaches this gate.
+        let mut f = good_facts();
+        f.observed_fds.push(proc_fd(7));
+        assert_eq!(
+            evaluate_launch(&f),
+            Err(Refusal::Fd(FdViolation::UnexpectedFd(7)))
+        );
+    }
+
+    #[test]
+    fn image_owner_mode_predicate_matches_the_2_5_floor() {
+        // Finding 2: the fstat'd executor image must be a regular, TCB-owned (root/brops-admin), non
+        // group/other-writable file. Pure predicate over (st_mode, st_uid, brops_admin_uid).
+        const ADMIN: u32 = 500;
+        const REG: u32 = 0o100000; // S_IFREG
+        const DIR: u32 = 0o040000; // S_IFDIR
+        // root- and brops-admin-owned regular non-writable images pass.
+        assert!(image_owner_mode_ok(REG | 0o755, 0, ADMIN));
+        assert!(image_owner_mode_ok(REG | 0o644, ADMIN, ADMIN));
+        // group- or other-writable images are rejected (a forge/replace vector).
+        assert!(!image_owner_mode_ok(REG | 0o664, 0, ADMIN));
+        assert!(!image_owner_mode_ok(REG | 0o646, 0, ADMIN));
+        // a non-TCB owner (e.g. the executor runtime uid 5007) is rejected even if non-writable.
+        assert!(!image_owner_mode_ok(REG | 0o755, 5007, ADMIN));
+        // a non-regular inode (directory) is rejected even if TCB-owned and non-writable.
+        assert!(!image_owner_mode_ok(DIR | 0o755, 0, ADMIN));
     }
 
     #[test]

@@ -20,18 +20,16 @@ use std::collections::BTreeSet;
 /// A Windows security identifier (opaque string form, e.g. `S-1-5-...`).
 pub type Sid = String;
 
-/// Privileges that MUST NOT be present on the executor's restricted token (a non-exhaustive forbidden set
-/// mirroring the Linux forbidden capabilities). Any of these on the token ⇒ violation.
-pub const FORBIDDEN_PRIVILEGES: &[&str] = &[
-    "SeDebugPrivilege",
-    "SeTcbPrivilege",
-    "SeLoadDriverPrivilege",
-    "SeImpersonatePrivilege",
-    "SeAssignPrimaryTokenPrivilege",
-    "SeBackupPrivilege",
-    "SeRestorePrivilege",
-    "SeTakeOwnershipPrivilege",
-];
+/// The ONLY privileges the contained executor is permitted to hold on its restricted token — an ALLOWLIST
+/// (mirroring the Linux dropped-caps floor). A denylist is unsafe here: privileges such as
+/// `SeCreateTokenPrivilege` (arbitrary token creation ⇒ full escalation), `SeCreateGlobalPrivilege`,
+/// `SeSystemEnvironmentPrivilege`, `SeManageVolumePrivilege`, and `SeSecurityPrivilege` are not in any
+/// bounded forbidden set, and `is_restricted` (restricting SIDs) does NOT imply `DISABLE_MAX_PRIVILEGE`, so
+/// a restricted token can still carry them. We therefore reject ANY privilege not explicitly allowed.
+///
+/// `SeChangeNotifyPrivilege` (bypass-traverse-checking) is effectively always present and harmless, so it is
+/// the sole allowed privilege.
+pub const ALLOWED_PRIVILEGES: &[&str] = &["SeChangeNotifyPrivilege"];
 
 /// Integrity level of a token (only `Low`/`Untrusted` are acceptable for the contained executor).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,11 +112,15 @@ pub enum WindowsBrokerViolation {
     WrongHandleRole(i32),
 }
 
-/// Verify the executor's restricted token: no forbidden privilege, low/untrusted integrity, is-restricted.
+/// Verify the executor's restricted token: ONLY allowlisted privileges, low/untrusted integrity,
+/// is-restricted. The privilege check is an ALLOWLIST — any privilege on the token that is not in
+/// [`ALLOWED_PRIVILEGES`] is a violation, REGARDLESS of `is_restricted` (which only means the token carries
+/// restricting SIDs and does not imply privileges were dropped). Integrity and is-restricted are retained as
+/// additional defense-in-depth gates.
 pub fn verify_restricted_token(t: &ObservedToken) -> Result<(), WindowsBrokerViolation> {
-    for p in FORBIDDEN_PRIVILEGES {
-        if t.privileges.contains(*p) {
-            return Err(WindowsBrokerViolation::ForbiddenPrivilege((*p).to_string()));
+    for p in &t.privileges {
+        if !ALLOWED_PRIVILEGES.contains(&p.as_str()) {
+            return Err(WindowsBrokerViolation::ForbiddenPrivilege(p.clone()));
         }
     }
     if !matches!(t.integrity, IntegrityLevel::Low | IntegrityLevel::Untrusted) {
@@ -206,6 +208,28 @@ mod tests {
     #[test]
     fn accepts_a_correct_restricted_token() {
         assert!(verify_restricted_token(&ok_token()).is_ok());
+    }
+
+    #[test]
+    fn accepts_token_holding_only_the_allowlisted_privilege() {
+        let mut t = ok_token();
+        t.privileges.insert("SeChangeNotifyPrivilege".into());
+        assert!(verify_restricted_token(&t).is_ok());
+    }
+
+    #[test]
+    fn rejects_escalation_privilege_even_on_low_integrity_restricted_token() {
+        // Regression (P1): SeCreateTokenPrivilege grants arbitrary token creation ⇒ full escalation. It is
+        // NOT in the old denylist, and `is_restricted` does not drop it. The allowlist MUST reject it even
+        // though integrity is Low and the token is restricted.
+        let mut t = ok_token();
+        t.privileges.insert("SeCreateTokenPrivilege".into());
+        assert_eq!(t.integrity, IntegrityLevel::Low);
+        assert!(t.is_restricted);
+        assert_eq!(
+            verify_restricted_token(&t),
+            Err(WindowsBrokerViolation::ForbiddenPrivilege("SeCreateTokenPrivilege".into()))
+        );
     }
 
     #[test]

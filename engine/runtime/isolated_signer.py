@@ -1,9 +1,9 @@
 """isolated receipt-signer service core (Wave 3b-1B, rev-30 §7 / §4.9).
 
-PURE signer logic for the isolated ``brops.receipt.v1`` signer described in the
-Isolated-Signer design (§1.1-§1.5, §4.1-§4.2). This module is deliberately
-socket-free and key-free so it can be exercised offline and without the OS
-trust chain:
+PURE signer logic for the isolated ``brops.governed-receipt-envelope.v1`` signer
+described in the Isolated-Signer design (§1.1-§1.5, §4.1-§4.2, §4.9). This module
+is deliberately socket-free and key-free so it can be exercised offline and
+without the OS trust chain:
 
   * The content-addressed artifact store is dict-backed and injected
     (``ArtifactStore``); a real deployment owns it behind the signer's dedicated
@@ -11,7 +11,7 @@ trust chain:
     handle and refuses unless ``sha256(bytes) == handle``.
   * The receipt-signing private key never appears here. Callers inject a
     ``sign_fn(private_key_handle, message_bytes) -> b64`` and the signer hands it
-    ONLY the canonical bytes it assembled from its OWN recomputed receipt.
+    ONLY the canonical bytes it assembled from its OWN recomputed payload.
   * The supervisor attestation is verified FIRST via an injected
     ``verify_attestation(key_handle, message_bytes, sig_b64) -> bool``; the
     signer acts on nothing until the attestation over ``JCS(evidence)`` verifies
@@ -22,12 +22,21 @@ structurally:
 
   * ``validate_sign_request`` accepts ONLY the fixed shape of ids/handles/small
     facts. Any inline artifact bytes field (e.g. a smuggled ``output_bytes``) or
-    any inline ``*_sha256`` claim is an UNKNOWN field and is REJECTED. Large
-    inputs enter ONLY as content-addressed handles.
-  * ``sign_result`` RECOMPUTES the receipt envelope itself: every ``*_sha256``
-    is derived from the store bytes named by the corresponding handle, never
-    trusted from the caller. It then signs ``JCS(recomputed_payload)`` exactly
-    once. It is NOT a ``sign(arbitrary_bytes)`` oracle.
+    any inline ``*_sha256`` claim for a store-derived digest is an UNKNOWN field
+    and is REJECTED. Large inputs enter ONLY as content-addressed handles.
+  * ``sign_result`` RECOMPUTES the receipt envelope itself: every store-derived
+    ``*_sha256`` (including ``output_sha256``/``output_bytes`` and the
+    ``request_sha256`` request-envelope digest) is derived from the store bytes
+    named by the corresponding handle, never trusted from the caller. It then
+    signs ``JCS(recomputed_payload)`` exactly once. It is NOT a
+    ``sign(arbitrary_bytes)`` oracle.
+
+The signed artifact is the FINAL-ACCEPTANCE envelope the desktop/broker verifies
+in ``governed_verification.rs`` (§7.1): a FLAT ``brops.governed-receipt-envelope.v1``
+payload of EXACTLY 23 keys (17 string, 6 integer) with ``key_id`` and the
+attestation binding INSIDE the signature. The broker reconstructs
+``JCS(payload)`` from these fields and Ed25519-verifies it under the pinned
+isolated-signer key, so this signer and that verifier MUST agree byte-for-byte.
 
 Every malformed / oversize / unauthorized input fails CLOSED as a typed refusal
 (``brops.governed-receipt-refusal.v1``) carrying a fixed reason — never a
@@ -43,12 +52,17 @@ import json
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
 # ---------------------------------------------------------------------------
-# Domain-separated protocol tags (§1.9)
+# Domain-separated protocol tags (§1.9, §2.2, §4.9)
 # ---------------------------------------------------------------------------
 
 SIGN_REQUEST_PROTOCOL = "brops.sign-request.v1"
-RECEIPT_PROTOCOL = "brops.receipt.v1"
+# The canonical governed-request envelope protocol whose JCS digest is
+# ``request_sha256`` (mirrors receipt.rs ``REQUEST_PROTOCOL`` / §2.2). The signer
+# RECOMPUTES this digest; it never trusts a transported request_sha256.
+REQUEST_PROTOCOL = "brops.request.v1"
 ATTESTATION_PROTOCOL = "brops.run-attestation.v1"
+# The frozen §4.9 artifact #12 discriminator. MUST equal
+# governed_verification.rs::RECEIPT_ENVELOPE_ARTIFACT_TYPE.
 ENVELOPE_ARTIFACT_TYPE = "brops.governed-receipt-envelope.v1"
 REFUSAL_ARTIFACT_TYPE = "brops.governed-receipt-refusal.v1"
 
@@ -57,14 +71,19 @@ REFUSAL_ARTIFACT_TYPE = "brops.governed-receipt-refusal.v1"
 MAX_REQUEST_BYTES = 256 * 1024
 STRING_CAP = 128
 
-# The fixed, exhaustive evidence shape. Anything outside this set (extra keys,
-# missing keys, wrong types) is rejected. In particular there is NO field for
-# inline artifact bytes and NO inline ``*_sha256`` claim: turn facts enter as
-# authoritative small values or as content-addressed handles ONLY.
+# ---------------------------------------------------------------------------
+# The fixed, exhaustive evidence shape (§4.9 source inputs). Anything outside
+# this set (extra keys, missing keys, wrong types) is rejected. In particular
+# there is NO field for inline artifact bytes and NO inline store-derived
+# ``*_sha256`` claim: turn facts enter as authoritative small values or as
+# content-addressed handles ONLY.
+# ---------------------------------------------------------------------------
+
+# Capped non-empty strings — authoritative small facts carried verbatim.
 EVIDENCE_STRING_FIELDS = (
     "run_id",
     "execution_attempt_id",
-    "lease_id",
+    "task_id",
     "request_nonce",
     "receipt_id",
     "decision",
@@ -76,7 +95,12 @@ EVIDENCE_STRING_FIELDS = (
     "policy_id",
     "policy_version",
 )
-EVIDENCE_HANDLE_FIELDS = (
+
+# Store handles the signer READS to DERIVE a ``*_sha256`` from the exact bytes.
+# ``system``/``history``/``generation_config`` feed the recomputed request_sha256;
+# ``output`` feeds output_sha256/output_bytes; ``policy_bundle``/``containment``
+# are authorization evidence (their presence is required, §1.5).
+EVIDENCE_DERIVE_HANDLE_FIELDS = (
     "policy_bundle_handle",
     "generation_config_handle",
     "system_handle",
@@ -84,11 +108,44 @@ EVIDENCE_HANDLE_FIELDS = (
     "output_handle",
     "containment_evidence_handle",
 )
-EVIDENCE_TS_FIELDS = ("requested_at", "completed_at")
-EVIDENCE_FIELDS = EVIDENCE_STRING_FIELDS + EVIDENCE_HANDLE_FIELDS + EVIDENCE_TS_FIELDS
 
-# handle field -> the receipt hash field the signer DERIVES from the store bytes.
-HANDLE_TO_RECEIPT_HASH = {
+# Protected-chain store handles carried VERBATIM into the signed envelope. The
+# signer deep-verifies that each resolves in its protected store (§7) — it will
+# not mint an envelope naming a record/lease/execution-receipt it cannot see —
+# but the handle *value* (already the content address) is what the envelope
+# carries; the broker never dereferences it (§4.6 authority rule).
+EVIDENCE_CHAIN_HANDLE_FIELDS = (
+    "record_handle",
+    "lease_handle",
+    "execution_receipt_handle",
+)
+
+# 64-hex evidence-chain digest carried verbatim (attested by the supervisor; not
+# a store blob the signer dereferences).
+EVIDENCE_DIGEST_FIELDS = ("evidence_final_event_hash",)
+
+# Epoch-ms timestamps (u64).
+EVIDENCE_TS_FIELDS = ("requested_at", "completed_at", "challenge_accepted_at_ms")
+
+# Evidence-head counters — bare positive integers (the ``governed_evidence_head_floor``
+# CHECK constraints require each >= 1).
+EVIDENCE_COUNT_FIELDS = (
+    "evidence_event_count",
+    "evidence_last_sequence",
+    "evidence_head_sequence",
+)
+
+EVIDENCE_HANDLE_FIELDS = EVIDENCE_DERIVE_HANDLE_FIELDS + EVIDENCE_CHAIN_HANDLE_FIELDS
+EVIDENCE_FIELDS = (
+    EVIDENCE_STRING_FIELDS
+    + EVIDENCE_HANDLE_FIELDS
+    + EVIDENCE_DIGEST_FIELDS
+    + EVIDENCE_TS_FIELDS
+    + EVIDENCE_COUNT_FIELDS
+)
+
+# derive-handle field -> the ``*_sha256`` the signer DERIVES from the store bytes.
+HANDLE_TO_DERIVED_HASH = {
     "policy_bundle_handle": "policy_bundle_sha256",
     "generation_config_handle": "generation_config_sha256",
     "system_handle": "system_sha256",
@@ -99,32 +156,38 @@ HANDLE_TO_RECEIPT_HASH = {
 
 ATTESTATION_FIELDS = ("attestation_protocol", "supervisor_key_id", "sig")
 
-# The recomputed receipt envelope fields, in a fixed order (§1.4 "the signer
-# constructs the canonical receipt itself"). JCS re-sorts on serialization, so
-# order here is documentation, not the signed order.
-RECEIPT_FIELDS = (
-    "protocol",
+# The §4.9 flat envelope payload — EXACTLY these 23 keys. 17 string-valued, 6
+# integer-valued. JCS re-sorts on serialization, so this order is documentation,
+# not the signed order. This set MUST equal the field set reconstructed by
+# governed_verification.rs::ReceiptEnvelope::payload_jcs.
+ENVELOPE_STRING_KEYS = (
+    "artifact_type",
+    "key_id",
     "receipt_id",
     "run_id",
     "execution_attempt_id",
-    "lease_id",
-    "request_nonce",
-    "decision",
+    "task_id",
     "workspace_id",
     "install_id",
-    "supervisor_id",
-    "executor_id",
-    "builder_id",
-    "policy_id",
-    "policy_version",
-    "policy_bundle_sha256",
-    "generation_config_sha256",
-    "system_sha256",
-    "history_sha256",
+    "request_nonce",
+    "request_sha256",
+    "record_handle",
+    "lease_handle",
+    "execution_receipt_handle",
     "output_sha256",
-    "containment_evidence_sha256",
-    "completed_at",
+    "evidence_final_event_hash",
+    "supervisor_attestation_key_id",
+    "attestation_evidence_sha256",
 )
+ENVELOPE_INTEGER_KEYS = (
+    "output_bytes",
+    "challenge_accepted_at_ms",
+    "completed_at_ms",
+    "evidence_event_count",
+    "evidence_last_sequence",
+    "evidence_head_sequence",
+)
+ENVELOPE_PAYLOAD_FIELDS = ENVELOPE_STRING_KEYS + ENVELOPE_INTEGER_KEYS
 
 # Fixed refusal-reason vocabulary (§4.2 tagged union).
 REASON_ATTESTATION_INVALID = "attestation_invalid"
@@ -165,9 +228,29 @@ class _Refuse(Exception):
 
 def _canonical_bytes(payload: Mapping[str, Any]) -> bytes:
     """Deterministic JCS-equivalent encoding: sorted keys, compact separators,
-    UTF-8. No NaN/Inf (``allow_nan=False``) so a hostile float can't sneak in."""
+    UTF-8, no NaN/Inf. Used for the attestation-evidence digest and the
+    whole-request size bound (internal consistency only)."""
     return json.dumps(
         payload, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+
+
+def _jcs_bytes(payload: Mapping[str, Any]) -> bytes:
+    """RFC-8785-compatible JCS for a flat object over the fixed ASCII key set:
+    sorted keys, compact separators, raw UTF-8 (``ensure_ascii=False``), integers
+    as bare JSON integers. This is EXACTLY the encoding the Rust broker
+    reconstructs (``serde_json::to_vec`` of a sorted ``Map``), so the isolated
+    signer's ``JCS(payload)`` and the broker's ``payload_jcs`` are byte-identical.
+
+    ``json.dumps(payload, sort_keys=True, separators=(",",":"),
+    ensure_ascii=False).encode("utf-8")``.
+    """
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
 
 
@@ -188,6 +271,12 @@ def _capped_str(value: Any) -> bool:
 def _is_u64_ms(value: Any) -> bool:
     # bool is an int subclass — exclude it explicitly.
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 2 ** 64
+
+
+def _is_pos_i63(value: Any) -> bool:
+    # Evidence-head counters: strictly positive, i64 range (matches the broker's
+    # i64 fields and the ledger's ``>= 1`` CHECK constraints). bool excluded.
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value < 2 ** 63
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +343,10 @@ class SignerConfig:
     OPAQUE handle (path / KMS id / HSM slot) that only ``sign_fn`` knows how to
     use. ``supervisor_attestation_key_handle`` is likewise the opaque public-key
     handle the injected ``verify_attestation`` consumes.
+
+    ``receipt_key_id`` and ``supervisor_attestation_key_id`` are the signer's
+    pinned identity: they are placed INSIDE the signed §4.9 payload and the
+    broker checks them against its own pinned manifest ids.
     """
 
     def __init__(
@@ -315,9 +408,10 @@ def _validate_attestation(attestation: Any) -> Dict[str, Any]:
 
 
 def _validate_evidence(evidence: Any) -> Dict[str, Any]:
-    """Validate the evidence body against the fixed shape; raise ``_Refuse`` on
-    ANY violation. This is the ONLY door through which turn facts enter, and it
-    admits NO inline artifact bytes and NO caller-supplied ``*_sha256`` claim."""
+    """Validate the evidence body against the fixed §4.9 source shape; raise
+    ``_Refuse`` on ANY violation. This is the ONLY door through which turn facts
+    enter, and it admits NO inline artifact bytes and NO caller-supplied
+    store-derived ``*_sha256`` claim."""
     if not isinstance(evidence, Mapping):
         raise _Refuse(REASON_MALFORMED)
 
@@ -334,8 +428,14 @@ def _validate_evidence(evidence: Any) -> Dict[str, Any]:
     for field in EVIDENCE_HANDLE_FIELDS:
         if not _is_sha256_hex(evidence[field]):
             raise _Refuse(REASON_MALFORMED)
+    for field in EVIDENCE_DIGEST_FIELDS:
+        if not _is_sha256_hex(evidence[field]):
+            raise _Refuse(REASON_MALFORMED)
     for field in EVIDENCE_TS_FIELDS:
         if not _is_u64_ms(evidence[field]):
+            raise _Refuse(REASON_MALFORMED)
+    for field in EVIDENCE_COUNT_FIELDS:
+        if not _is_pos_i63(evidence[field]):
             raise _Refuse(REASON_MALFORMED)
 
     return {field: evidence[field] for field in EVIDENCE_FIELDS}
@@ -367,7 +467,7 @@ def validate_sign_request(request: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]
 
 class IsolatedSigner:
     """Recompute-and-sign core: turns an attested sign-request into a signed
-    ``brops.governed-receipt-envelope.v1`` or a typed refusal.
+    ``brops.governed-receipt-envelope.v1`` (§4.9) or a typed refusal.
 
     Injected seams (no real socket, no real key needed):
       * ``store``            — ``ArtifactStore`` read by handle.
@@ -410,6 +510,12 @@ class IsolatedSigner:
         becomes ``{"artifact_type": "brops.governed-receipt-refusal.v1",
         "status": "refused", "reason": <fixed reason>}``. Never a partial or
         unsigned success.
+
+        On success returns the §4.9 envelope:
+        ``{"artifact_type", "status": "signed", "payload": <flat 23-key dict>,
+        "signature_b64": <sign_fn output>}`` — ``key_id``, the attestation key
+        id and the attestation-evidence digest all live INSIDE ``payload`` and
+        are therefore covered by the signature.
         """
         try:
             # (0) whole-request bound (§1.9) BEFORE anything else.
@@ -422,13 +528,24 @@ class IsolatedSigner:
             self._check_run_binding(evidence)
             self._check_identity(evidence)
             self._check_timestamps(evidence)
-            # (4) recompute every hash from the STORE bytes named by the handle.
+            # (4) recompute every store-derived hash from the STORE bytes named
+            #     by the handle, and deep-verify the protected-chain handles.
             derived = self._derive_hashes(evidence)
-            # (5) construct the canonical receipt payload from trusted inputs.
-            payload = self._recompute_receipt(evidence, derived)
-            # (6) sign the EXACT canonical bytes of our OWN payload — never the
-            #     caller's bytes.
-            message = _canonical_bytes(payload)
+            self._verify_chain_handles(evidence)
+            output_bytes = self._derive_output_bytes(evidence)
+            request_sha256 = self._recompute_request_sha256(evidence, derived)
+            attestation_evidence_sha256 = _sha256_hex(evidence_jcs)
+            # (5) construct the canonical §4.9 payload from trusted inputs.
+            payload = self._build_envelope_payload(
+                evidence,
+                derived,
+                output_bytes=output_bytes,
+                request_sha256=request_sha256,
+                attestation_evidence_sha256=attestation_evidence_sha256,
+            )
+            # (6) sign the EXACT JCS bytes of our OWN payload — never the
+            #     caller's bytes. Same encoding the Rust broker reconstructs.
+            message = _jcs_bytes(payload)
             signature_b64 = self._sign_fn(
                 self._config.receipt_private_key_handle, message
             )
@@ -444,11 +561,8 @@ class IsolatedSigner:
         return {
             "artifact_type": ENVELOPE_ARTIFACT_TYPE,
             "status": "signed",
-            "key_id": self._config.receipt_key_id,
             "payload": payload,
             "signature_b64": signature_b64,
-            "supervisor_attestation_key_id": self._config.supervisor_attestation_key_id,
-            "attestation_evidence_sha256": _sha256_hex(evidence_jcs),
         }
 
     # -- gate steps ---------------------------------------------------------
@@ -481,7 +595,7 @@ class IsolatedSigner:
         return evidence_jcs
 
     def _check_run_binding(self, evidence: Mapping[str, Any]) -> None:
-        # run/attempt/lease already shape-validated as capped non-empty strings.
+        # run/attempt/task already shape-validated as capped non-empty strings.
         if evidence["decision"] != "completed":
             raise _Refuse(REASON_NOT_COMPLETED)
         # request_nonce must be present (already validated) — bind it.
@@ -500,7 +614,11 @@ class IsolatedSigner:
     def _check_timestamps(self, evidence: Mapping[str, Any]) -> None:
         requested_at = evidence["requested_at"]
         completed_at = evidence["completed_at"]
+        challenge_accepted_at = evidence["challenge_accepted_at_ms"]
+        # requested <= challenge-accepted <= completed, and not in the future.
         if requested_at > completed_at:
+            raise _Refuse(REASON_TIMESTAMP_INVALID)
+        if challenge_accepted_at > completed_at:
             raise _Refuse(REASON_TIMESTAMP_INVALID)
         now = self._clock_ms()
         if not isinstance(now, int) or isinstance(now, bool):
@@ -509,11 +627,11 @@ class IsolatedSigner:
             raise _Refuse(REASON_TIMESTAMP_INVALID)
 
     def _derive_hashes(self, evidence: Mapping[str, Any]) -> Dict[str, str]:
-        """Read each artifact from the store BY HANDLE, confirm
-        ``sha256(bytes) == handle``, and DERIVE the receipt ``*_sha256`` from the
-        exact bytes. No caller-supplied hash is ever trusted."""
+        """Read each DERIVE artifact from the store BY HANDLE, confirm
+        ``sha256(bytes) == handle``, and DERIVE the ``*_sha256`` from the exact
+        bytes. No caller-supplied hash is ever trusted."""
         derived: Dict[str, str] = {}
-        for handle_field, hash_field in HANDLE_TO_RECEIPT_HASH.items():
+        for handle_field, hash_field in HANDLE_TO_DERIVED_HASH.items():
             handle = evidence[handle_field]
             data = self._store.read_verified(handle)
             if data is None:
@@ -526,36 +644,113 @@ class IsolatedSigner:
             derived[hash_field] = digest
         return derived
 
-    def _recompute_receipt(
+    def _verify_chain_handles(self, evidence: Mapping[str, Any]) -> None:
+        """Deep-verify the protected-chain handles (§7): the record, lease, and
+        execution-receipt each MUST resolve in the signer's protected store. The
+        signer will not mint an envelope naming a chain artifact it cannot see.
+        The handle *value* (content address) is carried verbatim into the
+        payload; the broker never dereferences it (§4.6)."""
+        for handle_field in EVIDENCE_CHAIN_HANDLE_FIELDS:
+            handle = evidence[handle_field]
+            if self._store.read_verified(handle) is None:
+                raise _Refuse(REASON_HANDLE_MISSING)
+
+    def _derive_output_bytes(self, evidence: Mapping[str, Any]) -> int:
+        """The exact reply byte-length, DERIVED from the store bytes named by
+        ``output_handle`` (never a caller-supplied ``output_bytes``). The broker
+        length-gates ``len(output) == output_bytes`` over the raw bytes (§4.6)."""
+        data = self._store.read_verified(evidence["output_handle"])
+        if data is None:  # pragma: no cover - _derive_hashes already read it
+            raise _Refuse(REASON_HANDLE_MISSING)
+        return len(data)
+
+    def _recompute_request_sha256(
         self, evidence: Mapping[str, Any], derived: Mapping[str, str]
+    ) -> str:
+        """RECOMPUTE the canonical governed-request digest (§2.2) from the
+        signer's OWN derived component hashes + authoritative ids/timestamp,
+        using the SAME JCS formula as ``receipt.rs::request_envelope_sha256``.
+        The broker independently recomputes this from its trusted ``Expected``
+        and requires equality, so a forged request_sha256 can never survive — and
+        the signer never trusts a transported one."""
+        request_envelope = {
+            "protocol": REQUEST_PROTOCOL,
+            "workspace_id": evidence["workspace_id"],
+            "install_id": evidence["install_id"],
+            "request_nonce": evidence["request_nonce"],
+            "system_sha256": derived["system_sha256"],
+            "history_sha256": derived["history_sha256"],
+            "generation_config_sha256": derived["generation_config_sha256"],
+            # requested_at is a STRING field in the request envelope (§2.2); the
+            # canonical decimal of the epoch-ms integer.
+            "requested_at": str(evidence["requested_at"]),
+        }
+        return _sha256_hex(_jcs_bytes(request_envelope))
+
+    def _build_envelope_payload(
+        self,
+        evidence: Mapping[str, Any],
+        derived: Mapping[str, str],
+        *,
+        output_bytes: int,
+        request_sha256: str,
+        attestation_evidence_sha256: str,
     ) -> Dict[str, Any]:
-        """Assemble the canonical ``brops.receipt.v1`` payload from the signer's
-        OWN trusted inputs: authoritative small facts + the freshly derived
-        hashes. The caller supplies no receipt bytes."""
-        payload = {
-            "protocol": RECEIPT_PROTOCOL,
+        """Assemble the canonical §4.9 ``brops.governed-receipt-envelope.v1``
+        payload from the signer's OWN trusted inputs: pinned config identity,
+        authoritative attested small facts, freshly derived digests, and the
+        recomputed request digest. The caller supplies no receipt bytes and no
+        store-derived hash. Field sources:
+
+          * ``artifact_type``                  — frozen §4.9 const.
+          * ``key_id``                         — signer config (pinned identity).
+          * ``supervisor_attestation_key_id``  — signer config (pinned identity).
+          * ``attestation_evidence_sha256``    — sha256 of the JCS evidence the
+                                                 supervisor attested (signer-computed).
+          * ``request_sha256``                 — recomputed request-envelope digest.
+          * ``output_sha256`` / ``output_bytes`` — derived from the store output bytes.
+          * ``record_handle`` / ``lease_handle`` / ``execution_receipt_handle`` —
+                                                 deep-verified protected-chain handles.
+          * ``evidence_final_event_hash`` and the three ``evidence_*`` counters,
+            ``challenge_accepted_at_ms`` — attested evidence-head facts.
+          * ``completed_at_ms``                — attested ``completed_at``.
+          * the remaining ids                  — attested small facts.
+        """
+        cfg = self._config
+        payload: Dict[str, Any] = {
+            # --- 17 string fields ---
+            "artifact_type": ENVELOPE_ARTIFACT_TYPE,
+            "key_id": cfg.receipt_key_id,
             "receipt_id": evidence["receipt_id"],
             "run_id": evidence["run_id"],
             "execution_attempt_id": evidence["execution_attempt_id"],
-            "lease_id": evidence["lease_id"],
-            "request_nonce": evidence["request_nonce"],
-            "decision": evidence["decision"],
+            "task_id": evidence["task_id"],
             "workspace_id": evidence["workspace_id"],
             "install_id": evidence["install_id"],
-            "supervisor_id": evidence["supervisor_id"],
-            "executor_id": evidence["executor_id"],
-            "builder_id": evidence["builder_id"],
-            "policy_id": evidence["policy_id"],
-            "policy_version": evidence["policy_version"],
-            "policy_bundle_sha256": derived["policy_bundle_sha256"],
-            "generation_config_sha256": derived["generation_config_sha256"],
-            "system_sha256": derived["system_sha256"],
-            "history_sha256": derived["history_sha256"],
+            "request_nonce": evidence["request_nonce"],
+            "request_sha256": request_sha256,
+            "record_handle": evidence["record_handle"],
+            "lease_handle": evidence["lease_handle"],
+            "execution_receipt_handle": evidence["execution_receipt_handle"],
             "output_sha256": derived["output_sha256"],
-            "containment_evidence_sha256": derived["containment_evidence_sha256"],
-            "completed_at": evidence["completed_at"],
+            "evidence_final_event_hash": evidence["evidence_final_event_hash"],
+            "supervisor_attestation_key_id": cfg.supervisor_attestation_key_id,
+            "attestation_evidence_sha256": attestation_evidence_sha256,
+            # --- 6 integer fields (bare JSON integers) ---
+            "output_bytes": output_bytes,
+            "challenge_accepted_at_ms": evidence["challenge_accepted_at_ms"],
+            "completed_at_ms": evidence["completed_at"],
+            "evidence_event_count": evidence["evidence_event_count"],
+            "evidence_last_sequence": evidence["evidence_last_sequence"],
+            "evidence_head_sequence": evidence["evidence_head_sequence"],
         }
-        # Structural self-check: the recomputed payload is EXACTLY RECEIPT_FIELDS.
-        if set(payload.keys()) != set(RECEIPT_FIELDS):  # pragma: no cover
-            raise SignerError("recomputed receipt field-set drift")
+        # Structural self-check: EXACTLY the 23 §4.9 keys, correctly typed.
+        if set(payload.keys()) != set(ENVELOPE_PAYLOAD_FIELDS):  # pragma: no cover
+            raise SignerError("recomputed envelope field-set drift")
+        for key in ENVELOPE_STRING_KEYS:  # pragma: no cover - defensive
+            if not isinstance(payload[key], str):
+                raise SignerError("envelope string field %s is not a str" % key)
+        for key in ENVELOPE_INTEGER_KEYS:  # pragma: no cover - defensive
+            if not isinstance(payload[key], int) or isinstance(payload[key], bool):
+                raise SignerError("envelope integer field %s is not an int" % key)
         return payload

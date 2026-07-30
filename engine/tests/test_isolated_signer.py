@@ -5,15 +5,15 @@ clock is a fake, and Ed25519 signing + attestation verification are stubs. These
 exercise the normative signer behaviours:
 
   * a valid attested sign-request => a well-formed
-    ``brops.governed-receipt-envelope.v1`` whose payload was RECOMPUTED by the
-    signer (its ``*_sha256`` derived from the store bytes, not copied from the
-    caller);
+    ``brops.governed-receipt-envelope.v1`` §4.9 envelope whose flat payload was
+    RECOMPUTED by the signer (its store-derived ``*_sha256`` derived from the
+    store bytes, its ``request_sha256`` recomputed, not copied from the caller);
   * an unattested / malformed / oversize / out-of-scope request => a typed
     fail-closed refusal (never a partial success);
-  * the signer NEVER signs the caller-supplied ``output_bytes`` directly — the
-    bytes handed to ``sign_fn`` are exactly ``JCS(recomputed_payload)`` and the
-    raw artifact bytes never appear in the signed message; an inline
-    ``output_bytes`` field is rejected as an unknown field.
+  * the signer NEVER signs the caller-supplied output bytes directly — the bytes
+    handed to ``sign_fn`` are exactly ``JCS(recomputed_payload)`` and the raw
+    artifact bytes never appear in the signed message; an inline ``output_bytes``
+    field is rejected as an unknown field.
 """
 
 import hashlib
@@ -27,8 +27,9 @@ sys.path.insert(0, str(ROOT / "runtime"))
 from isolated_signer import (  # noqa: E402
     ATTESTATION_PROTOCOL,
     ENVELOPE_ARTIFACT_TYPE,
-    RECEIPT_FIELDS,
-    RECEIPT_PROTOCOL,
+    ENVELOPE_INTEGER_KEYS,
+    ENVELOPE_PAYLOAD_FIELDS,
+    REQUEST_PROTOCOL,
     REFUSAL_ARTIFACT_TYPE,
     REASON_ATTESTATION_INVALID,
     REASON_CONTAINMENT_MISSING,
@@ -43,6 +44,8 @@ from isolated_signer import (  # noqa: E402
     IsolatedSigner,
     SignerConfig,
     _canonical_bytes,
+    _jcs_bytes,
+    _sha256_hex,
     validate_sign_request,
 )
 
@@ -70,6 +73,10 @@ def _build_store():
         "history_handle": b'[{"content":"hi","role":"user"}]',
         "output_handle": OUTPUT_MARKER,  # the sensitive reply bytes
         "containment_evidence_handle": b'{"containment":"ok"}',
+        # Protected-chain artifacts the signer deep-verifies (must resolve).
+        "record_handle": b'{"terminal_record":"COMPLETED"}',
+        "lease_handle": b'{"lease":"signed-lease-payload"}',
+        "execution_receipt_handle": b'{"execution_receipt":"ok"}',
     }
     store = ArtifactStore()
     handles = {}
@@ -82,7 +89,7 @@ def _evidence(handles):
     return {
         "run_id": "run-abc",
         "execution_attempt_id": "attempt-1",
-        "lease_id": "lease-xyz",
+        "task_id": "task-1",
         "request_nonce": "550e8400-e29b-41d4-a716-446655440000",
         "receipt_id": "receipt-777",
         "decision": "completed",
@@ -99,9 +106,32 @@ def _evidence(handles):
         "history_handle": handles["history_handle"],
         "output_handle": handles["output_handle"],
         "containment_evidence_handle": handles["containment_evidence_handle"],
+        "record_handle": handles["record_handle"],
+        "lease_handle": handles["lease_handle"],
+        "execution_receipt_handle": handles["execution_receipt_handle"],
+        "evidence_final_event_hash": "a" * 64,
         "requested_at": NOW_MS - 5_000,
+        "challenge_accepted_at_ms": NOW_MS - 3_000,
         "completed_at": NOW_MS - 1_000,
+        "evidence_event_count": 3,
+        "evidence_last_sequence": 12,
+        "evidence_head_sequence": 4,
     }
+
+
+def _expected_request_sha256(handles):
+    """The canonical request digest the broker (receipt.rs) recomputes."""
+    request_envelope = {
+        "protocol": REQUEST_PROTOCOL,
+        "workspace_id": "ws-1",
+        "install_id": "install-xyz",
+        "request_nonce": "550e8400-e29b-41d4-a716-446655440000",
+        "system_sha256": _h(b"you are a governed agent"),
+        "history_sha256": _h(b'[{"content":"hi","role":"user"}]'),
+        "generation_config_sha256": _h(b'{"temperature":0}'),
+        "requested_at": str(NOW_MS - 5_000),
+    }
+    return _sha256_hex(_jcs_bytes(request_envelope))
 
 
 def _request(evidence, sig="GOOD-SIG", supervisor_key_id=SUP_KEY_ID):
@@ -162,27 +192,45 @@ class ValidSignTest(unittest.TestCase):
 
         self.assertEqual(result["artifact_type"], ENVELOPE_ARTIFACT_TYPE)
         self.assertEqual(result["status"], "signed")
-        self.assertEqual(result["key_id"], RECEIPT_KEY_ID)
-        self.assertEqual(result["supervisor_attestation_key_id"], SUP_KEY_ID)
         self.assertTrue(result["signature_b64"])
+
+        payload = result["payload"]
+        # payload is EXACTLY the 23-key §4.9 flat envelope, nothing more.
+        self.assertEqual(set(payload.keys()), set(ENVELOPE_PAYLOAD_FIELDS))
+        self.assertEqual(len(payload), 23)
+        # frozen §4.9 identity, with key_id INSIDE the signed payload.
+        self.assertEqual(payload["artifact_type"], ENVELOPE_ARTIFACT_TYPE)
+        self.assertEqual(payload["key_id"], RECEIPT_KEY_ID)
+        self.assertEqual(payload["supervisor_attestation_key_id"], SUP_KEY_ID)
         # forensic binding: attestation_evidence_sha256 is over JCS(evidence).
         self.assertEqual(
-            result["attestation_evidence_sha256"],
+            payload["attestation_evidence_sha256"],
             _h(_canonical_bytes(_evidence(handles))),
         )
-        # payload is the full canonical receipt field-set, nothing more.
-        self.assertEqual(set(result["payload"].keys()), set(RECEIPT_FIELDS))
-        self.assertEqual(result["payload"]["protocol"], RECEIPT_PROTOCOL)
+        # the 6 integer fields are bare ints (not stringified).
+        for key in ENVELOPE_INTEGER_KEYS:
+            self.assertIsInstance(payload[key], int)
+            self.assertNotIsInstance(payload[key], bool)
+        self.assertEqual(payload["completed_at_ms"], NOW_MS - 1_000)
+        self.assertEqual(payload["challenge_accepted_at_ms"], NOW_MS - 3_000)
+        self.assertEqual(payload["output_bytes"], len(OUTPUT_MARKER))
 
-    def test_payload_hashes_are_recomputed_not_caller_supplied(self):
+    def test_store_derived_fields_are_recomputed_not_caller_supplied(self):
         signer, store, handles, _ = _make_signer()
         result = signer.sign_result(_request(_evidence(handles)))
         payload = result["payload"]
-        # Each *_sha256 was DERIVED from the exact store bytes.
+        # output_sha256/output_bytes DERIVED from the exact store bytes.
         self.assertEqual(payload["output_sha256"], _h(OUTPUT_MARKER))
-        self.assertEqual(payload["system_sha256"], _h(b"you are a governed agent"))
-        # And it equals the content-address handle (round trip).
         self.assertEqual(payload["output_sha256"], handles["output_handle"])
+        self.assertEqual(payload["output_bytes"], len(OUTPUT_MARKER))
+        # request_sha256 RECOMPUTED via the receipt.rs request-envelope formula.
+        self.assertEqual(payload["request_sha256"], _expected_request_sha256(handles))
+        # protected-chain handles carried verbatim.
+        self.assertEqual(payload["record_handle"], handles["record_handle"])
+        self.assertEqual(payload["lease_handle"], handles["lease_handle"])
+        self.assertEqual(
+            payload["execution_receipt_handle"], handles["execution_receipt_handle"]
+        )
 
     def test_inline_sha256_claim_is_rejected(self):
         # A caller cannot smuggle a chosen output_sha256 — unknown field.
@@ -205,8 +253,9 @@ class NeverSignsCallerBytesTest(unittest.TestCase):
         self.assertEqual(recorder.signed_handles, [RECEIPT_PRIV_HANDLE])
 
         signed = recorder.signed_messages[0]
-        # The signed bytes are EXACTLY JCS(recomputed payload).
-        self.assertEqual(signed, _canonical_bytes(result["payload"]))
+        # The signed bytes are EXACTLY JCS(recomputed payload) — the same
+        # encoding the Rust broker reconstructs.
+        self.assertEqual(signed, _jcs_bytes(result["payload"]))
         # The raw sensitive output bytes NEVER appear in the signed message —
         # only their sha256 does. This is not a sign(arbitrary_bytes) oracle.
         self.assertNotIn(OUTPUT_MARKER, signed)
@@ -279,6 +328,16 @@ class RefusalTest(unittest.TestCase):
             signer.sign_result(_request(ev))["reason"], REASON_HANDLE_MISSING
         )
 
+    def test_missing_chain_handle_is_refused(self):
+        # A protected-chain handle that does not resolve in the store => the
+        # signer refuses to mint an envelope naming an unseen record.
+        signer, store, handles, _ = _make_signer()
+        ev = _evidence(handles)
+        ev["execution_receipt_handle"] = "c" * 64
+        self.assertEqual(
+            signer.sign_result(_request(ev))["reason"], REASON_HANDLE_MISSING
+        )
+
     def test_missing_containment_has_specific_reason(self):
         signer, store, handles, _ = _make_signer()
         ev = _evidence(handles)
@@ -300,6 +359,20 @@ class RefusalTest(unittest.TestCase):
             result = signer.sign_result(bad)
             self.assertEqual(result["artifact_type"], REFUSAL_ARTIFACT_TYPE)
             self.assertEqual(result["reason"], REASON_MALFORMED)
+
+    def test_non_integer_evidence_head_count_is_refused(self):
+        # The evidence-head counters must be bare positive integers.
+        signer, store, handles, _ = _make_signer()
+        ev = _evidence(handles)
+        ev["evidence_event_count"] = "3"  # stringified => malformed
+        self.assertEqual(
+            signer.sign_result(_request(ev))["reason"], REASON_MALFORMED
+        )
+        ev = _evidence(handles)
+        ev["evidence_head_sequence"] = 0  # must be >= 1
+        self.assertEqual(
+            signer.sign_result(_request(ev))["reason"], REASON_MALFORMED
+        )
 
     def test_oversize_request_is_refused(self):
         signer, store, handles, _ = _make_signer()

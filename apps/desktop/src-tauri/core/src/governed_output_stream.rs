@@ -108,6 +108,20 @@ pub fn mint(
     Ok(())
 }
 
+/// Constant-time byte-slice equality. The length is compared first (the token length is not the
+/// secret — only the bytes are), then every byte is folded into an accumulator with no early exit,
+/// so the running time does not depend on the position of the first differing byte.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Resolve an output stream for a read (rev-30 §4.10(f) three-phase). LIVE + token match + not-expired ⇒
 /// Ok(broker_turn_id). Past TTL ⇒ `Expired` (tombstone). Absent/swept ⇒ `Unknown`. Wrong token ⇒
 /// `TokenMismatch`. Verified OUTSIDE any DB write (read-only).
@@ -139,8 +153,10 @@ pub fn resolve(
     if state == "swept" {
         return Err(StreamError::Unknown);
     }
-    // constant-ish token check (length + bytes) before any phase decision.
-    if tok.as_bytes() != capability_token.as_bytes() {
+    // constant-time token check (length + bytes) before any phase decision: the byte comparison
+    // must not short-circuit on the first differing byte, since the token is the sole anti-guessing
+    // secret and a data-dependent early exit would leak it via a timing oracle.
+    if !ct_eq(tok.as_bytes(), capability_token.as_bytes()) {
         return Err(StreamError::TokenMismatch);
     }
     if state == "expired" || now_ms >= expires {
@@ -194,6 +210,35 @@ mod tests {
         let c = conn();
         mint(&c, "os-1", "bt-1", "inst-1", TOK, 1000).unwrap();
         assert_eq!(resolve(&c, "os-1", "wrong", 2000), Err(StreamError::TokenMismatch));
+    }
+
+    #[test]
+    fn resolve_token_diff_first_or_last_byte_is_mismatch() {
+        let c = conn();
+        mint(&c, "os-1", "bt-1", "inst-1", TOK, 1000).unwrap();
+        // exact match resolves
+        assert_eq!(resolve(&c, "os-1", TOK, 2000).unwrap(), "bt-1");
+        // same length as TOK, differing ONLY in the last byte
+        let mut last = TOK.as_bytes().to_vec();
+        *last.last_mut().unwrap() ^= 0x01;
+        let last = String::from_utf8(last).unwrap();
+        assert_ne!(last.as_str(), TOK);
+        assert_eq!(resolve(&c, "os-1", &last, 2000), Err(StreamError::TokenMismatch));
+        // same length as TOK, differing ONLY in the first byte
+        let mut first = TOK.as_bytes().to_vec();
+        first[0] ^= 0x01;
+        let first = String::from_utf8(first).unwrap();
+        assert_ne!(first.as_str(), TOK);
+        assert_eq!(resolve(&c, "os-1", &first, 2000), Err(StreamError::TokenMismatch));
+    }
+
+    #[test]
+    fn ct_eq_matches_plain_equality() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abd")); // last byte differs
+        assert!(!ct_eq(b"abc", b"zbc")); // first byte differs
+        assert!(!ct_eq(b"abc", b"ab")); // length differs
+        assert!(ct_eq(b"", b""));
     }
 
     #[test]

@@ -89,7 +89,15 @@ pub fn persist_committed(
     if sha256_hex(accepted.accepted_body.as_bytes()) != accepted.envelope_body_sha256 {
         return Err(TurnReason::CommitReadbackMismatch);
     }
-    conn.execute(
+    // Open ONE explicit transaction so the INSERT, the re-read, and every verification form a single
+    // atomic snapshot. `unchecked_transaction` takes `&Connection` and yields a `Transaction` that ROLLS
+    // BACK on drop unless `commit()` is called — so any fail-closed return below leaves NO committed row
+    // (rev-30 §4.10(g) P0: the trusted_verified row must not durably survive a readback mismatch).
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|_| TurnReason::CommitReadbackMismatch)?;
+
+    tx.execute(
         "INSERT INTO governed_messages
             (message_id, conversation_id, broker_turn_id, author, body, body_sha256, created_at_ms, trust_state)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'trusted_verified')",
@@ -105,8 +113,9 @@ pub fn persist_committed(
     )
     .map_err(|_| TurnReason::CommitReadbackMismatch)?;
 
-    // In-tx re-read: the committed row must equal the accepted output, else fail closed.
-    let (rb_body, rb_sha, rb_trust, rb_created): (String, String, String, i64) = conn
+    // In-tx re-read: the just-inserted row must equal the accepted output, else fail closed. Because this
+    // read runs inside `tx`, a mismatch return drops `tx` (rollback) and the row never becomes durable.
+    let (rb_body, rb_sha, rb_trust, rb_created): (String, String, String, i64) = tx
         .query_row(
             "SELECT body, body_sha256, trust_state, created_at_ms FROM governed_messages WHERE message_id = ?1",
             params![accepted.message_id],
@@ -118,6 +127,9 @@ pub fn persist_committed(
     if rb_created != accepted.created_at_ms {
         return Err(TurnReason::CommitReadbackMismatch);
     }
+
+    // Only now — after the readback AND the created_at_ms equality both pass — make the row durable.
+    tx.commit().map_err(|_| TurnReason::CommitReadbackMismatch)?;
 
     Ok(CommittedMessage::new(
         accepted.message_id.clone(),
@@ -198,6 +210,59 @@ mod tests {
             params![sha256_hex(b"b")],
         );
         assert!(r.is_err(), "CHECK constraint must reject a non-trusted_verified trust_state");
+    }
+
+    #[test]
+    fn readback_mismatch_rolls_back_the_committed_row_atomically() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        // An AFTER INSERT trigger tampers with the just-inserted row's body so the in-tx readback will
+        // disagree with the accepted output. If persist_committed's INSERT + readback + verify were NOT
+        // wrapped in one transaction, the tampered row would durably survive the fail-closed return. With
+        // the fix, the transaction drops on the Err and the row is rolled back.
+        conn.execute_batch(
+            "CREATE TRIGGER tamper_after_insert
+             AFTER INSERT ON governed_messages
+             BEGIN
+                 UPDATE governed_messages
+                    SET body = 'TAMPERED-BY-TRIGGER'
+                  WHERE message_id = NEW.message_id;
+             END;",
+        )
+        .unwrap();
+
+        // Must fail closed on the readback mismatch...
+        assert_eq!(
+            persist_committed(&conn, &accepted("hello world")),
+            Err(TurnReason::CommitReadbackMismatch)
+        );
+
+        // ...and no row may survive: the whole transaction (INSERT + trigger UPDATE) rolled back.
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM governed_messages WHERE message_id = ?1",
+                params!["m-1"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "orphaned trusted_verified row must NOT survive the fail-closed path");
+    }
+
+    #[test]
+    fn happy_path_commits_the_row_durably() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        // No tampering: readback matches, so the transaction must commit and the row must be durable.
+        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        assert_eq!(msg.body, "hello world");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM governed_messages WHERE message_id = ?1 AND trust_state = 'trusted_verified'",
+                params!["m-1"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "a matching readback must leave exactly one committed trusted_verified row");
     }
 
     #[test]

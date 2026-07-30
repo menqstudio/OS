@@ -111,6 +111,10 @@ pub trait FsProbe {
 /// value here ⇒ the supervisor DISABLES governed real-mode (fail-closed, never partial).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TcbViolation {
+    /// The pin manifest does not cover the full rev-30 §2.5 EXPANDED `TCB_REQUIRED_ARTIFACTS` set: one or
+    /// more required artifacts are unpinned, so they would never be integrity-checked. Fail-closed on an
+    /// under-specified manifest (an omitted, possibly login-writable artifact must not pass by omission).
+    MissingRequired { missing: Vec<String> },
     /// The pinned artifact is absent from disk.
     Missing { logical_name: String, path: String },
     /// The manifest has no resolved UID for the artifact's expected owner (mis-provisioned pin manifest).
@@ -144,9 +148,14 @@ pub enum TcbViolation {
 }
 
 impl TcbViolation {
-    /// The `logical_name` of the artifact whose check failed.
+    /// The `logical_name` of the artifact whose check failed. For a coverage
+    /// ([`TcbViolation::MissingRequired`]) violation this is the first uncovered required name (or
+    /// `"<coverage>"` if the list is somehow empty), since the failure is the manifest as a whole.
     pub fn logical_name(&self) -> &str {
         match self {
+            TcbViolation::MissingRequired { missing } => {
+                missing.first().map(String::as_str).unwrap_or("<coverage>")
+            }
             TcbViolation::Missing { logical_name, .. }
             | TcbViolation::UnknownOwner { logical_name, .. }
             | TcbViolation::WrongOwner { logical_name, .. }
@@ -207,6 +216,17 @@ pub fn verify_tcb_integrity(
     runtime_uids: &[u32],
     login_uid: u32,
 ) -> Result<(), TcbViolation> {
+    // Coverage floor FIRST: an under-specified manifest must fail closed. The per-artifact loop only
+    // ever inspects LISTED entries, so a manifest that OMITS a required artifact (e.g. `isolated-signer.bin`)
+    // would otherwise pass while that omitted, possibly login-writable artifact is never integrity-checked.
+    // The floor cannot depend on caller discipline (`missing_required()` is only "SHOULD" for callers).
+    let missing = manifest.missing_required();
+    if !missing.is_empty() {
+        return Err(TcbViolation::MissingRequired {
+            missing: missing.into_iter().map(str::to_string).collect(),
+        });
+    }
+
     for art in &manifest.artifacts {
         verify_artifact(manifest, art, probe, runtime_uids, login_uid)?;
     }
@@ -370,42 +390,66 @@ mod tests {
         }
     }
 
-    // Two representative artifacts: the broker binary (owner root) and the challenge-authority config
-    // (owner brops-admin). Enough to exercise every code path; the required-set coverage is checked
-    // separately by `manifest_missing_required_reports_the_gap`.
+    // Two distinguished artifacts the per-artifact tests corrupt: the broker binary (owner root) and the
+    // challenge-authority config (owner brops-admin). `manifest()` embeds these inside a FULL-coverage
+    // manifest (every `TCB_REQUIRED_ARTIFACTS` name pinned) so `verify_tcb_integrity`'s coverage floor is
+    // satisfied and the tests genuinely exercise the per-artifact code paths, not the coverage short-circuit.
     const BROKER_PATH: &str = "/opt/brops/bin/trusted-verifier-broker";
     const BROKER_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const CA_CFG_PATH: &str = "/etc/brops/challenge-authority/policy.json";
     const CA_CFG_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    // Generic clean fixture for every other required artifact (root-owned, hash-matched).
+    const GENERIC_SHA: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 
+    /// The pinned entry for one required artifact name. The broker binary and challenge-authority config
+    /// keep the distinguished fixtures the per-artifact tests mutate; every other required name gets a
+    /// generic clean root-owned entry so the manifest has FULL rev-30 §2.5 coverage.
+    fn art_for(name: &str) -> TcbArtifact {
+        match name {
+            "trusted-verifier-broker.bin" => TcbArtifact {
+                logical_name: name.into(),
+                path: BROKER_PATH.into(),
+                expected_sha256: BROKER_SHA.into(),
+                expected_owner: TcbOwner::Root,
+            },
+            "desktop-challenge-authority.config" => TcbArtifact {
+                logical_name: name.into(),
+                path: CA_CFG_PATH.into(),
+                expected_sha256: CA_CFG_SHA.into(),
+                expected_owner: TcbOwner::BropsAdmin,
+            },
+            other => TcbArtifact {
+                logical_name: other.into(),
+                path: format!("/opt/brops/{other}"),
+                expected_sha256: GENERIC_SHA.into(),
+                expected_owner: TcbOwner::Root,
+            },
+        }
+    }
+
+    /// A FULL-coverage pin manifest: every `TCB_REQUIRED_ARTIFACTS` name is pinned (so the coverage floor
+    /// passes), with the two distinguished fixtures embedded.
     fn manifest() -> TcbPinManifest {
         let mut owner_uids = BTreeMap::new();
         owner_uids.insert(TcbOwner::Root, ROOT);
         owner_uids.insert(TcbOwner::BropsAdmin, ADMIN);
         TcbPinManifest {
-            artifacts: vec![
-                TcbArtifact {
-                    logical_name: "trusted-verifier-broker.bin".into(),
-                    path: BROKER_PATH.into(),
-                    expected_sha256: BROKER_SHA.into(),
-                    expected_owner: TcbOwner::Root,
-                },
-                TcbArtifact {
-                    logical_name: "desktop-challenge-authority.config".into(),
-                    path: CA_CFG_PATH.into(),
-                    expected_sha256: CA_CFG_SHA.into(),
-                    expected_owner: TcbOwner::BropsAdmin,
-                },
-            ],
+            artifacts: TCB_REQUIRED_ARTIFACTS.iter().map(|n| art_for(n)).collect(),
             owner_uids,
         }
     }
 
-    /// A fully-clean FS: both artifacts present, TCB-owned, non-writable, hash-matched, all ancestors good.
+    /// A fully-clean FS: every pinned artifact present, TCB-owned, non-writable, hash-matched, all
+    /// ancestors good (derived directly from `manifest()` so the two stay in sync).
     fn clean_fs() -> FakeFs {
         let mut fs = FakeFs::default();
-        fs.good_file(BROKER_PATH, ROOT, BROKER_SHA);
-        fs.good_file(CA_CFG_PATH, ADMIN, CA_CFG_SHA);
+        for art in &manifest().artifacts {
+            let owner = match art.expected_owner {
+                TcbOwner::Root => ROOT,
+                TcbOwner::BropsAdmin => ADMIN,
+            };
+            fs.good_file(&art.path, owner, &art.expected_sha256);
+        }
         fs
     }
 
@@ -531,24 +575,41 @@ mod tests {
 
     #[test]
     fn manifest_missing_required_reports_the_gap() {
-        // The 2-artifact test manifest is intentionally partial: coverage check must flag the rest.
-        let gap = manifest().missing_required();
+        // A deliberately partial 2-artifact manifest: `missing_required` must flag every unpinned name.
+        let partial = TcbPinManifest {
+            artifacts: vec![
+                art_for("trusted-verifier-broker.bin"),
+                art_for("desktop-challenge-authority.config"),
+            ],
+            owner_uids: BTreeMap::new(),
+        };
+        let gap = partial.missing_required();
         assert!(gap.contains(&"supervisor.bin"));
         assert!(gap.contains(&"privileged-launcher.bin"));
         assert!(gap.contains(&"trusted-verifier-broker.pinned-manifest-config"));
-        // A manifest listing every required name has no gap.
-        let full = TcbPinManifest {
-            artifacts: TCB_REQUIRED_ARTIFACTS
-                .iter()
-                .map(|n| TcbArtifact {
-                    logical_name: (*n).to_string(),
-                    path: format!("/opt/brops/{n}"),
-                    expected_sha256: BROKER_SHA.into(),
-                    expected_owner: TcbOwner::Root,
-                })
-                .collect(),
-            owner_uids: BTreeMap::new(),
-        };
-        assert!(full.missing_required().is_empty());
+        // The full-coverage `manifest()` has no gap.
+        assert!(manifest().missing_required().is_empty());
+    }
+
+    /// Regression for the rev-30 §2.5 coverage fail-open: a manifest that OMITS a required artifact must
+    /// make `verify_tcb_integrity` FAIL CLOSED, even when every LISTED entry is clean on disk. Before the
+    /// fix the per-artifact loop only inspected listed entries and returned `Ok`, silently skipping the
+    /// omitted (possibly login-writable) artifact.
+    #[test]
+    fn manifest_omitting_required_artifact_fails_closed() {
+        let mut m = manifest();
+        // Drop a required artifact; every remaining listed entry is still clean on disk.
+        m.artifacts.retain(|a| a.logical_name != "isolated-signer.bin");
+        assert!(m.missing_required().contains(&"isolated-signer.bin"));
+        let fs = clean_fs(); // all remaining listed artifacts verify clean
+
+        let result = verify_tcb_integrity(&m, &fs, &runtime_uids(), LOGIN);
+        assert_ne!(result, Ok(()), "under-specified manifest must not pass");
+        match result.unwrap_err() {
+            TcbViolation::MissingRequired { missing } => {
+                assert!(missing.contains(&"isolated-signer.bin".to_string()));
+            }
+            other => panic!("expected MissingRequired (fail-closed), got {other:?}"),
+        }
     }
 }

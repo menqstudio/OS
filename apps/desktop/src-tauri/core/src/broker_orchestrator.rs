@@ -83,11 +83,21 @@ pub fn run_governed_turn(
         }
     }
 
-    // 3. Mint the broker-authoritative identities and record the live turn.
+    // 3. Mint the broker-authoritative identities and record the live turn. The INSERT is the atomic
+    //    guard behind the (non-atomic) `decide` read above: the partial UNIQUE one-live-per-conversation
+    //    index makes a concurrency loser fail here as `TurnInProgress`, which we surface as the SAME
+    //    fail-closed `turn_in_progress` reply the `decide` branch returns. Any OTHER store failure stays
+    //    fail-closed as `UpstreamBlocked`.
     let broker_turn_id = ids.new_broker_turn_id();
     let request_nonce = ids.new_request_nonce();
-    if broker_turns::record_new(conn, &req.idempotency_key(), &broker_turn_id, &request_nonce, now_ms).is_err() {
-        return RendererGovernedTurnResult::blocked(crid, broker_turn_id, conv, TurnReason::UpstreamBlocked);
+    match broker_turns::record_new(conn, &req.idempotency_key(), &broker_turn_id, &request_nonce, now_ms) {
+        Ok(()) => {}
+        Err(broker_turns::StoreError::TurnInProgress) => {
+            return RendererGovernedTurnResult::blocked(crid, String::new(), conv, TurnReason::TurnInProgress);
+        }
+        Err(_) => {
+            return RendererGovernedTurnResult::blocked(crid, broker_turn_id, conv, TurnReason::UpstreamBlocked);
+        }
     }
 
     // 4. Drive the governed execution + verification chain.
