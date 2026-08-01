@@ -23,3 +23,12 @@ sha2 = "0.10"
 # the Windows/other-host build stays pure-std and fails closed at runtime.
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+
+# Test-only crypto: the governed-turn unit tests build a REAL signed receipt envelope +
+# supervisor attestation (the same Ed25519 / base64url the isolated signer and supervisor
+# produce) so `governed_verification::verify_and_accept` runs its real predicate against the
+# fake chain. Shipping broker code carries NO signing key — these are dev-only, matching the
+# verify-only crypto in brops-core (and the retired governed_proof harness).
+[dev-dependencies]
+ed25519-dalek = "2"
+base64 = "0.22"

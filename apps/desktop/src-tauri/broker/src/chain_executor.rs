@@ -8,10 +8,46 @@
 //! unit-testable without the running services; the real Linux implementation drives the AF_UNIX sockets and
 //! calls `governed_verification::verify_and_accept` to produce the [`AcceptedOutput`] — a lost/refusing hop
 //! surfaces as a closed [`TurnReason`], never a fabricated acceptance.
+//!
+//! ## The assembled flow ([`GovernedChain::run_verified`])
+//!
+//! One governed turn is an ASSEMBLY of already-proven parts — this module invents no crypto:
+//!
+//!  1. **challenge-authority** (`create-pending` → `issue`) over its socket ⇒ a signed
+//!     `brops.governed-turn-challenge.v1` document. The turn facts sent to `create-pending` come from the
+//!     broker's OWN trusted resolution ([`TurnResolver`]), never the wire.
+//!  2. **supervisor** (`accept-open {challenge_doc}` → lease, then `launch-gate {lease}` → proceed) over its
+//!     socket. The lease authorizes exactly one privileged execution.
+//!  3. **EXECUTION** — the privileged recorder → setuid launcher → executor chain, abstracted behind
+//!     [`GovernedExecution`]. It produces the raw output bytes, the `sign_request` to hand the signer, and
+//!     the supervisor attestation (the exact evidence bytes + detached signature). A unit test injects a
+//!     fake; the real Linux impl ([`linux::LinuxGovernedExecution`]) spawns the setuid chain and is marked
+//!     `LINUX-RUN-PENDING`, failing closed until that chain + protected store are provisioned.
+//!  4. **isolated-signer** (`sign-result {sign_request}`) over its socket ⇒ the flat 23-key
+//!     `brops.governed-receipt-envelope.v1` payload + its Ed25519 signature.
+//!  5. **final acceptance** — `governed_verification::verify_and_accept` over the broker's OWN pinned keys +
+//!     its OWN trusted `Expected` (never values from the wire): it reconstructs `JCS(payload)`, re-verifies
+//!     the isolated-signer + supervisor signatures, recomputes `request_sha256`, and length+digest-gates the
+//!     output. Only its `Ok` yields an [`AcceptedOutput`]; any hop failure / refusal / bad reply / verify
+//!     failure ⇒ a closed [`TurnReason`].
+//!
+//! The pure orchestration types + the trait-driven flow are cross-platform (they compile and unit-test on
+//! any host); only the real AF_UNIX transport + the privileged spawn are `#[cfg(target_os = "linux")]`.
+
+use std::sync::Mutex;
+
+use serde_json::{json, Value};
 
 use brops_core::broker_orchestrator::GovernedExecutor;
 use brops_core::governed_message_store::AcceptedOutput;
 use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};
+use brops_core::governed_verification::{
+    verify_and_accept, AcceptanceLedger, BrokerContext, PinnedKeys, ReceiptEnvelope,
+    SupervisorAttestation,
+};
+use brops_core::receipt::IssuedRequest;
+
+use crate::chain_hops::{hop_roundtrip, HopConn, HopError, Principal};
 
 /// The full authority→supervisor→launcher→executor→signer→verification sub-chain for ONE governed turn,
 /// abstracted to its one contract: given the validated request + the broker-minted ids, either produce the
@@ -50,13 +86,435 @@ impl<C: GovernedTurnChain> GovernedExecutor for ChainExecutor<C> {
     }
 }
 
-/// The real Linux sub-chain: drives the AF_UNIX challenge-authority / supervisor / isolated-signer hops and
-/// calls `governed_verification::verify_and_accept`. Compiles cross-platform (the socket work is gated);
-/// the actual multi-service run is exercised by the Linux CI isolation proof + real deployment, not a
-/// Windows unit test. On a non-Linux host it fails closed.
+// =================================================================================================
+// Injected seams — everything the pure orchestration needs from the outside, each a trait so the flow
+// is unit-testable with fakes and the real Linux transport/execution is a separate, clearly-marked impl.
+// =================================================================================================
+
+/// A factory that opens ONE fresh single-request/single-response connection to a trusted principal. Each
+/// hop (each protocol op) gets its own connection, matching the servers' one-frame-per-connection contract.
+/// A bare closure `Fn(Principal) -> Result<Box<dyn HopConn>, HopError>` satisfies this (blanket impl below),
+/// so the real Linux transport and a test's canned-reply factory share one seam.
+pub trait HopConnector {
+    fn connect(&self, principal: Principal) -> Result<Box<dyn HopConn>, HopError>;
+}
+
+impl<F> HopConnector for F
+where
+    F: Fn(Principal) -> Result<Box<dyn HopConn>, HopError>,
+{
+    fn connect(&self, principal: Principal) -> Result<Box<dyn HopConn>, HopError> {
+        self(principal)
+    }
+}
+
+/// The broker's OWN trusted per-turn resolution (§4.10(g)): the pinned manifest keys + the `Expected`
+/// request-envelope facts + the create-pending turn facts + the committed-message author. EVERYTHING the
+/// final acceptance trusts comes from here (root-signed manifest + broker config), NEVER from a hop reply —
+/// so a compromised principal cannot smuggle a favourable key or request binding. Owned so the borrowed
+/// verification structs can point at it for the whole turn.
+#[derive(Debug, Clone)]
+pub struct ResolvedTurn {
+    // --- pinned manifest keys (resolved from the broker's root-signed, anti-rollback-checked manifest) ---
+    pub isolated_signer_key_id: String,
+    pub isolated_signer_public_key: [u8; 32],
+    pub supervisor_attestation_key_id: String,
+    pub supervisor_attestation_public_key: [u8; 32],
+    // --- Expected request-envelope facts (request_nonce is the broker-minted nonce, passed separately) ---
+    pub workspace_id: String,
+    pub install_id: String,
+    pub system_sha256: String,
+    pub history_sha256: String,
+    pub generation_config_sha256: String,
+    /// `requested_at` as the canonical decimal string of the epoch-ms (matches the §2.2 request envelope).
+    pub requested_at: String,
+    // --- create-pending turn facts the challenge-authority requires (§2.1) ---
+    pub run_id: String,
+    pub task_id: String,
+    pub requested_at_ms: i64,
+    // --- committed-message identity ---
+    pub author: String,
+}
+
+/// Resolves the broker's OWN trusted turn facts + pinned keys for a request. In production this reads the
+/// root-signed key manifest (root-verify + anti-rollback + production-key resolution) and the broker's
+/// resolved system/history/generation-config hashes; a test injects a fixed resolution.
+pub trait TurnResolver {
+    fn resolve(
+        &self,
+        req: &ValidatedRequest,
+        broker_turn_id: &str,
+        request_nonce: &str,
+    ) -> Result<ResolvedTurn, TurnReason>;
+}
+
+/// A supervisor-minted lease (§5): the exhaustive fixed shape the supervisor returns from `accept-open` and
+/// the broker forwards verbatim to `launch-gate` + into the privileged execution.
+#[derive(Debug, Clone)]
+pub struct Lease {
+    pub lease_id: String,
+    pub execution_attempt_id: String,
+    pub lease_expires_at_ms: i64,
+    pub launcher_executable_sha256: String,
+    pub executor_executable_sha256: String,
+    /// The exact lease JSON the supervisor returned, forwarded byte-faithfully to `launch-gate`.
+    pub raw: Value,
+}
+
+/// The inputs the privileged execution receives: the request + broker-minted ids + the lease that
+/// authorizes exactly this execution + the broker's trusted resolution.
+pub struct ExecutionPlan<'a> {
+    pub req: &'a ValidatedRequest,
+    pub broker_turn_id: &'a str,
+    pub request_nonce: &'a str,
+    pub resolved: &'a ResolvedTurn,
+    pub lease: &'a Lease,
+}
+
+/// What the privileged execution produces for the signer hop + the final acceptance.
+pub struct ExecutionArtifacts {
+    /// The exact reassembled reply bytes (§4.10(f) pull). The broker length+digest-gates these against the
+    /// signed envelope — never a caller-supplied hash.
+    pub output: Vec<u8>,
+    /// The `brops.sign-request.v1` body `{protocol, attestation, evidence}` handed to the isolated signer
+    /// verbatim. The signer strict-validates it, verifies the attestation, and RECOMPUTES every digest.
+    pub sign_request: Value,
+    /// The EXACT `JCS(evidence)` bytes the supervisor attested — carried through so the final acceptance can
+    /// check `SHA256(evidence_jcs) == envelope.attestation_evidence_sha256` against the bytes it holds.
+    pub attestation_evidence_jcs: Vec<u8>,
+    /// The supervisor's detached Ed25519 signature (base64url) over `attestation_evidence_jcs`.
+    pub attestation_signature_b64: String,
+}
+
+/// The privileged recorder → setuid launcher → executor chain, abstracted (§6). Given the lease-authorized
+/// plan it runs the real execution and returns the output bytes + the attestation/evidence the broker
+/// forwards to the isolated signer. A unit test injects a fake; the real Linux impl spawns the setuid chain
+/// (see [`linux::LinuxGovernedExecution`], `LINUX-RUN-PENDING`).
+pub trait GovernedExecution {
+    fn execute(&self, plan: &ExecutionPlan) -> Result<ExecutionArtifacts, TurnReason>;
+}
+
+// =================================================================================================
+// The pure, cross-platform orchestration.
+// =================================================================================================
+
+/// The broker's real governed sub-chain, generic over its injected seams so the whole ordered flow is
+/// unit-testable on any host. It sequences the hops, drives the privileged execution, then runs the final
+/// crypto acceptance over the broker's OWN pinned keys + trusted `Expected`. It NEVER takes trust from an
+/// unsigned hop value — the only path to an [`AcceptedOutput`] is a successful
+/// `governed_verification::verify_and_accept`.
+pub struct GovernedChain<C, R, E, L>
+where
+    C: HopConnector,
+    R: TurnResolver,
+    E: GovernedExecution,
+    L: AcceptanceLedger,
+{
+    connector: C,
+    resolver: R,
+    execution: E,
+    /// The one-time nonce + receipt-id freshness ledger (§7.1(c)(d)). In production a DB transaction; a
+    /// test injects an in-memory one. Behind a `Mutex` so `run_verified(&self, …)` can consume it without
+    /// two concurrent turns sharing a borrow.
+    ledger: Mutex<L>,
+}
+
+impl<C, R, E, L> GovernedChain<C, R, E, L>
+where
+    C: HopConnector,
+    R: TurnResolver,
+    E: GovernedExecution,
+    L: AcceptanceLedger,
+{
+    pub fn new(connector: C, resolver: R, execution: E, ledger: L) -> Self {
+        GovernedChain {
+            connector,
+            resolver,
+            execution,
+            ledger: Mutex::new(ledger),
+        }
+    }
+
+    /// One framed request→reply roundtrip to `principal` over a fresh connection. Fails CLOSED on connect
+    /// failure, frame/transport error, malformed reply, or any principal refusal (`ok:false` / a `reason`).
+    /// Returns the parsed success reply object.
+    fn hop(&self, principal: Principal, request: &Value) -> Result<Value, TurnReason> {
+        let bytes = serde_json::to_vec(request).map_err(|_| TurnReason::UpstreamBlocked)?;
+        let mut conn = self
+            .connector
+            .connect(principal)
+            .map_err(|e| e.to_turn_reason())?;
+        let reply = hop_roundtrip(conn.as_mut(), &bytes).map_err(|e| e.to_turn_reason())?;
+        let value: Value = serde_json::from_slice(&reply).map_err(|_| TurnReason::UpstreamBlocked)?;
+        // A principal reply is a success ONLY if it says so; `ok:false` (with its typed `reason`) or a
+        // missing/false `ok` is a fail-closed refusal — never a fabricated success.
+        let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        if !ok {
+            return Err(TurnReason::UpstreamBlocked);
+        }
+        Ok(value)
+    }
+}
+
+impl<C, R, E, L> GovernedTurnChain for GovernedChain<C, R, E, L>
+where
+    C: HopConnector,
+    R: TurnResolver,
+    E: GovernedExecution,
+    L: AcceptanceLedger,
+{
+    fn run_verified(
+        &self,
+        req: &ValidatedRequest,
+        broker_turn_id: &str,
+        request_nonce: &str,
+    ) -> Result<AcceptedOutput, TurnReason> {
+        // (0) The broker's OWN trusted resolution — pinned keys + Expected facts. Resolved BEFORE any hop so
+        //     the trust anchors never depend on a principal reply.
+        let resolved = self.resolver.resolve(req, broker_turn_id, request_nonce)?;
+
+        // (1) challenge-authority: create-pending. Turn facts are the broker's own (§2.1 fixed shape).
+        let create_pending = json!({
+            "op": "create-pending",
+            "run_id": resolved.run_id,
+            "task_id": resolved.task_id,
+            "workspace_id": resolved.workspace_id,
+            "install_id": resolved.install_id,
+            "request_nonce": request_nonce,
+            "system_sha256": resolved.system_sha256,
+            "history_sha256": resolved.history_sha256,
+            "generation_config_sha256": resolved.generation_config_sha256,
+            "requested_at_ms": resolved.requested_at_ms,
+        });
+        let reply = self.hop(Principal::ChallengeAuthority, &create_pending)?;
+        let pending_id = reply
+            .get("pending_challenge_id")
+            .and_then(Value::as_str)
+            .ok_or(TurnReason::UpstreamBlocked)?
+            .to_string();
+
+        // (2) challenge-authority: issue ⇒ the signed brops.governed-turn-challenge.v1 document.
+        let issue = json!({ "op": "issue", "pending_challenge_id": pending_id });
+        let reply = self.hop(Principal::ChallengeAuthority, &issue)?;
+        let challenge_doc = reply
+            .get("challenge")
+            .cloned()
+            .ok_or(TurnReason::UpstreamBlocked)?;
+
+        // (3) supervisor: accept-open ⇒ lease.
+        let accept_open = json!({ "op": "accept-open", "challenge_doc": challenge_doc });
+        let reply = self.hop(Principal::Supervisor, &accept_open)?;
+        let lease = parse_lease(reply.get("lease").ok_or(TurnReason::UpstreamBlocked)?)?;
+
+        // (4) supervisor: launch-gate ⇒ proceed (budget re-check). The lease is forwarded byte-faithfully.
+        let launch_gate = json!({ "op": "launch-gate", "lease": lease.raw });
+        let reply = self.hop(Principal::Supervisor, &launch_gate)?;
+        if !reply.get("proceed").and_then(Value::as_bool).unwrap_or(false) {
+            return Err(TurnReason::UpstreamBlocked);
+        }
+
+        // (5) EXECUTION — the privileged recorder → launcher → executor chain (abstracted; real Linux spawn
+        //     is LINUX-RUN-PENDING). Produces the output bytes + the sign_request + the supervisor
+        //     attestation the broker forwards + re-checks.
+        let plan = ExecutionPlan {
+            req,
+            broker_turn_id,
+            request_nonce,
+            resolved: &resolved,
+            lease: &lease,
+        };
+        let artifacts = self.execution.execute(&plan)?;
+
+        // (6) isolated-signer: sign-result ⇒ the flat 23-key envelope payload + its Ed25519 signature.
+        let sign = json!({ "op": "sign-result", "sign_request": artifacts.sign_request });
+        let reply = self.hop(Principal::IsolatedSigner, &sign)?;
+        let payload = reply.get("payload").ok_or(TurnReason::UpstreamBlocked)?;
+        let env_sig = reply
+            .get("signature")
+            .and_then(Value::as_str)
+            .ok_or(TurnReason::UpstreamBlocked)?
+            .to_string();
+        let env = OwnedEnvelope::from_payload(payload)?;
+
+        // (7) FINAL ACCEPTANCE — the broker-owned predicate over its OWN pinned keys + trusted Expected. The
+        //     envelope + its signature came from the wire; EVERY trust anchor (keys, request binding) is the
+        //     broker's own. verify_and_accept reconstructs JCS(payload), re-verifies both signatures,
+        //     recomputes request_sha256, and length+digest-gates the output. Any mismatch ⇒ closed reason.
+        let message_id = format!("m-{broker_turn_id}");
+        let envelope = env.as_receipt_envelope();
+        let keys = PinnedKeys {
+            isolated_signer_key_id: &resolved.isolated_signer_key_id,
+            isolated_signer_public_key: &resolved.isolated_signer_public_key,
+            supervisor_attestation_key_id: &resolved.supervisor_attestation_key_id,
+            supervisor_attestation_public_key: &resolved.supervisor_attestation_public_key,
+        };
+        let expected = IssuedRequest {
+            workspace_id: &resolved.workspace_id,
+            install_id: &resolved.install_id,
+            request_nonce,
+            system_sha256: &resolved.system_sha256,
+            history_sha256: &resolved.history_sha256,
+            generation_config_sha256: &resolved.generation_config_sha256,
+            requested_at: &resolved.requested_at,
+        };
+        let attestation = SupervisorAttestation {
+            evidence_jcs: &artifacts.attestation_evidence_jcs,
+            signature_b64: &artifacts.attestation_signature_b64,
+        };
+        let ctx = BrokerContext {
+            broker_turn_id,
+            message_id: &message_id,
+            conversation_id: &req.conversation_id,
+            author: &resolved.author,
+        };
+        let mut ledger = self.ledger.lock().map_err(|_| TurnReason::UpstreamBlocked)?;
+        verify_and_accept(
+            &expected,
+            &envelope,
+            &env_sig,
+            &attestation,
+            &keys,
+            &artifacts.output,
+            &ctx,
+            &mut *ledger,
+        )
+    }
+}
+
+/// Parse the supervisor lease object (§5 exhaustive shape) into a [`Lease`]; the raw JSON is retained for a
+/// byte-faithful `launch-gate` re-check. A missing/mistyped field fails closed.
+fn parse_lease(v: &Value) -> Result<Lease, TurnReason> {
+    let s = |k: &str| {
+        v.get(k)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or(TurnReason::UpstreamBlocked)
+    };
+    Ok(Lease {
+        lease_id: s("lease_id")?,
+        execution_attempt_id: s("execution_attempt_id")?,
+        lease_expires_at_ms: v
+            .get("lease_expires_at_ms")
+            .and_then(Value::as_i64)
+            .ok_or(TurnReason::UpstreamBlocked)?,
+        launcher_executable_sha256: s("launcher_executable_sha256")?,
+        executor_executable_sha256: s("executor_executable_sha256")?,
+        raw: v.clone(),
+    })
+}
+
+/// The isolated-signer's flat 23-key `brops.governed-receipt-envelope.v1` payload parsed into OWNED fields
+/// so the borrowed [`ReceiptEnvelope`] can point at it for the verify call. A missing/mistyped key fails
+/// closed BEFORE any signature check (verify_and_accept re-checks the identity fields regardless).
+struct OwnedEnvelope {
+    artifact_type: String,
+    key_id: String,
+    receipt_id: String,
+    run_id: String,
+    execution_attempt_id: String,
+    task_id: String,
+    workspace_id: String,
+    install_id: String,
+    request_nonce: String,
+    request_sha256: String,
+    record_handle: String,
+    lease_handle: String,
+    execution_receipt_handle: String,
+    output_sha256: String,
+    evidence_final_event_hash: String,
+    supervisor_attestation_key_id: String,
+    attestation_evidence_sha256: String,
+    output_bytes: u64,
+    challenge_accepted_at_ms: i64,
+    completed_at_ms: i64,
+    evidence_event_count: i64,
+    evidence_last_sequence: i64,
+    evidence_head_sequence: i64,
+}
+
+impl OwnedEnvelope {
+    fn from_payload(p: &Value) -> Result<Self, TurnReason> {
+        let s = |k: &str| {
+            p.get(k)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or(TurnReason::UpstreamBlocked)
+        };
+        let i = |k: &str| {
+            p.get(k)
+                .and_then(Value::as_i64)
+                .ok_or(TurnReason::UpstreamBlocked)
+        };
+        let u = |k: &str| {
+            p.get(k)
+                .and_then(Value::as_u64)
+                .ok_or(TurnReason::UpstreamBlocked)
+        };
+        Ok(OwnedEnvelope {
+            artifact_type: s("artifact_type")?,
+            key_id: s("key_id")?,
+            receipt_id: s("receipt_id")?,
+            run_id: s("run_id")?,
+            execution_attempt_id: s("execution_attempt_id")?,
+            task_id: s("task_id")?,
+            workspace_id: s("workspace_id")?,
+            install_id: s("install_id")?,
+            request_nonce: s("request_nonce")?,
+            request_sha256: s("request_sha256")?,
+            record_handle: s("record_handle")?,
+            lease_handle: s("lease_handle")?,
+            execution_receipt_handle: s("execution_receipt_handle")?,
+            output_sha256: s("output_sha256")?,
+            evidence_final_event_hash: s("evidence_final_event_hash")?,
+            supervisor_attestation_key_id: s("supervisor_attestation_key_id")?,
+            attestation_evidence_sha256: s("attestation_evidence_sha256")?,
+            output_bytes: u("output_bytes")?,
+            challenge_accepted_at_ms: i("challenge_accepted_at_ms")?,
+            completed_at_ms: i("completed_at_ms")?,
+            evidence_event_count: i("evidence_event_count")?,
+            evidence_last_sequence: i("evidence_last_sequence")?,
+            evidence_head_sequence: i("evidence_head_sequence")?,
+        })
+    }
+
+    fn as_receipt_envelope(&self) -> ReceiptEnvelope<'_> {
+        ReceiptEnvelope {
+            artifact_type: &self.artifact_type,
+            key_id: &self.key_id,
+            receipt_id: &self.receipt_id,
+            run_id: &self.run_id,
+            execution_attempt_id: &self.execution_attempt_id,
+            task_id: &self.task_id,
+            workspace_id: &self.workspace_id,
+            install_id: &self.install_id,
+            request_nonce: &self.request_nonce,
+            request_sha256: &self.request_sha256,
+            record_handle: &self.record_handle,
+            lease_handle: &self.lease_handle,
+            execution_receipt_handle: &self.execution_receipt_handle,
+            output_sha256: &self.output_sha256,
+            output_bytes: self.output_bytes,
+            challenge_accepted_at_ms: self.challenge_accepted_at_ms,
+            completed_at_ms: self.completed_at_ms,
+            evidence_final_event_hash: &self.evidence_final_event_hash,
+            evidence_event_count: self.evidence_event_count,
+            evidence_last_sequence: self.evidence_last_sequence,
+            evidence_head_sequence: self.evidence_head_sequence,
+            supervisor_attestation_key_id: &self.supervisor_attestation_key_id,
+            attestation_evidence_sha256: &self.attestation_evidence_sha256,
+        }
+    }
+}
+
+/// The real Linux sub-chain: drives the AF_UNIX challenge-authority / supervisor / isolated-signer hops via
+/// a real socket [`HopConnector`], and (once provisioned) the privileged execution spawn. The pure
+/// orchestration above is host-independent; only the socket transport + the setuid spawn live here.
 #[cfg(target_os = "linux")]
 pub mod linux {
     use super::*;
+    use brops_core::ipc_framing::{LENGTH_PREFIX_BYTES, MAX_FRAME_PAYLOAD_BYTES};
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
 
     /// Socket paths for the trusted principals (each owned by its own service UID; §2.6 provisioning).
     pub struct ChainSockets {
@@ -65,27 +523,97 @@ pub mod linux {
         pub signer: String,
     }
 
-    /// The production sub-chain over AF_UNIX. Holds the pinned keys/config the broker resolves from its own
-    /// root-signed manifest; drives each hop, then verifies. (The per-hop socket protocol reuses
-    /// `brops_core::ipc_framing`; the final acceptance reuses `governed_verification::verify_and_accept`.)
-    pub struct LinuxGovernedTurnChain {
+    /// Real AF_UNIX connector: one fresh single-request/single-response connection per hop (matching the
+    /// servers' one-frame-per-connection contract). A connect/transport failure is a closed [`HopError`].
+    pub struct LinuxHopConnector {
         pub sockets: ChainSockets,
     }
 
-    impl GovernedTurnChain for LinuxGovernedTurnChain {
+    impl HopConnector for LinuxHopConnector {
+        fn connect(&self, principal: Principal) -> Result<Box<dyn HopConn>, HopError> {
+            let path = match principal {
+                Principal::ChallengeAuthority => &self.sockets.authority,
+                Principal::Supervisor => &self.sockets.supervisor,
+                Principal::IsolatedSigner => &self.sockets.signer,
+            };
+            let stream = UnixStream::connect(path).map_err(|_| HopError::Unavailable)?;
+            Ok(Box::new(UnixHopConn { stream }))
+        }
+    }
+
+    /// A live AF_UNIX peer as a [`HopConn`]: `send_all` writes the framed request; `recv_all` reads exactly
+    /// one length-prefixed reply frame (bounded) and returns it framed for `decode_one`.
+    struct UnixHopConn {
+        stream: UnixStream,
+    }
+
+    impl HopConn for UnixHopConn {
+        fn send_all(&mut self, frame: &[u8]) -> Result<(), HopError> {
+            self.stream.write_all(frame).map_err(|_| HopError::Io)?;
+            self.stream.flush().map_err(|_| HopError::Io)
+        }
+
+        fn recv_all(&mut self) -> Result<Vec<u8>, HopError> {
+            let mut prefix = [0u8; LENGTH_PREFIX_BYTES];
+            self.stream.read_exact(&mut prefix).map_err(|_| HopError::Io)?;
+            let declared = u32::from_be_bytes(prefix) as usize;
+            if declared == 0 || declared > MAX_FRAME_PAYLOAD_BYTES {
+                return Err(HopError::BadReply);
+            }
+            let mut body = vec![0u8; declared];
+            self.stream.read_exact(&mut body).map_err(|_| HopError::Io)?;
+            let mut framed = Vec::with_capacity(LENGTH_PREFIX_BYTES + declared);
+            framed.extend_from_slice(&prefix);
+            framed.extend_from_slice(&body);
+            Ok(framed)
+        }
+    }
+
+    /// LINUX-RUN-PENDING: real privileged execution spawn (recorder → setuid launcher → executor, producing
+    /// the output bytes + execution-receipt/evidence handles + the supervisor attestation over the run
+    /// evidence). Until that setuid chain + the signer/supervisor protected store are provisioned end-to-end
+    /// this fails CLOSED rather than fabricate an accepted success — the Linux CI isolation proof drives the
+    /// real run. It is deliberately NOT a fake success.
+    pub struct LinuxGovernedExecution;
+
+    impl GovernedExecution for LinuxGovernedExecution {
+        fn execute(&self, _plan: &ExecutionPlan) -> Result<ExecutionArtifacts, TurnReason> {
+            // LINUX-RUN-PENDING: real privileged execution spawn.
+            Err(TurnReason::UpstreamBlocked)
+        }
+    }
+
+    /// The production Linux sub-chain: the pure [`GovernedChain`] wired to the real socket connector + the
+    /// (still-pending) privileged execution spawn + the broker's injected resolver/ledger. Because the
+    /// execution is a fail-closed stub, every turn currently blocks — correctly, never fabricated — until
+    /// the setuid chain lands; the hops + final verification are the real code the CI proof exercises.
+    #[allow(dead_code)]
+    pub struct LinuxGovernedTurnChain<R: TurnResolver, L: AcceptanceLedger> {
+        inner: GovernedChain<LinuxHopConnector, R, LinuxGovernedExecution, L>,
+    }
+
+    #[allow(dead_code)]
+    impl<R: TurnResolver, L: AcceptanceLedger> LinuxGovernedTurnChain<R, L> {
+        pub fn new(sockets: ChainSockets, resolver: R, ledger: L) -> Self {
+            LinuxGovernedTurnChain {
+                inner: GovernedChain::new(
+                    LinuxHopConnector { sockets },
+                    resolver,
+                    LinuxGovernedExecution,
+                    ledger,
+                ),
+            }
+        }
+    }
+
+    impl<R: TurnResolver, L: AcceptanceLedger> GovernedTurnChain for LinuxGovernedTurnChain<R, L> {
         fn run_verified(
             &self,
-            _req: &ValidatedRequest,
-            _broker_turn_id: &str,
-            _request_nonce: &str,
+            req: &ValidatedRequest,
+            broker_turn_id: &str,
+            request_nonce: &str,
         ) -> Result<AcceptedOutput, TurnReason> {
-            // Real AF_UNIX hops (authority create-pending/issue -> supervisor open+lease -> launcher/
-            // executor -> signer sign-result), then governed_verification::verify_and_accept over the
-            // pinned keys + the trusted Expected. Until the deployed services + provisioning are wired
-            // end-to-end this fails closed rather than fabricating an acceptance (the Linux CI isolation
-            // proof drives the real run). Referencing the sockets keeps the field live for that wiring.
-            let _ = (&self.sockets.authority, &self.sockets.supervisor, &self.sockets.signer);
-            Err(TurnReason::UpstreamBlocked)
+            self.inner.run_verified(req, broker_turn_id, request_nonce)
         }
     }
 }
@@ -93,13 +621,31 @@ pub mod linux {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::collections::{HashMap, VecDeque};
+    use std::rc::Rc;
+
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
+    use ed25519_dalek::{Signer as _, SigningKey};
+    use serde_json::{Map, Number};
+
     use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
     use brops_core::broker_turns;
     use brops_core::governed_message_store::{create_schema as create_msg_schema, sha256_hex};
     use brops_core::governed_turn_ipc::{REQUEST_PROTOCOL, TRUSTED_VERIFIED};
+    use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
+    use brops_core::ipc_framing::{decode_one, encode_frame};
+    use brops_core::receipt::request_envelope_sha256;
     use rusqlite::Connection;
 
     const CRID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+    const NONCE: &str = "nonce-1";
+    const OUTPUT: &[u8] = b"the exact governed reply bytes";
+    const EVIDENCE: &[u8] = br#"{"protocol":"brops.run-attestation.v1","x":1}"#;
+    const H64: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const ISO_KEY_ID: &str = "iso-signer-1";
+    const SUP_KEY_ID: &str = "sup-att-1";
 
     struct FixedIds;
     impl BrokerIds for FixedIds {
@@ -107,14 +653,12 @@ mod tests {
             "bt-1".into()
         }
         fn new_request_nonce(&self) -> String {
-            "nonce-1".into()
+            NONCE.into()
         }
     }
 
-    /// A fake sub-chain that returns a verified accepted output (as
-    /// `governed_verification::verify_and_accept` would on a valid signed envelope — that crypto is proven
-    /// in governed_verification's own tests). This isolates + proves the ChainExecutor -> orchestrator ->
-    /// commit-readback composition.
+    // ---- retained composition tests: ChainExecutor relays exactly what a GovernedTurnChain returned ----
+
     struct FakeChain {
         body: String,
     }
@@ -151,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn chain_executor_end_to_end_yields_committed_verified_message() {
+    fn chain_executor_relays_a_verified_chain_result() {
         let c = conn();
         let exec = ChainExecutor::new(FakeChain { body: "the governed reply".into() });
         let r = run_governed_turn(&c, &raw(), &FixedIds, &exec, 1);
@@ -163,12 +707,374 @@ mod tests {
     }
 
     #[test]
-    fn a_refusing_chain_blocks_the_turn_without_a_message() {
+    fn chain_executor_relays_a_refusal_without_a_message() {
         let c = conn();
         let exec = ChainExecutor::new(RefusingChain);
         let r = run_governed_turn(&c, &raw(), &FixedIds, &exec, 1);
         assert_eq!(r.status, "blocked");
         assert_eq!(r.reason, Some(TurnReason::UpstreamBlocked));
+        assert!(r.message.is_none());
+    }
+
+    // =============================================================================================
+    // Orchestration tests — inject fake hops + fake execution and drive the REAL verify_and_accept.
+    // =============================================================================================
+
+    fn signing_key(seed: u8) -> SigningKey {
+        SigningKey::from_bytes(&[seed; 32])
+    }
+    fn sign_b64(k: &SigningKey, msg: &[u8]) -> String {
+        URL_SAFE_NO_PAD.encode(k.sign(msg).to_bytes())
+    }
+    fn hx(n: u8) -> String {
+        (0..32).map(|_| format!("{n:02x}")).collect()
+    }
+
+    fn expected_request_sha256() -> String {
+        request_envelope_sha256(
+            "ws-1",
+            "install-1",
+            NONCE,
+            &hx(0x55),
+            &hx(0x66),
+            &hx(0x44),
+            "1000",
+        )
+    }
+
+    /// Build the flat 23-key envelope payload the isolated signer would return, matching the fixture's
+    /// Expected + output + attestation, and sign its JCS with the isolated-signer key. `to_vec` of a sorted
+    /// `Map` is byte-identical to `ReceiptEnvelope::payload_jcs`, so the signature verifies in the broker.
+    fn signed_payload(out_bytes: u64, out_sha: &str) -> (Value, String) {
+        let mut m = Map::new();
+        let strings = [
+            ("artifact_type", RECEIPT_ENVELOPE_ARTIFACT_TYPE),
+            ("key_id", ISO_KEY_ID),
+            ("receipt_id", "receipt-abc"),
+            ("run_id", "run-1"),
+            ("execution_attempt_id", "att-1"),
+            ("task_id", "task-1"),
+            ("workspace_id", "ws-1"),
+            ("install_id", "install-1"),
+            ("request_nonce", NONCE),
+            ("record_handle", H64),
+            ("lease_handle", H64),
+            ("execution_receipt_handle", H64),
+            ("evidence_final_event_hash", H64),
+            ("supervisor_attestation_key_id", SUP_KEY_ID),
+        ];
+        for (k, v) in strings {
+            m.insert(k.to_string(), Value::String(v.to_string()));
+        }
+        m.insert("request_sha256".to_string(), Value::String(expected_request_sha256()));
+        m.insert("output_sha256".to_string(), Value::String(out_sha.to_string()));
+        m.insert(
+            "attestation_evidence_sha256".to_string(),
+            Value::String(sha256_hex(EVIDENCE)),
+        );
+        let ints: [(&str, u64); 6] = [
+            ("output_bytes", out_bytes),
+            ("challenge_accepted_at_ms", 1000),
+            ("completed_at_ms", 2000),
+            ("evidence_event_count", 3),
+            ("evidence_last_sequence", 12),
+            ("evidence_head_sequence", 12),
+        ];
+        for (k, v) in ints {
+            m.insert(k.to_string(), Value::Number(Number::from(v)));
+        }
+        let payload = Value::Object(m);
+        let jcs = serde_json::to_vec(&payload).unwrap();
+        let env_sig = sign_b64(&signing_key(7), &jcs);
+        (payload, env_sig)
+    }
+
+    // ---- fake connector: canned framed replies per principal, in call order; records sent requests ----
+
+    struct FakeConn {
+        principal: Principal,
+        reply: Vec<u8>,
+        sent: Rc<RefCell<Vec<(Principal, Value)>>>,
+    }
+    impl HopConn for FakeConn {
+        fn send_all(&mut self, frame: &[u8]) -> Result<(), HopError> {
+            let payload = decode_one(frame).map_err(HopError::Frame)?;
+            let v: Value = serde_json::from_slice(payload).map_err(|_| HopError::BadReply)?;
+            self.sent.borrow_mut().push((self.principal, v));
+            Ok(())
+        }
+        fn recv_all(&mut self) -> Result<Vec<u8>, HopError> {
+            encode_frame(&self.reply).map_err(HopError::Frame)
+        }
+    }
+
+    struct FakeConnector {
+        replies: RefCell<HashMap<Principal, VecDeque<Vec<u8>>>>,
+        sent: Rc<RefCell<Vec<(Principal, Value)>>>,
+    }
+    impl FakeConnector {
+        fn new() -> Self {
+            FakeConnector {
+                replies: RefCell::new(HashMap::new()),
+                sent: Rc::new(RefCell::new(Vec::new())),
+            }
+        }
+        fn push(&self, principal: Principal, reply: Value) {
+            self.replies
+                .borrow_mut()
+                .entry(principal)
+                .or_default()
+                .push_back(serde_json::to_vec(&reply).unwrap());
+        }
+    }
+    impl HopConnector for FakeConnector {
+        fn connect(&self, principal: Principal) -> Result<Box<dyn HopConn>, HopError> {
+            let reply = self
+                .replies
+                .borrow_mut()
+                .get_mut(&principal)
+                .and_then(VecDeque::pop_front)
+                .ok_or(HopError::Unavailable)?;
+            Ok(Box::new(FakeConn {
+                principal,
+                reply,
+                sent: self.sent.clone(),
+            }))
+        }
+    }
+
+    // ---- fake resolver: the broker's OWN pinned keys + Expected, matching the fixture ----
+
+    struct FakeResolver;
+    impl TurnResolver for FakeResolver {
+        fn resolve(&self, _req: &ValidatedRequest, _bt: &str, _n: &str) -> Result<ResolvedTurn, TurnReason> {
+            Ok(ResolvedTurn {
+                isolated_signer_key_id: ISO_KEY_ID.into(),
+                isolated_signer_public_key: signing_key(7).verifying_key().to_bytes(),
+                supervisor_attestation_key_id: SUP_KEY_ID.into(),
+                supervisor_attestation_public_key: signing_key(9).verifying_key().to_bytes(),
+                workspace_id: "ws-1".into(),
+                install_id: "install-1".into(),
+                system_sha256: hx(0x55),
+                history_sha256: hx(0x66),
+                generation_config_sha256: hx(0x44),
+                requested_at: "1000".into(),
+                run_id: "run-1".into(),
+                task_id: "task-1".into(),
+                requested_at_ms: 1000,
+                author: "Bro".into(),
+            })
+        }
+    }
+
+    // ---- fake execution: real output + supervisor attestation; optionally tampers the output ----
+
+    struct FakeExecution {
+        tamper: bool,
+    }
+    impl GovernedExecution for FakeExecution {
+        fn execute(&self, plan: &ExecutionPlan) -> Result<ExecutionArtifacts, TurnReason> {
+            // A faithful execution acts only on the lease it was actually granted + the broker-minted ids
+            // (never fabricating them); asserting here proves the orchestration threads them through.
+            assert_eq!(plan.lease.lease_id, "L1");
+            assert_eq!(plan.lease.execution_attempt_id, "att-1");
+            // The real execution verifies the pinned launcher/executor hashes + budget before it spawns.
+            assert_eq!(plan.lease.launcher_executable_sha256, H64);
+            assert_eq!(plan.lease.executor_executable_sha256, H64);
+            assert_eq!(plan.lease.lease_expires_at_ms, 999_999);
+            assert_eq!(plan.request_nonce, NONCE);
+            assert_eq!(plan.resolved.workspace_id, "ws-1");
+            assert_eq!(plan.req.conversation_id, "conv-1");
+            assert_eq!(plan.broker_turn_id, "bt-1");
+            let mut output = OUTPUT.to_vec();
+            if self.tamper {
+                output[0] ^= 0x01; // same length, different bytes ⇒ digest gate fails downstream
+            }
+            Ok(ExecutionArtifacts {
+                output,
+                sign_request: json!({
+                    "protocol": "brops.sign-request.v1",
+                    "attestation": {"attestation_protocol": "brops.run-attestation.v1",
+                                    "supervisor_key_id": SUP_KEY_ID, "sig": sign_b64(&signing_key(9), EVIDENCE)},
+                    "evidence": {"run_id": "run-1"}
+                }),
+                attestation_evidence_jcs: EVIDENCE.to_vec(),
+                attestation_signature_b64: sign_b64(&signing_key(9), EVIDENCE),
+            })
+        }
+    }
+
+    fn lease_obj() -> Value {
+        json!({
+            "lease_id": "L1",
+            "execution_attempt_id": "att-1",
+            "lease_expires_at_ms": 999_999,
+            "launcher_executable_sha256": H64,
+            "executor_executable_sha256": H64,
+        })
+    }
+
+    /// A connector primed for a full happy path (create-pending → issue → accept-open → launch-gate →
+    /// sign-result). The signer payload binds the given output.
+    fn happy_connector() -> FakeConnector {
+        let c = FakeConnector::new();
+        c.push(
+            Principal::ChallengeAuthority,
+            json!({"ok": true, "op": "create-pending", "pending_challenge_id": "pc-1", "pending_expires_at_ms": 123}),
+        );
+        c.push(
+            Principal::ChallengeAuthority,
+            json!({"ok": true, "op": "issue", "challenge": {"protocol": "brops.governed-turn-challenge.v1", "x": 1}}),
+        );
+        c.push(
+            Principal::Supervisor,
+            json!({"ok": true, "op": "accept-open", "lease": lease_obj()}),
+        );
+        c.push(
+            Principal::Supervisor,
+            json!({"ok": true, "op": "launch-gate", "proceed": true, "lease": lease_obj()}),
+        );
+        let (payload, sig) = signed_payload(OUTPUT.len() as u64, &sha256_hex(OUTPUT));
+        c.push(
+            Principal::IsolatedSigner,
+            json!({"ok": true, "op": "sign-result", "artifact_type": RECEIPT_ENVELOPE_ARTIFACT_TYPE,
+                   "payload": payload, "signature": sig}),
+        );
+        c
+    }
+
+    fn chain(
+        connector: FakeConnector,
+        tamper: bool,
+    ) -> GovernedChain<FakeConnector, FakeResolver, FakeExecution, InMemoryLedger> {
+        GovernedChain::new(connector, FakeResolver, FakeExecution { tamper }, InMemoryLedger::new())
+    }
+
+    #[test]
+    fn happy_path_produces_a_committed_trusted_verified_message() {
+        let c = conn();
+        let exec = ChainExecutor::new(chain(happy_connector(), false));
+        let r = run_governed_turn(&c, &raw(), &FixedIds, &exec, 1);
+        assert_eq!(r.status, "committed", "reason={:?}", r.reason);
+        let m = r.message.expect("committed message present");
+        assert_eq!(m.body.as_bytes(), OUTPUT);
+        assert_eq!(m.trust_state, TRUSTED_VERIFIED);
+        assert_eq!(m.created_at_ms, 2000); // envelope completed_at_ms
+        assert_eq!(r.broker_turn_id, "bt-1");
+    }
+
+    #[test]
+    fn happy_path_run_verified_returns_the_exact_verified_output() {
+        // Drive the sub-chain directly and assert the AcceptedOutput is bound to the signed envelope.
+        let ch = chain(happy_connector(), false);
+        let req = ValidatedRequest::decode(&raw()).unwrap();
+        let accepted = ch.run_verified(&req, "bt-1", NONCE).expect("verified acceptance");
+        assert_eq!(accepted.accepted_body.as_bytes(), OUTPUT);
+        assert_eq!(accepted.envelope_body_sha256, sha256_hex(OUTPUT));
+        assert_eq!(accepted.message_id, "m-bt-1");
+        assert_eq!(accepted.conversation_id, "conv-1");
+        assert_eq!(accepted.author, "Bro");
+    }
+
+    #[test]
+    fn hops_are_sequenced_and_chained_in_order() {
+        let connector = happy_connector();
+        // Capture the shared sent-log before the connector is moved into the chain.
+        let sent = connector.sent.clone();
+        let ch = chain(connector, false);
+        let req = ValidatedRequest::decode(&raw()).unwrap();
+        ch.run_verified(&req, "bt-1", NONCE).unwrap();
+
+        let sent = sent.borrow();
+        let ops: Vec<(Principal, String)> = sent
+            .iter()
+            .map(|(p, v)| (*p, v.get("op").and_then(Value::as_str).unwrap_or("").to_string()))
+            .collect();
+        assert_eq!(
+            ops,
+            vec![
+                (Principal::ChallengeAuthority, "create-pending".into()),
+                (Principal::ChallengeAuthority, "issue".into()),
+                (Principal::Supervisor, "accept-open".into()),
+                (Principal::Supervisor, "launch-gate".into()),
+                (Principal::IsolatedSigner, "sign-result".into()),
+            ]
+        );
+        // Data threads between hops: issue carries the create-pending id; accept-open carries the issued
+        // challenge doc; launch-gate carries the accept-open lease.
+        assert_eq!(sent[1].1.get("pending_challenge_id").and_then(Value::as_str), Some("pc-1"));
+        assert!(sent[2].1.get("challenge_doc").is_some());
+        assert_eq!(
+            sent[3].1.get("lease").and_then(|l| l.get("lease_id")).and_then(Value::as_str),
+            Some("L1")
+        );
+    }
+
+    #[test]
+    fn a_refusing_authority_blocks_with_no_message() {
+        let c = FakeConnector::new();
+        c.push(
+            Principal::ChallengeAuthority,
+            json!({"ok": false, "op": "create-pending", "reason": "retry_conflict", "error": "x"}),
+        );
+        let db = conn();
+        let exec = ChainExecutor::new(chain(c, false));
+        let r = run_governed_turn(&db, &raw(), &FixedIds, &exec, 1);
+        assert_eq!(r.status, "blocked");
+        assert_eq!(r.reason, Some(TurnReason::UpstreamBlocked));
+        assert!(r.message.is_none());
+    }
+
+    #[test]
+    fn a_refusing_supervisor_blocks_with_no_message() {
+        let c = FakeConnector::new();
+        c.push(
+            Principal::ChallengeAuthority,
+            json!({"ok": true, "op": "create-pending", "pending_challenge_id": "pc-1", "pending_expires_at_ms": 123}),
+        );
+        c.push(
+            Principal::ChallengeAuthority,
+            json!({"ok": true, "op": "issue", "challenge": {"protocol": "brops.governed-turn-challenge.v1"}}),
+        );
+        c.push(
+            Principal::Supervisor,
+            json!({"ok": false, "op": "accept-open", "reason": "challenge_expired", "error": "x"}),
+        );
+        let db = conn();
+        let exec = ChainExecutor::new(chain(c, false));
+        let r = run_governed_turn(&db, &raw(), &FixedIds, &exec, 1);
+        assert_eq!(r.status, "blocked");
+        assert_eq!(r.reason, Some(TurnReason::UpstreamBlocked));
+        assert!(r.message.is_none());
+    }
+
+    #[test]
+    fn a_signer_refusal_blocks_with_no_message() {
+        let c = happy_connector();
+        // Replace the sign-result reply with a typed refusal.
+        c.replies.borrow_mut().get_mut(&Principal::IsolatedSigner).unwrap().clear();
+        c.push(
+            Principal::IsolatedSigner,
+            json!({"ok": false, "op": "sign-result", "reason": "attestation_invalid",
+                   "artifact_type": "brops.governed-receipt-refusal.v1", "error": "refused"}),
+        );
+        let db = conn();
+        let exec = ChainExecutor::new(chain(c, false));
+        let r = run_governed_turn(&db, &raw(), &FixedIds, &exec, 1);
+        assert_eq!(r.status, "blocked");
+        assert_eq!(r.reason, Some(TurnReason::UpstreamBlocked));
+        assert!(r.message.is_none());
+    }
+
+    #[test]
+    fn a_tampered_output_fails_verification_and_blocks() {
+        // The signer bound the REAL output digest; execution returns a byte-flipped output ⇒ the broker's
+        // output digest gate fails ⇒ CommitReadbackMismatch, never a fabricated acceptance.
+        let db = conn();
+        let exec = ChainExecutor::new(chain(happy_connector(), true));
+        let r = run_governed_turn(&db, &raw(), &FixedIds, &exec, 1);
+        assert_eq!(r.status, "blocked");
+        assert_eq!(r.reason, Some(TurnReason::CommitReadbackMismatch));
         assert!(r.message.is_none());
     }
 }

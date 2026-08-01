@@ -67,7 +67,7 @@ pub fn reply_status(reply_json: &[u8]) -> Result<String, HopError> {
 
 /// The three trusted principals of the governed chain, in order (§2.1 → §5 → §7). Used to label a hop
 /// failure and to select the socket in the Linux transport.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Principal {
     ChallengeAuthority,
     Supervisor,
