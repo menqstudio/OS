@@ -21,6 +21,8 @@ import { Approvals } from './Approvals';
 import { Notifications } from './Notifications';
 import { Decisions } from './Decisions';
 import { Activity } from './Activity';
+import { Library } from './Library';
+import { Research } from './Research';
 
 // Screens backed by real Tauri commands (SQLite). Everything else falls through
 // to <Generic>, which honestly reports that the workspace has no backend yet.
@@ -35,6 +37,8 @@ const screens: Partial<Record<RouteId, React.FC>> = {
   knowledge: Knowledge,
   memory: Memory,
   decisions: Decisions,
+  research: Research,
+  library: Library,
   calendar: Calendar,
   automations: Automations,
   approvals: Approvals,

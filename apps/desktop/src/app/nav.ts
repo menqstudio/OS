@@ -39,8 +39,8 @@ export const NAV: NavGroup[] = [
       { id: 'knowledge', labelKey: 'nav.knowledge', subtitleKey: 'knowledge.subtitle', icon: '📚' },
       { id: 'memory', labelKey: 'nav.memory', subtitleKey: 'memory.subtitle', icon: '🧠' },
       { id: 'decisions', labelKey: 'nav.decisions', subtitleKey: 'decisions.subtitle', icon: '⚖' },
-      { id: 'research', labelKey: 'nav.research', subtitleKey: 'generic.subtitle', icon: '🔬' },
-      { id: 'library', labelKey: 'nav.library', subtitleKey: 'generic.subtitle', icon: '📓' },
+      { id: 'research', labelKey: 'nav.research', subtitleKey: 'generic.subtitle', icon: '⌖' },
+      { id: 'library', labelKey: 'nav.library', subtitleKey: 'generic.subtitle', icon: '❑' },
     ],
   },
   {
