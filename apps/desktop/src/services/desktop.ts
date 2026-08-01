@@ -6,9 +6,10 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import type {
   ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
-  DirListing, FileContent, Integration, KnowledgeNote, MemoryEntry, Message, MessageRole, Metric,
+  DirListing, FileContent, Integration, KnowledgeNote, LibraryItem, MemoryEntry, Message, MessageRole, Metric,
   NewAutomation, NewEvent,
-  NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
+  NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject, NewResearchItem, NewTask,
+  Notification, Project, ResearchItem, Run,
   RunStep, SearchResult, SecuritySummary, Task,
 } from '../domain/entities';
 
@@ -109,6 +110,16 @@ export const desktop = {
   searchKnowledge: (query: string) => invoke<KnowledgeNote[]>('search_knowledge', { query }),
   createKnowledge: (input: NewKnowledgeNote) => invoke<KnowledgeNote>('create_knowledge', { input }),
   deleteKnowledge: (id: string) => invoke<void>('delete_knowledge', { id }),
+
+  // library
+  listLibrary: () => invoke<LibraryItem[]>('list_library'),
+  createLibraryItem: (input: NewLibraryItem) => invoke<LibraryItem>('create_library_item', { input }),
+  deleteLibraryItem: (id: string) => invoke<void>('delete_library_item', { id }),
+
+  // research
+  listResearch: () => invoke<ResearchItem[]>('list_research'),
+  createResearchItem: (input: NewResearchItem) => invoke<ResearchItem>('create_research_item', { input }),
+  deleteResearchItem: (id: string) => invoke<void>('delete_research_item', { id }),
 
   // memory
   listMemory: (scope?: string) => invoke<MemoryEntry[]>('list_memory', { scope: scope ?? null }),

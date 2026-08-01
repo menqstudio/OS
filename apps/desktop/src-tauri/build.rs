@@ -57,6 +57,14 @@ fn main() {
         "search_knowledge",
         "create_knowledge",
         "delete_knowledge",
+        // library
+        "list_library",
+        "create_library_item",
+        "delete_library_item",
+        // research
+        "list_research",
+        "create_research_item",
+        "delete_research_item",
         // memory
         "list_memory",
         "create_memory",

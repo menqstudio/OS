@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-library-item"
+description = "Enables the create_library_item command without any pre-configured scope."
+commands.allow = ["create_library_item"]
+
+[[permission]]
+identifier = "deny-create-library-item"
+description = "Denies the create_library_item command without any pre-configured scope."
+commands.deny = ["create_library_item"]

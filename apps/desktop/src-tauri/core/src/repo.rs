@@ -1225,6 +1225,112 @@ pub mod memory {
     }
 }
 
+pub mod library {
+    use super::*;
+
+    fn map(r: &Row) -> rusqlite::Result<LibraryItem> {
+        Ok(LibraryItem {
+            id: r.get("id")?,
+            title: r.get("title")?,
+            kind: r.get("kind")?,
+            body: r.get("body")?,
+            tags: r.get("tags")?,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    pub fn create(conn: &Connection, input: NewLibraryItem) -> CoreResult<LibraryItem> {
+        let now = now();
+        let id = id();
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO library_items(id, title, kind, body, tags, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                rusqlite::params![id, input.title, input.kind, input.body, input.tags, now],
+            )?;
+            super::audit::record(tx, "library.created", "user", "gev", "library_item", &id)?;
+            Ok(())
+        })?;
+        get(conn, &id)
+    }
+
+    pub fn get(conn: &Connection, id: &str) -> CoreResult<LibraryItem> {
+        conn.query_row("SELECT * FROM library_items WHERE id = ?1", [id], map)
+            .map_err(not_found(id))
+    }
+
+    pub fn list(conn: &Connection) -> CoreResult<Vec<LibraryItem>> {
+        let mut s = conn.prepare("SELECT * FROM library_items ORDER BY updated_at DESC LIMIT ?1")?;
+        let rows = s.query_map([super::MAX_PAGE], map)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            let changed = tx.execute("DELETE FROM library_items WHERE id = ?1", [id])?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "library.deleted", "user", "gev", "library_item", id)?;
+            Ok(())
+        })
+    }
+}
+
+pub mod research {
+    use super::*;
+
+    fn map(r: &Row) -> rusqlite::Result<ResearchItem> {
+        Ok(ResearchItem {
+            id: r.get("id")?,
+            title: r.get("title")?,
+            question: r.get("question")?,
+            findings: r.get("findings")?,
+            status: r.get("status")?,
+            created_at: r.get("created_at")?,
+            updated_at: r.get("updated_at")?,
+        })
+    }
+
+    pub fn create(conn: &Connection, input: NewResearchItem) -> CoreResult<ResearchItem> {
+        let now = now();
+        let id = id();
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO research_items(id, title, question, findings, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                rusqlite::params![id, input.title, input.question, input.findings, input.status, now],
+            )?;
+            super::audit::record(tx, "research.created", "user", "gev", "research_item", &id)?;
+            Ok(())
+        })?;
+        get(conn, &id)
+    }
+
+    pub fn get(conn: &Connection, id: &str) -> CoreResult<ResearchItem> {
+        conn.query_row("SELECT * FROM research_items WHERE id = ?1", [id], map)
+            .map_err(not_found(id))
+    }
+
+    pub fn list(conn: &Connection) -> CoreResult<Vec<ResearchItem>> {
+        let mut s = conn.prepare("SELECT * FROM research_items ORDER BY updated_at DESC LIMIT ?1")?;
+        let rows = s.query_map([super::MAX_PAGE], map)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            let changed = tx.execute("DELETE FROM research_items WHERE id = ?1", [id])?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, "research.deleted", "user", "gev", "research_item", id)?;
+            Ok(())
+        })
+    }
+}
+
 pub mod runs {
     use super::*;
 

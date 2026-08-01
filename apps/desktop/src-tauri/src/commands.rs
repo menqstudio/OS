@@ -4,9 +4,9 @@
 use crate::AppState;
 use brops_core::{
     repo, ActivityEvent, Agent, Approval, Automation, Conversation, Decision, Event, Integration,
-    KnowledgeNote, MemoryEntry, Message, Metric, NewAutomation, NewEvent, NewKnowledgeNote,
-    NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run, RunStep,
-    SearchResult, SecuritySummary, Task,
+    KnowledgeNote, LibraryItem, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
+    NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject, NewResearchItem,
+    NewTask, Notification, Project, ResearchItem, Run, RunStep, SearchResult, SecuritySummary, Task,
 };
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -653,6 +653,46 @@ pub fn create_knowledge(state: State<AppState>, input: NewKnowledgeNote) -> Resu
 pub fn delete_knowledge(state: State<AppState>, id: String) -> Result<(), String> {
     let conn = locked(&state)?;
     repo::knowledge::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+// --- library ---
+
+#[tauri::command]
+pub fn list_library(state: State<AppState>) -> Result<Vec<LibraryItem>, String> {
+    let conn = locked(&state)?;
+    repo::library::list(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_library_item(state: State<AppState>, input: NewLibraryItem) -> Result<LibraryItem, String> {
+    let conn = locked(&state)?;
+    repo::library::create(&conn, input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_library_item(state: State<AppState>, id: String) -> Result<(), String> {
+    let conn = locked(&state)?;
+    repo::library::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+// --- research ---
+
+#[tauri::command]
+pub fn list_research(state: State<AppState>) -> Result<Vec<ResearchItem>, String> {
+    let conn = locked(&state)?;
+    repo::research::list(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_research_item(state: State<AppState>, input: NewResearchItem) -> Result<ResearchItem, String> {
+    let conn = locked(&state)?;
+    repo::research::create(&conn, input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_research_item(state: State<AppState>, id: String) -> Result<(), String> {
+    let conn = locked(&state)?;
+    repo::research::delete(&conn, &id).map_err(|e| e.to_string())
 }
 
 // --- memory ---

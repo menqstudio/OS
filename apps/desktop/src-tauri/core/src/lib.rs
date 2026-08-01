@@ -26,9 +26,10 @@ pub mod repo;
 
 pub use domain::{
     ActivityEvent, Agent, Approval, Automation, Conversation, CoreError, CoreResult, Decision,
-    Event, Integration, KnowledgeNote, Message, MemoryEntry, Metric, NewAutomation, NewEvent,
-    NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
-    RunStep, SearchResult, SecuritySummary, Task,
+    Event, Integration, KnowledgeNote, LibraryItem, Message, MemoryEntry, Metric, NewAutomation,
+    NewEvent, NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject,
+    NewResearchItem, NewTask, Notification, Project, ResearchItem, Run, RunStep, SearchResult,
+    SecuritySummary, Task,
 };
 
 /// A new UUID v4 string. IDs are opaque text everywhere in the schema.

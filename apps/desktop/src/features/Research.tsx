@@ -1,417 +1,443 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  useEffect, useMemo, useRef, useState,
+  type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Badge, Input, Skeleton, ErrorState, EmptyState,
+  PageHeader, Panel, Button, Badge, Input, Textarea, Select, Skeleton, ErrorState, EmptyState, Modal,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import type { ResearchItem } from '../domain/entities';
+import type { Tone } from '../domain/enums';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// research ⌖ Հետազոտում — §D page.
-//
-// Data source (spec): a research run is a *governed* bridge task
-// (`bridge.task-request` → `bridge.result`) that yields a verified receipt, and
-// its result is saved to knowledge. The desktop research-run IPC command is NOT
-// yet exposed by `services/desktop.ts` (there is no `list_research_runs` / research
-// `bridge.task-request` command). Per the spec's honesty rule this page therefore:
-//   • reads the REAL `ai_status` command to gate governed availability →
-//     drives the `blocked` state (governed provider off / sidecar down → no result);
-//   • renders NO fabricated runs — with no research store the run list is honestly
-//     `empty` ("Bro has run no research yet");
-//   • on a run attempt, performs a REAL `ai_status` round-trip and honestly reports
-//     that the governed research bridge is unavailable, rather than inventing sources
-//     or a synthesis.
-// The completed-run UI (sources list, synthesis, verified-receipt badge, save-to-
-// knowledge) is fully implemented and wired to the REAL `create_knowledge` command;
-// it renders only from a genuine committed run, so it never shows fake data.
-// ─────────────────────────────────────────────────────────────────────────────
+// ── §D `research` ⌖ Հետազոտում ────────────────────────────────────────────────
+// A research record store — a question and its findings, with a status — wired
+// end-to-end to the REAL desktop research store (`list_research` /
+// `create_research_item`). Mirrors the Knowledge entity pattern precisely: a plain
+// SQLite-backed store surfaced through the typed desktop service. No data is
+// fabricated — the store's real rows drive every state. (Hard-delete stays
+// capability-denied under the Wave-2b L2 policy, exactly like knowledge, so the
+// page exposes no delete affordance.)
 
-interface ResearchSource {
-  id: string;
-  title: string;
-  url: string;
+const RESEARCH_STATUSES = ['open', 'in_progress', 'done'] as const;
+type ResearchStatus = (typeof RESEARCH_STATUSES)[number];
+
+const statusTone: Record<string, Tone> = {
+  open: 'info',
+  in_progress: 'warning',
+  done: 'success',
+};
+
+interface Copy {
+  subtitle: string;
+  listPanel: string;
+  detailPanel: string;
+  searchPlaceholder: string;
+  searchLabel: string;
+  emptyTitle: string;
+  emptyHint: string;
+  filteredTitle: string;
+  filteredHint: string;
+  clearSearch: string;
+  selectTitle: string;
+  selectHint: string;
+  question: string;
+  findings: string;
+  noQuestion: string;
+  noFindings: string;
+  created: string;
+  updated: string;
+  loadFailed: string;
+  newTitle: string;
+  fTitle: string;
+  fQuestion: string;
+  fFindings: string;
+  fStatus: string;
+  questionPlaceholder: string;
+  findingsPlaceholder: string;
+  saving: string;
+  status: Record<ResearchStatus, string>;
 }
 
-interface ResearchRun {
-  id: string;
-  query: string;
-  synthesis: string;
-  sources: ResearchSource[];
-  verified: boolean;
-  receiptId: string;
-}
-
-// The local run-status machine. `done` is part of the contract but is only ever
-// constructed from a genuine committed bridge result — absent a research IPC
-// command in this build it stays unreached, so no fabricated run is shown.
-type RunView =
-  | { kind: 'idle' }
-  | { kind: 'running'; query: string }
-  | { kind: 'blocked'; query: string; reason: string }
-  | { kind: 'error'; query: string; message: string }
-  | { kind: 'done'; run: ResearchRun };
-
-const STR = {
+const COPY: Record<'en' | 'hy', Copy> = {
   en: {
-    subtitle: 'Governed research — every run yields a verified receipt',
-    queryPanel: 'Research query',
-    resultPanel: 'Latest run',
-    placeholder: 'Ask a question for Bro to research…',
-    run: 'Run',
-    running: 'Running governed research…',
-    governed: 'Governed',
-    ungoverned: 'Ungoverned',
-    verified: 'Verified receipt',
-    unverified: 'Unverified',
-    hintEnter: 'Enter to run · Esc to cancel',
-    blockedTitle: 'Governed research unavailable',
-    blockedBody:
-      'Research is governed — it only runs behind the engine wall with a verified receipt. The governed provider is off or the sidecar is down, so no result can be produced.',
-    runFailedTitle: 'Research run failed',
-    bridgeAbsent:
-      'The governed research bridge (bridge.task-request) is not wired in this desktop build yet — no result was produced and no data is fabricated.',
+    subtitle: 'Research records — a question, its findings, and status',
+    listPanel: 'Research',
+    detailPanel: 'Record',
+    searchPlaceholder: 'Search research…    press /',
+    searchLabel: 'Search research',
     emptyTitle: 'Bro has run no research yet',
-    emptyHint: 'Run a governed research query above to produce a verified result.',
-    sources: 'Sources',
-    noSources: 'This run surfaced no sources.',
-    synthesis: 'Synthesis',
-    saveToKnowledge: 'Save to knowledge',
-    saved: 'Saved to knowledge.',
-    idleStatus: 'Idle — no run in progress.',
-    liveRunning: 'Governed research run in progress.',
-    liveBlocked: 'Research blocked:',
-    liveFailed: 'Research run failed:',
-    liveDone: 'Research run complete — verified receipt issued.',
-    openSource: 'Open source',
+    emptyHint: 'Record the first research question to start the log.',
+    filteredTitle: 'No matches',
+    filteredHint: 'Nothing matches your search.',
+    clearSearch: 'Clear search',
+    selectTitle: 'Select a record',
+    selectHint: 'Pick a research record from the list, or press New to add one.',
+    question: 'Question',
+    findings: 'Findings',
+    noQuestion: 'No question recorded.',
+    noFindings: 'No findings recorded yet.',
+    created: 'Created',
+    updated: 'Updated',
+    loadFailed: 'Couldn’t load research.',
+    newTitle: 'New research record',
+    fTitle: 'Title',
+    fQuestion: 'Question',
+    fFindings: 'Findings',
+    fStatus: 'Status',
+    questionPlaceholder: 'What is being researched?',
+    findingsPlaceholder: 'What was found…',
+    saving: 'Saving…',
+    status: { open: 'Open', in_progress: 'In progress', done: 'Done' },
   },
   hy: {
-    subtitle: 'Կառավարվող հետազոտում — յուրաքանչյուր գործարկում տալիս է ստուգված անդորրագիր',
-    queryPanel: 'Հետազոտման հարցում',
-    resultPanel: 'Վերջին գործարկումը',
-    placeholder: 'Հարց տուր, որ Bro-ն հետազոտի…',
-    run: 'Գործարկել',
-    running: 'Կառավարվող հետազոտումը ընթացքի մեջ է…',
-    governed: 'Կառավարվող',
-    ungoverned: 'Չկառավարվող',
-    verified: 'Ստուգված անդորրագիր',
-    unverified: 'Չստուգված',
-    hintEnter: 'Enter՝ գործարկել · Esc՝ չեղարկել',
-    blockedTitle: 'Կառավարվող հետազոտումն անհասանելի է',
-    blockedBody:
-      'Հետազոտումը կառավարվող է — այն աշխատում է միայն շարժիչի պատի հետևում՝ ստուգված անդորրագրով։ Կառավարվող մատակարարն անջատված է կամ sidecar-ը չի աշխատում, ուստի արդյունք հնարավոր չէ ստանալ։',
-    runFailedTitle: 'Հետազոտման գործարկումը ձախողվեց',
-    bridgeAbsent:
-      'Կառավարվող հետազոտման կամուրջը (bridge.task-request) դեռ միացված չէ այս կառուցվածքում — արդյունք չի ստացվել, և տվյալներ չեն հորինվում։',
+    subtitle: 'Հետազոտման գրառումներ — հարց, գտածոներ և կարգավիճակ',
+    listPanel: 'Հետազոտում',
+    detailPanel: 'Գրառում',
+    searchPlaceholder: 'Փնտրել հետազոտում…    սեղմեք /',
+    searchLabel: 'Փնտրել հետազոտում',
     emptyTitle: 'Bro-ն դեռ հետազոտում չի կատարել',
-    emptyHint: 'Վերևում գործարկիր կառավարվող հարցում՝ ստուգված արդյունք ստանալու համար։',
-    sources: 'Աղբյուրներ',
-    noSources: 'Այս գործարկումը աղբյուրներ չբերեց։',
-    synthesis: 'Ամփոփում',
-    saveToKnowledge: 'Պահել գիտելիքում',
-    saved: 'Պահվեց գիտելիքում։',
-    idleStatus: 'Դատարկ — ընթացիկ գործարկում չկա։',
-    liveRunning: 'Կառավարվող հետազոտման գործարկումը ընթացքի մեջ է։',
-    liveBlocked: 'Հետազոտումն արգելափակված է՝',
-    liveFailed: 'Հետազոտման գործարկումը ձախողվեց՝',
-    liveDone: 'Հետազոտման գործարկումն ավարտվեց — տրվել է ստուգված անդորրագիր։',
-    openSource: 'Բացել աղբյուրը',
+    emptyHint: 'Գրանցիր առաջին հետազոտման հարցը՝ մատյանը սկսելու համար։',
+    filteredTitle: 'Համընկնումներ չկան',
+    filteredHint: 'Ոչինչ չի համընկնում ձեր որոնման հետ։',
+    clearSearch: 'Մաքրել որոնումը',
+    selectTitle: 'Ընտրիր գրառում',
+    selectHint: 'Ընտրիր հետազոտման գրառում ցանկից կամ սեղմիր «Նոր»՝ ավելացնելու համար։',
+    question: 'Հարց',
+    findings: 'Գտածոներ',
+    noQuestion: 'Հարց գրանցված չէ։',
+    noFindings: 'Գտածոներ դեռ գրանցված չեն։',
+    created: 'Ստեղծված',
+    updated: 'Թարմացված',
+    loadFailed: 'Չհաջողվեց բեռնել հետազոտումը։',
+    newTitle: 'Նոր հետազոտման գրառում',
+    fTitle: 'Վերնագիր',
+    fQuestion: 'Հարց',
+    fFindings: 'Գտածոներ',
+    fStatus: 'Կարգավիճակ',
+    questionPlaceholder: 'Ի՞նչ է հետազոտվում',
+    findingsPlaceholder: 'Ի՞նչ գտնվեց…',
+    saving: 'Պահվում է…',
+    status: { open: 'Բաց', in_progress: 'Ընթացքի մեջ', done: 'Ավարտված' },
   },
-} as const;
+};
 
-/** Sources list with roving-focus arrow-key navigation. Each source is a labeled,
- *  focusable link (spec: "each source labeled + linked"; "arrow-navigate sources"). */
-function SourceList({ sources, label, openLabel }: { sources: ResearchSource[]; label: string; openLabel: string }) {
-  const [active, setActive] = useState(0);
-  const refs = useRef<(HTMLAnchorElement | null)[]>([]);
+function statusLabel(c: Copy, status: string): string {
+  return (RESEARCH_STATUSES as readonly string[]).includes(status)
+    ? c.status[status as ResearchStatus]
+    : status;
+}
 
-  useEffect(() => {
-    refs.current[active]?.focus();
-  }, [active]);
+// ── Create form (Modal) — fully wired to the REAL create_research_item command ─
+function CreateDialog(
+  { onClose, onCreated }: { onClose: () => void; onCreated: (item: ResearchItem) => void },
+) {
+  const { t, lang } = useApp();
+  const c = COPY[lang === 'hy' ? 'hy' : 'en'];
 
-  const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setActive((i) => Math.min(i + 1, sources.length - 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setActive((i) => Math.max(i - 1, 0));
-    } else if (e.key === 'Home') {
-      e.preventDefault();
-      setActive(0);
-    } else if (e.key === 'End') {
-      e.preventDefault();
-      setActive(sources.length - 1);
-    }
+  const [title, setTitle] = useState('');
+  const [question, setQuestion] = useState('');
+  const [findings, setFindings] = useState('');
+  const [status, setStatus] = useState<ResearchStatus>('open');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const titleRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => { titleRef.current?.focus(); }, []);
+
+  const canSave = title.trim().length > 0 && !busy;
+
+  const submit = () => {
+    if (!canSave) return;
+    setBusy(true);
+    setError(null);
+    desktop
+      .createResearchItem({ title: title.trim(), question: question.trim(), findings: findings.trim(), status })
+      .then((created) => onCreated(created))
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setBusy(false);
+      });
   };
 
   return (
-    <ul className="rsx-sources" role="list" aria-label={label} onKeyDown={onKeyDown}>
-      {sources.map((src, idx) => (
-        <li key={src.id} role="listitem" className="rsx-source-row">
-          <a
-            ref={(el) => { refs.current[idx] = el; }}
-            className={`rsx-source ${idx === active ? 'rsx-source--active' : ''}`}
-            href={src.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            tabIndex={idx === active ? 0 : -1}
-            aria-label={`${openLabel}: ${src.title}`}
-            onFocus={() => setActive(idx)}
-          >
-            <span className="rsx-source-idx" aria-hidden="true">{idx + 1}</span>
-            <span className="rsx-source-title">{src.title}</span>
-            <span className="rsx-source-url muted">{src.url}</span>
-          </a>
-        </li>
-      ))}
-    </ul>
+    <Modal title={c.newTitle} onClose={onClose}>
+      {error && <div className="form-error">{error}</div>}
+      <label className="form-row">
+        <span className="field-label">{c.fTitle}</span>
+        <Input ref={titleRef} value={title}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)} />
+      </label>
+      <label className="form-row">
+        <span className="field-label">{c.fQuestion}</span>
+        <Textarea value={question} style={{ minHeight: 80 }} placeholder={c.questionPlaceholder}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setQuestion(e.target.value)} />
+      </label>
+      <label className="form-row">
+        <span className="field-label">{c.fFindings}</span>
+        <Textarea value={findings} style={{ minHeight: 140 }} placeholder={c.findingsPlaceholder}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setFindings(e.target.value)} />
+      </label>
+      <label className="form-row">
+        <span className="field-label">{c.fStatus}</span>
+        <Select value={status} onChange={(e: ChangeEvent<HTMLSelectElement>) => setStatus(e.target.value as ResearchStatus)}>
+          {RESEARCH_STATUSES.map((k) => <option key={k} value={k}>{c.status[k]}</option>)}
+        </Select>
+      </label>
+      <div className="form-actions">
+        <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
+        <Button variant="primary" disabled={!canSave} onClick={submit}>
+          {busy ? c.saving : t('action.save')}
+        </Button>
+      </div>
+    </Modal>
   );
 }
 
 export function Research() {
   const { t, lang } = useApp();
-  const tr = lang === 'hy' ? STR.hy : STR.en;
+  const c = COPY[lang === 'hy' ? 'hy' : 'en'];
+
+  const s = useAsync<ResearchItem[]>(() => desktop.listResearch(), []);
 
   const [query, setQuery] = useState('');
-  const [run, setRun] = useState<RunView>({ kind: 'idle' });
-  const [saved, setSaved] = useState(false);
-  // Monotonic token: a run resolved after Esc/cancel (or a newer run) is ignored.
-  const runToken = useRef(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
-  // REAL data: governed-provider availability gates the whole page.
-  const status = useAsync(() => desktop.aiStatus(), []);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
-  const available = !!status.data && status.data.ready && status.data.governed;
+  const items = s.data ?? [];
 
-  const cancel = () => {
-    runToken.current += 1;
-    setRun({ kind: 'idle' });
+  const dateFmt = useMemo(
+    () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium' }),
+    [lang],
+  );
+  const fmtDate = (raw: string): string => {
+    const v = raw?.trim();
+    if (!v) return '—';
+    const d = new Date(isNaN(Number(v)) ? v : Number(v));
+    return isNaN(d.getTime()) ? v : dateFmt.format(d);
   };
 
-  const startRun = async () => {
-    const q = query.trim();
-    if (!q || !available || run.kind === 'running') return;
-    const token = (runToken.current += 1);
-    setSaved(false);
-    setRun({ kind: 'running', query: q });
-    try {
-      // A real backend round-trip so the loading (pulse) state reflects live
-      // governed availability at run time — no fabricated latency.
-      const now = await desktop.aiStatus();
-      if (token !== runToken.current) return; // cancelled or superseded
-      if (!now.ready || !now.governed) {
-        setRun({ kind: 'blocked', query: q, reason: now.detail || tr.blockedBody });
-        return;
-      }
-      // Governed engine reachable, but this build exposes no research bridge
-      // command — report honestly instead of inventing sources/synthesis.
-      setRun({ kind: 'error', query: q, message: tr.bridgeAbsent });
-    } catch (e: unknown) {
-      if (token !== runToken.current) return;
-      setRun({ kind: 'error', query: q, message: e instanceof Error ? e.message : String(e) });
-    }
-  };
+  const q = query.trim().toLowerCase();
+  const filtered = items.filter((it) => {
+    if (!q) return true;
+    return (
+      it.title.toLowerCase().includes(q) ||
+      it.question.toLowerCase().includes(q) ||
+      it.findings.toLowerCase().includes(q)
+    );
+  });
 
-  const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape') {
+  const isFiltering = q !== '';
+  const activeId = filtered.some((r) => r.id === selectedId) ? selectedId : (filtered[0]?.id ?? null);
+  const selected = filtered.find((r) => r.id === activeId) ?? null;
+
+  // `/` focuses search from anywhere (unless typing or the dialog is open).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || creating) return;
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
       e.preventDefault();
-      if (run.kind === 'running') cancel();
-      else if (query) setQuery('');
-      else setRun({ kind: 'idle' });
+      searchRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [creating]);
+
+  const onListKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (filtered.length === 0) return;
+    const idx = Math.max(0, filtered.findIndex((r) => r.id === activeId));
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      let next = idx;
+      if (e.key === 'ArrowDown') next = Math.min(idx + 1, filtered.length - 1);
+      else if (e.key === 'ArrowUp') next = Math.max(idx - 1, 0);
+      else if (e.key === 'Home') next = 0;
+      else next = filtered.length - 1;
+      setSelectedId(filtered[next].id);
     }
   };
 
-  const saveRunToKnowledge = async (r: ResearchRun) => {
-    try {
-      await desktop.createKnowledge({
-        title: `Research: ${r.query}`,
-        body: r.synthesis,
-        source: `Governed research run · receipt ${r.receiptId}`,
-        tags: 'research',
-      });
-      setSaved(true);
-    } catch {
-      /* surfaced through the run's error path elsewhere; keep the result visible */
-    }
+  const onCreated = (item: ResearchItem) => {
+    setCreating(false);
+    setQuery('');
+    setSelectedId(item.id);
+    s.reload();
   };
 
-  // Text for the polite live region that narrates run-status transitions.
-  const liveText = (() => {
-    switch (run.kind) {
-      case 'running': return tr.liveRunning;
-      case 'blocked': return `${tr.liveBlocked} ${run.reason}`;
-      case 'error': return `${tr.liveFailed} ${run.message}`;
-      case 'done': return tr.liveDone;
-      default: return tr.idleStatus;
+  const loading = s.loading && s.data === null;
+
+  const renderList = () => {
+    if (loading) return <Skeleton rows={5} />;
+    if (s.error) return <ErrorState message={s.error || c.loadFailed} onRetry={s.reload} retryLabel={t('action.retry')} />;
+    if (filtered.length === 0) {
+      return isFiltering ? (
+        <div>
+          <EmptyState glyph="⌕" title={c.filteredTitle} hint={c.filteredHint} />
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <Button small onClick={() => setQuery('')}>{c.clearSearch}</Button>
+          </div>
+        </div>
+      ) : (
+        <EmptyState glyph="⌖" title={c.emptyTitle} hint={c.emptyHint} />
+      );
     }
-  })();
+    return (
+      <div
+        ref={listRef}
+        className="rsx-list"
+        role="listbox"
+        aria-label={c.listPanel}
+        aria-activedescendant={activeId ? `rsx-row-${activeId}` : undefined}
+        tabIndex={0}
+        onKeyDown={onListKey}
+      >
+        {filtered.map((r, i) => {
+          const isSel = r.id === activeId;
+          return (
+            <div
+              key={r.id}
+              id={`rsx-row-${r.id}`}
+              role="option"
+              aria-selected={isSel}
+              className={`rsx-row${isSel ? ' rsx-row--sel' : ''}`}
+              style={{ animationDelay: `${Math.min(i, 10) * 35}ms` }}
+              onClick={() => setSelectedId(r.id)}
+            >
+              <span className="rsx-row-top">
+                <span className="rsx-row-title">{r.title}</span>
+                <Badge tone={statusTone[r.status] ?? 'neutral'}>{statusLabel(c, r.status)}</Badge>
+              </span>
+              {r.question && <span className="rsx-row-sub">{r.question}</span>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderDetail = () => {
+    if (loading) return <Panel><Skeleton rows={6} /></Panel>;
+    if (s.error) return <Panel><ErrorState message={s.error} onRetry={s.reload} retryLabel={t('action.retry')} /></Panel>;
+    if (!selected) {
+      return (
+        <Panel>
+          <EmptyState glyph="⌖" title={c.selectTitle} hint={c.selectHint} />
+        </Panel>
+      );
+    }
+    return (
+      <Panel>
+        <article className="rsx-detail" role="article" aria-label={selected.title}>
+          <div className="rsx-detail-head">
+            <h2>{selected.title}</h2>
+            <Badge tone={statusTone[selected.status] ?? 'neutral'}>{statusLabel(c, selected.status)}</Badge>
+          </div>
+
+          <section aria-label={c.question}>
+            <h3>{c.question}</h3>
+            {selected.question
+              ? <div className="rsx-body">{selected.question}</div>
+              : <div className="muted">{c.noQuestion}</div>}
+          </section>
+
+          <section className="rsx-section" aria-label={c.findings}>
+            <h3>{c.findings}</h3>
+            {selected.findings
+              ? <div className="rsx-body">{selected.findings}</div>
+              : <div className="muted">{c.noFindings}</div>}
+          </section>
+
+          <section className="rsx-section" aria-label={c.detailPanel}>
+            <div className="rsx-meta">
+              <div className="field">
+                <span className="field-label">{c.created}</span>
+                <span>{fmtDate(selected.createdAt)}</span>
+              </div>
+              <div className="field">
+                <span className="field-label">{c.updated}</span>
+                <span>{fmtDate(selected.updatedAt)}</span>
+              </div>
+            </div>
+          </section>
+        </article>
+      </Panel>
+    );
+  };
+
+  const toolbarVisible = !loading && !s.error && items.length > 0;
 
   return (
     <>
-      <PageHeader title={t('nav.research')} subtitle={tr.subtitle} />
-
       <style>{CSS}</style>
 
-      {/* Governed-availability gate (REAL ai_status). */}
-      {status.loading && status.data === null ? (
-        <Panel title={tr.queryPanel}>
-          <Skeleton rows={3} />
-        </Panel>
-      ) : status.error ? (
-        <Panel title={tr.queryPanel}>
-          {/* ErrorState renders a calm offline state when there is no backend. */}
-          <ErrorState message={status.error} onRetry={status.reload} retryLabel={t('action.retry')} />
-        </Panel>
-      ) : (
-        <>
-          <Panel
-            title={tr.queryPanel}
-            actions={
-              <Badge tone={available ? 'success' : 'danger'}>
-                {status.data && status.data.governed ? tr.governed : tr.ungoverned}
-              </Badge>
-            }
-          >
-            <form
-              className="ask-form"
-              onSubmit={(e) => { e.preventDefault(); startRun(); }}
-            >
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={onInputKeyDown}
-                placeholder={tr.placeholder}
-                disabled={!available || run.kind === 'running'}
-                aria-label={tr.queryPanel}
-                autoFocus
-              />
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={!available || run.kind === 'running' || !query.trim()}
-              >
-                {tr.run}
-              </Button>
-              {run.kind === 'running' && (
-                <Button variant="ghost" onClick={cancel}>{t('action.cancel')}</Button>
-              )}
-            </form>
-            <div className="chat-hint" style={{ marginTop: 8 }}>{tr.hintEnter}</div>
+      <PageHeader
+        title={t('nav.research')}
+        subtitle={c.subtitle}
+        actions={<Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>}
+      />
 
-            {/* Blocked state — governed provider off / sidecar down. */}
-            {!available && (
-              <div className="rsx-blocked" role="note">
-                <div className="rsx-blocked-title">⛔ {tr.blockedTitle}</div>
-                <div className="muted" style={{ marginTop: 4 }}>
-                  {status.data && status.data.detail ? status.data.detail : tr.blockedBody}
-                </div>
+      <div className="chat-layout">
+        <Panel title={c.listPanel}>
+          <div className="rsx-rail">
+            {toolbarVisible && (
+              <div className="rsx-search">
+                <Input
+                  ref={searchRef}
+                  type="search"
+                  role="searchbox"
+                  value={query}
+                  aria-label={c.searchLabel}
+                  placeholder={c.searchPlaceholder}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)}
+                />
               </div>
             )}
+            {renderList()}
+          </div>
+        </Panel>
 
-            {/* Run-status live region (polite) — narrates every transition. */}
-            <div className="rsx-live" role="status" aria-live="polite">
-              {run.kind === 'running' && <span className="rsx-pulse" aria-hidden="true" />}
-              <span>{liveText}</span>
-            </div>
-          </Panel>
+        <div>{renderDetail()}</div>
+      </div>
 
-          <div style={{ height: 16 }} />
-
-          <Panel title={tr.resultPanel}>
-            {!available ? (
-              <EmptyState glyph="⌖" title={tr.blockedTitle} hint={tr.blockedBody} />
-            ) : run.kind === 'running' ? (
-              <div className="rsx-run-card rsx-run-card--running" aria-busy="true">
-                <span className="rsx-pulse" aria-hidden="true" />
-                <span>{tr.running}</span>
-              </div>
-            ) : run.kind === 'blocked' ? (
-              <EmptyState glyph="⛔" title={tr.blockedTitle} hint={run.reason} />
-            ) : run.kind === 'error' ? (
-              <div className="rsx-run-card rsx-run-card--error" role="alert">
-                <div className="rsx-run-card-title">⚠ {tr.runFailedTitle}</div>
-                <div className="muted" style={{ marginTop: 4 }}>{run.message}</div>
-                <div style={{ marginTop: 12 }}>
-                  <Button small onClick={startRun}>{t('action.retry')}</Button>
-                </div>
-              </div>
-            ) : run.kind === 'done' ? (
-              <div className="stack">
-                <div className="row between" style={{ flexWrap: 'wrap', gap: 8 }}>
-                  <div className="panel-title">{run.run.query}</div>
-                  <Badge tone={run.run.verified ? 'success' : 'warning'}>
-                    {run.run.verified ? `✓ ${tr.verified}` : tr.unverified}
-                  </Badge>
-                </div>
-
-                <div className="field-label">{tr.sources}</div>
-                {run.run.sources.length > 0 ? (
-                  <SourceList sources={run.run.sources} label={tr.sources} openLabel={tr.openSource} />
-                ) : (
-                  <div className="muted">{tr.noSources}</div>
-                )}
-
-                <div className="field-label" style={{ marginTop: 8 }}>{tr.synthesis}</div>
-                <div className="rsx-synthesis">{run.run.synthesis}</div>
-
-                <div className="row" style={{ gap: 8, marginTop: 4 }}>
-                  <Button variant="primary" small onClick={() => saveRunToKnowledge(run.run)} disabled={saved}>
-                    {tr.saveToKnowledge}
-                  </Button>
-                  {saved && <span className="chat-hint">✓ {tr.saved}</span>}
-                </div>
-              </div>
-            ) : (
-              // idle — no runs yet (honest empty; no research store exists).
-              <EmptyState glyph="⌖" title={tr.emptyTitle} hint={tr.emptyHint} />
-            )}
-          </Panel>
-        </>
-      )}
+      {creating && <CreateDialog onClose={() => setCreating(false)} onCreated={onCreated} />}
     </>
   );
 }
 
 const CSS = `
-.rsx-live { display: flex; align-items: center; gap: 8px; margin-top: 12px;
-  font-size: 12px; color: var(--brops-muted); }
-.rsx-blocked { margin-top: 12px; padding: 12px 14px;
-  background: color-mix(in srgb, var(--menq-color-danger) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--menq-color-danger) 34%, transparent);
-  border-radius: var(--menq-radius-md); }
-.rsx-blocked-title { font-weight: 600; color: var(--menq-color-danger); }
-.rsx-run-card { padding: 14px 16px; border: 1px solid var(--brops-border);
-  border-radius: var(--menq-radius-md); background: var(--menq-color-hover);
-  display: flex; align-items: center; gap: 10px; }
-.rsx-run-card--running { color: var(--brops-accent); }
-.rsx-run-card--error { display: block; border-color: color-mix(in srgb, var(--menq-color-danger) 34%, transparent); }
-.rsx-run-card-title { font-weight: 600; color: var(--menq-color-danger); }
-.rsx-pulse { width: 10px; height: 10px; border-radius: 50%; flex: none;
-  background: var(--brops-accent); animation: rsx-pulse 1.1s ease-in-out infinite; }
-@keyframes rsx-pulse {
-  0%, 100% { opacity: 0.35; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.15); }
-}
-.rsx-sources { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.rsx-source-row { min-width: 0; }
-.rsx-source { display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 8px 11px; border: 1px solid var(--brops-border);
-  border-radius: var(--menq-radius-md); background: var(--brops-surface);
-  color: var(--brops-text); text-decoration: none;
+.rsx-rail { display: flex; flex-direction: column; gap: var(--menq-space-4); }
+.rsx-search { position: relative; }
+.rsx-list { display: flex; flex-direction: column; gap: 2px; max-height: 56vh; overflow-y: auto;
+  padding-right: 4px; outline: none; border-radius: var(--menq-radius-md); }
+.rsx-list:focus-visible { box-shadow: 0 0 0 2px var(--menq-color-focus); }
+.rsx-row { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; cursor: pointer;
+  padding: 9px 12px; background: var(--brops-surface); color: var(--brops-text);
+  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md); font: inherit;
+  animation: rsx-reveal var(--menq-motion-med) ease both;
   transition: background var(--menq-motion-fast), border-color var(--menq-motion-fast); }
-.rsx-source:hover { background: var(--menq-color-hover); }
-.rsx-source--active, .rsx-source:focus-visible {
-  border-color: var(--brops-accent); background: var(--menq-color-selected); outline: none; }
-.rsx-source-idx { width: 20px; height: 20px; flex: none; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; color: var(--brops-accent);
-  background: var(--menq-color-selected); }
-.rsx-source-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rsx-source-url { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rsx-synthesis { line-height: 1.5; white-space: pre-wrap;
-  padding: 12px 14px; background: var(--menq-color-hover);
-  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md); }
+.rsx-row:hover { background: var(--menq-color-hover); }
+.rsx-row--sel { background: var(--menq-color-selected); border-color: var(--brops-accent); }
+.rsx-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rsx-row-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rsx-row-sub { font-size: 12px; color: var(--brops-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rsx-detail { display: flex; flex-direction: column; gap: var(--menq-space-4);
+  animation: rsx-reveal var(--menq-motion-med) ease both; }
+.rsx-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--menq-space-3); }
+.rsx-detail h2 { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+.rsx-detail h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--brops-muted); font-weight: 600; margin: 0 0 6px; }
+.rsx-body { line-height: 1.6; white-space: pre-wrap; font-size: 14px; }
+.rsx-section { border-top: 1px solid var(--brops-border); padding-top: var(--menq-space-4);
+  display: flex; flex-direction: column; gap: var(--menq-space-2); }
+.rsx-meta { display: flex; gap: var(--menq-space-5); flex-wrap: wrap; }
+@keyframes rsx-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .rsx-pulse { animation: none; }
+  .rsx-row, .rsx-detail { animation: none; }
 }
 `;

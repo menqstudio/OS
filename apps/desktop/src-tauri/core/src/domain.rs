@@ -177,6 +177,26 @@ camel! {
         pub updated_at: String,
     }
 
+    pub struct LibraryItem {
+        pub id: String,
+        pub title: String,
+        pub kind: String,
+        pub body: String,
+        pub tags: String,
+        pub created_at: String,
+        pub updated_at: String,
+    }
+
+    pub struct ResearchItem {
+        pub id: String,
+        pub title: String,
+        pub question: String,
+        pub findings: String,
+        pub status: String,
+        pub created_at: String,
+        pub updated_at: String,
+    }
+
     pub struct Run {
         pub id: String,
         pub intent: String,
@@ -307,6 +327,24 @@ pub struct NewMemoryEntry {
     pub scope: String,
     pub kind: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewLibraryItem {
+    pub title: String,
+    pub kind: String,
+    pub body: String,
+    pub tags: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewResearchItem {
+    pub title: String,
+    pub question: String,
+    pub findings: String,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -139,6 +139,40 @@ export interface NewKnowledgeNote {
   tags: string;
 }
 
+export interface LibraryItem {
+  id: string;
+  title: string;
+  kind: string;
+  body: string;
+  tags: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewLibraryItem {
+  title: string;
+  kind: string;
+  body: string;
+  tags: string;
+}
+
+export interface ResearchItem {
+  id: string;
+  title: string;
+  question: string;
+  findings: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewResearchItem {
+  title: string;
+  question: string;
+  findings: string;
+  status: string;
+}
+
 export interface MemoryEntry {
   id: string;
   scope: string;

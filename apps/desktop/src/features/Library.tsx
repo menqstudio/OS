@@ -4,57 +4,38 @@ import {
 } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Badge, Input, Skeleton, ErrorState, EmptyState, Modal,
+  PageHeader, Panel, Button, Badge, Input, Textarea, Select, Skeleton, ErrorState, EmptyState, Modal,
 } from '../components/ui';
+import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import type { LibraryItem } from '../domain/entities';
 import type { Tone } from '../domain/enums';
 
-// ── Domain shapes for the catalog ────────────────────────────────────────────
-// Internal prop contract for a catalog entry (ROADMAP §"library": a
-// component/prompt/pattern catalog). `source` records which of the two spec
-// data sources the entry came from — the desktop library store (product) or the
-// engine skill registry (read-only).
-type LibraryKind = 'component' | 'prompt' | 'pattern';
-type LibrarySourceTag = 'product' | 'registry';
+// ── §D `library` ❑ Դարան ─────────────────────────────────────────────────────
+// The component / prompt / pattern catalog, wired end-to-end to the REAL desktop
+// library store (`list_library` / `create_library_item`). Mirrors the Knowledge
+// entity pattern precisely: a plain SQLite-backed store surfaced through the typed
+// desktop service. No data is fabricated — the store's real rows drive every state.
+// (Hard-delete stays capability-denied under the Wave-2b L2 policy, exactly like
+// knowledge, so the page exposes no delete affordance.)
 
-interface LibraryItem {
-  id: string;
-  kind: LibraryKind;
-  source: LibrarySourceTag;
-  title: string;
-  summary: string;
-  /** Text shown in the live preview (a prompt/pattern body, or a component blurb). */
-  preview: string;
-  tags: string[];
-}
-
-// The store is either wired (`ready` + its items) or not yet backed by a command.
-type LibrarySource =
-  | { kind: 'unavailable' }
-  | { kind: 'ready'; items: LibraryItem[] };
-
-// Honest data boundary. The two data sources the spec names for this page — the
-// desktop library store (product) and the engine skill registry (read) — have NO
-// Tauri command on `desktop` yet (ROADMAP Phase 4 backend leg / `list_library`).
-// We never fabricate catalog rows, so the store reports itself unavailable and
-// the page renders its honest "not yet connected" state. The moment a real
-// `list_library` command lands, replace the body with that call returning
-// `{ kind: 'ready', items }` and every render path below lights up unchanged.
-async function loadLibrarySource(): Promise<LibrarySource> {
-  return { kind: 'unavailable' };
-}
+const LIBRARY_KINDS = ['component', 'prompt', 'pattern'] as const;
+type LibraryKind = (typeof LIBRARY_KINDS)[number];
 
 // CSS custom properties are allowed on style objects via this widened type.
 type StyleVars = CSSProperties & Record<`--${string}`, string | number>;
 
-const kindTone: Record<LibraryKind, Tone> = {
+const kindTone: Record<string, Tone> = {
   component: 'accent',
   prompt: 'info',
   pattern: 'success',
 };
 
-// ── Inline bilingual copy (HY + EN), mirroring the thin-page convention. The
-// shared i18n files are intentionally left untouched. ────────────────────────
+function parseTags(raw: string): string[] {
+  return raw.split(',').map((x) => x.trim()).filter(Boolean);
+}
+
+// ── Inline bilingual copy (HY + EN), mirroring the thin-page convention. ──────
 interface Copy {
   subtitle: string;
   searchPlaceholder: string;
@@ -62,20 +43,23 @@ interface Copy {
   filterLabel: string;
   all: string;
   kind: Record<LibraryKind, string>;
-  source: Record<LibrarySourceTag, string>;
   emptyTitle: string;
   emptyHint: string;
   filteredTitle: string;
   filteredHint: string;
   clearFilters: string;
-  unavailableTitle: string;
-  unavailableHint: string;
   previewEmpty: string;
   listLabel: string;
-  open: string;
-  close: string;
   tags: string;
   loadFailed: string;
+  newTitle: string;
+  fTitle: string;
+  fKind: string;
+  fBody: string;
+  fTags: string;
+  bodyPlaceholder: string;
+  tagsPlaceholder: string;
+  saving: string;
 }
 
 const COPY: Record<'en' | 'hy', Copy> = {
@@ -86,21 +70,23 @@ const COPY: Record<'en' | 'hy', Copy> = {
     filterLabel: 'Filter by type',
     all: 'All',
     kind: { component: 'Components', prompt: 'Prompts', pattern: 'Patterns' },
-    source: { product: 'Saved', registry: 'Skill registry' },
     emptyTitle: 'Nothing saved yet',
-    emptyHint: 'Saved components, prompts and patterns will appear here once you add them.',
+    emptyHint: 'Save the first component, prompt or pattern to start the library.',
     filteredTitle: 'No matches',
     filteredHint: 'Nothing matches your search and filters.',
     clearFilters: 'Clear search & filters',
-    unavailableTitle: 'Library isn’t connected yet',
-    unavailableHint:
-      'The desktop library store and the engine skill-registry read have no backend command yet (ROADMAP Phase 4). No placeholder data is shown — the catalog appears here once those commands land.',
     previewEmpty: 'Select an item to preview it.',
     listLabel: 'Library results',
-    open: 'Open',
-    close: 'Close',
     tags: 'Tags',
     loadFailed: 'Couldn’t load the library.',
+    newTitle: 'New library item',
+    fTitle: 'Title',
+    fKind: 'Type',
+    fBody: 'Body',
+    fTags: 'Tags',
+    bodyPlaceholder: 'The prompt, pattern or component blurb…',
+    tagsPlaceholder: 'react, form, accessible',
+    saving: 'Saving…',
   },
   hy: {
     subtitle: 'Բաղադրիչների, հուշումների և ձևանմուշների դարան՝ կենդանի նախադիտումով',
@@ -109,31 +95,104 @@ const COPY: Record<'en' | 'hy', Copy> = {
     filterLabel: 'Զտել ըստ տեսակի',
     all: 'Բոլորը',
     kind: { component: 'Բաղադրիչներ', prompt: 'Հուշումներ', pattern: 'Ձևանմուշներ' },
-    source: { product: 'Պահված', registry: 'Հմտությունների ռեեստր' },
     emptyTitle: 'Դեռ ոչինչ պահված չէ',
-    emptyHint: 'Պահված բաղադրիչները, հուշումներն ու ձևանմուշները կհայտնվեն այստեղ։',
+    emptyHint: 'Պահիր առաջին բաղադրիչը, հուշումը կամ ձևանմուշը՝ դարանը սկսելու համար։',
     filteredTitle: 'Համընկնումներ չկան',
     filteredHint: 'Ոչինչ չի համընկնում ձեր որոնման և զտիչների հետ։',
     clearFilters: 'Մաքրել որոնումն ու զտիչները',
-    unavailableTitle: 'Դարանը դեռ միացված չէ',
-    unavailableHint:
-      'Աշխատասեղանի դարանի պահեստը և շարժիչի հմտությունների ռեեստրի ընթերցումը դեռ չունեն backend հրաման (ROADMAP Փուլ 4)։ Կեղծ տվյալներ ցույց չեն տրվում — դարանը կհայտնվի այստեղ, երբ այդ հրամանները ավելացվեն։',
     previewEmpty: 'Ընտրեք տարր՝ նախադիտելու համար։',
     listLabel: 'Դարանի արդյունքներ',
-    open: 'Բացել',
-    close: 'Փակել',
     tags: 'Պիտակներ',
     loadFailed: 'Չհաջողվեց բեռնել դարանը։',
+    newTitle: 'Նոր դարանի տարր',
+    fTitle: 'Վերնագիր',
+    fKind: 'Տեսակ',
+    fBody: 'Բովանդակություն',
+    fTags: 'Պիտակներ',
+    bodyPlaceholder: 'Հուշումը, ձևանմուշը կամ բաղադրիչի նկարագիրը…',
+    tagsPlaceholder: 'react, form, accessible',
+    saving: 'Պահվում է…',
   },
 };
 
 type KindFilter = 'all' | LibraryKind;
 
+function kindLabel(c: Copy, kind: string): string {
+  return (LIBRARY_KINDS as readonly string[]).includes(kind) ? c.kind[kind as LibraryKind] : kind;
+}
+
+// ── Create form (Modal) — fully wired to the REAL create_library_item command ─
+function CreateDialog(
+  { onClose, onCreated }: { onClose: () => void; onCreated: (item: LibraryItem) => void },
+) {
+  const { t, lang } = useApp();
+  const c = COPY[lang === 'hy' ? 'hy' : 'en'];
+
+  const [title, setTitle] = useState('');
+  const [kind, setKind] = useState<LibraryKind>('component');
+  const [body, setBody] = useState('');
+  const [tags, setTags] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const titleRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => { titleRef.current?.focus(); }, []);
+
+  const canSave = title.trim().length > 0 && !busy;
+
+  const submit = () => {
+    if (!canSave) return;
+    setBusy(true);
+    setError(null);
+    desktop
+      .createLibraryItem({ title: title.trim(), kind, body: body.trim(), tags: tags.trim() })
+      .then((created) => onCreated(created))
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setBusy(false);
+      });
+  };
+
+  return (
+    <Modal title={c.newTitle} onClose={onClose}>
+      {error && <div className="form-error">{error}</div>}
+      <label className="form-row">
+        <span className="field-label">{c.fTitle}</span>
+        <Input ref={titleRef} value={title}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)} />
+      </label>
+      <label className="form-row">
+        <span className="field-label">{c.fKind}</span>
+        <Select value={kind} onChange={(e: ChangeEvent<HTMLSelectElement>) => setKind(e.target.value as LibraryKind)}>
+          {LIBRARY_KINDS.map((k) => <option key={k} value={k}>{c.kind[k]}</option>)}
+        </Select>
+      </label>
+      <label className="form-row">
+        <span className="field-label">{c.fBody}</span>
+        <Textarea value={body} style={{ minHeight: 140 }} placeholder={c.bodyPlaceholder}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setBody(e.target.value)} />
+      </label>
+      <label className="form-row">
+        <span className="field-label">{c.fTags}</span>
+        <Input value={tags} placeholder={c.tagsPlaceholder}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => setTags(e.target.value)} />
+      </label>
+      <div className="form-actions">
+        <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
+        <Button variant="primary" disabled={!canSave} onClick={submit}>
+          {busy ? c.saving : t('action.save')}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Live preview panel (labeled, announces selection changes) ────────────────
-function PreviewPanel({ item, label, previewLabelFor }: {
+function PreviewPanel({ item, label, previewLabelFor, c }: {
   item: LibraryItem | null;
   label: string;
   previewLabelFor: (title: string) => string;
+  c: Copy;
 }) {
   return (
     <section
@@ -148,12 +207,16 @@ function PreviewPanel({ item, label, previewLabelFor }: {
         <>
           <div className="lib-preview-head">
             <span className="lib-preview-title">{item.title}</span>
-            <Badge tone={kindTone[item.kind]}>{item.kind}</Badge>
+            <Badge tone={kindTone[item.kind] ?? 'neutral'}>{kindLabel(c, item.kind)}</Badge>
           </div>
-          <div className="muted" style={{ marginBottom: 10 }}>{item.summary}</div>
           <div className="lib-preview-body">
-            <pre aria-label={previewLabelFor(item.title)}>{item.preview}</pre>
+            <pre aria-label={previewLabelFor(item.title)}>{item.body || '—'}</pre>
           </div>
+          {parseTags(item.tags).length > 0 && (
+            <div className="lib-tags" aria-label={c.tags}>
+              {parseTags(item.tags).map((tg) => <span key={tg} className="lib-tag">{tg}</span>)}
+            </div>
+          )}
         </>
       )}
     </section>
@@ -166,18 +229,17 @@ export function Library() {
   const previewLabelFor = (title: string) =>
     lang === 'hy' ? `Նախադիտում՝ ${title}` : `Preview: ${title}`;
 
-  const s = useAsync<LibrarySource>(() => loadLibrarySource(), []);
+  const s = useAsync<LibraryItem[]>(() => desktop.listLibrary(), []);
 
   const [query, setQuery] = useState('');
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [selected, setSelected] = useState(0);
-  const [openItem, setOpenItem] = useState<LibraryItem | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  const source = s.data;
-  const rawItems: LibraryItem[] = source && source.kind === 'ready' ? source.items : [];
+  const rawItems: LibraryItem[] = s.data ?? [];
 
   const q = query.trim().toLowerCase();
   const filtered = rawItems.filter((it) => {
@@ -185,32 +247,27 @@ export function Library() {
     if (!q) return true;
     return (
       it.title.toLowerCase().includes(q) ||
-      it.summary.toLowerCase().includes(q) ||
-      it.tags.some((tg) => tg.toLowerCase().includes(q))
+      it.body.toLowerCase().includes(q) ||
+      parseTags(it.tags).some((tg) => tg.toLowerCase().includes(q))
     );
   });
 
   const sel = filtered.length ? Math.min(selected, filtered.length - 1) : 0;
 
-  // `/` focuses search from anywhere (unless typing); Escape closes the preview.
+  // `/` focuses search from anywhere (unless typing or the create dialog is open).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && openItem) {
-        setOpenItem(null);
-        return;
-      }
-      if (e.key !== '/') return;
+      if (e.key !== '/' || creating) return;
       const el = document.activeElement as HTMLElement | null;
       const tag = el?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
-      if (openItem) return;
       e.preventDefault();
       searchRef.current?.focus();
       searchRef.current?.select();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openItem]);
+  }, [creating]);
 
   const moveSelection = (to: number) => {
     const n = filtered.length;
@@ -225,11 +282,6 @@ export function Library() {
     else if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(sel - 1); }
     else if (e.key === 'Home') { e.preventDefault(); moveSelection(0); }
     else if (e.key === 'End') { e.preventDefault(); moveSelection(filtered.length - 1); }
-    else if (e.key === 'Enter') {
-      e.preventDefault();
-      const it = filtered[sel];
-      if (it) setOpenItem(it);
-    }
   };
 
   const onSearchChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -249,20 +301,27 @@ export function Library() {
   const pickKind = (k: KindFilter) => { setKindFilter(k); setSelected(0); };
   const clearAll = () => { setQuery(''); setKindFilter('all'); setSelected(0); };
 
+  const onCreated = (item: LibraryItem) => {
+    setCreating(false);
+    setQuery('');
+    setKindFilter('all');
+    setSelected(0);
+    s.reload();
+    // Focus lands back on the (soon-to-refresh) list head.
+    void item;
+  };
+
   const countLabel = lang === 'hy'
     ? `${filtered.length} արդյունք`
     : `${filtered.length} ${filtered.length === 1 ? 'result' : 'results'}`;
 
   const loading = s.loading && s.data === null;
-  const chips: KindFilter[] = ['all', 'component', 'prompt', 'pattern'];
-  const toolbarVisible = !loading && !s.error && source?.kind === 'ready';
+  const chips: KindFilter[] = ['all', ...LIBRARY_KINDS];
+  const toolbarVisible = !loading && !s.error && rawItems.length > 0;
 
   const renderResults = () => {
     if (loading) return <Skeleton rows={5} />;
     if (s.error) return <ErrorState message={s.error || c.loadFailed} onRetry={s.reload} retryLabel={t('action.retry')} />;
-    if (!source || source.kind === 'unavailable') {
-      return <EmptyState glyph="❑" title={c.unavailableTitle} hint={c.unavailableHint} />;
-    }
     if (rawItems.length === 0) {
       return <EmptyState glyph="❑" title={c.emptyTitle} hint={c.emptyHint} />;
     }
@@ -294,19 +353,18 @@ export function Library() {
                   aria-current={isActive ? 'true' : undefined}
                   onFocus={() => setSelected(idx)}
                   onClick={() => setSelected(idx)}
-                  onDoubleClick={() => setOpenItem(it)}
                 >
                   <span className="lib-item-top">
                     <span className="lib-item-title">{it.title}</span>
-                    <Badge tone={kindTone[it.kind]}>{c.kind[it.kind]}</Badge>
+                    <Badge tone={kindTone[it.kind] ?? 'neutral'}>{kindLabel(c, it.kind)}</Badge>
                   </span>
-                  <span className="lib-item-sum">{it.summary}</span>
+                  {it.body && <span className="lib-item-sum">{it.body}</span>}
                 </button>
               </li>
             );
           })}
         </ul>
-        <PreviewPanel item={active} label={c.previewEmpty} previewLabelFor={previewLabelFor} />
+        <PreviewPanel item={active} label={c.previewEmpty} previewLabelFor={previewLabelFor} c={c} />
       </div>
     );
   };
@@ -315,7 +373,11 @@ export function Library() {
     <>
       <style>{LIBRARY_CSS}</style>
 
-      <PageHeader title={t('nav.library')} subtitle={c.subtitle} />
+      <PageHeader
+        title={t('nav.library')}
+        subtitle={c.subtitle}
+        actions={<Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>}
+      />
 
       <Panel>
         {toolbarVisible && (
@@ -354,26 +416,7 @@ export function Library() {
         {renderResults()}
       </Panel>
 
-      {openItem && (
-        <Modal title={openItem.title} onClose={() => setOpenItem(null)}>
-          <div className="row" style={{ gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-            <Badge tone={kindTone[openItem.kind]}>{c.kind[openItem.kind]}</Badge>
-            <Badge tone="neutral">{c.source[openItem.source]}</Badge>
-          </div>
-          <div className="muted" style={{ marginBottom: 12 }}>{openItem.summary}</div>
-          <div className="lib-preview-body">
-            <pre aria-label={previewLabelFor(openItem.title)}>{openItem.preview}</pre>
-          </div>
-          {openItem.tags.length > 0 && (
-            <div className="lib-tags" aria-label={c.tags}>
-              {openItem.tags.map((tg) => <span key={tg} className="lib-tag">{tg}</span>)}
-            </div>
-          )}
-          <div className="form-actions">
-            <Button variant="ghost" onClick={() => setOpenItem(null)}>{c.close}</Button>
-          </div>
-        </Modal>
-      )}
+      {creating && <CreateDialog onClose={() => setCreating(false)} onCreated={onCreated} />}
     </>
   );
 }
@@ -391,8 +434,8 @@ const LIBRARY_CSS = `
   cursor: pointer; transition: background var(--menq-motion-fast), color var(--menq-motion-fast), border-color var(--menq-motion-fast); }
 .lib-chip:hover { background: var(--menq-color-hover); }
 .lib-chip[aria-pressed="true"] { background: var(--menq-color-selected); border-color: var(--brops-accent); color: var(--brops-accent); }
-.lib-count { font-size: 12px; color: var(--brops-muted); font-variant-numeric: tabular-nums; }
-.lib-layout { display: grid; grid-template-columns: minmax(240px, 340px) 1fr; gap: var(--menq-space-4); align-items: start; }
+.lib-count { font-size: 12px; color: var(--brops-muted); font-variant-numeric: tabular-nums; margin-top: var(--menq-space-3); }
+.lib-layout { display: grid; grid-template-columns: minmax(240px, 340px) 1fr; gap: var(--menq-space-4); align-items: start; margin-top: var(--menq-space-3); }
 @media (max-width: 820px) { .lib-layout { grid-template-columns: 1fr; } }
 .lib-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
   max-height: 56vh; overflow-y: auto; }

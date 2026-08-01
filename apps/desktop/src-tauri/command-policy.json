@@ -134,6 +134,32 @@
       "tier": "R",
       "grant": "allow"
     },
+    "list_library": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "create_library_item": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "delete_library_item": {
+      "tier": "L2",
+      "grant": "deny",
+      "protection": "none"
+    },
+    "list_research": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "create_research_item": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "delete_research_item": {
+      "tier": "L2",
+      "grant": "deny",
+      "protection": "none"
+    },
     "list_memory": {
       "tier": "R",
       "grant": "allow"
