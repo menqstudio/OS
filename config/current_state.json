@@ -2,10 +2,10 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof are now CONSOLIDATED on branch feat/cockpit-pages (PR #48, base chore/main-resync), superseding the earlier split (PR #46 impl / PR #31 design / PR #32 impl). The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green). tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #48 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "9c1b901380de0d05220134347b2e0a447a986daa",
+    "baseline_main_head_at_sync": "0c08dd87cb534253b4641f2af4fda95bfd5d2702",
     "snapshot_branch": "chore/main-resync",
-    "live_main_resolution": "baseline_main_head_at_sync is the resync baseline main HEAD. The active workflow branch feat/cockpit-pages (PR #48) is STACKED on chore/main-resync (base != main), so the pull_request base-sha baseline check is skipped for it and it inherits this re-synced state.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the whole workflow is consolidated on the single self-carrier PR #48). PR #48's own exact-head is anchored on its own branch via its PR-body AUDIT_CANDIDATE_HEAD marker (event head == live headRefOid == marker == 38d5d71504ba68b70b015b958cb09109c80e595a). Nothing is exempt."
+    "live_main_resolution": "baseline_main_head_at_sync is the current live main HEAD (#47 0c08dd8, which sits on #31 9c1b901). main has been RECONCILED (merged) into feat/cockpit-pages, so main is a strict ancestor of the PR head and none of main's canonical work (#31 isolated-signer boundary, #47 quality/CI gate suite) is dropped when PR #48 eventually lands. The active workflow branch feat/cockpit-pages (PR #48) is STACKED on chore/main-resync (base != main), so the pull_request base-sha baseline check is skipped for it and it inherits this re-synced state.",
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the whole workflow is consolidated on the single self-carrier PR #48). PR #48's own exact-head is anchored on its own branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
