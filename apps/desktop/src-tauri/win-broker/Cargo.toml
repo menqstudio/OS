@@ -1,0 +1,25 @@
+[package]
+name = "brops-win-broker"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Windows (§0.W) governed-execution broker — REAL winapi syscall layer over the pure brops-core::windows_broker predicates."
+
+[lib]
+name = "brops_win_broker"
+
+[dependencies]
+brops-core = { path = "../core" }
+
+# The winapi bindings are only compiled on Windows; on every other host this crate is the pure
+# re-export of brops-core::windows_broker, so the workspace still builds/tests on Linux CI.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+] }

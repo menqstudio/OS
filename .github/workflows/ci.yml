@@ -67,6 +67,24 @@ jobs:
       - name: Test the host crate (ai.rs governed/receipt unit tests)
         run: cargo test -p brops --manifest-path apps/desktop/src-tauri/Cargo.toml
 
+  windows-broker:
+    name: Windows · §0.W broker syscall proof (named-pipe peer-auth)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      # The pure §0.W verification core must pass on the ACTUAL Windows platform (not only the Linux
+      # runner), then the REAL winapi named-pipe peer-SID authentication (the SO_PEERCRED equivalent,
+      # §0.W.4) must authenticate a live client connection. This is a partial Windows machine-proof — it
+      # does NOT flip platform_governed_execution_supported() (the remaining §0.1 primitives + the
+      # dedicated-service-SID proof are unbuilt), so governed turns stay fail-closed on Windows.
+      - name: Pure §0.W predicates on Windows
+        run: cargo test -p brops-core windows_broker --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Real named-pipe peer-SID authentication on Windows
+        run: cargo test -p brops-win-broker --manifest-path apps/desktop/src-tauri/Cargo.toml
+
   engine:
     name: Engine · governance runtime (python)
     runs-on: ubuntu-latest
