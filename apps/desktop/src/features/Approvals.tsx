@@ -54,6 +54,10 @@ export function Approvals() {
   const toast = useToast();
   const state = useAsync(() => desktop.listApprovals());
   const { data, error, reload } = state;
+  // Real, READ-ONLY engine approval-QUEUE read (mirror, never decide; queue read only —
+  // NO approval-request POST, which is a separate gated engine task). Steady state in
+  // Phase-2 is blocked/unreachable — surfaced honestly below the gate, never fabricated.
+  const engineQueue = useAsync(() => desktop.readEngineApprovalQueue());
 
   /** Inline HY/EN the way the thin pages do (shared i18n stays untouched). */
   const bi = useCallback((en: string, hy: string) => (lang === 'hy' ? hy : en), [lang]);
@@ -253,6 +257,22 @@ export function Approvals() {
       <div className="ap-hint muted" aria-hidden="true">
         {`↑/↓ ${bi('select', 'ընտրել')} · g ${bi('grant', 'հաստատել')} · d ${bi('deny', 'մերժել')} · e ${bi('escalate', 'բարձրացնել')} · Enter ${bi('confirm', 'հաստատել')} · Esc ${bi('cancel', 'չեղարկել')}`}
       </div>
+
+      {/* Engine approval-QUEUE mirror (read-only). Until the engine queue read answers,
+          this reads honestly as blocked/unreachable — the list above is the local mirror;
+          the desktop never fabricates an engine queue and never decides on its own. */}
+      {engineQueue.data && engineQueue.data.state !== 'ok' && (
+        <div className="ap-blocked" role="note" style={{ padding: 'var(--menq-space-3) var(--menq-space-4)' }}>
+          <span className="muted">
+            {engineQueue.data.state === 'unreachable'
+              ? bi('Engine approval queue unreachable — showing the local mirror only.',
+                'Շարժիչի հաստատումների հերթն անհասանելի է — ցուցադրվում է միայն տեղական արտացոլումը։')
+              : bi('Engine approval queue is sealed — showing the local mirror only.',
+                'Շարժիչի հաստատումների հերթը կնքված է — ցուցադրվում է միայն տեղական արտացոլումը։')}
+            {engineQueue.data.reason ? ` (${engineQueue.data.reason})` : ''}
+          </span>
+        </div>
+      )}
 
       {/* approval queue (apQueue) */}
       <ul className="ap-queue stack" role="list" aria-label={bi('Approval queue', 'Հաստատումների հերթ')}>

@@ -6,6 +6,7 @@ use tauri::Manager;
 
 mod ai;
 mod commands;
+mod governance;
 mod governed_turn;
 mod files;
 
@@ -95,6 +96,14 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             governed_turn::governed_turn_execute,
+            // Phase-2 governance mirror (READ-ONLY; mirror, never decide). These
+            // commands only READ engine governance surfaces via the sidecar and fail
+            // closed to a typed Blocked/Unreachable — they hold no key/lease, touch no
+            // DB, and can author no decision.
+            governance::read_decision_ledger,
+            governance::read_evidence_chain,
+            governance::read_verifier_verdicts,
+            governance::read_engine_approval_queue,
             commands::list_projects,
             commands::create_project,
             commands::set_project_status,

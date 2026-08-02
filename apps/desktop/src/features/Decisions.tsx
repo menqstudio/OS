@@ -5,6 +5,7 @@ import {
 } from '../components/ui';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
+import type { GovernanceRead } from '../services/governance';
 import type { Decision } from '../domain/entities';
 
 // Scoped styles for the decision chamber. All colour/space/motion resolves
@@ -74,6 +75,10 @@ export function Decisions() {
   // desktop-facing command — opening it reveals the honest `blocked` (evidence
   // sealed) state the spec requires, never fabricated evidence.
   const [evidenceOpenId, setEvidenceOpenId] = useState<string | null>(null);
+  // Real, READ-ONLY engine evidence-chain read for the open decision. Steady state in
+  // Phase-2 is `blocked`/`unreachable` (the engine chain read is not answering yet) —
+  // rendered honestly, never as fabricated evidence. `null` = still reading.
+  const [evidenceRead, setEvidenceRead] = useState<GovernanceRead | null>(null);
   const [announce, setAnnounce] = useState('');
 
   // Bilingual inline strings (HY + EN) the way the thin pages do; shared i18n
@@ -144,12 +149,28 @@ export function Decisions() {
   const openEvidence = (d: Decision | null) => {
     if (!d) return;
     setEvidenceOpenId(d.id);
-    // Verdict/evidence outcome announced via the polite live region.
     setAnnounce(L(
-      `Evidence for “${d.title}” is sealed — the engine chain is not exposed to the desktop.`,
-      `«${d.title}» որոշման ապացույցները կնքված են — շարժիչի շղթան հասանելի չէ desktop-ին։`,
+      `Reading the engine evidence chain for “${d.title}”…`,
+      `Կարդում ենք «${d.title}» որոշման շարժիչի ապացույցների շղթան…`,
     ));
   };
+
+  // Fetch the evidence chain (read-only) whenever a decision's evidence viewer opens.
+  // The desktop mirrors the engine chain; it never holds or fabricates the evidence.
+  useEffect(() => {
+    if (!evidenceOpenId) { setEvidenceRead(null); return; }
+    let alive = true;
+    setEvidenceRead(null);
+    desktop.readEvidenceChain(evidenceOpenId).then((r) => {
+      if (!alive) return;
+      setEvidenceRead(r);
+      setAnnounce(r.state === 'ok'
+        ? L('Engine evidence chain mirrored.', 'Շարժիչի ապացույցների շղթան արտացոլվեց։')
+        : L('Evidence chain is sealed — the engine chain is not exposed to the desktop.',
+          'Ապացույցների շղթան կնքված է — շարժիչի շղթան հասանելի չէ desktop-ին։'));
+    });
+    return () => { alive = false; };
+  }, [evidenceOpenId]);
 
   const onLedgerKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (ledger.length === 0) return;
@@ -280,16 +301,43 @@ export function Decisions() {
               </Button>
             </div>
             {evidenceOpen ? (
-              <div className="dec-blocked" role="note">
-                <div className="dec-blocked-glyph" aria-hidden="true">⛓</div>
-                <div className="dec-blocked-title">{L('Evidence sealed', 'Ապացույցները կնքված են')}</div>
-                <div className="dec-blocked-body">
-                  {L(
-                    'The engine evidence chain is read-only and is not exposed to the desktop. The ledger mirrors the decision; it never holds the sealed evidence.',
-                    'Շարժիչի ապացույցների շղթան կարդալու է և հասանելի չէ desktop-ին։ Մատյանն արտացոլում է որոշումը, բայց երբեք չի պահում կնքված ապացույցը։',
-                  )}
+              evidenceRead === null ? (
+                <div className="muted" style={{ fontSize: 13 }} role="status">
+                  {L('Reading the engine evidence chain…', 'Կարդում ենք շարժիչի ապացույցների շղթան…')}
                 </div>
-              </div>
+              ) : evidenceRead.state === 'ok' ? (
+                <div className="dec-blocked" role="note">
+                  <div className="dec-blocked-glyph" aria-hidden="true">⛓</div>
+                  <div className="dec-blocked-title">
+                    {L(`Evidence chain (${evidenceRead.records?.length ?? 0} event${(evidenceRead.records?.length ?? 0) === 1 ? '' : 's'})`,
+                      `Ապացույցների շղթա (${evidenceRead.records?.length ?? 0} իրադարձություն)`)}
+                  </div>
+                  <div className="dec-blocked-body">
+                    {L('Mirrored read-only from the engine chain. The desktop displays it; it never decides on it.',
+                      'Արտացոլված է շարժիչի շղթայից միայն ընթերցմամբ։ Desktop-ը ցուցադրում է, բայց երբեք չի որոշում։')}
+                  </div>
+                </div>
+              ) : (
+                <div className="dec-blocked" role="note">
+                  <div className="dec-blocked-glyph" aria-hidden="true">⛓</div>
+                  <div className="dec-blocked-title">
+                    {evidenceRead.state === 'unreachable'
+                      ? L('Evidence chain unreachable', 'Ապացույցների շղթան անհասանելի է')
+                      : L('Evidence sealed', 'Ապացույցները կնքված են')}
+                  </div>
+                  <div className="dec-blocked-body">
+                    {L(
+                      'The engine evidence chain is read-only and is not exposed to the desktop yet. The ledger mirrors the decision; it never holds or fabricates the sealed evidence.',
+                      'Շարժիչի ապացույցների շղթան կարդալու է և դեռ հասանելի չէ desktop-ին։ Մատյանն արտացոլում է որոշումը, բայց երբեք չի պահում կամ կեղծում կնքված ապացույցը։',
+                    )}
+                    {evidenceRead.reason ? (
+                      <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+                        {L('Reason: ', 'Պատճառ՝ ')}{evidenceRead.reason}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              )
             ) : (
               <div className="muted" style={{ fontSize: 13 }}>
                 {L('Press Enter or Open to inspect this decision’s evidence.',

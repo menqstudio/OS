@@ -52,14 +52,23 @@ const RESIDUALS: Residual[] = [
 export function Security() {
   const { t, lang } = useApp();
   const s = useAsync(() => desktop.getSecuritySummary(), []);
+  // Real, READ-ONLY engine evidence-chain read — the honest source for the
+  // chain-integrity view and the control-plane digest. In Phase-2 it is
+  // blocked/unreachable (the engine chain read is not answering yet); the desktop
+  // never claims a "verified" chain of its own — it mirrors, it does not adjudicate.
+  const chain = useAsync(() => desktop.readEvidenceChain(), []);
   const tr = (en: string, hy: string) => (lang === 'hy' ? hy : en);
 
   const backend = hasBackend();
-  // Honest derivation — never a fabricated "verified".
+  // Honest derivation from the real chain read — never a fabricated "verified".
+  // `checking` while the read is in flight; otherwise `blocked` (the engine
+  // adjudicates integrity; the desktop only mirrors, and today the read is sealed).
   const integrity: Integrity =
-    s.loading && s.data === null ? 'checking'
-      : s.error && backend ? 'broken'
+    chain.data === null && chain.loading ? 'checking'
+      : (chain.error || (chain.data && chain.data.state === 'unreachable')) && backend ? 'broken'
         : 'blocked';
+  // The honest machine reason from the engine, surfaced verbatim where we have one.
+  const chainReason = chain.data && chain.data.state !== 'ok' ? chain.data.reason : undefined;
 
   // --- Sectioned tab order: refs + keyboard navigation -------------------------------
   const sectionRefs = useRef<Array<HTMLElement | null>>([]);
@@ -152,6 +161,11 @@ export function Security() {
       >
         <Badge tone={TONE_BY_INTEGRITY[integrity]}>{integrityLabel}</Badge>
         <div className="muted" style={{ marginTop: 6, maxWidth: 620 }}>{integrityDetail}</div>
+        {chainReason ? (
+          <div className="muted" style={{ marginTop: 4, maxWidth: 620, fontSize: 12 }}>
+            {tr('Engine reason: ', 'Շարժիչի պատճառ՝ ')}{chainReason}
+          </div>
+        ) : null}
       </div>
     </div>,
   );
@@ -197,9 +211,14 @@ export function Security() {
         <code className="sec-digest-val">—</code>
       </div>
       {blockedNote(
-        'The protected control-plane digest is held by the engine; no read command is wired into the desktop yet.',
-        'Պաշտպանված կառավարման հարթության digest-ը պահվում է շարժիչում. ընթերցման հրաման դեռ միացված չէ։',
+        'The protected control-plane digest is held by the engine and mirrored read-only; the engine chain read is not answering yet, so no digest is shown (never a fabricated one).',
+        'Պաշտպանված կառավարման հարթության digest-ը պահվում է շարժիչում և արտացոլվում է միայն ընթերցմամբ. շարժիչի շղթայի ընթերցումը դեռ չի պատասխանում, ուստի digest ցույց չի տրվում (երբեք կեղծ)։',
       )}
+      {chainReason ? (
+        <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+          {tr('Engine reason: ', 'Շարժիչի պատճառ՝ ')}{chainReason}
+        </div>
+      ) : null}
     </>,
   );
 

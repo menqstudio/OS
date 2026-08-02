@@ -1349,6 +1349,39 @@ async fn governed_engine(
     prepared: &PreparedGovernedTurn,
 ) -> Result<GovernedReply, String> {
     let request = governed_request(prepared);
+    let doc = governed_sidecar_call(python, sidecar, &request).await?;
+    interpret_bridge_result(&doc)
+}
+
+/// Phase-2 governance mirror (read-only): run a READ-ONLY query against the governed
+/// engine sidecar and return its raw JSON reply for the caller to validate against the
+/// engine schemas. Mirrors [`governed_engine`]'s subprocess discipline exactly (same
+/// sidecar, stdin payload, bounded reads, one deadline, kill-on-drop) but makes NO trust
+/// decision and holds NO key/lease — it only forwards the read. Any failure to reach or
+/// parse the sidecar is an `Err` the caller maps to a typed `Unreachable`/`Blocked`; the
+/// governed engine not being configured is likewise a fail-closed `Err` (never a silent
+/// ungoverned fallback). This never runs a turn and never mutates state.
+pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_json::Value, String> {
+    let _permit = GenerationPermit::acquire()?;
+    match resolve()? {
+        Provider::GovernedEngine { python, sidecar } => {
+            governed_sidecar_call(&python, &sidecar, request_json).await
+        }
+        _ => Err(
+            "governed engine is not configured; the governance mirror is fail-closed".to_string(),
+        ),
+    }
+}
+
+/// Shell out to the bridge sidecar with `request` on stdin and return its parsed JSON
+/// reply. Shared by the governed AI turn ([`governed_engine`]) and the read-only
+/// governance mirror ([`governed_sidecar_read`]) so both use the IDENTICAL subprocess
+/// discipline. Makes no trust decision — it returns the raw `bridge.result` document.
+async fn governed_sidecar_call(
+    python: &str,
+    sidecar: &str,
+    request: &str,
+) -> Result<serde_json::Value, String> {
     let mut cmd = tokio::process::Command::new(python);
     cmd.arg(sidecar)
         // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
@@ -1367,7 +1400,7 @@ async fn governed_engine(
     // Feed the task-request via stdin (never argv → not in /proc/<pid>/cmdline) on a
     // concurrent task, so a stalled write can't hang the deadline-bounded wait.
     if let Some(mut stdin) = child.stdin.take() {
-        let bytes = request.into_bytes();
+        let bytes = request.as_bytes().to_vec();
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             let _ = stdin.write_all(&bytes).await;
@@ -1408,7 +1441,7 @@ async fn governed_engine(
     let stdout = String::from_utf8_lossy(&obuf);
     let doc: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("could not parse bridge-result ({e})"))?;
-    interpret_bridge_result(&doc)
+    Ok(doc)
 }
 
 async fn ollama(url: &str, model: &str, system: &str, messages: &[ChatMsg]) -> Result<String, String> {

@@ -70,6 +70,10 @@ type Filter = 'all' | 'unread' | string;
 export function Notifications() {
   const { t, lang } = useApp();
   const state = useAsync<Notification[]>(() => desktop.listNotifications());
+  // Real, READ-ONLY engine governance-event stream (mirrored via the evidence chain).
+  // Steady state in Phase-2 is blocked/unreachable — the gate panel below renders that
+  // honestly from the actual IPC result, never a fabricated stream.
+  const gov = useAsync(() => desktop.readEvidenceChain());
   const [filter, setFilter] = useState<Filter>('unread');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -259,16 +263,34 @@ export function Notifications() {
         )}
       </Panel>
 
-      {/* Blocked state (§D). The engine governance-event stream has no read IPC
-          command yet, so it is rendered honestly as sealed/blocked rather than
-          fabricating events. Dependent engine actions stay disabled. */}
+      {/* Governance stream (§D). Driven by the real READ-ONLY engine governance IPC
+          (`read_evidence_chain`). Until the engine read endpoint answers, the honest
+          state is blocked/unreachable — rendered as such from the actual result, never
+          fabricating events. The desktop mirrors; it never decides. */}
       <div style={{ marginTop: 16 }}>
         <Panel title={tr('gateHeading')}>
           <div className="nsig-gate" role="status" aria-label={tr('gateTitle')}>
             <div className="nsig-gate-glyph" aria-hidden="true">⛨</div>
             <div>
-              <div className="nsig-gate-title">{tr('gateTitle')}</div>
-              <div className="muted" style={{ marginTop: 4, maxWidth: 560 }}>{tr('gateBody')}</div>
+              <div className="nsig-gate-title">
+                {gov.data?.state === 'ok'
+                  ? (lang === 'hy' ? 'Կառավարման հոսքն արտացոլված է' : 'Governance stream mirrored')
+                  : tr('gateTitle')}
+              </div>
+              <div className="muted" style={{ marginTop: 4, maxWidth: 560 }}>
+                {gov.data === null
+                  ? (lang === 'hy' ? 'Կարդում ենք շարժիչի կառավարման հոսքը…' : 'Reading the engine governance stream…')
+                  : gov.data.state === 'ok'
+                    ? (lang === 'hy'
+                      ? `${gov.data.records?.length ?? 0} իրադարձություն արտացոլված է շարժիչի շղթայից։`
+                      : `${gov.data.records?.length ?? 0} event(s) mirrored from the engine chain.`)
+                    : tr('gateBody')}
+              </div>
+              {gov.data && gov.data.state !== 'ok' && gov.data.reason ? (
+                <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+                  {(lang === 'hy' ? 'Պատճառ՝ ' : 'Reason: ')}{gov.data.reason}
+                </div>
+              ) : null}
             </div>
           </div>
         </Panel>

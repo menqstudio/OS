@@ -4,6 +4,9 @@
 // its error state — that is the honest "backend unavailable" behaviour.
 
 import { invoke, Channel } from '@tauri-apps/api/core';
+import {
+  parseGovernanceRead, type GovernanceRead, type GovernanceSurface,
+} from './governance';
 import type {
   ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
   DirListing, FileContent, Integration, KnowledgeNote, LibraryItem, MemoryEntry, Message, MessageRole, Metric,
@@ -30,6 +33,24 @@ function allowedRole(role: string): MessageRole {
 
 function normalizeMessage(m: Message): Message {
   return { ...m, role: allowedRole(m.role) };
+}
+
+// Phase-2 governance mirror: invoke a READ-ONLY governance command and parse its typed
+// reply fail-closed. A rejected invoke (no backend, IPC error, engine down) becomes
+// `unreachable` rather than a thrown rejection — a governance read is a mirror, so an
+// honest state is always returned and never an exception a page must special-case.
+async function governanceRead(
+  surface: GovernanceSurface,
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<GovernanceRead> {
+  try {
+    const raw = await invoke<unknown>(command, args);
+    return parseGovernanceRead(surface, raw);
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    return { state: 'unreachable', surface, reason };
+  }
 }
 
 export const desktop = {
@@ -173,6 +194,19 @@ export const desktop = {
   // analytics / security (computed, read-only)
   getAnalytics: () => invoke<Metric[]>('get_analytics'),
   getSecuritySummary: () => invoke<SecuritySummary>('get_security_summary'),
+
+  // Phase-2 governance mirror (READ-ONLY; mirror, never decide). Each wrapper invokes
+  // a read-only Tauri command that asks the engine sidecar and parses the typed reply
+  // FAIL-CLOSED: a thrown transport error is mapped to `unreachable`, a refused/malformed
+  // reply to `blocked`, and only a well-formed schema-valid reply to `ok`. The renderer
+  // supplies no key/lease and never decides — it can only surface engine truth or an
+  // honest blocked/unreachable state.
+  readDecisionLedger: () => governanceRead('decisionLedger', 'read_decision_ledger'),
+  readEvidenceChain: (taskId?: string) =>
+    governanceRead('evidenceChain', 'read_evidence_chain', { taskId: taskId ?? null }),
+  readVerifierVerdicts: (taskId?: string) =>
+    governanceRead('verdicts', 'read_verifier_verdicts', { taskId: taskId ?? null }),
+  readEngineApprovalQueue: () => governanceRead('approvalQueue', 'read_engine_approval_queue'),
 
   // ai (live agent replies)
   aiStatus: () => invoke<AiStatus>('ai_status'),
