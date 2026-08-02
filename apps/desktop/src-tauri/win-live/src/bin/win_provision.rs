@@ -44,6 +44,29 @@ fn main() {
     });
     let executor_path = arg(&args, "--executor-path").unwrap_or_default();
     let pipe_prefix = arg(&args, "--pipe-prefix").unwrap_or_else(|| "brops-live".to_string());
+    // Audit condition 1: the root PRIVATE key is supplied by the OPERATOR from an offline location, never
+    // compiled in and never left on the serving box. It signs the manifest here; only the root PUBLIC key is
+    // pinned in the TCB (crate::tcb). The offline private MUST match that pinned public.
+    let root_key_path = arg(&args, "--root-key").unwrap_or_else(|| {
+        eprintln!("win_provision: --root-key <offline root private seed hex> required");
+        std::process::exit(2);
+    });
+    let root_signing = {
+        let hex = std::fs::read_to_string(&root_key_path).unwrap_or_else(|e| {
+            eprintln!("win_provision: cannot read --root-key {root_key_path}: {e}");
+            std::process::exit(2);
+        });
+        let seed = crypto::hex32(hex.trim()).unwrap_or_else(|| {
+            eprintln!("win_provision: --root-key is not a 32-byte hex seed");
+            std::process::exit(2);
+        });
+        let sk = crypto::signing_key(&seed);
+        if crypto::public_key_hex(&sk) != tcb::root_public_key_hex() {
+            eprintln!("win_provision: --root-key does not match the TCB-pinned root public key");
+            std::process::exit(3);
+        }
+        sk
+    };
 
     let root = Path::new(&root);
     let store = root.join("store");
@@ -108,7 +131,7 @@ fn main() {
     });
     let manifest: KeyManifest = serde_json::from_value(manifest_json).expect("manifest build");
     let manifest_bytes = manifest.canonical_bytes();
-    let root_sig = crypto::sign_b64std(&tcb::root_signing_key(), &manifest_bytes);
+    let root_sig = crypto::sign_b64std(&root_signing, &manifest_bytes);
     let content_hash = manifest.content_hash();
     std::fs::write(root.join("manifest.json"), &manifest_bytes).expect("write manifest");
     std::fs::write(root.join("manifest.sig"), &root_sig).expect("write manifest.sig");

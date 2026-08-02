@@ -135,7 +135,12 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
     });
     let manifest: KeyManifest =
         serde_json::from_value(manifest_json).map_err(|e| format!("manifest_build: {e}"))?;
-    let root_sig = crypto::sign_b64std(&tcb::root_signing_key(), &manifest.canonical_bytes());
+    // The operator's OFFLINE root private key signs the manifest (in production it lives offline; here a test
+    // constant). The TCB compiles in only the corresponding PUBLIC key (tcb::root_public_key_hex()).
+    let offline_root_seed =
+        "0011223344556677001122334455667700112233445566770011223344556677"; // gitleaks:allow (offline test root)
+    let offline_root = crypto::signing_key(&crypto::hex32(offline_root_seed).expect("root seed"));
+    let root_sig = crypto::sign_b64std(&offline_root, &manifest.canonical_bytes());
     let pinned_root = PinnedRoot {
         root_key_id: tcb::ROOT_KEY_ID.to_string(),
         public_key_hex: tcb::root_public_key_hex(),

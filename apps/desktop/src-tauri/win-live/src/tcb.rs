@@ -16,20 +16,16 @@ use crate::crypto;
 /// The pinned root key id.
 pub const ROOT_KEY_ID: &str = "brops-tcb-root-1"; // gitleaks:allow (fake public key-id)
 
-/// PROOF-KIT fixed root private seed (32 bytes, hex). PRODUCTION: delete; ship only the public key.
-pub const ROOT_SEED_HEX: &str =
-    "0011223344556677001122334455667700112233445566770011223344556677"; // gitleaks:allow (fake proof-kit root seed)
+/// The TCB-pinned root PUBLIC key hex — the ONLY root material compiled into the broker (audit condition 1).
+/// The root PRIVATE key is held OFFLINE by the operator and never appears in a deployed binary or on the
+/// serving box; the manifest is signed offline with it (see win_provision --root-key). The driver pins THIS
+/// public key and refuses any manifest not signed by the corresponding private root.
+pub const ROOT_PUBLIC_KEY_HEX: &str =
+    "59cfbe7b22c066c63f7c18fc698b58f63215d0705ebab5cd306bc37a49efeede"; // gitleaks:allow (public key)
 
-/// The TCB-pinned root PUBLIC key hex — the anchor the driver pins (never from config).
+/// The TCB-pinned root PUBLIC key hex — the anchor the driver pins (never from config, never a private key).
 pub fn root_public_key_hex() -> String {
-    let seed = crypto::hex32(ROOT_SEED_HEX).expect("valid root seed hex");
-    crypto::public_key_hex(&crypto::signing_key(&seed))
-}
-
-/// The proof-kit root signing key (PRODUCTION: held offline; not shipped in the TCB).
-pub fn root_signing_key() -> ed25519_dalek::SigningKey {
-    let seed = crypto::hex32(ROOT_SEED_HEX).expect("valid root seed hex");
-    crypto::signing_key(&seed)
+    ROOT_PUBLIC_KEY_HEX.to_string()
 }
 
 /// The anti-rollback-floor integrity keypair — compiled into the broker TCB (audit R1). UNLIKE the root

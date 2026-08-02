@@ -47,9 +47,12 @@ resolution, never a hop reply:
 
 ## Conditions BEFORE the Windows governed gate may ever be flipped to `true` (not shipped today)
 These are honest limitations of a software-only proof kit; the gate stays closed until they are met:
-1. **Production key custody model.** Ship only the root PUBLIC key in the TCB, root private held OFFLINE
-   (the compiled-in proof-kit private seeds in `tcb.rs` are a self-containment shortcut, documented). Give
-   the floor-integrity key real TCB-only custody.
+1. **Production key custody model — ROOT DONE.** The TCB (`tcb.rs`) now compiles in ONLY the root PUBLIC key
+   (`ROOT_PUBLIC_KEY_HEX`); the root PRIVATE key is supplied by the operator from an offline location
+   (`win_provision --root-key`), which must match the pinned public, and is never written to the serving box
+   (proven: `keys/root.seed` no longer exists; the turn still reaches `trusted_verified`). REMAINING for full
+   custody: give the runtime floor-integrity key real TCB-only custody (it is still a compiled-in constant —
+   lower risk than the root, and covered defence-in-depth by condition 3's broker-only-writable floor).
 2. **Dedicated least-privilege broker principal.** `broker-as-SYSTEM` is a proof convenience — a SYSTEM
    broker could read the signer service's memory / DPAPI seed and defeat signer isolation, and
    `allowed_broker_sid = S-1-5-18` accepts any SYSTEM process. Enablement needs a dedicated broker service

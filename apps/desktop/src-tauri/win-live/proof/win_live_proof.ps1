@@ -24,9 +24,16 @@ foreach ($e in "win_provision.exe","win_authority.exe","win_supervisor.exe","win
   Copy-Item (Join-Path $Dbg $e) (Join-Path $bin $e) -Force
 }
 
+# The operator's OFFLINE root private key (proof constant; in production this is held offline and NEVER on
+# the serving box). Written to a temp file the provisioner reads via --root-key; it is not part of the
+# deployed tree. The TCB (crate::tcb) compiles in only the corresponding PUBLIC key.
+$offlineRoot = "0011223344556677001122334455667700112233445566770011223344556677"  # gitleaks:allow (offline test root)
+$rootKeyFile = Join-Path $env:TEMP "brops-offline-root.key"
+Set-Content -Path $rootKeyFile -Value $offlineRoot -Encoding Ascii
+
 function Invoke-Turn([string]$brokerSid, [string]$prefix, [string]$label) {
   & (Join-Path $bin "win_provision.exe") --root-dir $Root --allowed-broker-sid $brokerSid `
-      --executor-path (Join-Path $bin "win_executor.exe") --pipe-prefix $prefix | Out-Null
+      --executor-path (Join-Path $bin "win_executor.exe") --pipe-prefix $prefix --root-key $rootKeyFile | Out-Null
   $a = Start-Process (Join-Path $bin "win_authority.exe")  -ArgumentList "--config",$cfg -PassThru -WindowStyle Hidden
   $s = Start-Process (Join-Path $bin "win_supervisor.exe") -ArgumentList "--config",$cfg -PassThru -WindowStyle Hidden
   $g = Start-Process (Join-Path $bin "win_signer.exe")     -ArgumentList "--config",$cfg -PassThru -WindowStyle Hidden
