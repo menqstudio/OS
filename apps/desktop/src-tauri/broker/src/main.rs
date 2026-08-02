@@ -167,14 +167,18 @@ mod linux {
         })?;
 
         let ids = UuidBrokerIds;
-        let executor = UpstreamBlockedExecutor;
+        // Config-driven, FAIL-CLOSED executor: if `BROPS_BROKER_CONFIG` points at a valid deployment config
+        // with a TCB-root-signed manifest, serve real governed turns through the live chain; otherwise (no
+        // config / malformed / no trusted manifest) fall back to the fail-closed default that Blocks every
+        // turn — the shipped posture is unchanged until a trusted manifest is provisioned.
+        let executor: Box<dyn GovernedExecutor> = build_governed_executor();
 
         // One governed turn per connection (single-request/single-response). A bad peer or malformed frame
         // fails that ONE connection closed; the listener keeps serving.
         for stream in listener.incoming() {
             match stream {
                 Ok(mut s) => {
-                    if let Err(e) = handle_conn(&conn, &mut s, allowed_uid, &ids, &executor) {
+                    if let Err(e) = handle_conn(&conn, &mut s, allowed_uid, &ids, executor.as_ref()) {
                         eprintln!("brops-broker: connection refused: {e}");
                     }
                 }
@@ -182,6 +186,152 @@ mod linux {
             }
         }
         Ok(())
+    }
+
+    /// Build the broker's [`GovernedExecutor`], FAIL-CLOSED by default. Reads the optional deployment config
+    /// at `$BROPS_BROKER_CONFIG` (same shape the live-turn driver uses): if it parses and carries a
+    /// `[trust].manifest_path` + signature + floor + the `[sockets]`/`[execution]`/`[facts]`/`[resolved]`
+    /// blocks, the real `LinuxGovernedTurnChain` (with the production `ProductionResolver`) is served.
+    /// ANY problem — no env var, unreadable/malformed config, missing manifest — returns the fail-closed
+    /// `UpstreamBlockedExecutor`, so the broker keeps rendering `blocked` (never a fabricated acceptance).
+    fn build_governed_executor() -> Box<dyn GovernedExecutor> {
+        use brops_broker::chain_executor::linux::{
+            ChainSockets, ExecutionConfig, LinuxGovernedExecution, LinuxGovernedTurnChain,
+        };
+        use brops_broker::chain_executor::ChainExecutor;
+        use brops_broker::manifest_resolver::{ProductionResolver, ResolvedFacts};
+        use brops_core::governed_verification::InMemoryLedger;
+        use brops_core::key_manifest::{AntiRollbackFloor, KeyManifest};
+        use serde_json::Value;
+
+        let fail_closed = || -> Box<dyn GovernedExecutor> { Box::new(UpstreamBlockedExecutor) };
+
+        let path = match std::env::var("BROPS_BROKER_CONFIG") {
+            Ok(p) if !p.is_empty() => p,
+            _ => return fail_closed(),
+        };
+        let cfg: Value = match std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok())
+        {
+            Some(v) => v,
+            None => {
+                eprintln!("brops-broker: config unreadable/malformed at {path} — serving fail-closed");
+                return fail_closed();
+            }
+        };
+
+        let s = |p: &[&str]| -> Option<String> {
+            let mut cur = &cfg;
+            for k in p {
+                cur = cur.get(*k)?;
+            }
+            cur.as_str().map(|x| x.to_string())
+        };
+        let i = |p: &[&str]| -> Option<i64> {
+            let mut cur = &cfg;
+            for k in p {
+                cur = cur.get(*k)?;
+            }
+            cur.as_i64()
+        };
+
+        // The presence of a manifest path is the switch: absent ⇒ no trusted manifest ⇒ fail-closed.
+        let manifest_path = match s(&["trust", "manifest_path"]) {
+            Some(p) => p,
+            None => return fail_closed(),
+        };
+        let manifest: KeyManifest = match std::fs::read_to_string(&manifest_path)
+            .ok()
+            .and_then(|b| serde_json::from_str(&b).ok())
+        {
+            Some(m) => m,
+            None => return fail_closed(),
+        };
+        let root_sig = match s(&["trust", "manifest_sig_path"]).and_then(|p| std::fs::read_to_string(p).ok())
+        {
+            Some(sig) => sig.trim().to_string(),
+            None => return fail_closed(),
+        };
+        let floor = match s(&["trust", "floor_path"])
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|b| serde_json::from_str::<Value>(&b).ok())
+            .and_then(|v| {
+                Some(AntiRollbackFloor {
+                    highest_epoch: v.get("highest_epoch")?.as_u64()?,
+                    highest_hash: v.get("highest_hash")?.as_str()?.to_string(),
+                })
+            }) {
+            Some(f) => f,
+            None => return fail_closed(),
+        };
+        let facts = ResolvedFacts {
+            workspace_id: s(&["resolved", "workspace_id"]).unwrap_or_default(),
+            install_id: s(&["resolved", "install_id"]).unwrap_or_default(),
+            system_sha256: s(&["resolved", "system_sha256"]).unwrap_or_default(),
+            history_sha256: s(&["resolved", "history_sha256"]).unwrap_or_default(),
+            generation_config_sha256: s(&["resolved", "generation_config_sha256"]).unwrap_or_default(),
+            requested_at: s(&["resolved", "requested_at"]).unwrap_or_default(),
+            run_id: s(&["resolved", "run_id"]).unwrap_or_default(),
+            task_id: s(&["resolved", "task_id"]).unwrap_or_default(),
+            requested_at_ms: i(&["resolved", "requested_at_ms"]).unwrap_or(0),
+            author: s(&["resolved", "author"]).unwrap_or_else(|| "Bro".to_string()),
+        };
+        let resolver = ProductionResolver::provisioned(
+            manifest,
+            root_sig,
+            floor,
+            s(&["trust", "signer_key_id"]).unwrap_or_default(),
+            s(&["trust", "supervisor_attestation_key_id"]).unwrap_or_default(),
+            facts,
+        );
+
+        let sockets = match (s(&["sockets", "authority"]), s(&["sockets", "supervisor"]), s(&["sockets", "signer"]))
+        {
+            (Some(authority), Some(supervisor), Some(signer)) => {
+                ChainSockets { authority, supervisor, signer }
+            }
+            _ => return fail_closed(),
+        };
+        let exec_cfg = ExecutionConfig {
+            recorder_command: cfg
+                .get("execution")
+                .and_then(|e| e.get("recorder_command"))
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
+            recorder_store_dir: s(&["execution", "recorder_store_dir"]).unwrap_or_default(),
+            launcher_path: s(&["execution", "launcher_path"]).unwrap_or_default(),
+            executor_path: s(&["execution", "executor_path"]).unwrap_or_default(),
+            lease_file: s(&["execution", "lease_file"]).unwrap_or_default(),
+            cgroup_arg: s(&["execution", "cgroup_arg"]).unwrap_or_else(|| "cgroup-live".to_string()),
+            store_dir: s(&["execution", "store_dir"]).unwrap_or_default(),
+            report_dir: s(&["execution", "report_dir"]).unwrap_or_default(),
+            supervisor_sock: sockets.supervisor.clone(),
+            receipt_id: s(&["facts", "receipt_id"]).unwrap_or_default(),
+            supervisor_id: s(&["facts", "supervisor_id"]).unwrap_or_default(),
+            executor_id: s(&["facts", "executor_id"]).unwrap_or_default(),
+            builder_id: s(&["facts", "builder_id"]).unwrap_or_default(),
+            policy_id: s(&["facts", "policy_id"]).unwrap_or_default(),
+            policy_version: s(&["facts", "policy_version"]).unwrap_or_default(),
+            supervisor_attestation_key_id: s(&["trust", "supervisor_attestation_key_id"]).unwrap_or_default(),
+            policy_bundle_handle: s(&["facts", "policy_bundle_handle"]).unwrap_or_default(),
+            containment_evidence_handle: s(&["facts", "containment_evidence_handle"]).unwrap_or_default(),
+            record_handle: s(&["facts", "record_handle"]).unwrap_or_default(),
+            lease_handle: s(&["facts", "lease_handle"]).unwrap_or_default(),
+            execution_receipt_handle: s(&["facts", "execution_receipt_handle"]).unwrap_or_default(),
+            evidence_final_event_hash: s(&["facts", "evidence_final_event_hash"]).unwrap_or_default(),
+            evidence_event_count: i(&["facts", "evidence_event_count"]).unwrap_or(0),
+            evidence_last_sequence: i(&["facts", "evidence_last_sequence"]).unwrap_or(0),
+            evidence_head_sequence: i(&["facts", "evidence_head_sequence"]).unwrap_or(0),
+        };
+
+        eprintln!("brops-broker: trusted manifest provisioned — serving the live governed chain");
+        let chain = LinuxGovernedTurnChain::new(
+            sockets,
+            resolver,
+            LinuxGovernedExecution::new(exec_cfg),
+            InMemoryLedger::new(),
+        );
+        Box::new(ChainExecutor::new(chain))
     }
 
     /// Read the peer's OS credentials via `SO_PEERCRED` (kernel-attested at connect time — unforgeable by the
