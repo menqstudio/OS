@@ -83,6 +83,9 @@ chmod 4750 "$TCB/privileged-launcher.bin"
 install -m 0755 "$EXECUTOR_BIN" "$TCB/contained-executor.bin"
 chown 0:0 "$TCB/contained-executor.bin"
 install -m 0755 "$RECORDER_BIN" "$BIN/governed_recorder"; chown 0:0 "$BIN/governed_recorder"
+# The driver binary lives under the invoking user's target/ (a 0700 home the service accounts cannot
+# traverse), so run it from the world-traversable $BIN instead.
+install -m 0755 "$DRIVER_BIN" "$BIN/live_turn"; chown 0:0 "$BIN/live_turn"
 
 LAUNCHER_SHA=$(sha256sum "$TCB/privileged-launcher.bin" | cut -d' ' -f1)
 EXECUTOR_SHA=$(sha256sum "$TCB/contained-executor.bin" | cut -d' ' -f1)
@@ -149,7 +152,7 @@ done
 
 # ----- run ONE live governed turn as the broker account -------------------------------------------
 echo "== running the live governed turn as $BROKER_USER =="
-OUT=$(sudo -u "$BROKER_USER" "$DRIVER_BIN" --config "$CONFIG" 2>&1)
+OUT=$(sudo -u "$BROKER_USER" "$BIN/live_turn" --config "$CONFIG" 2>&1)
 echo "$OUT"
 RESULT_LINE=$(echo "$OUT" | grep -E '^RESULT:' | tail -1)
 
