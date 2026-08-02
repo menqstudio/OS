@@ -1003,6 +1003,12 @@ pub async fn stream_reply(
                 Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => {
                     let _ = on_event.send(StreamEvent::Blocked { reason: error });
                 }
+                // The conversation path (verify_and_record_receipt) never HOLDS an answer.
+                Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrustedHeld { .. }) => {
+                    let _ = on_event.send(StreamEvent::Error {
+                        message: "unexpected held answer on a conversation turn".into(),
+                    });
+                }
                 Err(e) => {
                     let _ = on_event.send(StreamEvent::Error { message: e.to_string() });
                 }
@@ -1270,7 +1276,11 @@ pub async fn stream_run_step(
 /// `save_ask_to_chat` can persist the pair without the webview ever supplying the
 /// agent body (P1-6). On failure an `error` event is sent instead.
 #[tauri::command]
-pub async fn stream_ask(prompt: String, on_event: tauri::ipc::Channel<StreamEvent>) -> Result<(), String> {
+pub async fn stream_ask(
+    state: State<'_, AppState>,
+    prompt: String,
+    on_event: tauri::ipc::Channel<StreamEvent>,
+) -> Result<(), String> {
     let prompt = prompt.trim().to_string();
     if prompt.is_empty() {
         let _ = on_event.send(StreamEvent::Error { message: "empty prompt".into() });
@@ -1278,6 +1288,141 @@ pub async fn stream_ask(prompt: String, on_event: tauri::ipc::Channel<StreamEven
     }
     let system = "You are Bro, the top-level assistant in the BroPS desktop app for its owner, Gev. Answer the question concisely and helpfully. Do not claim to have taken actions you cannot actually take.".to_string();
     let history = vec![crate::ai::ChatMsg { role: "user".to_string(), content: prompt.clone() }];
+
+    // --- Governed turn: buffered, DESKTOP-verified, HELD under a one-time id (fail-closed). ---
+    // Ask Bro is conversation-less: the verified answer is stashed under a result_id for a later,
+    // owner-chosen save (save_ask_to_chat), never auto-posted. The governed turn runs the same
+    // challenge → governed_turn → verify path as chat, but persists via verify_and_record_held_answer
+    // (no messages row). In production (NoTrustedManifest) every governed ask Blocks; the
+    // ai::generate_stream path below is the dev-only ungoverned fallthrough (BROPS_ALLOW_UNGOVERNED).
+    match crate::ai::provider_is_governed() {
+        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+        Ok(false) => { /* fall through to the ungoverned streaming path below */ }
+        Ok(true) => {
+            let started_ms: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let prepared = match crate::ai::prepare_governed_turn(
+                &system,
+                &history,
+                started_ms,
+                GOVERNED_WORKSPACE_ID,
+                GOVERNED_INSTALL_ID,
+                GOVERNED_GENERATION_CONFIG,
+            ) {
+                Ok(p) => p,
+                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+            };
+            let ctx = &prepared.context;
+            let issued = brops_core::receipt::IssuedRequest {
+                workspace_id: &ctx.workspace_id,
+                install_id: &ctx.install_id,
+                request_nonce: &ctx.request_nonce,
+                system_sha256: &ctx.system_sha256,
+                history_sha256: &ctx.history_sha256,
+                generation_config_sha256: &ctx.generation_config_sha256,
+                requested_at: &ctx.requested_at,
+            };
+            // The one-time challenge needs a conversation FK; Ask Bro is conversation-less, so use a
+            // single hidden system "ask" conversation (kind excluded from the UI list) that the held
+            // answer never posts to.
+            let ask_conv = {
+                let conn = match locked(&state) {
+                    Ok(c) => c,
+                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+                };
+                let existing = brops_core::repo::chat::list_conversations(&conn, Some("ask"))
+                    .ok()
+                    .and_then(|v| v.into_iter().next());
+                match existing {
+                    Some(c) => c.id,
+                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)") {
+                        Ok(c) => c.id,
+                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e.to_string() }); return Ok(()); }
+                    },
+                }
+            };
+            {
+                let conn = match locked(&state) {
+                    Ok(c) => c,
+                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+                };
+                if let Err(e) = brops_core::receipt_store::issue_challenge(&conn, &ask_conv, &issued, started_ms) {
+                    let _ = on_event.send(StreamEvent::Error { message: e.to_string() });
+                    return Ok(());
+                }
+            }
+            let governed = crate::ai::governed_turn(&prepared).await;
+            let verify_ms: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(started_ms);
+            let outcome = match &governed {
+                Err(transport) => {
+                    let reason = brops_core::receipt_store::bounded_reason(transport);
+                    let conn = match locked(&state) {
+                        Ok(c) => c,
+                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+                    };
+                    brops_core::receipt_store::record_pre_verification_block(
+                        &conn, &ctx.request_nonce, &reason, verify_ms,
+                    )
+                }
+                Ok(reply) => {
+                    let output = reply.reply.clone().into_bytes();
+                    let expected = brops_core::receipt::Expected {
+                        request: issued,
+                        supervisor_id: GOVERNED_SUPERVISOR_ID,
+                        policy_id: GOVERNED_POLICY_ID,
+                        policy_version: GOVERNED_POLICY_VERSION,
+                        policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
+                        containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
+                        allowed_executors: &[],
+                        allowed_builders: &[],
+                    };
+                    let turn = brops_core::receipt_store::GovernedTurn {
+                        wire: brops_core::receipt_store::ReceiptWire {
+                            envelope_jcs_b64: &reply.envelope_jcs_b64,
+                            signature_b64: &reply.signature_b64,
+                        },
+                        expected,
+                        output: &output,
+                        now_ms: verify_ms,
+                        freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
+                    };
+                    let conn = match locked(&state) {
+                        Ok(c) => c,
+                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+                    };
+                    brops_core::receipt_store::verify_and_record_held_answer(
+                        &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
+                    )
+                }
+            };
+            match outcome {
+                // Accepted + held: stash the VERIFIED body under a one-time id (never post it).
+                Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrustedHeld { body, .. }) => {
+                    let result_id = stash_pending_answer(prompt, body);
+                    let _ = on_event.send(StreamEvent::Ready { result_id });
+                }
+                // Blocked (every Wave 3a governed ask): a turn-level notice, no held answer leaks.
+                Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => {
+                    let _ = on_event.send(StreamEvent::Blocked { reason: error });
+                }
+                // The held path never posts a conversation message.
+                Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrusted { .. }) => {
+                    let _ = on_event.send(StreamEvent::Error {
+                        message: "unexpected conversation post on a held ask".into(),
+                    });
+                }
+                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e.to_string() }); }
+            }
+            return Ok(());
+        }
+    }
+
+    // --- Ungoverned (dev-only, BROPS_ALLOW_UNGOVERNED): streamed as before. ---
     let ch = on_event.clone();
     match crate::ai::generate_stream(&system, &history, move |delta| {
         let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
@@ -1417,6 +1562,10 @@ pub async fn reply_in_conversation(
                 }
                 // Blocked (every Wave 3a governed turn): fail-closed, NO message — the durable reason.
                 Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => Err(error),
+                // The conversation path (verify_and_record_receipt) never HOLDS an answer.
+                Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrustedHeld { .. }) => {
+                    Err("unexpected held answer on a conversation turn".to_string())
+                }
                 Err(e) => Err(e.to_string()),
             };
         }

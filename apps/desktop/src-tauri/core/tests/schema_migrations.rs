@@ -1,8 +1,8 @@
 //! End-to-end schema/migration test for `brops-core`.
 //!
 //! Applies every migration (0001..0015) in order to a fresh SQLite database and
-//! asserts the resulting shape: `SCHEMA_VERSION == 15`, the ledger is contiguous
-//! 1..=15, the key tables/columns exist, and the constraints introduced across
+//! asserts the resulting shape: `SCHEMA_VERSION == 16`, the ledger is contiguous
+//! 1..=16, the key tables/columns exist, and the constraints introduced across
 //! the migrations (status-guard triggers, the run_steps position uniqueness, and
 //! the Wave-3a receipt tables' CHECK/PK/one-time-consume invariants) actually
 //! bite. Migrations are forward-only (no down scripts), so the "down/idempotency"
@@ -72,10 +72,10 @@ fn migrate_applies_all_versions_in_order_to_a_fresh_db() {
     c.pragma_update(None, "foreign_keys", "ON").unwrap();
     db::migrate(&c).unwrap();
 
-    assert_eq!(db::SCHEMA_VERSION, 15, "crate SCHEMA_VERSION must be 15");
-    assert_eq!(db::current_version(&c).unwrap(), 15);
-    // The ledger is contiguous 1..=15 — nothing skipped, nothing double-counted.
-    assert_eq!(applied_versions(&c), (1..=15).collect::<Vec<i64>>());
+    assert_eq!(db::SCHEMA_VERSION, 16, "crate SCHEMA_VERSION must be 16");
+    assert_eq!(db::current_version(&c).unwrap(), 16);
+    // The ledger is contiguous 1..=16 — nothing skipped, nothing double-counted.
+    assert_eq!(applied_versions(&c), (1..=16).collect::<Vec<i64>>());
 }
 
 #[test]
@@ -382,7 +382,7 @@ fn migrate_is_idempotent_in_process() {
     db::migrate(&c).unwrap();
     assert_eq!(db::current_version(&c).unwrap(), db::SCHEMA_VERSION);
     assert_eq!(applied_versions(&c), before, "re-running migrate must not add ledger rows");
-    assert_eq!(before.len(), 15);
+    assert_eq!(before.len(), 16);
 }
 
 #[test]
@@ -397,10 +397,10 @@ fn migrate_is_idempotent_across_a_real_file_reopen() {
 
     {
         let c1 = db::open(path).unwrap();
-        assert_eq!(db::current_version(&c1).unwrap(), 15);
+        assert_eq!(db::current_version(&c1).unwrap(), 16);
     } // c1 dropped
 
     let c2 = db::open(path).unwrap(); // reopen re-runs migrate() (idempotent)
-    assert_eq!(db::current_version(&c2).unwrap(), 15);
-    assert_eq!(applied_versions(&c2), (1..=15).collect::<Vec<i64>>());
+    assert_eq!(db::current_version(&c2).unwrap(), 16);
+    assert_eq!(applied_versions(&c2), (1..=16).collect::<Vec<i64>>());
 }
