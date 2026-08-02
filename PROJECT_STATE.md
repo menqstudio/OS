@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **⏭️ CURRENT ACTIVE (2026-08-02): PR #48 (Wave 3b), #49 (Windows §0.W syscall), #50 (Phase-2 slice 1 — `reply_in_conversation` governed) MERGED to `main` (tip `f2b844e`, green).** The active workflow is now **PR #51 · branch `feat/govern-stream-ask`** (base `main`, task T-017): Phase-2 slice 2 — `stream_ask` routed through the governed wall (conversation-less held-answer accept in receipt_store + migration 0016; fail-closed). **Two of three ungoverned back doors closed.** `stream_run_step` + tightening `stream_reply` remain. No gate-logic change; no production `trusted_verified`; shipped "Verified" stays fail-closed. Earlier merged-PR prose below is HISTORY.
+> **⏭️ CURRENT ACTIVE (2026-08-02): PR #48, #49, #50, #51 MERGED to `main` (tip `1e8597c`, green).** The active workflow is now **PR #52 · branch `feat/govern-stream-run-step`** (base `main`, task T-017): Phase-2 slice 3 (final) — `stream_run_step` governed (reuses the held accept; verified body becomes the step result; fail-closed). **ALL THREE ungoverned back doors closed** — no production command reaches the provider except through the wall. No gate-logic change; no production `trusted_verified`; shipped "Verified" stays fail-closed. Earlier merged-PR prose below is HISTORY.
 
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**

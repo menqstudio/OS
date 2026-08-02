@@ -1213,58 +1213,172 @@ pub async fn stream_run_step(
         scope.provider_json()
     );
     let history = vec![crate::ai::ChatMsg { role: "user".to_string(), content: user }];
-    let ch = on_event.clone();
-    match crate::ai::generate_stream(&system, &history, move |delta| {
-        let _ = ch.send(RunStepEvent::Delta { text: delta.to_string() });
-    })
-    .await
-    {
-        Ok(full) => {
-            let outcome = {
-                let conn = match locked(&state) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = on_event.send(RunStepEvent::Error { message: e });
-                        return Ok(());
-                    }
-                };
-                // If the run was cancelled/finished while we streamed, fail this
-                // attempt (don't persist a result for a dead run). The grant stays
-                // consumed — a retry needs a fresh approval.
-                match repo::runs::get(&conn, &run_id) {
-                    Ok(run) if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") => {
-                        let _ = repo::runs::fail_step_execution(&conn, &step.id, &attempt);
-                        let _ = on_event.send(RunStepEvent::Error { message: format!("run is {}", run.status) });
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-                // Complete under THIS claiming attempt — a stale/duplicate dispatch
-                // (different attempt) cannot persist. The gate was already enforced
-                // and the grant consumed at claim time.
-                repo::runs::complete_step_execution(&conn, &step.id, &attempt, &full)
-                    .and_then(|_| repo::runs::advance(&conn, &run_id))
-            };
-            match outcome {
-                Ok(_) => {
-                    let _ = on_event.send(RunStepEvent::Done);
-                }
-                Err(e) => {
-                    let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
-                }
-            }
-        }
-        Err(e) => {
-            // Provider failed: fail this attempt. The grant consumed at claim is NOT
-            // restored (safest v1) — a retry requires a fresh approval.
+
+    // Helper: a governed/provider failure fails THIS claiming attempt (the grant is NOT restored —
+    // a retry needs a fresh approval) and reports the reason.
+    macro_rules! fail_attempt {
+        ($msg:expr) => {{
             if let Ok(conn) = locked(&state) {
                 let _ = repo::runs::fail_step_execution(&conn, &step.id, &attempt);
             }
-            let _ = on_event.send(RunStepEvent::Error { message: e });
+            let _ = on_event.send(RunStepEvent::Error { message: $msg });
+            return Ok(());
+        }};
+    }
+
+    // Produce the step's result through the governed wall (buffered, DESKTOP-verified, fail-closed) when the
+    // provider is governed, else via the dev-only ungoverned stream (BROPS_ALLOW_UNGOVERNED). The governed
+    // path runs the same one-time-challenge → governed_turn → verify pipeline as chat but persists via the
+    // conversation-less HELD accept (verify_and_record_held_answer), whose VERIFIED body becomes the step
+    // result. In production (NoTrustedManifest) every governed step Blocks (fails the attempt). Either way we
+    // end with the exact result bytes to persist under this attempt.
+    let full: String = match crate::ai::provider_is_governed() {
+        Err(e) => fail_attempt!(e),
+        Ok(true) => {
+            let started_ms: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let prepared = match crate::ai::prepare_governed_turn(
+                &system,
+                &history,
+                started_ms,
+                GOVERNED_WORKSPACE_ID,
+                GOVERNED_INSTALL_ID,
+                GOVERNED_GENERATION_CONFIG,
+            ) {
+                Ok(p) => p,
+                Err(e) => fail_attempt!(e),
+            };
+            let ctx = &prepared.context;
+            let issued = brops_core::receipt::IssuedRequest {
+                workspace_id: &ctx.workspace_id,
+                install_id: &ctx.install_id,
+                request_nonce: &ctx.request_nonce,
+                system_sha256: &ctx.system_sha256,
+                history_sha256: &ctx.history_sha256,
+                generation_config_sha256: &ctx.generation_config_sha256,
+                requested_at: &ctx.requested_at,
+            };
+            // The one-time challenge needs a conversation FK; a run step is conversation-less, so reuse the
+            // hidden system "ask" conversation (kind excluded from the UI list) — the held result is never
+            // posted there.
+            let gov_conv = {
+                let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
+                let existing = brops_core::repo::chat::list_conversations(&conn, Some("ask"))
+                    .ok()
+                    .and_then(|v| v.into_iter().next());
+                match existing {
+                    Some(c) => c.id,
+                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)") {
+                        Ok(c) => c.id,
+                        Err(e) => fail_attempt!(e.to_string()),
+                    },
+                }
+            };
+            {
+                let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
+                if let Err(e) = brops_core::receipt_store::issue_challenge(&conn, &gov_conv, &issued, started_ms) {
+                    fail_attempt!(e.to_string());
+                }
+            }
+            let governed = crate::ai::governed_turn(&prepared).await;
+            let verify_ms: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(started_ms);
+            let outcome = match &governed {
+                Err(transport) => {
+                    let reason = brops_core::receipt_store::bounded_reason(transport);
+                    let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
+                    brops_core::receipt_store::record_pre_verification_block(&conn, &ctx.request_nonce, &reason, verify_ms)
+                }
+                Ok(reply) => {
+                    let output = reply.reply.clone().into_bytes();
+                    let expected = brops_core::receipt::Expected {
+                        request: issued,
+                        supervisor_id: GOVERNED_SUPERVISOR_ID,
+                        policy_id: GOVERNED_POLICY_ID,
+                        policy_version: GOVERNED_POLICY_VERSION,
+                        policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
+                        containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
+                        allowed_executors: &[],
+                        allowed_builders: &[],
+                    };
+                    let turn = brops_core::receipt_store::GovernedTurn {
+                        wire: brops_core::receipt_store::ReceiptWire {
+                            envelope_jcs_b64: &reply.envelope_jcs_b64,
+                            signature_b64: &reply.signature_b64,
+                        },
+                        expected,
+                        output: &output,
+                        now_ms: verify_ms,
+                        freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
+                    };
+                    let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
+                    brops_core::receipt_store::verify_and_record_held_answer(
+                        &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
+                    )
+                }
+            };
+            match outcome {
+                // Accepted + held: the VERIFIED result is what we persist for the step.
+                Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrustedHeld { body, .. }) => body,
+                // Blocked (every Wave 3a governed step): fail the attempt with the durable reason.
+                Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => fail_attempt!(error),
+                Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrusted { .. }) => {
+                    fail_attempt!("unexpected conversation post on a held run-step turn".to_string())
+                }
+                Err(e) => fail_attempt!(e.to_string()),
+            }
+        }
+        Ok(false) => {
+            // Ungoverned (dev-only, BROPS_ALLOW_UNGOVERNED): streamed as before.
+            let ch = on_event.clone();
+            match crate::ai::generate_stream(&system, &history, move |delta| {
+                let _ = ch.send(RunStepEvent::Delta { text: delta.to_string() });
+            })
+            .await
+            {
+                Ok(full) => full,
+                Err(e) => fail_attempt!(e),
+            }
+        }
+    };
+
+    // Persist the result under THIS claiming attempt. First re-check the run is still alive (it may have
+    // been cancelled/finished while the turn ran) — if so, fail the attempt (don't persist for a dead run;
+    // the grant stays consumed, a retry needs a fresh approval). A stale/duplicate dispatch (different
+    // attempt) cannot persist. The gate was enforced + the grant consumed at claim time.
+    let outcome = {
+        let conn = match locked(&state) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = on_event.send(RunStepEvent::Error { message: e });
+                return Ok(());
+            }
+        };
+        match repo::runs::get(&conn, &run_id) {
+            Ok(run) if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") => {
+                let _ = repo::runs::fail_step_execution(&conn, &step.id, &attempt);
+                let _ = on_event.send(RunStepEvent::Error { message: format!("run is {}", run.status) });
+                return Ok(());
+            }
+            Err(e) => {
+                let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
+                return Ok(());
+            }
+            _ => {}
+        }
+        repo::runs::complete_step_execution(&conn, &step.id, &attempt, &full)
+            .and_then(|_| repo::runs::advance(&conn, &run_id))
+    };
+    match outcome {
+        Ok(_) => {
+            let _ = on_event.send(RunStepEvent::Done);
+        }
+        Err(e) => {
+            let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
         }
     }
     Ok(())

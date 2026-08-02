@@ -19,8 +19,9 @@
     {
       "command": "stream_run_step",
       "governance": "ungoverned_tracked",
-      "calls": ["generate_stream"],
-      "tracking": "T-017 / Wave 3b-1B — run-step execution is NOT yet governed; must route through governed_turn_execute once the governed authority entry is completed (PR #32, gated on rev-26 design-GREEN)."
+      "calls": ["governed_turn", "generate_stream"],
+      "tracking": "T-017 / Phase 2 — now routes through ai::governed_turn (primary: buffered + desktop-verified, one-time challenge, verified via receipt_store::verify_and_record_held_answer; the VERIFIED body becomes the step result persisted under the claiming attempt, fail-closed — a governed Block fails the attempt). The ai::generate_stream fallthrough is the dev-only ungoverned path (BROPS_ALLOW_UNGOVERNED). Reclassify to 'governed' only after the fallthrough is removed/gated.",
+      "note": "Governed like stream_reply. NoTrustedManifest fail-closed means production Blocks (the step fails; no ungoverned result persisted); no trusted_verified yet."
     },
     {
       "command": "stream_ask",

@@ -217,6 +217,11 @@ mod win_tests {
                 let mut read = 0u32;
                 ReadFile(pipe, Some(&mut b), Some(&mut read), None).expect("ReadFile");
                 let sid = authenticate_pipe_client_sid(pipe).expect("authenticate client SID");
+                // Ack the client so it stays connected until we have impersonated — removes the flaky
+                // close-race where the client disconnects before/while ConnectNamedPipe is still pending
+                // (which surfaces as ERROR_NO_DATA "the pipe is being closed").
+                let mut wrote = 0u32;
+                let _ = WriteFile(pipe, Some(b"y"), Some(&mut wrote), None);
                 let _ = CloseHandle(pipe);
                 sid
             })
@@ -248,6 +253,11 @@ mod win_tests {
         let mut written = 0u32;
         unsafe {
             WriteFile(client, Some(b"x"), Some(&mut written), None).expect("WriteFile");
+            // Block for the server's ack before closing, so the pipe stays connected through the server's
+            // ConnectNamedPipe + impersonation (deterministic; removes the close-race).
+            let mut ack = [0u8; 1];
+            let mut ackread = 0u32;
+            let _ = ReadFile(client, Some(&mut ack), Some(&mut ackread), None);
             let _ = CloseHandle(client);
         }
 
