@@ -45,10 +45,14 @@ import live_crypto as lc
 # ---------------------------------------------------------------------------
 # Fixed identities (mirror the constants the servers + driver agree on).
 # ---------------------------------------------------------------------------
-ROOT_KEY_ID = "brops-live-root-1"
-CHALLENGE_KEY_ID = "brops-live-challenge-1"
-SIGNER_KEY_ID = "brops-live-signer-1"
-SUP_ATTEST_KEY_ID = "brops-live-sup-attest-1"
+# These are PUBLIC key_id label strings (they appear in the manifest/receipt/attestation),
+# not secret key material — the private keys are generated at runtime into per-account 0400
+# files and never committed. gitleaks' generic-api-key detector trips only because the
+# constant names contain "KEY", so each public identifier is annotated as a known-safe value.
+ROOT_KEY_ID = "brops-live-root-1"  # gitleaks:allow
+CHALLENGE_KEY_ID = "brops-live-challenge-1"  # gitleaks:allow
+SIGNER_KEY_ID = "brops-live-signer-1"  # gitleaks:allow
+SUP_ATTEST_KEY_ID = "brops-live-sup-attest-1"  # gitleaks:allow
 
 # MUST equal governed_verification.rs::RECEIPT_ENVELOPE_ARTIFACT_TYPE and isolated_signer.ENVELOPE_ARTIFACT_TYPE.
 RECEIPT_ENVELOPE_ARTIFACT_TYPE = "brops.governed-receipt-envelope.v1"
