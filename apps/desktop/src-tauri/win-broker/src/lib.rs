@@ -37,10 +37,17 @@ pub mod syscall {
     use windows::Win32::Security::{
         GetTokenInformation, RevertToSelf, TokenUser, TOKEN_QUERY, TOKEN_USER,
     };
+    use windows::Win32::Security::WinTrust::{
+        WinVerifyTrust, WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_DATA_0,
+        WINTRUST_FILE_INFO, WTD_CHOICE_FILE, WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE,
+        WTD_STATEACTION_VERIFY, WTD_UI_NONE,
+    };
     use windows::Win32::System::Pipes::ImpersonateNamedPipeClient;
     use windows::Win32::System::Threading::{
         GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
     };
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
 
     /// Convert a token handle's user SID to its canonical string form (`S-1-5-...`).
     unsafe fn token_user_sid(token: HANDLE) -> Result<Sid, Error> {
@@ -111,6 +118,42 @@ pub mod syscall {
             Ok(()) => Ok(()),
             Err(e) if e.code() == ERROR_PIPE_CONNECTED.to_hresult() => Ok(()),
             Err(e) => Err(e),
+        }
+    }
+
+    /// §0.W image-integrity primitive: does the file at `path` carry a VALID embedded Authenticode
+    /// signature? This is the real `WinVerifyTrust` (`WINTRUST_ACTION_GENERIC_VERIFY_V2`) backing the
+    /// `authenticode_valid` field the pure [`brops_core::windows_broker::verify_image`] mandates — the
+    /// Windows analogue of the Linux TCB re-hash + signature floor (§2.5/§2.7). Fail-closed: any status
+    /// other than `S_OK` (unsigned = `TRUST_E_NOSIGNATURE`, tampered = `TRUST_E_BAD_DIGEST`, untrusted
+    /// root, etc.) returns `false`. `WTD_UI_NONE` (never prompts) + `WTD_REVOKE_NONE` (offline-deterministic;
+    /// revocation is enforced separately via the manifest, not a network CRL fetch during a launch gate).
+    pub fn image_authenticode_valid(path: &str) -> bool {
+        let wpath: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let mut file_info = WINTRUST_FILE_INFO {
+                cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
+                pcwszFilePath: PCWSTR(wpath.as_ptr()),
+                hFile: HANDLE::default(),
+                pgKnownSubject: std::ptr::null_mut(),
+            };
+            // WINTRUST_DATA is a plain #[repr(C)] POD (no Default derive); zero it, then set the fields
+            // that select file-based, no-UI, offline verification.
+            let mut wtd: WINTRUST_DATA = std::mem::zeroed();
+            wtd.cbStruct = std::mem::size_of::<WINTRUST_DATA>() as u32;
+            wtd.dwUIChoice = WTD_UI_NONE;
+            wtd.fdwRevocationChecks = WTD_REVOKE_NONE;
+            wtd.dwUnionChoice = WTD_CHOICE_FILE;
+            wtd.Anonymous = WINTRUST_DATA_0 { pFile: &mut file_info as *mut WINTRUST_FILE_INFO };
+            wtd.dwStateAction = WTD_STATEACTION_VERIFY;
+            let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+            let status =
+                WinVerifyTrust(HWND::default(), &mut action, &mut wtd as *mut _ as *mut std::ffi::c_void);
+            // Always release the state data regardless of the verdict.
+            wtd.dwStateAction = WTD_STATEACTION_CLOSE;
+            let _ =
+                WinVerifyTrust(HWND::default(), &mut action, &mut wtd as *mut _ as *mut std::ffi::c_void);
+            status == 0
         }
     }
 }
@@ -219,5 +262,42 @@ mod win_tests {
             authorize_pipe_peer(Pipe::Signer, &observed, &sids),
             Err(WindowsBrokerViolation::PeerNotAllowedOnPipe(Pipe::Signer, _))
         ));
+    }
+
+    #[test]
+    fn authenticode_rejects_an_unsigned_file() {
+        // An arbitrary unsigned file has no embedded Authenticode signature -> WinVerifyTrust returns
+        // TRUST_E_NOSIGNATURE (nonzero) -> image_authenticode_valid == false. This is the fail-closed
+        // direction (§2.7): an image that is not validly signed must never pass.
+        let path = std::env::temp_dir()
+            .join(format!("brops-unsigned-{}.bin", unsafe { GetCurrentProcessId() }));
+        std::fs::write(&path, b"not a signed PE image").unwrap();
+        let valid = image_authenticode_valid(path.to_str().unwrap());
+        let _ = std::fs::remove_file(&path);
+        assert!(!valid, "an unsigned file MUST fail Authenticode verification (fail-closed)");
+    }
+
+    #[test]
+    fn authenticode_accepts_an_embedded_signed_binary() {
+        // Modern Windows system binaries are CATALOG-signed, which file-based WinVerifyTrust (correctly)
+        // rejects — the §0.W broker verifies OUR OWN embedded-signed executor, not catalog-signed OS files.
+        // Node.js and Git ship EMBEDDED Authenticode signatures and are preinstalled on both a dev box and
+        // the windows-latest CI runner, so at least one is a stable positive fixture proving the verifier
+        // distinguishes a valid signature (not merely hardcoded false).
+        let candidates = [
+            r"C:\Program Files\nodejs\node.exe",
+            r"C:\Program Files\Git\cmd\git.exe",
+            r"C:\Program Files\Git\bin\git.exe",
+        ];
+        let found: Vec<&str> = candidates
+            .iter()
+            .copied()
+            .filter(|p| std::path::Path::new(p).exists())
+            .collect();
+        assert!(!found.is_empty(), "expected an embedded-signed fixture (node/git) present");
+        assert!(
+            found.iter().any(|p| image_authenticode_valid(p)),
+            "at least one embedded-signed fixture must pass Authenticode verification: {found:?}"
+        );
     }
 }
