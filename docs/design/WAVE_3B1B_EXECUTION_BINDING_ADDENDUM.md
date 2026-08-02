@@ -282,6 +282,24 @@ A future **Windows governed-execution broker** MUST provide equivalents for each
 
 Until that broker exists and is Architect-audited, the gate stays **false** on Windows.
 
+**Machine-proof status (PR #53, crate `brops-win-live`, `apps/desktop/src-tauri/win-live`).** The Windows
+governed turn is now **machine-proven to production `trusted_verified`** end-to-end: (1) an **in-process,
+host-independent** full crypto chain (challenge → lease → attest → sign → `verify_and_accept` →
+`production_verified=true bound=true`) that runs on the Linux CI runner too (`cargo test -p
+brops-win-live`), so the one cross-implementation boundary — the signer's `JCS(payload)` vs
+`brops-core`'s `ReceiptEnvelope::payload_jcs` — is byte-exact; (2) the **same `GovernedChain` over real
+`\\.\pipe\` named pipes** across three separate Windows processes (same-account); (3) the **peer-SID gate
+fail-closed both directions** (correct broker SID → verified, wrong → blocked); (4) **cross-account** —
+challenge-authority / supervisor / isolated-signer each as a **DISTINCT dedicated Windows service account**
+(session-0, batch logon), peer-SID authed across real account boundaries → `trusted_verified`
+(`win-live/proof/CROSS_ACCOUNT_PROOF.md`). This proves the peer-authentication + distinct-principal +
+verified-exec-binding primitives above over the real syscalls. It does **NOT** flip the §0.1 gate: the
+remaining primitives (broker as its **own** dedicated service account — currently blocked by a session-0
+console-launch `STATUS_DLL_INIT_FAILED` 0xC0000142 limitation, an environment issue orthogonal to the
+chain; `CreateProcessAsUser` under a restricted token + STARTUPINFOEX handle list; **CNG key custody**;
+WDAC/AppLocker TCB integrity) and a **separate Architect audit of the Windows broker** are still required.
+`platform_governed_execution_supported()` stays **false** on Windows until then.
+
 ---
 
 ## 1. Canonical time model (P0-1) — ONE unit, explicit names
