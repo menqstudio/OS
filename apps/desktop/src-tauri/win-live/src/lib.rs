@@ -19,7 +19,9 @@ pub mod execution;
 #[cfg(windows)]
 pub mod pipe;
 pub mod proof;
+pub mod resolver;
 pub mod servers;
+pub mod tcb;
 
 /// Ed25519 + JCS + SHA-256 primitives, byte-compatible with the Python `live_crypto.py` and with
 /// `brops_core`'s verifiers (the whole point: what these sign, `verify_and_accept` verifies).

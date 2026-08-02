@@ -22,20 +22,21 @@ mod win {
     use serde_json::{json, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use brops_broker::chain_executor::{ChainExecutor, ExecutionPlan, GovernedChain, ResolvedTurn, TurnResolver};
+    use brops_broker::chain_executor::{ChainExecutor, ExecutionPlan, GovernedChain};
 
     use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
-    use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest, REQUEST_PROTOCOL, TRUSTED_VERIFIED};
+    use brops_core::governed_turn_ipc::{REQUEST_PROTOCOL, TRUSTED_VERIFIED};
     use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
     use brops_core::key_manifest::{
-        check_and_advance, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest, PinnedRoot,
+        resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest, PinnedRoot,
     };
     use brops_core::production_trust::{resolve_trust_state, TrustState};
 
     use brops_win_live::config::Config;
-    use brops_win_live::crypto;
     use brops_win_live::execution::{ExecutionParams, GovernedExecutionCore};
     use brops_win_live::pipe::{self, WindowsHopConnector};
+    use brops_win_live::resolver::{ManifestResolver, ResolvedFacts};
+    use brops_win_live::tcb;
 
     fn now_ms() -> i64 {
         SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
@@ -45,14 +46,6 @@ mod win {
         1
     }
 
-    struct FixedResolver {
-        resolved: ResolvedTurn,
-    }
-    impl TurnResolver for FixedResolver {
-        fn resolve(&self, _r: &ValidatedRequest, _b: &str, _n: &str) -> Result<ResolvedTurn, TurnReason> {
-            Ok(self.resolved.clone())
-        }
-    }
     struct UuidIds;
     impl BrokerIds for UuidIds {
         fn new_broker_turn_id(&self) -> String {
@@ -103,10 +96,15 @@ mod win {
             Ok(s) => s.trim().to_string(),
             Err(_) => return blocked("manifest_sig_unreadable"),
         };
+        // Audit P1-a: pin the root from the TCB (crate::tcb), NEVER from config. A config-supplied root that
+        // disagrees with the compiled-in anchor is refused (an adversary who writes config cannot swap root).
         let pinned_root = PinnedRoot {
-            root_key_id: cfg.trust.root_key_id.clone(),
-            public_key_hex: cfg.trust.root_pub_hex.clone(),
+            root_key_id: tcb::ROOT_KEY_ID.to_string(),
+            public_key_hex: tcb::root_public_key_hex(),
         };
+        if !cfg.trust.root_pub_hex.is_empty() && cfg.trust.root_pub_hex != pinned_root.public_key_hex {
+            return blocked("config_root_disagrees_with_tcb");
+        }
         if verify_manifest(&manifest, &root_sig, &pinned_root).is_err() {
             return blocked("manifest_root_signature_invalid");
         }
@@ -122,34 +120,23 @@ mod win {
             Some(f) => f,
             None => return blocked("floor_unreadable"),
         };
-        if check_and_advance(&floor, &manifest).is_err() {
-            return blocked("anti_rollback");
-        }
-        let iso =
+        // Resolve the production key once for the final trust classification (the resolver re-resolves per
+        // turn and is the enforcement path). A keep-alive clone of the manifest backs the classification.
+        let manifest_for_trust = manifest.clone();
+        let signer_pub_hex =
             match resolve_production_key(&manifest, &cfg.trust.signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now) {
-                Ok(k) => k,
+                Ok(k) => k.public_key_hex,
                 Err(_) => return blocked("key_resolution"),
             };
-        let sup_hex = match manifest.keys.iter().find(|k| k.key_id == cfg.trust.supervisor_attestation_key_id) {
-            Some(k) => k.public_key_hex.clone(),
-            None => return blocked("supervisor_attestation_key_missing"),
-        };
-        let iso_pub = match crypto::hex32(&iso.public_key_hex) {
-            Some(b) => b,
-            None => return blocked("signer_pubkey_malformed"),
-        };
-        let sup_pub = match crypto::hex32(&sup_hex) {
-            Some(b) => b,
-            None => return blocked("supervisor_pubkey_malformed"),
-        };
+        if !manifest.keys.iter().any(|k| k.key_id == cfg.trust.supervisor_attestation_key_id) {
+            return blocked("supervisor_attestation_key_missing");
+        }
 
-        // ---- (B) the broker's OWN trusted resolution ----
+        // ---- (B) production manifest resolver (audit P1-b + P2): verify-manifest-vs-TCB + anti-rollback +
+        //         PERSIST floor + resolve keys INSIDE the chain resolution, feeding the pinned keys that
+        //         verify_and_accept verifies under. Replaces the inline "verify beside acceptance". ----
         let r = &cfg.resolved;
-        let resolved = ResolvedTurn {
-            isolated_signer_key_id: cfg.trust.signer_key_id.clone(),
-            isolated_signer_public_key: iso_pub,
-            supervisor_attestation_key_id: cfg.trust.supervisor_attestation_key_id.clone(),
-            supervisor_attestation_public_key: sup_pub,
+        let facts = ResolvedFacts {
             workspace_id: r.workspace_id.clone(),
             install_id: r.install_id.clone(),
             system_sha256: r.system_sha256.clone(),
@@ -161,6 +148,15 @@ mod win {
             requested_at_ms: r.requested_at_ms,
             author: r.author.clone(),
         };
+        let resolver = ManifestResolver::new(
+            manifest,
+            root_sig,
+            floor,
+            std::path::PathBuf::from(&cfg.trust.floor_path),
+            cfg.trust.signer_key_id.clone(),
+            cfg.trust.supervisor_attestation_key_id.clone(),
+            facts,
+        );
 
         // ---- (C) transport + execution ----
         let connector = WindowsHopConnector {
@@ -208,8 +204,7 @@ mod win {
         let exec = GovernedExecutionCore::new(params, produce, attest, now);
 
         // ---- (D) run ONE governed turn ----
-        let chain =
-            GovernedChain::new(connector, FixedResolver { resolved }, exec, InMemoryLedger::new());
+        let chain = GovernedChain::new(connector, resolver, exec, InMemoryLedger::new());
         let executor = ChainExecutor::new(chain);
 
         let conn = match Connection::open_in_memory() {
@@ -239,11 +234,11 @@ mod win {
         let bound = message.trust_state == TRUSTED_VERIFIED;
 
         let ts = resolve_trust_state(
-            Some(&manifest),
+            Some(&manifest_for_trust),
             &cfg.trust.signer_key_id,
             RECEIPT_ENVELOPE_ARTIFACT_TYPE,
             now,
-            &iso.public_key_hex,
+            &signer_pub_hex,
         );
         let production_verified = ts.is_production_verified();
         let ts_str = match &ts {

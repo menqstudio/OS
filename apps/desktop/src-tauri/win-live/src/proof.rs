@@ -14,13 +14,11 @@ use std::sync::Arc;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
-use brops_broker::chain_executor::{
-    ChainExecutor, ExecutionPlan, GovernedChain, ResolvedTurn, TurnResolver,
-};
+use brops_broker::chain_executor::{ChainExecutor, ExecutionPlan, GovernedChain};
 use brops_broker::chain_hops::{HopConn, HopError, Principal};
 
 use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
-use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest, REQUEST_PROTOCOL, TRUSTED_VERIFIED};
+use brops_core::governed_turn_ipc::{REQUEST_PROTOCOL, TRUSTED_VERIFIED};
 use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
 use brops_core::key_manifest::{
     check_and_advance, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest, PinnedRoot,
@@ -29,23 +27,16 @@ use brops_core::production_trust::{resolve_trust_state, TrustState};
 
 use crate::crypto;
 use crate::execution::{ExecutionParams, GovernedExecutionCore};
+use crate::resolver::{ManifestResolver, ResolvedFacts};
 use crate::servers::{
     Authority, AuthorityConfig, DispatchCore, Signer, SignerConfig, Supervisor, SupervisorConfig,
 };
+use crate::tcb;
 
 pub struct ProofOutcome {
     pub production_verified: bool,
     pub bound: bool,
     pub trust_str: String,
-}
-
-struct FixedResolver {
-    resolved: ResolvedTurn,
-}
-impl TurnResolver for FixedResolver {
-    fn resolve(&self, _r: &ValidatedRequest, _b: &str, _n: &str) -> Result<ResolvedTurn, TurnReason> {
-        Ok(self.resolved.clone())
-    }
 }
 
 struct UuidIds;
@@ -102,16 +93,16 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
     let challenge_seed = crypto::gen_seed();
     let attest_seed = crypto::gen_seed();
     let signer_seed = crypto::gen_seed();
-    let root_seed = crypto::gen_seed();
     let challenge_pub = crypto::public_key_hex(&crypto::signing_key(&challenge_seed));
     let attest_pub = crypto::public_key_hex(&crypto::signing_key(&attest_seed));
     let signer_pub = crypto::public_key_hex(&crypto::signing_key(&signer_seed));
-    let root_pub = crypto::public_key_hex(&crypto::signing_key(&root_seed));
 
     let challenge_key_id = "brops-live-challenge-1".to_string(); // gitleaks:allow (fake public key-id)
     let sup_attest_key_id = "brops-live-sup-attest-1".to_string(); // gitleaks:allow (fake public key-id)
     let signer_key_id = "brops-live-signer-1".to_string(); // gitleaks:allow (fake public key-id)
-    let root_key_id = "brops-live-root-1".to_string(); // gitleaks:allow (fake public key-id)
+    // Root anchor is the TCB-pinned key (audit P1-a): the manifest is signed with the TCB root and verified
+    // against the compiled-in public key, never a config/generated root.
+    let root_key_id = tcb::ROOT_KEY_ID.to_string();
     let supervisor_id = "brops-supervisor".to_string();
     let executor_id = "brops-executor".to_string();
     let builder_id = "brops-builder".to_string();
@@ -144,15 +135,20 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
     });
     let manifest: KeyManifest =
         serde_json::from_value(manifest_json).map_err(|e| format!("manifest_build: {e}"))?;
-    let root_sig = crypto::sign_b64std(&crypto::signing_key(&root_seed), &manifest.canonical_bytes());
-    let pinned_root = PinnedRoot { root_key_id: root_key_id.clone(), public_key_hex: root_pub };
+    let root_sig = crypto::sign_b64std(&tcb::root_signing_key(), &manifest.canonical_bytes());
+    let pinned_root = PinnedRoot {
+        root_key_id: tcb::ROOT_KEY_ID.to_string(),
+        public_key_hex: tcb::root_public_key_hex(),
+    };
     verify_manifest(&manifest, &root_sig, &pinned_root).map_err(|e| format!("verify_manifest: {e:?}"))?;
     let floor = AntiRollbackFloor { highest_epoch: 2, highest_hash: manifest.content_hash() };
     check_and_advance(&floor, &manifest).map_err(|e| format!("anti_rollback: {e:?}"))?;
-    let iso = resolve_production_key(&manifest, &signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now_ms)
-        .map_err(|e| format!("key_resolution: {e:?}"))?;
-    let iso_pub = crypto::hex32(&iso.public_key_hex).ok_or("signer_pubkey_malformed")?;
-    let sup_pub = crypto::hex32(&attest_pub).ok_or("supervisor_pubkey_malformed")?;
+    // Keep-alive clone + resolved signer pubkey for the final trust classification (the resolver, below, is
+    // the enforcement path that re-verifies the manifest + anti-rollback + resolves keys INSIDE the chain).
+    let manifest_for_trust = manifest.clone();
+    let signer_pub_hex = resolve_production_key(&manifest, &signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now_ms)
+        .map_err(|e| format!("key_resolution: {e:?}"))?
+        .public_key_hex;
 
     // ---- the three trusted-principal cores ----
     let authority: Arc<dyn DispatchCore> = Arc::new(Authority::new(AuthorityConfig {
@@ -225,12 +221,9 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
     };
     let exec = GovernedExecutionCore::new(params, produce, attest, now_ms);
 
-    // ---- the broker's OWN trusted resolution (pinned keys + Expected facts) ----
-    let resolved = ResolvedTurn {
-        isolated_signer_key_id: signer_key_id.clone(),
-        isolated_signer_public_key: iso_pub,
-        supervisor_attestation_key_id: sup_attest_key_id.clone(),
-        supervisor_attestation_public_key: sup_pub,
+    // ---- production manifest resolver (audit P1-b + P2): verify-manifest-vs-TCB + anti-rollback + PERSIST
+    //      floor + resolve keys INSIDE the chain resolution, feeding the pinned keys verify_and_accept uses. ----
+    let facts = ResolvedFacts {
         workspace_id: "ws-live-1".to_string(),
         install_id: "install-live-1".to_string(),
         system_sha256,
@@ -242,13 +235,17 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
         requested_at_ms: now_ms,
         author: "Bro".to_string(),
     };
-
-    let chain = GovernedChain::new(
-        connector,
-        FixedResolver { resolved: resolved.clone() },
-        exec,
-        InMemoryLedger::new(),
+    let resolver = ManifestResolver::new(
+        manifest,
+        root_sig,
+        floor,
+        store_dir.join("floor.json"),
+        signer_key_id.clone(),
+        sup_attest_key_id.clone(),
+        facts,
     );
+
+    let chain = GovernedChain::new(connector, resolver, exec, InMemoryLedger::new());
     let executor = ChainExecutor::new(chain);
 
     // ---- run ONE governed turn ----
@@ -270,8 +267,13 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
     let message = result.message.ok_or("committed_without_message")?;
     let bound = message.trust_state == TRUSTED_VERIFIED;
 
-    let ts =
-        resolve_trust_state(Some(&manifest), &signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now_ms, &iso.public_key_hex);
+    let ts = resolve_trust_state(
+        Some(&manifest_for_trust),
+        &signer_key_id,
+        RECEIPT_ENVELOPE_ARTIFACT_TYPE,
+        now_ms,
+        &signer_pub_hex,
+    );
     let production_verified = ts.is_production_verified();
     let trust_str = match &ts {
         TrustState::Production { key_id, key_epoch } => {

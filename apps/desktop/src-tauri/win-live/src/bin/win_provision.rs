@@ -11,6 +11,7 @@ use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
 use brops_core::key_manifest::KeyManifest;
 use brops_win_live::config::*;
 use brops_win_live::crypto;
+use brops_win_live::tcb;
 
 fn arg(args: &[String], flag: &str) -> Option<String> {
     args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
@@ -55,20 +56,21 @@ fn main() {
     let challenge_seed = crypto::gen_seed();
     let attest_seed = crypto::gen_seed();
     let signer_seed = crypto::gen_seed();
-    let root_seed = crypto::gen_seed();
     let challenge_pub = crypto::public_key_hex(&crypto::signing_key(&challenge_seed));
     let attest_pub = crypto::public_key_hex(&crypto::signing_key(&attest_seed));
     let signer_pub = crypto::public_key_hex(&crypto::signing_key(&signer_seed));
-    let root_pub = crypto::public_key_hex(&crypto::signing_key(&root_seed));
+    // Root anchor is the TCB-pinned key (audit fix P1-a) — the manifest is signed with the TCB root, and the
+    // driver pins the root PUBLIC key from crate::tcb, NEVER from config.json.
+    let root_pub = tcb::root_public_key_hex();
     write_seed(&keys.join("challenge.seed"), &challenge_seed);
     write_seed(&keys.join("attest.seed"), &attest_seed);
     write_seed(&keys.join("signer.seed"), &signer_seed);
-    write_seed(&keys.join("root.seed"), &root_seed);
+    write_seed(&keys.join("root.seed"), &crypto::hex32(tcb::ROOT_SEED_HEX).expect("root seed"));
 
     let challenge_key_id = "brops-live-challenge-1".to_string(); // gitleaks:allow (fake public key-id)
     let sup_attest_key_id = "brops-live-sup-attest-1".to_string(); // gitleaks:allow (fake public key-id)
     let signer_key_id = "brops-live-signer-1".to_string(); // gitleaks:allow (fake public key-id)
-    let root_key_id = "brops-live-root-1".to_string(); // gitleaks:allow (fake public key-id)
+    let root_key_id = tcb::ROOT_KEY_ID.to_string();
     let supervisor_id = "brops-supervisor".to_string();
     let executor_id = "brops-executor".to_string();
     let builder_id = "brops-builder".to_string();
@@ -104,7 +106,7 @@ fn main() {
     });
     let manifest: KeyManifest = serde_json::from_value(manifest_json).expect("manifest build");
     let manifest_bytes = manifest.canonical_bytes();
-    let root_sig = crypto::sign_b64std(&crypto::signing_key(&root_seed), &manifest_bytes);
+    let root_sig = crypto::sign_b64std(&tcb::root_signing_key(), &manifest_bytes);
     let content_hash = manifest.content_hash();
     std::fs::write(root.join("manifest.json"), &manifest_bytes).expect("write manifest");
     std::fs::write(root.join("manifest.sig"), &root_sig).expect("write manifest.sig");
