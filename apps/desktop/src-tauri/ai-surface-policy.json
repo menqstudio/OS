@@ -25,8 +25,9 @@
     {
       "command": "stream_ask",
       "governance": "ungoverned_tracked",
-      "calls": ["generate_stream"],
-      "tracking": "T-017 / Wave 3b-1B — Ask Bro is NOT yet governed; to be routed through the single governed authority entry. Its held answer is persisted by save_ask_to_chat (server-owned one-time result_id, T-013)."
+      "calls": ["governed_turn", "generate_stream"],
+      "tracking": "T-017 / Phase 2 — now routes through ai::governed_turn (primary: buffered + desktop-verified, one-time challenge, verified via receipt_store::verify_and_record_held_answer — the conversation-less HELD accept, no message posted; fail-closed). The verified answer is stashed under a one-time result_id for a later save (save_ask_to_chat, T-013). The ai::generate_stream fallthrough is the dev-only ungoverned path (BROPS_ALLOW_UNGOVERNED). Reclassify to 'governed' only after the fallthrough is removed/gated.",
+      "note": "Governed like stream_reply. NoTrustedManifest fail-closed means production Blocks (no held answer leaks); no trusted_verified yet."
     },
     {
       "command": "reply_in_conversation",

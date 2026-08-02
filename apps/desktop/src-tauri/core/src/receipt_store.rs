@@ -91,8 +91,26 @@ pub enum ReceiptOutcome {
     /// Accepted; rendered + persisted, badged development/untrusted. Carries the new
     /// message row and its evidence attempt row.
     DevelopmentUntrusted { message_id: String, attempt_id: String },
+    /// Accepted, badged development/untrusted, but the verified reply is **held** (not
+    /// posted to a conversation) — for conversation-less surfaces (e.g. Ask Bro) that
+    /// stash the answer under a one-time id for a later, owner-chosen save. The exact
+    /// same verify → consume-nonce → replay-ledger transaction ran; only the accept
+    /// persistence differs (no `messages` row; the evidence attempt carries no
+    /// `message_id`). `body` is the verified UTF-8 reply for the caller to stash.
+    DevelopmentUntrustedHeld { attempt_id: String, body: String },
     /// Not accepted; evidence recorded, no message. `error` is the machine reason.
     Blocked { attempt_id: String, error: String },
+}
+
+/// Where an **accepted** governed reply is persisted (design §4). The verify → consume →
+/// evidence transaction is identical for both; only the accept branch differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcceptSink {
+    /// Post the reply as an `agent` message in the challenge's conversation (chat surfaces).
+    Conversation,
+    /// Hold the verified reply — no `messages` row — for a conversation-less surface to
+    /// stash under its own one-time id (Ask Bro). The evidence attempt carries no message_id.
+    Held,
 }
 
 /// Record a fresh desktop challenge (the issuing half of the one-time nonce). The
@@ -136,7 +154,23 @@ pub fn verify_and_record_receipt(
     authority: &impl ReceiptKeyAuthority,
     turn: &GovernedTurn,
 ) -> CoreResult<ReceiptOutcome> {
-    in_immediate_tx(conn, |tx| record(tx, authority, turn))
+    in_immediate_tx(conn, |tx| record(tx, authority, turn, AcceptSink::Conversation))
+}
+
+/// Conversation-less sibling of [`verify_and_record_receipt`] for surfaces that HOLD the
+/// verified reply instead of posting it to a conversation (Ask Bro). It runs the identical
+/// atomic **verify → consume-nonce → replay-ledger** transaction; the only difference is the
+/// accept branch — it writes NO `messages` row (the evidence attempt carries no `message_id`)
+/// and returns [`ReceiptOutcome::DevelopmentUntrustedHeld`] carrying the verified UTF-8 body
+/// for the caller to stash under its own one-time id. Blocked / replay / non-UTF-8 /
+/// fail-closed (`NoTrustedManifest`) semantics are byte-for-byte those of
+/// [`verify_and_record_receipt`].
+pub fn verify_and_record_held_answer(
+    conn: &Connection,
+    authority: &impl ReceiptKeyAuthority,
+    turn: &GovernedTurn,
+) -> CoreResult<ReceiptOutcome> {
+    in_immediate_tx(conn, |tx| record(tx, authority, turn, AcceptSink::Held))
 }
 
 /// Max bytes of a free-text reason we let into durable evidence / the UI, so a
@@ -248,6 +282,7 @@ fn record(
     tx: &Connection,
     authority: &impl ReceiptKeyAuthority,
     turn: &GovernedTurn,
+    sink: AcceptSink,
 ) -> CoreResult<ReceiptOutcome> {
     let stamp = turn.now_ms.to_string();
     let wire_env = cap(turn.wire.envelope_jcs_b64, MAX_WIRE_ENVELOPE_B64);
@@ -361,13 +396,9 @@ fn record(
                     Ok(ReceiptOutcome::Blocked { attempt_id, error })
                 }
                 None => {
-                    // Accepted (development_untrusted). `is_consumed()` guarantees the
-                    // challenge existed, so its conversation_id is known.
-                    let conversation_id = nonce_state
-                        .conversation_id()
-                        .expect("consumed nonce carries a conversation_id");
-
-                    // The reply must render as text (design §2.1 exact UTF-8 bytes).
+                    // The reply must render as text (design §2.1 exact UTF-8 bytes) — shared by
+                    // both accept sinks; a non-UTF-8 output Blocks regardless of where it would
+                    // be persisted.
                     let body = match std::str::from_utf8(turn.output) {
                         Ok(s) => s.to_string(),
                         Err(_) => {
@@ -392,43 +423,81 @@ fn record(
                         }
                     };
 
-                    // Order (Architect fix 2): message → accepted attempt → ledger,
-                    // all in this tx. A real failure at any step rolls back the whole
-                    // thing (including the nonce consume).
-                    let msg = crate::repo::chat::post_message(
-                        tx,
-                        NewMessage {
-                            conversation_id,
-                            role: "agent".to_string(),
-                            author: "agent".to_string(),
-                            body,
-                        },
-                    )?;
-                    let attempt_id = insert_attempt(
-                        tx,
-                        &AttemptRow {
-                            wire_env: &wire_env,
-                            wire_sig: &wire_sig,
-                            receipt_id: Some(&receipt_id),
-                            key_id: Some(&key_id),
-                            envelope_jcs: Some(&decoded),
-                            signature: Some(&signature),
-                            outcome: "development_untrusted",
-                            error: None,
-                            nonce: Some(want_nonce),
-                            message_id: Some(&msg.id),
-                            stamp: &stamp,
-                        },
-                    )?;
-                    tx.execute(
-                        "INSERT INTO receipt_ids_seen(receipt_id, first_seen_at, attempt_id)
-                         VALUES (?1, ?2, ?3)",
-                        rusqlite::params![receipt_id, stamp, attempt_id],
-                    )?;
-                    Ok(ReceiptOutcome::DevelopmentUntrusted {
-                        message_id: msg.id,
-                        attempt_id,
-                    })
+                    match sink {
+                        // Chat surfaces: post the reply, then the accepted attempt + ledger, all
+                        // in this tx. Order (Architect fix 2): message → attempt → ledger. A real
+                        // failure at any step rolls back the whole thing (including the nonce consume).
+                        AcceptSink::Conversation => {
+                            // `is_consumed()` guarantees the challenge existed, so its
+                            // conversation_id is known.
+                            let conversation_id = nonce_state
+                                .conversation_id()
+                                .expect("consumed nonce carries a conversation_id");
+                            let msg = crate::repo::chat::post_message(
+                                tx,
+                                NewMessage {
+                                    conversation_id,
+                                    role: "agent".to_string(),
+                                    author: "agent".to_string(),
+                                    body,
+                                },
+                            )?;
+                            let attempt_id = insert_attempt(
+                                tx,
+                                &AttemptRow {
+                                    wire_env: &wire_env,
+                                    wire_sig: &wire_sig,
+                                    receipt_id: Some(&receipt_id),
+                                    key_id: Some(&key_id),
+                                    envelope_jcs: Some(&decoded),
+                                    signature: Some(&signature),
+                                    outcome: "development_untrusted",
+                                    error: None,
+                                    nonce: Some(want_nonce),
+                                    message_id: Some(&msg.id),
+                                    stamp: &stamp,
+                                },
+                            )?;
+                            tx.execute(
+                                "INSERT INTO receipt_ids_seen(receipt_id, first_seen_at, attempt_id)
+                                 VALUES (?1, ?2, ?3)",
+                                rusqlite::params![receipt_id, stamp, attempt_id],
+                            )?;
+                            Ok(ReceiptOutcome::DevelopmentUntrusted {
+                                message_id: msg.id,
+                                attempt_id,
+                            })
+                        }
+                        // Conversation-less (Ask Bro): NO messages row. Record the accepted
+                        // attempt (no message_id) + the replay ledger in the SAME tx, and return
+                        // the verified body for the caller to stash under its one-time id.
+                        AcceptSink::Held => {
+                            let attempt_id = insert_attempt(
+                                tx,
+                                &AttemptRow {
+                                    wire_env: &wire_env,
+                                    wire_sig: &wire_sig,
+                                    receipt_id: Some(&receipt_id),
+                                    key_id: Some(&key_id),
+                                    envelope_jcs: Some(&decoded),
+                                    signature: Some(&signature),
+                                    // Accepted, but HELD (no message row) — the widened §4 invariant
+                                    // (migration 0016) permits a NULL message_id only for this outcome.
+                                    outcome: "development_untrusted_held",
+                                    error: None,
+                                    nonce: Some(want_nonce),
+                                    message_id: None,
+                                    stamp: &stamp,
+                                },
+                            )?;
+                            tx.execute(
+                                "INSERT INTO receipt_ids_seen(receipt_id, first_seen_at, attempt_id)
+                                 VALUES (?1, ?2, ?3)",
+                                rusqlite::params![receipt_id, stamp, attempt_id],
+                            )?;
+                            Ok(ReceiptOutcome::DevelopmentUntrustedHeld { attempt_id, body })
+                        }
+                    }
                 }
             }
         }
@@ -968,6 +1037,84 @@ mod tests {
             .query_row("SELECT envelope_jcs FROM receipt_verification_attempts WHERE id = ?1", [&attempt_id], |r| r.get(0))
             .unwrap();
         assert_eq!(stored, serde_json::to_vec(&fx.fields("receipt-1")).unwrap());
+    }
+
+    // ---- held answer (conversation-less accept, e.g. Ask Bro) --------------
+
+    #[test]
+    fn held_answer_accept_verifies_without_posting_a_message() {
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-H");
+        // The challenge still needs a conversation id (the held path stores it but never posts to it).
+        seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-held-1"));
+        let messages_before = count(&conn, "SELECT COUNT(*) FROM messages");
+
+        let out = verify_and_record_held_answer(
+            &conn,
+            &fx.authority(TrustClass::Development),
+            &turn(&fx, &env, &sig, now),
+        )
+        .unwrap();
+
+        let (attempt_id, body) = match out {
+            ReceiptOutcome::DevelopmentUntrustedHeld { attempt_id, body } => (attempt_id, body),
+            other => panic!("expected DevelopmentUntrustedHeld, got {other:?}"),
+        };
+        // The verified body is returned for the caller to stash; NO message row was written.
+        assert_eq!(body.as_bytes(), OUTPUT);
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM messages"),
+            messages_before,
+            "held accept must not post a message"
+        );
+        // Evidence attempt is development_untrusted with a NULL message_id.
+        let (outcome, linked): (String, Option<String>) = conn
+            .query_row(
+                "SELECT outcome, message_id FROM receipt_verification_attempts WHERE id = ?1",
+                [&attempt_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(outcome, "development_untrusted_held");
+        assert!(linked.is_none(), "held accept attempt carries no message_id");
+        // Replay ledger recorded + nonce consumed, exactly like the conversation accept.
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen WHERE receipt_id = 'receipt-held-1'"),
+            1
+        );
+        let consumed: Option<String> = conn
+            .query_row(
+                "SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-H'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(consumed.is_some(), "nonce must be consumed on held accept");
+    }
+
+    #[test]
+    fn held_answer_is_fail_closed_under_no_trusted_manifest() {
+        // The held path MUST be as fail-closed as the conversation path: with no trusted manifest,
+        // Ask Bro Blocks (no held body leaks), records blocked evidence, and consumes the nonce.
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-HB");
+        seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-held-blocked"));
+
+        let out = verify_and_record_held_answer(&conn, &NoTrustedManifest, &turn(&fx, &env, &sig, now)).unwrap();
+
+        assert!(
+            matches!(out, ReceiptOutcome::Blocked { .. }),
+            "held answer under NoTrustedManifest must Block, got {out:?}"
+        );
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0, "no message on a blocked held turn");
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-HB'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_some(), "nonce must be consumed even on a blocked held turn");
     }
 
     // ---- replayed nonce ----------------------------------------------------

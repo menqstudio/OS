@@ -9,7 +9,9 @@ pub const PROJECT_STATUSES: &[&str] =
     &["planned", "active", "blocked", "completed", "archived"];
 pub const PRIORITIES: &[&str] = &["low", "normal", "high", "critical"];
 pub const APPROVAL_DECISIONS: &[&str] = &["approved", "rejected"];
-pub const CONVERSATION_KINDS: &[&str] = &["direct", "group"];
+// "ask" is a hidden, system-owned kind holding governed Ask-Bro challenges (the UI lists only
+// direct/group, so it never surfaces); its held answers are never posted there.
+pub const CONVERSATION_KINDS: &[&str] = &["direct", "group", "ask"];
 pub const MESSAGE_ROLES: &[&str] = &["user", "agent", "system"];
 pub const MEMORY_KINDS: &[&str] = &["fact", "preference", "note", "reference"];
 pub const RUN_STATUSES: &[&str] = &[
