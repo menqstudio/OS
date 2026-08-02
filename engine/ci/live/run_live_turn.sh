@@ -41,9 +41,22 @@ EXECUTOR_BIN="$TARGET_DIR/proof_executor"
 RECORDER_BIN="$TARGET_DIR/governed_recorder"
 DRIVER_BIN="$TARGET_DIR/live_turn"
 
-echo "== building the live-turn crates (launcher + governed-live: recorder/executor/driver) =="
-( cd "$REPO_ROOT" && cargo build --manifest-path "$TAURI_DIR/Cargo.toml" \
-    -p brops-launcher -p brops-governed-live ) || { echo "FAIL: build"; exit 1; }
+# Build the crates. Under `sudo` root's PATH usually lacks cargo (it lives in the invoking user's
+# ~/.cargo/bin), so if the four binaries are already built (build them as the normal user first:
+# `cargo build -p brops-launcher -p brops-governed-live`), skip the build. Otherwise try cargo, first
+# from PATH, then from the sudo-invoking user's ~/.cargo/bin.
+if [ -x "$LAUNCHER_BIN" ] && [ -x "$EXECUTOR_BIN" ] && [ -x "$RECORDER_BIN" ] && [ -x "$DRIVER_BIN" ]; then
+  echo "== using pre-built live-turn binaries =="
+else
+  echo "== building the live-turn crates (launcher + governed-live: recorder/executor/driver) =="
+  CARGO_BIN="$(command -v cargo || true)"
+  [ -n "$CARGO_BIN" ] || for u in "${SUDO_USER:-}" gevorg; do
+    [ -n "$u" ] && [ -x "/home/$u/.cargo/bin/cargo" ] && { CARGO_BIN="/home/$u/.cargo/bin/cargo"; break; }
+  done
+  [ -n "$CARGO_BIN" ] || { echo "FAIL: cargo not found (build as the normal user first, then re-run)"; exit 1; }
+  ( cd "$REPO_ROOT" && "$CARGO_BIN" build --manifest-path "$TAURI_DIR/Cargo.toml" \
+      -p brops-launcher -p brops-governed-live ) || { echo "FAIL: build"; exit 1; }
+fi
 for b in "$LAUNCHER_BIN" "$EXECUTOR_BIN" "$RECORDER_BIN" "$DRIVER_BIN"; do
   [ -x "$b" ] || { echo "FAIL: missing built binary $b"; exit 1; }
 done
