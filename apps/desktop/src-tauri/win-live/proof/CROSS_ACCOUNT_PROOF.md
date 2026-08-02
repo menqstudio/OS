@@ -39,25 +39,30 @@ lease → attest-run → sign-result → `verify_and_accept`, producing a genuin
   (the servers deny the peer before dispatch). Verified with the three servers running as
   their service accounts.
 
-## Honest caveat — the broker's own account
+## The broker principal — proven as SYSTEM (session 0)
 
-In this run the three **servers** are dedicated service accounts (the security-critical
-isolation: they hold the private keys and must be distinct, mutually-isolated principals).
-The **broker/driver** ran as the elevated operator session rather than a dedicated
-`brops-broker` service account, because a service-account **console** process that does
-complex child-spawning (it launches the executor and opens SQLite) in **session 0** hits a
-Windows `STATUS_DLL_INIT_FAILED` (`0xC0000142`)-class launch limitation — the same wall
-documented for interactive-desktop service-account console apps, and it also affects the
-previously-working `pipe_proof.exe`, so it is an **environment/session-0 limitation
-orthogonal to the governance logic**, not a chain defect. The broker is the trusted
-orchestrator (it is the one principal every server is meant to accept), so its exact account
-identity is the least security-critical of the four; the three key-holding principals ARE
-isolated dedicated accounts, and the peer-SID gate is enforced across those account
-boundaries in both directions.
+The three **servers** are dedicated service accounts (the security-critical isolation: they
+hold the private keys and must be distinct, mutually-isolated principals). The **broker** is
+the trusted orchestrator — the TCB — so its correct Windows deployment is **`SYSTEM`
+(LocalSystem)**, the standard non-interactive service identity that holds the privileges the
+broker needs (`SeAssignPrimaryToken`, `SeImpersonate`) and runs cleanly in **session 0**.
 
-Closing that last gap (broker as its own service account, or all four as real Windows
-services rather than scheduled tasks) is an OS-integration hardening step; the governed-turn
-machinery itself is fully proven:
+**Proven (session-0, cross-account):** the broker/driver running as **`SYSTEM`** via a
+session-0 scheduled task, with the three servers as their distinct dedicated service accounts
+(peer allowlist = the broker's `SYSTEM` SID `S-1-5-18`), completes the full governed turn →
+
+```
+RESULT: trusted_verified(production key=<signer-key-id> epoch=2) production_verified=true bound=true
+```
+
+This closes the earlier `STATUS_DLL_INIT_FAILED` (`0xC0000142`) concern: that limitation only
+affects a **non-privileged service-account CONSOLE** process doing child-spawning in session 0
+— it does **not** affect `SYSTEM`, so it is not a blocker for the broker's real deployment. A
+dedicated non-`SYSTEM` `brops-broker` service account remains an option for a future
+least-privilege hardening, but running the broker as the `SYSTEM`/LocalSystem TCB principal is
+the correct and now-proven deployment.
+
+The governed-turn machinery itself is fully proven:
 
 1. **Crypto chain** → `trusted_verified`, host-independent: `cargo test -p brops-win-live`
    (runs on the Linux CI runner too).
