@@ -6,13 +6,30 @@ pub mod db;
 pub mod domain;
 pub mod receipt;
 pub mod receipt_store;
+pub mod governed_turn_ipc;
+pub mod governed_message_store;
+pub mod fd_lifecycle;
+pub mod privilege_drop;
+pub mod tcb_integrity;
+pub mod broker_turns;
+pub mod broker_orchestrator;
+pub mod governed_output_stream;
+pub mod governed_verification;
+pub mod windows_broker;
+pub mod ipc_framing;
+pub mod real_ids;
+pub mod broker_client;
+pub mod key_manifest;
+pub mod production_trust;
+pub mod supervisor_ledger;
 pub mod repo;
 
 pub use domain::{
     ActivityEvent, Agent, Approval, Automation, Conversation, CoreError, CoreResult, Decision,
-    Event, Integration, KnowledgeNote, Message, MemoryEntry, Metric, NewAutomation, NewEvent,
-    NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
-    RunStep, SearchResult, SecuritySummary, Task,
+    Event, Integration, KnowledgeNote, LibraryItem, Message, MemoryEntry, Metric, NewAutomation,
+    NewEvent, NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject,
+    NewResearchItem, NewTask, Notification, Project, ResearchItem, Run, RunStep, SearchResult,
+    SecuritySummary, Task,
 };
 
 /// A new UUID v4 string. IDs are opaque text everywhere in the schema.

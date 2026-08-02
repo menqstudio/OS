@@ -594,7 +594,14 @@ class StopGateFullFlowTests(unittest.TestCase):
             f = w / f"{self._testMethodName}-{name}.json"
             f.write_text(json.dumps(obj), encoding="utf-8"); files[name] = str(f)
         env = {
+            # The operator-root pin is honoured from the raw env var ONLY when the
+            # CI system marks the environment (BRO_ENV=ci); bro_signature.py fails
+            # closed otherwise, so — like every other suite that injects the pin
+            # (test_signature_authority / test_workspace_scope / test_hooks_subprocess)
+            # — pair it with the CI flag so the full Stop flow is deterministic
+            # regardless of the ambient environment (was RED under `unittest discover`).
             "BRO_OPERATOR_ROOT_PUBKEY": self.pin,
+            "BRO_ENV": "ci",
             "BRO_TASK_CONTRACT": files["task"], "BRO_AGENT_PROFILE": files["agent"],
             "BRO_SKILL_RECEIPT": files["receipt"], "BRO_MODE_GRANT": files["grant"],
             "BRO_COMPLETION_MANIFEST": files["manifest"],

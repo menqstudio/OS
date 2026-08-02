@@ -1,0 +1,62 @@
+name: release
+
+# Tag-triggered signed-installer build (v*). Does NOT run on PRs/pushes — so it never gates day-to-day CI.
+# The signing + updater steps activate ONLY when the Owner's secrets are present (see docs/RELEASE_SETUP.md);
+# without them the job still builds unsigned installers (useful for smoke-testing the bundle) and skips
+# signing rather than failing. A production release is additionally gated by the fail-closed RELEASE GATE in
+# docs/RELEASE_SETUP.md (code-audit GREEN + governed chain running + 3b-2/3b-3) — enforce that before tagging.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-latest
+          - platform: windows-latest
+          - platform: macos-latest
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Linux bundle deps
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/setup-node@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          node-version: '22'
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+
+      - name: Install frontend deps
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Build + bundle (signed if secrets present, unsigned otherwise)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing — set these two secrets (see docs/RELEASE_SETUP.md §3) to sign updates.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: 'BroPS ${{ github.ref_name }}'
+          releaseDraft: true
+          prerelease: false

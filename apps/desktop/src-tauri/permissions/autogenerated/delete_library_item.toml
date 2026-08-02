@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-library-item"
+description = "Enables the delete_library_item command without any pre-configured scope."
+commands.allow = ["delete_library_item"]
+
+[[permission]]
+identifier = "deny-delete-library-item"
+description = "Denies the delete_library_item command without any pre-configured scope."
+commands.deny = ["delete_library_item"]

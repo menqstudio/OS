@@ -178,6 +178,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "brops-broker"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "brops-core",
+ "ed25519-dalek",
+ "libc",
+ "rusqlite",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "brops-core"
 version = "0.1.0"
 dependencies = [
@@ -190,6 +203,32 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "brops-executor"
+version = "0.1.0"
+dependencies = [
+ "brops-core",
+]
+
+[[package]]
+name = "brops-governed-live"
+version = "0.1.0"
+dependencies = [
+ "brops-broker",
+ "brops-core",
+ "libc",
+ "rusqlite",
+ "serde_json",
+]
+
+[[package]]
+name = "brops-launcher"
+version = "0.1.0"
+dependencies = [
+ "brops-core",
+ "libc",
 ]
 
 [[package]]

@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "brops.renderer-governed-turn.v1",
+  "title": "Renderer→broker governed-turn request (rev-30 §4.10(g))",
+  "description": "The sole renderer→broker request frame. Carries ONLY a conversation id, an optional authorized agent id, and a NON-authoritative UUIDv4 correlation token. additionalProperties:false rejects any smuggled system/history/generation_config/hash/nonce/run_id/task_id/broker_turn_id/request_nonce/prepared-object/verdict/receipt field ⇒ malformed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "conversation_id", "client_request_id"],
+  "properties": {
+    "protocol": {
+      "type": "string",
+      "const": "brops.renderer-governed-turn.v1"
+    },
+    "conversation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "client_request_id": {
+      "type": "string",
+      "description": "NON-authoritative correlation token. Canonical lowercase RFC-4122 v4 UUID.",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    }
+  }
+}

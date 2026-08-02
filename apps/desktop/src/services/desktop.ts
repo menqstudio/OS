@@ -6,9 +6,10 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import type {
   ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
-  DirListing, FileContent, Integration, KnowledgeNote, MemoryEntry, Message, MessageRole, Metric,
+  DirListing, FileContent, Integration, KnowledgeNote, LibraryItem, MemoryEntry, Message, MessageRole, Metric,
   NewAutomation, NewEvent,
-  NewKnowledgeNote, NewMemoryEntry, NewMessage, NewProject, NewTask, Notification, Project, Run,
+  NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject, NewResearchItem, NewTask,
+  Notification, Project, ResearchItem, Run,
   RunStep, SearchResult, SecuritySummary, Task,
 } from '../domain/entities';
 
@@ -110,6 +111,16 @@ export const desktop = {
   createKnowledge: (input: NewKnowledgeNote) => invoke<KnowledgeNote>('create_knowledge', { input }),
   deleteKnowledge: (id: string) => invoke<void>('delete_knowledge', { id }),
 
+  // library
+  listLibrary: () => invoke<LibraryItem[]>('list_library'),
+  createLibraryItem: (input: NewLibraryItem) => invoke<LibraryItem>('create_library_item', { input }),
+  deleteLibraryItem: (id: string) => invoke<void>('delete_library_item', { id }),
+
+  // research
+  listResearch: () => invoke<ResearchItem[]>('list_research'),
+  createResearchItem: (input: NewResearchItem) => invoke<ResearchItem>('create_research_item', { input }),
+  deleteResearchItem: (id: string) => invoke<void>('delete_research_item', { id }),
+
   // memory
   listMemory: (scope?: string) => invoke<MemoryEntry[]>('list_memory', { scope: scope ?? null }),
   createMemory: (input: NewMemoryEntry) => invoke<MemoryEntry>('create_memory', { input }),
@@ -202,3 +213,24 @@ export type RunStepEvent =
   | { type: 'done' }
   | { type: 'approvalRequired'; approvalId: string }
   | { type: 'error'; message: string };
+
+// --- Wave 3b-1B: governed-turn thin proxy to the trusted broker service -------------------------
+// The renderer sends the broker ONLY the closed {conversation_id, agent?, client_request_id} command
+// via the `governed_turn_execute` #[tauri::command] (a thin proxy forwarding to the broker service over
+// the platform IPC); the committed/blocked reply is parsed + validated read-only. The renderer can never
+// forge a `trusted_verified` result — see services/governedTurn.ts.
+import {
+  runGovernedTurn as runGovernedTurnCore,
+  type GovernedTurnRequest, type GovernedTurnResult,
+} from './governedTurn';
+
+/** Real broker transport: invoke the thin-proxy `governed_turn_execute` Tauri command. */
+async function brokerTransport(request: GovernedTurnRequest): Promise<unknown> {
+  return invoke('governed_turn_execute', { request });
+}
+
+/** Run a governed turn through the trusted broker service. `agent` is an optional authorized identifier;
+ *  the broker resolves system/history/config/IDs itself — the renderer supplies none of them. */
+export function governedTurn(conversationId: string, agent?: string): Promise<GovernedTurnResult> {
+  return runGovernedTurnCore(conversationId, agent, brokerTransport, () => crypto.randomUUID());
+}

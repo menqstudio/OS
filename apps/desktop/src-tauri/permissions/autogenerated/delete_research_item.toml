@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-research-item"
+description = "Enables the delete_research_item command without any pre-configured scope."
+commands.allow = ["delete_research_item"]
+
+[[permission]]
+identifier = "deny-delete-research-item"
+description = "Denies the delete_research_item command without any pre-configured scope."
+commands.deny = ["delete_research_item"]

@@ -6,6 +6,7 @@ use tauri::Manager;
 
 mod ai;
 mod commands;
+mod governed_turn;
 mod files;
 
 pub struct AppState {
@@ -93,6 +94,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            governed_turn::governed_turn_execute,
             commands::list_projects,
             commands::create_project,
             commands::set_project_status,
@@ -128,6 +130,12 @@ pub fn run() {
             commands::search_knowledge,
             commands::create_knowledge,
             commands::delete_knowledge,
+            commands::list_library,
+            commands::create_library_item,
+            commands::delete_library_item,
+            commands::list_research,
+            commands::create_research_item,
+            commands::delete_research_item,
             commands::list_memory,
             commands::create_memory,
             commands::set_memory_pinned,

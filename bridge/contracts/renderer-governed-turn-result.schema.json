@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "brops.renderer-governed-turn-result.v1",
+  "title": "Broker→renderer governed-turn result (rev-30 §4.10(g))",
+  "description": "The closed broker→renderer reply frame. Exactly one of committed (carries the broker-produced immutable message projection, NO reason) or blocked (carries a CLOSED reason enum, NO message). Every reply echoes client_request_id and broker_turn_id. UI-safe: no store handle, key, envelope, hash, nonce, or verdict internals.",
+  "oneOf": [
+    {
+      "title": "committed",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "status", "client_request_id", "broker_turn_id", "conversation_id", "message"],
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "const": "brops.renderer-governed-turn-result.v1"
+        },
+        "status": {
+          "type": "string",
+          "const": "committed"
+        },
+        "client_request_id": {
+          "type": "string"
+        },
+        "broker_turn_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["message_id", "role", "author", "body", "created_at_ms", "trust_state"],
+          "properties": {
+            "message_id": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string",
+              "const": "assistant"
+            },
+            "author": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "created_at_ms": {
+              "type": "integer"
+            },
+            "trust_state": {
+              "type": "string",
+              "const": "trusted_verified"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "blocked",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "status", "client_request_id", "broker_turn_id", "conversation_id", "reason"],
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "const": "brops.renderer-governed-turn-result.v1"
+        },
+        "status": {
+          "type": "string",
+          "const": "blocked"
+        },
+        "client_request_id": {
+          "type": "string"
+        },
+        "broker_turn_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "malformed",
+            "peer_denied",
+            "retry_conflict",
+            "turn_in_progress",
+            "commit_readback_mismatch",
+            "upstream_blocked"
+          ]
+        }
+      }
+    }
+  ]
+}

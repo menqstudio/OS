@@ -1,0 +1,30 @@
+[package]
+name = "brops-governed-live"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Wave 3b LIVE production governed-turn kit (LINUX-RUN): the live-turn driver + the §2.7 evidence-recorder helper + the contained executor image. Drives the real broker chain (broker library) against the 3 live Python service servers + the setuid launcher/executor to render a genuine production trusted_verified. Not shipped in the desktop bundle."
+
+[[bin]]
+name = "live_turn"
+path = "src/bin/live_turn.rs"
+
+[[bin]]
+name = "governed_recorder"
+path = "src/bin/governed_recorder.rs"
+
+[[bin]]
+name = "proof_executor"
+path = "src/bin/proof_executor.rs"
+
+[dependencies]
+# The driver wires the SAME real governed chain the broker uses (LinuxGovernedTurnChain / LinuxHopConnector /
+# LinuxGovernedExecution) and the SAME brops-core crypto/verification — it re-implements no hop and no check.
+brops-core = { path = "../core" }
+brops-broker = { path = "../broker" }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# The recorder's fork/execve + inherited-fd model and the executor's /proc self-inspection are Linux-only.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

@@ -1,30 +1,20 @@
 {
   "schema": 2,
-  "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI. Phase 0 (repository-truth) DONE (PR #33). Wave 3b-1: the 3b-1B execution-binding DESIGN is Architect DESIGN GREEN (rev-30) and MERGED to main via PR #31 (with the 3b-1A isolated-signer boundary code, Architect Code GREEN). The 3b-1B IMPLEMENTATION is WIP on PR #46 (not code-audited); the dependency-safe quality/CI gates are integrated. NoTrustedManifest stays fail-closed; no production trusted_verified until the full 3b-1 chain is code-audit GREEN + 3b-2/3b-3 land. Update in the same commit as any state change.",
+  "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof are now CONSOLIDATED on branch feat/cockpit-pages (PR #48, base chore/main-resync), superseding the earlier split (PR #46 impl / PR #31 design / PR #32 impl). The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green). tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #48 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "9c1b901380de0d05220134347b2e0a447a986daa",
-    "live_main_resolution": "Resolve the ACTUAL main HEAD from git/GitHub at session start. baseline_main_head_at_sync is the SHA this snapshot was synced against (main right after PR #33 merged). On a pull_request whose base is main, check_repo_state requires the event base sha == this baseline (stale => RED, forcing a rebase/resync).",
-    "verification": "CI job repo-state (tools/check_repo_state.py) is EXACT-HEAD fail-closed against the baseline. No design-audit carrier is active (PR #31 merged); prs[] is empty (no moving-target exact-head PR is tracked). Nothing is exempt from the baseline check."
+    "baseline_main_head_at_sync": "0c08dd87cb534253b4641f2af4fda95bfd5d2702",
+    "snapshot_branch": "chore/main-resync",
+    "live_main_resolution": "baseline_main_head_at_sync is the current live main HEAD (#47 0c08dd8, which sits on #31 9c1b901). main has been RECONCILED (merged) into feat/cockpit-pages, so main is a strict ancestor of the PR head and none of main's canonical work (#31 isolated-signer boundary, #47 quality/CI gate suite) is dropped when PR #48 eventually lands. The active workflow branch feat/cockpit-pages (PR #48) is STACKED on chore/main-resync (base != main), so the pull_request base-sha baseline check is skipped for it and it inherits this re-synced state.",
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the whole workflow is consolidated on the single self-carrier PR #48). PR #48's own exact-head is anchored on its own branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "impl/wave-3b1b-core"
+    "branch": "feat/cockpit-pages"
   },
-  "prs": [
-    {
-      "number": 46,
-      "branch": "impl/wave-3b1b-core",
-      "base": "chore/main-resync",
-      "head": "0dd6381ac35b10ce9192c1b9ada2dce449ddb740",
-      "role": "implementation",
-      "draft": false,
-      "merge_state": "open",
-      "contains": "3b-1B rev-30 implementation (WIP, cargo/py/vitest verified, NOT code-audited)."
-    }
-  ],
+  "prs": [],
   "status_tokens": {
-    "_note": "The current region of NEXT_CHAT.md, PROJECT_STATE.md and TASKS.md must contain each of these `KEY: value` tokens verbatim; tools/check_coordination.py fails closed on any mismatch.",
+    "_note": "Every human state doc's CURRENT region must contain each KEY: value token verbatim. No carrier-transition is modeled (PR #48 is a self-carrier that does not merge to repair main), so there are no CARRIER_IF_* tokens.",
     "CURRENT_ACTIVE_TASK": "T-017",
     "CURRENT_ACTIVE_WAVE": "3b-1B",
     "CURRENT_PHASE0": "done",
@@ -32,101 +22,128 @@
     "CURRENT_DESIGN_CANDIDATE": "rev-30",
     "CURRENT_LAST_REVIEWED": "rev-30",
     "CURRENT_LAST_VERDICT": "GREEN",
-    "CURRENT_DESIGN_PR": "31-merged",
-    "CURRENT_IMPL_PR": "46",
-    "CURRENT_IMPL_STATE": "WIP",
+    "CURRENT_DESIGN_PR": "48",
+    "CURRENT_IMPL_PR": "48",
+    "CURRENT_IMPL_STATE": "consolidated",
+    "CURRENT_CODE_AUDIT": "ARCHITECT_PENDING",
+    "CURRENT_LINUX_E2E": "proven",
     "CURRENT_PRODUCTION_VERIFIED": "false",
     "CURRENT_VERIFY_SEAM": "complete",
     "CURRENT_RECEIPT_PLUMBING": "complete",
     "CURRENT_GOVERNED_ROUNDTRIP": "complete"
   },
   "design_gate": {
-    "candidate": "rev-30 (docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md, on main)",
+    "candidate": "rev-30 (docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) carried on PR #48",
+    "candidate_head_note": "The exact audit HEAD is PR #48's live head 38d5d71504ba68b70b015b958cb09109c80e595a, recorded in the PR #48 body AUDIT_CANDIDATE_HEAD marker.",
     "last_reviewed_candidate": "rev-30",
     "last_architect_verdict": "GREEN",
-    "last_architect_verdict_scope": "rev-30 at exact HEAD 65c00bf — Architect DESIGN GREEN (CI run 30299587552 9/9). Predecessors rev-26..rev-29 were RED; rev-30 closed the final 1 P0 + 3 P1. MERGED to main via PR #31 (squash 9c1b901).",
+    "last_architect_verdict_scope": "rev-30 = Architect DESIGN GREEN (relayed by the Owner). Supersedes the stale rev-27 RED / rev-28 pending history.",
     "current_candidate": "rev-30",
     "current_candidate_gate": "GREEN",
-    "note": "3b-1B DESIGN gate PASSED (Architect DESIGN GREEN on rev-30) and merged. This is DESIGN-green only; the 3b-1B IMPLEMENTATION (PR #46) is WIP and NOT code-audited, and no production trusted_verified exists.",
-    "open_blockers": {
-      "note": "No open DESIGN blockers (rev-30 GREEN). Open work is the 3b-1B implementation code-audit + 3b-2/3b-3.",
-      "p0": [],
-      "p1": []
-    }
+    "note": "Design-GREEN is NOT code-GREEN. The consolidated implementation on PR #48 still owes the external Architect CODE-audit. Do NOT claim Architect code-GREEN, and do NOT expose production trusted_verified in the shipped app."
+  },
+  "code_audit": {
+    "builder_passes": "3 independent adversarial security passes converged: 10 -> 6 -> 1 P1, ALL fixed; trust-boundary / chain / manifest CLEAN.",
+    "authority": "This is the BUILDER's evidence only. The external Architect CODE-audit gate is still PENDING; builder convergence is NOT the Architect verdict.",
+    "gate": "ARCHITECT_PENDING"
+  },
+  "linux_e2e": {
+    "status": "proven",
+    "note": "The FULL 7-service production governed turn ran GREEN on real Linux — the FIRST production trusted_verified proven live (real service accounts, real setuid launcher -> executor, real ed25519 keys + root-signed manifest, verify_and_accept). Proven via engine/ci/live/run_live_turn.sh.",
+    "shipped_desktop": "The SHIPPED desktop app's production 'Verified' is STILL fail-closed: main() keeps UpstreamBlockedExecutor; the live chain is proven in the live kit, not yet wired into the desktop runtime. CURRENT_PRODUCTION_VERIFIED stays false for the shipped app."
   },
   "waves": {
     "3a": {
       "status": "complete",
       "code_exists": true,
-      "note": "slices 1/2/3 merged (6c920d0, 9b214e5, 8a580028); migrations through 0014, SCHEMA_VERSION=14"
+      "note": "slices 1/2/3 merged; migrations through 0014"
     },
     "3b-0": {
       "status": "design_green_merged",
       "code_exists": false,
-      "note": "isolated-signer design rev 5, Architect DESIGN GREEN (def7711), merged via PR #30 (df3c0ac)"
+      "note": "isolated-signer design rev 5 GREEN, merged PR #30"
     },
     "3b-1A": {
       "status": "code_green",
       "code_exists": true,
-      "note": "isolated-signer boundary code; Architect Code GREEN; on PR #31"
+      "note": "isolated-signer boundary code; Architect Code GREEN; consolidated onto feat/cockpit-pages"
     },
     "3b-1B": {
-      "status": "design_green_merged_impl_wip",
+      "status": "design_green_rev30_code_consolidated_audit_pending",
       "code_exists": true,
-      "impl_pr": 46,
-      "note": "3b-1B design rev-30 = Architect DESIGN GREEN, merged to main (PR #31). Implementation WIP on PR #46 (impl/wave-3b1b-core): contract/store/idempotency/orchestrator/ledger/verification/isolation-verifiers/output-stream/IPC-framing/Windows + launcher/executor/broker crates + Python authority/supervisor/signer services + renderer proxy + Tauri command; ~300 tests cargo/py/vitest verified; ChainExecutor real AF_UNIX hops + end-to-end Linux proof + Architect CODE-audit pending. No production trusted_verified."
+      "impl_pr": 48,
+      "design_pr": 48,
+      "note": "Design rev-30 = Architect DESIGN GREEN. Implementation consolidated on feat/cockpit-pages (PR #48); 3 builder security passes converged (all P1 fixed) but the external Architect CODE-audit is still pending. Design-green != code-green."
     },
     "3b-2": {
-      "status": "not_started",
-      "code_exists": false
+      "status": "implemented_live",
+      "code_exists": true,
+      "note": "signed manifest / anti-rollback implemented + wired in the live kit; proven in the Linux end-to-end production turn. Not yet wired into the shipped desktop runtime."
     },
     "3b-3": {
-      "status": "not_started",
-      "code_exists": false
+      "status": "implemented_live",
+      "code_exists": true,
+      "note": "production trust resolver implemented + wired in the live kit; drove the first live production trusted_verified. Not yet wired into the shipped desktop runtime."
     }
   },
   "closed_stale_prs": [
     {
       "number": 13,
-      "reason": "superseded: obsolete self-asserted receipt.verified model; migration collision"
+      "reason": "superseded"
     },
     {
       "number": 12,
-      "reason": "superseded after salvage: stale proposal docs; two useful test files carried forward"
+      "reason": "superseded after salvage"
+    },
+    {
+      "number": 46,
+      "reason": "superseded — the 3b-1B implementation snapshot consolidated into PR #48 (feat/cockpit-pages)."
+    },
+    {
+      "number": 31,
+      "reason": "superseded — the 3b-1A code + 3b-1B design (now rev-30 GREEN) consolidated into PR #48."
+    },
+    {
+      "number": 32,
+      "reason": "superseded — the execution-binding WIP consolidated into PR #48."
     }
   ],
   "merged_prs": [
     {
-      "number": 31,
-      "reason": "Wave 3b-1: 3b-1A isolated-signer boundary (Architect Code GREEN) + 3b-1B execution-binding design rev-30 (Architect DESIGN GREEN); squash-merged 9c1b901 (Owner-authorized)."
-    },
-    {
       "number": 33,
-      "reason": "Phase 0 repository-truth remediation + semantic/live-truth exact-head gates; Owner-approved GREEN at exact 45f3793; squash-merged to main (b6c6712)."
+      "reason": "Phase 0 repository-truth remediation; Owner-approved GREEN at 45f3793; merged b6c6712."
     },
     {
       "number": 30,
-      "reason": "Wave 3b-0 isolated-signer design (Architect GREEN rev 5, def7711); merged df3c0ac."
+      "reason": "Wave 3b-0 isolated-signer design GREEN; merged df3c0ac."
     }
   ],
   "product_roadmap": {
-    "note": "MASTER_EXECUTION_ROADMAP.md v1.0 Locked. The security spine is a subset. The whole v1 app is NOT finished — a large multi-wave build remains (Phases 1-10). Every governed 'Verified' path is blocked behind the 3b-1B design + Wave 3b security chain.",
+    "note": "MASTER_EXECUTION_ROADMAP.md v1.0 Locked. Whole v1 app NOT finished — large multi-wave build remains. The chain is now proven live on Linux, but the shipped desktop 'Verified' stays fail-closed until the live chain is wired into the desktop runtime and the Architect CODE-audit passes.",
     "phase_0": "done",
-    "phase_1": "in_progress (3b-1 design merged; implementation WIP, code-audit pending)",
+    "phase_1": "in_progress",
     "phases_2_to_10": "not_done",
-    "ai_entry_points_governed": "only the main governed-chat seam runs the chain (fail-closed, no trusted_verified). stream_run_step / stream_ask / reply_in_conversation + stream_reply's real-provider fallthrough are UNGOVERNED (tracked; inventory gate on branch ci/ai-surface-inventory-gate, queued).",
-    "windows_production_isolation": "not_done (Linux-only isolation proofs exist; Windows is a release blocker — rev-28 §0.W + docs/design/WINDOWS_BROKER_DESIGN.md queued on branch docs/windows-broker-design)."
+    "cockpit": "22-page cockpit built + wired to real backends; app functional.",
+    "ai_entry_points_governed": "only the main governed-chat seam runs the chain; stream_run_step / stream_ask / reply_in_conversation + stream_reply fallthrough UNGOVERNED (tracked).",
+    "windows_production_isolation": "not_done (Linux-only production proof; Windows release blocker — see docs/windows-broker-design + WINDOWS_BROKER_IMPL_PLAN). The PURE §0.W verification core (apps/desktop/src-tauri/core/src/windows_broker.rs) now covers all five primitives cross-platform + unit-tested: restricted-token privilege allowlist, image hash+Authenticode+ACL, STARTUPINFOEX handle-list 0..=6, the 7-service-SID verify_distinct_principals(), and the §0.W.4 named-pipe peer-SID allowlist matrix. The real Windows SYSCALL layer (named pipes / CreateProcessAsUser / CNG) + Windows CI machine-proof are still NOT built, so platform_governed_execution_supported() stays false on Windows (governed turns fail-closed)."
   },
-  "next_action": "3b-1B: complete the implementation on PR #46 (wire the ChainExecutor's real authority->supervisor->signer->verify AF_UNIX hops, end-to-end Linux isolation proof), then Architect CODE-audit. Then 3b-2 (signed manifest + pinned root + anti-rollback) -> 3b-3 (resolver + first production trusted_verified). Dependency-safe quality/CI gates are integrated (this snapshot). NoTrustedManifest stays fail-closed.",
+  "next_action": "3b-1B design is Architect DESIGN GREEN at rev-30. The implementation + live proof are consolidated on feat/cockpit-pages (PR #48). Next: obtain the external Architect CODE-audit GREEN on PR #48's exact head, then wire the live-proven trust chain into the shipped desktop runtime (retire UpstreamBlockedExecutor in main()) to enable production trusted_verified. Do NOT merge or expose 'Verified' before Architect code-GREEN.",
   "stop_gates": [
-    "NoTrustedManifest stays fail-closed; NO production trusted_verified until the complete 3b-1 chain is code-audit GREEN + exact-head zero-trust GREEN and 3b-2/3b-3 land.",
-    "3b-1B DESIGN is GREEN + merged (rev-30). The 3b-1B IMPLEMENTATION (PR #46) is WIP and NOT Architect code-audited — do NOT treat it as production-ready or merge it to main as such until code-audit GREEN.",
-    "3b-2/3b-3 not started. First trusted_verified only after the full 3b-1->3b-2->3b-3 chain is exact-head zero-trust GREEN.",
-    "CI-green is NOT code-audit-green; a passing unit test is NOT a working install; a Linux proof is NOT a Windows production proof."
+    "Shipped-desktop production trusted_verified stays fail-closed (main() keeps UpstreamBlockedExecutor) until the live-proven chain is wired into the desktop runtime AND the Architect CODE-audit is GREEN.",
+    "Design rev-30 is Architect DESIGN GREEN, but design-GREEN is NOT code-GREEN: the external Architect CODE-audit on PR #48 is still pending. 3 builder security passes converging is the builder's evidence, not the Architect verdict.",
+    "PR #48 must NOT merge before Architect CODE-audit GREEN on its exact head + Owner approval.",
+    "CI-green is NOT design/audit-green; the Linux production proof is NOT a Windows production proof (Windows broker is a release blocker)."
   ],
+  "current_workflow_pr": {
+    "number": 48,
+    "branch": "feat/cockpit-pages",
+    "base": "chore/main-resync",
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #48 body (== 38d5d71504ba68b70b015b958cb09109c80e595a). check_repo_state requires event head == live headRefOid == marker.",
+    "note": "PR #48 = the consolidated Wave 3b work (3b-1A code, 3b-1B design rev-30 GREEN, 3b-1B/3b-2/3b-3 implementation, the live-proof kit, and the 22-page cockpit). Self-carrier; NOT Architect code-audited; shipped 'Verified' still fail-closed."
+  },
   "next_action_by_carrier": {
-    "_note": "No active merge carrier (PR #31 design-audit carrier merged). Single next action below.",
-    "open": "n/a",
-    "merged": "n/a"
+    "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",
+    "open": "obtain Architect CODE-audit GREEN on the exact head, then wire the live chain into the shipped desktop runtime",
+    "merged": "n/a until Architect CODE-audit GREEN + Owner approval"
   }
 }
