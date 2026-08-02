@@ -8,7 +8,7 @@
 use crate::crypto;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde_json::{json, Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -358,11 +358,15 @@ pub struct SupervisorConfig {
 pub struct Supervisor {
     cfg: SupervisorConfig,
     counter: Mutex<u64>,
+    /// execution_attempt_ids of leases this supervisor minted via accept-open, not yet attested. attest-run
+    /// requires the facts' execution_attempt_id to be one of these (one-time consume) — so the supervisor
+    /// only attests a run it actually leased, not arbitrary caller-supplied evidence (audit R3).
+    issued_leases: Mutex<BTreeSet<String>>,
 }
 
 impl Supervisor {
     pub fn new(cfg: SupervisorConfig) -> Self {
-        Supervisor { cfg, counter: Mutex::new(0) }
+        Supervisor { cfg, counter: Mutex::new(0), issued_leases: Mutex::new(BTreeSet::new()) }
     }
 
     pub fn dispatch(&self, req: &Value, now_ms: i64) -> Value {
@@ -444,9 +448,12 @@ impl Supervisor {
         // Mint the lease — launcher/executor digests are the supervisor's OWN config, never the wire.
         let mut c = self.counter.lock().unwrap();
         *c += 1;
+        let execution_attempt_id = format!("EA-{}-{}", now_ms, *c);
+        // Record the leased execution_attempt_id so attest-run can only attest a run we actually leased (R3).
+        self.issued_leases.lock().unwrap().insert(execution_attempt_id.clone());
         let lease = json!({
             "lease_id": format!("L-{}-{}", now_ms, *c),
-            "execution_attempt_id": format!("EA-{}-{}", now_ms, *c),
+            "execution_attempt_id": execution_attempt_id,
             "lease_expires_at_ms": now_ms + LEASE_DURATION_MS,
             "launcher_executable_sha256": self.cfg.launcher_executable_sha256,
             "executor_executable_sha256": self.cfg.executor_executable_sha256,
@@ -497,6 +504,13 @@ impl Supervisor {
             if get_i64(facts, k).is_none() {
                 return refuse("attest-run", "malformed");
             }
+        }
+        // Bind attest-run to a lease THIS supervisor actually minted via accept-open (audit R3): one-time
+        // consume of the issued execution_attempt_id. A run we never leased is refused — so even a broker-SID
+        // caller cannot get the supervisor to attest arbitrary caller-supplied evidence out of thin air.
+        let ea_id = get_str(facts, "execution_attempt_id").unwrap_or_default();
+        if !self.issued_leases.lock().unwrap().remove(&ea_id) {
+            return refuse("attest-run", "no_lease");
         }
         // Stamp decision=completed, build evidence, JCS it, sign THOSE bytes.
         let mut evidence = facts.clone();
