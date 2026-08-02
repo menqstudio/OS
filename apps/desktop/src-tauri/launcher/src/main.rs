@@ -289,11 +289,29 @@ pub fn parse_lease(content: &str) -> Option<Lease> {
         }
     }
 
+    let recorder_uid = recorder_uid?;
+    let recorder_gid = recorder_gid?;
+    let executor_uid = executor_uid?;
+    let executor_gid = executor_gid?;
+
+    // The executor MUST land on a dedicated UNPRIVILEGED principal, distinct from root and from the
+    // recorder that invokes the launcher. Reject uid/gid 0 (a "drop" to root is a no-op) and reject
+    // executor == recorder (would run the executor as the invoker principal). A misprovisioned lease
+    // value can therefore never yield a root/confused executor — fail closed at the lease boundary (the
+    // §2.7 post-drop floor in privilege_drop::verify_final_state enforces the same uid/gid != 0 rule).
+    if executor_uid == 0
+        || executor_gid == 0
+        || executor_uid == recorder_uid
+        || executor_gid == recorder_gid
+    {
+        return None;
+    }
+
     Some(Lease {
-        recorder_uid: recorder_uid?,
-        recorder_gid: recorder_gid?,
-        executor_uid: executor_uid?,
-        executor_gid: executor_gid?,
+        recorder_uid,
+        recorder_gid,
+        executor_uid,
+        executor_gid,
         executor_executable_sha256: sha?,
     })
 }
@@ -360,6 +378,11 @@ mod linux {
         }
         let lease_handle = &args[0];
         let executor_image = &args[1];
+        // args[2] is the cgroup path. TODO(§2.7 step-2, deferred Linux-run slice): while still root, place
+        // the process into this lease-authorized leaf cgroup and apply rlimits, and validate args[2]
+        // against the lease-authorized cgroup path (refuse on mismatch). Currently NOT performed —
+        // containment/reap of a runaway executor is therefore not yet enforced by the launcher; this is a
+        // tracked containment gap (P2, not trust-forgery), not a silent omission.
 
         // (2) Read + integrity-verify the VALIDATED lease (§4.3). The launcher takes the invoker identity,
         //     the executor drop-target identity, and the executor image hash pin FROM the lease — it never
@@ -1028,5 +1051,16 @@ mod tests {
         assert_eq!(parse_lease(&good_lease_body().replace(&"ab".repeat(32), &"AB".repeat(32))), None);
         // a line without '='
         assert_eq!(parse_lease(&format!("{}garbage\n", good_lease_body())), None);
+    }
+
+    #[test]
+    fn parse_lease_rejects_privileged_or_recorder_executor_target() {
+        // The executor must be a dedicated UNPRIVILEGED principal, distinct from root and the recorder.
+        // (good_lease_body: recorder_uid/gid=5005, executor_uid/gid=5007.)
+        assert_eq!(parse_lease(&good_lease_body().replace("executor_uid=5007", "executor_uid=0")), None);
+        assert_eq!(parse_lease(&good_lease_body().replace("executor_gid=5007", "executor_gid=0")), None);
+        // executor == recorder (would run the executor as the invoking recorder principal)
+        assert_eq!(parse_lease(&good_lease_body().replace("executor_uid=5007", "executor_uid=5005")), None);
+        assert_eq!(parse_lease(&good_lease_body().replace("executor_gid=5007", "executor_gid=5005")), None);
     }
 }

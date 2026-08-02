@@ -115,6 +115,12 @@ pub struct FinalState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrivViolation {
+    /// The drop TARGET itself is privileged (uid or gid 0). A "drop" to root is a no-op, so the post-state
+    /// would still be root yet compare equal to the (root) target and pass every other check. The floor
+    /// rejects the target independent of the post-state, so a misprovisioned/compromised lease claiming
+    /// `executor_uid=0` can never be waved through as a clean drop. The executor MUST land on a dedicated
+    /// unprivileged principal.
+    PrivilegedDropTarget,
     UidNotExecutor,
     GidNotExecutor,
     SupplementaryGroupsNonEmpty,
@@ -126,6 +132,13 @@ pub enum PrivViolation {
 /// executor UID/GID (all three of each), cleared every supplementary group, emptied ALL five capability
 /// sets, and set `no_new_privs`. Any residual ⇒ abort, no exec.
 pub fn verify_final_state(s: &FinalState, exec_uid: u32, exec_gid: u32) -> Result<(), PrivViolation> {
+    // The drop TARGET must be an unprivileged principal — uid/gid 0 (root) is never a valid executor
+    // identity. Validate the target itself, not merely the post-state against it, so a lease claiming
+    // `executor_uid=0`/`executor_gid=0` cannot make `drop_privileges` a no-op that this self-check (the
+    // §2.7 post-drop floor) then passes because the still-root post-state equals the (root) target.
+    if exec_uid == 0 || exec_gid == 0 {
+        return Err(PrivViolation::PrivilegedDropTarget);
+    }
     if !(s.ruid == exec_uid && s.euid == exec_uid && s.suid == exec_uid) {
         return Err(PrivViolation::UidNotExecutor);
     }
@@ -195,6 +208,18 @@ mod tests {
     #[test]
     fn accepts_a_fully_dropped_final_state() {
         assert!(verify_final_state(&dropped(), EXEC_UID, EXEC_GID).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_privileged_drop_target() {
+        // A lease claiming executor_uid/gid=0 makes drop_privileges a no-op (already root); the floor must
+        // reject the TARGET itself independent of the post-state — otherwise a still-root post-state would
+        // compare equal to the (root) target and pass. uid 0 OR gid 0 is refused.
+        let mut root = dropped();
+        root.ruid = 0; root.euid = 0; root.suid = 0; root.rgid = 0; root.egid = 0; root.sgid = 0;
+        assert_eq!(verify_final_state(&root, 0, 0), Err(PrivViolation::PrivilegedDropTarget));
+        assert_eq!(verify_final_state(&dropped(), 0, EXEC_GID), Err(PrivViolation::PrivilegedDropTarget));
+        assert_eq!(verify_final_state(&dropped(), EXEC_UID, 0), Err(PrivViolation::PrivilegedDropTarget));
     }
 
     #[test]
