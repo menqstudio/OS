@@ -24,7 +24,7 @@ dispatch. The store directory is content-addressed; the signer re-derives every 
 ## Result
 
 ```
-RESULT: trusted_verified(production key=brops-live-signer-1 epoch=2) production_verified=true bound=true
+RESULT: trusted_verified(production key=<signer-key-id> epoch=2) production_verified=true bound=true
 ```
 
 The full chain ran end-to-end across the three isolated service accounts: challenge →

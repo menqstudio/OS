@@ -108,10 +108,10 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
     let signer_pub = crypto::public_key_hex(&crypto::signing_key(&signer_seed));
     let root_pub = crypto::public_key_hex(&crypto::signing_key(&root_seed));
 
-    let challenge_key_id = "brops-live-challenge-1".to_string();
-    let sup_attest_key_id = "brops-live-sup-attest-1".to_string();
-    let signer_key_id = "brops-live-signer-1".to_string();
-    let root_key_id = "brops-live-root-1".to_string();
+    let challenge_key_id = "brops-live-challenge-1".to_string(); // gitleaks:allow (fake public key-id)
+    let sup_attest_key_id = "brops-live-sup-attest-1".to_string(); // gitleaks:allow (fake public key-id)
+    let signer_key_id = "brops-live-signer-1".to_string(); // gitleaks:allow (fake public key-id)
+    let root_key_id = "brops-live-root-1".to_string(); // gitleaks:allow (fake public key-id)
     let supervisor_id = "brops-supervisor".to_string();
     let executor_id = "brops-executor".to_string();
     let builder_id = "brops-builder".to_string();

@@ -65,10 +65,10 @@ fn main() {
     write_seed(&keys.join("signer.seed"), &signer_seed);
     write_seed(&keys.join("root.seed"), &root_seed);
 
-    let challenge_key_id = "brops-live-challenge-1".to_string();
-    let sup_attest_key_id = "brops-live-sup-attest-1".to_string();
-    let signer_key_id = "brops-live-signer-1".to_string();
-    let root_key_id = "brops-live-root-1".to_string();
+    let challenge_key_id = "brops-live-challenge-1".to_string(); // gitleaks:allow (fake public key-id)
+    let sup_attest_key_id = "brops-live-sup-attest-1".to_string(); // gitleaks:allow (fake public key-id)
+    let signer_key_id = "brops-live-signer-1".to_string(); // gitleaks:allow (fake public key-id)
+    let root_key_id = "brops-live-root-1".to_string(); // gitleaks:allow (fake public key-id)
     let supervisor_id = "brops-supervisor".to_string();
     let executor_id = "brops-executor".to_string();
     let builder_id = "brops-builder".to_string();
