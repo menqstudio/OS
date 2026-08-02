@@ -99,27 +99,34 @@ pub fn floor_body(floor: &AntiRollbackFloor) -> Vec<u8> {
     .expect("floor serializes")
 }
 
-/// Atomically persist the advanced anti-rollback floor AND its TCB-signed integrity tag `floor.sig`
-/// (fix P2 + R1): a rollback cannot be replayed across restarts, and a config-dir adversary who resets
-/// `floor.json` cannot forge a matching `floor.sig` (no TCB floor key), so the reset is caught on load.
-/// Best-effort durability: a failure fails the turn closed.
-fn persist_floor(path: &PathBuf, floor: &AntiRollbackFloor) -> Result<(), ()> {
-    let body = floor_body(floor);
-    let sig = crypto::sign_b64url(&tcb::floor_signing_key(), &body);
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &body).map_err(|_| ())?;
-    std::fs::rename(&tmp, path).map_err(|_| ())?;
-    let sig_path = path.with_extension("sig");
-    let sig_tmp = path.with_extension("sig.tmp");
-    std::fs::write(&sig_tmp, sig.as_bytes()).map_err(|_| ())?;
-    std::fs::rename(&sig_tmp, &sig_path).map_err(|_| ())
+/// The self-contained signed floor file: the `{highest_epoch, highest_hash}` body PLUS a TCB signature over
+/// exactly that body, in ONE JSON object. A single file → a single atomic rename on write (audit D: no
+/// json/sig split that a crash could desync), and the reset/tamper defense of R1 (a config-dir adversary
+/// cannot forge `sig` without the TCB floor key).
+pub fn signed_floor_file(floor: &AntiRollbackFloor) -> Vec<u8> {
+    let sig = crypto::sign_b64url(&tcb::floor_signing_key(), &floor_body(floor));
+    serde_json::to_vec(&serde_json::json!({
+        "highest_epoch": floor.highest_epoch,
+        "highest_hash": floor.highest_hash,
+        "sig": sig,
+    }))
+    .expect("signed floor serializes")
 }
 
-/// Verify an ed25519 signature (hex pubkey, base64url-nopad sig) over `msg`.
+/// Atomically persist the advanced anti-rollback floor as ONE self-contained TCB-signed file (fix P2 + R1 +
+/// D). A persist failure fails the turn closed.
+fn persist_floor(path: &PathBuf, floor: &AntiRollbackFloor) -> Result<(), ()> {
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, signed_floor_file(floor)).map_err(|_| ())?;
+    std::fs::rename(&tmp, path).map_err(|_| ())
+}
+
+/// Verify an ed25519 signature (hex pubkey, base64url-nopad sig) over `msg`, `verify_strict` (rejects
+/// non-canonical S + small-order keys), matching the rest of the chain.
 fn verify_ed25519_hex(public_key_hex: &str, msg: &[u8], sig_b64url: &str) -> bool {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use ed25519_dalek::{Signature, VerifyingKey};
     let pk = match crypto::hex32(public_key_hex) {
         Some(b) => b,
         None => return false,
@@ -133,30 +140,30 @@ fn verify_ed25519_hex(public_key_hex: &str, msg: &[u8], sig_b64url: &str) -> boo
         Err(_) => return false,
     };
     match Signature::from_slice(&sig_bytes) {
-        Ok(s) => vk.verify(msg, &s).is_ok(),
+        Ok(s) => vk.verify_strict(msg, &s).is_ok(),
         Err(_) => false,
     }
 }
 
-/// Load the anti-rollback floor AND verify its TCB integrity tag (audit R1). Reads `floor.json` +
-/// `floor.sig`; refuses (Err) if the signature is missing or does not verify under the TCB floor key —
-/// i.e. a reset/tampered floor is REJECTED (fail-closed), not silently trusted.
+/// Load the anti-rollback floor from the self-contained signed `floor.json` and verify its TCB integrity tag
+/// (audit R1 + D). Refuses (Err) if `sig` is missing or does not verify under the TCB floor key over the
+/// exact `{highest_epoch, highest_hash}` body — i.e. a reset/tampered floor is REJECTED (fail-closed).
 pub fn load_verified_floor(floor_path: &Path) -> Result<AntiRollbackFloor, String> {
-    let body = std::fs::read(floor_path).map_err(|e| format!("floor read: {e}"))?;
-    let sig_path = floor_path.with_extension("sig");
-    let sig = std::fs::read_to_string(&sig_path).map_err(|e| format!("floor.sig read: {e}"))?;
-    if !verify_ed25519_hex(&tcb::floor_public_key_hex(), &body, sig.trim()) {
-        return Err("floor_integrity: floor.sig invalid (reset or tampered)".to_string());
-    }
-    let v: serde_json::Value = serde_json::from_slice(&body).map_err(|e| format!("floor parse: {e}"))?;
-    Ok(AntiRollbackFloor {
+    let raw = std::fs::read(floor_path).map_err(|e| format!("floor read: {e}"))?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).map_err(|e| format!("floor parse: {e}"))?;
+    let floor = AntiRollbackFloor {
         highest_epoch: v.get("highest_epoch").and_then(|x| x.as_u64()).ok_or("floor.highest_epoch")?,
         highest_hash: v
             .get("highest_hash")
             .and_then(|x| x.as_str())
             .ok_or("floor.highest_hash")?
             .to_string(),
-    })
+    };
+    let sig = v.get("sig").and_then(|x| x.as_str()).ok_or("floor.sig missing")?;
+    if !verify_ed25519_hex(&tcb::floor_public_key_hex(), &floor_body(&floor), sig) {
+        return Err("floor_integrity: signature invalid (reset or tampered)".to_string());
+    }
+    Ok(floor)
 }
 
 impl TurnResolver for ManifestResolver {
@@ -231,16 +238,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("brops-floor-{}", brops_core::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let floor_path = dir.join("floor.json");
+        // A self-contained TCB-signed floor loads with the epoch intact.
         let floor = AntiRollbackFloor { highest_epoch: 5, highest_hash: "a".repeat(64) };
-        let body = floor_body(&floor);
-        std::fs::write(&floor_path, &body).unwrap();
-        std::fs::write(dir.join("floor.sig"), crypto::sign_b64url(&tcb::floor_signing_key(), &body)).unwrap();
-        // Valid TCB-signed floor loads with the epoch intact.
+        std::fs::write(&floor_path, signed_floor_file(&floor)).unwrap();
         assert_eq!(load_verified_floor(&floor_path).expect("valid floor loads").highest_epoch, 5);
-        // Adversary resets the epoch to 0 without a matching signature -> REJECTED (fail-closed).
-        let reset = floor_body(&AntiRollbackFloor { highest_epoch: 0, highest_hash: "a".repeat(64) });
-        std::fs::write(&floor_path, &reset).unwrap();
+        // Adversary resets the epoch to 0 (unsigned body, no valid sig) -> REJECTED (fail-closed).
+        std::fs::write(&floor_path, floor_body(&AntiRollbackFloor { highest_epoch: 0, highest_hash: "a".repeat(64) })).unwrap();
         assert!(load_verified_floor(&floor_path).is_err(), "a reset floor.json must be rejected (R1)");
+        // Adversary writes epoch 0 WITH a bogus sig -> REJECTED (cannot forge without the TCB floor key).
+        std::fs::write(&floor_path, serde_json::to_vec(&serde_json::json!({
+            "highest_epoch": 0, "highest_hash": "a".repeat(64), "sig": "bogus"
+        })).unwrap()).unwrap();
+        assert!(load_verified_floor(&floor_path).is_err(), "a forged-sig floor must be rejected (R1)");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -65,7 +65,9 @@ fn main() {
     write_seed(&keys.join("challenge.seed"), &challenge_seed);
     write_seed(&keys.join("attest.seed"), &attest_seed);
     write_seed(&keys.join("signer.seed"), &signer_seed);
-    write_seed(&keys.join("root.seed"), &crypto::hex32(tcb::ROOT_SEED_HEX).expect("root seed"));
+    // Audit A: the root PRIVATE key is NOT written to the live deployment. The manifest is signed here with
+    // the TCB root (crate::tcb); the driver pins only the root PUBLIC key. In production the root private is
+    // held offline entirely — nothing about the root private lands on the serving box.
 
     let challenge_key_id = "brops-live-challenge-1".to_string(); // gitleaks:allow (fake public key-id)
     let sup_attest_key_id = "brops-live-sup-attest-1".to_string(); // gitleaks:allow (fake public key-id)
@@ -110,14 +112,11 @@ fn main() {
     let content_hash = manifest.content_hash();
     std::fs::write(root.join("manifest.json"), &manifest_bytes).expect("write manifest");
     std::fs::write(root.join("manifest.sig"), &root_sig).expect("write manifest.sig");
-    // Anti-rollback floor + its TCB integrity tag (audit R1): floor.sig is signed with the TCB floor key so
-    // a config-dir adversary who resets floor.json cannot forge a matching signature (the reset is caught on
-    // load). Use resolver::floor_body for the exact bytes the loader verifies.
+    // Anti-rollback floor as ONE self-contained TCB-signed file (audit R1 + D): a config-dir adversary who
+    // resets floor.json cannot forge the embedded TCB signature, so the reset is caught on load.
     let floor = AntiRollbackFloor { highest_epoch: 2, highest_hash: content_hash };
-    let floor_body = brops_win_live::resolver::floor_body(&floor);
-    let floor_sig = crypto::sign_b64url(&tcb::floor_signing_key(), &floor_body);
-    std::fs::write(root.join("floor.json"), &floor_body).expect("write floor");
-    std::fs::write(root.join("floor.sig"), floor_sig).expect("write floor.sig");
+    std::fs::write(root.join("floor.json"), brops_win_live::resolver::signed_floor_file(&floor))
+        .expect("write floor");
 
     // ---- config.json ----
     let p = |s: &str| root.join("keys").join(s).to_string_lossy().to_string();
@@ -133,7 +132,7 @@ fn main() {
             challenge_seed: p("challenge.seed"),
             attest_seed: p("attest.seed"),
             signer_seed: p("signer.seed"),
-            root_seed: p("root.seed"),
+            root_seed: String::new(), // audit A: no root private on the serving box
         },
         key_ids: KeyIds {
             challenge: challenge_key_id,
