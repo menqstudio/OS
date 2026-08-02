@@ -1326,6 +1326,103 @@ pub async fn reply_in_conversation(
     if history.is_empty() {
         return Err("nothing to reply to".to_string());
     }
+
+    // --- Governed turn: buffered, DESKTOP-verified, fail-closed (mirrors stream_reply §3/§7). ---
+    // reply_in_conversation is a non-streaming sibling of stream_reply: same context assembly, same
+    // one-time-challenge → governed_turn → verify_and_record_receipt path. In Wave 3a/NoTrustedManifest
+    // every governed turn Blocks (returned as Err — no message posted), so this surface no longer reaches
+    // the generic provider in production; the ungoverned ai::generate path below is the dev-only fallthrough
+    // (opt-in via BROPS_ALLOW_UNGOVERNED, fail-closed by default).
+    match crate::ai::provider_is_governed() {
+        // A provider RESOLUTION error is fail-closed — never silently ungoverned.
+        Err(e) => return Err(e),
+        Ok(false) => { /* fall through to the ungoverned path below */ }
+        Ok(true) => {
+            let started_ms: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let prepared = crate::ai::prepare_governed_turn(
+                &system,
+                &history,
+                started_ms,
+                GOVERNED_WORKSPACE_ID,
+                GOVERNED_INSTALL_ID,
+                GOVERNED_GENERATION_CONFIG,
+            )?;
+            let ctx = &prepared.context;
+            let issued = brops_core::receipt::IssuedRequest {
+                workspace_id: &ctx.workspace_id,
+                install_id: &ctx.install_id,
+                request_nonce: &ctx.request_nonce,
+                system_sha256: &ctx.system_sha256,
+                history_sha256: &ctx.history_sha256,
+                generation_config_sha256: &ctx.generation_config_sha256,
+                requested_at: &ctx.requested_at,
+            };
+            {
+                let conn = locked(&state)?;
+                brops_core::receipt_store::issue_challenge(&conn, &conversation_id, &issued, started_ms)
+                    .map_err(|e| e.to_string())?;
+            }
+            let governed = crate::ai::governed_turn(&prepared).await;
+            let verify_ms: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(started_ms);
+            let outcome = match &governed {
+                Err(transport) => {
+                    let reason = brops_core::receipt_store::bounded_reason(transport);
+                    let conn = locked(&state)?;
+                    brops_core::receipt_store::record_pre_verification_block(
+                        &conn, &ctx.request_nonce, &reason, verify_ms,
+                    )
+                }
+                Ok(reply) => {
+                    let output = reply.reply.clone().into_bytes();
+                    let expected = brops_core::receipt::Expected {
+                        request: issued,
+                        supervisor_id: GOVERNED_SUPERVISOR_ID,
+                        policy_id: GOVERNED_POLICY_ID,
+                        policy_version: GOVERNED_POLICY_VERSION,
+                        policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
+                        containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
+                        allowed_executors: &[],
+                        allowed_builders: &[],
+                    };
+                    let turn = brops_core::receipt_store::GovernedTurn {
+                        wire: brops_core::receipt_store::ReceiptWire {
+                            envelope_jcs_b64: &reply.envelope_jcs_b64,
+                            signature_b64: &reply.signature_b64,
+                        },
+                        expected,
+                        output: &output,
+                        now_ms: verify_ms,
+                        freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
+                    };
+                    let conn = locked(&state)?;
+                    brops_core::receipt_store::verify_and_record_receipt(
+                        &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
+                    )
+                }
+            };
+            return match outcome {
+                // Accepted: receipt_store ALREADY posted the message — read it back, do not double-post.
+                Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrusted { message_id, .. }) => {
+                    let conn = locked(&state)?;
+                    repo::chat::list_messages(&conn, &conversation_id, None, None)
+                        .ok()
+                        .and_then(|ms| ms.into_iter().find(|m| m.id == message_id))
+                        .ok_or_else(|| "verified governed message could not be read back".to_string())
+                }
+                // Blocked (every Wave 3a governed turn): fail-closed, NO message — the durable reason.
+                Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => Err(error),
+                Err(e) => Err(e.to_string()),
+            };
+        }
+    }
+
+    // --- Ungoverned (dev-only, BROPS_ALLOW_UNGOVERNED): unchanged. ---
     let text = crate::ai::generate(&system, &history).await?;
     let conn = locked(&state)?;
     repo::chat::post_message(
