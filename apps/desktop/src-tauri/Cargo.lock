@@ -240,6 +240,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "brops-win-live"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "brops-broker",
+ "brops-core",
+ "brops-win-broker",
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "brotli"
 version = "8.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -865,6 +881,7 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "rand_core 0.6.4",
  "serde",
  "sha2",
  "subtle",
