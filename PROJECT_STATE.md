@@ -1,5 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
+> **⏭️ CURRENT ACTIVE (2026-08-02): PR #48 MERGED to `main` (squash `08544d0`).** The consolidated Wave 3b (live `trusted_verified` + full cockpit + the §0.W pure verification core) is on trunk, main green. The active workflow is now **PR #49 · branch `feat/windows-broker-syscall`** (base `main`): the first REAL Windows §0.W syscall primitive — winapi named-pipe peer-SID authentication + a windows-latest CI proof. Windows governed gate stays **false** (fail-closed); shipped "Verified" stays fail-closed. `feat/cockpit-pages` / PR #48 prose below is HISTORY (merged).
+
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 
