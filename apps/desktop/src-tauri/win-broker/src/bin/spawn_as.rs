@@ -73,7 +73,9 @@ mod win {
                 return 3;
             }
 
-            // 2) Launch the target under that token (needs SeImpersonatePrivilege).
+            // 2) Launch the target under that token (needs SeImpersonatePrivilege). Run DETACHED (no
+            // console/desktop) so a non-interactive service principal that lacks interactive-desktop access
+            // doesn't hang attaching to WinSta0\Default — the servers/executor are headless anyway.
             let mut si = STARTUPINFOW::default();
             si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
             let mut pi = PROCESS_INFORMATION::default();
@@ -95,12 +97,14 @@ mod win {
             }
 
             // 3) Wait for the child + propagate its exit code.
+            eprintln!("spawn_as: launched pid={}", pi.dwProcessId);
             let mut code = 0u32;
-            let _ = WaitForSingleObject(pi.hProcess, 30_000);
+            let w = WaitForSingleObject(pi.hProcess, 30_000);
+            eprintln!("spawn_as: wait={:?} (WAIT_OBJECT_0={:?})", w, WAIT_OBJECT_0);
             let _ = GetExitCodeProcess(pi.hProcess, &mut code);
+            eprintln!("spawn_as: child_exit_code={code}");
             let _ = CloseHandle(pi.hThread);
             let _ = CloseHandle(pi.hProcess);
-            let _ = WAIT_OBJECT_0; // silence unused import on some toolchains
             code as i32
         }
     }
