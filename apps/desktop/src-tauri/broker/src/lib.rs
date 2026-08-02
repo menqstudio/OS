@@ -14,3 +14,10 @@
 pub mod chain_hops;
 
 pub mod chain_executor;
+
+/// The broker's compiled-in TCB root anchor (production-trust root public key).
+pub mod tcb;
+
+/// The broker's production `TurnResolver` — fail-closed by default; the real manifest resolution when a
+/// trusted manifest is provisioned.
+pub mod manifest_resolver;
