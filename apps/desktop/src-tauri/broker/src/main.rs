@@ -26,14 +26,10 @@
 //! exits non-zero (governed real mode disabled — fail closed). The DB-schema init and the governed-turn
 //! wiring are pure and unit-tested on any platform.
 
-// Governed-chain orchestration: fully unit-tested (chain_executor tests) but not yet consumed by
-// main() — main keeps the fail-closed UpstreamBlockedExecutor until the Linux deployment slice wires a
-// real resolver/ledger + the LINUX-RUN-PENDING privileged execution. Allow dead_code until then.
-#[allow(dead_code)]
-mod chain_executor;
-#[allow(dead_code)]
-mod chain_hops;
-
+// Governed-chain orchestration now lives in the crate LIBRARY (`brops_broker::chain_executor` /
+// `brops_broker::chain_hops`) so the Linux live-turn driver wires the SAME real chain. This binary keeps
+// the fail-closed UpstreamBlockedExecutor for the renderer→broker path; the live driver is the entry point
+// that instantiates the real LinuxGovernedTurnChain end-to-end.
 use brops_core::broker_orchestrator::{BrokerIds, GovernedExecutor};
 use brops_core::governed_message_store::AcceptedOutput;
 use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};

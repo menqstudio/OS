@@ -5,6 +5,13 @@ edition = "2021"
 publish = false
 description = "BroPS trusted broker service as a SEPARATE binary crate (rev-30 §0 role #2, §4.10(g)): opens the receipt/broker SQLite DB, binds the renderer→broker AF_UNIX listener, authenticates each connecting peer, and drives one governed turn per connection via brops-core::broker_orchestrator::run_governed_turn. The socket/peer-cred path is Linux-only; every other host fails closed."
 
+# The governed-chain orchestration (chain_executor / chain_hops) is exposed as a library so the Linux
+# live-turn driver (proof crate) can wire the SAME LinuxGovernedTurnChain / LinuxHopConnector /
+# LinuxGovernedExecution the broker binary uses — one source of truth for the real chain.
+[lib]
+name = "brops_broker"
+path = "src/lib.rs"
+
 [[bin]]
 name = "brops-broker"
 path = "src/main.rs"
@@ -19,10 +26,12 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json = "1"
 sha2 = "0.10"
 
-# SO_PEERCRED / getsockopt live only on Linux. libc is pulled in ONLY on Linux;
-# the Windows/other-host build stays pure-std and fails closed at runtime.
+# SO_PEERCRED / getsockopt live only on Linux. libc + base64 are pulled in ONLY on Linux (the live
+# privileged execution decodes the supervisor's base64url evidence JCS); the Windows/other-host build stays
+# pure-std and fails closed at runtime.
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+base64 = "0.22"
 
 # Test-only crypto: the governed-turn unit tests build a REAL signed receipt envelope +
 # supervisor attestation (the same Ed25519 / base64url the isolated signer and supervisor

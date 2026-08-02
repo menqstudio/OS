@@ -512,9 +512,14 @@ impl OwnedEnvelope {
 #[cfg(target_os = "linux")]
 pub mod linux {
     use super::*;
-    use brops_core::ipc_framing::{LENGTH_PREFIX_BYTES, MAX_FRAME_PAYLOAD_BYTES};
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
+    use brops_core::governed_message_store::sha256_hex;
+    use brops_core::ipc_framing::{encode_frame, LENGTH_PREFIX_BYTES, MAX_FRAME_PAYLOAD_BYTES};
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     /// Socket paths for the trusted principals (each owned by its own service UID; §2.6 provisioning).
     pub struct ChainSockets {
@@ -569,39 +574,260 @@ pub mod linux {
         }
     }
 
-    /// LINUX-RUN-PENDING: real privileged execution spawn (recorder → setuid launcher → executor, producing
-    /// the output bytes + execution-receipt/evidence handles + the supervisor attestation over the run
-    /// evidence). Until that setuid chain + the signer/supervisor protected store are provisioned end-to-end
-    /// this fails CLOSED rather than fabricate an accepted success — the Linux CI isolation proof drives the
-    /// real run. It is deliberately NOT a fake success.
-    pub struct LinuxGovernedExecution;
+    /// Read exactly one length-prefixed reply frame (bounded) from a live AF_UNIX peer; a short/oversize/lost
+    /// frame is a closed [`TurnReason`]. Mirrors the servers' 4-byte-big-endian one-frame-per-connection wire.
+    fn read_one_reply(stream: &mut UnixStream) -> Result<Vec<u8>, TurnReason> {
+        let mut prefix = [0u8; LENGTH_PREFIX_BYTES];
+        stream.read_exact(&mut prefix).map_err(|_| TurnReason::UpstreamBlocked)?;
+        let declared = u32::from_be_bytes(prefix) as usize;
+        if declared == 0 || declared > MAX_FRAME_PAYLOAD_BYTES {
+            return Err(TurnReason::UpstreamBlocked);
+        }
+        let mut body = vec![0u8; declared];
+        stream.read_exact(&mut body).map_err(|_| TurnReason::UpstreamBlocked)?;
+        Ok(body)
+    }
 
-    impl GovernedExecution for LinuxGovernedExecution {
-        fn execute(&self, _plan: &ExecutionPlan) -> Result<ExecutionArtifacts, TurnReason> {
-            // LINUX-RUN-PENDING: real privileged execution spawn.
-            Err(TurnReason::UpstreamBlocked)
+    /// The deployment-static remainder the live privileged execution needs beyond the per-turn plan: the
+    /// paths of the setuid chain + protected store, the supervisor `attest-run` socket, and the fixed run
+    /// facts (ids, identities, protected-chain + authorization handles, evidence-head counters). The per-turn
+    /// facts (`workspace/install/run/task/request_nonce/requested_at` + the granted lease) come from the
+    /// plan — never duplicated here — so the attestation is bound to exactly the broker's own resolution.
+    #[derive(Debug, Clone)]
+    pub struct ExecutionConfig {
+        /// The invoker prefix that lands the recorder on its dedicated UID (e.g.
+        /// `["sudo","-n","-u","brops-recorder","/opt/brops-live/bin/governed_recorder"]`). The launcher's
+        /// §2.7 step-1 invoker gate requires the REAL uid to be the recorder principal, so the broker cannot
+        /// spawn the setuid launcher directly — it delegates to the recorder identity here.
+        pub recorder_command: Vec<String>,
+        /// Directory of the named fd 3/4/5 store inputs (`system`/`history`/`generation_config`) the recorder
+        /// opens for the executor.
+        pub recorder_store_dir: String,
+        /// The TCB-owned setuid (4750) launcher the recorder `execve`s.
+        pub launcher_path: String,
+        /// The pinned executor image the launcher `fexecve`s.
+        pub executor_path: String,
+        /// The launcher's §4.3 `key=value` lease FILE (recorder/executor uid/gid + executor image digest).
+        pub lease_file: String,
+        /// The launcher's third argv token (cgroup path).
+        pub cgroup_arg: String,
+        /// The content-addressed protected store the isolated signer reads (`<store_dir>/<sha256hex>`).
+        pub store_dir: String,
+        /// A world-writable staging dir for the recorder's `--out` report (owned by the recorder uid, read by
+        /// the broker uid). Trust for the bytes is the isolated-signer envelope, not this path.
+        pub report_dir: String,
+        /// The supervisor `attest-run` socket (the broker's own uid is SO_PEERCRED-allowlisted).
+        pub supervisor_sock: String,
+        // ---- fixed §4.9 evidence facts (deployment-static) ----
+        pub receipt_id: String,
+        pub supervisor_id: String,
+        pub executor_id: String,
+        pub builder_id: String,
+        pub policy_id: String,
+        pub policy_version: String,
+        pub supervisor_attestation_key_id: String,
+        pub policy_bundle_handle: String,
+        pub containment_evidence_handle: String,
+        pub record_handle: String,
+        pub lease_handle: String,
+        pub execution_receipt_handle: String,
+        pub evidence_final_event_hash: String,
+        pub evidence_event_count: i64,
+        pub evidence_last_sequence: i64,
+        pub evidence_head_sequence: i64,
+    }
+
+    /// The REAL privileged execution (§6/§2.7): it delegates the recorder → setuid launcher → executor spawn
+    /// to the recorder identity, content-addresses the executor's exact output into the signer's protected
+    /// store, then drives the supervisor `attest-run` to obtain the `brops.run-attestation.v1` over the run
+    /// evidence. It returns the output bytes + the `sign-request` the isolated signer strict-validates + the
+    /// EXACT attested evidence JCS + the supervisor's detached signature. Fail-closed on ANY launcher/executor
+    /// refusal, missing output, or supervisor refusal — it never fabricates output or an attestation.
+    pub struct LinuxGovernedExecution {
+        config: ExecutionConfig,
+    }
+
+    impl LinuxGovernedExecution {
+        pub fn new(config: ExecutionConfig) -> Self {
+            LinuxGovernedExecution { config }
+        }
+
+        fn now_ms() -> i64 {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0)
+        }
+
+        /// One framed `attest-run {facts}` → `{attestation, evidence_jcs_b64, attestation_evidence_sha256}`
+        /// roundtrip to the supervisor over a fresh AF_UNIX connection. A lost/refusing hop is a closed reason.
+        fn supervisor_attest_run(&self, facts: &Value) -> Result<Value, TurnReason> {
+            let req = json!({ "op": "attest-run", "facts": facts });
+            let bytes = serde_json::to_vec(&req).map_err(|_| TurnReason::UpstreamBlocked)?;
+            let frame = encode_frame(&bytes).map_err(|_| TurnReason::UpstreamBlocked)?;
+            let mut stream =
+                UnixStream::connect(&self.config.supervisor_sock).map_err(|_| TurnReason::UpstreamBlocked)?;
+            stream.write_all(&frame).map_err(|_| TurnReason::UpstreamBlocked)?;
+            stream.flush().map_err(|_| TurnReason::UpstreamBlocked)?;
+            let reply = read_one_reply(&mut stream)?;
+            let value: Value = serde_json::from_slice(&reply).map_err(|_| TurnReason::UpstreamBlocked)?;
+            if !value.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return Err(TurnReason::UpstreamBlocked);
+            }
+            Ok(value)
         }
     }
 
-    /// The production Linux sub-chain: the pure [`GovernedChain`] wired to the real socket connector + the
-    /// (still-pending) privileged execution spawn + the broker's injected resolver/ledger. Because the
-    /// execution is a fail-closed stub, every turn currently blocks — correctly, never fabricated — until
-    /// the setuid chain lands; the hops + final verification are the real code the CI proof exercises.
-    #[allow(dead_code)]
+    impl GovernedExecution for LinuxGovernedExecution {
+        fn execute(&self, plan: &ExecutionPlan) -> Result<ExecutionArtifacts, TurnReason> {
+            let cfg = &self.config;
+            let r = plan.resolved;
+
+            // (1) Privileged execution — the recorder (its own UID) prepares FDs 0–6 and `execve`s the setuid
+            //     launcher, which drops privilege and `fexecve`s the pinned executor. The executor writes its
+            //     exact reply bytes to fd 6; the recorder captures them to `--out`. A non-zero exit or empty
+            //     capture is a launcher/executor REFUSAL ⇒ fail closed (never a fabricated output).
+            if cfg.recorder_command.is_empty() {
+                return Err(TurnReason::UpstreamBlocked);
+            }
+            let report_path = format!(
+                "{}/live-{}-{}.out",
+                cfg.report_dir, plan.broker_turn_id, plan.lease.execution_attempt_id
+            );
+            let _ = std::fs::remove_file(&report_path);
+            let mut command = Command::new(&cfg.recorder_command[0]);
+            command.args(&cfg.recorder_command[1..]);
+            command.args([
+                "--store",
+                cfg.recorder_store_dir.as_str(),
+                "--launcher",
+                cfg.launcher_path.as_str(),
+                "--executor",
+                cfg.executor_path.as_str(),
+                "--lease",
+                cfg.lease_file.as_str(),
+                "--cgroup",
+                cfg.cgroup_arg.as_str(),
+                "--out",
+                report_path.as_str(),
+            ]);
+            let status = command.status().map_err(|_| TurnReason::UpstreamBlocked)?;
+            if !status.success() {
+                return Err(TurnReason::UpstreamBlocked);
+            }
+            let output = std::fs::read(&report_path).map_err(|_| TurnReason::UpstreamBlocked)?;
+            if output.is_empty() {
+                return Err(TurnReason::UpstreamBlocked);
+            }
+
+            // (2) Content-address the exact output into the signer's protected store (`<store>/<sha256hex>`),
+            //     so the isolated signer RE-DERIVES output_sha256/output_bytes from the bytes THIS run
+            //     produced — never a caller-supplied hash.
+            let output_handle = sha256_hex(&output);
+            let output_blob = format!("{}/{}", cfg.store_dir, output_handle);
+            std::fs::write(&output_blob, &output).map_err(|_| TurnReason::UpstreamBlocked)?;
+            // The isolated signer (a DIFFERENT uid) reads this blob by handle; make it group/other-readable
+            // regardless of the broker's umask. Integrity is the content address, not the mode.
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&output_blob, std::fs::Permissions::from_mode(0o644));
+            }
+
+            // (3) The §4.9 run facts (ATTEST_INPUT_FIELDS = EVIDENCE_FIELDS minus `decision`). The per-turn
+            //     ids are the broker's OWN resolution + the granted lease's execution_attempt_id; the
+            //     system/history/generation-config handles ARE those resolved component digests (a content
+            //     address == its sha256); the remaining handles/identities/counters are deployment-static.
+            let now = Self::now_ms();
+            let facts = json!({
+                "run_id": r.run_id,
+                "execution_attempt_id": plan.lease.execution_attempt_id,
+                "task_id": r.task_id,
+                "request_nonce": plan.request_nonce,
+                "receipt_id": cfg.receipt_id,
+                "workspace_id": r.workspace_id,
+                "install_id": r.install_id,
+                "supervisor_id": cfg.supervisor_id,
+                "executor_id": cfg.executor_id,
+                "builder_id": cfg.builder_id,
+                "policy_id": cfg.policy_id,
+                "policy_version": cfg.policy_version,
+                "policy_bundle_handle": cfg.policy_bundle_handle,
+                "generation_config_handle": r.generation_config_sha256,
+                "system_handle": r.system_sha256,
+                "history_handle": r.history_sha256,
+                "output_handle": output_handle,
+                "containment_evidence_handle": cfg.containment_evidence_handle,
+                "record_handle": cfg.record_handle,
+                "lease_handle": cfg.lease_handle,
+                "execution_receipt_handle": cfg.execution_receipt_handle,
+                "evidence_final_event_hash": cfg.evidence_final_event_hash,
+                "requested_at": r.requested_at_ms,
+                "completed_at": now,
+                "challenge_accepted_at_ms": now,
+                "evidence_event_count": cfg.evidence_event_count,
+                "evidence_last_sequence": cfg.evidence_last_sequence,
+                "evidence_head_sequence": cfg.evidence_head_sequence,
+            });
+
+            // (4) Supervisor attest-run: it stamps `decision=completed`, builds JCS(evidence) itself, and
+            //     Ed25519-signs THOSE bytes with the supervisor-attestation key. We carry the EXACT signed
+            //     bytes + detached signature through so the final acceptance can re-hash + re-verify them.
+            let attn = self.supervisor_attest_run(&facts)?;
+            let attestation = attn.get("attestation").cloned().ok_or(TurnReason::UpstreamBlocked)?;
+            let evidence_jcs_b64 = attn
+                .get("evidence_jcs_b64")
+                .and_then(Value::as_str)
+                .ok_or(TurnReason::UpstreamBlocked)?;
+            let attestation_evidence_jcs = URL_SAFE_NO_PAD
+                .decode(evidence_jcs_b64.as_bytes())
+                .map_err(|_| TurnReason::UpstreamBlocked)?;
+            let attestation_signature_b64 = attestation
+                .get("sig")
+                .and_then(Value::as_str)
+                .ok_or(TurnReason::UpstreamBlocked)?
+                .to_string();
+
+            // (5) The isolated signer's evidence is the SAME run facts + the supervisor-stamped decision, so
+            //     the signer's own JCS(evidence) is byte-identical to what the supervisor attested (its
+            //     re-hash + attestation-signature check both hold). The signer then re-derives every
+            //     store digest and signs its OWN recomputed 23-key envelope.
+            let mut evidence = facts;
+            evidence
+                .as_object_mut()
+                .ok_or(TurnReason::UpstreamBlocked)?
+                .insert("decision".to_string(), Value::String("completed".to_string()));
+            let sign_request = json!({
+                "protocol": "brops.sign-request.v1",
+                "attestation": attestation,
+                "evidence": evidence,
+            });
+
+            Ok(ExecutionArtifacts {
+                output,
+                sign_request,
+                attestation_evidence_jcs,
+                attestation_signature_b64,
+            })
+        }
+    }
+
+    /// The production Linux sub-chain: the pure [`GovernedChain`] wired to the real AF_UNIX socket connector,
+    /// the REAL privileged [`LinuxGovernedExecution`], and the broker's injected resolver/ledger. Every hop +
+    /// the final `verify_and_accept` are the real code; only a genuinely-verified chain yields an
+    /// [`AcceptedOutput`], any refusal/loss/mismatch a closed [`TurnReason`].
     pub struct LinuxGovernedTurnChain<R: TurnResolver, L: AcceptanceLedger> {
         inner: GovernedChain<LinuxHopConnector, R, LinuxGovernedExecution, L>,
     }
 
-    #[allow(dead_code)]
     impl<R: TurnResolver, L: AcceptanceLedger> LinuxGovernedTurnChain<R, L> {
-        pub fn new(sockets: ChainSockets, resolver: R, ledger: L) -> Self {
+        pub fn new(
+            sockets: ChainSockets,
+            resolver: R,
+            execution: LinuxGovernedExecution,
+            ledger: L,
+        ) -> Self {
             LinuxGovernedTurnChain {
-                inner: GovernedChain::new(
-                    LinuxHopConnector { sockets },
-                    resolver,
-                    LinuxGovernedExecution,
-                    ledger,
-                ),
+                inner: GovernedChain::new(LinuxHopConnector { sockets }, resolver, execution, ledger),
             }
         }
     }

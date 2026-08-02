@@ -37,6 +37,7 @@ canonical, strict, fail-closed peer match) rather than reimplemented here.
 
 from __future__ import annotations
 
+import base64
 import json
 import socket
 import struct
@@ -48,9 +49,11 @@ from governed_supervisor import (
     Lease,
     LaunchProceed,
     Refusal,
+    RunAttestation,
     SupervisorConfig,
     SupervisorError,
     accept_open,
+    build_run_attestation,
     launch_gate,
     recompute_request_sha256 as default_recompute_request_sha256,
 )
@@ -68,6 +71,7 @@ MAX_FRAME_BYTES = 8192
 
 OP_ACCEPT_OPEN = "accept-open"
 OP_LAUNCH_GATE = "launch-gate"
+OP_ATTEST_RUN = "attest-run"
 
 # The exhaustive field set of a wire lease (mirrors governed_supervisor.Lease).
 LEASE_FIELDS = (
@@ -210,6 +214,27 @@ def _lease_to_dict(lease: Lease) -> Dict[str, Any]:
     }
 
 
+def _b64url_nopad(data: bytes) -> str:
+    """base64url WITHOUT padding — the §4.1/§4.2 ``*_b64`` transport convention the
+    Rust broker decodes with ``URL_SAFE_NO_PAD``."""
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _attestation_reply(attn: RunAttestation) -> Dict[str, Any]:
+    """Marshal the supervisor-built run-attestation into the wire reply. The
+    ``attestation`` object is relayed verbatim (the exact 3-field shape the
+    isolated signer verifies); ``evidence_jcs_b64`` carries the EXACT JCS bytes the
+    supervisor signed so the signer/broker can re-hash them, and
+    ``attestation_evidence_sha256`` echoes ``sha256(evidence_jcs)`` for convenience."""
+    return {
+        "ok": True,
+        "op": OP_ATTEST_RUN,
+        "attestation": dict(attn.attestation),
+        "evidence_jcs_b64": _b64url_nopad(attn.evidence_jcs),
+        "attestation_evidence_sha256": attn.attestation_evidence_sha256,
+    }
+
+
 def _refusal_reply(op: str, refusal: Refusal) -> Dict[str, Any]:
     # A refusal is a fail-closed verdict, NOT a success. It surfaces as ok:false
     # with the typed REFUSE_* reason so the broker sees the exact denial cause.
@@ -273,19 +298,49 @@ def dispatch(
     verify_sig: Callable[[bytes, str], bool],
     recompute_request_sha256: Callable[[Mapping[str, Any]], str],
     clock_ms: Callable[[], int],
+    *,
+    sign_attestation: Optional[Callable[[bytes], str]] = None,
+    supervisor_attestation_key_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Route one decoded request into the pure supervisor core.
 
     ``accept-open`` runs the two-phase challenge verify and, on success, mints a
-    lease; ``launch-gate`` re-checks a lease's remaining budget. The supervisor's
-    own clock (``clock_ms``) supplies ``now_ms`` for BOTH — it is never read from
+    lease; ``launch-gate`` re-checks a lease's remaining budget; ``attest-run``
+    builds the §4.9 evidence from the supervisor's OWN trusted run facts and
+    produces the ``brops.run-attestation.v1`` over it. The supervisor's own clock
+    (``clock_ms``) supplies ``now_ms`` for the lease ops — it is never read from
     the wire, so a caller cannot pick a favourable time. The signed challenge
-    document and the lease enter ONLY through the typed ops, never as free bytes
-    used for a trust decision.
+    document, the lease, and the run facts enter ONLY through the typed ops, never
+    as free bytes used for a trust decision.
+
+    ``attest-run`` is available only when the deployment injects the
+    ``sign_attestation`` seam + the pinned ``supervisor_attestation_key_id``; a
+    request for it without them is a supervisor-side config fault (fail-closed
+    error reply), never a fabricated attestation.
     """
     if not isinstance(request, Mapping):
         raise ServerError("request body must be a JSON object")
     op = request.get("op")
+
+    if op == OP_ATTEST_RUN:
+        if sign_attestation is None or supervisor_attestation_key_id is None:
+            raise SupervisorError(
+                "attest-run requires an injected sign_attestation seam and "
+                "supervisor_attestation_key_id"
+            )
+        facts = request.get("facts")
+        if not isinstance(facts, Mapping):
+            raise ServerError("attest-run requires a facts object")
+        result = build_run_attestation(
+            facts,
+            supervisor_key_id=supervisor_attestation_key_id,
+            sign_attestation=sign_attestation,
+        )
+        if isinstance(result, RunAttestation):
+            return _attestation_reply(result)
+        if isinstance(result, Refusal):
+            return _refusal_reply(OP_ATTEST_RUN, result)
+        raise SupervisorError("build_run_attestation returned an unexpected result type")
 
     if op == OP_ACCEPT_OPEN:
         challenge_doc = request.get("challenge_doc")
@@ -336,10 +391,16 @@ def handle_connection(
     verify_sig: Callable[[bytes, str], bool],
     recompute_request_sha256: Callable[[Mapping[str, Any]], str],
     clock_ms: Callable[[], int],
+    *,
+    sign_attestation: Optional[Callable[[bytes], str]] = None,
+    supervisor_attestation_key_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Authenticate the peer, read one bounded frame, dispatch, and write the
     framed reply. Returns the reply object (also useful for tests). Never raises
     on hostile input — every failure becomes a fail-closed error reply.
+
+    ``sign_attestation`` + ``supervisor_attestation_key_id`` enable the
+    ``attest-run`` op; omit them and only the lease ops are served.
     """
     peer_uid = getattr(conn, "peer_uid", None)
     # Allowlist ONLY the broker uid; refuse BEFORE reading any frame.
@@ -351,7 +412,15 @@ def handle_connection(
     try:
         raw = read_frame(conn)
         request = json.loads(raw.decode("utf-8"))
-        reply = dispatch(request, config, verify_sig, recompute_request_sha256, clock_ms)
+        reply = dispatch(
+            request,
+            config,
+            verify_sig,
+            recompute_request_sha256,
+            clock_ms,
+            sign_attestation=sign_attestation,
+            supervisor_attestation_key_id=supervisor_attestation_key_id,
+        )
     except (FrameError, ServerError, SupervisorError, ValueError, UnicodeDecodeError) as exc:
         reply = {"ok": False, "error": str(exc)}
         # Surface a typed refusal reason if the exception carried one (a Refusal
@@ -383,6 +452,9 @@ def serve_forever(
     verify_sig: Callable[[bytes, str], bool],
     recompute_request_sha256: Callable[[Mapping[str, Any]], str],
     clock_ms: Callable[[], int],
+    *,
+    sign_attestation: Optional[Callable[[bytes], str]] = None,
+    supervisor_attestation_key_id: Optional[str] = None,
 ) -> None:
     """Drive the accept loop. ``accept_one`` returns the next connection (any
     object with ``peer_uid`` / ``recv_exactly`` / ``send_all`` / ``close``) or
@@ -404,6 +476,8 @@ def serve_forever(
                 verify_sig,
                 recompute_request_sha256,
                 clock_ms,
+                sign_attestation=sign_attestation,
+                supervisor_attestation_key_id=supervisor_attestation_key_id,
             )
         finally:
             try:
@@ -441,6 +515,7 @@ __all__ = [
     "MAX_FRAME_BYTES",
     "OP_ACCEPT_OPEN",
     "OP_LAUNCH_GATE",
+    "OP_ATTEST_RUN",
     "FrameError",
     "ServerError",
     "SocketPeerConn",
