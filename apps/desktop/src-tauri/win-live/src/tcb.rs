@@ -31,3 +31,22 @@ pub fn root_signing_key() -> ed25519_dalek::SigningKey {
     let seed = crypto::hex32(ROOT_SEED_HEX).expect("valid root seed hex");
     crypto::signing_key(&seed)
 }
+
+/// The anti-rollback-floor integrity keypair — compiled into the broker TCB (audit R1). UNLIKE the root
+/// (whose private half is offline in production), the broker WRITES the floor at runtime, so it needs a
+/// runtime signing key held in the TCB. The floor is signed with this key on every advance and verified on
+/// load; a config-dir adversary who resets `floor.json` cannot forge a matching `floor.sig` (they cannot
+/// write the broker binary), so a rollback-to-an-older-genuine-manifest is caught. The trust boundary is
+/// "cannot modify the broker TCB", the same boundary the whole broker rests on.
+pub const FLOOR_SEED_HEX: &str =
+    "8899aabbccddeeff8899aabbccddeeff8899aabbccddeeff8899aabbccddeeff"; // gitleaks:allow (TCB floor-integrity key)
+
+pub fn floor_signing_key() -> ed25519_dalek::SigningKey {
+    let seed = crypto::hex32(FLOOR_SEED_HEX).expect("valid floor seed hex");
+    crypto::signing_key(&seed)
+}
+
+pub fn floor_public_key_hex() -> String {
+    let seed = crypto::hex32(FLOOR_SEED_HEX).expect("valid floor seed hex");
+    crypto::public_key_hex(&crypto::signing_key(&seed))
+}

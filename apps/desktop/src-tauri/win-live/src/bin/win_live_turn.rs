@@ -27,9 +27,7 @@ mod win {
     use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
     use brops_core::governed_turn_ipc::{REQUEST_PROTOCOL, TRUSTED_VERIFIED};
     use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
-    use brops_core::key_manifest::{
-        resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest, PinnedRoot,
-    };
+    use brops_core::key_manifest::{resolve_production_key, verify_manifest, KeyManifest, PinnedRoot};
     use brops_core::production_trust::{resolve_trust_state, TrustState};
 
     use brops_win_live::config::Config;
@@ -108,17 +106,11 @@ mod win {
         if verify_manifest(&manifest, &root_sig, &pinned_root).is_err() {
             return blocked("manifest_root_signature_invalid");
         }
-        let floor: AntiRollbackFloor = match std::fs::read_to_string(&cfg.trust.floor_path)
-            .ok()
-            .and_then(|b| serde_json::from_str::<Value>(&b).ok())
-            .and_then(|v| {
-                Some(AntiRollbackFloor {
-                    highest_epoch: v.get("highest_epoch")?.as_u64()?,
-                    highest_hash: v.get("highest_hash")?.as_str()?.to_string(),
-                })
-            }) {
-            Some(f) => f,
-            None => return blocked("floor_unreadable"),
+        // Load + TCB-integrity-verify the anti-rollback floor (audit R1): a reset/tampered floor.json is
+        // rejected because floor.sig will not verify under the TCB floor key.
+        let floor = match brops_win_live::resolver::load_verified_floor(std::path::Path::new(&cfg.trust.floor_path)) {
+            Ok(f) => f,
+            Err(e) => return blocked(&format!("floor:{e}")),
         };
         // Resolve the production key once for the final trust classification (the resolver re-resolves per
         // turn and is the enforcement path). A keep-alive clone of the manifest backs the classification.

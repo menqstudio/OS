@@ -8,7 +8,7 @@ use serde_json::json;
 use std::path::Path;
 
 use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
-use brops_core::key_manifest::KeyManifest;
+use brops_core::key_manifest::{AntiRollbackFloor, KeyManifest};
 use brops_win_live::config::*;
 use brops_win_live::crypto;
 use brops_win_live::tcb;
@@ -110,11 +110,14 @@ fn main() {
     let content_hash = manifest.content_hash();
     std::fs::write(root.join("manifest.json"), &manifest_bytes).expect("write manifest");
     std::fs::write(root.join("manifest.sig"), &root_sig).expect("write manifest.sig");
-    std::fs::write(
-        root.join("floor.json"),
-        serde_json::to_vec(&json!({ "highest_epoch": 2u64, "highest_hash": content_hash })).unwrap(),
-    )
-    .expect("write floor");
+    // Anti-rollback floor + its TCB integrity tag (audit R1): floor.sig is signed with the TCB floor key so
+    // a config-dir adversary who resets floor.json cannot forge a matching signature (the reset is caught on
+    // load). Use resolver::floor_body for the exact bytes the loader verifies.
+    let floor = AntiRollbackFloor { highest_epoch: 2, highest_hash: content_hash };
+    let floor_body = brops_win_live::resolver::floor_body(&floor);
+    let floor_sig = crypto::sign_b64url(&tcb::floor_signing_key(), &floor_body);
+    std::fs::write(root.join("floor.json"), &floor_body).expect("write floor");
+    std::fs::write(root.join("floor.sig"), floor_sig).expect("write floor.sig");
 
     // ---- config.json ----
     let p = |s: &str| root.join("keys").join(s).to_string_lossy().to_string();
