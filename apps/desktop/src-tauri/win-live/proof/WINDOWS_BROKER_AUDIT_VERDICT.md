@@ -53,14 +53,25 @@ These are honest limitations of a software-only proof kit; the gate stays closed
    (proven: `keys/root.seed` no longer exists; the turn still reaches `trusted_verified`). REMAINING for full
    custody: give the runtime floor-integrity key real TCB-only custody (it is still a compiled-in constant —
    lower risk than the root, and covered defence-in-depth by condition 3's broker-only-writable floor).
-2. **Dedicated least-privilege broker principal.** `broker-as-SYSTEM` is a proof convenience — a SYSTEM
-   broker could read the signer service's memory / DPAPI seed and defeat signer isolation, and
-   `allowed_broker_sid = S-1-5-18` accepts any SYSTEM process. Enablement needs a dedicated broker service
-   SID distinct from SYSTEM, with the signer's key unreachable by the broker account.
-3. **Replay-proof anti-rollback.** `floor.sig` closes reset/tamper; a captured older valid `floor.json` can
-   still be replayed. Full anti-rollback needs monotonic/TPM-backed freshness or a broker-only-writable
-   floor location — a hardware/deployment property beyond software custody.
+2. **Dedicated least-privilege broker principal — DONE.** The broker now runs as a dedicated **non-SYSTEM**
+   service account (`brops-broker`), NOT SYSTEM, so it cannot read the signer service's memory / DPAPI seed,
+   and `allowed_broker_sid` is that account's exclusive SID. Proven: the full cross-account turn with the
+   broker as `brops-broker` and the three servers as their own accounts reaches `trusted_verified`. This
+   required building the win-live bins with **`-C target-feature=+crt-static`** — the earlier `0xC0000142`
+   (`STATUS_DLL_INIT_FAILED`) was the debug-CRT DLL dependency a limited session-0 service account could not
+   load; a static CRT removes it. (Deployment note: build the Windows kit with `+crt-static`.)
+3. **Replay-proof anti-rollback — closed vs the in-scope (login-user) adversary; TPM for the admin case.**
+   The floor lives in the broker-writable deployment root; the deploy ACL grants write only to the broker
+   principal and denies the interactive login user, so the config-dir adversary cannot restore an old signed
+   `floor.json` (combined with `floor.sig` tamper-evidence). A full admin/SYSTEM compromise can still reset
+   any file — defeating any software custody — so hardware monotonic/TPM-backed freshness remains the answer
+   for that (explicitly out of scope, same class as "admin defeats DPAPI").
 
 Bottom line: **for the question the gate actually asks — can anything in scope forge a shipped
-`trusted_verified`? — the answer is no.** The kit is GREEN as an audited proof; enabling the Windows gate
-is a separate, deployment-hardening step gated on the three conditions above.
+`trusted_verified`? — the answer is no.** The kit is GREEN as an audited proof, and the enablement path is
+now proven end-to-end: conditions **1 (offline-root manifest signing)** and **2 (a dedicated non-SYSTEM
+`brops-broker` principal)** are DONE, and **3** is closed against the in-scope login-user adversary via an
+ACL-protected, TCB-signed floor — all reaching `trusted_verified` cross-account with three distinct
+service-account principals. What remains is deployment/hardware-class only: the runtime floor-integrity key
+custody sub-item and TPM/monotonic anti-rollback for the admin-compromise case — plus, separately, the Owner
+decision to flip the shipped gate and wire the live chain into the desktop runtime.

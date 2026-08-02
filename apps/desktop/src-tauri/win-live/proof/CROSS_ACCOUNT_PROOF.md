@@ -39,28 +39,30 @@ lease → attest-run → sign-result → `verify_and_accept`, producing a genuin
   (the servers deny the peer before dispatch). Verified with the three servers running as
   their service accounts.
 
-## The broker principal — proven as SYSTEM (session 0)
+## The broker principal — proven as a dedicated NON-SYSTEM service account (session 0)
 
 The three **servers** are dedicated service accounts (the security-critical isolation: they
 hold the private keys and must be distinct, mutually-isolated principals). The **broker** is
-the trusted orchestrator — the TCB — so its correct Windows deployment is **`SYSTEM`
-(LocalSystem)**, the standard non-interactive service identity that holds the privileges the
-broker needs (`SeAssignPrimaryToken`, `SeImpersonate`) and runs cleanly in **session 0**.
+the trusted orchestrator; for **least privilege** it runs as its OWN dedicated non-`SYSTEM`
+service account (`brops-broker`) — NOT `SYSTEM`, so it cannot read the signer service's memory
+or DPAPI-sealed seed (which a `SYSTEM` broker could, defeating signer isolation).
 
-**Proven (session-0, cross-account):** the broker/driver running as **`SYSTEM`** via a
+**Proven (session-0, cross-account):** the broker/driver running as **`brops-broker`** via a
 session-0 scheduled task, with the three servers as their distinct dedicated service accounts
-(peer allowlist = the broker's `SYSTEM` SID `S-1-5-18`), completes the full governed turn →
+(peer allowlist = the broker account's exclusive SID), and the manifest signed by the operator's
+**offline** root key, completes the full governed turn →
 
 ```
 RESULT: trusted_verified(production key=<signer-key-id> epoch=2) production_verified=true bound=true
 ```
 
-This closes the earlier `STATUS_DLL_INIT_FAILED` (`0xC0000142`) concern: that limitation only
-affects a **non-privileged service-account CONSOLE** process doing child-spawning in session 0
-— it does **not** affect `SYSTEM`, so it is not a blocker for the broker's real deployment. A
-dedicated non-`SYSTEM` `brops-broker` service account remains an option for a future
-least-privilege hardening, but running the broker as the `SYSTEM`/LocalSystem TCB principal is
-the correct and now-proven deployment.
+**Resolving the earlier `0xC0000142`:** the `STATUS_DLL_INIT_FAILED` a limited service-account
+console process hit in session 0 was the **debug-CRT DLL dependency** (e.g. `vcruntime140d.dll`)
+that account could not load — NOT a fundamental session-0 limitation. Building the win-live bins
+with **`-C target-feature=+crt-static`** removes the dynamic CRT dependency, and the dedicated
+`brops-broker` account then runs the full turn cleanly. (`SYSTEM` also works, but a dedicated
+non-`SYSTEM` broker is the correct least-privilege deployment and is what is now proven.)
+**Deployment note:** build the Windows kit with `+crt-static`.
 
 The governed-turn machinery itself is fully proven:
 
