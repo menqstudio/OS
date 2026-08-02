@@ -20,6 +20,8 @@ pub mod execution;
 pub mod pipe;
 pub mod proof;
 pub mod resolver;
+#[cfg(windows)]
+pub mod seedstore;
 pub mod servers;
 pub mod tcb;
 

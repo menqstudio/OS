@@ -121,8 +121,34 @@ impl Config {
     }
 }
 
-/// Read a hex-encoded 32-byte seed file into raw bytes.
+/// Load a principal's 32-byte seed. On Windows the seed is under DPAPI custody: a sealed blob is unsealed
+/// with the CURRENT account's master key (so only the owning service account can recover it); a legacy
+/// plaintext-hex file is parsed AND immediately re-sealed in place (trust-on-first-use), so after the first
+/// server start the seed is never plaintext at rest again. On non-Windows (Linux CI / in-process proof) only
+/// the hex form is used.
 pub fn read_seed(path: &str) -> Result<[u8; 32], String> {
-    let hex = std::fs::read_to_string(path).map_err(|e| format!("seed read {path}: {e}"))?;
-    crate::crypto::hex32(hex.trim()).ok_or_else(|| format!("seed malformed: {path}"))
+    let bytes = std::fs::read(path).map_err(|e| format!("seed read {path}: {e}"))?;
+
+    #[cfg(windows)]
+    {
+        if crate::seedstore::looks_sealed(&bytes) {
+            return crate::seedstore::dpapi_unseal(&bytes);
+        }
+        // Legacy plaintext hex on first run: parse, then seal to THIS account + atomically replace.
+        let hex = String::from_utf8_lossy(&bytes);
+        let seed = crate::crypto::hex32(hex.trim()).ok_or_else(|| format!("seed malformed: {path}"))?;
+        if let Ok(blob) = crate::seedstore::dpapi_seal(&seed) {
+            let tmp = format!("{path}.sealing");
+            if std::fs::write(&tmp, &blob).is_ok() {
+                let _ = std::fs::rename(&tmp, path); // same dir -> atomic replace, ACL preserved
+            }
+        }
+        return Ok(seed);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let hex = String::from_utf8_lossy(&bytes);
+        crate::crypto::hex32(hex.trim()).ok_or_else(|| format!("seed malformed: {path}"))
+    }
 }
