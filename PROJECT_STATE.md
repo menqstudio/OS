@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **⏭️ CURRENT ACTIVE (2026-08-02): PR #48 (Wave 3b + cockpit) AND PR #49 (Windows §0.W syscall) MERGED to `main` (tip `aad6809`, green).** The active workflow is now **PR #50 · branch `feat/govern-ai-surfaces-design`** (base `main`, task T-017): Phase-2 "govern the AI surfaces" — design proposal + slice 1 (`reply_in_conversation` routes through the governed wall, fail-closed). `stream_ask`/`stream_run_step` deferred (core work). No gate-logic change; no production `trusted_verified`; shipped "Verified" stays fail-closed. `feat/cockpit-pages`/PR #48 and `feat/windows-broker-syscall`/PR #49 prose below is HISTORY (merged).
+> **⏭️ CURRENT ACTIVE (2026-08-02): PR #48 (Wave 3b), #49 (Windows §0.W syscall), #50 (Phase-2 slice 1 — `reply_in_conversation` governed) MERGED to `main` (tip `f2b844e`, green).** The active workflow is now **PR #51 · branch `feat/govern-stream-ask`** (base `main`, task T-017): Phase-2 slice 2 — `stream_ask` routed through the governed wall (conversation-less held-answer accept in receipt_store + migration 0016; fail-closed). **Two of three ungoverned back doors closed.** `stream_run_step` + tightening `stream_reply` remain. No gate-logic change; no production `trusted_verified`; shipped "Verified" stays fail-closed. Earlier merged-PR prose below is HISTORY.
 
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
