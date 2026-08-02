@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, Badge, Avatar, EmptyState, Skeleton, ErrorState } from '../components/ui';
+import { PageHeader, Panel, Button, Badge, Avatar, EmptyState, Skeleton, ErrorState, usePrefersReducedMotion } from '../components/ui';
 import { useAsync } from '../hooks/useAsync';
 import { desktop, hasBackend } from '../services/desktop';
+import { buildECG, STRIP_W, STRIP_H } from '../components/charts/geometry';
 import type { ActivityEvent } from '../domain/entities';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,24 +24,9 @@ import type { ActivityEvent } from '../domain/entities';
 const MAX_BLIPS = 48;
 /** Number of ECG complexes drawn across the strip (visual cadence only). */
 const ECG_BEATS = 8;
-const STRIP_W = 1000;
-const STRIP_H = 150;
-
-/** Respect `prefers-reduced-motion` for JS-driven motion (CSS handles the rest). */
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(
-    () => typeof window !== 'undefined' && !!window.matchMedia
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-  );
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const on = () => setReduced(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, []);
-  return reduced;
-}
+// Strip dimensions and the ECG waveform builder are the shared, deterministic
+// chart geometry (components/charts/geometry.ts) — the same source the Beatline
+// primitive draws from — so this page keeps no bespoke copy of them.
 
 /** Integer count-up (§D motion "integer count-up on vitals"). Snaps instantly
  *  when `animate` is false so reduced-motion users get the final value at once. */
@@ -60,33 +46,6 @@ function useCountUp(target: number, animate: boolean): number {
     return () => cancelAnimationFrame(raf);
   }, [target, animate]);
   return value;
-}
-
-/** buildECG — synthesize an ECG (P-QRS-T) SVG path across `beats` complexes.
- *  Deterministic geometry; carries no telemetry meaning. */
-function buildECG(width: number, height: number, beats: number): string {
-  const mid = height / 2;
-  const seg = width / beats;
-  let d = `M 0 ${mid}`;
-  for (let i = 0; i < beats; i++) {
-    const x = i * seg;
-    const p = x + seg * 0.14;
-    const q = x + seg * 0.42;
-    const r = x + seg * 0.48;
-    const s = x + seg * 0.54;
-    const tw = x + seg * 0.74;
-    d += ` L ${p.toFixed(1)} ${mid.toFixed(1)}`;
-    d += ` L ${(p + seg * 0.05).toFixed(1)} ${(mid - height * 0.09).toFixed(1)}`;  // P
-    d += ` L ${(p + seg * 0.1).toFixed(1)} ${mid.toFixed(1)}`;
-    d += ` L ${q.toFixed(1)} ${(mid + height * 0.07).toFixed(1)}`;                 // Q
-    d += ` L ${r.toFixed(1)} ${(mid - height * 0.42).toFixed(1)}`;                 // R
-    d += ` L ${s.toFixed(1)} ${(mid + height * 0.18).toFixed(1)}`;                 // S
-    d += ` L ${(s + seg * 0.04).toFixed(1)} ${mid.toFixed(1)}`;
-    d += ` L ${tw.toFixed(1)} ${(mid - height * 0.15).toFixed(1)}`;                // T
-    d += ` L ${(tw + seg * 0.08).toFixed(1)} ${mid.toFixed(1)}`;
-    d += ` L ${(x + seg).toFixed(1)} ${mid.toFixed(1)}`;
-  }
-  return d;
 }
 
 interface Bi { (en: string, hy: string): string }
