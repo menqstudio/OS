@@ -1,5 +1,7 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
+> **⏭️ CURRENT ACTIVE (2026-08-02): PR #48 is MERGED to `main` (squash `08544d0`)** — the consolidated Wave 3b (live `trusted_verified` + full cockpit + the §0.W pure verification core) is on trunk. The active workflow is now **PR #49 · branch `feat/windows-broker-syscall`** (base `main`): the first REAL Windows §0.W syscall primitive — winapi named-pipe peer-SID authentication (the `SO_PEERCRED` equivalent) + a windows-latest CI proof. The Windows governed gate stays **false** (governed turns fail-closed); shipped "Verified" stays fail-closed. Everything below about `feat/cockpit-pages` / PR #48 is now HISTORY (merged).
+
 > **New Claude or ChatGPT session:** this file + the canonical files it points to are
 > everything you need. GitHub (`menqstudio/OS`) is the single source of truth — this
 > chat's predecessors are gone; do not rely on any prior chat memory. Read this in

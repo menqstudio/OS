@@ -1,5 +1,7 @@
 # TASKS — the coordination board · координация board
 
+> **⏭️ CURRENT ACTIVE (2026-08-02): PR #48 MERGED to `main` (squash `08544d0`).** The consolidated Wave 3b (live `trusted_verified` + full cockpit + §0.W pure core) is on trunk. The active workflow is **PR #49 · branch `feat/windows-broker-syscall`** (base `main`, task T-017): the first REAL Windows §0.W syscall primitive — winapi named-pipe peer-SID authentication + a windows-latest CI proof. Windows governed gate stays **false** (fail-closed). `feat/cockpit-pages` / PR #48 references below are HISTORY (merged).
+
 > **🥇 THE MOST IMPORTANT RULE: never two agents on the same task at the same time.**
 > Before you start a task, **claim it here** (set *Claimed by* + status `In-Progress`) in a commit on your branch.
 > Check this board **first, every session**. If a task is already `In-Progress` by someone else — pick another.
