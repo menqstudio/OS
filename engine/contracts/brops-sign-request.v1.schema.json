@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "brops.sign-request.v1",
+  "description": "Supervisor -> isolated receipt signer (design §4.1). The signer's ONLY input. Delivered over the dedicated supervisor->signer local channel (design §1.1); the sidecar never sends it. Large inputs are content-addressed HANDLES (hex sha256) the signer reads from the protected store — never inline bytes (design §1.9, P1-3). The whole frame is capped at 256 KiB. `evidence` is authoritative ONLY because `attestation.sig` covers it; every *_sha256 is DERIVED by the signer (recomputed from the store bytes), never trusted from the wire.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "attestation", "evidence"],
+  "properties": {
+    "protocol": { "const": "brops.sign-request.v1" },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attestation_protocol", "supervisor_key_id", "sig"],
+      "properties": {
+        "attestation_protocol": { "const": "brops.run-attestation.v1" },
+        "supervisor_key_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sig": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "base64url (no-pad) of a 64-byte Ed25519 signature over JCS(evidence). 64 bytes → exactly 86 base64url chars; padding + '+'/'/' are rejected."
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id", "execution_attempt_id", "lease_id", "request_nonce", "receipt_id",
+        "decision", "workspace_id", "install_id", "supervisor_id", "executor_id",
+        "builder_id", "policy_id", "policy_version", "requested_at", "completed_at",
+        "system_handle", "history_handle", "output_handle", "generation_config_handle",
+        "containment_evidence_handle", "policy_bundle_handle"
+      ],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "execution_attempt_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "lease_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "request_nonce": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "receipt_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "decision": { "const": "completed" },
+        "workspace_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "install_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "supervisor_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "executor_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "builder_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "policy_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "policy_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "requested_at": { "type": "string", "pattern": "^[0-9]+$" },
+        "completed_at": { "type": "string", "pattern": "^[0-9]+$" },
+        "system_handle": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "history_handle": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "output_handle": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "generation_config_handle": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "containment_evidence_handle": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "policy_bundle_handle": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

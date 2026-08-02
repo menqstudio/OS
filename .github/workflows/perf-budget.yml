@@ -1,0 +1,53 @@
+name: perf-budget
+
+# Bundle-size performance budget: build the cockpit frontend and fail the PR if any
+# Vite entry's initial gzipped payload exceeds the committed ceiling in
+# apps/desktop/perf-budget.json. Keeps cold-start latency from regressing silently.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  bundle-budget:
+    name: Cockpit · frontend bundle-size budget (build + check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Stdlib-only gate self-tests first — fast, no build required, proves the checker
+      # itself is sound before we trust its verdict on the real bundle.
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Budget-gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_bundle_budget
+
+      # Build the frontend (vite emits dist/.vite/manifest.json because
+      # vite.config.ts sets build.manifest = true).
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build the cockpit frontend
+        working-directory: apps/desktop
+        run: npm run build
+
+      # Fail-closed: any entry over budget, any unbudgeted entry, or any stale budget
+      # line fails the job.
+      - name: Enforce the bundle-size budget
+        run: python tools/check_bundle_budget.py

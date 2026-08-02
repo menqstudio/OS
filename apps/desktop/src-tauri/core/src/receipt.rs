@@ -1197,6 +1197,90 @@ mod tests {
     }
 
     #[test]
+    fn brops_all_formula_parity_matches_python() {
+        // Wave 3b-1 cross-language parity (design §3(d), §4.0a). The Python signer
+        // (`engine/runtime/brops_canonical.py`) and `engine/tests/test_brops_parity.py`
+        // assert the SAME hex from the SAME fixture. If a formula drifts, both break.
+
+        // system = raw UTF-8 bytes.
+        assert_eq!(
+            sha256_hex("You are Bro.".as_bytes()),
+            "245560397a2a5124423b16d544dfda343392cced1fa0981aefb833fba1f8d032"
+        );
+        // output = exact UTF-8 reply bytes.
+        assert_eq!(
+            sha256_hex("the answer".as_bytes()),
+            "a7c9985d46ca5719357525cc365641e45d6882fb66949d4c08989883f8148c8b"
+        );
+        // generation_config = raw bytes.
+        assert_eq!(
+            sha256_hex(r#"{"model":"claude","temperature":0}"#.as_bytes()),
+            "963be7a4e0b02ab18478b28a969f38f6c5c5b7f7bbe6bccf67ec9495cb377234"
+        );
+        // history = compact JSON of [{content,role}, ...], keys ordered, non-ASCII raw
+        // UTF-8 (matches ai.rs::governed_history_sha256 + Python history_bytes).
+        let history: Vec<BTreeMap<&str, &str>> = vec![
+            [("content", "hi"), ("role", "user")].into_iter().collect(),
+            [("content", "hello é✈"), ("role", "assistant")].into_iter().collect(),
+        ];
+        let history_bytes = serde_json::to_vec(&history).unwrap();
+        // Non-ASCII stays raw UTF-8 (serde_json does not \u-escape), keys ordered
+        // content<role, compact — byte-identical to Python `history_bytes`.
+        assert_eq!(
+            history_bytes,
+            "[{\"content\":\"hi\",\"role\":\"user\"},{\"content\":\"hello é✈\",\"role\":\"assistant\"}]".as_bytes()
+        );
+        assert_eq!(
+            sha256_hex(&history_bytes),
+            "fbd46857ec1ed759024d56430d5f00214e9a478b6f94ec3933f498aa7cd14c80"
+        );
+        // request envelope.
+        let request = request_envelope_sha256(
+            "ws-1",
+            "install-1",
+            "11111111-1111-4111-8111-111111111111",
+            "245560397a2a5124423b16d544dfda343392cced1fa0981aefb833fba1f8d032",
+            "fbd46857ec1ed759024d56430d5f00214e9a478b6f94ec3933f498aa7cd14c80",
+            "963be7a4e0b02ab18478b28a969f38f6c5c5b7f7bbe6bccf67ec9495cb377234",
+            "1000",
+        );
+        assert_eq!(request, "6cce48e660b34938e9f3e98dd12f20f0e4d3d29d0539fff82bc15369062d4a66");
+        // The full 21-field receipt envelope JCS (opaque hex fields for
+        // containment/policy are just strings here).
+        let mut env: BTreeMap<String, String> = BTreeMap::new();
+        for (k, v) in [
+            ("protocol", RECEIPT_PROTOCOL),
+            ("key_id", "receipt-key-1"),
+            ("receipt_id", "22222222-2222-4222-8222-222222222222"),
+            ("decision", "completed"),
+            ("request_nonce", "11111111-1111-4111-8111-111111111111"),
+            ("request_sha256", &request),
+            ("requested_at", "1000"),
+            ("completed_at", "2000"),
+            ("workspace_id", "ws-1"),
+            ("install_id", "install-1"),
+            ("supervisor_id", "sup-1"),
+            ("executor_id", "exec-1"),
+            ("builder_id", "builder-1"),
+            ("policy_id", "policy-1"),
+            ("policy_version", "1"),
+            ("system_sha256", "245560397a2a5124423b16d544dfda343392cced1fa0981aefb833fba1f8d032"),
+            ("history_sha256", "fbd46857ec1ed759024d56430d5f00214e9a478b6f94ec3933f498aa7cd14c80"),
+            ("output_sha256", "a7c9985d46ca5719357525cc365641e45d6882fb66949d4c08989883f8148c8b"),
+            ("generation_config_sha256", "963be7a4e0b02ab18478b28a969f38f6c5c5b7f7bbe6bccf67ec9495cb377234"),
+            ("containment_evidence_sha256", "4added8a71b943254639a80deadff9a4e62e7a39b31e247b44007e3596677d16"),
+            ("policy_bundle_sha256", "1ba910c02817ad322145351bb70efdbfcb2589fe989ebe6b190ce1e8cd7a61e1"),
+        ] {
+            env.insert(k.to_string(), v.to_string());
+        }
+        assert_eq!(env.len(), RECEIPT_FIELDS.len());
+        assert_eq!(
+            sha256_hex(&jcs_bytes(&env)),
+            "37075e5fd925e78cd386eef4d548d0b940c3e23ad1b9c22c5ee88dda9c518f00"
+        );
+    }
+
+    #[test]
     fn jcs_is_sorted_compact_and_minimally_escaped() {
         let mut m = BTreeMap::new();
         m.insert("b".to_string(), "x".to_string());

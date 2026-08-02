@@ -1,0 +1,96 @@
+# deny.toml - cargo-deny policy for menqstudio/OS (Tauri host workspace).
+#
+# Consumed by .github/workflows/supply-chain.yml job `cargo-deny`:
+#   cargo deny --manifest-path apps/desktop/src-tauri/Cargo.toml \
+#     --all-features --config .github/supply-chain/deny.toml \
+#     check advisories bans licenses sources
+#
+# Written for the cargo-deny 0.16.x schema. Fails closed on vulnerabilities and on
+# copyleft/unknown licenses; keeps advisory waivers in ONE place ([advisories].ignore)
+# alongside the cargo-audit ignore list.
+
+[graph]
+# Scan the full graph. Leave targets empty to evaluate every target; narrow later
+# if cross-compilation targets need to be excluded from the license/ban policy.
+all-features = true
+
+[advisories]
+# The advisory DB is the source of truth for vulnerabilities.
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/RustSec/advisory-db"]
+# Fail closed: any security vulnerability is a hard error (this is the "fail on high+"
+# lever - RustSec advisories are security-severity by definition).
+yanked = "deny"
+# Advisory IDs consciously waived. Keep in sync with
+# .github/supply-chain/cargo-audit-ignore.txt. Each entry needs a triage comment.
+ignore = [
+    # unmaintained/unsound warnings on TRANSITIVE deps, no fix at the pinned Tauri 2
+    # version (NOT vulnerabilities). Tracked: Tauri GTK4 migration / dep refresh.
+    # gtk-rs 0.18 GTK3 stack (Tauri Linux backend):
+    "RUSTSEC-2024-0413", # atk
+    "RUSTSEC-2024-0416", # atk-sys
+    "RUSTSEC-2024-0412", # gdk
+    "RUSTSEC-2024-0418", # gdk-sys
+    "RUSTSEC-2024-0411", # gdkwayland-sys
+    "RUSTSEC-2024-0417", # gdkx11
+    "RUSTSEC-2024-0414", # gdkx11-sys
+    "RUSTSEC-2024-0415", # gtk
+    "RUSTSEC-2024-0420", # gtk-sys
+    "RUSTSEC-2024-0419", # gtk3-macros
+    "RUSTSEC-2024-0429", # glib (unsound)
+    # other unmaintained transitive deps:
+    "RUSTSEC-2024-0370", # proc-macro-error
+    "RUSTSEC-2025-0081", # unic-char-property
+    "RUSTSEC-2025-0075", # unic-char-range
+    "RUSTSEC-2025-0080", # unic-common
+    "RUSTSEC-2025-0100", # unic-ucd-ident
+    "RUSTSEC-2025-0098", # unic-ucd-version
+]
+
+[licenses]
+# Explicit allowlist of SPDX license expressions permitted in the dependency graph.
+# Anything not on this list is a hard error (fail closed on unknown/unvetted licenses).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0", # permissive data license (Mozilla CA-roots bundle); OSI-style permissive
+]
+# Below this confidence, cargo-deny refuses to guess a license -> hard error.
+confidence-threshold = 0.9
+# Per-crate license clarifications go here if a crate ships an ambiguous license file.
+exceptions = []
+# First-party workspace crates (brops, brops-core) are unpublished (publish = false) — they are the
+# thing being audited, not third-party deps — so exclude them from the license allowlist check.
+private = { ignore = true }
+
+[bans]
+# Deny-by-severity for duplicate/unwanted crates. `warn` on multiple-versions keeps
+# the job green while surfacing drift; flip to "deny" once the graph is deduplicated.
+multiple-versions = "warn"
+wildcards = "deny"
+# Internal path deps (brops-core = { path = "core" }) carry no version req; permit the wildcard
+# ONLY for local path deps — registry wildcards stay denied.
+allow-wildcard-paths = true
+# Crates that must never appear in the graph (add known-bad or policy-forbidden crates).
+deny = [
+    # { name = "openssl", reason = "prefer rustls; no system OpenSSL in the host crate" },
+]
+skip = []
+skip-tree = []
+
+[sources]
+# Only crates.io (and explicitly-listed git sources) are permitted; an unknown
+# registry or git remote is a hard error (fail closed on unvetted sources).
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

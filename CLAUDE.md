@@ -32,6 +32,21 @@ Only then start. **No exceptions.** When Gev says *"go read the repo / կարդ�
 
 ---
 
+## ⛔ CONTINUOUS-DOCUMENTATION LAW — mandatory, every work cycle · ՊԱՐՏԱԴԻՐ
+
+**After EVERY substantive** design change, code change, audit verdict, HEAD change, blocker discovery/closure, status transition, or merge, you MUST — **in the same work cycle** — update **all** affected canonical documents, commit, push, and update the PR body. **No required continuation state may live only in chat, GPT chat, memory, a scratchpad, or an unpushed commit.**
+
+At every moment the repository must be sufficient for a brand-new Claude/GPT session told only *"Go to `menqstudio/OS`, read `NEXT_CHAT.md` and every file in `config/canonical-read-manifest.json`, verify the exact GitHub HEAD/CI, and continue"* — and then continue correctly **from GitHub alone**, without asking Gev to repeat history. This is **continuous**, not a one-time cleanup; do not create a disconnected documentation graveyard — update the authoritative existing files. One file is the **single normative source** per subsystem (e.g. the 3b-1B contracts live only in `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`); other files reference it and must not re-inline schemas that can drift. Revision history is a **non-normative appendix** — historical prose never redefines a current contract.
+
+**CI is NOT a doc-commit trigger (avoid the commit→CI→doc-commit→CI loop):** **GitHub Checks/Actions is the authoritative current-exact-head CI source.** A **substantive** commit updates canonical docs *before* push; after its CI completes, update the **PR body / status text without changing HEAD** when practical — **do NOT create a new commit solely to change a CI run number**. Canonical docs instruct new sessions to **query GitHub for the current HEAD's real CI** rather than trusting a hardcoded run number; a later substantive commit naturally records the previously-reviewed run as historical evidence. **CI GREEN ≠ design/audit GREEN** remains mandatory (only an Architect verdict on the exact HEAD is GREEN).
+
+**Each substantive cycle:** (1) update at least `NEXT_CHAT.md` (§3 = authoritative current state), `PROJECT_STATE.md`, `TASKS.md`, the relevant `docs/design/*` (banner + changelog), this `CLAUDE.md` where the law/roadmap state belongs, the PR body, and any other roadmap/status/handoff doc holding the changed fact (manifest only if the startup read-set changes); (2) record exact HEAD, the reviewed CI run + result, current revision, verdict, OPEN findings, next permitted action, STOP gates; (3) run `python tools/check_coordination.py` + `python tools/check_capabilities.py` (both GREEN) and verify manifest paths exist; (4) commit, **push**, `gh pr edit <n> --body-file …`, and confirm the remote HEAD.
+
+**Design docs:** one file is the single normative source per subsystem (e.g. the 3b-1B contracts live only in `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`); other files reference it and must not re-inline schemas that can drift. Revision history is a **non-normative appendix** — historical prose never redefines a current contract.
+
+
+---
+
 # English
 
 > This file is the single source of truth for what this repo *is*, where it stands, how to

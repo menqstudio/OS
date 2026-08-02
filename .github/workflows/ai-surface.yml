@@ -1,0 +1,33 @@
+name: ai-surface
+
+# AI-entry-point inventory gate: every Tauri command that reaches the model provider (directly or one
+# pub-helper hop) must be classified in apps/desktop/src-tauri/ai-surface-policy.json. Fail-closed on an
+# unclassified surface, a stale policy entry, an untracked ungoverned surface, or a 'governed' surface
+# that actually reaches a generic provider entry. Offline + deterministic.
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop/src-tauri/src/commands.rs'
+      - 'apps/desktop/src-tauri/ai-surface-policy.json'
+      - 'tools/check_ai_surfaces.py'
+      - 'tools/test_check_ai_surfaces.py'
+      - '.github/workflows/ai-surface.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ai-surface:
+    name: AI-surface inventory gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: '3.12'
+      - name: Unit tests (parser + resolver)
+        run: python -m unittest tools.test_check_ai_surfaces -v
+      - name: Inventory gate (fail-closed)
+        run: python tools/check_ai_surfaces.py --root .
