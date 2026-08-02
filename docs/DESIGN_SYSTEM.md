@@ -134,6 +134,24 @@ Not a component but shared: `.badge` inside a calendar event, `.board-*`
 (kanban), `.chat-*`, `.bar-chart`, `.toast*`, `.offline-banner` classes are all
 defined in `ui.css` and consume the same tokens.
 
+### 3.1 Phase-4 library primitives (G1–G7)
+
+Reusable primitives added in Phase-4. Each is presentational and locale-neutral
+(labels are passed in as props, so none call `useApp()` or touch the IPC layer),
+each renders classes in `ui.css` (charts in `components/charts/`), and each
+covers the standard §D concerns — role/aria, keyboard, non-color signal, and
+`prefers-reduced-motion`.
+
+| Primitive | Import | Props (key) | States / keyboard / aria / reduced-motion |
+| --- | --- | --- | --- |
+| **`DataTable<T>`** (G1) | `components/ui` | `columns: Column<T>[]`, `rows`, `rowKey`, `caption`, `loading?`, `emptyTitle?`/`emptyHint?`/`emptyGlyph?`, `onActivateRow?`, `skeletonRows?` | Native `<table role="table">` with `<caption>` + `<th scope="col">`. **States:** `loading` → `aria-busy` skeleton rows; `rows.length === 0` → `EmptyState`; else data rows. **Keyboard:** roving `tabindex` on rows — Up/Down move focus, Home/End jump, Enter/Space activate (when `onActivateRow`). **Non-color:** `numeric` columns right-align with tabular-nums (layout signal, not hue). **Motion:** none. |
+| **`Drawer`** (G2) | `components/ui` | `title`, `onClose`, `side?='right'`, `children`, `footer?` | Mirrors `Modal`: `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, scrim-click closes, inner click stopped. **Keyboard:** Esc closes; Tab is trapped inside; initial focus lands on the first focusable; focus is restored to the opener on unmount. **Motion:** slide-in from the edge, disabled under reduced-motion. |
+| **`Rail`** / **`RailSection`** (G3) | `components/ui` | `Rail`: `label`, `side?='left'`, `actions?`, `children`. `RailSection`: `title`, `children` | `Rail` renders a landmark `<aside role="complementary">` with an accessible name and optional header/actions; `RailSection` titles a sub-group. Promotes the bespoke context/command/group-rail pattern. **Motion:** none. |
+| **`TileGroup`** / **`StatTile`** (G4) | `components/ui` | `TileGroup`: `label`, `children`. `StatTile`: `glyph`, `value`, `label`, `hint?`, `countUp?`, `onActivate?` | Promotes Home's bespoke `.stat` tile. **Keyboard:** inside a `TileGroup`, arrow keys (both axes) + Home/End rove focus with a single tab stop; a `StatTile` with `onActivate` is a `<button>` with a trailing "→". **Non-color:** glyph + label carry meaning. **Motion:** optional integer count-up on a numeric `value`, snapped to the final value under reduced-motion. |
+| **`Mark`** / **`LiveMark`** (G5) | `components/ui` | `Mark`: `word?='Br·PS'`, `sub?`. `LiveMark`: `state?='live'\|'connecting'\|'offline'`, `label?`, `word?` | The "Br·PS" brand wordmark, extracted from the Shell. **Non-color:** `LiveMark` shows a state word ("Live"/"Connecting"/"Offline") next to its dot; color only echoes it. **Motion:** the live dot pulses only in `state="live"`, disabled under reduced-motion (`livemark--still`). |
+| **`InlineAlert`** (G6) | `components/ui` | `tone?='info'\|'success'\|'warning'\|'danger'`, `title?`, `children?`, `glyph?` | Inline notice strip. **Aria:** `danger` → `role="alert"` (assertive); calmer tones → `role="status"` (polite). **Non-color:** a leading glyph (`ℹ`/`✓`/`⚠`) carries the tone plus a left-border accent. **Motion:** none. |
+| **`Beatline`** (G7) | `components/charts/Chart` | `data: BeatPoint[]`, `caption`, `summary?`, `unit?`, `height?`, `loading?`, `emptyTitle?`/`emptyHint?`, `valueHeader?`/`labelHeader?`, `showDots?` | Accessible deterministic line/beatline chart (geometry in `components/charts/geometry.ts` — `buildECG`, `buildLinePath`, `pointCoords`, all pure). **States:** `loading` → `aria-busy` skeleton; empty `data` → `EmptyState`; else the plot. **Aria:** `<svg role="img">` labelled by a visible one-line `summary`; a `<details>` data-table fallback lists every point as text. **Non-color:** one accent stroke; meaning lives in the summary + table. **Motion:** the draw-on animation is disabled under reduced-motion. |
+
 ### Tones and the `statusTone` map
 
 `Tone` (`enums.ts`) = `'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info'`.
