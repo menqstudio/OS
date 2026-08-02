@@ -1,6 +1,6 @@
 # TASKS — the coordination board · координация board
 
-> **⏭️ CURRENT ACTIVE (2026-08-02): PR #48 MERGED to `main` (squash `08544d0`).** The consolidated Wave 3b (live `trusted_verified` + full cockpit + §0.W pure core) is on trunk. The active workflow is **PR #49 · branch `feat/windows-broker-syscall`** (base `main`, task T-017): the first REAL Windows §0.W syscall primitive — winapi named-pipe peer-SID authentication + a windows-latest CI proof. Windows governed gate stays **false** (fail-closed). `feat/cockpit-pages` / PR #48 references below are HISTORY (merged).
+> **⏭️ CURRENT ACTIVE (2026-08-02): PR #48 (Wave 3b + cockpit) AND PR #49 (Windows §0.W syscall) MERGED to `main` (tip `aad6809`).** The active workflow is **PR #50 · branch `feat/govern-ai-surfaces-design`** (base `main`, task T-017): Phase-2 "govern the AI surfaces" — design proposal + slice 1 (`reply_in_conversation` routes through the governed wall, fail-closed). `stream_ask`/`stream_run_step` deferred. No gate-logic change; no production `trusted_verified`. `feat/cockpit-pages`/PR #48 and `feat/windows-broker-syscall`/PR #49 references below are HISTORY (merged).
 
 > **🥇 THE MOST IMPORTANT RULE: never two agents on the same task at the same time.**
 > Before you start a task, **claim it here** (set *Claimed by* + status `In-Progress`) in a commit on your branch.
