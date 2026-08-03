@@ -628,6 +628,29 @@ pub fn rename_conversation(state: State<AppState>, id: String, title: String) ->
     repo::chat::rename_conversation(&conn, &id, &title).map_err(|e| e.to_string())
 }
 
+/// Replace a group room's participant roster (the create-modal multi-select). Names are the
+/// agent/human display names in the room; the reply fan-out and each agent's prompt use them.
+#[tauri::command]
+pub fn set_conversation_participants(
+    state: State<AppState>,
+    conversation_id: String,
+    names: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let conn = locked(&state)?;
+    repo::chat::set_participants(&conn, &conversation_id, &names).map_err(|e| e.to_string())?;
+    repo::chat::list_participants(&conn, &conversation_id).map_err(|e| e.to_string())
+}
+
+/// The participant roster for a conversation (empty when none were set).
+#[tauri::command]
+pub fn list_conversation_participants(
+    state: State<AppState>,
+    conversation_id: String,
+) -> Result<Vec<String>, String> {
+    let conn = locked(&state)?;
+    repo::chat::list_participants(&conn, &conversation_id).map_err(|e| e.to_string())
+}
+
 // --- knowledge ---
 
 #[tauri::command]
@@ -892,8 +915,15 @@ pub async fn stream_reply(
                 content: format!("{}: {}", m.author, m.body),
             })
             .collect();
+        // Roster-aware prompt (#5): name who else is present so the agent can address the room.
+        let roster = repo::chat::list_participants(&conn, &conversation_id).unwrap_or_default();
+        let room = if roster.is_empty() {
+            String::new()
+        } else {
+            format!(" The people and agents present in this room are: {}.", roster.join(", "))
+        };
         let system = format!(
-            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what. Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
+            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what.{room} Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
         );
         (system, history)
     };
@@ -1638,8 +1668,15 @@ pub async fn reply_in_conversation(
                 content: format!("{}: {}", m.author, m.body),
             })
             .collect();
+        // Roster-aware prompt (#5): name who else is present so the agent can address the room.
+        let roster = repo::chat::list_participants(&conn, &conversation_id).unwrap_or_default();
+        let room = if roster.is_empty() {
+            String::new()
+        } else {
+            format!(" The people and agents present in this room are: {}.", roster.join(", "))
+        };
         let system = format!(
-            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what. Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
+            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what.{room} Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
         );
         (system, history)
     };

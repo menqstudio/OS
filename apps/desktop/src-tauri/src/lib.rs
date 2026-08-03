@@ -130,6 +130,8 @@ pub fn run() {
             commands::list_activity,
             commands::list_conversations,
             commands::create_conversation,
+            commands::set_conversation_participants,
+            commands::list_conversation_participants,
             commands::list_messages,
             commands::post_message,
             commands::post_user_message,

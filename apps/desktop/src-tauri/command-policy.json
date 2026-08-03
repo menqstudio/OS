@@ -30,6 +30,14 @@
       "tier": "L1",
       "grant": "allow"
     },
+    "set_conversation_participants": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "list_conversation_participants": {
+      "tier": "R",
+      "grant": "allow"
+    },
     "create_decision": {
       "tier": "L1",
       "grant": "allow"

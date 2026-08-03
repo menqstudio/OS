@@ -50,6 +50,11 @@ export const STR = {
     hy: 'Պատճենվեց',
     ru: 'Скопировано',
   },
+  participants: {
+    en: 'Participants',
+    hy: 'Մասնակիցներ',
+    ru: 'Участники',
+  },
   thinkingCap: {
     en: 'THINKING',
     hy: 'ՄՏԱԾՈՒՄ',

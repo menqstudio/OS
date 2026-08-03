@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-conversation-participants"
+description = "Enables the list_conversation_participants command without any pre-configured scope."
+commands.allow = ["list_conversation_participants"]
+
+[[permission]]
+identifier = "deny-list-conversation-participants"
+description = "Denies the list_conversation_participants command without any pre-configured scope."
+commands.deny = ["list_conversation_participants"]

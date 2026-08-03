@@ -146,6 +146,12 @@ export const desktop = {
   deleteConversation: (id: string) => invoke<void>('delete_conversation', { id }),
   renameConversation: (id: string, title: string) =>
     invoke<Conversation>('rename_conversation', { id, title }),
+  // Group-room roster: the create-modal multi-select sets it; the reply fan-out + each
+  // agent's prompt use it. Returns the stored roster.
+  setConversationParticipants: (conversationId: string, names: string[]) =>
+    invoke<string[]>('set_conversation_participants', { conversationId, names }),
+  listConversationParticipants: (conversationId: string) =>
+    invoke<string[]>('list_conversation_participants', { conversationId }),
 
   // knowledge
   listKnowledge: () => invoke<KnowledgeNote[]>('list_knowledge'),

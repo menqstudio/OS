@@ -2348,6 +2348,13 @@ body.ignited .shimmer{opacity:1}
 .v-chat .turn:hover .t-copy{opacity:.85}
 .v-chat .t-copy:hover{background:rgb(var(--cyan-rgb)/.12);color:var(--ink)}
 .v-chat .t-copy.done{color:var(--cyan);opacity:1}
+/* group-room participant multi-select (create modal) */
+.participant-pick{display:flex;flex-wrap:wrap;gap:6px}
+.pp-chip{padding:5px 11px;border-radius:999px;font-size:12.5px;cursor:pointer;color:var(--ink-muted);
+  background:rgb(var(--hi-rgb)/.5);border:1px solid rgb(var(--line-rgb)/.8);transition:all var(--fast)}
+.pp-chip:hover{color:var(--ink)}
+.pp-chip.on{color:var(--ink);background:rgb(var(--cyan-rgb)/.14);border-color:rgb(var(--cyan-rgb)/.5);
+  box-shadow:inset 0 0 0 1px rgb(var(--cyan-rgb)/.3)}
 
 /* inline @mention chip */
 .v-chat .mn{font-family:var(--f-mono);font-size:12.5px;font-weight:600;color:var(--cyan-soft);

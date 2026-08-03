@@ -115,9 +115,12 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
   const ai = useAsync(() => desktop.aiStatus(), []);
   const agents = useAsync(() => desktop.listAgents(), []);
+  // The explicit room roster (0017). When set, it drives who answers a group message.
+  const participants = useAsync(() => desktop.listConversationParticipants(conversation.id), [conversation.id]);
   const isGroup = conversation.kind === 'group';
   const agentList = agents.data ?? [];
   const agentNames = agentList.map((a) => a.displayName);
+  const roster = (participants.data ?? []).filter((n) => agentNames.includes(n));
   const [selectedAgent, setSelectedAgent] = useState('Bro');
   const [streamingAuthor, setStreamingAuthor] = useState('Bro');
   const [draft, setDraft] = useState('');
@@ -262,7 +265,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
       const responders = mentioned.length
         ? mentioned
         : isGroup
-          ? (agentNames.slice(0, 2).length ? agentNames.slice(0, 2) : ['Bro'])
+          ? (roster.length ? roster : agentNames.slice(0, 2).length ? agentNames.slice(0, 2) : ['Bro'])
           : [selectedAgent];
       for (const who of responders) {
         if (cancelledRef.current) break;
@@ -562,10 +565,16 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
 }
 
 function NewRoomForm({ onClose, onCreated }: { onClose: () => void; onCreated: (c: Conversation) => void }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const agents = useAsync(() => desktop.listAgents(), []);
+  const agentNames = (agents.data ?? []).map((a) => a.displayName);
+  // #6 multi-select: choose which specialists are in the room.
+  const [picked, setPicked] = useState<string[]>([]);
+  const toggle = (n: string) => setPicked((p) => (p.includes(n) ? p.filter((x) => x !== n) : [...p, n]));
 
   const submit = () => {
     if (!name.trim() || busy) return;
@@ -573,7 +582,12 @@ function NewRoomForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
     setError(null);
     desktop
       .createConversation('group', name.trim())
-      .then((c) => {
+      .then(async (c) => {
+        // Persist the chosen roster (default to the first two agents when none picked).
+        const roster = picked.length ? picked : agentNames.slice(0, 2);
+        if (roster.length) {
+          try { await desktop.setConversationParticipants(c.id, roster); } catch { /* non-fatal */ }
+        }
         onCreated(c);
         onClose();
       })
@@ -589,6 +603,23 @@ function NewRoomForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
       <FormRow label={t('chat.roomName')}>
         <Input value={name} autoFocus onChange={(e) => setName(e.target.value)} />
       </FormRow>
+      {agentNames.length > 0 && (
+        <FormRow label={L('participants')}>
+          <div className="participant-pick">
+            {agentNames.map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`pp-chip${picked.includes(n) ? ' on' : ''}`}
+                onClick={() => toggle(n)}
+                aria-pressed={picked.includes(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </FormRow>
+      )}
       <div className="form-actions">
         <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant="primary" onClick={submit}>{t('action.create')}</Button>

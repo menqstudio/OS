@@ -46,6 +46,8 @@ fn main() {
         // chat
         "list_conversations",
         "create_conversation",
+        "set_conversation_participants",
+        "list_conversation_participants",
         "list_messages",
         "post_message",
         "post_user_message",

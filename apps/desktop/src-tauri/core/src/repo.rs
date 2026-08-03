@@ -1052,6 +1052,43 @@ pub mod chat {
         })
     }
 
+    /// Replace a conversation's participant roster (the explicit set of members in a group
+    /// room). Idempotent: clears the existing rows and inserts the given names deduped and
+    /// order-insensitive. The FK rejects an unknown conversation id, so callers pass a real one.
+    pub fn set_participants(conn: &Connection, conversation_id: &str, names: &[String]) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "DELETE FROM conversation_participants WHERE conversation_id = ?1",
+                [conversation_id],
+            )?;
+            let mut seen = std::collections::HashSet::new();
+            for name in names {
+                let n = name.trim();
+                if n.is_empty() || !seen.insert(n.to_string()) {
+                    continue;
+                }
+                tx.execute(
+                    "INSERT INTO conversation_participants (conversation_id, name, added_at) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![conversation_id, n, now()],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// The participant roster for a conversation, alphabetical. Empty when none were set.
+    pub fn list_participants(conn: &Connection, conversation_id: &str) -> CoreResult<Vec<String>> {
+        let mut stmt = conn.prepare(
+            "SELECT name FROM conversation_participants WHERE conversation_id = ?1 ORDER BY name",
+        )?;
+        let rows = stmt.query_map([conversation_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     /// Rename a conversation and bump its activity timestamp. Rejects an unknown
     /// conversation.
     pub fn rename_conversation(conn: &Connection, id: &str, title: &str) -> CoreResult<Conversation> {

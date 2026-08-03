@@ -35,6 +35,8 @@
     "allow-list-activity",
     "allow-list-conversations",
     "allow-create-conversation",
+    "allow-set-conversation-participants",
+    "allow-list-conversation-participants",
     "allow-list-messages",
     "allow-post-message",
     "allow-post-user-message",
