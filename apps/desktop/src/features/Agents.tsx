@@ -1,27 +1,26 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useApp } from '../app/store';
-import {
-  PageHeader, Panel, Badge, StatusPill, Avatar, Skeleton, ErrorState, EmptyState, Button,
-} from '../components/ui';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
 import { ringPositions } from '../components/charts/Chart';
+import { Mark } from '../components/Ambient';
 import type { Agent } from '../domain/entities';
 
-// ── Phase 6 · `agents` ⬡ Կենդանի Ցանց — the live agent lattice ─────────────────
-// Faithful to MASTER_EXECUTION_ROADMAP.md §D (lines 920-926): lattice/latStage/
-// latLinks + dossier, per-agent state (idle/flowing/throttled/blocked/completed),
-// owner + role; states live/loading/empty/error/blocked; link stream/emit motion,
-// suspend/interrupt on throttle/block; arrow-navigate + Enter/Esc; role=list
-// fallback, each node labeled "agent · role · state", state announced on change.
+// ── `agents` ⬡ Կենդանի Ցանց — the live agent lattice, dressed as the AI-OS mockup ─
+// The mockup (views/agents.js · «Կենդանի Ցանց») is a living roster network with a
+// state-census instrument and a re-forging dossier rail. This React port keeps the
+// mockup's chrome — `.lattice-panel .surface .cut .hud` (brackets/ticks/eyebrow/
+// legend/census) + a `.dossier .surface .soft` rail — but drives EVERY node from the
+// REAL `list_agents` Tauri command (services/desktop → domain Agent) laid out on the
+// shared, deterministic `ringPositions` lattice geometry. No fabricated roster.
 //
-// HONEST DATA. Nodes render REAL agents from the `list_agents` Tauri command
-// (services/desktop → domain Agent). The spec's fuller "engine supervisor live
-// pack state" (per-agent lease_id / receipt_id live subscription) has NO backing
-// command in this build, so the dossier renders an explicit honest "telemetry
-// pending" panel instead of fabricating lease/receipt values.
+// HONEST DATA. The mockup's fuller dossier (per-guild SKILLS, guild MATES, a live
+// telemetry sparkline, a current-task line) has NO backing in the real `Agent`
+// entity, so those fields are OMITTED rather than invented; the telemetry block
+// renders an explicit "governed telemetry pending" note. What the entity really
+// carries — displayName, role, status, model, slug, id — is all that is shown.
 
-// The five per-agent phases the spec names, derived from the real AgentStatus.
+// The five per-agent phases, derived from the real AgentStatus string.
 type Phase = 'idle' | 'flowing' | 'throttled' | 'blocked' | 'completed';
 
 function phaseOf(status: string): Phase {
@@ -42,136 +41,153 @@ function phaseOf(status: string): Phase {
   }
 }
 
-// Bilingual strings inlined (the shared i18n files are not edited). Falls back to
-// English for any non-Armenian UI language.
+// Phase → shared aios state class (drives the `--st-rgb` colour token used by the
+// legend swatch, census segment, node ring and governance link).
+const PHASE_STATE: Record<Phase, string> = {
+  idle: 'state-idle',
+  flowing: 'state-working',
+  throttled: 'state-waiting',
+  blocked: 'state-blocked',
+  completed: 'state-completed',
+};
+// Phase → foundation `.pill` tone (`.bad` is the v-agents-local danger pill).
+const PHASE_PILL: Record<Phase, string> = {
+  idle: 'off',
+  flowing: 'info',
+  throttled: 'warn',
+  blocked: 'bad',
+  completed: 'live',
+};
+// Phase → GLYPH power-mark state (mockup rule: mark reflects the real status).
+const PHASE_MARK: Record<Phase, string> = {
+  idle: 'idle',
+  flowing: 'live',
+  throttled: 'thinking',
+  blocked: 'alert',
+  completed: 'live',
+};
+
+const PHASE_ORDER: Phase[] = ['flowing', 'throttled', 'idle', 'completed', 'blocked'];
+
+// Bilingual strings inlined (the shared i18n files are not edited). Armenian reuses
+// the mockup's own strings; English is the fallback for any non-Armenian UI.
 type Lang = 'hy' | 'en';
 const STR: Record<Lang, Record<string, string>> = {
   en: {
-    networkTitle: 'Live Network',
-    dossierTitle: 'Dossier',
+    eyebrow: 'Roster · Live Network',
+    activeWord: 'active',
+    agentWord: 'agents',
+    censusLabel: 'State distribution',
+    latticeLabel: 'Agent lattice',
+    footHint: 'Pick a node to open its dossier',
+    keysHint: 'Arrows move · Enter opens · Esc closes',
     building: 'Building lattice…',
     linkLost: 'Link to the engine supervisor was lost — the live pack state is unavailable.',
     emptyTitle: 'No active agents',
     emptyHint: 'When the conductor dispatches a governed pack, its builders appear here.',
     conductor: 'conductor',
-    conductorHint: 'One conductor · the desktop observes, never holds a lease',
     pickTitle: 'Select an agent',
     pickHint: 'Choose a node in the lattice — or press Enter — to open its dossier.',
-    close: 'Close',
-    role: 'Role',
+    details: 'Details',
     owner: 'Owner',
     model: 'Model',
     slug: 'Slug',
     agentId: 'Agent ID',
-    phase: 'State',
+    state: 'State',
     governed: 'Governed telemetry',
     telemetryPending:
-      'Live lease & receipt telemetry is issued by the engine supervisor. That subscription is not wired in this build, so no lease_id / receipt_id is shown — the desktop never holds a lease.',
+      'Live lease & receipt telemetry is issued by the engine supervisor. That subscription is not wired in this build — no lease_id / receipt_id is shown, and the desktop never holds a lease.',
     blockedTitle: 'Agent blocked',
     blockedBody:
       'A governed turn for this agent was halted by the wall. Its result is withheld until a verified receipt is produced.',
-    legend: 'State legend',
-    keysHint: 'Arrows move between agents · Enter opens the dossier · Esc closes it',
-    latticeLabel: 'Agent lattice',
-    activeOf: 'active',
+    retry: 'Retry',
   },
   hy: {
-    networkTitle: 'Կենդանի Ցանց',
-    dossierTitle: 'Անձնագիր',
+    eyebrow: 'ՌՈՍՏԵՐ · ԿԵՆԴԱՆԻ ՑԱՆՑ',
+    activeWord: 'ԱԿՏԻՎ',
+    agentWord: 'ԳՈՐԾԱԿԱԼ',
+    censusLabel: 'Վիճակների բաշխում',
+    latticeLabel: 'Գործակալների ցանց',
+    footHint: 'Ընտրի՛ր հանգույց՝ անձնագիրը բացելու համար',
+    keysHint: 'Սլաքներ՝ տեղաշարժ · Enter՝ բացել · Esc՝ փակել',
     building: 'Ցանցը կառուցվում է…',
     linkLost: 'Կապը շարժիչի վերահսկիչի հետ կորավ — կենդանի փաթեթի վիճակն անհասանելի է։',
     emptyTitle: 'Ակտիվ գործակալներ չկան',
     emptyHint: 'Երբ դիրիժորը ուղարկի կառավարվող փաթեթ, նրա կառուցողները կհայտնվեն այստեղ։',
     conductor: 'դիրիժոր',
-    conductorHint: 'Մեկ դիրիժոր · աշխատասեղանը դիտում է, երբեք չի պահում լիզինգ',
     pickTitle: 'Ընտրեք գործակալ',
     pickHint: 'Ընտրեք հանգույց ցանցում — կամ սեղմեք Enter — բացելու համար նրա անձնագիրը։',
-    close: 'Փակել',
-    role: 'Դեր',
-    owner: 'Տեր',
-    model: 'Մոդել',
-    slug: 'Ծածկագիր',
-    agentId: 'Գործակալի ID',
-    phase: 'Վիճակ',
-    governed: 'Կառավարվող տվյալներ',
+    details: 'ՄԱՆՐԱՄԱՍՆԵՐ',
+    owner: 'ՏԵՐ',
+    model: 'ՄՈԴԵԼ',
+    slug: 'ԾԱԾԿԱԳԻՐ',
+    agentId: 'ԳՈՐԾԱԿԱԼԻ ID',
+    state: 'ՎԻՃԱԿ',
+    governed: 'ՀԵՌԱՉԱՓՈՒԹՅՈՒՆ',
     telemetryPending:
-      'Կենդանի լիզինգի և ստացականի տվյալները տրամադրվում են շարժիչի վերահսկիչի կողմից։ Այդ բաժանորդագրությունը միացված չէ այս կառուցվածքում, ուստի lease_id / receipt_id չի ցուցադրվում — աշխատասեղանը երբեք չի պահում լիզինգ։',
+      'Կենդանի լիզինգի և ստացականի տվյալները տրամադրվում են շարժիչի վերահսկիչի կողմից։ Այդ բաժանորդագրությունը միացված չէ այս կառուցվածքում — lease_id / receipt_id չի ցուցադրվում, և աշխատասեղանը երբեք չի պահում լիզինգ։',
     blockedTitle: 'Գործակալն արգելափակված է',
     blockedBody:
       'Այս գործակալի կառավարվող քայլը կանգնեցվեց պատի կողմից։ Արդյունքը պահվում է մինչև ստուգված ստացականի ստեղծումը։',
-    legend: 'Վիճակների լեգենդ',
-    keysHint: 'Սլաքները տեղաշարժում են · Enter-ը բացում է անձնագիրը · Esc-ը փակում է',
-    latticeLabel: 'Գործակալների ցանց',
-    activeOf: 'ակտիվ',
+    retry: 'Կրկնել',
   },
 };
 
 const PHASE_LABELS: Record<Lang, Record<Phase, string>> = {
   en: { idle: 'idle', flowing: 'flowing', throttled: 'throttled', blocked: 'blocked', completed: 'completed' },
-  hy: { idle: 'պարապ', flowing: 'հոսող', throttled: 'զսպված', blocked: 'արգելափակված', completed: 'ավարտված' },
+  hy: { idle: 'պարապ', flowing: 'հոսող', throttled: 'զսպված', blocked: 'արգելափակված', completed: 'ավարտ' },
 };
 
-const PHASE_ORDER: Phase[] = ['idle', 'flowing', 'throttled', 'blocked', 'completed'];
-
-// Node ring geometry comes from the shared, deterministic `ringPositions`
-// (components/charts/geometry): evenly spaced coordinates on a 0..100 ring so the
-// absolutely-positioned nodes and the SVG links stay aligned. The lattice itself
-// stays bespoke (see DESIGN_SYSTEM §3.1) — only the geometry is shared.
-
-function Dossier({ agent, L, phaseLabels }: { agent: Agent; L: Record<string, string>; phaseLabels: Record<Phase, string> }) {
+// ── The re-forging dossier rail — fills for the selected node ─────────────────
+function Dossier({
+  agent,
+  L,
+  phaseLabels,
+}: {
+  agent: Agent;
+  L: Record<string, string>;
+  phaseLabels: Record<Phase, string>;
+}) {
   const phase = phaseOf(agent.status);
   return (
-    <div className="stack" style={{ gap: 14 }}>
-      <div className="row" style={{ gap: 10 }}>
-        <Avatar name={agent.displayName} />
-        <span style={{ minWidth: 0 }}>
-          <div className="panel-title">{agent.displayName}</div>
-          <div className="muted">{agent.role}</div>
-        </span>
-        <span style={{ marginLeft: 'auto' }}>
-          <StatusPill status={agent.status} />
-        </span>
+    <>
+      <div className="dos-hd">
+        <span className="dos-face"><Mark state={PHASE_MARK[phase]} size={54} /></span>
+        <div className="dos-id">
+          <b>{agent.displayName}</b>
+          <span className="micro">{agent.role}</span>
+        </div>
+        <span className={`pill ${PHASE_PILL[phase]} dos-pill`}>{phaseLabels[phase]}</span>
       </div>
 
+      <p className="dos-role">Bro · {L.conductor}</p>
+
       {phase === 'blocked' && (
-        <div className="lat-blocked" role="note">
-          <div className="lat-blocked-title">⚠ {L.blockedTitle}</div>
-          <div className="muted" style={{ marginTop: 4 }}>{L.blockedBody}</div>
+        <div className="ag-blocked" role="note">
+          <span className="micro">⚠ {L.blockedTitle}</span>
+          <p>{L.blockedBody}</p>
         </div>
       )}
 
-      <div className="lat-facts">
-        <div className="field">
-          <span className="field-label">{L.phase}</span>
-          <span><Badge tone="neutral">{phaseLabels[phase]}</Badge></span>
-        </div>
-        <div className="field">
-          <span className="field-label">{L.role}</span>
-          <span>{agent.role}</span>
-        </div>
-        <div className="field">
-          <span className="field-label">{L.owner}</span>
-          <span>Bro · {L.conductor}</span>
-        </div>
-        <div className="field">
-          <span className="field-label">{L.model}</span>
-          <span>{agent.model ?? '—'}</span>
-        </div>
-        <div className="field">
-          <span className="field-label">{L.slug}</span>
-          <span className="lat-mono">{agent.slug}</span>
-        </div>
-        <div className="field">
-          <span className="field-label">{L.agentId}</span>
-          <span className="lat-mono">{agent.id}</span>
+      <div className="dos-block">
+        <span className="micro">{L.details}</span>
+        <div className="ag-facts">
+          <div className="ag-fact"><span className="ag-fk">{L.state}</span><span className={`pill ${PHASE_PILL[phase]}`}>{phaseLabels[phase]}</span></div>
+          <div className="ag-fact"><span className="ag-fk">{L.owner}</span><span>Bro · {L.conductor}</span></div>
+          <div className="ag-fact"><span className="ag-fk">{L.model}</span><span>{agent.model ?? '—'}</span></div>
+          <div className="ag-fact"><span className="ag-fk">{L.slug}</span><span className="ag-mono">{agent.slug}</span></div>
+          <div className="ag-fact ag-fact--wide"><span className="ag-fk">{L.agentId}</span><span className="ag-mono">{agent.id}</span></div>
         </div>
       </div>
 
-      <div className="lat-telemetry">
-        <div className="field-label">{L.governed}</div>
-        <div className="muted" style={{ marginTop: 6 }}>{L.telemetryPending}</div>
+      {/* Honest omission: the real Agent entity carries no live telemetry / skills /
+          guild-mates, so the mockup's sparkline + skill grades + mate stack are not
+          fabricated — this block states the governed telemetry is pending instead. */}
+      <div className="dos-block">
+        <span className="micro">{L.governed}</span>
+        <p className="muted ag-telemetry">{L.telemetryPending}</p>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -186,18 +202,30 @@ export function Agents() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [filter, setFilter] = useState<Phase | null>(null);
   const nodeRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  // Keep the roving focus index inside the current agent set.
+  // Roster state census — a real, live count per phase over the actual agents.
+  const counts = useMemo(() => {
+    const c: Record<Phase, number> = { idle: 0, flowing: 0, throttled: 0, blocked: 0, completed: 0 };
+    for (const a of agents) c[phaseOf(a.status)] += 1;
+    return c;
+  }, [agents]);
+  const active = counts.flowing + counts.throttled;
+
+  // Keep the roving focus index inside the current agent set; open the first node
+  // by default so the dossier rail is populated (mockup init select(0)).
   useEffect(() => {
     if (focusedIndex > agents.length - 1) setFocusedIndex(agents.length > 0 ? agents.length - 1 : 0);
   }, [agents.length, focusedIndex]);
+  useEffect(() => {
+    if (selectedId === null && agents.length > 0) setSelectedId(agents[0].id);
+  }, [agents, selectedId]);
 
   const selected = agents.find((a) => a.id === selectedId) ?? null;
   const focused = agents[focusedIndex] ?? null;
 
-  // aria-live: announce the currently focused node's "agent · role · state" so a
-  // screen-reader user hears the lattice change as they arrow across it.
+  // aria-live: announce the focused node's "agent · role · state".
   const announcement = focused
     ? `${focused.displayName} · ${focused.role} · ${phaseLabels[phaseOf(focused.status)]}`
     : '';
@@ -224,6 +252,7 @@ export function Agents() {
         moveFocus(-1);
         break;
       case 'Enter':
+      case ' ':
         e.preventDefault();
         setSelectedId(agents[focusedIndex]?.id ?? null);
         break;
@@ -239,109 +268,156 @@ export function Agents() {
   };
 
   const header = (
-    <PageHeader
-      title={t('nav.agents')}
-      subtitle={t('agents.subtitle')}
-      actions={agents.length > 0 ? <Badge tone="accent">{`${agents.length} ${L.activeOf}`}</Badge> : undefined}
-    />
+    <div className="pageHead">
+      <div>
+        <span className="eyebrow">{L.eyebrow}</span>
+        <h1>{t('nav.agents')}</h1>
+        <p className="sub">{t('agents.subtitle')}</p>
+      </div>
+      {agents.length > 0 && (
+        <div className="right">
+          <span className="pill live">{active} {L.activeWord}</span>
+          <span className="pill info">{agents.length} {L.agentWord}</span>
+        </div>
+      )}
+    </div>
   );
 
-  // ── States: loading(building) · error(link lost) · empty(no active agents) ──
+  // ── States: loading · error(link lost) · empty(no active agents) ────────────
   if (state.loading && state.data === null) {
     return (
-      <>
+      <div className="v-agents">
+        <style>{AG_CSS}</style>
         {header}
-        <style>{LATTICE_CSS}</style>
-        <Panel title={L.networkTitle}>
-          <div className="muted" style={{ marginBottom: 12 }} aria-live="polite">{L.building}</div>
-          <Skeleton rows={5} />
-        </Panel>
-      </>
+        <section className="lattice-panel surface cut hud" aria-label={L.latticeLabel}>
+          <i className="bracket tl" /><i className="bracket tr" /><i className="bracket bl" /><i className="bracket br" />
+          <div className="muted" style={{ marginBottom: 14 }} aria-live="polite">{L.building}</div>
+          <div className="ag-skel" aria-hidden="true"><i /><i /><i /><i /></div>
+        </section>
+      </div>
     );
   }
 
   if (state.error) {
     return (
-      <>
+      <div className="v-agents">
+        <style>{AG_CSS}</style>
         {header}
-        <Panel title={L.networkTitle}>
-          <ErrorState message={`${L.linkLost} ${state.error}`} onRetry={state.reload} retryLabel={t('action.retry')} />
-        </Panel>
-      </>
+        <section className="surface soft" role="alert" style={{ padding: 'var(--s6)' }}>
+          <span className="eyebrow">{L.eyebrow}</span>
+          <p className="muted" style={{ margin: '10px 0 14px', maxWidth: '60ch' }}>{`${L.linkLost} ${state.error}`}</p>
+          <button type="button" className="ag-btn" onClick={state.reload}>{L.retry}</button>
+        </section>
+      </div>
     );
   }
 
   if (agents.length === 0) {
     return (
-      <>
+      <div className="v-agents">
+        <style>{AG_CSS}</style>
         {header}
-        <Panel title={L.networkTitle}>
-          <EmptyState glyph="⬡" title={L.emptyTitle} hint={L.emptyHint} />
-        </Panel>
-      </>
+        <section className="surface soft ag-empty" role="status">
+          <span className="ag-empty-glyph" aria-hidden="true">⬡</span>
+          <div className="ag-empty-title">{L.emptyTitle}</div>
+          <p className="muted">{L.emptyHint}</p>
+        </section>
+      </div>
     );
   }
 
   // ── Default: the live lattice + dossier ─────────────────────────────────────
   return (
-    <>
+    <div className="v-agents">
+      <style>{AG_CSS}</style>
       {header}
-      <style>{LATTICE_CSS}</style>
 
-      <div className="lat-live-announce" aria-live="polite">{announcement}</div>
+      <span className="ag-sr" aria-live="polite">{announcement}</span>
 
-      <div className="lat-layout">
-        <Panel title={L.networkTitle}>
-          <div className="lattice">
-            {/* Decorative governance links from the central conductor to each node. */}
-            <svg className="latLinks" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-              {positions.map((p, i) => {
-                const phase = phaseOf(agents[i].status);
+      <div className="ros-wrap">
+        {/* ── HERO · the roster lattice ─────────────────────────────────────── */}
+        <section className="lattice-panel surface cut hud reveal" aria-label={L.latticeLabel}>
+          <i className="bracket tl" /><i className="bracket tr" /><i className="bracket bl" /><i className="bracket br" />
+          <div className="ticks" aria-hidden="true">
+            {Array.from({ length: 12 }).map((_, i) => <i key={i} />)}
+          </div>
+
+          <div className="lat-top">
+            <span className="eyebrow">{L.eyebrow}</span>
+            <div className="lat-legend" aria-hidden="true">
+              {PHASE_ORDER.map((p) => (
+                <span key={p} className={`lg-key ${PHASE_STATE[p]}`}><i />{phaseLabels[p]}</span>
+              ))}
+            </div>
+          </div>
+
+          {/* the one live instrument — state census (click a segment to isolate) */}
+          <div className="census" role="group" aria-label={L.censusLabel}>
+            {PHASE_ORDER.map((p) => {
+              const n = counts[p];
+              const pressed = filter === p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  className={`cseg ${PHASE_STATE[p]}`}
+                  style={{ flex: `${Math.max(n, 0.35)} 1 0` }}
+                  aria-pressed={pressed}
+                  aria-label={`${phaseLabels[p]} · ${n}`}
+                  onClick={() => setFilter((f) => (f === p ? null : p))}
+                >
+                  <b>{n}</b>
+                  <span className="cseg-k">{phaseLabels[p]}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* the lattice: real agents on the shared ringPositions geometry */}
+          <div className={`ag-stage${filter ? ' filtering' : ''}`}>
+            <svg className="ag-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              {positions.map((pt, i) => {
+                const ph = phaseOf(agents[i].status);
+                const dim = filter !== null && ph !== filter;
                 return (
                   <line
                     key={agents[i].id}
-                    className={`lat-link lat-link--${phase}`}
+                    className={`ag-link ${PHASE_STATE[ph]}${dim ? ' dim' : ''}`}
                     x1={50}
                     y1={50}
-                    x2={p.x}
-                    y2={p.y}
+                    x2={pt.x}
+                    y2={pt.y}
                     vectorEffect="non-scaling-stroke"
                   />
                 );
               })}
             </svg>
 
-            {/* Central conductor hub — structural anchor of the lattice, not agent
-                data. The desktop observes the pack; it holds no lease. */}
-            <div className="lat-hub" aria-hidden="true" title={L.conductorHint}>
-              <span className="lat-hub-glyph">⬡</span>
-              <span className="lat-hub-name">Bro</span>
-              <span className="lat-hub-role">{L.conductor}</span>
+            {/* central conductor anchor — structural, not agent data. The desktop
+                observes the pack and holds no lease. */}
+            <div className="ag-hub" aria-hidden="true">
+              <Mark state="live" size={30} />
+              <span className="ag-hub-name">Bro</span>
+              <span className="ag-hub-role">{L.conductor}</span>
             </div>
 
-            {/* Node list fallback: role=list, each node a listitem with a labeled,
-                roving-tabindex button — the lattice IS the accessible list. */}
-            <ul
-              className="latStage"
-              role="list"
-              aria-label={L.latticeLabel}
-              onKeyDown={onStageKeyDown}
-            >
+            <ul className="ag-nodes" role="list" aria-label={L.latticeLabel} onKeyDown={onStageKeyDown}>
               {agents.map((a, i) => {
                 const phase = phaseOf(a.status);
                 const pos = positions[i];
+                const dim = filter !== null && phase !== filter;
                 const label = `${a.displayName} · ${a.role} · ${phaseLabels[phase]}`;
                 return (
                   <li
                     key={a.id}
                     role="listitem"
-                    className="lat-node-slot"
+                    className="ag-slot"
                     style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
                   >
                     <button
                       type="button"
                       ref={(el) => { nodeRefs.current[i] = el; }}
-                      className={`lat-node lat-node--${phase}${a.id === selectedId ? ' lat-node--sel' : ''}`}
+                      className={`ag-node ${PHASE_STATE[phase]}${a.id === selectedId ? ' sel' : ''}${dim ? ' dim' : ''}`}
                       aria-label={label}
                       aria-pressed={a.id === selectedId}
                       tabIndex={i === focusedIndex ? 0 : -1}
@@ -349,9 +425,8 @@ export function Agents() {
                       onFocus={() => setFocusedIndex(i)}
                       onClick={() => { setFocusedIndex(i); setSelectedId(a.id); }}
                     >
-                      <span className="lat-node-avatar" aria-hidden="true">{a.displayName.slice(0, 1).toUpperCase()}</span>
-                      <span className="lat-node-name">{a.displayName}</span>
-                      <span className="lat-node-role">{a.role}</span>
+                      <span className="ag-node-face"><Mark state={PHASE_MARK[phase]} size={26} /></span>
+                      <span className="ag-node-name">{a.displayName}</span>
                     </button>
                   </li>
                 );
@@ -359,114 +434,115 @@ export function Agents() {
             </ul>
           </div>
 
-          {/* Legend + keyboard hint */}
-          <div className="lat-legend" aria-label={L.legend}>
-            {PHASE_ORDER.map((p) => (
-              <span key={p} className="lat-legend-item">
-                <span className={`lat-dot lat-node--${p}`} aria-hidden="true" />
-                <span className="muted">{phaseLabels[p]}</span>
-              </span>
-            ))}
+          <div className="lat-foot">
+            <span className="micro">{L.footHint}</span>
+            <span className="lat-scan-lbl micro">◎ {L.keysHint}</span>
           </div>
-          <div className="lat-keys muted">{L.keysHint}</div>
-        </Panel>
+        </section>
 
-        <Panel title={L.dossierTitle}>
+        {/* ── DOSSIER rail ──────────────────────────────────────────────────── */}
+        <aside className="dossier surface soft reveal" aria-live="polite" aria-label={L.details}>
           {selected ? (
-            <>
-              <div className="lat-dossier-head">
-                <Button small variant="ghost" onClick={() => setSelectedId(null)} title={L.close}>✕</Button>
-              </div>
-              <Dossier agent={selected} L={L} phaseLabels={phaseLabels} />
-            </>
+            <Dossier agent={selected} L={L} phaseLabels={phaseLabels} />
           ) : (
-            <EmptyState glyph="◍" title={L.pickTitle} hint={L.pickHint} />
+            <div className="ag-pick">
+              <Mark state="idle" size={44} />
+              <div className="ag-empty-title">{L.pickTitle}</div>
+              <p className="muted">{L.pickHint}</p>
+            </div>
           )}
-        </Panel>
+        </aside>
       </div>
-    </>
+    </div>
   );
 }
 
-// Lattice-only styling, scoped by `lat-`/`lattice` class names so it never
-// collides with the shared kit. All colors resolve through design tokens; every
-// animation is disabled under prefers-reduced-motion.
-const LATTICE_CSS = `
-.lat-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); gap: var(--menq-space-4); align-items: start; }
-@media (max-width: 900px) { .lat-layout { grid-template-columns: 1fr; } }
+// Lattice-internal styling (scoped under `.v-agents`, prefixed `ag-`) for the radial
+// stage, nodes, governance links, dossier facts and the state branches. The panel
+// chrome (surface/cut/hud/bracket/ticks/eyebrow/lat-top/lat-legend/lg-key/census/
+// cseg/lat-foot/dossier/dos-*/pill/micro/eyebrow) is the shared aios.css. Colours
+// resolve through the `--st-rgb` phase token; motion honours prefers-reduced-motion.
+const AG_CSS = `
+.v-agents .ag-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
-.lat-live-announce { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.v-agents .ag-stage{position:relative;width:100%;min-height:440px;margin:var(--s4) 0 var(--s5)}
+.v-agents .ag-links{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+.v-agents .ag-link{stroke:rgb(var(--st-rgb)/.42);stroke-width:1.4;fill:none;transition:opacity var(--slow)}
+.v-agents .ag-link.state-working{stroke-dasharray:4 5;animation:ag-stream 900ms linear infinite}
+.v-agents .ag-link.dim{opacity:.12}
+@keyframes ag-stream{to{stroke-dashoffset:-18}}
 
-.lattice { position: relative; width: 100%; min-height: 420px; }
-.latLinks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.lat-link { stroke: var(--brops-border); stroke-width: 1.5; fill: none; }
-.lat-link--flowing { stroke: var(--brops-accent); stroke-dasharray: 4 5; animation: lat-stream 900ms linear infinite; }
-.lat-link--completed { stroke: var(--menq-color-success); }
-.lat-link--throttled { stroke: var(--menq-color-warning); stroke-dasharray: 3 6; }
-.lat-link--blocked { stroke: var(--menq-color-danger); stroke-dasharray: 2 4; }
-@keyframes lat-stream { to { stroke-dashoffset: -18; } }
+.v-agents .ag-hub{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
+  display:flex;flex-direction:column;align-items:center;gap:2px;width:96px;height:96px;justify-content:center;
+  border-radius:50%;background:linear-gradient(158deg,rgb(var(--raised-rgb)/.97),rgb(var(--surface-rgb)/.9));
+  border:1.5px solid rgb(var(--cyan-rgb)/.5);box-shadow:0 0 26px -6px rgb(var(--cyan-rgb)/.5);pointer-events:none}
+.v-agents .ag-hub .mark{width:30px;height:30px}
+.v-agents .ag-hub-name{font-family:var(--f-display);font-weight:700;font-size:13px;letter-spacing:-.01em}
+.v-agents .ag-hub-role{font-family:var(--f-mono);font-size:8.5px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-muted)}
 
-.lat-hub { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
-  width: 92px; height: 92px; justify-content: center; border-radius: 50%;
-  background: var(--brops-elevated); border: 1.5px solid var(--brops-accent);
-  box-shadow: var(--menq-shadow-1); pointer-events: none; z-index: 1; }
-.lat-hub-glyph { font-size: 20px; color: var(--brops-accent); line-height: 1; }
-.lat-hub-name { font-weight: 700; font-size: 13px; }
-.lat-hub-role { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--brops-muted); }
+.v-agents .ag-nodes{position:absolute;inset:0;list-style:none;margin:0;padding:0;z-index:3}
+.v-agents .ag-slot{position:absolute;transform:translate(-50%,-50%)}
+.v-agents .ag-node{display:flex;flex-direction:column;align-items:center;gap:4px;width:104px;padding:9px 8px;
+  cursor:pointer;font:inherit;text-align:center;color:var(--ink);
+  background:linear-gradient(158deg,rgb(var(--raised-rgb)/.96),rgb(var(--surface-rgb)/.9));
+  border:1.5px solid rgb(var(--st-rgb)/.4);border-radius:14px;
+  box-shadow:0 0 0 0 rgb(var(--st-rgb)/0),var(--shadow-1);
+  transition:transform var(--slow),border-color var(--slow),box-shadow var(--slow),opacity var(--slow)}
+.v-agents .ag-node .mark{width:26px;height:26px}
+.v-agents .ag-node-name{font-family:var(--f-mono);font-size:10px;font-weight:600;letter-spacing:.02em;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-muted)}
+.v-agents .ag-node:hover{transform:translateY(-2px);border-color:rgb(var(--st-rgb)/.65)}
+.v-agents .ag-node:hover .ag-node-name{color:var(--ink)}
+.v-agents .ag-node:focus-visible{outline:2px solid var(--cyan-soft);outline-offset:3px}
+.v-agents .ag-node.sel{transform:translateY(-2px) scale(1.05);border-color:rgb(var(--st-rgb)/.9);
+  box-shadow:0 0 22px -4px rgb(var(--st-rgb)/.6),var(--shadow-2)}
+.v-agents .ag-node.sel .ag-node-name{color:var(--ink)}
+.v-agents .ag-node.dim{opacity:.22;filter:grayscale(.4)}
+.v-agents .ag-node.dim:hover{opacity:.55}
+.v-agents .ag-node.state-working{animation:ag-glow 2.8s cubic-bezier(.4,0,.2,1) infinite}
+.v-agents .ag-node.state-waiting{animation:ag-suspend 1.9s ease-in-out infinite}
+.v-agents .ag-node.state-blocked{animation:ag-interrupt 1.2s ease-in-out infinite}
+@keyframes ag-glow{0%,100%{box-shadow:0 0 8px -3px rgb(var(--st-rgb)/.3),var(--shadow-1)}
+  50%{box-shadow:0 0 18px -2px rgb(var(--st-rgb)/.55),var(--shadow-1)}}
+@keyframes ag-suspend{0%,100%{opacity:1}50%{opacity:.62}}
+@keyframes ag-interrupt{0%,100%{box-shadow:0 0 0 0 rgb(var(--st-rgb)/.45),var(--shadow-1)}
+  50%{box-shadow:0 0 0 5px rgb(var(--st-rgb)/0),var(--shadow-1)}}
 
-.latStage { position: absolute; inset: 0; list-style: none; margin: 0; padding: 0; z-index: 2; }
-.lat-node-slot { position: absolute; transform: translate(-50%, -50%); }
+/* dossier facts + honest telemetry */
+.v-agents .ag-facts{display:grid;grid-template-columns:1fr 1fr;gap:var(--s3) var(--s4)}
+.v-agents .ag-fact{display:flex;flex-direction:column;gap:4px;min-width:0}
+.v-agents .ag-fact--wide{grid-column:1 / -1}
+.v-agents .ag-fk{font-family:var(--f-mono);font-size:8.5px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-muted)}
+.v-agents .ag-mono{font-family:var(--f-mono);font-size:11px;word-break:break-all;color:var(--ink)}
+.v-agents .ag-telemetry{font-size:12px;line-height:1.5;margin:0}
+.v-agents .ag-blocked{padding:var(--s3) var(--s4);border-radius:12px;
+  border:1px solid rgb(var(--danger-rgb)/.35);background:rgb(var(--danger-rgb)/.08)}
+.v-agents .ag-blocked .micro{color:var(--danger)}
+.v-agents .ag-blocked p{margin:5px 0 0;font-size:12px;line-height:1.5;color:var(--ink-muted)}
 
-.lat-node { display: flex; flex-direction: column; align-items: center; gap: 3px;
-  width: 104px; padding: 10px 8px; cursor: pointer; font: inherit; text-align: center;
-  background: var(--brops-surface); color: var(--brops-text);
-  border: 1.5px solid var(--brops-border); border-radius: var(--menq-radius-card);
-  box-shadow: var(--menq-shadow-1);
-  transition: border-color var(--menq-motion-fast), background var(--menq-motion-fast), transform var(--menq-motion-fast); }
-.lat-node:hover { transform: translateY(-2px); }
-.lat-node:focus-visible { outline: 2px solid var(--menq-color-focus); outline-offset: 2px; }
-.lat-node--sel { border-color: var(--brops-accent); background: var(--menq-color-selected); }
-.lat-node-avatar { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-  background: var(--menq-color-selected); color: var(--brops-accent); font-weight: 700; font-size: 13px; }
-.lat-node-name { font-weight: 600; font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lat-node-role { font-size: 11px; color: var(--brops-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* state branches: loading skeleton · error · empty · pick */
+.v-agents .ag-skel{display:grid;gap:10px}
+.v-agents .ag-skel i{height:16px;border-radius:8px;
+  background:linear-gradient(90deg,transparent,rgb(var(--cyan-rgb)/.14) 40%,rgb(var(--line-rgb)/.9) 50%,rgb(var(--cyan-rgb)/.14) 60%,transparent);
+  background-size:200% 100%;animation:ag-shimmer 1.4s linear infinite}
+.v-agents .ag-skel i:nth-child(2){width:82%}.v-agents .ag-skel i:nth-child(3){width:64%}.v-agents .ag-skel i:nth-child(4){width:73%}
+@keyframes ag-shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+.v-agents .ag-btn{font:inherit;font-size:13px;font-weight:600;height:32px;padding:0 16px;cursor:pointer;
+  color:var(--cyan);border:1px solid rgb(var(--cyan-rgb)/.4);background:rgb(var(--cyan-rgb)/.08);border-radius:var(--r-pill)}
+.v-agents .ag-btn:hover{background:rgb(var(--cyan-rgb)/.14)}
+.v-agents .ag-btn:focus-visible{outline:2px solid var(--cyan-soft);outline-offset:2px}
+.v-agents .ag-empty,.v-agents .ag-pick{text-align:center;padding:var(--s7) var(--s5);display:grid;gap:8px;place-items:center}
+.v-agents .ag-empty-glyph{font-size:34px;color:var(--cyan-soft)}
+.v-agents .ag-empty-title{font-family:var(--f-display);font-weight:700;font-size:17px}
+.v-agents .ag-pick .muted,.v-agents .ag-empty .muted{max-width:34ch;font-size:13px;line-height:1.5}
 
-/* node state color, from semantic tokens (ring + avatar tint) */
-.lat-node--idle .lat-node-avatar { background: var(--menq-color-hover); color: var(--brops-muted); }
-.lat-node--flowing { border-color: color-mix(in srgb, var(--brops-accent) 60%, var(--brops-border)); }
-.lat-node--flowing .lat-node-avatar { background: var(--menq-color-selected); color: var(--brops-accent); }
-.lat-node--completed { border-color: color-mix(in srgb, var(--menq-color-success) 55%, var(--brops-border)); }
-.lat-node--completed .lat-node-avatar { background: color-mix(in srgb, var(--menq-color-success) 18%, transparent); color: var(--menq-color-success); }
-.lat-node--throttled { border-color: color-mix(in srgb, var(--menq-color-warning) 60%, var(--brops-border)); animation: lat-suspend 1.8s ease-in-out infinite; }
-.lat-node--throttled .lat-node-avatar { background: color-mix(in srgb, var(--menq-color-warning) 18%, transparent); color: var(--menq-color-warning); }
-.lat-node--blocked { border-color: var(--menq-color-danger); animation: lat-interrupt 1.1s ease-in-out infinite; }
-.lat-node--blocked .lat-node-avatar { background: color-mix(in srgb, var(--menq-color-danger) 18%, transparent); color: var(--menq-color-danger); }
-
-/* suspend = gentle breathing on a throttled node; interrupt = urgent pulse on block */
-@keyframes lat-suspend { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
-@keyframes lat-interrupt { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-danger) 45%, transparent); } 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--menq-color-danger) 0%, transparent); } }
-
-.lat-legend { display: flex; flex-wrap: wrap; gap: var(--menq-space-4); margin-top: var(--menq-space-4); padding-top: var(--menq-space-3); border-top: 1px solid var(--brops-border); }
-.lat-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
-.lat-dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--brops-border); background: var(--brops-surface); }
-.lat-dot.lat-node--flowing { border-color: var(--brops-accent); background: var(--brops-accent); }
-.lat-dot.lat-node--completed { border-color: var(--menq-color-success); background: var(--menq-color-success); }
-.lat-dot.lat-node--throttled { border-color: var(--menq-color-warning); background: var(--menq-color-warning); animation: none; }
-.lat-dot.lat-node--blocked { border-color: var(--menq-color-danger); background: var(--menq-color-danger); animation: none; }
-.lat-dot.lat-node--idle { border-color: var(--brops-muted); background: transparent; }
-.lat-keys { margin-top: var(--menq-space-3); font-size: 12px; }
-
-.lat-dossier-head { display: flex; justify-content: flex-end; margin-bottom: -6px; }
-.lat-facts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--menq-space-3) var(--menq-space-4); }
-.lat-mono { font-family: var(--menq-font-mono); font-size: 12px; word-break: break-all; }
-.lat-telemetry { padding: var(--menq-space-3); background: var(--menq-color-hover); border: 1px dashed var(--brops-border); border-radius: var(--menq-radius-md); }
-.lat-blocked { padding: var(--menq-space-3); border: 1px solid var(--menq-color-danger); border-radius: var(--menq-radius-md);
-  background: color-mix(in srgb, var(--menq-color-danger) 10%, transparent); }
-.lat-blocked-title { font-weight: 700; color: var(--menq-color-danger); }
-
-@media (prefers-reduced-motion: reduce) {
-  .lat-link--flowing, .lat-node--throttled, .lat-node--blocked, .lat-node:hover { animation: none; transition: none; }
-  .lat-node:hover { transform: none; }
+@media (max-width:560px){.v-agents .ag-node{width:88px}}
+@media (prefers-reduced-motion:reduce){
+  .v-agents .ag-link.state-working,.v-agents .ag-node.state-working,
+  .v-agents .ag-node.state-waiting,.v-agents .ag-node.state-blocked,
+  .v-agents .ag-skel i{animation:none}
+  .v-agents .ag-node{transition:none}
 }
 `;

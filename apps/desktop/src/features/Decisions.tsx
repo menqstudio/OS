@@ -1,68 +1,46 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, StatusPill, Field, Skeleton, ErrorState, EmptyState,
+  StatusPill, Field, Skeleton, ErrorState, EmptyState, Button,
 } from '../components/ui';
+import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
 import type { GovernanceRead } from '../services/governance';
 import type { Decision } from '../domain/entities';
 
-// Scoped styles for the decision chamber. All colour/space/motion resolves
-// through the shared MenQ tokens; nothing is hard-coded. Motion is disabled
-// under prefers-reduced-motion, per §D.
+// Scoped supplements to the global `aios.css` decision-chamber design. The page is
+// re-skinned to the "VERDICT CHAMBER" mockup, but every value it shows is REAL:
+// the append-only engine ledger (`list_decisions`) and the read-only engine
+// evidence-chain mirror. The mockup's fabricated instruments — the weighted balance
+// beam, the A/B option pans, the confidence %, the winner/margin — have NO backing
+// in the `Decision` entity and are therefore OMITTED, never faked. Motion is
+// disabled under prefers-reduced-motion, per §D.
 const styles = `
-.dec-ledger { display: flex; flex-direction: column; gap: 2px; max-height: 62vh; overflow-y: auto;
-  padding-right: 4px; outline: none; border-radius: var(--menq-radius-md); }
-.dec-ledger:focus-visible { box-shadow: 0 0 0 2px var(--menq-color-focus); }
-.dec-row { position: relative; display: flex; flex-direction: column; gap: 4px; width: 100%;
-  text-align: left; cursor: pointer; padding: 10px 12px 10px 16px;
-  background: var(--brops-surface); color: var(--brops-text);
-  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md);
-  animation: dec-reveal var(--menq-motion-med) ease both;
-  transition: background var(--menq-motion-fast), border-color var(--menq-motion-fast); }
-.dec-row::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
-  border-radius: var(--menq-radius-pill); background: var(--brops-border); }
-.dec-row:hover { background: var(--menq-color-hover); }
-.dec-row--sel { background: var(--menq-color-selected); border-color: var(--brops-accent); }
-.dec-row--sel::before { background: var(--brops-accent); }
-.dec-row--stamp { animation: dec-stamp var(--menq-motion-med) cubic-bezier(0.2, 1.2, 0.3, 1) both; }
-.dec-row-top { display: flex; align-items: center; justify-content: space-between; gap: var(--menq-space-3); }
-.dec-row-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dec-row-meta { display: flex; gap: var(--menq-space-3); font-size: 11px; color: var(--brops-muted);
-  font-variant-numeric: tabular-nums; }
-.dec-seal { font-size: 11px; color: var(--brops-muted); letter-spacing: 0.03em; }
-
-.dec-chamber { display: flex; flex-direction: column; gap: var(--menq-space-4); }
-.dec-chamber-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--menq-space-3); }
-.dec-chamber-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
-.dec-rationale { line-height: 1.5; }
-.dec-section { border-top: 1px solid var(--brops-border); padding-top: var(--menq-space-4);
-  display: flex; flex-direction: column; gap: var(--menq-space-3); }
-.dec-sec-head { display: flex; align-items: center; justify-content: space-between; gap: var(--menq-space-3); }
-
-.dec-blocked { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
-  padding: var(--menq-space-5) var(--menq-space-4);
-  border: 1px dashed color-mix(in srgb, var(--menq-color-warning) 45%, transparent);
-  border-radius: var(--menq-radius-md);
-  background: color-mix(in srgb, var(--menq-color-warning) 8%, transparent); }
-.dec-blocked-glyph { font-size: 26px; color: var(--menq-color-warning); }
-.dec-blocked-title { font-weight: 700; color: var(--brops-text); }
-.dec-blocked-body { max-width: 460px; color: var(--brops-muted); font-size: 13px; }
-
-.dec-reweigh-hint { flex: 1; min-width: 0; font-size: 13px; }
-.dec-sr-live { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-
+.v-decisions .ledger:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--menq-color-focus); }
+.v-decisions .ledger { border-radius: var(--r-md, 12px); outline: none; max-height: 62vh; overflow-y: auto; padding-right: 2px; }
+.v-decisions .led { grid-template-columns: auto 1fr auto; cursor: pointer; animation: dec-reveal var(--menq-motion-med, .3s) ease both; }
+.v-decisions .led.dec-stamp { animation: dec-stamp var(--menq-motion-med, .4s) cubic-bezier(0.2, 1.2, 0.3, 1) both; }
+.v-decisions .ch-verdict { align-items: center; }
+.v-decisions .vcore .mark { width: 46px; height: 46px; }
+.dec-meta { display: flex; flex-wrap: wrap; gap: var(--s5, 18px); margin: var(--s4, 14px) 0; }
+.dec-hint { font-size: var(--t-small, 13px); color: var(--ink-muted); }
+.dec-sr-live { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 @keyframes dec-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@keyframes dec-stamp {
-  0% { opacity: 0; transform: scale(1.14) rotate(-1.5deg); }
-  60% { opacity: 1; transform: scale(0.97); }
-  100% { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) {
-  .dec-row, .dec-row--stamp { animation: none; }
-}
+@keyframes dec-stamp { 0% { opacity: 0; transform: scale(1.12); } 60% { opacity: 1; transform: scale(0.98); } 100% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .v-decisions .led, .v-decisions .led.dec-stamp { animation: none; } }
 `;
+
+// Honest status → presentation map. NEVER returns a "live"/green/verified tone: the
+// desktop cannot verify a decision, so the power mark is `idle` for anything that is
+// not an explicit block/refusal (which reads `alert`). Colour on the ledger dot is
+// carried by `--st-rgb`; a settled decision simply reads neutral, never approved-green.
+function statusMeta(status: string): { face: string; mark: string; tone: string } {
+  const v = (status || '').toLowerCase();
+  if (/block|reject|den|fail|abort|error/.test(v)) return { face: 'blocked', mark: 'alert', tone: 'var(--danger-rgb)' };
+  if (/wait|pend|propos|review|hold|open|draft/.test(v)) return { face: 'waiting', mark: 'idle', tone: 'var(--warning-rgb)' };
+  return { face: 'idle', mark: 'idle', tone: 'var(--muted-rgb)' };
+}
 
 export function Decisions() {
   const { t, lang, focus, clearFocus } = useApp();
@@ -102,6 +80,21 @@ export function Decisions() {
     const list = s.data ?? [];
     return [...list].sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
   }, [s.data]);
+
+  // Decision-stats strip — derived ENTIRELY from the real ledger. No mockup metric
+  // (avg confidence, reversal %, evidence coverage) has any backing in the `Decision`
+  // entity, so those are omitted; only honestly-countable facts are shown.
+  const stats = useMemo(() => {
+    const isBlocked = (d: Decision) => /block|reject|den|fail|abort|error/.test((d.status || '').toLowerCase());
+    const isPending = (d: Decision) => /wait|pend|propos|review|hold|open|draft/.test((d.status || '').toLowerCase());
+    return [
+      { v: ledger.length, label: L('decisions · ledger', 'որոշում · մատյան'), tone: '' },
+      { v: new Set(ledger.map((d) => d.owner).filter(Boolean)).size, label: L('owners', 'հեղինակ'), tone: 'info' },
+      { v: ledger.filter(isPending).length, label: L('awaiting', 'սպասում է'), tone: 'warn' },
+      { v: ledger.filter(isBlocked).length, label: L('blocked', 'արգելափակված'), tone: 'warn' },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ledger, lang]);
 
   const loading = s.loading && s.data === null;
   const selIdx = ledger.length === 0 ? 0 : Math.min(selectedIndex, ledger.length - 1);
@@ -211,7 +204,7 @@ export function Decisions() {
     }
     return (
       <div
-        className="dec-ledger"
+        className="ledger"
         role="log"
         aria-label={ledgerLabel}
         aria-live="polite"
@@ -220,25 +213,29 @@ export function Decisions() {
       >
         {ledger.map((d, i) => {
           const isSel = i === selIdx;
+          const m = statusMeta(d.status);
           return (
             <div
               key={d.id}
               ref={isSel ? selRowRef : undefined}
               id={`dec-row-${d.id}`}
-              className={`dec-row${isSel ? ' dec-row--sel' : ''}${stampIds.has(d.id) ? ' dec-row--stamp' : ''}`}
+              className={`led surface soft rise state-${m.face}${isSel ? ' on' : ''}${stampIds.has(d.id) ? ' dec-stamp' : ''}`}
               aria-readonly={true}
-              style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }}
+              style={{ ['--i' as string]: i + 2, ['--st-rgb' as string]: m.tone } as CSSProperties}
               onClick={() => { setSelectedIndex(i); }}
               onDoubleClick={() => openEvidence(d)}
             >
-              <div className="dec-row-top">
-                <span className="dec-row-title">{d.title}</span>
-                <StatusPill status={d.status} />
-              </div>
-              <div className="dec-row-meta">
-                <span>{d.owner}</span>
-                <span>{fmtDate(d.createdAt)}</span>
-              </div>
+              <span className="l-ix">
+                <span className="l-dot" aria-hidden="true" />
+                <b className="mono">{String(i + 1).padStart(2, '0')}</b>
+              </span>
+              <span className="l-main">
+                <b className="l-ti">{d.title}</b>
+                <span className="l-vs">
+                  <em>{d.owner || '—'}</em><i>·</i><em>{fmtDate(d.createdAt)}</em>
+                </span>
+              </span>
+              <StatusPill status={d.status} />
             </div>
           );
         })}
@@ -246,147 +243,198 @@ export function Decisions() {
     );
   };
 
+  const renderEvidence = () => {
+    if (!evidenceOpen) {
+      return (
+        <div className="dec-hint">
+          {L('Press Enter or Open evidence to inspect this decision’s engine chain.',
+            'Enter-ով կամ «Բացել ապացույցները»-ով դիտիր այս որոշման շարժիչի շղթան։')}
+        </div>
+      );
+    }
+    if (evidenceRead === null) {
+      return (
+        <div role="status">
+          <span className="ev-tag micro">{L('EVIDENCE CHAIN', 'ԱՊԱՑՈՒՅՑԻ ՇՂԹԱ')}</span>
+          <p>{L('Reading the engine evidence chain…', 'Կարդում ենք շարժիչի ապացույցների շղթան…')}</p>
+        </div>
+      );
+    }
+    if (evidenceRead.state === 'ok') {
+      const n = evidenceRead.records?.length ?? 0;
+      return (
+        <div role="note">
+          <span className="ev-tag micro">
+            {L(`ENGINE EVIDENCE · ${n}`, `ՇԱՐԺԻՉԻ ԱՊԱՑՈՒՅՑ · ${n}`)}
+          </span>
+          <p>
+            {L('Mirrored read-only from the engine chain. The desktop displays it; it never decides on it.',
+              'Արտացոլված է շարժիչի շղթայից միայն ընթերցմամբ։ Desktop-ը ցուցադրում է, բայց երբեք չի որոշում։')}
+          </p>
+        </div>
+      );
+    }
+    // Honest fail-closed states: unreachable OR blocked/sealed. NEVER fabricated evidence.
+    return (
+      <div role="note">
+        <span className="ev-tag micro">
+          {evidenceRead.state === 'unreachable'
+            ? L('Evidence chain unreachable', 'Ապացույցների շղթան անհասանելի է')
+            : L('Evidence sealed', 'Ապացույցները կնքված են')}
+        </span>
+        <p>
+          {L(
+            'The engine evidence chain is read-only and is not exposed to the desktop yet. The ledger mirrors the decision; it never holds or fabricates the sealed evidence.',
+            'Շարժիչի ապացույցների շղթան կարդալու է և դեռ հասանելի չէ desktop-ին։ Մատյանն արտացոլում է որոշումը, բայց երբեք չի պահում կամ կեղծում կնքված ապացույցը։',
+          )}
+          {evidenceRead.reason ? (
+            <span className="micro" style={{ display: 'block', marginTop: 6 }}>
+              {L('Reason: ', 'Պատճառ՝ ')}{evidenceRead.reason}
+            </span>
+          ) : null}
+        </p>
+      </div>
+    );
+  };
+
   const renderChamber = () => {
-    if (loading) return <Panel><Skeleton rows={5} /></Panel>;
+    if (loading) {
+      return <section className="chamber surface soft lg hud"><Skeleton rows={5} /></section>;
+    }
     if (s.error) {
       return (
-        <Panel>
+        <section className="chamber surface soft lg hud">
+          <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
+          <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
           <EmptyState
             glyph="⚖"
             title={L('Chamber unavailable', 'Պալատն անհասանելի է')}
             hint={L('The decision ledger could not be read from the engine.',
               'Որոշումների մատյանը չհաջողվեց կարդալ շարժիչից։')}
           />
-        </Panel>
+        </section>
       );
     }
     if (!selected) {
       return (
-        <Panel>
+        <section className="chamber surface soft lg hud">
+          <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
+          <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
           <EmptyState
             glyph="⚖"
             title={L('Select a decision', 'Ընտրիր որոշում')}
             hint={L('Arrow-navigate the ledger; press Enter to open its evidence.',
               'Սլաքներով շրջիր մատյանում, Enter-ով բացիր ապացույցները։')}
           />
-        </Panel>
+        </section>
       );
     }
+
+    const m = statusMeta(selected.status);
     return (
-      <Panel>
-        <div className="dec-chamber">
-          <div className="dec-chamber-head">
-            <div className="dec-chamber-title">{selected.title}</div>
+      <section className={`chamber surface soft lg hud st-${m.face}`} id="chamber">
+        <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
+        <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
+
+        <div className="ch-head">
+          <div className="ch-title">
+            <span className="eyebrow">{L('DELIBERATION · ENGINE LEDGER', 'ՈՐՈՇՄԱՆ ԴԱՀԼԻՃ · DELIBERATION')}</span>
+            <h2>{selected.title}</h2>
+            {/* The rationale is the real "why" the engine recorded — shown verbatim,
+                in place of the mockup's fabricated weighted-criteria instrument. */}
+            <p className="ch-q">{selected.rationale || '—'}</p>
+          </div>
+          {/* Verdict readout: the power mark leans by REAL status (never forced green/
+              live) and the pill mirrors the recorded status. No fabricated confidence %. */}
+          <div className={`ch-verdict vcore face-${m.face}`}>
+            <Mark state={m.mark} size={46} />
             <StatusPill status={selected.status} />
           </div>
-
-          <Field label={t('field.owner')}>{selected.owner}</Field>
-          <div className="field">
-            <span className="field-label">{L('Rationale', 'Հիմնավորում')}</span>
-            <span className="dec-rationale">{selected.rationale || '—'}</span>
-          </div>
-          <div className="row" style={{ gap: 'var(--menq-space-5)', flexWrap: 'wrap' }}>
-            <Field label={L('Recorded', 'Գրանցված')}>{fmtDate(selected.createdAt)}</Field>
-            <Field label={L('Updated', 'Թարմացված')}>{fmtDate(selected.updatedAt)}</Field>
-          </div>
-
-          {/* chEvidence — evidence viewer. Read-only. Opening it reveals the
-              honest `blocked` (evidence sealed) state: the engine evidence chain
-              has no desktop command, so no evidence is fabricated. */}
-          <section className="dec-section" aria-label={L('Evidence chain', 'Ապացույցների շղթա')}>
-            <div className="dec-sec-head">
-              <span className="field-label">{L('Evidence chain', 'Ապացույցների շղթա')}</span>
-              <Button small onClick={() => openEvidence(selected)}>
-                {L('Open evidence', 'Բացել ապացույցները')}
-              </Button>
-            </div>
-            {evidenceOpen ? (
-              evidenceRead === null ? (
-                <div className="muted" style={{ fontSize: 13 }} role="status">
-                  {L('Reading the engine evidence chain…', 'Կարդում ենք շարժիչի ապացույցների շղթան…')}
-                </div>
-              ) : evidenceRead.state === 'ok' ? (
-                <div className="dec-blocked" role="note">
-                  <div className="dec-blocked-glyph" aria-hidden="true">⛓</div>
-                  <div className="dec-blocked-title">
-                    {L(`Evidence chain (${evidenceRead.records?.length ?? 0} event${(evidenceRead.records?.length ?? 0) === 1 ? '' : 's'})`,
-                      `Ապացույցների շղթա (${evidenceRead.records?.length ?? 0} իրադարձություն)`)}
-                  </div>
-                  <div className="dec-blocked-body">
-                    {L('Mirrored read-only from the engine chain. The desktop displays it; it never decides on it.',
-                      'Արտացոլված է շարժիչի շղթայից միայն ընթերցմամբ։ Desktop-ը ցուցադրում է, բայց երբեք չի որոշում։')}
-                  </div>
-                </div>
-              ) : (
-                <div className="dec-blocked" role="note">
-                  <div className="dec-blocked-glyph" aria-hidden="true">⛓</div>
-                  <div className="dec-blocked-title">
-                    {evidenceRead.state === 'unreachable'
-                      ? L('Evidence chain unreachable', 'Ապացույցների շղթան անհասանելի է')
-                      : L('Evidence sealed', 'Ապացույցները կնքված են')}
-                  </div>
-                  <div className="dec-blocked-body">
-                    {L(
-                      'The engine evidence chain is read-only and is not exposed to the desktop yet. The ledger mirrors the decision; it never holds or fabricates the sealed evidence.',
-                      'Շարժիչի ապացույցների շղթան կարդալու է և դեռ հասանելի չէ desktop-ին։ Մատյանն արտացոլում է որոշումը, բայց երբեք չի պահում կամ կեղծում կնքված ապացույցը։',
-                    )}
-                    {evidenceRead.reason ? (
-                      <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
-                        {L('Reason: ', 'Պատճառ՝ ')}{evidenceRead.reason}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              )
-            ) : (
-              <div className="muted" style={{ fontSize: 13 }}>
-                {L('Press Enter or Open to inspect this decision’s evidence.',
-                  'Enter-ով կամ «Բացել»-ով դիտիր այս որոշման ապացույցը։')}
-              </div>
-            )}
-          </section>
-
-          {/* chReweigh — reweigh control. Disabled by design: reweighing is
-              adjudicated by the engine (mirror, never decide); the desktop holds
-              no decision authority and there is no reweigh command to call. */}
-          <section className="dec-section">
-            <span className="field-label">{L('Reweigh', 'Վերակշռում')}</span>
-            <div className="row between">
-              <span className="muted dec-reweigh-hint">
-                {L('Reweighing is adjudicated by the engine. The desktop mirrors, never decides.',
-                  'Վերակշռումը որոշում է շարժիչը։ Desktop-ն արտացոլում է, երբեք չի որոշում։')}
-              </span>
-              <Button
-                small
-                disabled
-                title={L('Reweigh is adjudicated by the engine — the desktop cannot alter the ledger.',
-                  'Վերակշռումը որոշում է շարժիչը — desktop-ը չի կարող փոխել մատյանը։')}
-              >
-                {L('Reweigh decision', 'Վերակշռել որոշումը')}
-              </Button>
-            </div>
-          </section>
         </div>
-      </Panel>
+
+        <div className="dec-meta">
+          <Field label={t('field.owner')}>{selected.owner || '—'}</Field>
+          <Field label={L('Recorded', 'Գրանցված')}>{fmtDate(selected.createdAt)}</Field>
+          <Field label={L('Updated', 'Թարմացված')}>{fmtDate(selected.updatedAt)}</Field>
+        </div>
+
+        {/* chEvidence — evidence readout. Read-only. Opening it reveals the honest
+            `ok`/`blocked`/`unreachable` engine state; no evidence is fabricated. */}
+        <section className="ch-foot" aria-label={L('Evidence chain', 'Ապացույցների շղթա')}>
+          <div className="evidence" id="chEvidence" aria-live="polite">
+            {renderEvidence()}
+          </div>
+          <div className="ch-actions">
+            <span className="ch-by micro">{selected.owner || '—'}</span>
+            <Button small onClick={() => openEvidence(selected)}>
+              {L('Open evidence', 'Բացել ապացույցները')}
+            </Button>
+            {/* chReweigh — disabled by design: reweighing is adjudicated by the engine
+                (mirror, never decide); the desktop holds no decision authority. */}
+            <Button
+              small
+              disabled
+              title={L('Reweigh is adjudicated by the engine — the desktop cannot alter the ledger.',
+                'Վերակշռումը որոշում է շարժիչը — desktop-ը չի կարող փոխել մատյանը։')}
+            >
+              {L('↻ Reweigh', '↻ Վերակշռել')}
+            </Button>
+          </div>
+        </section>
+      </section>
     );
   };
 
+  const renderStats = () => (
+    <section className="surface soft dstats-wrap rise" style={{ ['--i' as string]: 2 } as CSSProperties}>
+      <div className="dstats">
+        {stats.map((x, i) => (
+          <div
+            key={i}
+            className={`dstat rise${x.tone ? ` ds-${x.tone}` : ''}`}
+            style={{ ['--i' as string]: i + 2 } as CSSProperties}
+          >
+            <b className="count num mono">{x.v}</b>
+            <span className="micro">{x.label}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
   return (
-    <>
+    <div className="v-decisions">
       <style>{styles}</style>
-      <PageHeader title={t('nav.decisions')} subtitle={t('decisions.subtitle')} />
+
+      <header className="pageHead">
+        <div>
+          <span className="eyebrow">{L('VERDICT INTELLIGENCE · DECISION CHAMBER', 'ՈՐՈՇՄԱՆ ԻՆՏԵԼԵԿՏ · VERDICT CHAMBER')}</span>
+          <h1>{t('nav.decisions')}</h1>
+          <p className="sub">{t('decisions.subtitle')}</p>
+        </div>
+        <div className="right">
+          {/* Honest posture: the desktop only MIRRORS the engine ledger, read-only. */}
+          <span className="pill info">{L('Read-only mirror', 'Միայն ընթերցում')}</span>
+        </div>
+      </header>
 
       {/* Polite live region — announces ledger selection and the sealed-evidence verdict. */}
       <div className="dec-sr-live" role="status" aria-live="polite">{announce}</div>
 
-      <div className="chat-layout">
-        {/* chamber (left rail: the append-only ledger) */}
-        <Panel title={ledgerLabel}>
-          {renderLedger()}
-        </Panel>
-        {/* chamber (right: selected decision + evidence + reweigh) */}
-        <div>{renderChamber()}</div>
+      {renderChamber()}
+
+      <div className="sec-head" style={{ marginTop: 26 }}>
+        <h2>{L('Decision ledger', 'Որոշումների մատյան')}</h2>
+        <span className="note">
+          {L('Select a row to open its chamber', 'Ընտրիր տողը՝ դահլիճը բացելու համար')}
+          {' · '}<b className="mono">{ledger.length}</b>{' '}
+          {L('active decisions', 'ակտիվ որոշում')}
+        </span>
       </div>
-    </>
+
+      {renderLedger()}
+
+      {!loading && !s.error && ledger.length > 0 ? renderStats() : null}
+    </div>
   );
 }

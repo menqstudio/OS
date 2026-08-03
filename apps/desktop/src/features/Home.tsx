@@ -1,10 +1,27 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, StatusPill, Avatar, Badge, Async, Input, TileGroup, StatTile } from '../components/ui';
+import { Button, Async, Input, TileGroup, StatTile } from '../components/ui';
+import { Mark } from '../components/Ambient';
+import { statusTone } from '../domain/enums';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Markdown } from '../components/markdown';
 import { useToast } from '../components/toast';
+
+// Real status → aios `.pill` modifier. The pill only re-skins a status that the
+// backend actually returned — it never invents a "verified"/"live" state.
+function pillTone(status: string): string {
+  switch (statusTone[status] ?? 'neutral') {
+    case 'success': return 'live';
+    case 'accent':
+    case 'info': return 'info';
+    case 'warning':
+    case 'danger': return 'warn';
+    default: return '';
+  }
+}
+
+const label = (s: string) => s.replace(/_/g, ' ');
 
 export function Home() {
   const { t, setRoute } = useApp();
@@ -78,165 +95,191 @@ export function Home() {
   const projects = useAsync(() => desktop.listProjects(), []);
 
   const showAnswerBlock = asking || answer || askError || blocked;
+  // The greeting power-mark tracks the real interaction state — nothing else.
+  const markState = askError || blocked ? 'alert' : asking ? 'thinking' : 'live';
 
   return (
-    <>
-      <PageHeader title={t('nav.home')} subtitle={t('home.subtitle')} />
+    <div className="v-home">
+      {/* ── HERO · Ask Bro + at-a-glance counts ─────────────────────────── */}
+      <section className="briefing surface soft lg hud reveal">
+        <span className="bracket tl" aria-hidden="true" />
+        <span className="bracket tr" aria-hidden="true" />
+        <span className="bracket bl" aria-hidden="true" />
+        <span className="bracket br" aria-hidden="true" />
 
-      <Panel title={t('home.askBro')}>
-        <form className="ask-form" onSubmit={(e) => { e.preventDefault(); ask(); }}>
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={t('command.placeholder')}
-            aria-label={t('action.ask')}
-          />
-          <Button type="submit" variant="primary" disabled={asking || !q.trim()}>{t('action.ask')}</Button>
-        </form>
-        {showAnswerBlock && (
-          <div className="ask-answer">
-            {/* Live region: the streamed answer and the typing indicator are
-                announced to assistive tech as text arrives. */}
-            <div aria-live="polite" aria-atomic="false" aria-busy={asking}>
-              {answer && (asking
-                ? <div className="ask-stream">{answer}<span className="chat-cursor" aria-hidden="true" /></div>
-                : <Markdown text={answer} />)}
-              {asking && !answer && (
-                <span className="chat-typing" role="status" aria-label={t('state.loading')}>
-                  <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
-                </span>
-              )}
+        <div className="brief-top">
+          <span className="eyebrow">{t('home.subtitle')}</span>
+        </div>
+
+        <div className="brief-hd">
+          <div className="greet">
+            <Mark state={markState} size={46} />
+            <div className="greet-txt">
+              <h1>{t('nav.home')}</h1>
+              <p className="sub">{t('home.subtitle')}</p>
             </div>
+          </div>
+        </div>
 
-            {blocked && !asking && (
-              <div className="chat-hint" role="status">
-                <span aria-hidden="true">⚠ </span>
-                {t('chat.governedBlocked')}{blocked ? ` — ${blocked}` : ''}
+        {/* Ask-Bro command box — unchanged streaming/receipt logic. */}
+        <div>
+          <div className="sec-head"><h2>{t('home.askBro')}</h2></div>
+          <form className="ask-form" onSubmit={(e) => { e.preventDefault(); ask(); }}>
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder={t('command.placeholder')}
+              aria-label={t('action.ask')}
+            />
+            <Button type="submit" variant="primary" disabled={asking || !q.trim()}>{t('action.ask')}</Button>
+          </form>
+          {showAnswerBlock && (
+            <div className="ask-answer">
+              {/* Live region: the streamed answer and the typing indicator are
+                  announced to assistive tech as text arrives. */}
+              <div aria-live="polite" aria-atomic="false" aria-busy={asking}>
+                {answer && (asking
+                  ? <div className="ask-stream">{answer}<span className="chat-cursor" aria-hidden="true" /></div>
+                  : <Markdown text={answer} />)}
+                {asking && !answer && (
+                  <span className="chat-typing" role="status" aria-label={t('state.loading')}>
+                    <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
+                  </span>
+                )}
               </div>
-            )}
 
-            {askError && (
-              <div role="alert">
-                <div className="chat-hint"><span aria-hidden="true">⚠ </span>{askError}</div>
+              {blocked && !asking && (
+                <div className="chat-hint" role="status">
+                  <span aria-hidden="true">⚠ </span>
+                  {t('chat.governedBlocked')}{blocked ? ` — ${blocked}` : ''}
+                </div>
+              )}
+
+              {askError && (
+                <div role="alert">
+                  <div className="chat-hint"><span aria-hidden="true">⚠ </span>{askError}</div>
+                  <div style={{ marginTop: 8 }}>
+                    <Button small variant="ghost" onClick={ask} disabled={asking || !q.trim()}>
+                      {t('action.retry')}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {!asking && answer && !askError && !blocked && (
                 <div style={{ marginTop: 8 }}>
-                  <Button small variant="ghost" onClick={ask} disabled={asking || !q.trim()}>
-                    {t('action.retry')}
+                  <Button small variant="ghost" onClick={saveToChat} disabled={saving || !resultId}>
+                    {t('chat.saveToChat')}
                   </Button>
                 </div>
-              </div>
-            )}
-
-            {!asking && answer && !askError && !blocked && (
-              <div style={{ marginTop: 8 }}>
-                <Button small variant="ghost" onClick={saveToChat} disabled={saving || !resultId}>
-                  {t('chat.saveToChat')}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-      </Panel>
-
-      {/* At-a-glance overview — the four workspace counts as keyboard-operable
-          StatTiles (roving arrows inside the group); each opens its full screen. */}
-      <div style={{ marginTop: 16 }}>
-        <TileGroup label={t('home.subtitle')}>
-          <StatTile glyph="◆" value={active.data?.length ?? 0} label={t('home.priorities')} countUp onActivate={() => setRoute('tasks')} />
-          <StatTile glyph="⚑" value={approvals.data?.length ?? 0} label={t('home.approvals')} countUp onActivate={() => setRoute('approvals')} />
-          <StatTile glyph="⬡" value={agents.data?.length ?? 0} label={t('home.agents')} countUp onActivate={() => setRoute('agents')} />
-          <StatTile glyph="▤" value={projects.data?.length ?? 0} label={t('nav.projects')} countUp onActivate={() => setRoute('projects')} />
-        </TileGroup>
-      </div>
-
-      <div className="grid grid-2" style={{ marginTop: 16 }}>
-        <Panel
-          title={t('home.priorities')}
-          actions={(
-            <Button small variant="ghost" title={`${t('action.viewAll')} — ${t('home.priorities')}`} onClick={() => setRoute('tasks')}>
-              {t('action.viewAll')}
-            </Button>
+              )}
+            </div>
           )}
-        >
+        </div>
+
+        {/* At-a-glance overview — the four workspace counts as keyboard-operable
+            StatTiles (roving arrows inside the group); each opens its full screen. */}
+        <div className="ledger-wrap">
+          <span className="micro since">{t('home.subtitle')}</span>
+          <TileGroup label={t('home.subtitle')}>
+            <StatTile glyph="◆" value={active.data?.length ?? 0} label={t('home.priorities')} countUp onActivate={() => setRoute('tasks')} />
+            <StatTile glyph="⚑" value={approvals.data?.length ?? 0} label={t('home.approvals')} countUp onActivate={() => setRoute('approvals')} />
+            <StatTile glyph="⬡" value={agents.data?.length ?? 0} label={t('home.agents')} countUp onActivate={() => setRoute('agents')} />
+            <StatTile glyph="▤" value={projects.data?.length ?? 0} label={t('nav.projects')} countUp onActivate={() => setRoute('projects')} />
+          </TileGroup>
+        </div>
+      </section>
+
+      {/* ── BOARD · the four real-data queues ───────────────────────────── */}
+      <div className="grid wide">
+        <section className="surface soft reveal">
+          <div className="sec-head">
+            <h2>{t('home.priorities')}</h2>
+            <button type="button" className="chip" title={`${t('action.viewAll')} — ${t('home.priorities')}`} onClick={() => setRoute('tasks')}>
+              {t('action.viewAll')}
+            </button>
+          </div>
           <Async state={active} emptyTitle={t('home.emptyPriorities')} emptyHint={t('home.emptyPrioritiesHint')}>
             {(items) => (
-              <div className="stack">
+              <ul className="nba-list">
                 {items.map((x) => (
-                  <div key={x.id} className="list-row">
-                    <span>{x.title}</span>
-                    <StatusPill status={x.status} />
-                  </div>
+                  <li key={x.id} className="nba-item">
+                    <span className="nba-rank mono" aria-hidden="true">◆</span>
+                    <div className="nba-txt"><b>{x.title}</b></div>
+                    <span className={`pill ${pillTone(x.status)}`.trim()}>{label(x.status)}</span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </Async>
-        </Panel>
+        </section>
 
-        <Panel
-          title={t('home.approvals')}
-          actions={(
-            <Button small variant="ghost" title={`${t('action.viewAll')} — ${t('home.approvals')}`} onClick={() => setRoute('approvals')}>
+        <section className="surface soft reveal">
+          <div className="sec-head">
+            <h2>{t('home.approvals')}</h2>
+            <button type="button" className="chip" title={`${t('action.viewAll')} — ${t('home.approvals')}`} onClick={() => setRoute('approvals')}>
               {t('action.viewAll')}
-            </Button>
-          )}
-        >
+            </button>
+          </div>
           <Async state={approvals} emptyTitle={t('home.emptyApprovals')} emptyHint={t('home.emptyApprovalsHint')}>
             {(items) => (
-              <div className="stack">
+              <ul className="nba-list">
                 {items.map((a) => (
-                  <div key={a.id} className="list-row">
-                    <span>{a.actionType}</span>
-                    <Badge tone="warning">{a.level}</Badge>
-                  </div>
+                  <li key={a.id} className="nba-item">
+                    <span className="nba-rank mono" aria-hidden="true">⚑</span>
+                    <div className="nba-txt"><b>{a.actionType}</b><span className="micro">{a.level}</span></div>
+                    <span className="pill warn">{label(a.status)}</span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </Async>
-        </Panel>
+        </section>
 
-        <Panel
-          title={t('home.agents')}
-          actions={(
-            <Button small variant="ghost" title={`${t('action.viewAll')} — ${t('home.agents')}`} onClick={() => setRoute('agents')}>
+        <section className="surface soft reveal">
+          <div className="sec-head">
+            <h2>{t('home.agents')}</h2>
+            <button type="button" className="chip" title={`${t('action.viewAll')} — ${t('home.agents')}`} onClick={() => setRoute('agents')}>
               {t('action.viewAll')}
-            </Button>
-          )}
-        >
+            </button>
+          </div>
           <Async state={agents} emptyTitle={t('home.emptyAgents')} emptyHint={t('home.emptyAgentsHint')}>
             {(items) => (
-              <div className="stack">
+              <ul className="nba-list">
                 {items.map((a) => (
-                  <div key={a.id} className="list-row">
-                    <span className="row"><Avatar name={a.displayName} />{a.displayName} · <span className="muted">{a.role}</span></span>
-                    <StatusPill status={a.status} />
-                  </div>
+                  <li key={a.id} className="nba-item">
+                    <span className="nba-rank mono" aria-hidden="true">⬡</span>
+                    <div className="nba-txt"><b>{a.displayName}</b><span className="micro">{a.role}</span></div>
+                    <span className={`pill ${pillTone(a.status)}`.trim()}>{label(a.status)}</span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </Async>
-        </Panel>
+        </section>
 
-        <Panel
-          title={t('nav.projects')}
-          actions={(
-            <Button small variant="ghost" title={`${t('action.viewAll')} — ${t('nav.projects')}`} onClick={() => setRoute('projects')}>
+        <section className="surface soft reveal">
+          <div className="sec-head">
+            <h2>{t('nav.projects')}</h2>
+            <button type="button" className="chip" title={`${t('action.viewAll')} — ${t('nav.projects')}`} onClick={() => setRoute('projects')}>
               {t('action.viewAll')}
-            </Button>
-          )}
-        >
+            </button>
+          </div>
           <Async state={projects} emptyTitle={t('home.emptyProjects')} emptyHint={t('home.emptyProjectsHint')}>
             {(items) => (
-              <div className="stack">
+              <ul className="nba-list">
                 {items.map((p) => (
-                  <div key={p.id} className="list-row">
-                    <span>{p.name}</span>
-                    <StatusPill status={p.status} />
-                  </div>
+                  <li key={p.id} className="nba-item">
+                    <span className="nba-rank mono" aria-hidden="true">▤</span>
+                    <div className="nba-txt"><b>{p.name}</b></div>
+                    <span className={`pill ${pillTone(p.status)}`.trim()}>{label(p.status)}</span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </Async>
-        </Panel>
+        </section>
       </div>
-    </>
+    </div>
   );
 }
