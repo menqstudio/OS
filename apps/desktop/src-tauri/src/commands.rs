@@ -826,6 +826,16 @@ const GOVERNED_GENERATION_CONFIG: &str = "brops.governed-engine.sidecar.v1";
 const GOVERNED_PLACEHOLDER_HASH: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
+/// Stop an in-flight streaming turn for `conversation_id` (the Stop button). Sets the
+/// armed cancellation flag; the stream's read loop breaks at the next delta and kills
+/// the `claude` child, keeping whatever streamed so far. A no-op (still Ok) if no turn
+/// is currently streaming for that conversation.
+#[tauri::command]
+pub fn cancel_reply(conversation_id: String) -> Result<(), String> {
+    crate::ai::request_cancel(&conversation_id);
+    Ok(())
+}
+
 /// Streaming counterpart of `reply_in_conversation`: emits incremental `delta`
 /// events as the agent produces text, then a `done` event carrying the
 /// persisted message (or an `error` event). Returns Ok even on provider failure
@@ -1017,14 +1027,26 @@ pub async fn stream_reply(
         }
     }
 
-    // --- Ungoverned turn: streamed as before (UNCHANGED) ---
+    // --- Ungoverned turn: streamed, cancellable via `cancel_reply` (the Stop button) ---
+    let cancel = crate::ai::arm_cancel(&conversation_id);
     let ch = on_event.clone();
-    let result = crate::ai::generate_stream(&system, &history, move |delta| {
-        let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
-    })
+    let result = crate::ai::generate_stream(
+        &system,
+        &history,
+        move |delta| {
+            let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
+        },
+        Some(cancel),
+    )
     .await;
+    crate::ai::disarm_cancel(&conversation_id);
     match result {
         Ok(full) => {
+            // A Stop before any token streamed → empty partial: unstick the UI with no
+            // persisted message (the command returning resolves the awaited stream_reply).
+            if full.trim().is_empty() {
+                return Ok(());
+            }
             // Persist the reply. Any failure here must still deliver a terminal
             // event so the streaming UI never stays stuck "thinking".
             let persisted = {
@@ -1337,7 +1359,7 @@ pub async fn stream_run_step(
             let ch = on_event.clone();
             match crate::ai::generate_stream(&system, &history, move |delta| {
                 let _ = ch.send(RunStepEvent::Delta { text: delta.to_string() });
-            })
+            }, None)
             .await
             {
                 Ok(full) => full,
@@ -1540,7 +1562,7 @@ pub async fn stream_ask(
     let ch = on_event.clone();
     match crate::ai::generate_stream(&system, &history, move |delta| {
         let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
-    })
+    }, None)
     .await
     {
         Ok(answer) => {

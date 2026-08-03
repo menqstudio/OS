@@ -99,6 +99,13 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [replyError, setReplyError] = useState<string | null>(null);
+  // Stop button: a ref the responder loop checks so it can break out immediately.
+  const cancelledRef = useRef(false);
+  // Messages sent while a turn is running are queued and fire automatically when it
+  // finishes — the user never waits to keep talking. A ref (not state) so the drain in
+  // send's `finally` reads the latest queue without a stale closure.
+  const queueRef = useRef<string[]>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
   // @mention autocomplete over agent display names.
   const inputRef = useRef<HTMLInputElement | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
@@ -172,16 +179,26 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     }
   };
 
-  const send = async () => {
-    const body = draft.trim();
-    if (!body || busy || thinking) return;
+  const send = async (override?: string) => {
+    const body = (override ?? draft).trim();
+    if (!body) return;
+    // A turn is already running: don't block the user — queue this message and it
+    // fires automatically when the current turn finishes (see the drain in `finally`).
+    if (!override && (busy || thinking)) {
+      queueRef.current.push(body);
+      setQueuedCount(queueRef.current.length);
+      setDraft('');
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
+    cancelledRef.current = false;
     setBusy(true);
     setError(null);
     setReplyError(null);
     try {
       const userMsg = await desktop.postMessage({ conversationId: conversation.id, role: 'user', author: t('chat.you'), body });
       setExtra((prev) => [...prev, userMsg]);
-      setDraft('');
+      if (!override) setDraft('');
       // Focus management on send: return the caret to the composer for the next turn.
       requestAnimationFrame(() => inputRef.current?.focus());
       onActivity();
@@ -193,7 +210,8 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     setBusy(false);
     // Stream real agent replies. In a direct chat the selected agent answers;
     // in a group room the first couple of specialists answer in turn. A provider
-    // failure is shown honestly and never loses the user's message.
+    // failure is shown honestly and never loses the user's message. The Stop button
+    // sets cancelledRef so this loop breaks and the backend turn is cancelled.
     setThinking(true);
     setStreamingText('');
     try {
@@ -201,6 +219,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
         ? (agentNames.slice(0, 2).length ? agentNames.slice(0, 2) : ['Bro'])
         : [selectedAgent];
       for (const who of responders) {
+        if (cancelledRef.current) break;
         setStreamingAuthor(who);
         setStreamingText('');
         let failed = false;
@@ -212,7 +231,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
           // turn-level notice, NO persisted agent message (Wave 3a Blocks every turn).
           else if (ev.type === 'blocked') { setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`); failed = true; }
         }, who);
-        if (failed) break; // don't replay the same provider error for every agent
+        if (failed || cancelledRef.current) break; // stop the chain on error or Stop
       }
     } catch (e: unknown) {
       setReplyError(e instanceof Error ? e.message : String(e));
@@ -220,7 +239,22 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
       setThinking(false);
       setStreamingText('');
       onActivity();
+      // Fire the next queued message, if any and the user didn't Stop.
+      if (!cancelledRef.current && queueRef.current.length > 0) {
+        const next = queueRef.current.shift()!;
+        setQueuedCount(queueRef.current.length);
+        void send(next);
+      }
     }
+  };
+
+  // Stop the in-flight turn: break the responder loop, cancel the backend stream
+  // (keeping whatever streamed so far), and drop any queued follow-ups.
+  const stopTurn = () => {
+    cancelledRef.current = true;
+    queueRef.current = [];
+    setQueuedCount(0);
+    void desktop.cancelReply(conversation.id).catch(() => {});
   };
 
   const history = s.data ?? [];
@@ -355,6 +389,11 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
               ))}
             </ul>
           )}
+          {queuedCount > 0 && (
+            <div className="comp-queued" aria-live="polite">
+              {queuedCount === 1 ? L('queuedOne') : `${queuedCount} ${L('queuedMany')}`}
+            </div>
+          )}
           <div className="comp-bar">
             <button
               type="button"
@@ -374,9 +413,23 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
               aria-label={t('chat.composer')}
               autoFocus
             />
-            <button type="submit" className="comp-send" aria-label={t('action.send')} disabled={busy || thinking}>
-              <span className="cs-glyph" aria-hidden="true">➤</span>
-            </button>
+            {thinking ? (
+              // While a turn streams, the primary action is Stop; Enter still queues a
+              // follow-up so the user can keep talking without waiting.
+              <button
+                type="button"
+                className="comp-send comp-stop"
+                aria-label={L('stop')}
+                title={L('stop')}
+                onClick={stopTurn}
+              >
+                <span className="cs-glyph" aria-hidden="true">■</span>
+              </button>
+            ) : (
+              <button type="submit" className="comp-send" aria-label={t('action.send')} disabled={busy}>
+                <span className="cs-glyph" aria-hidden="true">➤</span>
+              </button>
+            )}
           </div>
         </form>
 

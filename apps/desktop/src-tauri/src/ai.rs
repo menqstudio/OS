@@ -241,6 +241,49 @@ impl Drop for GenerationPermit {
     }
 }
 
+/// Per-key cancellation flags for in-flight streaming turns. `stream_reply` arms a
+/// flag (via [`arm_cancel`]) before generating and disarms it after; the
+/// `cancel_reply` command sets it (via [`request_cancel`]), and the stream's read
+/// loop breaks at the next delta — the `claude` child is then killed. Keyed by
+/// conversation id, so the frontend Stop button targets exactly one turn.
+fn cancel_flags(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>> {
+    static F: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    > = std::sync::OnceLock::new();
+    F.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Arm a fresh (not-cancelled) flag for `key` and return it to the streaming turn.
+pub fn arm_cancel(key: &str) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Ok(mut m) = cancel_flags().lock() {
+        m.insert(key.to_string(), flag.clone());
+    }
+    flag
+}
+
+/// Request cancellation of the turn armed under `key`. Returns true if one was armed.
+pub fn request_cancel(key: &str) -> bool {
+    match cancel_flags().lock() {
+        Ok(m) => m
+            .get(key)
+            .map(|f| {
+                f.store(true, std::sync::atomic::Ordering::SeqCst);
+                true
+            })
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
+/// Disarm (remove) the flag for `key` when its turn ends — always paired with [`arm_cancel`].
+pub fn disarm_cancel(key: &str) {
+    if let Ok(mut m) = cancel_flags().lock() {
+        m.remove(key);
+    }
+}
+
 /// One turn of a conversation. `role` is "user" or "assistant".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMsg {
@@ -602,13 +645,14 @@ pub async fn generate_stream<F: FnMut(&str)>(
     system: &str,
     messages: &[ChatMsg],
     mut on_delta: F,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, String> {
     validate_input(system, messages)?;
     let _permit = GenerationPermit::acquire()?;
     let messages = trim_history(messages);
     let provider = resolve()?;
     match provider {
-        Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta).await,
+        Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta, cancel).await,
         Provider::Anthropic { key, model } => {
             let full = anthropic(&key, &model, system, messages).await?;
             on_delta(&full);
@@ -1020,7 +1064,11 @@ fn claude_args(system_file: &std::path::Path, streaming: bool, model: Option<&st
     a.extend(tool_args(bro_agent_dir().is_some()));
     a.push("--strict-mcp-config".into()); // ignore every MCP config (we pass none)
     a.push("--setting-sources".into());
-    a.push("project".into()); // only project settings (empty sandbox) — excludes user hooks/plugins/MCP
+    // "" → load NO setting sources: excludes user AND project hooks/plugins/MCP. Critical for the coding
+    // agent (cwd = a real repo): otherwise claude runs the repo's `.claude` Stop hook (e.g. a coordination
+    // doc-sync guard), which can `decision:block` a headless turn and wedge it until the CLI times out. Tools
+    // and permission mode come from CLI flags, never settings, so nothing we rely on is lost.
+    a.push(String::new());
     a.push("--no-session-persistence".into());
     if let Some(m) = model {
         a.push("--model".into());
@@ -1034,12 +1082,17 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     system: &str,
     messages: &[ChatMsg],
     on_delta: &mut F,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, String> {
     let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
     let sys_file = TempFileGuard(write_system_prompt_file(system)?);
-    // Absolute deadline for the WHOLE streaming lifecycle (stdout loop + child
-    // wait + stderr drain) — a child that keeps dribbling lines can't run forever.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+    // Absolute deadline for the WHOLE streaming lifecycle (stdout loop + child wait +
+    // stderr drain). A conversational chat gets 180s; the coding agent (BROPS_PROJECT_DIR
+    // set) does real multi-step work — reading files, running build/test — so it gets a
+    // far larger budget, otherwise a legitimate agent task surfaces as "claude CLI timed out".
+    let agent = bro_agent_dir().is_some();
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_secs(if agent { 900 } else { 180 });
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(claude_args(&sys_file.0, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
         .current_dir(ai_cwd()?)
@@ -1093,9 +1146,16 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     // (hung `claude`, auth prompt, network stall) is bounded by a per-read
     // timeout so the UI never spins forever; kill_on_drop reaps the child.
     loop {
+        // User pressed Stop: kill the child now (don't wait on child.wait) and keep
+        // whatever streamed so far — a stopped turn returns its partial reply.
+        if cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst)) {
+            let _ = child.start_kill();
+            return Ok(acc.trim().to_string());
+        }
         // Bound each read by the earlier of the absolute request deadline and a
-        // 120s per-read stall cap.
-        let read_deadline = deadline.min(tokio::time::Instant::now() + Duration::from_secs(120));
+        // per-read stall cap (the agent can pause longer between output lines).
+        let read_deadline =
+            deadline.min(tokio::time::Instant::now() + Duration::from_secs(if agent { 300 } else { 120 }));
         let line = match tokio::time::timeout_at(read_deadline, lines.next_line()).await {
             Err(_) => return Err("claude CLI timed out".to_string()),
             Ok(Ok(Some(l))) => l,
@@ -1644,7 +1704,7 @@ mod tests {
             assert!(args.iter().any(|a| a == "--strict-mcp-config"), "must pass --strict-mcp-config");
             // only project settings load (from the empty sandbox) → no user hooks/plugins/MCP.
             let sp = args.iter().position(|a| a == "--setting-sources").expect("--setting-sources present");
-            assert_eq!(args.get(sp + 1), Some(&"project".to_string()));
+            assert_eq!(args.get(sp + 1), Some(&String::new()), "no setting sources → no user/project hooks");
             assert!(args.iter().any(|a| a == "--no-session-persistence"));
             // never bypass permissions / re-enable tools.
             assert!(!args.iter().any(|a| a == "--dangerously-skip-permissions"

@@ -25,6 +25,21 @@ export const STR = {
     hy: 'պատրաստ',
     ru: 'готов',
   },
+  stop: {
+    en: 'Stop',
+    hy: 'Կանգնեցնել',
+    ru: 'Остановить',
+  },
+  queuedOne: {
+    en: '1 message queued',
+    hy: '1 հաղորդագրություն հերթում',
+    ru: '1 сообщение в очереди',
+  },
+  queuedMany: {
+    en: 'messages queued',
+    hy: 'հաղորդագրություն հերթում',
+    ru: 'сообщений в очереди',
+  },
   thinkingCap: {
     en: 'THINKING',
     hy: 'ՄՏԱԾՈՒՄ',

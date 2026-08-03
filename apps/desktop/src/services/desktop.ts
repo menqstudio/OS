@@ -244,6 +244,10 @@ export const desktop = {
     return invoke<void>('stream_reply', { conversationId, agent: agent ?? null, onEvent: channel });
   },
 
+  // Stop an in-flight streaming turn for a conversation (the Stop button). The
+  // backend breaks the stream at the next delta and keeps whatever streamed so far.
+  cancelReply: (conversationId: string) => invoke<void>('cancel_reply', { conversationId }),
+
   // one-shot Ask Bro: streams an answer to a single prompt (no persistence).
   streamAsk: (prompt: string, onEvent: (e: StreamEvent) => void) => {
     const channel = new Channel<StreamEvent>();

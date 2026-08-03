@@ -2376,6 +2376,16 @@ body.ignited .shimmer{opacity:1}
   box-shadow:0 0 20px rgb(var(--cyan-rgb)/.45);transition:transform var(--fast),box-shadow var(--fast)}
 .v-chat .comp-send:hover{transform:translateY(-1px);box-shadow:0 0 28px rgb(var(--cyan-rgb)/.65)}
 .v-chat .comp-send:active{transform:translateY(0)}
+.v-chat .comp-send:disabled{opacity:.5;cursor:default;box-shadow:none;transform:none}
+/* Stop button (shown while a turn streams) — a distinct danger-tinted state. */
+.v-chat .comp-stop{color:#fff;background:linear-gradient(120deg,#e0556a,#c33d54);
+  box-shadow:0 0 20px rgb(224 85 106/.5)}
+.v-chat .comp-stop:hover{box-shadow:0 0 28px rgb(224 85 106/.7)}
+.v-chat .comp-stop .cs-glyph{font-size:12px;transform:none}
+/* Queued-follow-up hint above the composer bar. */
+.v-chat .comp-queued{align-self:flex-start;margin:0 0 6px 4px;padding:3px 10px;border-radius:999px;
+  font-size:11px;letter-spacing:.02em;color:var(--ink-muted);
+  background:rgb(var(--cyan-rgb)/.08);border:1px solid rgb(var(--cyan-rgb)/.18)}
 .v-chat .cs-glyph{font-size:14px;line-height:1;transform:translateX(1px)}
 
 /* quick replies (bilingual) */
