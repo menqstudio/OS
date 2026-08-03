@@ -4,6 +4,7 @@ import { Skeleton, ErrorState, EmptyState } from '../components/ui';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Mark } from '../components/Ambient';
+import { TrustSelftestPanel } from '../components/TrustSelftest';
 
 // ⛨ Անվտանգություն — Evidence chain / posture (Phase-2 §D), re-dressed into the
 // AI-OS design language (aios.css) as a "manifest instrument" + posture strip.
@@ -363,6 +364,7 @@ export function Security() {
 
         <div className="sec-sections">
           {integrityHero}
+          <TrustSelftestPanel />
           {postureStrip}
           {digestSection}
           {residualSection}

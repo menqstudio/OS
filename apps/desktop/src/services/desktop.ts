@@ -53,6 +53,22 @@ async function governanceRead(
   }
 }
 
+/**
+ * Result of the governed trust-chain self-test. `bound && production_verified`
+ * means a REAL `trusted_verified` receipt was produced by the in-process chain
+ * (real ed25519 crypto). `custody_note` states the honest posture — the root is a
+ * demonstration anchor, not an offline-HSM key — and `available` is false off Windows.
+ */
+export interface TrustSelftest {
+  available: boolean;
+  trust_state: string;
+  production_verified: boolean;
+  bound: boolean;
+  detail: string;
+  custody_note: string;
+  platform_note: string;
+}
+
 export const desktop = {
   // projects
   listProjects: () => invoke<Project[]>('list_projects'),
@@ -207,6 +223,11 @@ export const desktop = {
   readVerifierVerdicts: (taskId?: string) =>
     governanceRead('verdicts', 'read_verifier_verdicts', { taskId: taskId ?? null }),
   readEngineApprovalQueue: () => governanceRead('approvalQueue', 'read_engine_approval_queue'),
+
+  // Governed trust-chain self-test: runs the REAL in-process challenge→sign→verify→
+  // trusted_verified chain (Windows) and returns the honest outcome + custody posture.
+  // It never flips live AI turns — those stay fail-closed.
+  governedTrustSelftest: () => invoke<TrustSelftest>('governed_trust_selftest'),
 
   // ai (live agent replies)
   aiStatus: () => invoke<AiStatus>('ai_status'),

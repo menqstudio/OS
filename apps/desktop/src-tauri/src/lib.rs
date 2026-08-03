@@ -7,6 +7,7 @@ use tauri::Manager;
 mod ai;
 mod commands;
 mod governance;
+mod governed_selftest;
 mod governed_turn;
 mod files;
 
@@ -180,6 +181,10 @@ pub fn run() {
             files::list_dir,
             files::read_file,
             files::write_file,
+            // Owner-visible governed trust-chain self-test: runs the REAL in-process
+            // challenge→sign→verify→trusted_verified chain (Windows) and reports the
+            // honest outcome + custody posture. Never flips live AI turns.
+            governed_selftest::governed_trust_selftest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running BroPS");
