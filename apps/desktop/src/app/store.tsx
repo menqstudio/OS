@@ -91,3 +91,10 @@ export function useApp(): AppState {
   if (!ctx) throw new Error('useApp must be used within AppProvider');
   return ctx;
 }
+
+/** Provider-safe variant: returns null instead of throwing when no AppProvider is
+ *  present (e.g. a shared primitive rendered standalone in a unit test). Lets a
+ *  low-level component localize when there's a provider and fall back otherwise. */
+export function useAppOptional(): AppState | null {
+  return useContext(AppContext);
+}

@@ -5,6 +5,11 @@ import { desktop } from '../services/desktop';
 import { ringPositions } from '../components/charts/Chart';
 import { Mark } from '../components/Ambient';
 import type { Agent } from '../domain/entities';
+import { STR } from './Agents.strings';
+
+// Page-local string sourcing lives in Agents.strings.ts (en/hy/ru). `L` resolves a
+// key against the active language with an English fallback — see the effect below.
+type LFn = (k: keyof typeof STR) => string;
 
 // ── `agents` ⬡ Կենդանի Ցանց — the live agent lattice, dressed as the AI-OS mockup ─
 // The mockup (views/agents.js · «Կենդանի Ցանց») is a living roster network with a
@@ -69,75 +74,6 @@ const PHASE_MARK: Record<Phase, string> = {
 
 const PHASE_ORDER: Phase[] = ['flowing', 'throttled', 'idle', 'completed', 'blocked'];
 
-// Bilingual strings inlined (the shared i18n files are not edited). Armenian reuses
-// the mockup's own strings; English is the fallback for any non-Armenian UI.
-type Lang = 'hy' | 'en';
-const STR: Record<Lang, Record<string, string>> = {
-  en: {
-    eyebrow: 'Roster · Live Network',
-    activeWord: 'active',
-    agentWord: 'agents',
-    censusLabel: 'State distribution',
-    latticeLabel: 'Agent lattice',
-    footHint: 'Pick a node to open its dossier',
-    keysHint: 'Arrows move · Enter opens · Esc closes',
-    building: 'Building lattice…',
-    linkLost: 'Link to the engine supervisor was lost — the live pack state is unavailable.',
-    emptyTitle: 'No active agents',
-    emptyHint: 'When the conductor dispatches a governed pack, its builders appear here.',
-    conductor: 'conductor',
-    pickTitle: 'Select an agent',
-    pickHint: 'Choose a node in the lattice — or press Enter — to open its dossier.',
-    details: 'Details',
-    owner: 'Owner',
-    model: 'Model',
-    slug: 'Slug',
-    agentId: 'Agent ID',
-    state: 'State',
-    governed: 'Governed telemetry',
-    telemetryPending:
-      'Live lease & receipt telemetry is issued by the engine supervisor. That subscription is not wired in this build — no lease_id / receipt_id is shown, and the desktop never holds a lease.',
-    blockedTitle: 'Agent blocked',
-    blockedBody:
-      'A governed turn for this agent was halted by the wall. Its result is withheld until a verified receipt is produced.',
-    retry: 'Retry',
-  },
-  hy: {
-    eyebrow: 'ՌՈՍՏԵՐ · ԿԵՆԴԱՆԻ ՑԱՆՑ',
-    activeWord: 'ԱԿՏԻՎ',
-    agentWord: 'ԳՈՐԾԱԿԱԼ',
-    censusLabel: 'Վիճակների բաշխում',
-    latticeLabel: 'Գործակալների ցանց',
-    footHint: 'Ընտրի՛ր հանգույց՝ անձնագիրը բացելու համար',
-    keysHint: 'Սլաքներ՝ տեղաշարժ · Enter՝ բացել · Esc՝ փակել',
-    building: 'Ցանցը կառուցվում է…',
-    linkLost: 'Կապը շարժիչի վերահսկիչի հետ կորավ — կենդանի փաթեթի վիճակն անհասանելի է։',
-    emptyTitle: 'Ակտիվ գործակալներ չկան',
-    emptyHint: 'Երբ դիրիժորը ուղարկի կառավարվող փաթեթ, նրա կառուցողները կհայտնվեն այստեղ։',
-    conductor: 'դիրիժոր',
-    pickTitle: 'Ընտրեք գործակալ',
-    pickHint: 'Ընտրեք հանգույց ցանցում — կամ սեղմեք Enter — բացելու համար նրա անձնագիրը։',
-    details: 'ՄԱՆՐԱՄԱՍՆԵՐ',
-    owner: 'ՏԵՐ',
-    model: 'ՄՈԴԵԼ',
-    slug: 'ԾԱԾԿԱԳԻՐ',
-    agentId: 'ԳՈՐԾԱԿԱԼԻ ID',
-    state: 'ՎԻՃԱԿ',
-    governed: 'ՀԵՌԱՉԱՓՈՒԹՅՈՒՆ',
-    telemetryPending:
-      'Կենդանի լիզինգի և ստացականի տվյալները տրամադրվում են շարժիչի վերահսկիչի կողմից։ Այդ բաժանորդագրությունը միացված չէ այս կառուցվածքում — lease_id / receipt_id չի ցուցադրվում, և աշխատասեղանը երբեք չի պահում լիզինգ։',
-    blockedTitle: 'Գործակալն արգելափակված է',
-    blockedBody:
-      'Այս գործակալի կառավարվող քայլը կանգնեցվեց պատի կողմից։ Արդյունքը պահվում է մինչև ստուգված ստացականի ստեղծումը։',
-    retry: 'Կրկնել',
-  },
-};
-
-const PHASE_LABELS: Record<Lang, Record<Phase, string>> = {
-  en: { idle: 'idle', flowing: 'flowing', throttled: 'throttled', blocked: 'blocked', completed: 'completed' },
-  hy: { idle: 'պարապ', flowing: 'հոսող', throttled: 'զսպված', blocked: 'արգելափակված', completed: 'ավարտ' },
-};
-
 // ── The re-forging dossier rail — fills for the selected node ─────────────────
 function Dossier({
   agent,
@@ -145,7 +81,7 @@ function Dossier({
   phaseLabels,
 }: {
   agent: Agent;
-  L: Record<string, string>;
+  L: LFn;
   phaseLabels: Record<Phase, string>;
 }) {
   const phase = phaseOf(agent.status);
@@ -160,23 +96,23 @@ function Dossier({
         <span className={`pill ${PHASE_PILL[phase]} dos-pill`}>{phaseLabels[phase]}</span>
       </div>
 
-      <p className="dos-role">Bro · {L.conductor}</p>
+      <p className="dos-role">Bro · {L('conductor')}</p>
 
       {phase === 'blocked' && (
         <div className="ag-blocked" role="note">
-          <span className="micro">⚠ {L.blockedTitle}</span>
-          <p>{L.blockedBody}</p>
+          <span className="micro">⚠ {L('blockedTitle')}</span>
+          <p>{L('blockedBody')}</p>
         </div>
       )}
 
       <div className="dos-block">
-        <span className="micro">{L.details}</span>
+        <span className="micro">{L('details')}</span>
         <div className="ag-facts">
-          <div className="ag-fact"><span className="ag-fk">{L.state}</span><span className={`pill ${PHASE_PILL[phase]}`}>{phaseLabels[phase]}</span></div>
-          <div className="ag-fact"><span className="ag-fk">{L.owner}</span><span>Bro · {L.conductor}</span></div>
-          <div className="ag-fact"><span className="ag-fk">{L.model}</span><span>{agent.model ?? '—'}</span></div>
-          <div className="ag-fact"><span className="ag-fk">{L.slug}</span><span className="ag-mono">{agent.slug}</span></div>
-          <div className="ag-fact ag-fact--wide"><span className="ag-fk">{L.agentId}</span><span className="ag-mono">{agent.id}</span></div>
+          <div className="ag-fact"><span className="ag-fk">{L('state')}</span><span className={`pill ${PHASE_PILL[phase]}`}>{phaseLabels[phase]}</span></div>
+          <div className="ag-fact"><span className="ag-fk">{L('owner')}</span><span>Bro · {L('conductor')}</span></div>
+          <div className="ag-fact"><span className="ag-fk">{L('model')}</span><span>{agent.model ?? '—'}</span></div>
+          <div className="ag-fact"><span className="ag-fk">{L('slug')}</span><span className="ag-mono">{agent.slug}</span></div>
+          <div className="ag-fact ag-fact--wide"><span className="ag-fk">{L('agentId')}</span><span className="ag-mono">{agent.id}</span></div>
         </div>
       </div>
 
@@ -184,8 +120,8 @@ function Dossier({
           guild-mates, so the mockup's sparkline + skill grades + mate stack are not
           fabricated — this block states the governed telemetry is pending instead. */}
       <div className="dos-block">
-        <span className="micro">{L.governed}</span>
-        <p className="muted ag-telemetry">{L.telemetryPending}</p>
+        <span className="micro">{L('governed')}</span>
+        <p className="muted ag-telemetry">{L('telemetryPending')}</p>
       </div>
     </>
   );
@@ -193,8 +129,14 @@ function Dossier({
 
 export function Agents() {
   const { t, lang } = useApp();
-  const L = STR[lang === 'hy' ? 'hy' : 'en'];
-  const phaseLabels = PHASE_LABELS[lang === 'hy' ? 'hy' : 'en'];
+  const L: LFn = (k) => STR[k][lang] ?? STR[k].en;
+  const phaseLabels: Record<Phase, string> = {
+    idle: L('phaseIdle'),
+    flowing: L('phaseFlowing'),
+    throttled: L('phaseThrottled'),
+    blocked: L('phaseBlocked'),
+    completed: L('phaseCompleted'),
+  };
   const state = useAsync(() => desktop.listAgents(), []);
 
   const agents = useMemo(() => state.data ?? [], [state.data]);
@@ -340,14 +282,14 @@ export function Agents() {
   const header = (
     <div className="pageHead">
       <div>
-        <span className="eyebrow">{L.eyebrow}</span>
+        <span className="eyebrow">{L('eyebrow')}</span>
         <h1>{t('nav.agents')}</h1>
         <p className="sub">{t('agents.subtitle')}</p>
       </div>
       {agents.length > 0 && (
         <div className="right">
-          <span className="pill live">{active} {L.activeWord}</span>
-          <span className="pill info">{agents.length} {L.agentWord}</span>
+          <span className="pill live">{active} {L('activeWord')}</span>
+          <span className="pill info">{agents.length} {L('agentWord')}</span>
         </div>
       )}
     </div>
@@ -359,9 +301,9 @@ export function Agents() {
       <div className="v-agents">
         <style>{AG_CSS}</style>
         {header}
-        <section className="lattice-panel surface cut hud" aria-label={L.latticeLabel}>
+        <section className="lattice-panel surface cut hud" aria-label={L('latticeLabel')}>
           <i className="bracket tl" /><i className="bracket tr" /><i className="bracket bl" /><i className="bracket br" />
-          <div className="muted" style={{ marginBottom: 14 }} aria-live="polite">{L.building}</div>
+          <div className="muted" style={{ marginBottom: 14 }} aria-live="polite">{L('building')}</div>
           <div className="ag-skel" aria-hidden="true"><i /><i /><i /><i /></div>
         </section>
       </div>
@@ -374,9 +316,9 @@ export function Agents() {
         <style>{AG_CSS}</style>
         {header}
         <section className="surface soft" role="alert" style={{ padding: 'var(--s6)' }}>
-          <span className="eyebrow">{L.eyebrow}</span>
-          <p className="muted" style={{ margin: '10px 0 14px', maxWidth: '60ch' }}>{`${L.linkLost} ${state.error}`}</p>
-          <button type="button" className="ag-btn" onClick={state.reload}>{L.retry}</button>
+          <span className="eyebrow">{L('eyebrow')}</span>
+          <p className="muted" style={{ margin: '10px 0 14px', maxWidth: '60ch' }}>{`${L('linkLost')} ${state.error}`}</p>
+          <button type="button" className="ag-btn" onClick={state.reload}>{L('retry')}</button>
         </section>
       </div>
     );
@@ -389,8 +331,8 @@ export function Agents() {
         {header}
         <section className="surface soft ag-empty" role="status">
           <span className="ag-empty-glyph" aria-hidden="true">⬡</span>
-          <div className="ag-empty-title">{L.emptyTitle}</div>
-          <p className="muted">{L.emptyHint}</p>
+          <div className="ag-empty-title">{L('emptyTitle')}</div>
+          <p className="muted">{L('emptyHint')}</p>
         </section>
       </div>
     );
@@ -406,14 +348,14 @@ export function Agents() {
 
       <div className="ros-wrap">
         {/* ── HERO · the roster lattice ─────────────────────────────────────── */}
-        <section className="lattice-panel surface cut hud reveal" aria-label={L.latticeLabel}>
+        <section className="lattice-panel surface cut hud reveal" aria-label={L('latticeLabel')}>
           <i className="bracket tl" /><i className="bracket tr" /><i className="bracket bl" /><i className="bracket br" />
           <div className="ticks" aria-hidden="true">
             {Array.from({ length: 12 }).map((_, i) => <i key={i} />)}
           </div>
 
           <div className="lat-top">
-            <span className="eyebrow">{L.eyebrow}</span>
+            <span className="eyebrow">{L('eyebrow')}</span>
             <div className="lat-legend" aria-hidden="true">
               {PHASE_ORDER.map((p) => (
                 <span key={p} className={`lg-key ${PHASE_STATE[p]}`}><i />{phaseLabels[p]}</span>
@@ -422,7 +364,7 @@ export function Agents() {
           </div>
 
           {/* the one live instrument — state census (click a segment to isolate) */}
-          <div className="census" role="group" aria-label={L.censusLabel}>
+          <div className="census" role="group" aria-label={L('censusLabel')}>
             {PHASE_ORDER.map((p) => {
               const n = counts[p];
               const pressed = filter === p;
@@ -478,10 +420,10 @@ export function Agents() {
             <div className="ag-hub" aria-hidden="true">
               <Mark state="live" size={30} />
               <span className="ag-hub-name">Bro</span>
-              <span className="ag-hub-role">{L.conductor}</span>
+              <span className="ag-hub-role">{L('conductor')}</span>
             </div>
 
-            <ul className="ag-nodes" role="list" aria-label={L.latticeLabel} onKeyDown={onStageKeyDown}>
+            <ul className="ag-nodes" role="list" aria-label={L('latticeLabel')} onKeyDown={onStageKeyDown}>
               {agents.map((a, i) => {
                 const phase = phaseOf(a.status);
                 const pos = positions[i];
@@ -516,13 +458,13 @@ export function Agents() {
           </div>
 
           <div className="lat-foot">
-            <span className="micro">{L.footHint}</span>
-            <span className="lat-scan-lbl micro">◎ {L.keysHint}</span>
+            <span className="micro">{L('footHint')}</span>
+            <span className="lat-scan-lbl micro">◎ {L('keysHint')}</span>
           </div>
         </section>
 
         {/* ── DOSSIER rail ──────────────────────────────────────────────────── */}
-        <aside className="dossier surface soft reveal" aria-live="polite" aria-label={L.details}>
+        <aside className="dossier surface soft reveal" aria-live="polite" aria-label={L('details')}>
           {selected ? (
             // keyed on the agent id so the rail remounts and re-forges on every
             // select (mockup: dossier.innerHTML = dossierHTML(idx)); the ag-forge
@@ -533,8 +475,8 @@ export function Agents() {
           ) : (
             <div className="ag-pick">
               <Mark state="idle" size={44} />
-              <div className="ag-empty-title">{L.pickTitle}</div>
-              <p className="muted">{L.pickHint}</p>
+              <div className="ag-empty-title">{L('pickTitle')}</div>
+              <p className="muted">{L('pickHint')}</p>
             </div>
           )}
         </aside>

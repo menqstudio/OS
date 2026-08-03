@@ -6,77 +6,7 @@ import { languageNames } from '../i18n';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { Lang, Theme } from '../domain/enums';
-
-// -------------------------------------------------------------------------------------------------
-// Local, page-scoped bilingual copy (EN + HY). Per the thin-page convention this page inlines its
-// own strings for the surfaces that are not yet in the shared i18n dictionaries — it never edits the
-// shared i18n files. Keys already present in i18n/en.ts + hy.ts are used through `t()`. Short,
-// decorative console captions are inlined verbatim from the brops-aios mockup (Armenian, no interp).
-// -------------------------------------------------------------------------------------------------
-interface Str { en: string; hy: string }
-const copy = {
-  appearanceDesc: {
-    en: 'Visual theme and interface language. Preferences are saved to this device.',
-    hy: 'Տեսքի ոճ և ինտերֆեյսի լեզու։ Նախապատվությունները պահվում են այս սարքում։',
-  },
-  themeDesc: {
-    en: 'Choose a light or dark interface. Motion is reduced automatically when your system asks for it.',
-    hy: 'Ընտրեք բաց կամ մուգ ինտերֆեյս։ Շարժումը նվազում է ինքնաշխատ, երբ համակարգը դա պահանջում է։',
-  },
-  languageDesc: {
-    en: 'Interface language for BroPS.',
-    hy: 'BroPS-ի ինտերֆեյսի լեզուն։',
-  },
-  governedToggleLabel: { en: 'Governed provider', hy: 'Կառավարվող մատակարար' },
-  governedToggleDesc: {
-    en: 'Set by the backend environment under the fail-closed policy. This control is read-only — the desktop app never holds keys or leases and cannot route turns through the wall from here.',
-    hy: 'Սահմանվում է backend-ի միջավայրի կողմից՝ fail-closed քաղաքականությամբ։ Այս կարգավորումը միայն կարդալու համար է. desktop ծրագիրը երբեք չի պահում բանալիներ կամ վարձակալություններ և չի կարող այստեղից ուղղորդել շրջադարձերը պատի միջով։',
-  },
-  runtimeDesc: {
-    en: 'The provider, model and Bro runtime are resolved by the backend environment and shown read-only. Data flows provider → model → Bro; the desktop app cannot re-seat the engine from here.',
-    hy: 'Մատակարարը, մոդելը և Բրո շարժիչը որոշվում են backend միջավայրի կողմից և ցուցադրվում են միայն կարդալու համար։ Տվյալները հոսում են մատակարար → մոդել → Բրո. desktop ծրագիրն այստեղից չի կարող վերաձեռնարկել շարժիչը։',
-  },
-  noModel: { en: 'No model loaded', hy: 'ՉԿԱ ԲԵՌՆՎԱԾ ՄՈԴԵԼ' },
-  sidecarHealthyDesc: {
-    en: 'The governance engine responded and the governed path is available.',
-    hy: 'Կառավարման շարժիչը պատասխանեց, և կառավարվող ուղին հասանելի է։',
-  },
-  sidecarInactiveDesc: {
-    en: 'The resolved provider is ungoverned, so no governance sidecar is engaged. Turns are not verified.',
-    hy: 'Ընտրված մատակարարը չկառավարվող է, ուստի կառավարման կողմնակի ծառայությունը ներգրավված չէ։ Շրջադարձերը չեն ստուգվում։',
-  },
-  blockedTitle: { en: 'Sidecar misconfigured — governed path is fail-closed', hy: 'Կողմնակի ծառայությունը սխալ է կարգավորված — կառավարվող ուղին fail-closed է' },
-  blockedGuideIntro: {
-    en: 'The governed provider is enabled but the sidecar did not become ready, so every governed turn is blocked (no result is produced). To restore the governed path:',
-    hy: 'Կառավարվող մատակարարը միացված է, բայց կողմնակի ծառայությունը պատրաստ չդարձավ, ուստի յուրաքանչյուր կառավարվող շրջադարձ արգելափակված է (արդյունք չի ստեղծվում)։ Կառավարվող ուղին վերականգնելու համար՝',
-  },
-  blockedStep1: {
-    en: 'Confirm the governance engine / broker service is running in the backend environment.',
-    hy: 'Հաստատեք, որ կառավարման շարժիչը / broker ծառայությունը աշխատում է backend միջավայրում։',
-  },
-  blockedStep2: {
-    en: 'Provision the trust root so signed receipts can be verified (do not fall back to ungoverned).',
-    hy: 'Ապահովեք վստահության արմատը, որպեսզի ստորագրված անդորրագրերը ստուգվեն (մի անցեք չկառավարվողի)։',
-  },
-  blockedStep3: {
-    en: 'Re-check status once the sidecar is configured.',
-    hy: 'Կրկին ստուգեք վիճակը, երբ կողմնակի ծառայությունը կարգավորված է։',
-  },
-  recheck: { en: 'Re-check', hy: 'Կրկին ստուգել' },
-  aboutProductLabel: { en: 'Product', hy: 'Արտադրանք' },
-  aboutVersionLabel: { en: 'Version', hy: 'Տարբերակ' },
-  aboutGovernanceLabel: { en: 'Governance', hy: 'Կառավարում' },
-  aboutGovernanceValue: {
-    en: 'Fail-closed, verified-receipt-mandatory',
-    hy: 'Fail-closed, պարտադիր ստուգված անդորրագրով',
-  },
-  providerNotConfiguredHint: {
-    en: 'No AI provider is resolved by the backend environment. Configure one to enable turns.',
-    hy: 'Backend միջավայրը AI մատակարար չի ընտրել։ Կարգավորեք մեկը՝ շրջադարձերը միացնելու համար։',
-  },
-  themeChanged: { en: 'Theme set to', hy: 'Տեսքի ոճը սահմանված է՝' },
-  languageChanged: { en: 'Language set to', hy: 'Լեզուն սահմանված է՝' },
-} satisfies Record<string, Str>;
+import { STR } from './Settings.strings';
 
 // A read-only, accessible on/off indicator. Rendered as a disabled <button role="switch"> so the
 // state is exposed non-visually through aria-checked (the governed provider is backend-owned and
@@ -103,19 +33,19 @@ function Switch(
 
 export function Settings() {
   const { t, theme, toggleTheme, lang, setLang } = useApp();
-  const pick = (m: Str) => (lang === 'hy' ? m.hy : m.en);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   // Polite, screen-reader-only announcement of a just-applied preference change.
   const [announce, setAnnounce] = useState('');
 
   const selectTheme = (value: Theme) => {
     if (value !== theme) toggleTheme();
-    setAnnounce(`${pick(copy.themeChanged)} ${value === 'dark' ? t('settings.theme.dark') : t('settings.theme.light')}`);
+    setAnnounce(`${L('themeChanged')} ${value === 'dark' ? t('settings.theme.dark') : t('settings.theme.light')}`);
   };
 
   const selectLang = (value: Lang) => {
     setLang(value);
-    setAnnounce(`${pick(copy.languageChanged)} ${languageNames[value]}`);
+    setAnnounce(`${L('languageChanged')} ${languageNames[value]}`);
   };
 
   // Read-only, HONEST view of the runtime the backend actually resolved. The provider/model/governed
@@ -142,16 +72,16 @@ export function Settings() {
 
   // Honest bay-state pill computed from the real request lifecycle + status.
   const bayPill: { tone: string; label: string } = !hasBackend()
-    ? { tone: 'off', label: 'ԱՆՀԱՍԱՆԵԼԻ' }
+    ? { tone: 'off', label: L('bayUnavailable') }
     : ai.loading && data === null
-      ? { tone: 'info', label: 'ՍՏՈՒԳՈՒՄ · CHECKING' }
+      ? { tone: 'info', label: L('bayChecking') }
       : ai.error
-        ? { tone: 'warn', label: 'ՍԽԱԼ · ERROR' }
+        ? { tone: 'warn', label: L('bayError') }
         : isNone
-          ? { tone: 'warn', label: 'ՉԿԱՐԳԱՎՈՐՎԱԾ · UNSET' }
+          ? { tone: 'warn', label: L('bayUnset') }
           : ready
-            ? { tone: 'info', label: 'ԳՈՐԾԱՐԿՎԱԾ · RUNNING' }
-            : { tone: 'warn', label: 'ԱՆՋԱՏ · OFFLINE' };
+            ? { tone: 'info', label: L('bayRunning') }
+            : { tone: 'warn', label: L('bayOffline') };
 
   return (
     <div className={`v-settings${engineDown ? ' engine-down' : ''}`}>
@@ -194,7 +124,7 @@ export function Settings() {
 
       <header className="pageHead">
         <div>
-          <span className="eyebrow">ԿԱՌԱՎԱՐՄԱՆ ԿԵՆՏՐՈՆ · CONTROL ROOM</span>
+          <span className="eyebrow">{L('eyebrowControlRoom')}</span>
           <h1>{t('nav.settings')}</h1>
           <p className="sub">{t('settings.subtitle')}</p>
         </div>
@@ -216,7 +146,7 @@ export function Settings() {
         <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
 
         <div className="bay-top">
-          <span className="eyebrow">ԳՈՐԾԱՐԿԱՅԻՆ ՎԱՀԱՆԱԿ · RUNTIME CONSOLE</span>
+          <span className="eyebrow">{L('eyebrowRuntimeConsole')}</span>
           <span className={`pill ${bayPill.tone}`}>{bayPill.label}</span>
         </div>
 
@@ -232,7 +162,7 @@ export function Settings() {
               <EmptyState
                 glyph="◍"
                 title={t('settings.aiProviderNotConfigured')}
-                hint={pick(copy.providerNotConfiguredHint)}
+                hint={L('providerNotConfiguredHint')}
               />
             )}
 
@@ -240,7 +170,7 @@ export function Settings() {
               <div className="bay-rig">
                 {/* — dock 1 · PROVIDER (the resolved provider, read-only) — */}
                 <div className="dock-bay db-prov">
-                  <span className="db-cap"><i className="db-i">01</i>ՄԱՏԱԿԱՐԱՐ</span>
+                  <span className="db-cap"><i className="db-i">01</i>{L('capProvider')}</span>
                   <div className="psock-list">
                     <div
                       className={`psock seated pst-${provSt}`}
@@ -262,14 +192,14 @@ export function Settings() {
 
                   {/* Governed-provider toggle — honestly read-only (backend-owned, fail-closed). */}
                   <div className="set-toggle">
-                    <span id="settings-governed-label">{pick(copy.governedToggleLabel)}</span>
+                    <span id="settings-governed-label">{L('governedToggleLabel')}</span>
                     <Switch
                       checked={isGoverned}
-                      label={pick(copy.governedToggleLabel)}
+                      label={L('governedToggleLabel')}
                       describedBy="settings-governed-desc"
                     />
                   </div>
-                  <p id="settings-governed-desc" className="set-note db-hint">{pick(copy.governedToggleDesc)}</p>
+                  <p id="settings-governed-desc" className="set-note db-hint">{L('governedToggleDesc')}</p>
                 </div>
 
                 {/* bus link prov → model (flows only when the engine is live) */}
@@ -277,7 +207,7 @@ export function Settings() {
 
                 {/* — dock 2 · MODEL (real resolved model, or honest empty) — */}
                 <div className="dock-bay db-model">
-                  <span className="db-cap"><i className="db-i">02</i>ՄՈԴԵԼ</span>
+                  <span className="db-cap"><i className="db-i">02</i>{L('capModel')}</span>
                   <div className="mchip">
                     {data.model ? (
                       <>
@@ -287,7 +217,7 @@ export function Settings() {
                         {data.detail && <p className="mc-note micro">{data.detail}</p>}
                       </>
                     ) : (
-                      <p className="mc-note micro">{pick(copy.noModel)}</p>
+                      <p className="mc-note micro">{L('noModel')}</p>
                     )}
                   </div>
                 </div>
@@ -297,28 +227,28 @@ export function Settings() {
 
                 {/* — dock 3 · RUNTIME (Bro) — power mark mapped from REAL aiStatus — */}
                 <div className="dock-bay db-run">
-                  <span className="db-cap"><i className="db-i">03</i>ԳՈՐԾԱՐԿՈՒՄ · ԲՐՈ</span>
+                  <span className="db-cap"><i className="db-i">03</i>{L('capRuntime')}</span>
                   <div className="rt-core">
                     <span className="rt-halo" aria-hidden="true" />
                     <span className="rt-mark"><Mark state={markState} size={30} /></span>
                     <span className="rt-name micro">
-                      {ready ? data.model || data.provider : pick(copy.noModel)}
+                      {ready ? data.model || data.provider : L('noModel')}
                     </span>
                   </div>
 
                   {/* Governance readout derived from the real ai_status (honest, badge-free reasons). */}
                   {sidecarBlocked ? (
-                    <div className="set-blocked" role="group" aria-label={pick(copy.blockedTitle)}>
-                      <div className="set-blocked-title"><span aria-hidden="true">⛔</span> {pick(copy.blockedTitle)}</div>
+                    <div className="set-blocked" role="group" aria-label={L('blockedTitle')}>
+                      <div className="set-blocked-title"><span aria-hidden="true">⛔</span> {L('blockedTitle')}</div>
                       {data.detail && <p className="set-note" style={{ marginTop: 6 }}>{data.detail}</p>}
-                      <p className="set-note" style={{ marginTop: 6 }}>{pick(copy.blockedGuideIntro)}</p>
+                      <p className="set-note" style={{ marginTop: 6 }}>{L('blockedGuideIntro')}</p>
                       <ol>
-                        <li>{pick(copy.blockedStep1)}</li>
-                        <li>{pick(copy.blockedStep2)}</li>
-                        <li>{pick(copy.blockedStep3)}</li>
+                        <li>{L('blockedStep1')}</li>
+                        <li>{L('blockedStep2')}</li>
+                        <li>{L('blockedStep3')}</li>
                       </ol>
                       <div style={{ marginTop: 12 }}>
-                        <button type="button" className="chip" onClick={ai.reload}>{pick(copy.recheck)}</button>
+                        <button type="button" className="chip" onClick={ai.reload}>{L('recheck')}</button>
                       </div>
                     </div>
                   ) : (
@@ -329,7 +259,7 @@ export function Settings() {
                         </span>
                       </div>
                       <p className="set-note" style={{ marginTop: 8 }}>
-                        {isGoverned && ready ? pick(copy.sidecarHealthyDesc) : pick(copy.sidecarInactiveDesc)}
+                        {isGoverned && ready ? L('sidecarHealthyDesc') : L('sidecarInactiveDesc')}
                       </p>
                     </>
                   )}
@@ -340,7 +270,7 @@ export function Settings() {
         )}
 
         <div className="bay-foot">
-          <span className="micro bay-note">{pick(copy.runtimeDesc)}</span>
+          <span className="micro bay-note">{L('runtimeDesc')}</span>
         </div>
       </section>
 
@@ -351,7 +281,7 @@ export function Settings() {
         <section className="surface soft set-panel set-theme reveal" aria-label={t('settings.appearance')}>
           <div className="sec-head">
             <h2>{t('settings.appearance')}</h2>
-            <span className="note">{pick(copy.appearanceDesc)}</span>
+            <span className="note">{L('appearanceDesc')}</span>
           </div>
 
           <div
@@ -388,7 +318,7 @@ export function Settings() {
               <span className="tt-check" aria-hidden="true">✓</span>
             </button>
           </div>
-          <span id="settings-theme-desc" className="set-note">{pick(copy.themeDesc)}</span>
+          <span id="settings-theme-desc" className="set-note">{L('themeDesc')}</span>
 
           <div className="set-lang">
             <label htmlFor="settings-language">{t('settings.language')}</label>
@@ -403,20 +333,20 @@ export function Settings() {
               ))}
             </select>
           </div>
-          <span id="settings-language-desc" className="set-note">{pick(copy.languageDesc)}</span>
+          <span id="settings-language-desc" className="set-note">{L('languageDesc')}</span>
 
           {/* Fixed brand accent — decorative, not a user control. */}
           <div className="accent-rail" aria-hidden="true">
-            <span className="micro">ՇԵՇՏ · ACCENT</span>
+            <span className="micro">{L('accentLabel')}</span>
             <span className="acc-dot ad-cyan" /><span className="acc-dot ad-azure" /><span className="acc-dot ad-mint" />
-            <span className="micro acc-note">հաստատված · MenQ</span>
+            <span className="micro acc-note">{L('accentNote')}</span>
           </div>
         </section>
 
         {/* — SYSTEM IDENTITY · real About values only — */}
         <section className="surface soft set-panel set-sys reveal" aria-label={t('nav.settings')}>
           <div className="sec-head">
-            <h2>Համակարգ</h2>
+            <h2>{L('systemHeading')}</h2>
             <span className={`pill ${data?.ready ? 'live' : 'off'}`}>
               {data?.ready ? t('settings.aiProviderReady') : t('settings.aiProviderNotReady')}
             </span>
@@ -426,9 +356,9 @@ export function Settings() {
             <div className="sys-idt"><b>MENQ OS</b><span className="micro mono">v0.9 · MenQ Studio</span></div>
           </div>
           <div className="sys-rows">
-            <div className="sys-row"><span className="sys-k">{pick(copy.aboutProductLabel)}</span><b>MENQ OS</b></div>
-            <div className="sys-row"><span className="sys-k">{pick(copy.aboutVersionLabel)}</span><b className="mono">v0.9</b></div>
-            <div className="sys-row"><span className="sys-k">{pick(copy.aboutGovernanceLabel)}</span><b>{pick(copy.aboutGovernanceValue)}</b></div>
+            <div className="sys-row"><span className="sys-k">{L('aboutProductLabel')}</span><b>MENQ OS</b></div>
+            <div className="sys-row"><span className="sys-k">{L('aboutVersionLabel')}</span><b className="mono">v0.9</b></div>
+            <div className="sys-row"><span className="sys-k">{L('aboutGovernanceLabel')}</span><b>{L('aboutGovernanceValue')}</b></div>
           </div>
         </section>
 

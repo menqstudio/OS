@@ -3,7 +3,7 @@ import './ui.css';
 import { statusTone, type Tone } from '../domain/enums';
 import type { AsyncState } from '../hooks/useAsync';
 import { hasBackend } from '../services/desktop';
-import { useApp } from '../app/store';
+import { useApp, useAppOptional } from '../app/store';
 
 export function Card({ children, className = '', style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
   return <div className={`card ${className}`} style={style}>{children}</div>;
@@ -401,6 +401,8 @@ export function Drawer({
   children: React.ReactNode;
   footer?: React.ReactNode;
 }) {
+  const app = useAppOptional();
+  const closeLabel = app ? app.t('action.close') : 'Close';
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useRef(`drawer-${Math.random().toString(36).slice(2)}`).current;
 
@@ -444,7 +446,7 @@ export function Drawer({
       >
         <div className="drawer-head">
           <div className="drawer-title" id={titleId}>{title}</div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label={`Close ${title}`} title="Close">
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={`${closeLabel} ${title}`} title={closeLabel}>
             <span aria-hidden="true">✕</span>
           </button>
         </div>

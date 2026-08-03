@@ -191,6 +191,7 @@ export const en = {
 
   'action.create': 'Create',
   'action.cancel': 'Cancel',
+  'action.close': 'Close',
   'action.edit': 'Edit',
   'action.retry': 'Retry',
   'form.newProject': 'New project',

@@ -10,6 +10,8 @@ import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { LibraryItem } from '../domain/entities';
+import type { Lang } from '../domain/enums';
+import { STR } from './Library.strings';
 
 // ── §D `library` ❑ Դարան — reskinned to the brops-aios "Դարան / Archive" ──────
 // The component / prompt / pattern catalog, wired end-to-end to the REAL desktop
@@ -29,111 +31,26 @@ function parseTags(raw: string): string[] {
   return raw.split(',').map((x) => x.trim()).filter(Boolean);
 }
 
-// ── Inline bilingual copy (HY + EN), mirroring the thin-page convention. ──────
-interface Copy {
-  eyebrow: string;
-  watching: string;
-  subtitle: string;
-  searchPlaceholder: string;
-  searchLabel: string;
-  filterLabel: string;
-  all: string;
-  kind: Record<LibraryKind, string>;
-  totalsLabel: string;
-  total: string;
-  indexTitle: string;
-  emptyTitle: string;
-  emptyHint: string;
-  filteredTitle: string;
-  filteredHint: string;
-  clearFilters: string;
-  previewEmpty: string;
-  listLabel: string;
-  tags: string;
-  loadFailed: string;
-  newTitle: string;
-  fTitle: string;
-  fKind: string;
-  fBody: string;
-  fTags: string;
-  bodyPlaceholder: string;
-  tagsPlaceholder: string;
-  saving: string;
-  deleteTitle: string;
-  deleteConfirm: string;
-}
+// ── Trilingual copy lives in Library.strings.ts. `L` resolves a key against the
+// active language (falling back to English), so switching language re-renders
+// the whole page in one language. ────────────────────────────────────────────
+type StrKey = keyof typeof STR;
+type Localize = (k: StrKey) => string;
 
-const COPY: Record<'en' | 'hy', Copy> = {
-  en: {
-    eyebrow: 'LIBRARY · ARCHIVE',
-    watching: 'Bro · watching the library',
-    subtitle: 'Component, prompt & pattern catalog with live previews',
-    searchPlaceholder: 'Search the library…    press /',
-    searchLabel: 'Search the library',
-    filterLabel: 'Filter by type',
-    all: 'All',
-    kind: { component: 'Components', prompt: 'Prompts', pattern: 'Patterns' },
-    totalsLabel: 'Library totals',
-    total: 'total',
-    indexTitle: 'Archive index',
-    emptyTitle: 'Nothing saved yet',
-    emptyHint: 'Save the first component, prompt or pattern to start the library.',
-    filteredTitle: 'No matches',
-    filteredHint: 'Nothing matches your search and filters.',
-    clearFilters: 'Clear search & filters',
-    previewEmpty: 'Select an item to preview it.',
-    listLabel: 'Library results',
-    tags: 'Tags',
-    loadFailed: 'Couldn’t load the library.',
-    newTitle: 'New library item',
-    fTitle: 'Title',
-    fKind: 'Type',
-    fBody: 'Body',
-    fTags: 'Tags',
-    bodyPlaceholder: 'The prompt, pattern or component blurb…',
-    tagsPlaceholder: 'react, form, accessible',
-    saving: 'Saving…',
-    deleteTitle: 'Delete library item',
-    deleteConfirm: 'Delete this item? This can’t be undone.',
-  },
-  hy: {
-    eyebrow: 'ԴԱՐԱՆ · ARCHIVE',
-    watching: 'Bro · դարանը դիտում է',
-    subtitle: 'Բաղադրիչների, հուշումների և ձևանմուշների դարան՝ կենդանի նախադիտումով',
-    searchPlaceholder: 'Փնտրել դարանում…    սեղմեք /',
-    searchLabel: 'Փնտրել դարանում',
-    filterLabel: 'Զտել ըստ տեսակի',
-    all: 'Բոլորը',
-    kind: { component: 'Բաղադրիչներ', prompt: 'Հուշումներ', pattern: 'Ձևանմուշներ' },
-    totalsLabel: 'Դարանի հաշվարկ',
-    total: 'ընդամենը',
-    indexTitle: 'Արխիվի ինդեքս',
-    emptyTitle: 'Դեռ ոչինչ պահված չէ',
-    emptyHint: 'Պահիր առաջին բաղադրիչը, հուշումը կամ ձևանմուշը՝ դարանը սկսելու համար։',
-    filteredTitle: 'Համընկնումներ չկան',
-    filteredHint: 'Ոչինչ չի համընկնում ձեր որոնման և զտիչների հետ։',
-    clearFilters: 'Մաքրել որոնումն ու զտիչները',
-    previewEmpty: 'Ընտրեք տարր՝ նախադիտելու համար։',
-    listLabel: 'Դարանի արդյունքներ',
-    tags: 'Պիտակներ',
-    loadFailed: 'Չհաջողվեց բեռնել դարանը։',
-    newTitle: 'Նոր դարանի տարր',
-    fTitle: 'Վերնագիր',
-    fKind: 'Տեսակ',
-    fBody: 'Բովանդակություն',
-    fTags: 'Պիտակներ',
-    bodyPlaceholder: 'Հուշումը, ձևանմուշը կամ բաղադրիչի նկարագիրը…',
-    tagsPlaceholder: 'react, form, accessible',
-    saving: 'Պահվում է…',
-    deleteTitle: 'Ջնջել դարանի տարրը',
-    deleteConfirm: 'Ջնջե՞լ այս տարրը։ Սա հնարավոր չէ հետարկել։',
-  },
+const makeL = (lang: Lang): Localize => (k) => STR[k][lang] ?? STR[k].en;
+
+// Per-kind label keys, so `L(KIND_KEY[kind])` yields the localized noun.
+const KIND_KEY: Record<LibraryKind, StrKey> = {
+  component: 'kindComponent',
+  prompt: 'kindPrompt',
+  pattern: 'kindPattern',
 };
 
 type KindFilter = 'all' | LibraryKind;
 
-function kindLabel(c: Copy, kind: string): string {
-  return (LIBRARY_KINDS as readonly string[]).includes(kind) ? c.kind[kind as LibraryKind] : kind;
+function kindLabel(L: Localize, kind: string): string {
+  return (LIBRARY_KINDS as readonly string[]).includes(kind)
+    ? L(KIND_KEY[kind as LibraryKind]) : kind;
 }
 
 // ── Create form (Modal) — fully wired to the REAL create_library_item command ─
@@ -141,7 +58,7 @@ function CreateDialog(
   { onClose, onCreated }: { onClose: () => void; onCreated: (item: LibraryItem) => void },
 ) {
   const { t, lang } = useApp();
-  const c = COPY[lang === 'hy' ? 'hy' : 'en'];
+  const L = makeL(lang);
 
   const [title, setTitle] = useState('');
   const [kind, setKind] = useState<LibraryKind>('component');
@@ -169,33 +86,33 @@ function CreateDialog(
   };
 
   return (
-    <Modal title={c.newTitle} onClose={onClose}>
+    <Modal title={L('newTitle')} onClose={onClose}>
       {error && <div className="form-error">{error}</div>}
       <label className="form-row">
-        <span className="field-label">{c.fTitle}</span>
+        <span className="field-label">{L('fTitle')}</span>
         <Input ref={titleRef} value={title}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)} />
       </label>
       <label className="form-row">
-        <span className="field-label">{c.fKind}</span>
+        <span className="field-label">{L('fKind')}</span>
         <Select value={kind} onChange={(e: ChangeEvent<HTMLSelectElement>) => setKind(e.target.value as LibraryKind)}>
-          {LIBRARY_KINDS.map((k) => <option key={k} value={k}>{c.kind[k]}</option>)}
+          {LIBRARY_KINDS.map((k) => <option key={k} value={k}>{L(KIND_KEY[k])}</option>)}
         </Select>
       </label>
       <label className="form-row">
-        <span className="field-label">{c.fBody}</span>
-        <Textarea value={body} style={{ minHeight: 140 }} placeholder={c.bodyPlaceholder}
+        <span className="field-label">{L('fBody')}</span>
+        <Textarea value={body} style={{ minHeight: 140 }} placeholder={L('bodyPlaceholder')}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setBody(e.target.value)} />
       </label>
       <label className="form-row">
-        <span className="field-label">{c.fTags}</span>
-        <Input value={tags} placeholder={c.tagsPlaceholder}
+        <span className="field-label">{L('fTags')}</span>
+        <Input value={tags} placeholder={L('tagsPlaceholder')}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setTags(e.target.value)} />
       </label>
       <div className="form-actions">
         <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant="primary" disabled={!canSave} onClick={submit}>
-          {busy ? c.saving : t('action.save')}
+          {busy ? L('saving') : t('action.save')}
         </Button>
       </div>
     </Modal>
@@ -203,11 +120,11 @@ function CreateDialog(
 }
 
 // ── Live preview panel — the opened "codex" (labeled, announces selection) ────
-function PreviewPanel({ item, label, previewLabelFor, c }: {
+function PreviewPanel({ item, label, previewLabelFor, L }: {
   item: LibraryItem | null;
   label: string;
   previewLabelFor: (title: string) => string;
-  c: Copy;
+  L: Localize;
 }) {
   return (
     <section
@@ -221,14 +138,14 @@ function PreviewPanel({ item, label, previewLabelFor, c }: {
       ) : (
         <>
           <div className="lib-codex-head">
-            <span className="eyebrow">{kindLabel(c, item.kind)}</span>
+            <span className="eyebrow">{kindLabel(L, item.kind)}</span>
             <h3 className="lib-codex-title">{item.title}</h3>
           </div>
           <div className="lib-codex-body">
             <pre aria-label={previewLabelFor(item.title)}>{item.body || '—'}</pre>
           </div>
           {parseTags(item.tags).length > 0 && (
-            <div className="lib-tags" aria-label={c.tags}>
+            <div className="lib-tags" aria-label={L('tags')}>
               {parseTags(item.tags).map((tg) => <span key={tg} className="tag">{tg}</span>)}
             </div>
           )}
@@ -240,9 +157,8 @@ function PreviewPanel({ item, label, previewLabelFor, c }: {
 
 export function Library() {
   const { t, lang } = useApp();
-  const c = COPY[lang === 'hy' ? 'hy' : 'en'];
-  const previewLabelFor = (title: string) =>
-    lang === 'hy' ? `Նախադիտում՝ ${title}` : `Preview: ${title}`;
+  const L = makeL(lang);
+  const previewLabelFor = (title: string) => `${L('previewPrefix')}${title}`;
 
   const s = useAsync<LibraryItem[]>(() => desktop.listLibrary(), []);
 
@@ -350,9 +266,20 @@ export function Library() {
     if ((LIBRARY_KINDS as readonly string[]).includes(it.kind)) kindCounts[it.kind as LibraryKind] += 1;
   });
 
-  const countLabel = lang === 'hy'
-    ? `${filtered.length} արդյունք`
-    : `${filtered.length} ${filtered.length === 1 ? 'result' : 'results'}`;
+  // Localized "N results" — English singular/plural, Armenian invariant,
+  // Russian three-way plural (1 / 2–4 / 5+).
+  const resultNoun = (n: number): string => {
+    if (lang === 'ru') {
+      const m10 = n % 10;
+      const m100 = n % 100;
+      if (m10 === 1 && m100 !== 11) return L('resultOne');
+      if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return L('resultFew');
+      return L('resultMany');
+    }
+    if (lang === 'en') return n === 1 ? L('resultOne') : L('resultFew');
+    return L('resultOne');
+  };
+  const countLabel = `${filtered.length} ${resultNoun(filtered.length)}`;
 
   const loading = s.loading && s.data === null;
   const chips: KindFilter[] = ['all', ...LIBRARY_KINDS];
@@ -360,16 +287,16 @@ export function Library() {
 
   const renderResults = () => {
     if (loading) return <Skeleton rows={5} />;
-    if (s.error) return <ErrorState message={s.error || c.loadFailed} onRetry={s.reload} retryLabel={t('action.retry')} />;
+    if (s.error) return <ErrorState message={s.error || L('loadFailed')} onRetry={s.reload} retryLabel={t('action.retry')} />;
     if (rawItems.length === 0) {
-      return <EmptyState glyph="❑" title={c.emptyTitle} hint={c.emptyHint} />;
+      return <EmptyState glyph="❑" title={L('emptyTitle')} hint={L('emptyHint')} />;
     }
     if (filtered.length === 0) {
       return (
         <div>
-          <EmptyState glyph="⌕" title={c.filteredTitle} hint={c.filteredHint} />
+          <EmptyState glyph="⌕" title={L('filteredTitle')} hint={L('filteredHint')} />
           <div style={{ textAlign: 'center', marginTop: 12 }}>
-            <Button small onClick={clearAll}>{c.clearFilters}</Button>
+            <Button small onClick={clearAll}>{L('clearFilters')}</Button>
           </div>
         </div>
       );
@@ -377,7 +304,7 @@ export function Library() {
     const active = filtered[sel] ?? null;
     return (
       <div className="lib-layout">
-        <ul className="lib-list" role="list" aria-label={c.listLabel} onKeyDown={onListKeyDown}>
+        <ul className="lib-list" role="list" aria-label={L('listLabel')} onKeyDown={onListKeyDown}>
           {filtered.map((it, idx) => {
             const isActive = idx === sel;
             const itemStyle: StyleVars = { '--i': idx };
@@ -395,7 +322,7 @@ export function Library() {
                 >
                   <span className="lib-item-top">
                     <span className="lib-item-title">{it.title}</span>
-                    <span className={`tag tag--${it.kind}`}>{kindLabel(c, it.kind)}</span>
+                    <span className={`tag tag--${it.kind}`}>{kindLabel(L, it.kind)}</span>
                   </span>
                   {it.body && <span className="lib-item-sum">{it.body}</span>}
                 </button>
@@ -412,7 +339,7 @@ export function Library() {
             );
           })}
         </ul>
-        <PreviewPanel item={active} label={c.previewEmpty} previewLabelFor={previewLabelFor} c={c} />
+        <PreviewPanel item={active} label={L('previewEmpty')} previewLabelFor={previewLabelFor} L={L} />
       </div>
     );
   };
@@ -424,12 +351,12 @@ export function Library() {
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
       <header className="pageHead reveal">
         <div>
-          <span className="eyebrow">{c.eyebrow}</span>
+          <span className="eyebrow">{L('eyebrow')}</span>
           <h1>{t('nav.library')}</h1>
-          <p className="sub">{c.subtitle}</p>
+          <p className="sub">{L('subtitle')}</p>
         </div>
         <div className="right">
-          {toolbarVisible && <span className="pill info" aria-hidden="true">{c.watching}</span>}
+          {toolbarVisible && <span className="pill info" aria-hidden="true">{L('watching')}</span>}
           <Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>
           <Mark state="live" size={30} />
         </div>
@@ -443,13 +370,13 @@ export function Library() {
         <span className="bracket br" aria-hidden="true" />
 
         {toolbarVisible && (
-          <div className="lib-totals" role="group" aria-label={c.totalsLabel}>
+          <div className="lib-totals" role="group" aria-label={L('totalsLabel')}>
             <span className="capsule">
-              <b className="num">{total}</b><span>{c.total}</span>
+              <b className="num">{total}</b><span>{L('total')}</span>
             </span>
             {LIBRARY_KINDS.map((k) => (
               <span key={k} className="capsule">
-                <b className="num">{kindCounts[k]}</b><span>{c.kind[k]}</span>
+                <b className="num">{kindCounts[k]}</b><span>{L(KIND_KEY[k])}</span>
               </span>
             ))}
           </div>
@@ -457,7 +384,7 @@ export function Library() {
 
         {toolbarVisible && (
           <div className="sec-head">
-            <h2>{c.indexTitle}</h2>
+            <h2>{L('indexTitle')}</h2>
             <div className="lib-count" role="status" aria-live="polite">{countLabel}</div>
           </div>
         )}
@@ -471,11 +398,11 @@ export function Library() {
                 value={query}
                 onChange={onSearchChange}
                 onKeyDown={onSearchKeyDown}
-                placeholder={c.searchPlaceholder}
-                aria-label={c.searchLabel}
+                placeholder={L('searchPlaceholder')}
+                aria-label={L('searchLabel')}
               />
             </div>
-            <div className="lib-chips" role="group" aria-label={c.filterLabel}>
+            <div className="lib-chips" role="group" aria-label={L('filterLabel')}>
               {chips.map((k) => (
                 <button
                   key={k}
@@ -484,7 +411,7 @@ export function Library() {
                   aria-pressed={kindFilter === k}
                   onClick={() => pickKind(k)}
                 >
-                  {k === 'all' ? c.all : c.kind[k]}
+                  {k === 'all' ? L('all') : L(KIND_KEY[k])}
                 </button>
               ))}
             </div>
@@ -499,9 +426,9 @@ export function Library() {
       {creating && <CreateDialog onClose={() => setCreating(false)} onCreated={onCreated} />}
       {pendingDelete && (
         <ConfirmDialog
-          title={c.deleteTitle}
-          message={`${pendingDelete.title} — ${c.deleteConfirm}`}
-          confirmLabel={deleteBusy ? c.saving : t('action.delete')}
+          title={L('deleteTitle')}
+          message={`${pendingDelete.title} — ${L('deleteConfirm')}`}
+          confirmLabel={deleteBusy ? L('saving') : t('action.delete')}
           cancelLabel={t('action.cancel')}
           onConfirm={confirmDelete}
           onCancel={() => { if (!deleteBusy) setPendingDelete(null); }}

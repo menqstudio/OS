@@ -9,8 +9,9 @@ import {
 import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import { STR } from './Research.strings';
 import type { ResearchItem } from '../domain/entities';
-import type { Tone } from '../domain/enums';
+import type { Lang, Tone } from '../domain/enums';
 
 // ── §D `research` ⌖ Հետազոտում — reskinned to the brops-aios "Research Observatory"
 // mockup (aios.css `.v-research`). The mockup's crucible hero runs on fabricated
@@ -29,124 +30,21 @@ const statusTone: Record<string, Tone> = {
   done: 'success',
 };
 
-// Decorative eyebrow lifted verbatim from the mockup header (no data bound).
-const EYEBROW = 'ՀԵՏԱԶՈՏԱԿԱՆ ԴԻՏԱԿԵՏ · RESEARCH OBSERVATORY';
+// Localizer: reads the active language and returns the natural-language string
+// for `key` (en/hy/ru), falling back to English. `lang` comes from useApp.
+type Localize = (k: keyof typeof STR) => string;
+const makeL = (lang: Lang): Localize => (k) => STR[k][lang] ?? STR[k].en;
 
-interface Copy {
-  subtitle: string;
-  listPanel: string;
-  detailPanel: string;
-  searchPlaceholder: string;
-  searchLabel: string;
-  emptyTitle: string;
-  emptyHint: string;
-  filteredTitle: string;
-  filteredHint: string;
-  clearSearch: string;
-  selectTitle: string;
-  selectHint: string;
-  question: string;
-  findings: string;
-  noQuestion: string;
-  noFindings: string;
-  created: string;
-  updated: string;
-  loadFailed: string;
-  newTitle: string;
-  fTitle: string;
-  fQuestion: string;
-  fFindings: string;
-  fStatus: string;
-  questionPlaceholder: string;
-  findingsPlaceholder: string;
-  saving: string;
-  records: string;
-  listNote: string;
-  deleteLabel: string;
-  deleteTitle: string;
-  deletePrompt: string;
-  deleting: string;
-  status: Record<ResearchStatus, string>;
-}
-
-const COPY: Record<'en' | 'hy', Copy> = {
-  en: {
-    subtitle: 'Research records — a question, its findings, and status',
-    listPanel: 'Research',
-    detailPanel: 'Record',
-    searchPlaceholder: 'Search research…    press /',
-    searchLabel: 'Search research',
-    emptyTitle: 'Bro has run no research yet',
-    emptyHint: 'Record the first research question to start the log.',
-    filteredTitle: 'No matches',
-    filteredHint: 'Nothing matches your search.',
-    clearSearch: 'Clear search',
-    selectTitle: 'Select a record',
-    selectHint: 'Pick a research record from the list, or press New to add one.',
-    question: 'Question',
-    findings: 'Findings',
-    noQuestion: 'No question recorded.',
-    noFindings: 'No findings recorded yet.',
-    created: 'Created',
-    updated: 'Updated',
-    loadFailed: 'Couldn’t load research.',
-    newTitle: 'New research record',
-    fTitle: 'Title',
-    fQuestion: 'Question',
-    fFindings: 'Findings',
-    fStatus: 'Status',
-    questionPlaceholder: 'What is being researched?',
-    findingsPlaceholder: 'What was found…',
-    saving: 'Saving…',
-    records: 'Records',
-    listNote: 'Real records from the store — select one to open it.',
-    deleteLabel: 'Delete',
-    deleteTitle: 'Delete research record',
-    deletePrompt: 'This permanently removes the record.',
-    deleting: 'Deleting…',
-    status: { open: 'Open', in_progress: 'In progress', done: 'Done' },
-  },
-  hy: {
-    subtitle: 'Հետազոտման գրառումներ — հարց, գտածոներ և կարգավիճակ',
-    listPanel: 'Հետազոտում',
-    detailPanel: 'Գրառում',
-    searchPlaceholder: 'Փնտրել հետազոտում…    սեղմեք /',
-    searchLabel: 'Փնտրել հետազոտում',
-    emptyTitle: 'Bro-ն դեռ հետազոտում չի կատարել',
-    emptyHint: 'Գրանցիր առաջին հետազոտման հարցը՝ մատյանը սկսելու համար։',
-    filteredTitle: 'Համընկնումներ չկան',
-    filteredHint: 'Ոչինչ չի համընկնում ձեր որոնման հետ։',
-    clearSearch: 'Մաքրել որոնումը',
-    selectTitle: 'Ընտրիր գրառում',
-    selectHint: 'Ընտրիր հետազոտման գրառում ցանկից կամ սեղմիր «Նոր»՝ ավելացնելու համար։',
-    question: 'Հարց',
-    findings: 'Գտածոներ',
-    noQuestion: 'Հարց գրանցված չէ։',
-    noFindings: 'Գտածոներ դեռ գրանցված չեն։',
-    created: 'Ստեղծված',
-    updated: 'Թարմացված',
-    loadFailed: 'Չհաջողվեց բեռնել հետազոտումը։',
-    newTitle: 'Նոր հետազոտման գրառում',
-    fTitle: 'Վերնագիր',
-    fQuestion: 'Հարց',
-    fFindings: 'Գտածոներ',
-    fStatus: 'Կարգավիճակ',
-    questionPlaceholder: 'Ի՞նչ է հետազոտվում',
-    findingsPlaceholder: 'Ի՞նչ գտնվեց…',
-    saving: 'Պահվում է…',
-    records: 'Գրառումներ',
-    listNote: 'Իրական գրառումներ պահոցից — ընտրիր՝ բացելու համար։',
-    deleteLabel: 'Ջնջել',
-    deleteTitle: 'Ջնջել հետազոտման գրառումը',
-    deletePrompt: 'Սա ընդմիշտ հեռացնում է գրառումը։',
-    deleting: 'Ջնջվում է…',
-    status: { open: 'Բաց', in_progress: 'Ընթացքի մեջ', done: 'Ավարտված' },
-  },
+// Machine status id → localized string key (kept separate from the ids/tones).
+const STATUS_KEY: Record<ResearchStatus, keyof typeof STR> = {
+  open: 'statusOpen',
+  in_progress: 'statusInProgress',
+  done: 'statusDone',
 };
 
-function statusLabel(c: Copy, status: string): string {
+function statusLabel(L: Localize, status: string): string {
   return (RESEARCH_STATUSES as readonly string[]).includes(status)
-    ? c.status[status as ResearchStatus]
+    ? L(STATUS_KEY[status as ResearchStatus])
     : status;
 }
 
@@ -155,7 +53,7 @@ function CreateDialog(
   { onClose, onCreated }: { onClose: () => void; onCreated: (item: ResearchItem) => void },
 ) {
   const { t, lang } = useApp();
-  const c = COPY[lang === 'hy' ? 'hy' : 'en'];
+  const L = makeL(lang);
 
   const [title, setTitle] = useState('');
   const [question, setQuestion] = useState('');
@@ -183,33 +81,33 @@ function CreateDialog(
   };
 
   return (
-    <Modal title={c.newTitle} onClose={onClose}>
+    <Modal title={L('newTitle')} onClose={onClose}>
       {error && <div className="form-error">{error}</div>}
       <label className="form-row">
-        <span className="field-label">{c.fTitle}</span>
+        <span className="field-label">{L('fTitle')}</span>
         <Input ref={titleRef} value={title}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)} />
       </label>
       <label className="form-row">
-        <span className="field-label">{c.fQuestion}</span>
-        <Textarea value={question} style={{ minHeight: 80 }} placeholder={c.questionPlaceholder}
+        <span className="field-label">{L('fQuestion')}</span>
+        <Textarea value={question} style={{ minHeight: 80 }} placeholder={L('questionPlaceholder')}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setQuestion(e.target.value)} />
       </label>
       <label className="form-row">
-        <span className="field-label">{c.fFindings}</span>
-        <Textarea value={findings} style={{ minHeight: 140 }} placeholder={c.findingsPlaceholder}
+        <span className="field-label">{L('fFindings')}</span>
+        <Textarea value={findings} style={{ minHeight: 140 }} placeholder={L('findingsPlaceholder')}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setFindings(e.target.value)} />
       </label>
       <label className="form-row">
-        <span className="field-label">{c.fStatus}</span>
+        <span className="field-label">{L('fStatus')}</span>
         <Select value={status} onChange={(e: ChangeEvent<HTMLSelectElement>) => setStatus(e.target.value as ResearchStatus)}>
-          {RESEARCH_STATUSES.map((k) => <option key={k} value={k}>{c.status[k]}</option>)}
+          {RESEARCH_STATUSES.map((k) => <option key={k} value={k}>{L(STATUS_KEY[k])}</option>)}
         </Select>
       </label>
       <div className="form-actions">
         <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant="primary" disabled={!canSave} onClick={submit}>
-          {busy ? c.saving : t('action.save')}
+          {busy ? L('saving') : t('action.save')}
         </Button>
       </div>
     </Modal>
@@ -221,7 +119,7 @@ function DeleteDialog(
   { item, onClose, onDeleted }: { item: ResearchItem; onClose: () => void; onDeleted: (id: string) => void },
 ) {
   const { t, lang } = useApp();
-  const c = COPY[lang === 'hy' ? 'hy' : 'en'];
+  const L = makeL(lang);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -238,14 +136,14 @@ function DeleteDialog(
   };
 
   return (
-    <Modal title={c.deleteTitle} onClose={onClose}>
+    <Modal title={L('deleteTitle')} onClose={onClose}>
       {error && <div className="form-error">{error}</div>}
-      <p>{c.deletePrompt}</p>
+      <p>{L('deletePrompt')}</p>
       <p className="muted"><b>{item.title}</b></p>
       <div className="form-actions">
         <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant="danger" disabled={busy} onClick={confirm}>
-          {busy ? c.deleting : c.deleteLabel}
+          {busy ? L('deleting') : L('deleteLabel')}
         </Button>
       </div>
     </Modal>
@@ -254,7 +152,7 @@ function DeleteDialog(
 
 export function Research() {
   const { t, lang } = useApp();
-  const c = COPY[lang === 'hy' ? 'hy' : 'en'];
+  const L = makeL(lang);
 
   const s = useAsync<ResearchItem[]>(() => desktop.listResearch(), []);
 
@@ -347,17 +245,17 @@ export function Research() {
 
   const renderList = () => {
     if (loading) return <Skeleton rows={5} />;
-    if (s.error) return <ErrorState message={s.error || c.loadFailed} onRetry={s.reload} retryLabel={t('action.retry')} />;
+    if (s.error) return <ErrorState message={s.error || L('loadFailed')} onRetry={s.reload} retryLabel={t('action.retry')} />;
     if (filtered.length === 0) {
       return isFiltering ? (
         <div>
-          <EmptyState glyph="⌕" title={c.filteredTitle} hint={c.filteredHint} />
+          <EmptyState glyph="⌕" title={L('filteredTitle')} hint={L('filteredHint')} />
           <div style={{ textAlign: 'center', marginTop: 12 }}>
-            <Button small onClick={() => setQuery('')}>{c.clearSearch}</Button>
+            <Button small onClick={() => setQuery('')}>{L('clearSearch')}</Button>
           </div>
         </div>
       ) : (
-        <EmptyState glyph="⌖" title={c.emptyTitle} hint={c.emptyHint} />
+        <EmptyState glyph="⌖" title={L('emptyTitle')} hint={L('emptyHint')} />
       );
     }
     return (
@@ -365,7 +263,7 @@ export function Research() {
         ref={listRef}
         className="rsx-list"
         role="listbox"
-        aria-label={c.listPanel}
+        aria-label={L('listPanel')}
         aria-activedescendant={activeId ? `rsx-row-${activeId}` : undefined}
         tabIndex={0}
         onKeyDown={onListKey}
@@ -386,7 +284,7 @@ export function Research() {
               <span className="rsx-row-body">
                 <span className="rsx-row-top">
                   <span className="rsx-row-title">{r.title}</span>
-                  <Badge tone={statusTone[r.status] ?? 'neutral'}>{statusLabel(c, r.status)}</Badge>
+                  <Badge tone={statusTone[r.status] ?? 'neutral'}>{statusLabel(L, r.status)}</Badge>
                 </span>
                 {r.question && <span className="rsx-row-sub">{r.question}</span>}
               </span>
@@ -409,7 +307,7 @@ export function Research() {
     if (!selected) {
       return (
         <div className="rsx-panel surface soft">
-          <EmptyState glyph="⌖" title={c.selectTitle} hint={c.selectHint} />
+          <EmptyState glyph="⌖" title={L('selectTitle')} hint={L('selectHint')} />
         </div>
       );
     }
@@ -420,39 +318,39 @@ export function Research() {
         <article className="rsx-detail" role="article" aria-label={selected.title}>
           <div className="rsx-detail-head">
             <div className="rsx-detail-heading">
-              <span className="eyebrow">{c.detailPanel}</span>
+              <span className="eyebrow">{L('detailPanel')}</span>
               <h2>{selected.title}</h2>
             </div>
-            <Badge tone={statusTone[selected.status] ?? 'neutral'}>{statusLabel(c, selected.status)}</Badge>
+            <Badge tone={statusTone[selected.status] ?? 'neutral'}>{statusLabel(L, selected.status)}</Badge>
           </div>
 
-          <section aria-label={c.question}>
-            <h3>{c.question}</h3>
+          <section aria-label={L('question')}>
+            <h3>{L('question')}</h3>
             {selected.question
               ? <div className="rsx-body">{selected.question}</div>
-              : <div className="muted">{c.noQuestion}</div>}
+              : <div className="muted">{L('noQuestion')}</div>}
           </section>
 
-          <section className="rsx-section" aria-label={c.findings}>
-            <h3>{c.findings}</h3>
+          <section className="rsx-section" aria-label={L('findings')}>
+            <h3>{L('findings')}</h3>
             {selected.findings
               ? <div className="rsx-body">{selected.findings}</div>
-              : <div className="muted">{c.noFindings}</div>}
+              : <div className="muted">{L('noFindings')}</div>}
           </section>
 
-          <section className="rsx-section" aria-label={c.detailPanel}>
+          <section className="rsx-section" aria-label={L('detailPanel')}>
             <div className="rsx-foot">
               <div className="rsx-meta">
                 <div className="field">
-                  <span className="field-label">{c.created}</span>
+                  <span className="field-label">{L('created')}</span>
                   <span>{fmtDate(selected.createdAt)}</span>
                 </div>
                 <div className="field">
-                  <span className="field-label">{c.updated}</span>
+                  <span className="field-label">{L('updated')}</span>
                   <span>{fmtDate(selected.updatedAt)}</span>
                 </div>
               </div>
-              <Button variant="danger" small onClick={() => setDeleting(selected)}>{c.deleteLabel}</Button>
+              <Button variant="danger" small onClick={() => setDeleting(selected)}>{L('deleteLabel')}</Button>
             </div>
           </section>
         </article>
@@ -464,10 +362,10 @@ export function Research() {
   const statsVisible = !loading && !s.error;
 
   const stats: Array<{ n: number; label: string; cls?: string }> = [
-    { n: items.length, label: c.records, cls: 'rs-info' },
-    { n: counts.open, label: c.status.open },
-    { n: counts.in_progress, label: c.status.in_progress },
-    { n: counts.done, label: c.status.done, cls: 'rs-mint' },
+    { n: items.length, label: L('records'), cls: 'rs-info' },
+    { n: counts.open, label: L('statusOpen') },
+    { n: counts.in_progress, label: L('statusInProgress') },
+    { n: counts.done, label: L('statusDone'), cls: 'rs-mint' },
   ];
 
   return (
@@ -478,21 +376,21 @@ export function Research() {
         <div className="pageHead-lead">
           <Mark state="live" size={34} className="rsx-glyph" />
           <div>
-            <span className="eyebrow">{EYEBROW}</span>
+            <span className="eyebrow">{L('eyebrow')}</span>
             <h1>{t('nav.research')}</h1>
-            <p className="sub">{c.subtitle}</p>
+            <p className="sub">{L('subtitle')}</p>
           </div>
         </div>
         <div className="right">
           <span className="pill info" aria-live="polite">
-            {items.length}&nbsp;· {c.records}
+            {items.length}&nbsp;· {L('records')}
           </span>
           <Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>
         </div>
       </header>
 
       {statsVisible && (
-        <section className="surface soft rc-metrics rise" aria-label={c.records}>
+        <section className="surface soft rc-metrics rise" aria-label={L('records')}>
           <div className="rc-stats" aria-live="polite">
             {stats.map((st) => (
               <div key={st.label} className={`rc-stat${st.cls ? ` ${st.cls}` : ''}`}>
@@ -506,12 +404,12 @@ export function Research() {
       )}
 
       <div className="sec-head">
-        <h2>{c.listPanel}</h2>
-        <span className="note">{c.listNote}</span>
+        <h2>{L('listPanel')}</h2>
+        <span className="note">{L('listNote')}</span>
       </div>
 
       <div className="rsx-grid">
-        <section className="rsx-panel surface soft rsx-rail-card" aria-label={c.listPanel}>
+        <section className="rsx-panel surface soft rsx-rail-card" aria-label={L('listPanel')}>
           <div className="rsx-rail">
             {toolbarVisible && (
               <div className="rsx-search">
@@ -520,8 +418,8 @@ export function Research() {
                   type="search"
                   role="searchbox"
                   value={query}
-                  aria-label={c.searchLabel}
-                  placeholder={c.searchPlaceholder}
+                  aria-label={L('searchLabel')}
+                  placeholder={L('searchPlaceholder')}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)}
                 />
               </div>

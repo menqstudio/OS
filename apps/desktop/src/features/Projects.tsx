@@ -7,6 +7,7 @@ import { useToast } from '../components/toast';
 import { Modal, FormRow, Input, Textarea, Select, Button } from '../components/ui';
 import { PRIORITIES, PROJECT_STATUSES } from '../domain/enums';
 import type { Project, Task } from '../domain/entities';
+import { STR, type StrKey } from './Projects.strings';
 
 // ── `projects` ❖ Հոսքերի դաշտ — the workstream field, dressed as the AI-OS mockup ──
 // The mockup (views/projects.js · «Հոսքերի դաշտ») paints every project as an energy
@@ -43,50 +44,10 @@ const TASK_PILL: Record<string, string> = {
   blocked: 'bad', done: 'mint', cancelled: 'off',
 };
 
-// Bilingual strings inlined (the shared i18n files are not edited). Armenian reuses
-// the mockup's own strings; English is the fallback for any non-Armenian UI. Status
-// labels below are shared between the pills, the legend and the KPI tiles.
-type Lang = 'hy' | 'en';
-const STATUS_LABELS: Record<Lang, Record<string, string>> = {
-  hy: { planned: 'Ծրագրված', active: 'Ընթացքում', blocked: 'Արգելափակ', completed: 'Թողարկված', archived: 'Արխիվ' },
-  en: { planned: 'Planned', active: 'Active', blocked: 'Blocked', completed: 'Completed', archived: 'Archived' },
-};
-const STR: Record<Lang, Record<string, string>> = {
-  hy: {
-    eyebrow: 'ՌԱԶՄԱՎԱՐԱԿԱՆ ԱՇԽԱՏԱՆՔ · WORKSTREAMS',
-    activeWord: 'ակտիվ', totalWord: 'ընդամենը', blockedWord: 'արգելափակ', completedWord: 'թողարկված',
-    heroHint: 'Ակտիվ հոսքեր · ընտրի՛ր՝ մանրամասնելու',
-    boardHead: 'Պորտֆելի ընթերցում',
-    boardNote: 'Ամփոփ ազդանշաններ · իրական հաշվարկ',
-    readEyebrow: 'Bro-Ի ԸՆԹԵՐՑՈՒՄ',
-    readPending: 'Bro-ի պորտֆելի ընթերցումը տրամադրվում է կառավարվող շարժիչի կողմից։ Այդ բաժանորդագրությունը միացված չէ այս կառուցվածքում — վերլուծություն կամ վստահության գնահատական չեն ցուցադրվում։',
-    building: 'Հոսքերի դաշտը կառուցվում է…',
-    linkLost: 'Կապը տվյալների շերտի հետ կորավ — հոսքերն անհասանելի են։',
-    emptyTitle: 'Ակտիվ հոսքեր չկան',
-    emptyHint: 'Երբ ստեղծվի նախագիծ, այն կհայտնվի այստեղ՝ որպես առանձին էներգիայի գիծ։',
-    tasksDone: 'ավարտ', tasksWord: 'առաջադրանք', progressWord: 'ավարտվածություն',
-    tasksBuilding: 'Կապված առաջադրանքները բեռնվում են…',
-    tasksLinkLost: 'Առաջադրանքներն անհասանելի են։',
-    retry: 'Կրկնել',
-  },
-  en: {
-    eyebrow: 'Strategic Work · Workstreams',
-    activeWord: 'active', totalWord: 'total', blockedWord: 'blocked', completedWord: 'completed',
-    heroHint: 'Active workstreams · select to expand',
-    boardHead: 'Portfolio read',
-    boardNote: 'Aggregate signals · live counts',
-    readEyebrow: "Bro's read",
-    readPending: "Bro's portfolio read is issued by the governed engine. That subscription is not wired in this build — no narrative or confidence score is fabricated here.",
-    building: 'Building the workstream field…',
-    linkLost: 'Link to the data layer was lost — the workstreams are unavailable.',
-    emptyTitle: 'No workstreams yet',
-    emptyHint: 'When a project is created it appears here as its own energy line.',
-    tasksDone: 'done', tasksWord: 'tasks', progressWord: 'completion',
-    tasksBuilding: 'Loading linked tasks…',
-    tasksLinkLost: 'Linked tasks are unavailable.',
-    retry: 'Retry',
-  },
-};
+// UI strings live in `./Projects.strings` (trilingual en/hy/ru). `L(key)` resolves
+// the active language via the store's `lang`, falling back to English. Status
+// labels are derived from the same table (keys `st_<status>`) and shared between
+// the pills, the legend and the KPI tiles.
 
 function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { t } = useApp();
@@ -175,7 +136,7 @@ function ProjectDetail({
 }: {
   project: Project;
   statusLabels: Record<string, string>;
-  L: Record<string, string>;
+  L: (k: StrKey) => string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -246,7 +207,7 @@ function ProjectDetail({
           <div className="pd-block-head">
             <span className="micro">{t('projects.linkedTasks')}</span>
             {tasks.length > 0 && (
-              <span className="micro pd-prog-lbl">{`${doneCount}/${tasks.length} ${L.tasksDone}`}</span>
+              <span className="micro pd-prog-lbl">{`${doneCount}/${tasks.length} ${L('tasksDone')}`}</span>
             )}
           </div>
 
@@ -255,11 +216,11 @@ function ProjectDetail({
           )}
 
           {s.loading && s.data === null ? (
-            <p className="muted" aria-live="polite">{L.tasksBuilding}</p>
+            <p className="muted" aria-live="polite">{L('tasksBuilding')}</p>
           ) : s.error ? (
             <div role="alert">
-              <p className="muted">{`${L.tasksLinkLost} ${s.error}`}</p>
-              <Button small variant="ghost" onClick={s.reload}>{L.retry}</Button>
+              <p className="muted">{`${L('tasksLinkLost')} ${s.error}`}</p>
+              <Button small variant="ghost" onClick={s.reload}>{L('retry')}</Button>
             </div>
           ) : tasks.length === 0 ? (
             <div className="pd-empty" role="status">
@@ -285,8 +246,11 @@ function ProjectDetail({
 export function Projects() {
   const { t, lang, focus, clearFocus } = useApp();
   const toast = useToast();
-  const L = STR[lang === 'hy' ? 'hy' : 'en'];
-  const statusLabels = STATUS_LABELS[lang === 'hy' ? 'hy' : 'en'];
+  const L = (k: StrKey) => STR[k][lang] ?? STR[k].en;
+  const statusLabels: Record<string, string> = {
+    planned: L('st_planned'), active: L('st_active'), blocked: L('st_blocked'),
+    completed: L('st_completed'), archived: L('st_archived'),
+  };
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -316,16 +280,16 @@ export function Projects() {
   const header = (
     <div className="pageHead">
       <div>
-        <span className="eyebrow">{L.eyebrow}</span>
+        <span className="eyebrow">{L('eyebrow')}</span>
         <h1>{t('nav.projects')}</h1>
         <p className="sub">{t('projects.subtitle')}</p>
       </div>
       <div className="right">
         {projects.length > 0 && (
           <>
-            <span className="pill live">{`${counts.active} ${L.activeWord}`}</span>
-            {counts.blocked > 0 && <span className="pill bad">{`${counts.blocked} ${L.blockedWord}`}</span>}
-            <span className="pill info">{`${projects.length} ${L.totalWord}`}</span>
+            <span className="pill live">{`${counts.active} ${L('activeWord')}`}</span>
+            {counts.blocked > 0 && <span className="pill bad">{`${counts.blocked} ${L('blockedWord')}`}</span>}
+            <span className="pill info">{`${projects.length} ${L('totalWord')}`}</span>
           </>
         )}
         <Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>
@@ -348,7 +312,7 @@ export function Projects() {
         {header}{creatingModal}
         <section className="surface soft lg hud" aria-label={t('nav.projects')}>
           <i className="bracket tl" /><i className="bracket tr" /><i className="bracket bl" /><i className="bracket br" />
-          <div className="muted" style={{ marginBottom: 14 }} aria-live="polite">{L.building}</div>
+          <div className="muted" style={{ marginBottom: 14 }} aria-live="polite">{L('building')}</div>
           <div className="pf-skel" aria-hidden="true"><i /><i /><i /><i /></div>
         </section>
       </div>
@@ -361,9 +325,9 @@ export function Projects() {
         <style>{PF_CSS}</style>
         {header}{creatingModal}
         <section className="surface soft" role="alert" style={{ padding: 'var(--s6)' }}>
-          <span className="eyebrow">{L.eyebrow}</span>
-          <p className="muted" style={{ margin: '10px 0 14px', maxWidth: '60ch' }}>{`${L.linkLost} ${state.error}`}</p>
-          <Button variant="ghost" onClick={state.reload}>{L.retry}</Button>
+          <span className="eyebrow">{L('eyebrow')}</span>
+          <p className="muted" style={{ margin: '10px 0 14px', maxWidth: '60ch' }}>{`${L('linkLost')} ${state.error}`}</p>
+          <Button variant="ghost" onClick={state.reload}>{L('retry')}</Button>
         </section>
       </div>
     );
@@ -376,8 +340,8 @@ export function Projects() {
         {header}{creatingModal}
         <section className="surface soft pf-empty" role="status">
           <span className="pf-empty-glyph" aria-hidden="true">❖</span>
-          <div className="pd-empty-title">{L.emptyTitle}</div>
-          <p className="muted">{L.emptyHint}</p>
+          <div className="pd-empty-title">{L('emptyTitle')}</div>
+          <p className="muted">{L('emptyHint')}</p>
         </section>
       </div>
     );
@@ -385,10 +349,10 @@ export function Projects() {
 
   // KPI tiles — live counts over the real projects (no fabricated momentum).
   const kpis: Array<{ n: number; word: string; st: string }> = [
-    { n: counts.active, word: L.activeWord, st: 'state-working' },
-    { n: counts.blocked, word: L.blockedWord, st: 'state-blocked' },
-    { n: counts.completed, word: L.completedWord, st: 'state-completed' },
-    { n: projects.length, word: L.totalWord, st: 'state-idle' },
+    { n: counts.active, word: L('activeWord'), st: 'state-working' },
+    { n: counts.blocked, word: L('blockedWord'), st: 'state-blocked' },
+    { n: counts.completed, word: L('completedWord'), st: 'state-completed' },
+    { n: projects.length, word: L('totalWord'), st: 'state-idle' },
   ];
 
   // ── Default: the workstream field + portfolio board ─────────────────────────
@@ -405,7 +369,7 @@ export function Projects() {
         <div className="ticks" aria-hidden="true">{Array.from({ length: 9 }).map((_, i) => <i key={i} />)}</div>
 
         <div className="field-top">
-          <span className="micro">{L.heroHint}</span>
+          <span className="micro">{L('heroHint')}</span>
           <div className="pf-legend" aria-hidden="true">
             {LEGEND_ORDER.map((st) => (
               <span key={st} className={stState(st)}><i />{statusLabels[st]}</span>
@@ -450,8 +414,8 @@ export function Projects() {
 
       {/* SUB-BOARD · portfolio pulse (live counts) + Bro's read (governed, pending) */}
       <div className="sec-head" style={{ marginTop: 'var(--s5)' }}>
-        <h2>{L.boardHead}</h2>
-        <span className="note">{L.boardNote}</span>
+        <h2>{L('boardHead')}</h2>
+        <span className="note">{L('boardNote')}</span>
       </div>
 
       <div className="pf-board">
@@ -470,9 +434,9 @@ export function Projects() {
         <section className="surface soft pf-read rise">
           <div className="read-top">
             <Mark state="thinking" size={40} />
-            <span className="eyebrow">{L.readEyebrow}</span>
+            <span className="eyebrow">{L('readEyebrow')}</span>
           </div>
-          <p className="read-body muted">{L.readPending}</p>
+          <p className="read-body muted">{L('readPending')}</p>
         </section>
       </div>
     </div>

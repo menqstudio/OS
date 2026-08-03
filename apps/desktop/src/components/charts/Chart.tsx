@@ -2,6 +2,21 @@ import React, { useEffect, useRef, type KeyboardEvent } from 'react';
 import '../ui.css';
 import { EmptyState, usePrefersReducedMotion } from '../ui';
 import { STRIP_W, STRIP_H, buildECG, buildLinePath, pointCoords } from './geometry';
+import { useApp } from '../../app/store';
+import type { Lang } from '../../domain/enums';
+import { localize, beatSummary, barSummary, type StrKey } from './Chart.strings';
+
+// Read the active UI language reactively. `useApp()` throws outside an
+// `AppProvider` (e.g. in isolated component tests); those callers are treated as
+// English so the primitives stay usable standalone. `useApp` calls its own
+// hooks before any throw, so hook order is stable across renders either way.
+function useLang(): Lang {
+  try {
+    return useApp().lang;
+  } catch {
+    return 'en';
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Charts primitive — a reusable, accessible line/beatline chart.
@@ -42,10 +57,10 @@ export function Beatline({
   unit,
   height = STRIP_H,
   loading = false,
-  emptyTitle = 'No data yet',
+  emptyTitle,
   emptyHint,
-  valueHeader = 'Value',
-  labelHeader = 'Point',
+  valueHeader,
+  labelHeader,
   showDots = true,
 }: {
   data: BeatPoint[];
@@ -61,6 +76,8 @@ export function Beatline({
   showDots?: boolean;
 }) {
   const reduced = usePrefersReducedMotion();
+  const lang = useLang();
+  const L = (k: StrKey) => localize(lang, k);
   const summaryId = useRef(`chart-sum-${(seq += 1)}`).current;
 
   if (loading) {
@@ -76,7 +93,7 @@ export function Beatline({
     return (
       <figure className="chart" role="group" aria-label={caption}>
         <div className="chart-empty">
-          <EmptyState glyph="◌" title={emptyTitle} hint={emptyHint} />
+          <EmptyState glyph="◌" title={emptyTitle ?? L('emptyTitle')} hint={emptyHint} />
         </div>
       </figure>
     );
@@ -89,8 +106,7 @@ export function Beatline({
   const max = Math.max(...values);
   const last = values[values.length - 1];
   const u = unit ? ` ${unit}` : '';
-  const autoSummary =
-    `${caption}: ${data.length} points, from ${min}${u} to ${max}${u}. Latest ${last}${u}.`;
+  const autoSummary = beatSummary(lang, caption, data.length, min, max, last, u);
   const text = summary ?? autoSummary;
 
   return (
@@ -116,13 +132,13 @@ export function Beatline({
 
       {/* data-table fallback — every point reachable as text */}
       <details className="chart-table">
-        <summary>Show data table</summary>
+        <summary>{L('showDataTable')}</summary>
         <table>
           <caption className="chart-caption">{caption}</caption>
           <thead>
             <tr>
-              <th scope="col">{labelHeader}</th>
-              <th scope="col" className="chart-num">{valueHeader}</th>
+              <th scope="col">{labelHeader ?? L('labelHeader')}</th>
+              <th scope="col" className="chart-num">{valueHeader ?? L('valueHeader')}</th>
             </tr>
           </thead>
           <tbody>
@@ -335,16 +351,16 @@ export function BarChart({
   unit,
   hidden,
   onToggle,
-  legendLabel = 'Toggle series',
-  showLabel = 'Show',
-  hideLabel = 'Hide',
-  hiddenWord = 'hidden',
-  allHiddenNote = 'All series hidden — enable one in the legend.',
-  totalLabel = 'Total',
-  nodeHeader = 'Series',
-  valueHeader = 'Value',
-  shareHeader = 'Share',
-  tableToggle = 'Show data table',
+  legendLabel,
+  showLabel,
+  hideLabel,
+  hiddenWord,
+  allHiddenNote,
+  totalLabel,
+  nodeHeader,
+  valueHeader,
+  shareHeader,
+  tableToggle,
   showTable = true,
 }: {
   data: BarDatum[];
@@ -365,6 +381,8 @@ export function BarChart({
   tableToggle?: string;
   showTable?: boolean;
 }) {
+  const lang = useLang();
+  const L = (k: StrKey) => localize(lang, k);
   const hide = hidden ?? new Set<string>();
   const summaryId = useRef(`bar-sum-${(seq += 1)}`).current;
   const visible = data.filter((m) => !hide.has(m.key));
@@ -373,9 +391,19 @@ export function BarChart({
   const top = visible.reduce<BarDatum | null>((best, m) => (best && best.value >= m.value ? best : m), null);
   const u = unit ? ` ${unit}` : '';
 
-  const autoSummary = visible.length === 0
-    ? 'No series selected.'
-    : `${visible.length} series, total ${total}${u}.${top ? ` Highest: ${top.label} (${top.value}${u}).` : ''}`;
+  // Chart-owned labels: honour any caller override, else localize.
+  const legendLabelT = legendLabel ?? L('legendLabel');
+  const showLabelT = showLabel ?? L('showLabel');
+  const hideLabelT = hideLabel ?? L('hideLabel');
+  const hiddenWordT = hiddenWord ?? L('hiddenWord');
+  const allHiddenNoteT = allHiddenNote ?? L('allHiddenNote');
+  const totalLabelT = totalLabel ?? L('totalLabel');
+  const nodeHeaderT = nodeHeader ?? L('nodeHeader');
+  const valueHeaderT = valueHeader ?? L('valueHeader');
+  const shareHeaderT = shareHeader ?? L('shareHeader');
+  const tableToggleT = tableToggle ?? L('showDataTable');
+
+  const autoSummary = barSummary(lang, visible.length, total, u, top);
   const text = summary ?? autoSummary;
 
   return (
@@ -383,7 +411,7 @@ export function BarChart({
       <p id={summaryId} className="chart-summary">{text}</p>
 
       {onToggle && (
-        <div className="barchart-legend" role="group" aria-label={legendLabel}>
+        <div className="barchart-legend" role="group" aria-label={legendLabelT}>
           {data.map((m) => {
             const off = hide.has(m.key);
             return (
@@ -393,11 +421,11 @@ export function BarChart({
                 className={`barchart-legend-item ${off ? 'barchart-legend-item--off' : ''}`}
                 aria-pressed={!off}
                 onClick={() => onToggle(m.key)}
-                title={off ? showLabel : hideLabel}
+                title={off ? showLabelT : hideLabelT}
               >
                 <span className="barchart-legend-swatch" aria-hidden="true" />
                 <span className="barchart-legend-label">{m.label}</span>
-                {off && <span className="barchart-legend-state"> · {hiddenWord}</span>}
+                {off && <span className="barchart-legend-state"> · {hiddenWordT}</span>}
               </button>
             );
           })}
@@ -405,7 +433,7 @@ export function BarChart({
       )}
 
       {visible.length === 0 ? (
-        <div className="barchart-empty muted">{allHiddenNote}</div>
+        <div className="barchart-empty muted">{allHiddenNoteT}</div>
       ) : (
         <div className="bar-chart" role="img" aria-labelledby={summaryId}>
           {visible.map((m, i) => {
@@ -425,20 +453,20 @@ export function BarChart({
       )}
 
       <div className="barchart-total row between">
-        <span className="barchart-total-cap">{totalLabel}</span>
+        <span className="barchart-total-cap">{totalLabelT}</span>
         <span className="barchart-total-value">{total}{u}</span>
       </div>
 
       {showTable && (
         <details className="chart-table">
-          <summary>{tableToggle}</summary>
+          <summary>{tableToggleT}</summary>
           <table>
             <caption className="chart-caption">{caption}</caption>
             <thead>
               <tr>
-                <th scope="col">{nodeHeader}</th>
-                <th scope="col" className="chart-num">{valueHeader}</th>
-                <th scope="col" className="chart-num">{shareHeader}</th>
+                <th scope="col">{nodeHeaderT}</th>
+                <th scope="col" className="chart-num">{valueHeaderT}</th>
+                <th scope="col" className="chart-num">{shareHeaderT}</th>
               </tr>
             </thead>
             <tbody>
@@ -446,7 +474,7 @@ export function BarChart({
                 const share = total > 0 && !hide.has(m.key) ? Math.round((m.value / total) * 100) : 0;
                 return (
                   <tr key={m.key}>
-                    <th scope="row">{m.label}{hide.has(m.key) ? ` (${hiddenWord})` : ''}</th>
+                    <th scope="row">{m.label}{hide.has(m.key) ? ` (${hiddenWordT})` : ''}</th>
                     <td className="chart-num">{m.value}{u}</td>
                     <td className="chart-num">{hide.has(m.key) ? '—' : `${share}%`}</td>
                   </tr>
