@@ -7,6 +7,7 @@ import { languageNames } from '../i18n';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { AmbientLayer, Mark, useIgnition } from './Ambient';
+import { NavIcon } from './NavIcons';
 
 /**
  * Shell — the BroPS AI-OS app frame, ported from the `brops-aios` design mockup.
@@ -124,7 +125,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
                           setRoute(item.id);
                         }}
                       >
-                        <i aria-hidden="true">{item.icon}</i>
+                        <i aria-hidden="true">
+                          <NavIcon id={item.id} />
+                        </i>
                         <span>{t(item.labelKey)}</span>
                         {badge > 0 && (
                           <span className="nav-badge" aria-hidden="true">
@@ -183,7 +186,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
         <main id="main-content" className="stage" tabIndex={-1}>
           {!hasBackend() && <div className="proto-banner">◍ {t('state.prototype')}</div>}
-          {children}
+          {/* keyed on route so the stage replays a soft page-enter on each view change */}
+          <div key={route} className="stage-enter">
+            {children}
+          </div>
         </main>
       </div>
     </>
