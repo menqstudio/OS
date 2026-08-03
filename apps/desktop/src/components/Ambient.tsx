@@ -69,7 +69,7 @@ function useMesh(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
     const ctx = cv.getContext('2d');
     if (!ctx) return;
     const reduced = prefersReducedMotion();
-    const AGENTS = 26;
+    const AGENTS = 18;
     let W = 0;
     let H = 0;
     let DPR = 1;
@@ -155,7 +155,10 @@ function useMesh(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
     // real typing-lag / GPU-load source. Cheaper backdrop, same look.
     let lastPaint = 0;
     function frame(ts: number) {
-      if (ts - lastPaint >= 33) {
+      // ~15fps: the field drifts slowly, so a lower rate is imperceptible but
+      // roughly halves the mesh cost AND the backdrop-filter recompute it triggers
+      // on every surface above it — the main source of overall heaviness.
+      if (ts - lastPaint >= 66) {
         lastPaint = ts;
         draw();
       }
@@ -166,13 +169,25 @@ function useMesh(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
       seed();
       if (reduced) draw();
     };
+    // Pause the loop entirely when the window is hidden — no GPU spent in the
+    // background (and it resumes cleanly on return).
+    const onVisibility = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      } else if (!reduced && raf === 0) {
+        raf = requestAnimationFrame(frame);
+      }
+    };
     seed();
     if (reduced) draw();
     else raf = requestAnimationFrame(frame);
     addEventListener('resize', onResize, { passive: true });
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       cancelAnimationFrame(raf);
       removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [canvasRef]);
 }
