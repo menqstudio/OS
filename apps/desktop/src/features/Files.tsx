@@ -39,7 +39,9 @@ function crumbSegments(path?: string): { label: string; nav?: string }[] {
 // 'sealed' (the blocked state). Directories are always 'open'.
 type Guard = 'open' | 'read' | 'sealed';
 
-function formatSize(bytes: number): string {
+function formatSize(bytes: number | undefined | null): string {
+  // entry sizes can be absent/non-numeric from the backend — never render "NaN KB".
+  if (bytes == null || !Number.isFinite(bytes)) return '—';
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB', 'TB'];
   let n = bytes / 1024;

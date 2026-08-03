@@ -200,7 +200,7 @@ export const STR = {
   // -- page header ------------------------------------------------------------
   intelCentre: {
     en: 'INTELLIGENCE CENTRE · ANALYTICS',
-    hy: 'ԻՆՏԵԼԵԿՏԻ ԿԵՆՏՐՈՆ · ANALYTICS',
-    ru: 'ЦЕНТР РАЗВЕДКИ · ANALYTICS',
+    hy: 'ԻՆՏԵԼԵԿՏԻ ԿԵՆՏՐՈՆ · ՎԵՐԼՈՒԾՈՒԹՅՈՒՆ',
+    ru: 'ЦЕНТР РАЗВЕДКИ · АНАЛИТИКА',
   },
 } as const;

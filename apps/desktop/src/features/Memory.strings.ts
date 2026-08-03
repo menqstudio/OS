@@ -52,8 +52,8 @@ export const STR = {
   // --- Header ---------------------------------------------------------------
   fieldEyebrow: {
     en: 'MEMORY FIELD · TEMPORAL FIELD',
-    hy: 'ՀԻՇՈՂՈՒԹՅԱՆ ԴԱՇՏ · TEMPORAL FIELD',
-    ru: 'ПОЛЕ ПАМЯТИ · TEMPORAL FIELD',
+    hy: 'ՀԻՇՈՂՈՒԹՅԱՆ ԴԱՇՏ · ԺԱՄԱՆԱԿԱՅԻՆ ԴԱՇՏ',
+    ru: 'ПОЛЕ ПАМЯТИ · ТЕМПОРАЛЬНОЕ ПОЛЕ',
   },
   verifiable: { en: 'Verifiable memory', hy: 'Ստուգելի հիշողություն', ru: 'Проверяемая память' },
 

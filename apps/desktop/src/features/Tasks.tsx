@@ -8,8 +8,14 @@ import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { useToast } from '../components/toast';
 import { statusTone, PRIORITIES, TASK_STATUSES } from '../domain/enums';
+import type { Lang } from '../domain/enums';
+import { statusLabel, priorityLabel } from '../domain/statusLabels';
 import type { Task } from '../domain/entities';
 import type { DictKey } from '../i18n';
+import { STR } from './Tasks.strings';
+
+type StrKey = keyof typeof STR;
+type Lstr = (k: StrKey) => string;
 
 // Mission board — the brops-aios "Առաքելություն" reskin. Lanes group tasks by
 // their REAL status (the full status vocabulary maps onto the four mockup lanes
@@ -17,23 +23,21 @@ import type { DictKey } from '../i18n';
 // risk pill and the "free the blocker" flow are all driven by real data
 // (listTasks / listProjects / listTaskDependencies / setTaskStatus). Nothing —
 // no crew avatars, no critical-path rail, no fabricated counts — is invented.
-const LANES: { id: string; nm: string; tone: '' | 'info' | 'warn' | 'mint'; statuses: string[] }[] = [
-  { id: 'queue', nm: 'Հերթ',       tone: '',     statuses: ['inbox', 'planned'] },
-  { id: 'prog',  nm: 'Ընթացքում',  tone: 'info', statuses: ['active', 'review'] },
-  { id: 'block', nm: 'Արգելափակ',  tone: 'warn', statuses: ['blocked'] },
-  { id: 'done',  nm: 'Ավարտ',      tone: 'mint', statuses: ['done', 'cancelled'] },
+const LANES: { id: string; nmKey: StrKey; tone: '' | 'info' | 'warn' | 'mint'; statuses: string[] }[] = [
+  { id: 'queue', nmKey: 'lane_queue', tone: '',     statuses: ['inbox', 'planned'] },
+  { id: 'prog',  nmKey: 'lane_prog',  tone: 'info', statuses: ['active', 'review'] },
+  { id: 'block', nmKey: 'lane_block', tone: 'warn', statuses: ['blocked'] },
+  { id: 'done',  nmKey: 'lane_done',  tone: 'mint', statuses: ['done', 'cancelled'] },
 ];
 
 // Real task status → the mockup's card left-rail state class (purely visual).
 const STATE_CLASS: Record<string, string> = {
   active: 'state-working', review: 'state-thinking', blocked: 'state-blocked', done: 'state-completed',
 };
-// Real priority → the mockup's prio chip (label + class). low/normal collapse to "mid".
-const PRIO: Record<string, { lab: string; cls: string }> = {
-  critical: { lab: 'ԿՐԻՏ', cls: 'crit' },
-  high:     { lab: 'ԲԱՐՁՐ', cls: 'high' },
-  normal:   { lab: 'ՄԻՋ', cls: 'mid' },
-  low:      { lab: 'ՄԻՋ', cls: 'mid' },
+// Real priority → the mockup's prio chip class (purely visual). low/normal
+// collapse to "mid". The chip TEXT is the localized priorityLabel.
+const PRIO_CLS: Record<string, string> = {
+  critical: 'crit', high: 'high', normal: 'mid', low: 'mid',
 };
 
 const laneOf = (status: string) => LANES.find((l) => l.statuses.includes(status));
@@ -83,7 +87,7 @@ function NewTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
 }
 
 function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => void; onSaved: () => void }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
   const toast = useToast();
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -133,7 +137,7 @@ function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => voi
     <Modal title={t('form.editTask')} onClose={onClose}>
       {error && <div className="form-error">{error}</div>}
       <div className="row" style={{ gap: 8, marginBottom: 12 }}>
-        <Badge tone={statusTone[task.status] ?? 'neutral'}>{task.status.replace(/_/g, ' ')}</Badge>
+        <Badge tone={statusTone[task.status] ?? 'neutral'}>{statusLabel(task.status, lang)}</Badge>
       </div>
       <FormRow label={t('field.title')}>
         <Input value={title} autoFocus onChange={(e) => setTitle(e.target.value)} />
@@ -194,13 +198,15 @@ function MissionClock() {
 // surfaces them as the blocker note; the "Ազատել" button is a real status
 // mutation (blocked → active), the honest equivalent of "freeing" the card.
 function TaskCard({
-  task, projectName, onOpen, onMove, t,
+  task, projectName, onOpen, onMove, t, lang, L,
 }: {
   task: Task;
   projectName?: string;
   onOpen: (task: Task) => void;
   onMove: (task: Task, status: string) => void;
   t: (k: DictKey) => string;
+  lang: Lang;
+  L: Lstr;
 }) {
   const isBlocked = task.status === 'blocked';
   const deps = useAsync(
@@ -208,7 +214,7 @@ function TaskCard({
     [task.id, isBlocked],
   );
   const stateCls = STATE_CLASS[task.status] ?? '';
-  const prio = PRIO[task.priority] ?? PRIO.normal;
+  const prioCls = PRIO_CLS[task.priority] ?? 'mid';
   const blockers = deps.data ?? [];
 
   return (
@@ -221,7 +227,7 @@ function TaskCard({
     >
       <span className="stream" aria-hidden="true" />
       <div className="mt-head">
-        <span className={`prio prio-${prio.cls}`}>{prio.lab}</span>
+        <span className={`prio prio-${prioCls}`}>{priorityLabel(task.priority, lang)}</span>
         {task.dueAt && (
           <span className="mt-eta micro">{new Date(task.dueAt).toLocaleDateString()}</span>
         )}
@@ -240,7 +246,7 @@ function TaskCard({
           )}
           <div className="mt-block">
             <span className="mt-block-txt">
-              <b>Արգելափակում</b>
+              <b>{L('blocking')}</b>
               {deps.loading
                 ? '…'
                 : blockers.length > 0
@@ -253,7 +259,7 @@ function TaskCard({
               aria-label={`${t('action.open')}: ${task.title}`}
               onClick={(e) => { e.stopPropagation(); onMove(task, 'active'); }}
             >
-              Ազատել
+              {L('release')}
             </button>
           </div>
         </>
@@ -269,7 +275,7 @@ function TaskCard({
           onChange={(e) => onMove(task, e.target.value)}
         >
           {TASK_STATUSES.map((sv) => (
-            <option key={sv} value={sv}>{sv.replace(/_/g, ' ')}</option>
+            <option key={sv} value={sv}>{statusLabel(sv, lang)}</option>
           ))}
         </select>
         {task.assignedAgentId && <span className="mt-own micro">{task.assignedAgentId}</span>}
@@ -279,7 +285,8 @@ function TaskCard({
 }
 
 export function Tasks() {
-  const { t, focus, clearFocus } = useApp();
+  const { t, lang, focus, clearFocus } = useApp();
+  const L: Lstr = (k) => STR[k][lang] ?? STR[k].en;
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState<Task | null>(null);
@@ -311,7 +318,7 @@ export function Tasks() {
   const moveTo = (task: Task, status: string) => {
     if (status === task.status) return;
     const lane = laneOf(status);
-    setAnnounce(`${task.title} → ${lane?.nm ?? status}`);
+    setAnnounce(`${task.title} → ${lane ? L(lane.nmKey) : status}`);
     desktop.setTaskStatus(task.id, status).then(() => s.reload()).catch(() => s.reload());
   };
 
@@ -341,11 +348,11 @@ export function Tasks() {
           const doneCount = tasks.filter((x) => x.status === 'done').length;
           const total = tasks.length;
           const pct = total ? Math.round((doneCount / total) * 100) : 0;
-          const ledger: { n: number; lab: string; cls: string }[] = [
-            { n: total, lab: 'ընդամենը', cls: '' },
-            { n: active, lab: 'ընթացքում', cls: 'lg-info' },
-            { n: blocked, lab: 'արգելափակ', cls: 'lg-warn' },
-            { n: doneCount, lab: 'Ավարտ', cls: 'lg-mint' },
+          const ledger: { id: string; n: number; lab: string; cls: string }[] = [
+            { id: 'total', n: total, lab: L('kpi_total'), cls: '' },
+            { id: 'active', n: active, lab: L('kpi_active'), cls: 'lg-info' },
+            { id: 'blocked', n: blocked, lab: L('kpi_blocked'), cls: 'lg-warn' },
+            { id: 'done', n: doneCount, lab: L('kpi_done'), cls: 'lg-mint' },
           ];
 
           return (
@@ -357,12 +364,12 @@ export function Tasks() {
                 <span className="bracket bl" aria-hidden="true" />
                 <span className="bracket br" aria-hidden="true" />
                 <div className="m-top">
-                  <span className="eyebrow">ԱՌԱՔԵԼՈՒԹՅԱՆ ԿՈՆՏՐՈԼ</span>
+                  <span className="eyebrow">{L('eyebrow')}</span>
                   <MissionClock />
                   <div className="m-top-r">
                     {blocked > 0
-                      ? <span className="pill warn">{blocked} ԱՐԳԵԼՔ</span>
-                      : <span className="pill live">ՈՒՂԻՆ ՄԱՔՈՒՐ</span>}
+                      ? <span className="pill warn">{blocked} {L('blockersWord')}</span>
+                      : <span className="pill live">{L('pathClear')}</span>}
                     <span aria-hidden="true"><Mark state={blocked > 0 ? 'alert' : 'idle'} size={30} /></span>
                   </div>
                 </div>
@@ -373,13 +380,13 @@ export function Tasks() {
                   </div>
                   <div className="m-prog">
                     <b className="bignum">{pct}<small>%</small></b>
-                    <span className="micro">{doneCount}/{total} · Ավարտ</span>
+                    <span className="micro">{doneCount}/{total} · {L('doneCap')}</span>
                   </div>
                 </div>
                 <div className="m-foot">
                   <div className="ledger">
                     {ledger.map((l) => (
-                      <div key={l.lab} className={`lg-item ${l.cls}`.trim()}>
+                      <div key={l.id} className={`lg-item ${l.cls}`.trim()}>
                         <b className="count num">{l.n}</b>
                         <span className="micro">{l.lab}</span>
                       </div>
@@ -390,11 +397,11 @@ export function Tasks() {
 
               {/* BOARD BAR · quiet toolbar + legend */}
               <div className="board-bar">
-                <div className="sec-head"><h2>Առաքելության տախտակ</h2>
-                  <span className="note">կախվածություններ + արգելքներ</span></div>
+                <div className="sec-head"><h2>{L('boardTitle')}</h2>
+                  <span className="note">{L('boardNote')}</span></div>
                 <div className="legend">
-                  <span className="chip lg-c"><i className="d-block" aria-hidden="true" />Արգելափակ</span>
-                  <span className="chip lg-c"><i className="d-dep" aria-hidden="true" />Կախված</span>
+                  <span className="chip lg-c"><i className="d-block" aria-hidden="true" />{L('legendBlocked')}</span>
+                  <span className="chip lg-c"><i className="d-dep" aria-hidden="true" />{L('legendDep')}</span>
                 </div>
               </div>
 
@@ -406,11 +413,11 @@ export function Tasks() {
                     <section
                       key={lane.id}
                       className={`lane lane-${lane.id}`}
-                      aria-label={`${lane.nm} · ${items.length}`}
+                      aria-label={`${L(lane.nmKey)} · ${items.length}`}
                     >
                       <header className="lane-hd">
                         <span className={`lane-dot ${lane.tone ? `t-${lane.tone}` : ''}`.trim()} aria-hidden="true" />
-                        <h3 className="lane-nm">{lane.nm}</h3>
+                        <h3 className="lane-nm">{L(lane.nmKey)}</h3>
                         <span className="lane-ct mono">{items.length}</span>
                       </header>
                       <div className="lane-body">
@@ -422,6 +429,8 @@ export function Tasks() {
                             onOpen={setDetail}
                             onMove={moveTo}
                             t={t}
+                            lang={lang}
+                            L={L}
                           />
                         ))}
                         {items.length === 0 && <p className="lane-empty micro">—</p>}

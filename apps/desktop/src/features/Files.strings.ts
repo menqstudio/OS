@@ -130,8 +130,8 @@ export const STR = {
   },
   eyebrow: {
     en: 'DATA BENCH · SPATIAL WORKSPACE',
-    hy: 'ՏՎՅԱԼ-ՍԵՂԱՆ · SPATIAL WORKSPACE',
-    ru: 'СТЕНД ДАННЫХ · SPATIAL WORKSPACE',
+    hy: 'ՏՎՅԱԼ-ՍԵՂԱՆ · ՏԱՐԱԾԱԿԱՆ ԱՇԽԱՏԱՏԱՐԱԾՔ',
+    ru: 'СТЕНД ДАННЫХ · ПРОСТРАНСТВЕННАЯ РАБОЧАЯ ОБЛАСТЬ',
   },
   indexing: {
     en: 'Bro · indexing',

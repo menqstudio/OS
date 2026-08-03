@@ -3,13 +3,15 @@ import {
 } from 'react';
 import { useApp } from '../app/store';
 import {
-  Button, StatusPill, EmptyState, Skeleton, ErrorState,
+  Button, Badge, EmptyState, Skeleton, ErrorState,
 } from '../components/ui';
 import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
 import type { Notification } from '../domain/entities';
-import { STR, SEVERITY } from './Notifications.strings';
+import { statusTone } from '../domain/enums';
+import { severityLabel } from '../domain/statusLabels';
+import { STR } from './Notifications.strings';
 
 // Fixed priority order for the severity filter chips (most severe first).
 const SEVERITY_ORDER = ['critical', 'error', 'warning', 'success', 'info'];
@@ -50,9 +52,6 @@ export function Notifications() {
   const itemRefs = useRef(new Map<string, HTMLDivElement>());
 
   const L = (k: keyof typeof STR): string => STR[k][lang] ?? STR[k].en;
-  const severityLabel = (sev: string): string =>
-    (SEVERITY as Record<string, Record<string, string>>)[sev]?.[lang]
-      ?? sev.charAt(0).toUpperCase() + sev.slice(1);
 
   const dateFmt = useMemo(
     () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
@@ -205,7 +204,9 @@ export function Notifications() {
               <div className="nsig-now-txt">
                 <p className="nsig-now-title">{lead.title}</p>
                 <div className="row" style={{ gap: 8 }}>
-                  <StatusPill status={lead.severity} />
+                  <Badge tone={statusTone[lead.severity] ?? 'neutral'}>
+                    {severityLabel(lead.severity, lang)}
+                  </Badge>
                   {lead.readAt === null && (
                     <span className="micro nsig-now-unread">{L('unread')}</span>
                   )}
@@ -244,7 +245,7 @@ export function Notifications() {
         {band('unread', L('filterUnread'), unreadCount, 'var(--menq-color-warning)')}
         {band('all', L('filterAll'), items.length, 'var(--brops-accent)')}
         {severities.map((sev) =>
-          band(sev, severityLabel(sev), items.filter((n) => n.severity === sev).length, severityColor(sev)))}
+          band(sev, severityLabel(sev, lang), items.filter((n) => n.severity === sev).length, severityColor(sev)))}
       </div>
       <div className="nsig-hint micro">{L('keyboardHint')}</div>
 
@@ -272,7 +273,7 @@ export function Notifications() {
             const isExpanded = n.id === expandedId;
             const isUnread = n.readAt === null;
             const accent = severityColor(n.severity);
-            const label = `${severityLabel(n.severity)}: ${n.title}${isUnread ? ` — ${L('unread')}` : ''}`;
+            const label = `${severityLabel(n.severity, lang)}: ${n.title}${isUnread ? ` — ${L('unread')}` : ''}`;
             return (
               <div
                 key={n.id}
@@ -294,7 +295,9 @@ export function Notifications() {
                 {isUnread && <span className="nsig-srow-unread" aria-hidden="true" />}
                 <div className="nsig-srow-main">
                   <div className="nsig-srow-top">
-                    <StatusPill status={n.severity} />
+                    <Badge tone={statusTone[n.severity] ?? 'neutral'}>
+                      {severityLabel(n.severity, lang)}
+                    </Badge>
                     {n.kind && <span className="micro nsig-srow-kind">{n.kind}</span>}
                     <time className="mono nsig-srow-time">{fmtDate(n.createdAt)}</time>
                   </div>

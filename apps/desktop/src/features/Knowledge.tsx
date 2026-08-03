@@ -129,7 +129,7 @@ function ArticleEditor(
         </label>
         <label className="form-row">
           <span className="field-label">{t('knowledge.tags')}</span>
-          <Input value={tags} disabled={isEdit} placeholder="architecture, sqlite"
+          <Input value={tags} disabled={isEdit} placeholder={L('tagsPlaceholder')}
             onChange={(e: ChangeEvent<HTMLInputElement>) => setTags(e.target.value)} />
         </label>
 

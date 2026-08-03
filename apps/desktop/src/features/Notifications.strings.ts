@@ -87,13 +87,3 @@ export const STR = {
   gateChainMirror: { en: 'MIRROR', hy: 'ԱՐՏԱՑՈԼՈՒՄ', ru: 'ЗЕРКАЛО' },
   gateChainEngine: { en: 'ENGINE', hy: 'ՇԱՐԺԻՉ', ru: 'ДВИЖОК' },
 } as const;
-
-// Trilingual severity labels for filter chips and accessible row names. Falls
-// back to a capitalized raw value for any severity not listed here.
-export const SEVERITY = {
-  info: { en: 'Info', hy: 'Տեղեկություն', ru: 'Информация' },
-  success: { en: 'Success', hy: 'Հաջողություն', ru: 'Успех' },
-  warning: { en: 'Warning', hy: 'Զգուշացում', ru: 'Предупреждение' },
-  error: { en: 'Error', hy: 'Սխալ', ru: 'Ошибка' },
-  critical: { en: 'Critical', hy: 'Կրիտիկական', ru: 'Критично' },
-} as const;

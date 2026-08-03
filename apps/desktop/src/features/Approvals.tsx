@@ -5,6 +5,7 @@ import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { useToast } from '../components/toast';
 import { desktop, hasBackend } from '../services/desktop';
+import { riskLabel } from '../domain/statusLabels';
 import { STR } from './Approvals.strings';
 
 // ── §D `approvals` — Հաստատումներ (Approval gate) ────────────────────────────
@@ -401,7 +402,7 @@ export function Approvals() {
               </div>
               <div className="im-row">
                 <span className="micro">{t('field.risk')}</span>
-                <span className="im-v"><b className="mono">{seated?.riskLevel}</b></span>
+                <span className="im-v"><b className="mono">{riskLabel((seated?.riskLevel ?? '').toLowerCase(), lang)}</b></span>
               </div>
               <div className="im-row">
                 <span className="micro">{L('requestedByLabel')}</span>
@@ -506,7 +507,7 @@ export function Approvals() {
               <span className="q-impact">
                 <span className="micro">{L('target')}</span>
                 <b className="mono">{a.target}</b>
-                <span className="q-rev ok">{a.riskLevel}</span>
+                <span className="q-rev ok">{riskLabel((a.riskLevel ?? '').toLowerCase(), lang)}</span>
               </span>
               <span className="q-sla">
                 <span className="micro">{L('waitingLabel')}</span>

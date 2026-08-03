@@ -10,6 +10,7 @@ import { Markdown } from '../components/markdown';
 import { Mark } from '../components/Ambient';
 import type { Conversation, Message } from '../domain/entities';
 import type { Tone } from '../domain/enums';
+import { STR } from './Conversations.strings';
 
 /** Map a message's server-derived receipt outcome to its trust badge, or `null` for
  *  no badge. `development_untrusted` → amber dev badge; `trusted_verified` → green
@@ -78,7 +79,8 @@ function fmtTime(iso: string): string {
 }
 
 function MessageThread({ conversation, onActivity }: { conversation: Conversation; onActivity: () => void }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
   const ai = useAsync(() => desktop.aiStatus(), []);
   const agents = useAsync(() => desktop.listAgents(), []);
@@ -233,9 +235,9 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   // Assistant power-mark state: thinking while a reply streams, live when a
   // backend is present, idle when there is none.
   const markState = thinking ? 'thinking' : (hasBackend() ? 'live' : 'idle');
-  const liveWord = thinking ? 'գրում է…' : 'պատրաստ';
+  const liveWord = thinking ? L('typing') : L('ready');
   const attnPill = thinking ? 'live' : (ai.data && !ai.data.ready ? 'warn' : 'info');
-  const attnWord = thinking ? 'ՄՏԱԾՈՒՄ' : (ai.data && !ai.data.ready ? 'ԱՆՀԱՍԱՆԵԼԻ' : 'ՊԱՏՐԱՍՏ');
+  const attnWord = thinking ? L('thinkingCap') : (ai.data && !ai.data.ready ? L('unavailable') : L('readyCap'));
   const participantCount = agentList.length + 1; // agents + Bro
 
   return (
@@ -246,7 +248,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
 
         <header className="thread-head">
           <div className="th-topic">
-            <span className="eyebrow">{isGroup ? 'ԽՄԲԱՅԻՆ ԶՐՈՒՅՑ' : 'ԿԵՆԴԱՆԻ ԶՐՈՒՅՑ'}</span>
+            <span className="eyebrow">{isGroup ? L('groupChatEyebrow') : L('liveChatEyebrow')}</span>
             <h2>{conversation.title}</h2>
           </div>
           <div className="th-actions">
@@ -385,20 +387,20 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
 
         {/* Attention field — the assistant's live state, honestly sourced from
             aiStatus + the streaming flag (no fabricated confidence telemetry). */}
-        <section className="surface cut hud ctx-attn" aria-label="Ուշադրության դաշտ">
+        <section className="surface cut hud ctx-attn" aria-label={L('attnFieldAria')}>
           <i className="bracket tl" /><i className="bracket tr" />
           <i className="bracket bl" /><i className="bracket br" />
           <div className="ctx-head">
-            <span className="eyebrow">ՈՒՇԱԴՐՈՒԹՅԱՆ ԴԱՇՏ</span>
+            <span className="eyebrow">{L('attnFieldEyebrow')}</span>
             <span className={`pill ${attnPill}`}>{attnWord}</span>
           </div>
-          <p className="ctx-note">Ի՞նչ վիճակում է Bro-ն հենց հիմա։ Bro's live state right now.</p>
+          <p className="ctx-note">{L('liveState')}</p>
           <div className="attn-mark"><Mark state={markState} size={72} /></div>
           <div className="ctx-recalls">
-            <span className="micro rc-lbl">ՀԱՄԱՏԵՔՍՏ</span>
+            <span className="micro rc-lbl">{L('contextLabel')}</span>
             <ul className="recall-list">
-              <li className="recall"><span className="rk" /><b className="mono">{allMessages.length}</b>&nbsp;ՀԱՂՈՐԴԱԳՐՈՒԹՅՈՒՆ</li>
-              <li className="recall"><span className="rk" /><b className="mono">{agentList.length}</b>&nbsp;ԳՈՐԾԱԿԱԼ</li>
+              <li className="recall"><span className="rk" /><b className="mono">{allMessages.length}</b>&nbsp;{L('messagesUnit')}</li>
+              <li className="recall"><span className="rk" /><b className="mono">{agentList.length}</b>&nbsp;{L('agentsUnit')}</li>
               {ai.data && !ai.data.ready && <li className="recall"><span className="rk" />{ai.data.detail}</li>}
             </ul>
           </div>
@@ -407,14 +409,14 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
         {/* In the room — REAL participants: Bro + the agents from listAgents. */}
         <section className="surface soft ctx-room">
           <div className="cr-head">
-            <span className="eyebrow">ՍԵՆՅԱԿՈՒՄ</span>
-            <span className="micro">{participantCount}&nbsp;·&nbsp;ՄԱՍՆԱԿԻՑ</span>
+            <span className="eyebrow">{L('inRoomEyebrow')}</span>
+            <span className="micro">{participantCount}&nbsp;·&nbsp;{L('participantsUnit')}</span>
           </div>
           <div className="room-list">
             <div className="rm">
               <span className="rm-av"><Sigil name="Bro" state={thinking ? 'working' : 'idle'} /></span>
-              <span className="rm-who"><b>Bro</b><span>Միջուկ · օրկեստրավար</span></span>
-              <i className={`rm-st st-${thinking ? 'working' : 'idle'}`}>{thinking ? 'ԱՇԽԱՏՈՒՄ' : 'ՊԱՐԱՊ'}</i>
+              <span className="rm-who"><b>Bro</b><span>{L('broRole')}</span></span>
+              <i className={`rm-st st-${thinking ? 'working' : 'idle'}`}>{thinking ? L('statusWorking') : L('statusIdle')}</i>
             </div>
             <Async state={agents} emptyTitle={t('state.empty')}>
               {(list) => (
@@ -425,7 +427,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
                       <div key={a.id} className="rm">
                         <span className="rm-av"><Sigil name={a.displayName} state={active ? 'working' : 'idle'} /></span>
                         <span className="rm-who"><b>{a.displayName}</b><span>{a.role}</span></span>
-                        <i className={`rm-st st-${active ? 'working' : 'idle'}`}>{active ? 'ԱՇԽԱՏՈՒՄ' : 'ՊԱՐԱՊ'}</i>
+                        <i className={`rm-st st-${active ? 'working' : 'idle'}`}>{active ? L('statusWorking') : L('statusIdle')}</i>
                       </div>
                     );
                   })}
@@ -439,12 +441,12 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
             we show an honest real readout (this conversation's message count)
             instead of fabricated telemetry. */}
         <section className="surface soft ctx-rate">
-          <div className="cr-head"><span className="eyebrow">ԱՐՁԱԳԱՆՔ</span></div>
+          <div className="cr-head"><span className="eyebrow">{L('responseEyebrow')}</span></div>
           <div className="rate-stat">
             <b>{conversation.messageCount}</b>
-            <span className="micro">ՀԱՂՈՐԴԱԳՐՈՒԹՅՈՒՆ</span>
+            <span className="micro">{L('messagesUnit')}</span>
           </div>
-          <p className="rate-note">Կենդանի գրելու տեմպ չի չափվում։ Live typing tempo is not tracked.</p>
+          <p className="rate-note">{L('tempoNote')}</p>
         </section>
 
       </aside>

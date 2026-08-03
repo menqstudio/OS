@@ -8,6 +8,7 @@ import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { MEMORY_KINDS } from '../domain/enums';
+import { kindLabel } from '../domain/statusLabels';
 import type { MemoryEntry } from '../domain/entities';
 import { STR, liveCount, refCount } from './Memory.strings';
 
@@ -81,7 +82,7 @@ function contentPreview(text: string): string {
 
 // --- New entry (create is wired to the store) -------------------------------
 function NewEntryForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
   const [scope, setScope] = useState('global');
   const [kind, setKind] = useState('note');
   const [content, setContent] = useState('');
@@ -113,7 +114,7 @@ function NewEntryForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
       <FormRow label={t('memory.kind')}>
         <Select value={kind} onChange={(e) => setKind(e.target.value)}>
           {MEMORY_KINDS.map((k) => (
-            <option key={k} value={k}>{k}</option>
+            <option key={k} value={k}>{kindLabel(k, lang)}</option>
           ))}
         </Select>
       </FormRow>
@@ -142,10 +143,10 @@ function EditEntryForm({ entry, onClose }: { entry: MemoryEntry; onClose: () => 
         <Textarea value={entry.content} readOnly />
       </FormRow>
       <FormRow label={t('memory.kind')}>
-        <Input value={entry.kind} readOnly />
+        <Input value={kindLabel(entry.kind, lang)} readOnly />
       </FormRow>
       <FormRow label={t('memory.scope')}>
-        <Input value={entry.scope} readOnly />
+        <Input value={kindLabel(entry.scope, lang)} readOnly />
       </FormRow>
       <div className="form-actions">
         <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
@@ -184,13 +185,13 @@ function MemoryDetail(
       <div className="mr-head">
         <Mark state="idle" size={40} />
         <div className="mr-id">
-          <span className="eyebrow">{`${entry.kind.toUpperCase()} · ${L('memoryEyebrow')}`}</span>
-          <b>{entry.scope}</b>
+          <span className="eyebrow">{`${kindLabel(entry.kind, lang).toUpperCase()} · ${L('memoryEyebrow')}`}</span>
+          <b>{kindLabel(entry.scope, lang)}</b>
         </div>
       </div>
 
       <div className="mr-flags">
-        <span className={`pill ${kindPill[entry.kind] ?? 'info'}`}>{entry.kind}</span>
+        <span className={`pill ${kindPill[entry.kind] ?? 'info'}`}>{kindLabel(entry.kind, lang)}</span>
         {entry.pinned && <span className="pill info">{t('memory.pinned')}</span>}
         {blocked && <span className="pill warn">{L('sealed')}</span>}
       </div>
@@ -216,8 +217,8 @@ function MemoryDetail(
       <p className="mem-body">{entry.content}</p>
 
       <div className="mr-tags">
-        <span className="tag">{entry.scope}</span>
-        <span className="tag">{entry.kind}</span>
+        <span className="tag">{kindLabel(entry.scope, lang)}</span>
+        <span className="tag">{kindLabel(entry.kind, lang)}</span>
       </div>
 
       <div className="mr-meta">
@@ -481,7 +482,7 @@ export function Memory() {
                 aria-pressed={kindFilter === k}
                 onClick={() => setKindFilter(k)}
               >
-                {k === 'all' ? L('all') : k}
+                {k === 'all' ? L('all') : kindLabel(k, lang)}
               </button>
             ))}
           </div>
@@ -516,8 +517,8 @@ export function Memory() {
                       onClick={() => setSelectedId(m.id)}
                     >
                       <span className="mem-item-top">
-                        <span className={`pill ${kindPill[m.kind] ?? 'info'} mem-kind`}>{m.kind}</span>
-                        <span className="micro mem-item-scope">{m.scope}</span>
+                        <span className={`pill ${kindPill[m.kind] ?? 'info'} mem-kind`}>{kindLabel(m.kind, lang)}</span>
+                        <span className="micro mem-item-scope">{kindLabel(m.scope, lang)}</span>
                         {m.pinned && <span className="tag mem-flag">{t('memory.pinned')}</span>}
                         {isBlocked && (
                           <span className="tag mem-flag mem-flag--sealed">

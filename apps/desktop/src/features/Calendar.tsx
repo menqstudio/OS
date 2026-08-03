@@ -7,7 +7,9 @@ import {
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { statusTone, type Tone } from '../domain/enums';
+import { kindLabel } from '../domain/statusLabels';
 import type { CalendarEvent } from '../domain/entities';
+import { STR } from './Calendar.strings';
 
 // `startsAt` is free text: seed events store a millisecond-epoch string, while
 // the old form let the user type anything. Parse defensively and treat an
@@ -52,9 +54,6 @@ const TONE_VAR: Record<Tone, string> = {
 };
 const toneOf = (kind: string): Tone => statusTone[kind] ?? 'accent';
 const toneVar = (kind: string): string => TONE_VAR[toneOf(kind)];
-
-// New in-file labels reuse the mockup's Armenian strings verbatim (no interpolation).
-const DAY_EMPTY = 'Այս օրվա համար պլանավորված գործողություն չկա։';
 
 // Per-view CSS that isn't already in the global aios.css theme. The daygrid /
 // month / agenda classes themselves are all global; these only wire the ARIA
@@ -132,6 +131,9 @@ function NewEventForm(
 
 export function Calendar() {
   const { t, lang } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
+  // BCP47 locale for month/day/weekday names so they localize in all three langs.
+  const locale = lang === 'hy' ? 'hy-AM' : lang === 'ru' ? 'ru-RU' : 'en-US';
   // `creating` holds the datetime-local prefill (empty string = no prefill).
   const [creating, setCreating] = useState<{ when: string } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -144,22 +146,22 @@ export function Calendar() {
   const s = useAsync(() => desktop.listEvents(), []);
 
   const timeFmt = useMemo(
-    () => new Intl.DateTimeFormat(lang, { hour: '2-digit', minute: '2-digit' }),
-    [lang],
+    () => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }),
+    [locale],
   );
   const monthLabel = useMemo(
-    () => new Intl.DateTimeFormat(lang, { month: 'long', year: 'numeric' }).format(viewDate),
-    [lang, viewDate],
+    () => new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(viewDate),
+    [locale, viewDate],
   );
   const fullDateFmt = useMemo(
-    () => new Intl.DateTimeFormat(lang, { weekday: 'long', day: 'numeric', month: 'long' }),
-    [lang],
+    () => new Intl.DateTimeFormat(locale, { weekday: 'long', day: 'numeric', month: 'long' }),
+    [locale],
   );
   // Short weekday labels (Mon-first). 2024-01-01 was a Monday.
   const weekdays = useMemo(() => {
-    const fmt = new Intl.DateTimeFormat(lang, { weekday: 'short' });
+    const fmt = new Intl.DateTimeFormat(locale, { weekday: 'short' });
     return Array.from({ length: 7 }, (_, i) => fmt.format(new Date(2024, 0, 1 + i)));
-  }, [lang]);
+  }, [locale]);
 
   const shiftMonth = (delta: number) =>
     setViewDate((d) => new Date(d.getFullYear(), d.getMonth() + delta, 1));
@@ -267,11 +269,11 @@ export function Calendar() {
         <div className="ag-main">
           <b className="ag-t" title={e.title}>{e.title}</b>
           <span className="ag-crew micro">
-            {e.location ? `${e.kind} · ${e.location}` : e.kind}
+            {e.location ? `${kindLabel(e.kind, lang)} · ${e.location}` : kindLabel(e.kind, lang)}
           </span>
         </div>
         <div className="ag-side">
-          <Badge tone={toneOf(e.kind)}>{e.kind}</Badge>
+          <Badge tone={toneOf(e.kind)}>{kindLabel(e.kind, lang)}</Badge>
           <Button
             variant="ghost"
             small
@@ -333,12 +335,12 @@ export function Calendar() {
             <span className="bracket br" aria-hidden="true" />
 
             <div className="dg-top">
-              <span className="eyebrow">ՕՊԵՐԱՑԻՈՆ ՀՈՍՔ · {selectedLabel}</span>
-              <span className="pill info dg-attn">{dayEvents.length}&nbsp;գործողություն</span>
+              <span className="eyebrow">{L('opsFlow')} · {selectedLabel}</span>
+              <span className="pill info dg-attn">{dayEvents.length}&nbsp;{L('operations')}</span>
             </div>
 
             {dayEvents.length === 0 ? (
-              <div className="dg-empty muted">{DAY_EMPTY}</div>
+              <div className="dg-empty muted">{L('dayEmpty')}</div>
             ) : (
               <div className="rib-scroll">
                 <div className="dg-plot">
@@ -378,15 +380,15 @@ export function Calendar() {
               <div className="dg-stats">
                 <div className="dg-stat">
                   <b className="mono">{dayEvents.length}</b>
-                  <span className="micro">օրվա գործողություն</span>
+                  <span className="micro">{L('dayOps')}</span>
                 </div>
                 <div className="dg-stat">
                   <b className="mono">{totalCount}</b>
-                  <span className="micro">ընդամենը</span>
+                  <span className="micro">{L('total')}</span>
                 </div>
                 <div className="dg-stat">
                   <b className="mono">{undated.length}</b>
-                  <span className="micro">անթվակիր</span>
+                  <span className="micro">{L('undated')}</span>
                 </div>
               </div>
             </div>
@@ -404,7 +406,7 @@ export function Calendar() {
                   </span>
                   <b className="cm-title">{monthLabel}</b>
                 </div>
-                <span className="micro cmh-r">{monthCount}&nbsp;գործողություն</span>
+                <span className="micro cmh-r">{monthCount}&nbsp;{L('operations')}</span>
               </div>
 
               <div className="cal-cal" role="grid" aria-label={monthLabel}>
@@ -433,7 +435,7 @@ export function Calendar() {
                           role="gridcell"
                           aria-selected={cellSel}
                           aria-current={cellToday ? 'date' : undefined}
-                          aria-label={`${fullDateFmt.format(day)} · ${evs.length} գործողություն`}
+                          aria-label={`${fullDateFmt.format(day)} · ${evs.length} ${L('operations')}`}
                           className={cls}
                           onClick={() => pickDay(day)}
                         >
@@ -459,9 +461,9 @@ export function Calendar() {
 
             <aside className="agenda surface soft" aria-label={`${t('calendar.agenda')} · ${selectedLabel}`}>
               <div className="ag-head">
-                <span className="eyebrow">ՕՐԱԿԱՐԳ · {isToday ? 'ԱՅՍՕՐ' : 'ՊԼԱՆ'}</span>
+                <span className="eyebrow">{L('agenda')} · {isToday ? L('today') : L('plan')}</span>
                 <b className="ag-date">{selectedLabel}</b>
-                <span className="micro ag-ct">{dayEvents.length}&nbsp;գործողություն</span>
+                <span className="micro ag-ct">{dayEvents.length}&nbsp;{L('operations')}</span>
               </div>
 
               {emptyAll ? (
@@ -473,7 +475,7 @@ export function Calendar() {
                       {dayEvents.map(({ e, d }) => agendaNode(e, d))}
                     </div>
                   ) : (
-                    <div className="ag-empty muted">{DAY_EMPTY}</div>
+                    <div className="ag-empty muted">{L('dayEmpty')}</div>
                   )}
 
                   {undated.length > 0 && (

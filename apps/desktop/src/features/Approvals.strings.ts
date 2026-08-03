@@ -28,7 +28,7 @@ export const STR = {
   // ── page header ────────────────────────────────────────────────────────────
   eyebrowHitl: {
     en: 'HUMAN-IN-THE-LOOP · CONTROL GATE',
-    hy: 'ՄԱՐԴ-ՀԱՆԳՈՒՅՑ ՀՍԿԻՉ · HUMAN-IN-THE-LOOP',
+    hy: 'ՄԱՐԴ-ՀԱՆԳՈՒՅՑ ՀՍԿԻՉ · ՀԱՍՏԱՏՄԱՆ ԴԱՐՊԱՍ',
     ru: 'ЧЕЛОВЕК В КОНТУРЕ · КОНТРОЛЬНЫЙ ШЛЮЗ',
   },
   pending: { en: 'pending', hy: 'սպասում է', ru: 'ожидает' },
@@ -60,7 +60,7 @@ export const STR = {
 
   // ── the gate (hero) ────────────────────────────────────────────────────────
   approvalGatePrefix: { en: 'Approval gate — ', hy: 'Հաստատման դարպաս — ', ru: 'Шлюз одобрения — ' },
-  controlGate:        { en: 'CONTROL GATE', hy: 'ՀԱՍՏԱՏՄԱՆ ԴԱՐՊԱՍ · CONTROL GATE', ru: 'КОНТРОЛЬНЫЙ ШЛЮЗ · CONTROL GATE' },
+  controlGate:        { en: 'CONTROL GATE', hy: 'ՀԱՍՏԱՏՄԱՆ ԴԱՐՊԱՍ', ru: 'КОНТРОЛЬНЫЙ ШЛЮЗ' },
   requestingAgent:    { en: 'REQUESTING AGENT', hy: 'ՊԱՀԱՆՋՈՂ ԳՈՐԾԱԿԱԼ', ru: 'ЗАПРАШИВАЮЩИЙ АГЕНТ' },
   requester:          { en: 'requester', hy: 'հայցող', ru: 'запрашивающий' },
   actionHeld:         { en: 'ACTION HELD', hy: 'ԳՈՐԾՈՂՈՒԹՅՈՒՆԸ ՊԱՀՎԱԾ Է', ru: 'ДЕЙСТВИЕ УДЕРЖАНО' },

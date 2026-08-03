@@ -6,6 +6,7 @@ import { Mark } from '../components/Ambient';
 import { useToast } from '../components/toast';
 import { Modal, FormRow, Input, Textarea, Select, Button } from '../components/ui';
 import { PRIORITIES, PROJECT_STATUSES } from '../domain/enums';
+import { priorityLabel, statusLabel } from '../domain/statusLabels';
 import type { Project, Task } from '../domain/entities';
 import { STR, type StrKey } from './Projects.strings';
 
@@ -50,7 +51,7 @@ const TASK_PILL: Record<string, string> = {
 // the pills, the legend and the KPI tiles.
 
 function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('normal');
@@ -78,7 +79,7 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
       </FormRow>
       <FormRow label={t('field.priority')}>
         <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
-          {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+          {PRIORITIES.map((p) => <option key={p} value={p}>{priorityLabel(p, lang)}</option>)}
         </Select>
       </FormRow>
       <div className="form-actions">
@@ -90,7 +91,7 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
 }
 
 function EditProjectForm({ project, onClose, onSaved }: { project: Project; onClose: () => void; onSaved: () => void }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
   const toast = useToast();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
@@ -119,7 +120,7 @@ function EditProjectForm({ project, onClose, onSaved }: { project: Project; onCl
       </FormRow>
       <FormRow label={t('field.priority')}>
         <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
-          {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+          {PRIORITIES.map((p) => <option key={p} value={p}>{priorityLabel(p, lang)}</option>)}
         </Select>
       </FormRow>
       <div className="form-actions">
@@ -140,7 +141,7 @@ function ProjectDetail({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
   const s = useAsync(() => desktop.listTasksByProject(project.id), [project.id]);
   const [tab, setTab] = useState<'overview' | 'tasks'>('overview');
   const [editing, setEditing] = useState(false);
@@ -195,7 +196,7 @@ function ProjectDetail({
             </div>
             <div className="pd-fact">
               <span className="pd-fk">{t('field.priority')}</span>
-              <span className="tag">{project.priority}</span>
+              <span className="tag">{priorityLabel(project.priority, lang)}</span>
             </div>
           </div>
           <div style={{ marginTop: 'var(--s4)' }}>
@@ -232,7 +233,7 @@ function ProjectDetail({
               {tasks.map((x) => (
                 <li key={x.id} className="pd-row" role="listitem">
                   <span className="pd-tt">{x.title}</span>
-                  <span className={`pill ${TASK_PILL[x.status] ?? 'off'}`}>{x.status}</span>
+                  <span className={`pill ${TASK_PILL[x.status] ?? 'off'}`}>{statusLabel(x.status, lang)}</span>
                 </li>
               ))}
             </ul>
@@ -393,7 +394,7 @@ export function Projects() {
                 <span className="pf-lane-face"><Mark state={stMark(p.status)} size={30} /></span>
                 <span className="pl-who">
                   <b>{p.name}</b>
-                  <span className="micro">{p.priority}</span>
+                  <span className="micro">{priorityLabel(p.priority, lang)}</span>
                 </span>
                 <span className={`pill ${stPill(p.status)}`}>{label}</span>
               </button>

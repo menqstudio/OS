@@ -36,6 +36,11 @@ export const STR = {
     hy: 'Հղում — URL, գիրք կամ նշում',
     ru: 'Ссылка — URL, книга или заметка',
   },
+  tagsPlaceholder: {
+    en: 'architecture, sqlite',
+    hy: 'ճարտարապետություն, sqlite',
+    ru: 'архитектура, sqlite',
+  },
   toSave: {
     en: 'to save',
     hy: 'պահելու համար',
@@ -65,8 +70,8 @@ export const STR = {
   },
   metricArticles: {
     en: 'articles · store',
-    hy: 'հոդված · store',
-    ru: 'статьи · store',
+    hy: 'հոդված · պահոց',
+    ru: 'статьи · хранилище',
   },
   metricCollections: {
     en: 'collections',
@@ -124,8 +129,8 @@ export const STR = {
   },
   knowledgeNode: {
     en: 'KNOWLEDGE NODE · ARTICLE',
-    hy: 'ԳԻՏԵԼԻՔ-ՀԱՆԳՈՒՅՑ · ARTICLE',
-    ru: 'УЗЕЛ ЗНАНИЙ · ARTICLE',
+    hy: 'ԳԻՏԵԼԻՔ-ՀԱՆԳՈՒՅՑ · ՀՈԴՎԱԾ',
+    ru: 'УЗЕЛ ЗНАНИЙ · СТАТЬЯ',
   },
   openEditor: {
     en: 'Open the editor for this article',
@@ -181,8 +186,8 @@ export const STR = {
   // ── Page chrome ────────────────────────────────────────────────────────
   knowledgeBaseEyebrow: {
     en: 'KNOWLEDGE BASE · NEURAL MAP',
-    hy: 'ԳԻՏԵԼԻՔԻ ԲԱԶԱ · NEURAL MAP',
-    ru: 'БАЗА ЗНАНИЙ · NEURAL MAP',
+    hy: 'ԳԻՏԵԼԻՔԻ ԲԱԶԱ · ՆԵՅՐՈ-ՔԱՐՏԵԶ',
+    ru: 'БАЗА ЗНАНИЙ · НЕЙРОКАРТА',
   },
   recallActive: {
     en: 'Bro recall · active',
@@ -211,8 +216,8 @@ export const STR = {
   },
   countedFromStore: {
     en: 'counted from the store',
-    hy: 'store-ից հաշված',
-    ru: 'посчитано из store',
+    hy: 'պահոցից հաշված',
+    ru: 'посчитано из хранилища',
   },
 } as const;
 

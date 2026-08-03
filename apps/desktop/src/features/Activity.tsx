@@ -480,7 +480,7 @@ export function Activity() {
         <header className="pageHead reveal" style={cv(0)}>
           <div>
             <span className="eyebrow">{L('pageEyebrow')}</span>
-            <h1>{L('systemPulse')} ♥ Զարկերակ</h1>
+            <h1>{L('systemPulse')} ♥</h1>
             <p className="sub">{t('activity.subtitle')}</p>
           </div>
           <div className="right">

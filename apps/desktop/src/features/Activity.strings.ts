@@ -73,7 +73,7 @@ export const STR = {
   },
   systemPulse: {
     en: 'System pulse',
-    hy: 'Համակարգի զարկ',
+    hy: 'Համակարգի զարկերակ',
     ru: 'Пульс системы',
   },
   perMin: {

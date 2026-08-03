@@ -8,6 +8,8 @@ import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Markdown } from '../components/markdown';
 import { RUN_STATUSES } from '../domain/enums';
+import { statusLabel } from '../domain/statusLabels';
+import { STR } from './Command.strings';
 import type { Run, RunStep } from '../domain/entities';
 
 // Scoped supplements to the global `aios.css` command-reactor design. The page is
@@ -69,15 +71,14 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-// Honest RunStep status → trace presentation. Colour/word mirror the real step
-// status; nothing is shown as done/now unless the data says so.
-function stepMeta(status: string): { node: string; rs: string; word: string } {
+// Honest RunStep status → trace presentation. Only the node/rs CSS state mirrors
+// the real step status; nothing is shown as done/now unless the data says so. The
+// visible status word comes from the shared `statusLabel()` so it localizes.
+function stepMeta(status: string): { node: string; rs: string } {
   switch ((status || '').toLowerCase()) {
-    case 'done': return { node: 'done', rs: 'done', word: 'Ավարտ' };
-    case 'active': return { node: 'now', rs: 'now', word: 'Ընթացքում' };
-    case 'failed': return { node: '', rs: 'wait', word: 'Ձախողում' };
-    case 'skipped': return { node: '', rs: 'wait', word: 'Բաց թողնված' };
-    default: return { node: '', rs: 'wait', word: 'Սպասում' };
+    case 'done': return { node: 'done', rs: 'done' };
+    case 'active': return { node: 'now', rs: 'now' };
+    default: return { node: '', rs: 'wait' };
   }
 }
 
@@ -125,7 +126,8 @@ function NewRunForm({ onClose, onCreated }: { onClose: () => void; onCreated: (r
 // orbit + real HUD counts + status readout), the governed step composer + advance/
 // execute actions, streamed output, and the dispatch-trace timeline of real steps.
 function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
-  const { t, setRoute } = useApp();
+  const { t, setRoute, lang } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const reduced = usePrefersReducedMotion();
   const steps = useAsync(() => desktop.listRunSteps(run.id), [run.id]);
   const [title, setTitle] = useState('');
@@ -184,10 +186,10 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
   const activeN = items.filter((s) => s.status === 'active').length;
   const gatedN = items.filter((s) => s.requiresApproval).length;
   const hud = [
-    { pos: 'tl', k: 'ՔԱՅԼԵՐ', v: items.length },
-    { pos: 'tr', k: 'ԱՎԱՐՏ', v: doneN },
-    { pos: 'bl', k: 'ԸՆԹԱՑՔ', v: activeN },
-    { pos: 'br', k: 'ՀԱՍՏԱՏՈՒՄ', v: gatedN },
+    { pos: 'tl', k: L('hudSteps'), v: items.length },
+    { pos: 'tr', k: L('hudDone'), v: doneN },
+    { pos: 'bl', k: L('hudActive'), v: activeN },
+    { pos: 'br', k: L('hudGated'), v: gatedN },
   ];
 
   return (
@@ -207,7 +209,7 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
               <span className="halo" /><span className="halo inner" /><span className="disc" />
               <span className="glyphwrap"><Mark state={markState} style={{ width: '100%', height: '100%' }} /></span>
             </div>
-            <span className="core-name">BRO · ՄԻՋՈՒԿ</span>
+            <span className="core-name">{L('coreName')}</span>
           </div>
 
           {/* live HUD readouts — real step counts, readable by AT */}
@@ -271,8 +273,8 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
       {/* dispatch trace — the real step chain, announced as it progresses */}
       <div className="surface soft rail-card reveal" style={{ ['--i' as string]: 3 } as CSSProperties}>
         <div className="rail-head">
-          <span className="eyebrow">ԱՌԱՔՄԱՆ ՀԵՏՔ</span>
-          {executing && <span className="pill info">LIVE</span>}
+          <span className="eyebrow">{L('dispatchTrace')}</span>
+          {executing && <span className="pill info">{L('live')}</span>}
         </div>
         <div className="timeline cmd-trace" aria-live="polite" aria-label={t('command.steps')}>
           {/* decorative LIVE pulse riding the rail — only while a step streams and
@@ -292,7 +294,7 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
                       {s.detail && <span className="cmd-detail">{s.detail}</span>}
                       <span className="route">
                         <em>{run.intent}</em>
-                        <i className={`rs rs-${m.rs}`}>{m.word}</i>
+                        <i className={`rs rs-${m.rs}`}>{statusLabel(s.status, lang)}</i>
                       </span>
                       {s.result && <div className="run-step-result"><Markdown text={s.result} /></div>}
                     </div>
@@ -308,7 +310,8 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
 }
 
 export function Command() {
-  const { t } = useApp();
+  const { t, lang } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const [creating, setCreating] = useState(false);
   const [dockIntent, setDockIntent] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -334,7 +337,7 @@ export function Command() {
 
       <header className="pageHead">
         <div>
-          <span className="eyebrow">ՀՐԱՄԱՆԻ ՄԻՋՈՒԿ · COMMAND REACTOR</span>
+          <span className="eyebrow">{L('eyebrowReactor')}</span>
           <h1>{t('nav.command')}</h1>
           <p className="sub">{t('command.subtitle')}</p>
         </div>
@@ -363,10 +366,10 @@ export function Command() {
                 placeholder={t('command.placeholder')}
                 onChange={(e) => setDockIntent(e.target.value)}
               />
-              <button type="submit" className="dock-run">Կատարել</button>
+              <button type="submit" className="dock-run">{L('dockRun')}</button>
             </div>
             <div className="cmd-chips">
-              <span className="micro chips-lbl">ԱՐԱԳ ՀՐԱՄԱՆ</span>
+              <span className="micro chips-lbl">{L('quickCommand')}</span>
               <button type="button" className="chip" onClick={() => setCreating(true)}>＋ {t('command.newRun')}</button>
             </div>
           </form>
@@ -411,7 +414,7 @@ export function Command() {
                         type="button"
                         className="led-pick"
                         aria-pressed={selectedId === r.id}
-                        aria-label={`${r.intent} — ${r.status.replace(/_/g, ' ')}`}
+                        aria-label={`${r.intent} — ${statusLabel(r.status, lang)}`}
                         onClick={() => setSelectedId(r.id)}
                       >
                         <span className="led-ti">{r.intent}</span>
@@ -425,7 +428,7 @@ export function Command() {
                         aria-label={t('field.status')}
                       >
                         {RUN_STATUSES.map((st) => (
-                          <option key={st} value={st}>{st}</option>
+                          <option key={st} value={st}>{statusLabel(st, lang)}</option>
                         ))}
                       </Select>
                     </div>

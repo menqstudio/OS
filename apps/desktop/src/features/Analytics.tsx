@@ -6,6 +6,8 @@ import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { Metric } from '../domain/entities';
+import type { Lang } from '../domain/enums';
+import { metricLabel } from '../domain/statusLabels';
 import { STR } from './Analytics.strings';
 
 // ---------------------------------------------------------------------------
@@ -90,10 +92,12 @@ function useCountUp(value: number, reduced: boolean): number {
 // + accessible one-line summary + <details> table fallback). This page only maps
 // the real `Metric[]` to the primitive's data shape and supplies bilingual labels.
 function AnPlot(
-  { metrics, hidden, onToggle, tr }:
-  { metrics: Metric[]; hidden: ReadonlySet<string>; onToggle: (key: string) => void; tr: Tr },
+  { metrics, hidden, onToggle, tr, lang }:
+  { metrics: Metric[]; hidden: ReadonlySet<string>; onToggle: (key: string) => void; tr: Tr; lang: Lang },
 ) {
-  const visible = metrics.filter((m) => !hidden.has(m.key));
+  // Localize each metric's label from its key (falls back to backend label / humanized key).
+  const labeled = metrics.map((m) => ({ ...m, label: metricLabel(m.key, lang, m.label) }));
+  const visible = labeled.filter((m) => !hidden.has(m.key));
   const total = visible.reduce((sum, m) => sum + m.value, 0);
   const top = visible.reduce<Metric | null>((best, m) => (best && best.value >= m.value ? best : m), null);
 
@@ -104,7 +108,7 @@ function AnPlot(
 
   return (
     <BarChart
-      data={metrics.map((m) => ({ key: m.key, label: m.label, value: m.value }))}
+      data={labeled.map((m) => ({ key: m.key, label: m.label, value: m.value }))}
       caption={tr('distByNode')}
       summary={summary}
       hidden={hidden}
@@ -239,7 +243,7 @@ export function Analytics() {
             <span className="pill live">{Lz('streamLive')}</span>
           </div>
 
-          <AnPlot metrics={metrics} hidden={hidden} onToggle={toggle} tr={Lz} />
+          <AnPlot metrics={metrics} hidden={hidden} onToggle={toggle} tr={Lz} lang={lang} />
 
           <div className="wire live" aria-hidden="true" />
 
