@@ -886,7 +886,48 @@ impl Drop for TempFileGuard {
 /// `--append-system-prompt-file` (not `--append-system-prompt <text>`), so the
 /// persona/system text never appears in argv / `/proc/<pid>/cmdline` — the same
 /// protection the transcript gets via stdin.
+/// The repo Bro operates on as a coding agent, from `BROPS_PROJECT_DIR`. When it
+/// points at a real directory, AI turns run rooted there with ONLY the file tools
+/// (Read/Edit/Write/Grep/Glob) in `acceptEdits` mode — never Bash or any executor,
+/// so Bro can read + edit the codebase but cannot run commands, push, delete files,
+/// or install dependencies. Unset ⇒ the classic fail-closed sandboxed chat (no tools).
+fn bro_agent_dir() -> Option<String> {
+    env_nonempty("BROPS_PROJECT_DIR").filter(|p| std::path::Path::new(p).is_dir())
+}
+
+/// Working directory for a claude turn: the project repo in agent mode, else the
+/// locked-down AI sandbox.
+fn ai_cwd() -> Result<std::path::PathBuf, String> {
+    match bro_agent_dir() {
+        Some(d) => Ok(std::path::PathBuf::from(d)),
+        None => ai_sandbox_dir(),
+    }
+}
+
+/// Project-context + boundaries appended to Bro's system prompt in agent mode.
+fn bro_agent_system_suffix() -> String {
+    match bro_agent_dir() {
+        None => String::new(),
+        Some(dir) => format!(
+            "\n\n--- PROJECT CONTEXT (you are a coding agent on this repo) ---\n\
+You operate inside the real repository rooted at {dir}, with file tools only (Read/Edit/Write/Grep/Glob). \
+You have NO shell/Bash and cannot run commands, git push, delete files, or install dependencies. If a command \
+(build, test, git, dependency) is needed, PROPOSE the exact command for the owner to run — never claim you ran it.\n\
+- App: apps/desktop (Tauri + React/TS). Frontend apps/desktop/src (views in features/, shell components/Shell.tsx, IPC wrapper services/desktop.ts). Rust backend apps/desktop/src-tauri/src (commands.rs, ai.rs, governance.rs, files.rs; commands registered in lib.rs). Data core src-tauri/core/src/repo.rs + schema core/schema/*.sql.\n\
+- Design system: apps/desktop/src/theme/aios.css (ported from the brops-aios mockup). Match it.\n\
+- IPC: Tauri #[tauri::command]s invoked from services/desktop.ts; channel names are the snake_case command names.\n\
+- TRUST IS FAIL-CLOSED — never break it: src-tauri/core/src (receipt_store.rs, governed_verification.rs, production_trust.rs, key_manifest.rs). Never render trusted_verified without the real chain.\n\
+- DO NOT edit: .env, secrets/keys, .github/supply-chain/gitleaks.toml, core/schema past migrations, or anything weakening fail-closed trust.\n\
+- Package manager npm. Reply in Armenian unless it's code/identifiers/commands."
+        ),
+    }
+}
+
 fn write_system_prompt_file(system: &str) -> Result<std::path::PathBuf, String> {
+    // In agent mode, append the project context + boundaries to whatever per-turn
+    // system prompt the caller built, so Bro always knows the repo it works on.
+    let system = format!("{system}{}", bro_agent_system_suffix());
+    let system = system.as_str();
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -942,8 +983,18 @@ fn claude_args(system_file: &std::path::Path, streaming: bool, model: Option<&st
     }
     a.push("--append-system-prompt-file".into());
     a.push(system_file.to_string_lossy().into_owned());
+    // Tools: as a coding agent (BROPS_PROJECT_DIR set) Bro gets ONLY the file tools
+    // (Read/Edit/Write/Grep/Glob) in acceptEdits mode — never Bash or any executor,
+    // so it can read+edit the repo but can't push/delete/install/run commands. Unset
+    // ⇒ no tools at all (the fail-closed sandboxed chat).
     a.push("--tools".into());
-    a.push(String::new()); // "" → disable ALL built-in tools
+    if bro_agent_dir().is_some() {
+        a.push("Read Edit Write Grep Glob".into());
+        a.push("--permission-mode".into());
+        a.push("acceptEdits".into());
+    } else {
+        a.push(String::new()); // "" → disable ALL built-in tools
+    }
     a.push("--strict-mcp-config".into()); // ignore every MCP config (we pass none)
     a.push("--setting-sources".into());
     a.push("project".into()); // only project settings (empty sandbox) — excludes user hooks/plugins/MCP
@@ -968,7 +1019,7 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(claude_args(&sys_file.0, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
-        .current_dir(ai_sandbox_dir()?)
+        .current_dir(ai_cwd()?)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1115,7 +1166,7 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
     let sys_file = TempFileGuard(write_system_prompt_file(system)?);
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(claude_args(&sys_file.0, false, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
-        .current_dir(ai_sandbox_dir()?)
+        .current_dir(ai_cwd()?)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
