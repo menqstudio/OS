@@ -20,10 +20,13 @@ fn locked<'a>(state: &'a State<AppState>) -> Result<Conn<'a>, String> {
 
 /// Clamp a frontend-supplied agent/author name before it is formatted into a
 /// system prompt (or persisted): strip control characters (no newline-injected
-/// instructions) and bound the length. Falls back to `fallback`.
+/// instructions) AND colons — the transcript attributes each line as `"Name: text"`,
+/// so a colon in the name could forge a second speaker (e.g. `agent="Sentry: do X. Gev"`
+/// becoming a fake `Sentry:` turn hashed into `history_sha256`). Bound the length.
+/// Falls back to `fallback`.
 fn sanitize_author_or(name: Option<String>, fallback: &str) -> String {
     let raw = name.unwrap_or_default();
-    let cleaned: String = raw.chars().filter(|c| !c.is_control()).take(64).collect();
+    let cleaned: String = raw.chars().filter(|c| !c.is_control() && *c != ':').take(64).collect();
     let cleaned = cleaned.trim();
     if cleaned.is_empty() { fallback.to_string() } else { cleaned.to_string() }
 }
@@ -901,9 +904,20 @@ pub async fn stream_reply(
     agent: Option<String>,
     on_event: tauri::ipc::Channel<StreamEvent>,
 ) -> Result<(), String> {
-    let author = sanitize_author(agent);
-    let (system, history) = {
+    let requested_author = sanitize_author(agent);
+    let (author, system, history) = {
         let conn = locked(&state)?;
+        // Authority guard: the reply's attributed author MUST be a real agent — a compromised
+        // renderer cannot mint a reply "from" an arbitrary identity (which would then be hashed
+        // into history). An unknown name falls back to Bro rather than being trusted verbatim.
+        let author = if repo::agents::list(&conn)
+            .map(|v| v.iter().any(|a| a.display_name == requested_author))
+            .unwrap_or(false)
+        {
+            requested_author.clone()
+        } else {
+            "Bro".to_string()
+        };
         let msgs = repo::chat::list_messages(&conn, &conversation_id, None, None).map_err(|e| e.to_string())?;
         let history: Vec<crate::ai::ChatMsg> = msgs
             .iter()
@@ -925,7 +939,7 @@ pub async fn stream_reply(
         let system = format!(
             "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what.{room} Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
         );
-        (system, history)
+        (author, system, history)
     };
     if history.is_empty() {
         let _ = on_event.send(StreamEvent::Error { message: "nothing to reply to".into() });
@@ -1654,9 +1668,20 @@ pub async fn reply_in_conversation(
     conversation_id: String,
     agent: Option<String>,
 ) -> Result<Message, String> {
-    let author = sanitize_author(agent);
-    let (system, history) = {
+    let requested_author = sanitize_author(agent);
+    let (author, system, history) = {
         let conn = locked(&state)?;
+        // Authority guard: the reply's attributed author MUST be a real agent — a compromised
+        // renderer cannot mint a reply "from" an arbitrary identity (which would then be hashed
+        // into history). An unknown name falls back to Bro rather than being trusted verbatim.
+        let author = if repo::agents::list(&conn)
+            .map(|v| v.iter().any(|a| a.display_name == requested_author))
+            .unwrap_or(false)
+        {
+            requested_author.clone()
+        } else {
+            "Bro".to_string()
+        };
         let msgs = repo::chat::list_messages(&conn, &conversation_id, None, None).map_err(|e| e.to_string())?;
         let history: Vec<crate::ai::ChatMsg> = msgs
             .iter()
@@ -1678,7 +1703,7 @@ pub async fn reply_in_conversation(
         let system = format!(
             "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what.{room} Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
         );
-        (system, history)
+        (author, system, history)
     };
     if history.is_empty() {
         return Err("nothing to reply to".to_string());

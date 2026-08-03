@@ -328,7 +328,9 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const liveWord = thinking ? L('typing') : L('ready');
   const attnPill = thinking ? 'live' : (ai.data && !ai.data.ready ? 'warn' : 'info');
   const attnWord = thinking ? L('thinkingCap') : (ai.data && !ai.data.ready ? L('unavailable') : L('readyCap'));
-  const participantCount = agentList.length + 1; // agents + Bro
+  // The actual room: for a group with a set roster, only its members; otherwise all agents.
+  const roomAgents = isGroup && roster.length ? agentList.filter((a) => roster.includes(a.displayName)) : agentList;
+  const participantCount = roomAgents.length + (roster.includes('Bro') ? 0 : 1); // members (+ Bro)
 
   return (
     <div className="chat-shell">
@@ -516,7 +518,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
           </div>
         </section>
 
-        {/* In the room — REAL participants: Bro + the agents from listAgents. */}
+        {/* In the room — the REAL roster: Bro + the room's participants (all agents if unset). */}
         <section className="surface soft ctx-room">
           <div className="cr-head">
             <span className="eyebrow">{L('inRoomEyebrow')}</span>
@@ -529,9 +531,9 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
               <i className={`rm-st st-${thinking ? 'working' : 'idle'}`}>{thinking ? L('statusWorking') : L('statusIdle')}</i>
             </div>
             <Async state={agents} emptyTitle={t('state.empty')}>
-              {(list) => (
+              {() => (
                 <>
-                  {list.map((a) => {
+                  {roomAgents.filter((a) => a.displayName !== 'Bro').map((a) => {
                     const active = thinking && streamingAuthor === a.displayName;
                     return (
                       <div key={a.id} className="rm">
@@ -586,7 +588,13 @@ function NewRoomForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
         // Persist the chosen roster (default to the first two agents when none picked).
         const roster = picked.length ? picked : agentNames.slice(0, 2);
         if (roster.length) {
-          try { await desktop.setConversationParticipants(c.id, roster); } catch { /* non-fatal */ }
+          // Non-fatal: the room is created either way; if the roster write fails the reply
+          // fan-out falls back to the first two agents — but surface it so it isn't invisible.
+          try {
+            await desktop.setConversationParticipants(c.id, roster);
+          } catch (e) {
+            console.error('setConversationParticipants failed (room created without a roster):', e);
+          }
         }
         onCreated(c);
         onClose();
