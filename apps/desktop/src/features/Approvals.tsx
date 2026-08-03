@@ -87,6 +87,9 @@ export function Approvals() {
   const [holding, setHolding] = useState(false);
   const [verdict, setVerdict] = useState('');
   const [now, setNow] = useState(() => Date.now());
+  const [reduced, setReduced] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
   const holdTimer = useRef<number | null>(null);
 
   const items = useMemo(() => data ?? [], [data]);
@@ -104,6 +107,16 @@ export function Approvals() {
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
+  }, []);
+
+  // Honor the OS reduced-motion setting: the hold ring fill (and the shared
+  // grant-bar fill) become instant rather than sweeping across HOLD_MS — the
+  // deliberate press is still required, only the continuous animation is dropped.
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const on = () => setReduced(mq.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
   }, []);
 
   const onError = (e: unknown) => {
@@ -288,6 +301,13 @@ export function Approvals() {
   const opened = !!seated && /^(approved|granted|confirmed)$/i.test(seated.status);
   const pushed = !!seated && /^(rejected|denied|expired)$/i.test(seated.status);
 
+  // Hold-fill ring (decorative, aria-hidden with the whole seal): a pending gate
+  // shows an empty track that a deliberate press-and-hold sweeps full over HOLD_MS,
+  // reinforcing the grant bar; approved/active gates show the tone ring resolved,
+  // denied/expired empty it. Never anticipates the verdict — the ring only fills
+  // while a real hold is in progress, and the seal/stamp still wait on real data.
+  const ringOffset = opened ? 0 : pushed ? CIRC : isPending ? (holding ? 0 : CIRC) : 0;
+
   const tiles: Array<[number, string, string]> = [
     [items.length, bi('in queue', 'հերթում'), 'as-info'],
     [pendingCount, bi('pending now', 'սպասում է հիմա'), 'as-warn'],
@@ -306,6 +326,7 @@ export function Approvals() {
       >
         <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
         <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
+        <span className="ticks" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></span>
 
         <div className="g-head">
           <div className="gh-title">
@@ -339,7 +360,12 @@ export function Approvals() {
               <svg className="sla-ring" viewBox="0 0 200 200">
                 <circle className="sr-track" cx="100" cy="100" r="92" />
                 <circle className="sr-val" cx="100" cy="100" r="92"
-                  style={{ strokeDasharray: CIRC, strokeDashoffset: opened ? CIRC : 0 } as CSSProperties} />
+                  style={{
+                    strokeDasharray: CIRC,
+                    strokeDashoffset: ringOffset,
+                    // Reduced motion → instant; a live hold sweeps over HOLD_MS; otherwise a quick settle.
+                    transition: reduced ? 'none' : `stroke-dashoffset ${holding ? HOLD_MS : 380}ms linear, stroke .5s ease`,
+                  } as CSSProperties} />
               </svg>
               <div className="seal-body">
                 <span className="through" />
@@ -546,10 +572,11 @@ function ApprovalsStyle() {
       .v-approvals .ap-blocked .empty-title { margin-top: var(--s3); }
       .v-approvals .ap-blocked-body { max-width: 480px; margin: 6px auto 0; }
 
-      /* the grant key is a real hold gesture; keep the fill legible with motion reduced */
-      @media (prefers-reduced-motion: reduce) {
-        .v-approvals .ab-btn.grant.holding .grant-fill { transition: transform ${HOLD_MS}ms linear; }
-      }
+      /* The grant key is a real hold gesture. Under reduced motion the shared
+         aios.css already collapses the grant-fill and SLA-ring transitions to ~0ms,
+         so the fill is instant with no continuous sweep — the deliberate ~${HOLD_MS}ms
+         press is still required; only the animation is removed. Nothing here re-adds it. */
+      .v-approvals .ab-btn.grant .grant-fill { will-change: transform; }
     `}</style>
   );
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useApp } from '../app/store';
 import { Button, Skeleton, ErrorState, EmptyState } from '../components/ui';
 import { BarChart } from '../components/charts/Chart';
@@ -24,6 +24,64 @@ import type { Metric } from '../domain/entities';
 // ---------------------------------------------------------------------------
 
 type L = (en: string, hy: string) => string;
+
+// --- staggered-entrance index → the shared `.reveal/.rise` CSS reads `--i` -----
+// (the entrance itself is stilled under prefers-reduced-motion by aios.css).
+const iv = (i: number): CSSProperties => ({ ['--i']: i } as CSSProperties);
+
+// --- decorative HUD chrome for the deck frame (corner brackets + tick rail) ----
+// Purely ornamental, so the whole thing is aria-hidden.
+function DeckChrome() {
+  return (
+    <>
+      <span className="bracket tl" aria-hidden="true" />
+      <span className="bracket tr" aria-hidden="true" />
+      <span className="bracket bl" aria-hidden="true" />
+      <span className="bracket br" aria-hidden="true" />
+      <span className="ticks" aria-hidden="true">
+        <i /><i /><i /><i /><i /><i /><i /><i /><i />
+      </span>
+    </>
+  );
+}
+
+// --- prefers-reduced-motion, live ---------------------------------------------
+function useReducedMotion(): boolean {
+  const [reduced, setReduced] = useState<boolean>(
+    () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => setReduced(mq.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+  return reduced;
+}
+
+// --- count-up on a REAL integer (the mockup's `init()` count animation, ported).
+// Honesty: only ever counts up to the true value; reduced motion jumps to it.
+function useCountUp(value: number, reduced: boolean): number {
+  const [shown, setShown] = useState<number>(reduced ? value : 0);
+  useEffect(() => {
+    if (reduced) { setShown(value); return; }
+    let raf = 0;
+    let start = 0;
+    const dur = 900;
+    const step = (ts: number) => {
+      if (!start) start = ts;
+      const p = Math.min(1, (ts - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setShown(Math.round(value * eased));
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [value, reduced]);
+  return shown;
+}
 
 // --- the distribution plot: the shared accessible BarChart over real metrics --
 // Delegates to the library `BarChart` (horizontal bars + focusable legend + share%
@@ -69,14 +127,14 @@ function AnPlot(
 // Names what's missing (with a keyboard-reachable <details> table) instead of
 // fabricating a breakdown. Reused for the districts, autonomy and channel panels.
 function AnHonest(
-  { panelClass, title, note, glyph, hint, tableHint, segLabel, valLabel, L }:
+  { panelClass, title, note, glyph, hint, tableHint, segLabel, valLabel, i, L }:
   {
     panelClass: string; title: string; note?: string; glyph: string; hint: string;
-    tableHint: string; segLabel: string; valLabel: string; L: L;
+    tableHint: string; segLabel: string; valLabel: string; i: number; L: L;
   },
 ) {
   return (
-    <section className={`surface soft ${panelClass} rise`}>
+    <section className={`surface soft ${panelClass} rise`} style={iv(i)}>
       <div className="sec-head">
         <h2>{title}</h2>
         {note ? <span className="note">{note}</span> : null}
@@ -118,6 +176,8 @@ export function Analytics() {
 
   const metrics = s.data ?? [];
   const total = metrics.reduce((sum, m) => sum + m.value, 0);
+  const reduced = useReducedMotion();
+  const totalShown = useCountUp(total, reduced);
   const denied = s.error ? /denied|not permitted|permission|blocked|forbidden/i.test(s.error) : false;
 
   // aria-live announcement: current data state (node count from real metrics).
@@ -134,10 +194,7 @@ export function Analytics() {
     if (s.loading && s.data === null) {
       return (
         <section className="an-deck surface soft lg hud">
-          <span className="bracket tl" aria-hidden="true" />
-          <span className="bracket tr" aria-hidden="true" />
-          <span className="bracket bl" aria-hidden="true" />
-          <span className="bracket br" aria-hidden="true" />
+          <DeckChrome />
           <Skeleton rows={6} />
         </section>
       );
@@ -148,10 +205,7 @@ export function Analytics() {
       if (denied) {
         return (
           <section className="an-deck surface soft lg hud">
-            <span className="bracket tl" aria-hidden="true" />
-            <span className="bracket tr" aria-hidden="true" />
-            <span className="bracket bl" aria-hidden="true" />
-            <span className="bracket br" aria-hidden="true" />
+            <DeckChrome />
             <div className="an-blocked" role="alert">
               <div className="an-blocked-glyph" aria-hidden="true">⛒</div>
               <div className="empty-title">{t('state.permissionDenied')}</div>
@@ -180,11 +234,8 @@ export function Analytics() {
     return (
       <>
         {/* ── HERO · the Signal Deck: real distribution in the mockup framing ── */}
-        <section className="an-deck surface soft lg hud reveal">
-          <span className="bracket tl" aria-hidden="true" />
-          <span className="bracket tr" aria-hidden="true" />
-          <span className="bracket bl" aria-hidden="true" />
-          <span className="bracket br" aria-hidden="true" />
+        <section className="an-deck surface soft lg hud reveal" style={iv(1)}>
+          <DeckChrome />
 
           <div className="an-deck-top">
             <span className="eyebrow">{L('Distribution by node', 'Բաշխում ըստ հանգույցի')}</span>
@@ -202,7 +253,7 @@ export function Analytics() {
             </span>
             <span className="an-foot-r">
               <span className="micro">{L('Total across nodes', 'Ընդամենը հանգույցներով')}</span>
-              <b className="mono">{total}</b>
+              <b className="mono">{totalShown}</b>
             </span>
           </div>
         </section>
@@ -221,6 +272,7 @@ export function Analytics() {
             tableHint={L('No district aggregate from the engine.', 'Շարժիչից շրջանի ագրեգատ չկա։')}
             segLabel={L('District', 'Շրջան')}
             valLabel={L('Value', 'Արժեք')}
+            i={3}
             L={L}
           />
 
@@ -236,6 +288,7 @@ export function Analytics() {
               tableHint={L('No autonomy aggregate from the engine.', 'Շարժիչից ինքնավարության ագրեգատ չկա։')}
               segLabel={L('Segment', 'Հատված')}
               valLabel={L('Value', 'Արժեք')}
+              i={4}
               L={L}
             />
             <AnHonest
@@ -249,6 +302,7 @@ export function Analytics() {
               tableHint={L('No channel aggregate from the engine.', 'Շարժիչից ալիքի ագրեգատ չկա։')}
               segLabel={L('Channel', 'Ալիք')}
               valLabel={L('Value', 'Արժեք')}
+              i={5}
               L={L}
             />
           </aside>
@@ -262,7 +316,7 @@ export function Analytics() {
       <style>{ANALYTICS_CSS}</style>
 
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
-      <header className="pageHead reveal">
+      <header className="pageHead reveal" style={iv(0)}>
         <div>
           <span className="eyebrow">{L('INTELLIGENCE CENTRE · ANALYTICS', 'ԻՆՏԵԼԵԿՏԻ ԿԵՆՏՐՈՆ · ANALYTICS')}</span>
           <h1>{t('nav.analytics')}</h1>

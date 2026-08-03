@@ -204,6 +204,8 @@ export function Agents() {
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [filter, setFilter] = useState<Phase | null>(null);
   const nodeRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const threadsRef = useRef<SVGSVGElement | null>(null);
 
   // Roster state census — a real, live count per phase over the actual agents.
   const counts = useMemo(() => {
@@ -229,6 +231,74 @@ export function Agents() {
   const announcement = focused
     ? `${focused.displayName} · ${focused.role} · ${phaseLabels[phaseOf(focused.status)]}`
     : '';
+
+  // Honest analog of the mockup's guild network: peers that share the selected
+  // agent's REAL `role` (no fabricated guild). Selecting a node lights these up
+  // and draws measured collaboration threads to them — the mockup's GMATES reveal.
+  const linkedIds = useMemo(() => {
+    const s = new Set<string>();
+    if (!selected) return s;
+    for (const a of agents) if (a.id !== selected.id && a.role === selected.role) s.add(a.id);
+    return s;
+  }, [agents, selected]);
+
+  // ── Port of the mockup init(): drawLinks / centerOf / relink ────────────────
+  // Measure the live node geometry and draw the selected node's threads to its
+  // same-role peers into the `.lat-links` overlay (shared css: azure `ll`, fade-in
+  // via @keyframes llin, killed under reduced-motion). Redraw on select + resize.
+  useEffect(() => {
+    const stage = stageRef.current;
+    const svg = threadsRef.current;
+    if (!stage || !svg) return;
+
+    const centerOf = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      const s = stage.getBoundingClientRect();
+      return { x: r.left - s.left + r.width / 2, y: r.top - s.top + r.height / 2 };
+    };
+
+    const draw = () => {
+      const s = stage.getBoundingClientRect();
+      svg.setAttribute('viewBox', `0 0 ${Math.max(1, s.width)} ${Math.max(1, s.height)}`);
+      const fromEl = selected
+        ? nodeRefs.current[agents.findIndex((a) => a.id === selected.id)]
+        : null;
+      if (!selected || !fromEl) { svg.replaceChildren(); return; }
+      const from = centerOf(fromEl);
+      const NS = 'http://www.w3.org/2000/svg';
+      const frag = document.createDocumentFragment();
+      agents.forEach((a, i) => {
+        if (!linkedIds.has(a.id)) return;
+        const el = nodeRefs.current[i];
+        if (!el) return;
+        const to = centerOf(el);
+        const line = document.createElementNS(NS, 'line');
+        line.setAttribute('class', 'll');
+        line.setAttribute('x1', from.x.toFixed(1));
+        line.setAttribute('y1', from.y.toFixed(1));
+        line.setAttribute('x2', to.x.toFixed(1));
+        line.setAttribute('y2', to.y.toFixed(1));
+        frag.appendChild(line);
+      });
+      svg.replaceChildren(frag);
+    };
+
+    // draw once layout has settled (mockup defers select(0) to rAF)
+    let raf = 0;
+    const relink = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; draw(); });
+    };
+    relink();
+    window.addEventListener('resize', relink);
+    const ro = new ResizeObserver(relink);
+    ro.observe(stage);
+    return () => {
+      window.removeEventListener('resize', relink);
+      ro.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [agents, selected, linkedIds]);
 
   const moveFocus = (delta: number) => {
     const n = agents.length;
@@ -374,7 +444,13 @@ export function Agents() {
           </div>
 
           {/* the lattice: real agents on the shared ringPositions geometry */}
-          <div className={`ag-stage${filter ? ' filtering' : ''}`}>
+          <div ref={stageRef} className={`ag-stage${filter ? ' filtering' : ''}`}>
+            {/* Bro's attention pass rolling down the roster (shared .lat-scan; the
+                sweep is killed under prefers-reduced-motion by the shared css). */}
+            <span className="lat-scan" aria-hidden="true" />
+
+            {/* base governance lattice: hub → every node (percentage geometry, so it
+                rescales without JS). Bro conducts every agent. */}
             <svg className="ag-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
               {positions.map((pt, i) => {
                 const ph = phaseOf(agents[i].status);
@@ -393,6 +469,10 @@ export function Agents() {
               })}
             </svg>
 
+            {/* selected node's collaboration threads to same-role peers — drawn
+                imperatively from measured geometry in the effect above. */}
+            <svg ref={threadsRef} className="lat-links" preserveAspectRatio="none" aria-hidden="true" />
+
             {/* central conductor anchor — structural, not agent data. The desktop
                 observes the pack and holds no lease. */}
             <div className="ag-hub" aria-hidden="true">
@@ -406,6 +486,7 @@ export function Agents() {
                 const phase = phaseOf(a.status);
                 const pos = positions[i];
                 const dim = filter !== null && phase !== filter;
+                const linked = linkedIds.has(a.id);
                 const label = `${a.displayName} · ${a.role} · ${phaseLabels[phase]}`;
                 return (
                   <li
@@ -417,7 +498,7 @@ export function Agents() {
                     <button
                       type="button"
                       ref={(el) => { nodeRefs.current[i] = el; }}
-                      className={`ag-node ${PHASE_STATE[phase]}${a.id === selectedId ? ' sel' : ''}${dim ? ' dim' : ''}`}
+                      className={`ag-node ${PHASE_STATE[phase]}${a.id === selectedId ? ' sel' : ''}${linked ? ' linked' : ''}${dim ? ' dim' : ''}`}
                       aria-label={label}
                       aria-pressed={a.id === selectedId}
                       tabIndex={i === focusedIndex ? 0 : -1}
@@ -443,7 +524,12 @@ export function Agents() {
         {/* ── DOSSIER rail ──────────────────────────────────────────────────── */}
         <aside className="dossier surface soft reveal" aria-live="polite" aria-label={L.details}>
           {selected ? (
-            <Dossier agent={selected} L={L} phaseLabels={phaseLabels} />
+            // keyed on the agent id so the rail remounts and re-forges on every
+            // select (mockup: dossier.innerHTML = dossierHTML(idx)); the ag-forge
+            // animation is disabled under prefers-reduced-motion.
+            <div className="ag-forge" key={selected.id}>
+              <Dossier agent={selected} L={L} phaseLabels={phaseLabels} />
+            </div>
           ) : (
             <div className="ag-pick">
               <Mark state="idle" size={44} />
@@ -500,6 +586,13 @@ const AG_CSS = `
 .v-agents .ag-node.sel .ag-node-name{color:var(--ink)}
 .v-agents .ag-node.dim{opacity:.22;filter:grayscale(.4)}
 .v-agents .ag-node.dim:hover{opacity:.55}
+/* same-role peers of the selected node — azure collaboration tone, matching the
+   shared .lat-links .ll threads that connect them */
+.v-agents .ag-node.linked{border-color:rgb(var(--azure-rgb)/.72);
+  box-shadow:0 0 16px -4px rgb(var(--azure-rgb)/.5),var(--shadow-1)}
+.v-agents .ag-node.linked .ag-node-name{color:var(--ink)}
+/* measured collaboration threads sit above the base lattice but below the nodes */
+.v-agents .lat-links{z-index:2}
 .v-agents .ag-node.state-working{animation:ag-glow 2.8s cubic-bezier(.4,0,.2,1) infinite}
 .v-agents .ag-node.state-waiting{animation:ag-suspend 1.9s ease-in-out infinite}
 .v-agents .ag-node.state-blocked{animation:ag-interrupt 1.2s ease-in-out infinite}
@@ -508,6 +601,10 @@ const AG_CSS = `
 @keyframes ag-suspend{0%,100%{opacity:1}50%{opacity:.62}}
 @keyframes ag-interrupt{0%,100%{box-shadow:0 0 0 0 rgb(var(--st-rgb)/.45),var(--shadow-1)}
   50%{box-shadow:0 0 0 5px rgb(var(--st-rgb)/0),var(--shadow-1)}}
+
+/* dossier re-forges on every select (keyed remount of the rail content) */
+.v-agents .ag-forge{display:grid;gap:var(--s4);animation:ag-reforge .5s cubic-bezier(.2,.9,.25,1.1)}
+@keyframes ag-reforge{0%{opacity:.3;transform:translateY(7px) scale(.985)}100%{opacity:1;transform:none}}
 
 /* dossier facts + honest telemetry */
 .v-agents .ag-facts{display:grid;grid-template-columns:1fr 1fr;gap:var(--s3) var(--s4)}
@@ -542,7 +639,9 @@ const AG_CSS = `
 @media (prefers-reduced-motion:reduce){
   .v-agents .ag-link.state-working,.v-agents .ag-node.state-working,
   .v-agents .ag-node.state-waiting,.v-agents .ag-node.state-blocked,
-  .v-agents .ag-skel i{animation:none}
+  .v-agents .ag-skel i,.v-agents .ag-forge{animation:none}
   .v-agents .ag-node{transition:none}
+  /* threads still draw (static placement) — their fade-in / the .lat-scan sweep
+     are killed by the shared aios.css reduced-motion block. */
 }
 `;

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 import { useApp } from '../app/store';
 import {
   Badge, StatusPill, Async, Modal, FormRow, Input, Textarea, Select, Button, EmptyState,
@@ -37,7 +37,37 @@ const styles = `
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .v-command .cmd-trace .node .cmd-detail{display:block;font-size:11px;color:var(--ink-muted);margin-top:2px}
 .v-command .cmd-trace .node .run-step-result{margin-top:6px}
+/* LIVE traveling pulse — a light dot riding down the dispatch rail while a step
+   streams. Purely decorative (aria-hidden) and only rendered while executing; the
+   REAL active step is marked by the shared .node.now::before pulse from aios.css. */
+.v-command .cmd-trace .cmd-pulse{position:absolute;left:5px;top:0;width:7px;height:7px;
+  transform:translate(-50%,-50%);border-radius:50%;background:var(--cyan-soft);pointer-events:none;z-index:2;
+  box-shadow:0 0 12px rgb(var(--cyan-rgb)/.95),0 0 22px rgb(var(--cyan-rgb)/.5);
+  animation:cmd-trace-travel 2.4s ease-in-out infinite}
+@keyframes cmd-trace-travel{0%{top:0;opacity:0}14%{opacity:1}86%{opacity:1}100%{top:100%;opacity:0}}
+@media (prefers-reduced-motion:reduce){.v-command .cmd-trace .cmd-pulse{display:none;animation:none}}
 `;
+
+// Ported from the mockup's `init()` motion gate: the reactor orbit/sweep and the
+// trace pulse are decorative continuous motion, so they must go static under
+// prefers-reduced-motion. The shared aios.css already freezes the orbit/sweep;
+// this hook lets React drop the traveling pulse + dispatch beat entirely so
+// nothing keeps animating for motion-sensitive operators.
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState<boolean>(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setReduced(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+  return reduced;
+}
 
 // Honest RunStep status → trace presentation. Colour/word mirror the real step
 // status; nothing is shown as done/now unless the data says so.
@@ -96,6 +126,7 @@ function NewRunForm({ onClose, onCreated }: { onClose: () => void; onCreated: (r
 // execute actions, streamed output, and the dispatch-trace timeline of real steps.
 function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
   const { t, setRoute } = useApp();
+  const reduced = usePrefersReducedMotion();
   const steps = useAsync(() => desktop.listRunSteps(run.id), [run.id]);
   const [title, setTitle] = useState('');
   const [reqApproval, setReqApproval] = useState(false);
@@ -167,7 +198,7 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
         <i className="bracket bl" aria-hidden="true" /><i className="bracket br" aria-hidden="true" />
         <div className="ticks" aria-hidden="true">{Array.from({ length: 12 }, (_, i) => <i key={i} />)}</div>
 
-        <div className={`reactor${executing ? ' dispatching' : ''}`}>
+        <div className={`reactor${executing && !reduced ? ' dispatching' : ''}`}>
           <span className="reactor-sweep" aria-hidden="true" />
           <span className="orbit orbit-1" aria-hidden="true" />
           <span className="orbit orbit-2" aria-hidden="true" />
@@ -244,13 +275,16 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
           {executing && <span className="pill info">LIVE</span>}
         </div>
         <div className="timeline cmd-trace" aria-live="polite" aria-label={t('command.steps')}>
+          {/* decorative LIVE pulse riding the rail — only while a step streams and
+              only when motion is allowed; the real progress is the .now node below */}
+          {executing && !reduced && <span className="cmd-pulse" aria-hidden="true" />}
           <Async state={steps} emptyTitle={t('command.noSteps')}>
             {(list) => (
               <>
-                {[...list].sort((a, b) => a.position - b.position).map((s) => {
+                {[...list].sort((a, b) => a.position - b.position).map((s, i) => {
                   const m = stepMeta(s.status);
                   return (
-                    <div key={s.id} className={`node ${m.node} reveal`.trim()}>
+                    <div key={s.id} className={`node ${m.node} reveal`.trim()} style={{ ['--i' as string]: i } as CSSProperties}>
                       <b>
                         <span className="mono" aria-hidden="true">{s.position}. </span>{s.title}
                         {s.requiresApproval && <> <Badge tone="warning">{t('command.requiresApproval')}</Badge></>}

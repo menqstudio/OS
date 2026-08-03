@@ -1,6 +1,6 @@
 import {
   useEffect, useMemo, useRef, useState,
-  type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
+  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
 } from 'react';
 import { useApp } from '../app/store';
 import { Modal, FormRow, Input, Button, ConfirmDialog } from '../components/ui';
@@ -28,6 +28,13 @@ import type { Automation } from '../domain/entities';
 // (a live wall/guard denial). Throughput reads and the run log show an honest "—"
 // and a "backend pending" note rather than invented numbers.
 //
+// LIVE FIELD, NOT A RATE. The manifold's signature motion — flowing packets along a
+// conduit, the schematic's traveling pulse — is driven purely by whether a conduit
+// is ARMED & enabled (the `au-live` class), never by a fabricated run rate. It reads
+// as "this conduit is energised and ready", the honest counterpart of `enabled`;
+// disabled and sealed conduits are still. Readouts stay "—" throughout. The
+// SCHEDULER SWEEP likewise walks only armed intake valves. Reduced motion stills all.
+//
 // DESIGN-TIME GOVERNANCE GUARANTEE (kept intact). Authoring cannot produce an
 // ungoverned automation — every fire is dispatched behind the wall with a verified
 // receipt. The note lives in the authoring form AND is surfaced as the schematic's
@@ -53,6 +60,10 @@ function isDenial(message: string): boolean {
 function reduced(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
+
+// Typed carrier for CSS custom properties (the packet stagger `--d`). One cast,
+// centralised, so the inline styles stay type-clean.
+const cssVars = (v: Record<string, string>): CSSProperties => v as unknown as CSSProperties;
 
 // ── the authoring form (governance guarantee preserved verbatim) ──────────────
 function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
@@ -226,8 +237,10 @@ export function Automations() {
   };
 
   // ── The one live instrument: the SCHEDULER SWEEP — Bro walking the intake
-  //    valves in turn. Purely a visual attention marker over REAL conduits (it
-  //    asserts no schedule data). Skipped entirely when motion is reduced. ──────
+  //    valves in turn. It only ever touches ARMED (enabled) conduits (`.au-live`),
+  //    since a disabled or sealed intake is not being polled — a purely visual
+  //    attention marker over REAL conduits (it asserts no schedule data). Skipped
+  //    entirely when motion is reduced. ─────────────────────────────────────────
   useEffect(() => {
     if (reduced() || filtered.length === 0) return;
     const root = manifoldRef.current;
@@ -236,7 +249,7 @@ export function Automations() {
     let active: Element | null = null;
     const tick = () => {
       if (active) { active.classList.remove('checking'); active = null; }
-      const valves = root.querySelectorAll('.ln-valve');
+      const valves = root.querySelectorAll('.lane.au-live .ln-valve');
       if (!valves.length) return;
       const v = valves[i % valves.length];
       i += 1;
@@ -322,7 +335,7 @@ export function Automations() {
         ref={(el) => { laneRefs.current[a.id] = el; }}
         aria-selected={isSel}
         tabIndex={isSel ? 0 : -1}
-        className={`lane ${STATE_CLASS[st]}${isSel ? ' sel' : ''}${off ? ' au-off' : ''}`}
+        className={`lane ${STATE_CLASS[st]}${st === 'idle' ? ' au-live' : ''}${isSel ? ' sel' : ''}${off ? ' au-off' : ''}`}
         aria-label={`${a.name}, ${a.trigger || L('any event', 'ցանկացած իրադարձություն')}, ${stateLabel(st)}`}
         onClick={() => select(a)}
         onFocus={() => { if (!isSel) select(a); }}
@@ -333,6 +346,12 @@ export function Automations() {
           <span className="ln-trig micro">{a.trigger || '—'}</span>
         </span>
         <span className="ln-pipe">
+          {/* energy packets — three staggered layers. They read as the conduit's
+              live standing field (armed & energised), NOT a run rate: CSS reveals
+              them only on `.au-live` lanes and stills them under reduced motion. */}
+          <span className="ln-flow" style={cssVars({ '--d': '0s' })} aria-hidden="true" />
+          <span className="ln-flow" style={cssVars({ '--d': '-.9s' })} aria-hidden="true" />
+          <span className="ln-flow" style={cssVars({ '--d': '-1.8s' })} aria-hidden="true" />
           <span className={`ln-stage ${guardCls}`} style={{ left: '40%' }} aria-hidden="true">
             {st === 'blocked' ? '✕' : ''}
           </span>
@@ -399,8 +418,10 @@ export function Automations() {
 
         <div className="sc-grid">
           {/* the diagram — trigger ▸ governed guard ▸ action ▸ outlet. No run data,
-              so no node is marked done/now and the pulse never travels (honest). */}
-          <div className={`sc-diagram ${STATE_CLASS[st]}`}>
+              so no node is ever marked done/now. The traveling pulse runs only while
+              the conduit is armed/energised (`.au-live`) — a live-field marker, not an
+              observed run; a sealed (blocked) or off conduit stays still. */}
+          <div className={`sc-diagram ${STATE_CLASS[st]}${st === 'idle' ? ' au-live' : ''}`}>
             <div className="sc-track">
               <span className="sc-rail" aria-hidden="true" />
               <span className="sc-pulse" aria-hidden="true" />
@@ -731,7 +752,32 @@ const CSS = `
   background:rgb(var(--cyan-rgb)/.06);border:1px solid rgb(var(--cyan-rgb)/.18);
   border-radius:12px;padding:9px 11px;margin-bottom:14px}
 
+/* ── energised (armed) conduit — the live standing field ──────────────────────
+   The real entity has no throughput, so packets/pulse must never assert a rate.
+   They render only for an ARMED, enabled conduit (.au-live, never off/blocked)
+   as the manifold's live-energy signature; readouts stay "—". These selectors
+   out-specify the shared aios.css that hides .ln-flow unless a lane is .flowing
+   (.lane:not(.flowing):not(.throttled) .ln-flow{display:none}). */
+.v-automations .manifold .lane.au-live:not(.au-off) .ln-flow{display:block;animation:au-flow 3s linear infinite;animation-delay:var(--d,0s)}
+.v-automations .manifold .lane.au-live:not(.au-off) .ln-flow::before{opacity:.9}
+.v-automations .lane.au-live .ln-pipe::before{opacity:1}
+.v-automations .lane.au-live .ln-pipe{border-color:rgb(var(--st-rgb)/.34);
+  box-shadow:inset 0 0 12px rgb(var(--st-rgb)/.12),inset 0 1px 3px rgb(var(--bg-rgb)/.55)}
+.v-automations .lane.au-live .lv-core{opacity:1;animation:pulse 2.6s ease-in-out infinite}
+.v-automations .lane.au-live .ln-out{border-color:rgb(var(--st-rgb)/.7);
+  background:rgb(var(--st-rgb)/.18);box-shadow:0 0 9px rgb(var(--st-rgb)/.5)}
+
+/* schematic traveling pulse — armed/energised selected conduit only */
+.v-automations .sc-diagram.au-live .sc-pulse::before{opacity:.9}
+.v-automations .sc-diagram.au-live .sc-pulse{animation:au-flow 3.2s linear infinite}
+.v-automations .sc-diagram.au-live .sc-rail{background:linear-gradient(90deg,rgb(var(--st-rgb)/.45),rgb(var(--st-rgb)/.16))}
+
 @media (prefers-reduced-motion:reduce){
   .v-automations .au-skel i{animation:none}
+  /* shared css already forces .ln-flow/.sc-pulse/.lv-core animation:none — here
+     we just park a single static packet mid-conduit so the field stays legible. */
+  .v-automations .manifold .lane.au-live .ln-flow:first-child{transform:translateX(50%)}
+  .v-automations .manifold .lane.au-live .ln-flow:not(:first-child){display:none}
+  .v-automations .sc-diagram.au-live .sc-pulse{transform:translateX(50%)}
 }
 `;
