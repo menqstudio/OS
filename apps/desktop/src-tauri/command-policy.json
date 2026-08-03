@@ -280,7 +280,15 @@
       "tier": "X",
       "grant": "allow"
     },
+    "cancel_reply": {
+      "tier": "X",
+      "grant": "allow"
+    },
     "stream_run_step": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "open_window": {
       "tier": "X",
       "grant": "allow"
     },

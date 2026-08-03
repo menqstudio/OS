@@ -98,8 +98,11 @@ fn main() {
         // AI (live agent replies)
         "reply_in_conversation",
         "stream_reply",
+        "cancel_reply",
         "stream_ask",
         "stream_run_step",
+        // windowing
+        "open_window",
         // filesystem surface (M-8)
         "list_dir",
         "read_file",

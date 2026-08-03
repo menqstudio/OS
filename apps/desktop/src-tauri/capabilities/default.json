@@ -77,8 +77,10 @@
     "allow-ai-status",
     "allow-reply-in-conversation",
     "allow-stream-reply",
+    "allow-cancel-reply",
     "allow-stream-ask",
     "allow-stream-run-step",
+    "allow-open-window",
     "allow-list-dir",
     "allow-read-file",
     "allow-write-file"
