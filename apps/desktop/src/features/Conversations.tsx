@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Select, Skeleton,
+  PageHeader, Panel, Rail, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Select, Skeleton,
   ErrorState, ConfirmDialog, Badge,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
@@ -429,7 +429,10 @@ export function Conversations({ kind }: { kind: Kind }) {
       )}
 
       <div className="chat-layout">
-        <Panel title={t('chat.conversations')}>
+        {/* Conversation rail — the Rail primitive's plain-panel variant, so it
+            adopts the rail model without adding a second complementary landmark
+            or changing the panel padding. */}
+        <Rail variant="panel" label={t('chat.conversations')}>
           <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
             {(conversations) => {
               const active = selectedId ?? conversations[0]?.id ?? null;
@@ -468,7 +471,7 @@ export function Conversations({ kind }: { kind: Kind }) {
               );
             }}
           </Async>
-        </Panel>
+        </Rail>
 
         <div>
           {(() => {

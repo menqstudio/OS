@@ -5,6 +5,7 @@ import {
 } from '../components/ui';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
+import { ringPositions } from '../components/charts/Chart';
 import type { Agent } from '../domain/entities';
 
 // ── Phase 6 · `agents` ⬡ Կենդանի Ցանց — the live agent lattice ─────────────────
@@ -112,19 +113,10 @@ const PHASE_LABELS: Record<Lang, Record<Phase, string>> = {
 
 const PHASE_ORDER: Phase[] = ['idle', 'flowing', 'throttled', 'blocked', 'completed'];
 
-// Node ring geometry, in the lattice's own 0..100 coordinate space (shared by the
-// absolutely-positioned nodes and the SVG links so they stay aligned).
-interface NodePos { x: number; y: number }
-function ringPositions(n: number): NodePos[] {
-  if (n <= 0) return [];
-  const cx = 50;
-  const cy = 50;
-  const r = n === 1 ? 0 : 34;
-  return Array.from({ length: n }, (_, i) => {
-    const angle = (-Math.PI / 2) + (i * 2 * Math.PI) / n;
-    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
-  });
-}
+// Node ring geometry comes from the shared, deterministic `ringPositions`
+// (components/charts/geometry): evenly spaced coordinates on a 0..100 ring so the
+// absolutely-positioned nodes and the SVG links stay aligned. The lattice itself
+// stays bespoke (see DESIGN_SYSTEM §3.1) — only the geometry is shared.
 
 function Dossier({ agent, L, phaseLabels }: { agent: Agent; L: Record<string, string>; phaseLabels: Record<Phase, string> }) {
   const phase = phaseOf(agent.status);

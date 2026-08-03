@@ -136,6 +136,21 @@ describe('Rail', () => {
     expect(within(region).getByText('Filters')).toBeInTheDocument();
     expect(within(region).getByText('filter body')).toBeInTheDocument();
   });
+
+  it('panel variant renders a plain panel with NO complementary landmark', () => {
+    const { container } = render(
+      <Rail variant="panel" label="Conversations">
+        <div>list body</div>
+      </Rail>,
+    );
+    // no landmark is added — this is the whole point of the panel variant
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
+    // renders the Panel markup: a .card > .panel with the label as .panel-title
+    expect(container.querySelector('.card .panel .panel-title')?.textContent).toBe('Conversations');
+    expect(screen.getByText('list body')).toBeInTheDocument();
+    // and does NOT use the aside rail chrome
+    expect(container.querySelector('.rail')).toBeNull();
+  });
 });
 
 describe('StatTile / TileGroup', () => {
@@ -204,6 +219,19 @@ describe('Mark / LiveMark', () => {
   it('honours a custom label', () => {
     render(<LiveMark state="connecting" label="Linking…" />);
     expect(screen.getByText('Linking…')).toBeInTheDocument();
+  });
+
+  it('responsive Mark adds the collapse class and titles the glyph for the narrow layout', () => {
+    const { container } = render(<Mark responsive word="BroPS" sub="space" />);
+    expect(container.querySelector('.mark--responsive')).not.toBeNull();
+    // the glyph keeps a title so the collapsed (text-hidden) mark stays identifiable
+    expect(container.querySelector('.mark-glyph')?.getAttribute('title')).toBe('BroPS');
+  });
+
+  it('non-responsive Mark carries no collapse class or glyph title', () => {
+    const { container } = render(<Mark word="BroPS" />);
+    expect(container.querySelector('.mark--responsive')).toBeNull();
+    expect(container.querySelector('.mark-glyph')?.getAttribute('title')).toBeNull();
   });
 });
 

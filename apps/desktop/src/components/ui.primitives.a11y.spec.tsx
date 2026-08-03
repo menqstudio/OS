@@ -13,7 +13,7 @@ import {
   InlineAlert,
   type Column,
 } from './ui';
-import { Beatline } from './charts/Chart';
+import { Beatline, StripChart, BarChart } from './charts/Chart';
 
 /**
  * Accessibility (axe) smoke tests for the Phase-4 library primitives (G1–G7).
@@ -86,6 +86,39 @@ describe('accessibility (axe) — Phase-4 primitives', () => {
         <Beatline
           caption="Weekly beats"
           data={[{ label: 'Mon', value: 3 }, { label: 'Tue', value: 8 }, { label: 'Wed', value: 5 }]}
+        />
+      </main>,
+    );
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('StripChart (interactive beatline) has no violations', async () => {
+    const { container } = render(
+      <main>
+        <StripChart
+          ariaLabel="Activity strip — arrow keys scrub, Enter opens, Space freezes"
+          points={[{ id: 'a', label: 'Beat 1' }, { id: 'b', label: 'Beat 2' }, { id: 'c', label: 'Beat 3' }]}
+          selected={1}
+          opened={2}
+          onSelect={() => {}}
+          onOpen={() => {}}
+          onToggleFreeze={() => {}}
+          onCloseOpened={() => {}}
+        />
+      </main>,
+    );
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('BarChart (with legend + table fallback) has no violations', async () => {
+    const { container } = render(
+      <main>
+        <BarChart
+          caption="Regions"
+          data={[{ key: 'x', label: 'North', value: 8 }, { key: 'y', label: 'South', value: 2 }]}
+          hidden={new Set(['y'])}
+          onToggle={() => {}}
+          legendLabel="Toggle regions"
         />
       </main>,
     );

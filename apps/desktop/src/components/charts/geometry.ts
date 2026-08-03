@@ -65,6 +65,24 @@ export function buildLinePath(
     .join(' ');
 }
 
+/**
+ * ringPositions — evenly spaced node coordinates on a circle, in a 0..100
+ * coordinate space (so absolutely-positioned nodes and an SVG overlay stay
+ * aligned). Deterministic: the first node sits at the top (−90°) and the rest
+ * proceed clockwise. A single node sits at the centre. Lifted from the Agents
+ * lattice so the ring geometry is shared, pure and testable rather than bespoke.
+ */
+export function ringPositions(n: number, radius = 34): { x: number; y: number }[] {
+  if (n <= 0) return [];
+  const cx = 50;
+  const cy = 50;
+  const r = n === 1 ? 0 : radius;
+  return Array.from({ length: n }, (_, i) => {
+    const angle = (-Math.PI / 2) + (i * 2 * Math.PI) / n;
+    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+  });
+}
+
 /** Even-x / normalized-y coordinates for each value (marker dots, deterministic). */
 export function pointCoords(
   values: number[],

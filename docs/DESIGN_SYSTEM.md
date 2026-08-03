@@ -8,6 +8,8 @@ Source of truth in code:
 
 - `apps/desktop/src/theme/tokens.css` — CSS custom-property tokens.
 - `apps/desktop/src/components/ui.tsx` + `ui.css` — the component library.
+- `apps/desktop/src/components/charts/Chart.tsx` + `geometry.ts` — the chart
+  primitives (`Beatline`, `StripChart`, `BarChart`) and their pure geometry.
 - `apps/desktop/src/domain/enums.ts` — the `Tone` type and `statusTone` map.
 
 ## 1. Overview
@@ -134,7 +136,7 @@ Not a component but shared: `.badge` inside a calendar event, `.board-*`
 (kanban), `.chat-*`, `.bar-chart`, `.toast*`, `.offline-banner` classes are all
 defined in `ui.css` and consume the same tokens.
 
-### 3.1 Phase-4 library primitives (G1–G7)
+### 3.1 Phase-4 library primitives (G1–G9)
 
 Reusable primitives added in Phase-4. Each is presentational and locale-neutral
 (labels are passed in as props, so none call `useApp()` or touch the IPC layer),
@@ -142,15 +144,40 @@ each renders classes in `ui.css` (charts in `components/charts/`), and each
 covers the standard §D concerns — role/aria, keyboard, non-color signal, and
 `prefers-reduced-motion`.
 
+Two chart primitives cover the interactive/static split: **`Beatline`** is a
+static image with a text equivalent; **`StripChart`** is its live, keyboard-driven
+sibling. **`BarChart`** covers horizontal-magnitude comparison. All three draw
+from the same pure geometry (`components/charts/geometry.ts`) and share the
+single-accent + summary + `<details>`-table accessibility contract — color is
+never the signal.
+
 | Primitive | Import | Props (key) | States / keyboard / aria / reduced-motion |
 | --- | --- | --- | --- |
 | **`DataTable<T>`** (G1) | `components/ui` | `columns: Column<T>[]`, `rows`, `rowKey`, `caption`, `loading?`, `emptyTitle?`/`emptyHint?`/`emptyGlyph?`, `onActivateRow?`, `skeletonRows?` | Native `<table role="table">` with `<caption>` + `<th scope="col">`. **States:** `loading` → `aria-busy` skeleton rows; `rows.length === 0` → `EmptyState`; else data rows. **Keyboard:** roving `tabindex` on rows — Up/Down move focus, Home/End jump, Enter/Space activate (when `onActivateRow`). **Non-color:** `numeric` columns right-align with tabular-nums (layout signal, not hue). **Motion:** none. |
 | **`Drawer`** (G2) | `components/ui` | `title`, `onClose`, `side?='right'`, `children`, `footer?` | Mirrors `Modal`: `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, scrim-click closes, inner click stopped. **Keyboard:** Esc closes; Tab is trapped inside; initial focus lands on the first focusable; focus is restored to the opener on unmount. **Motion:** slide-in from the edge, disabled under reduced-motion. |
-| **`Rail`** / **`RailSection`** (G3) | `components/ui` | `Rail`: `label`, `side?='left'`, `actions?`, `children`. `RailSection`: `title`, `children` | `Rail` renders a landmark `<aside role="complementary">` with an accessible name and optional header/actions; `RailSection` titles a sub-group. Promotes the bespoke context/command/group-rail pattern. **Motion:** none. |
-| **`TileGroup`** / **`StatTile`** (G4) | `components/ui` | `TileGroup`: `label`, `children`. `StatTile`: `glyph`, `value`, `label`, `hint?`, `countUp?`, `onActivate?` | Promotes Home's bespoke `.stat` tile. **Keyboard:** inside a `TileGroup`, arrow keys (both axes) + Home/End rove focus with a single tab stop; a `StatTile` with `onActivate` is a `<button>` with a trailing "→". **Non-color:** glyph + label carry meaning. **Motion:** optional integer count-up on a numeric `value`, snapped to the final value under reduced-motion. |
-| **`Mark`** / **`LiveMark`** (G5) | `components/ui` | `Mark`: `word?='Br·PS'`, `sub?`. `LiveMark`: `state?='live'\|'connecting'\|'offline'`, `label?`, `word?` | The "Br·PS" brand wordmark, extracted from the Shell. **Non-color:** `LiveMark` shows a state word ("Live"/"Connecting"/"Offline") next to its dot; color only echoes it. **Motion:** the live dot pulses only in `state="live"`, disabled under reduced-motion (`livemark--still`). |
+| **`Rail`** / **`RailSection`** (G3) | `components/ui` | `Rail`: `label`, `side?='left'`, `actions?`, `variant?='complementary'\|'panel'`, `children`. `RailSection`: `title`, `children` | Promotes the context/command/group-rail pattern; compose `RailSection` for titled sub-groups. **Two renderings:** `variant='complementary'` (default) → a landmark `<aside role="complementary">` with an accessible name and an uppercase rail header, for a rail that should be a navigable landmark; `variant='panel'` → the **same markup as `Panel`** (a `.card` > `.panel` with `label` as `.panel-title`, `space-5` padding, **no** landmark role) so a list/rail can adopt the rail model without adding a second `complementary` landmark or changing padding (used by the conversation list and the command run list). **Motion:** none. |
+| **`TileGroup`** / **`StatTile`** (G4) | `components/ui` | `TileGroup`: `label`, `children`. `StatTile`: `glyph`, `value`, `label`, `hint?`, `countUp?`, `onActivate?` | Promotes Home's bespoke `.stat` tile (Home now renders its four workspace counts as a `TileGroup` of activating `StatTile`s). **Keyboard:** inside a `TileGroup`, arrow keys (both axes) + Home/End rove focus with a single tab stop; a `StatTile` with `onActivate` is a `<button>` with a trailing "→". **Non-color:** glyph + label carry meaning. **Motion:** optional integer count-up on a numeric `value`, snapped to the final value under reduced-motion. |
+| **`Mark`** / **`LiveMark`** (G5) | `components/ui` | `Mark`: `word?='Br·PS'`, `sub?`, `glyph?='B'`, `responsive?=false`. `LiveMark`: `state?='live'\|'connecting'\|'offline'`, `label?`, `word?` | The "Br·PS" brand wordmark, extracted from the Shell (which now renders it). **Responsive:** with `responsive`, the text (word + sub) is hidden at **≤900px** — mirroring the collapsed-sidebar label rule — leaving only the square glyph, which keeps a `title` so the collapsed mark stays identifiable. **Non-color:** `LiveMark` shows a state word ("Live"/"Connecting"/"Offline") next to its dot; color only echoes it. **Motion:** the live dot pulses only in `state="live"`, disabled under reduced-motion (`livemark--still`). |
 | **`InlineAlert`** (G6) | `components/ui` | `tone?='info'\|'success'\|'warning'\|'danger'`, `title?`, `children?`, `glyph?` | Inline notice strip. **Aria:** `danger` → `role="alert"` (assertive); calmer tones → `role="status"` (polite). **Non-color:** a leading glyph (`ℹ`/`✓`/`⚠`) carries the tone plus a left-border accent. **Motion:** none. |
-| **`Beatline`** (G7) | `components/charts/Chart` | `data: BeatPoint[]`, `caption`, `summary?`, `unit?`, `height?`, `loading?`, `emptyTitle?`/`emptyHint?`, `valueHeader?`/`labelHeader?`, `showDots?` | Accessible deterministic line/beatline chart (geometry in `components/charts/geometry.ts` — `buildECG`, `buildLinePath`, `pointCoords`, all pure). **States:** `loading` → `aria-busy` skeleton; empty `data` → `EmptyState`; else the plot. **Aria:** `<svg role="img">` labelled by a visible one-line `summary`; a `<details>` data-table fallback lists every point as text. **Non-color:** one accent stroke; meaning lives in the summary + table. **Motion:** the draw-on animation is disabled under reduced-motion. |
+| **`Beatline`** (G7) | `components/charts/Chart` | `data: BeatPoint[]`, `caption`, `summary?`, `unit?`, `height?`, `loading?`, `emptyTitle?`/`emptyHint?`, `valueHeader?`/`labelHeader?`, `showDots?` | Accessible **static** deterministic line/beatline chart (geometry in `components/charts/geometry.ts` — `buildECG`, `buildLinePath`, `pointCoords`, `ringPositions`, all pure). **States:** `loading` → `aria-busy` skeleton; empty `data` → `EmptyState`; else the plot. **Aria:** `<svg role="img">` labelled by a visible one-line `summary`; a `<details>` data-table fallback lists every point as text. **Non-color:** one accent stroke; meaning lives in the summary + table. **Motion:** the draw-on animation is disabled under reduced-motion. |
+| **`StripChart`** (G8) | `components/charts/Chart` | `points: StripPoint[]`, `selected`, `opened?`, `frozen?`, `sweep?`, `plot?`, `beats?`, `ariaLabel`, `onSelect`, `onOpen`, `onToggleFreeze`, `onCloseOpened` | The **interactive** beatline/strip (Activity's ECG). A deterministic ECG trace (decorative, `aria-hidden`) overlaid with one roving-focus "blip" `<button>` per point, plus a freeze/select affordance. **Fully controlled** — the page owns `selected`/`opened`/`frozen` (to drive a detail panel, live region and vitals); the primitive owns the geometry, the roving `tabindex` and the keyboard model. **Keyboard** (on the focusable `role="group"` strip): ←↑/→↓ scrub selection (clamped, no wrap), Home/End first/last, **Enter** opens the selected blip (`onOpen`), **Space** toggles freeze (`onToggleFreeze`), **Esc** closes an open detail (`onCloseOpened`). **Non-color:** each blip carries a text `label` (aria-label + title); selection and open state expose `aria-pressed` + a shape/scale change, not hue. **Motion:** the sweep, the blip reveal and the dot transitions are disabled under reduced-motion. |
+| **`BarChart`** (G9) | `components/charts/Chart` | `data: BarDatum[]`, `caption`, `summary?`, `unit?`, `hidden?`, `onToggle?`, `legendLabel?`/`showLabel?`/`hideLabel?`/`hiddenWord?`, `allHiddenNote?`, `totalLabel?`, `nodeHeader?`/`valueHeader?`/`shareHeader?`, `tableToggle?`, `showTable?` | Accessible **horizontal** bar chart (Analytics' distribution plot). One accent fill per bar with its value + share% of the visible total, a running total, and — when `onToggle` is given — a focusable legend whose items toggle series on/off (controlled via the `hidden` set). **States:** all series hidden → `allHiddenNote`; else the bars. **Aria:** the `.bar-chart` figure is `role="img"` labelled by a visible one-line `summary` (auto-generated in English, overridable); a `<details>` data-table fallback lists every series (value + share, "hidden" marked) as text. **Non-color:** the legend button's `aria-pressed` + a struck-through label mark a hidden series; every bar shows value + share% as text. **Motion:** the staggered bar entrance is disabled under reduced-motion. |
+
+#### Intentionally bespoke: the Agents lattice
+
+The Agents "live network" lattice (`features/Agents.tsx`) is **deliberately not**
+extracted into a general radial/lattice chart primitive, and this is the
+documented exception to "refactor every page onto a primitive." A faithful
+primitive would have to absorb the page's whole interaction surface — a central
+conductor hub, per-agent phase state with distinct suspend/interrupt animations,
+governance link strokes streaming from hub to node, a roving-focus node ring wired
+to a dossier panel, and the honest "telemetry pending" states. Generalizing all of
+that would produce a one-consumer abstraction with a dozen slots and callbacks —
+a contrived primitive that is harder to read than the bespoke component. So the
+**stateful lattice stays bespoke**; what *is* genuinely reusable — the
+deterministic ring geometry — was extracted to `ringPositions(n)` in
+`components/charts/geometry.ts` (pure, tested) and is consumed by the page. That
+keeps the shared, testable part in the library without forcing a bad abstraction.
 
 ### Tones and the `statusTone` map
 

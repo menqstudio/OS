@@ -3,6 +3,7 @@ import { useApp } from '../app/store';
 import {
   PageHeader, Panel, Button, Skeleton, ErrorState, EmptyState,
 } from '../components/ui';
+import { BarChart } from '../components/charts/Chart';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { Metric } from '../domain/entities';
@@ -120,16 +121,17 @@ function AnDeck({ metrics, L }: { metrics: Metric[]; L: L }) {
   );
 }
 
-// --- anPlot / anCap / anTotal: distribution-by-node ------------------------
-// Horizontal bar chart with a focusable legend (each node toggles), an accessible
-// summary, and a <details> data-table fallback. Color is one flat accent — meaning
-// is carried by the text label + value on every row, never by hue.
+// --- distribution-by-node: the BarChart primitive -------------------------
+// Delegates to the library `BarChart` (horizontal bars + focusable legend + share%
+// + accessible summary + <details> table fallback). This page only maps the real
+// `Metric[]` to the primitive's data shape and supplies bilingual labels + the
+// honest one-line summary. Color is one flat accent — meaning is carried by the
+// text label + value on every row, never by hue.
 function AnPlot(
   { metrics, hidden, onToggle, L }:
   { metrics: Metric[]; hidden: ReadonlySet<string>; onToggle: (key: string) => void; L: L },
 ) {
   const visible = metrics.filter((m) => !hidden.has(m.key));
-  const max = Math.max(0, ...visible.map((m) => m.value));
   const total = visible.reduce((sum, m) => sum + m.value, 0);
   const top = visible.reduce<Metric | null>((best, m) => (best && best.value >= m.value ? best : m), null);
 
@@ -141,88 +143,23 @@ function AnPlot(
     );
 
   return (
-    <div className="an-plot">
-      {/* accessible one-line summary, also referenced by the figure */}
-      <p id="an-plot-summary" className="an-cap">{summary}</p>
-
-      {/* legend — focusable node toggles (non-color signal: label text + pressed state) */}
-      <div className="an-legend" role="group" aria-label={L('Toggle nodes', 'Փոխարկել հանգույցները')}>
-        {metrics.map((m) => {
-          const off = hidden.has(m.key);
-          return (
-            <button
-              key={m.key}
-              type="button"
-              className={`an-legend-item ${off ? 'an-legend-item--off' : ''}`}
-              aria-pressed={!off}
-              onClick={() => onToggle(m.key)}
-              title={off ? L('Show node', 'Ցուցադրել հանգույցը') : L('Hide node', 'Թաքցնել հանգույցը')}
-            >
-              <span className="an-legend-swatch" aria-hidden="true" />
-              <span className="an-legend-label">{m.label}</span>
-              {off && <span className="an-legend-state"> · {L('hidden', 'թաքցված')}</span>}
-            </button>
-          );
-        })}
-      </div>
-
-      {visible.length === 0 ? (
-        <div className="an-plot-empty muted">{L('All nodes hidden — enable one in the legend.', 'Բոլոր հանգույցները թաքցված են․ միացրեք որևէ մեկը լեգենդից։')}</div>
-      ) : (
-        <div
-          className="bar-chart an-bars"
-          role="img"
-          aria-labelledby="an-plot-summary"
-        >
-          {visible.map((m, i) => {
-            const pct = max > 0 ? (m.value / max) * 100 : 0;
-            const share = total > 0 ? Math.round((m.value / total) * 100) : 0;
-            return (
-              <div className="bar-row an-bar" key={m.key} style={vars({ '--enter': `${i * 55}ms` })}>
-                <div className="bar-label" title={m.label}>{m.label}</div>
-                <div className="bar-track">
-                  <div className="bar-fill an-bar-fill" style={{ width: `${pct}%` }} />
-                </div>
-                <div className="bar-value">{m.value}<span className="an-bar-share"> · {share}%</span></div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* anTotal */}
-      <div className="an-total row between">
-        <span className="an-total-cap">{L('Total across nodes', 'Ընդամենը հանգույցներով')}</span>
-        <span className="an-total-value">{total}</span>
-      </div>
-
-      {/* data-table fallback */}
-      <details className="an-table">
-        <summary>{L('Show data table', 'Ցուցադրել աղյուսակը')}</summary>
-        <table>
-          <caption className="an-sr">{L('Distribution by node', 'Բաշխում ըստ հանգույցի')}</caption>
-          <thead>
-            <tr>
-              <th scope="col">{L('Node', 'Հանգույց')}</th>
-              <th scope="col">{L('Value', 'Արժեք')}</th>
-              <th scope="col">{L('Share', 'Բաժին')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {metrics.map((m) => {
-              const share = total > 0 && !hidden.has(m.key) ? Math.round((m.value / total) * 100) : 0;
-              return (
-                <tr key={m.key}>
-                  <th scope="row">{m.label}{hidden.has(m.key) ? ` (${L('hidden', 'թաքցված')})` : ''}</th>
-                  <td>{m.value}</td>
-                  <td>{hidden.has(m.key) ? '—' : `${share}%`}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </details>
-    </div>
+    <BarChart
+      data={metrics.map((m) => ({ key: m.key, label: m.label, value: m.value }))}
+      caption={L('Distribution by node', 'Բաշխում ըստ հանգույցի')}
+      summary={summary}
+      hidden={hidden}
+      onToggle={onToggle}
+      legendLabel={L('Toggle nodes', 'Փոխարկել հանգույցները')}
+      showLabel={L('Show node', 'Ցուցադրել հանգույցը')}
+      hideLabel={L('Hide node', 'Թաքցնել հանգույցը')}
+      hiddenWord={L('hidden', 'թաքցված')}
+      allHiddenNote={L('All nodes hidden — enable one in the legend.', 'Բոլոր հանգույցները թաքցված են․ միացրեք որևէ մեկը լեգենդից։')}
+      totalLabel={L('Total across nodes', 'Ընդամենը հանգույցներով')}
+      nodeHeader={L('Node', 'Հանգույց')}
+      valueHeader={L('Value', 'Արժեք')}
+      shareHeader={L('Share', 'Բաժին')}
+      tableToggle={L('Show data table', 'Ցուցադրել աղյուսակը')}
+    />
   );
 }
 
@@ -444,29 +381,11 @@ const ANALYTICS_CSS = `
 .an-live-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brops-muted); font-weight: 700; }
 .an-live-value { font-variant-numeric: tabular-nums; }
 
-/* anPlot / anCap / anTotal */
-.an-plot { display: flex; flex-direction: column; gap: var(--menq-space-4); }
+/* anCap — the scrubber's honest note (the distribution plot itself is the shared
+   BarChart primitive, styled in ui.css). */
 .an-cap { font-size: 13px; color: var(--brops-muted); margin: 0; }
-.an-legend { display: flex; flex-wrap: wrap; gap: var(--menq-space-2); }
-.an-legend-item { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font: inherit; font-size: 12px;
-  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-pill); background: var(--brops-surface);
-  color: var(--brops-text); cursor: pointer; transition: background var(--menq-motion-fast), border-color var(--menq-motion-fast); }
-.an-legend-item:hover { background: var(--menq-color-hover); }
-.an-legend-item:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--menq-color-focus); }
-.an-legend-swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--brops-accent); flex: none; }
-.an-legend-item--off { color: var(--brops-muted); border-style: dashed; }
-.an-legend-item--off .an-legend-swatch { background: var(--brops-muted); opacity: 0.5; }
-.an-legend-item--off .an-legend-label { text-decoration: line-through; }
-.an-legend-state { color: var(--brops-muted); font-size: 11px; }
-.an-bar { animation: an-bar-in var(--menq-motion-med) ease-out both; animation-delay: var(--enter, 0ms); }
-.an-bar-fill { background: var(--brops-accent); }
-.an-bar-share { color: var(--brops-muted); font-weight: 500; }
-.an-plot-empty { text-align: center; padding: var(--menq-space-5) 0; }
-.an-total { padding-top: var(--menq-space-3); border-top: 1px solid var(--brops-border); }
-.an-total-cap { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--brops-muted); font-weight: 600; }
-.an-total-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--brops-text); }
 
-/* data-table fallback */
+/* data-table fallback (AnSplit honest-empty tables) */
 .an-table { font-size: 13px; }
 .an-table > summary { cursor: pointer; color: var(--brops-accent); font-size: 12px; width: fit-content; }
 .an-table > summary:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--menq-color-focus); border-radius: var(--menq-radius-sm); }
@@ -482,15 +401,14 @@ const ANALYTICS_CSS = `
 .an-blocked-glyph { font-size: 30px; color: var(--menq-color-warning); }
 
 @keyframes an-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@keyframes an-bar-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
 @keyframes an-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 55%, transparent); }
   70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--menq-color-success) 0%, transparent); }
   100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 0%, transparent); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .an-live, .an-bar { animation: none; }
+  .an-live { animation: none; }
   .an-live-dot { animation: none; }
-  .an-scrub-fill, .an-scrub-thumb, .an-scrub-tick, .an-legend-item { transition: none; }
+  .an-scrub-fill, .an-scrub-thumb, .an-scrub-tick { transition: none; }
 }
 `;

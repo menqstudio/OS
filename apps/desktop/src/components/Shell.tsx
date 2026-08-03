@@ -6,6 +6,7 @@ import type { Lang } from '../domain/enums';
 import { languageNames } from '../i18n';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import { Mark } from './ui';
 
 /**
  * Roving-tabindex keyboard handler for a composite widget (the nav list or the
@@ -66,11 +67,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark" aria-hidden="true">B</div>
-          <div>
-            <div className="brand-name">{t('app.name')}</div>
-            <div className="brand-sub">{t('app.tagline')}</div>
-          </div>
+          <Mark responsive glyph="B" word={t('app.name')} sub={t('app.tagline')} />
         </div>
         <nav className="nav" aria-label={t('a11y.primaryNav')} onKeyDown={onNavKeyDown}>
           {NAV.map((group) => {

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, StatusPill, Avatar, Badge, Async, Input } from '../components/ui';
+import { PageHeader, Panel, Button, StatusPill, Avatar, Badge, Async, Input, TileGroup, StatTile } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Markdown } from '../components/markdown';
@@ -136,6 +136,17 @@ export function Home() {
           </div>
         )}
       </Panel>
+
+      {/* At-a-glance overview — the four workspace counts as keyboard-operable
+          StatTiles (roving arrows inside the group); each opens its full screen. */}
+      <div style={{ marginTop: 16 }}>
+        <TileGroup label={t('home.subtitle')}>
+          <StatTile glyph="◆" value={active.data?.length ?? 0} label={t('home.priorities')} countUp onActivate={() => setRoute('tasks')} />
+          <StatTile glyph="⚑" value={approvals.data?.length ?? 0} label={t('home.approvals')} countUp onActivate={() => setRoute('approvals')} />
+          <StatTile glyph="⬡" value={agents.data?.length ?? 0} label={t('home.agents')} countUp onActivate={() => setRoute('agents')} />
+          <StatTile glyph="▤" value={projects.data?.length ?? 0} label={t('nav.projects')} countUp onActivate={() => setRoute('projects')} />
+        </TileGroup>
+      </div>
 
       <div className="grid grid-2" style={{ marginTop: 16 }}>
         <Panel

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useApp } from '../app/store';
 import { PageHeader, Panel, Button, Badge, Avatar, EmptyState, Skeleton, ErrorState, usePrefersReducedMotion } from '../components/ui';
 import { useAsync } from '../hooks/useAsync';
 import { desktop, hasBackend } from '../services/desktop';
-import { buildECG, STRIP_W, STRIP_H } from '../components/charts/geometry';
+import { StripChart, type StripPoint } from '../components/charts/Chart';
 import type { ActivityEvent } from '../domain/entities';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,11 +22,9 @@ import type { ActivityEvent } from '../domain/entities';
 
 /** Longest run of blips we plot before collapsing the tail into a "+N" note. */
 const MAX_BLIPS = 48;
-/** Number of ECG complexes drawn across the strip (visual cadence only). */
+/** Number of ECG complexes drawn across the strip (visual cadence only). Passed
+ *  straight to the library `StripChart`, which owns the deterministic geometry. */
 const ECG_BEATS = 8;
-// Strip dimensions and the ECG waveform builder are the shared, deterministic
-// chart geometry (components/charts/geometry.ts) — the same source the Beatline
-// primitive draws from — so this page keeps no bespoke copy of them.
 
 /** Integer count-up (§D motion "integer count-up on vitals"). Snaps instantly
  *  when `animate` is false so reduced-motion users get the final value at once. */
@@ -54,100 +52,6 @@ interface Bi { (en: string, hy: string): string }
 // the desktop backend does not expose yet — so each renders honestly unavailable.
 interface Vital { key: string; label: string; unit: string }
 
-function PaBeatline({
-  events, sel, opened, plot, sweep, frozen, reduced, bi, onSelect, onOpen, onKeyDown, blipLabel, gridId,
-}: {
-  events: ActivityEvent[];
-  sel: number;
-  opened: number | null;
-  plot: boolean;
-  sweep: boolean;
-  frozen: boolean;
-  reduced: boolean;
-  bi: Bi;
-  onSelect: (i: number) => void;
-  onOpen: (i: number) => void;
-  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
-  blipLabel: (e: ActivityEvent, i: number) => string;
-  gridId: string;
-}) {
-  const blipRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  blipRefs.current = [];
-
-  // Keep the roving-tabindex focus in sync with the selected blip after the
-  // wrapper handles an arrow key.
-  useEffect(() => {
-    const el = blipRefs.current[sel];
-    if (el && document.activeElement && el.closest('.pa-strip')?.contains(document.activeElement)) {
-      el.focus();
-    }
-  }, [sel]);
-
-  const path = useMemo(() => buildECG(STRIP_W, STRIP_H, ECG_BEATS), []);
-  const stripClass = [
-    'pa-strip',
-    plot ? 'pa-strip--plot' : '',
-    sweep && !frozen && !reduced ? 'pa-strip--sweeping' : '',
-    frozen ? 'pa-strip--frozen' : '',
-  ].filter(Boolean).join(' ');
-
-  return (
-    <div
-      className={stripClass}
-      role="group"
-      tabIndex={0}
-      aria-label={bi('Activity beatline — arrow keys scrub beats, Enter opens a beat, Space freezes',
-        'Ակտիվության զարկագիծ — սլաքներով անցեք զարկերով, Enter՝ բացել, Space՝ սառեցնել')}
-      onKeyDown={onKeyDown}
-    >
-      <svg
-        className="pa-beatline"
-        viewBox={`0 0 ${STRIP_W} ${STRIP_H}`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <defs>
-          <pattern id={gridId} width="40" height="30" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 30" fill="none" className="pa-grid-line" />
-          </pattern>
-        </defs>
-        {plot && <rect x="0" y="0" width={STRIP_W} height={STRIP_H} fill={`url(#${gridId})`} />}
-        <line x1="0" y1={STRIP_H / 2} x2={STRIP_W} y2={STRIP_H / 2} className="pa-baseline" />
-        <path d={path} className="pa-trace" fill="none" />
-        {sweep && !reduced && <rect className="pa-sweep" x="0" y="0" width="3" height={STRIP_H} />}
-      </svg>
-
-      <div className="pa-blips">
-        {events.map((e, i) => {
-          const pct = ((i + 0.5) / events.length) * 100;
-          const isSel = i === sel;
-          const isOpen = i === opened;
-          const cls = ['pa-blip', isSel ? 'pa-blip--sel' : '', isOpen ? 'pa-blip--open' : ''].filter(Boolean).join(' ');
-          return (
-            <button
-              key={e.id}
-              type="button"
-              ref={(el) => { blipRefs.current[i] = el; }}
-              className={cls}
-              style={{ left: `${pct}%`, animationDelay: reduced ? undefined : `${Math.min(i, 20) * 24}ms` }}
-              tabIndex={isSel ? 0 : -1}
-              aria-label={blipLabel(e, i)}
-              aria-pressed={isOpen}
-              title={blipLabel(e, i)}
-              onClick={() => { onSelect(i); onOpen(i); }}
-              onFocus={() => onSelect(i)}
-            >
-              <span className="pa-blip-dot" aria-hidden="true" />
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 export function Activity() {
   const { t, lang } = useApp();
   const reduced = usePrefersReducedMotion();
@@ -160,7 +64,6 @@ export function Activity() {
   const [plot, setPlot] = useState(false);
   const [sel, setSel] = useState(0);
   const [opened, setOpened] = useState<number | null>(null);
-  const gridId = useRef(`pa-grid-${Math.random().toString(36).slice(2)}`).current;
 
   const events = state.data ?? [];
   const displayed = useMemo(() => events.slice(0, MAX_BLIPS), [events]);
@@ -189,47 +92,12 @@ export function Activity() {
     );
   }, [bi]);
 
-  const move = useCallback((delta: number) => {
-    setSel((s) => Math.max(0, Math.min(displayed.length - 1, s + delta)));
-  }, [displayed.length]);
-
-  const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
-    if (displayed.length === 0) return;
-    switch (e.key) {
-      case ' ':
-      case 'Spacebar':
-        e.preventDefault();                       // Space → freeze (not scroll / not blip click)
-        setFrozen((f) => !f);
-        break;
-      case 'ArrowRight':
-      case 'ArrowDown':
-        e.preventDefault();
-        move(1);
-        break;
-      case 'ArrowLeft':
-      case 'ArrowUp':
-        e.preventDefault();
-        move(-1);
-        break;
-      case 'Home':
-        e.preventDefault();
-        setSel(0);
-        break;
-      case 'End':
-        e.preventDefault();
-        setSel(displayed.length - 1);
-        break;
-      case 'Enter':
-        e.preventDefault();                       // Enter → open the focused beat's detail
-        setOpened(sel);
-        break;
-      case 'Escape':
-        if (opened !== null) { e.preventDefault(); setOpened(null); }
-        break;
-      default:
-        break;
-    }
-  }, [displayed.length, move, sel, opened]);
+  // Library-driven strip points: one blip per displayed event, each carrying its
+  // full text label (the StripChart owns the geometry + roving keyboard model).
+  const points = useMemo<StripPoint[]>(
+    () => displayed.map((e, i) => ({ id: e.id, label: blipLabel(e, i) })),
+    [displayed, blipLabel],
+  );
 
   const beatCount = useCountUp(events.length, !reduced && !state.loading && !state.error);
 
@@ -282,7 +150,7 @@ export function Activity() {
     // loading → strip skeleton
     body = (
       <div className="stack" style={{ gap: 'var(--menq-space-5)' }}>
-        <div className="pa-strip pa-strip--skeleton" aria-busy="true" aria-label={bi('Loading beatline', 'Բեռնվում է զարկագիծը')}>
+        <div className="pa-strip--skeleton" aria-busy="true" aria-label={bi('Loading beatline', 'Բեռնվում է զարկագիծը')}>
           <div className="pa-skeleton-line" />
         </div>
         <div className="pa-vitals">
@@ -331,20 +199,20 @@ export function Activity() {
     // default (live)
     body = (
       <div className="stack" style={{ gap: 'var(--menq-space-5)' }}>
-        <PaBeatline
-          events={displayed}
-          sel={sel}
+        <StripChart
+          points={points}
+          selected={sel}
           opened={opened}
           plot={plot}
           sweep={sweep}
           frozen={frozen}
-          reduced={reduced}
-          bi={bi}
+          beats={ECG_BEATS}
+          ariaLabel={bi('Activity beatline — arrow keys scrub beats, Enter opens a beat, Space freezes',
+            'Ակտիվության զարկագիծ — սլաքներով անցեք զարկերով, Enter՝ բացել, Space՝ սառեցնել')}
           onSelect={setSel}
           onOpen={setOpened}
-          onKeyDown={onKeyDown}
-          blipLabel={blipLabel}
-          gridId={gridId}
+          onToggleFreeze={() => setFrozen((f) => !f)}
+          onCloseOpened={() => setOpened(null)}
         />
 
         {hiddenCount > 0 && (
@@ -442,40 +310,16 @@ const PA_STYLE = `
   100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 0%, transparent); transform: scale(1); }
 }
 
-/* the ECG strip / beatline */
-.pa-strip { position: relative; width: 100%; height: 160px; background: var(--brops-bg);
-  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-card); overflow: hidden; outline: none; }
-.pa-strip:focus-visible { border-color: var(--brops-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brops-accent) 40%, transparent); }
-.pa-beatline { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.pa-baseline { stroke: var(--brops-border); stroke-width: 1; }
-.pa-grid-line { stroke: color-mix(in srgb, var(--brops-border) 70%, transparent); stroke-width: 1; }
-.pa-trace { stroke: var(--menq-color-success); stroke-width: 2; vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--menq-color-success) 40%, transparent)); }
-.pa-sweep { fill: color-mix(in srgb, var(--menq-color-success) 70%, transparent); opacity: 0; }
-.pa-strip--sweeping .pa-sweep { opacity: 0.8; animation: pa-sweepMove 3.2s linear infinite; }
-.pa-strip--frozen .pa-sweep { animation-play-state: paused; }
-@keyframes pa-sweepMove { from { transform: translateX(0); } to { transform: translateX(1000px); } }
-
-/* blip markers (buttons overlaid on the trace) */
-.pa-blips { position: absolute; inset: 0; }
-.pa-blip { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 22px; height: 22px;
-  display: grid; place-items: center; padding: 0; background: transparent; border: none; cursor: pointer;
-  border-radius: 50%; animation: pa-blipReveal var(--menq-motion-med) ease-out both; }
-.pa-blip-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--brops-accent);
-  border: 2px solid var(--brops-bg); box-shadow: 0 0 0 1px var(--brops-accent);
-  transition: transform var(--menq-motion-fast); }
-.pa-blip:hover .pa-blip-dot { transform: scale(1.25); }
-.pa-blip--sel .pa-blip-dot { background: var(--menq-color-warning); box-shadow: 0 0 0 1px var(--menq-color-warning), 0 0 8px color-mix(in srgb, var(--menq-color-warning) 60%, transparent); }
-.pa-blip--open .pa-blip-dot { background: var(--menq-color-success); box-shadow: 0 0 0 1px var(--menq-color-success); }
-.pa-blip:focus-visible { outline: none; }
-.pa-blip:focus-visible .pa-blip-dot { transform: scale(1.3); box-shadow: 0 0 0 2px var(--brops-accent), 0 0 0 4px var(--brops-bg); }
-@keyframes pa-blipReveal { from { opacity: 0; transform: translate(-50%, -50%) scale(0.4); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
-
+/* The interactive ECG strip + blips are the library StripChart primitive
+   (components/charts/Chart + .strip* rules in ui.css). Only the page-specific
+   chrome — controls, tail note, loading skeleton, vitals, blocked/detail — is
+   styled here. */
 .pa-controls { display: inline-flex; gap: var(--menq-space-2); }
 .pa-tail { font-size: 12px; }
 
-/* skeleton strip (loading) */
-.pa-strip--skeleton { height: 160px; display: grid; place-items: center; }
+/* skeleton strip (loading) — self-contained; mirrors the StripChart frame */
+.pa-strip--skeleton { height: 160px; display: grid; place-items: center; background: var(--brops-bg);
+  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-card); overflow: hidden; }
 .pa-skeleton-line { width: 92%; height: 3px; border-radius: 2px;
   background: linear-gradient(90deg, transparent, var(--menq-color-hover) 20%, var(--brops-border) 50%, var(--menq-color-hover) 80%, transparent);
   background-size: 200% 100%; animation: pa-shimmer 1.4s linear infinite; }
@@ -513,8 +357,6 @@ const PA_STYLE = `
 @media (max-width: 640px) { .pa-detail-grid { grid-template-columns: 1fr; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .pa-now-dot, .pa-sweep, .pa-blip, .pa-skeleton-line { animation: none !important; }
-  .pa-blip { opacity: 1; }
-  .pa-blip-dot, .pa-blip:hover .pa-blip-dot { transition: none; }
+  .pa-now-dot, .pa-skeleton-line { animation: none !important; }
 }
 `;

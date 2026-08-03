@@ -382,11 +382,67 @@
 .chart-table .dt-num, .chart-table td.chart-num { text-align: right; }
 @keyframes chart-draw { to { stroke-dashoffset: 0; } }
 
+/* G8 · StripChart (interactive beatline — components/charts) */
+.strip { position: relative; width: 100%; height: 160px; background: var(--brops-bg);
+  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-card); overflow: hidden; outline: none; }
+.strip:focus-visible { border-color: var(--brops-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brops-accent) 40%, transparent); }
+.strip-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.strip-baseline { stroke: var(--brops-border); stroke-width: 1; }
+.strip-grid-line { stroke: color-mix(in srgb, var(--brops-border) 70%, transparent); stroke-width: 1; }
+.strip-trace { stroke: var(--menq-color-success); stroke-width: 2; vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--menq-color-success) 40%, transparent)); }
+.strip-sweep { fill: color-mix(in srgb, var(--menq-color-success) 70%, transparent); opacity: 0; }
+.strip--sweeping .strip-sweep { opacity: 0.8; animation: strip-sweep-move 3.2s linear infinite; }
+.strip--frozen .strip-sweep { animation-play-state: paused; }
+@keyframes strip-sweep-move { from { transform: translateX(0); } to { transform: translateX(1000px); } }
+.strip-blips { position: absolute; inset: 0; }
+.strip-blip { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 22px; height: 22px;
+  display: grid; place-items: center; padding: 0; background: transparent; border: none; cursor: pointer;
+  border-radius: 50%; animation: strip-blip-reveal var(--menq-motion-med) ease-out both; }
+.strip-blip-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--brops-accent);
+  border: 2px solid var(--brops-bg); box-shadow: 0 0 0 1px var(--brops-accent);
+  transition: transform var(--menq-motion-fast); }
+.strip-blip:hover .strip-blip-dot { transform: scale(1.25); }
+.strip-blip--sel .strip-blip-dot { background: var(--menq-color-warning);
+  box-shadow: 0 0 0 1px var(--menq-color-warning), 0 0 8px color-mix(in srgb, var(--menq-color-warning) 60%, transparent); }
+.strip-blip--open .strip-blip-dot { background: var(--menq-color-success); box-shadow: 0 0 0 1px var(--menq-color-success); }
+.strip-blip:focus-visible { outline: none; }
+.strip-blip:focus-visible .strip-blip-dot { transform: scale(1.3); box-shadow: 0 0 0 2px var(--brops-accent), 0 0 0 4px var(--brops-bg); }
+@keyframes strip-blip-reveal { from { opacity: 0; transform: translate(-50%, -50%) scale(0.4); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+
+/* G9 · BarChart (components/charts) */
+.barchart { display: flex; flex-direction: column; gap: var(--menq-space-4); }
+.barchart-legend { display: flex; flex-wrap: wrap; gap: var(--menq-space-2); }
+.barchart-legend-item { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font: inherit; font-size: 12px;
+  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-pill); background: var(--brops-surface);
+  color: var(--brops-text); cursor: pointer; transition: background var(--menq-motion-fast), border-color var(--menq-motion-fast); }
+.barchart-legend-item:hover { background: var(--menq-color-hover); }
+.barchart-legend-item:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--menq-color-focus); }
+.barchart-legend-swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--brops-accent); flex: none; }
+.barchart-legend-item--off { color: var(--brops-muted); border-style: dashed; }
+.barchart-legend-item--off .barchart-legend-swatch { background: var(--brops-muted); opacity: 0.5; }
+.barchart-legend-item--off .barchart-legend-label { text-decoration: line-through; }
+.barchart-legend-state { color: var(--brops-muted); font-size: 11px; }
+.barchart-empty { text-align: center; padding: var(--menq-space-5) 0; }
+.barchart-total { padding-top: var(--menq-space-3); border-top: 1px solid var(--brops-border); }
+.barchart-total-cap { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--brops-muted); font-weight: 600; }
+.barchart-total-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--brops-text); }
+.barchart .bar-share { color: var(--brops-muted); font-weight: 500; }
+.barchart .bar-row { animation: barchart-bar-in var(--menq-motion-med) ease-out both; animation-delay: var(--enter, 0ms); }
+@keyframes barchart-bar-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+
+/* G5 · Mark responsive collapse — mirrors the ≤900px sidebar label hide */
+@media (max-width: 900px) { .mark--responsive .mark-text { display: none; } }
+
 @media (prefers-reduced-motion: reduce) {
   .drawer { animation: none; }
   .tile--link, .tile-arrow { transition: none; }
   .livemark-dot { animation: none; }
   .chart-line--draw { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
+  .strip--sweeping .strip-sweep, .strip-blip { animation: none !important; }
+  .strip-blip { opacity: 1; }
+  .strip-blip-dot, .strip-blip:hover .strip-blip-dot { transition: none; }
+  .barchart .bar-row { animation: none; }
 }
 
 /* honest offline / preview banner — full-width, calm muted-warning strip */

@@ -458,21 +458,49 @@ export function Drawer({
 // ── G3 · Rail / RailSection ─────────────────────────────────────────────────
 /**
  * Labeled side-rail region — the context/command/group rail pattern as one
- * primitive. Renders a landmark `<aside role="complementary">` with an
- * accessible name and an optional visible header + actions. Compose
- * `RailSection` children for titled sub-groups.
+ * primitive. Compose `RailSection` children for titled sub-groups.
+ *
+ * Two renderings, chosen by `variant`:
+ * - `'complementary'` (default) — a landmark `<aside role="complementary">` with
+ *   an accessible name and an uppercase rail header. Use for a genuine context
+ *   rail that should be a navigable landmark.
+ * - `'panel'` — a plain `Card`/`.panel` container identical to `Panel` (title as
+ *   `.panel-title`, `space-5` padding, NO landmark role). Use when the region is
+ *   a list/rail that must adopt the rail model WITHOUT adding another
+ *   `complementary` landmark or changing the panel's padding — e.g. the
+ *   conversation and command run lists.
  */
 export function Rail({
   label,
   side = 'left',
   actions,
+  variant = 'complementary',
   children,
 }: {
   label: string;
   side?: 'left' | 'right';
   actions?: React.ReactNode;
+  variant?: 'complementary' | 'panel';
   children: React.ReactNode;
 }) {
+  if (variant === 'panel') {
+    // Identical markup to `Panel` (Card + .panel, title in .panel-head, children
+    // rendered directly) so adopting the rail model changes neither the padding
+    // nor the landmark structure.
+    return (
+      <Card>
+        <div className="panel">
+          {(label || actions) && (
+            <div className="panel-head">
+              {label && <div className="panel-title">{label}</div>}
+              {actions}
+            </div>
+          )}
+          {children}
+        </div>
+      </Card>
+    );
+  }
   return (
     <aside className={`rail rail--${side}`} role="complementary" aria-label={label}>
       {(label || actions) && (
@@ -579,11 +607,20 @@ export function StatTile({
 }
 
 // ── G5 · Mark / LiveMark ────────────────────────────────────────────────────
-/** The "Br·PS" wordmark with its square glyph (promoted from Shell's brand). */
-export function Mark({ word = 'Br·PS', sub }: { word?: string; sub?: string }) {
+/**
+ * The "Br·PS" wordmark with its square glyph (promoted from Shell's brand).
+ *
+ * `responsive` honours the collapsed-sidebar rule: at ≤900px the text (word +
+ * sub) is hidden and only the square glyph remains, exactly like the sidebar
+ * collapses its labels — so Shell can adopt this without breaking the narrow
+ * layout. The glyph keeps a `title` so the collapsed mark stays identifiable.
+ */
+export function Mark({
+  word = 'Br·PS', sub, glyph = 'B', responsive = false,
+}: { word?: string; sub?: string; glyph?: string; responsive?: boolean }) {
   return (
-    <span className="mark">
-      <span className="mark-glyph" aria-hidden="true">B</span>
+    <span className={`mark ${responsive ? 'mark--responsive' : ''}`}>
+      <span className="mark-glyph" aria-hidden="true" title={responsive ? word : undefined}>{glyph}</span>
       <span className="mark-text">
         <span className="mark-word">{word}</span>
         {sub && <span className="mark-sub">{sub}</span>}

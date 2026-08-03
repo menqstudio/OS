@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Badge, StatusPill, Async, Modal, FormRow, Input, Textarea, Select,
+  PageHeader, Panel, Rail, Button, Badge, StatusPill, Async, Modal, FormRow, Input, Textarea, Select,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -181,7 +181,9 @@ export function Command() {
 
       {creating && <NewRunForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
 
-      <Panel title={t('command.runs')}>
+      {/* Runs rail — the Rail primitive's plain-panel variant (no extra landmark,
+          unchanged padding). */}
+      <Rail variant="panel" label={t('command.runs')}>
         <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
           {(runs) => {
             const selected = runs.find((r) => r.id === selectedId) ?? null;
@@ -218,7 +220,7 @@ export function Command() {
             );
           }}
         </Async>
-      </Panel>
+      </Rail>
     </>
   );
 }
