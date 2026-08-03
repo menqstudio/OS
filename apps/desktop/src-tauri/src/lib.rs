@@ -173,6 +173,7 @@ pub fn run() {
             commands::reply_in_conversation,
             commands::stream_reply,
             commands::cancel_reply,
+            commands::open_window,
             commands::stream_ask,
             commands::stream_run_step,
             // Filesystem surface (M-8): unlike the commands above, these are

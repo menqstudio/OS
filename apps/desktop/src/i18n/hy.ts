@@ -194,6 +194,7 @@ export const hy: Record<DictKey, string> = {
   'action.create': 'Ստեղծել',
   'action.cancel': 'Չեղարկել',
   'action.close': 'Փակել',
+  'action.openNewWindow': 'Բացել նոր պատուհանում',
   'action.edit': 'Խմբագրել',
   'action.retry': 'Կրկնել',
   'form.newProject': 'Նոր նախագիծ',

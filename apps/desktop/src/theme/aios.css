@@ -114,7 +114,10 @@ h1,h2,h3{font-family:var(--f-display);margin:0;letter-spacing:-.02em;line-height
    ═══════════════════════════════════════════════════════════════════════════ */
 .aurora{position:fixed;inset:-22%;z-index:-6;pointer-events:none;overflow:hidden;
   opacity:var(--aurora-op);filter:saturate(1.08);transition:opacity 1.2s ease}
-.band{position:absolute;border-radius:50%;filter:blur(52px);mix-blend-mode:screen;will-change:transform,opacity}
+.band{position:absolute;border-radius:50%;filter:blur(34px);mix-blend-mode:screen;will-change:transform,opacity}
+/* Pause the infinite ambient animations when the window isn't visible (toggled by the
+   Ambient layer's visibilitychange) so a backgrounded app costs the GPU nothing. */
+body.bg-still .band,body.bg-still #cursorlight{animation-play-state:paused}
 .band.a{width:52vw;height:36vw;left:-2%;top:-2%;background:rgb(var(--cyan-rgb)/.26);animation:drift-a 17s cubic-bezier(.4,0,.2,1) infinite alternate}
 .band.b{width:46vw;height:40vw;right:-4%;top:14%;background:rgb(var(--azure-rgb)/.2);animation:drift-b 21s cubic-bezier(.4,0,.2,1) infinite alternate}
 .band.c{width:44vw;height:34vw;left:22%;bottom:-8%;background:rgb(var(--cyan-deep-rgb)/.18);animation:drift-c 25s cubic-bezier(.4,0,.2,1) infinite alternate}
@@ -160,7 +163,7 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:998;op
 #cursorlight{position:fixed;left:0;top:0;width:520px;height:520px;z-index:-1;pointer-events:none;border-radius:50%;
   transform:translate3d(calc(var(--cx,50vw) - 260px),calc(var(--cy,40vh) - 260px),0);
   background:radial-gradient(circle,rgb(var(--cyan-rgb)/.10),rgb(var(--azure-rgb)/.05) 42%,transparent 70%);
-  filter:blur(20px);mix-blend-mode:screen;opacity:0;transition:opacity .6s ease}
+  filter:blur(13px);mix-blend-mode:screen;opacity:0;transition:opacity .6s ease}
 body.ignited #cursorlight{opacity:1}
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -225,7 +228,7 @@ body.ignited .shimmer{opacity:1}
    ═══════════════════════════════════════════════════════════════════════════ */
 .app{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
 .side{position:sticky;top:0;height:100vh;overflow-y:auto;padding:18px 12px 24px;
-  border-right:1px solid rgb(var(--line-rgb)/.8);background:rgb(var(--bg-rgb)/.6);backdrop-filter:blur(10px);z-index:10}
+  border-right:1px solid rgb(var(--line-rgb)/.8);background:rgb(var(--bg-rgb)/.72);backdrop-filter:blur(6px);z-index:10}
 .brand{display:inline-flex;align-items:center;gap:.02em;font-size:26px;line-height:1;padding:4px 10px 14px}
 .brand .mark{width:1em;height:1em}
 .side h5{margin:16px 10px 6px;font-family:var(--f-mono);font-size:9px;font-weight:700;
@@ -236,6 +239,21 @@ body.ignited .shimmer{opacity:1}
 .nav a.on{background:rgb(var(--cyan-rgb)/.1);color:var(--ink);box-shadow:inset 2px 0 0 var(--cyan)}
 .nav a i{font-style:normal;width:16px;text-align:center;font-size:12px;opacity:.8}
 .stage{padding:26px 30px 90px;min-width:0}
+/* Cap + center the content on ultrawide/4K so lines and rows don't stretch edge-to-edge. */
+.stage > .stage-enter{max-width:1560px;margin-inline:auto}
+/* Narrow-screen nav drawer controls — hidden by default, revealed under 860px. */
+.nav-toggle{display:none;position:fixed;top:12px;left:12px;z-index:60;width:40px;height:40px;
+  border-radius:11px;place-items:center;font-size:17px;color:var(--ink);cursor:pointer;
+  background:rgb(var(--bg-rgb)/.72);border:1px solid rgb(var(--line-rgb)/.8);backdrop-filter:blur(8px)}
+.nav-scrim{display:none;position:fixed;inset:0;z-index:40;background:rgb(0 0 0/.42)}
+/* Right-click context menu (Open in new window). */
+.ctx-scrim{position:fixed;inset:0;z-index:900}
+.ctx-menu{position:fixed;z-index:901;min-width:196px;padding:5px;border-radius:12px;
+  background:rgb(var(--bg-rgb)/.97);border:1px solid rgb(var(--line-rgb)/.9);
+  box-shadow:0 18px 50px rgb(0 0 0/.5);backdrop-filter:blur(8px)}
+.ctx-menu button{display:flex;width:100%;align-items:center;height:34px;padding:0 12px;border-radius:8px;
+  font-size:13px;color:var(--ink);text-align:left;background:none;border:0;cursor:pointer}
+.ctx-menu button:hover{background:rgb(var(--cyan-rgb)/.12)}
 
 .pageHead{display:flex;align-items:flex-end;gap:16px;margin-bottom:22px;flex-wrap:wrap}
 .pageHead h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:clamp(24px,3vw,34px);letter-spacing:-.02em}
@@ -628,9 +646,13 @@ body.ignited .shimmer{opacity:1}
    ═══════════════════════════════════════════════════════════════════════════ */
 @media (max-width:860px){
   .app{grid-template-columns:1fr}
-  .side{position:fixed;left:-260px;top:0;z-index:50;transition:left var(--slow)}
+  .side{position:fixed;left:-284px;top:0;width:264px;z-index:50;transition:left var(--slow);
+    box-shadow:0 0 40px rgb(0 0 0/.5)}
   .side.open{left:0}
-  .stage{padding:20px 16px 80px}
+  .nav-toggle{display:grid}
+  .nav-scrim{display:block}
+  /* clear the fixed hamburger so it never overlaps the page title */
+  .stage{padding:62px 16px 80px}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}

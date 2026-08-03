@@ -248,6 +248,9 @@ export const desktop = {
   // backend breaks the stream at the next delta and keeps whatever streamed so far.
   cancelReply: (conversationId: string) => invoke<void>('cancel_reply', { conversationId }),
 
+  // Open a second app window (right-click → "Open in new window"), optionally at a route.
+  openWindow: (route?: string) => invoke<void>('open_window', { route: route ?? null }),
+
   // one-shot Ask Bro: streams an answer to a single prompt (no persistence).
   streamAsk: (prompt: string, onEvent: (e: StreamEvent) => void) => {
     const channel = new Channel<StreamEvent>();

@@ -192,6 +192,7 @@ export const en = {
   'action.create': 'Create',
   'action.cancel': 'Cancel',
   'action.close': 'Close',
+  'action.openNewWindow': 'Open in new window',
   'action.edit': 'Edit',
   'action.retry': 'Retry',
   'form.newProject': 'New project',

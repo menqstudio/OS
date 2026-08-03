@@ -65,6 +65,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const onNavKeyDown = useRovingKeydown('vertical');
   const onDockKeyDown = useRovingKeydown('horizontal');
   const [dockFocus, setDockFocus] = useState(0);
+  // On narrow screens the side rail is an off-canvas drawer; this toggles it.
+  const [navOpen, setNavOpen] = useState(false);
+  // Right-click context menu (Open in new window). Suppressed inside text fields so
+  // the native edit menu still works there.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const onAppContextMenu = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return;
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  };
 
   return (
     <>
@@ -86,14 +96,27 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      <div className="app">
-        <aside className="side">
+      <div className="app" onContextMenu={onAppContextMenu}>
+        {/* Narrow-screen nav toggle + scrim (hidden ≥860px via CSS) so the rail is
+            reachable on small windows instead of being stuck off-canvas. */}
+        <button
+          type="button"
+          className="nav-toggle"
+          aria-label={t('a11y.primaryNav')}
+          aria-expanded={navOpen}
+          onClick={() => setNavOpen((o) => !o)}
+        >
+          <span aria-hidden="true">{navOpen ? '✕' : '☰'}</span>
+        </button>
+        {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} aria-hidden="true" />}
+        <aside className={`side${navOpen ? ' open' : ''}`}>
           <a
             className="brand"
             href="#home"
             onClick={(e) => {
               e.preventDefault();
               setRoute('home');
+              setNavOpen(false);
             }}
           >
             <b>Br</b>
@@ -123,6 +146,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                         onClick={(e) => {
                           e.preventDefault();
                           setRoute(item.id);
+                          setNavOpen(false);
                         }}
                       >
                         <i aria-hidden="true">
@@ -192,6 +216,28 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </main>
       </div>
+
+      {ctxMenu && (
+        <>
+          <div
+            className="ctx-scrim"
+            onClick={() => setCtxMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }}
+          />
+          <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void desktop.openWindow(route).catch(() => {});
+                setCtxMenu(null);
+              }}
+            >
+              {t('action.openNewWindow')}
+            </button>
+          </div>
+        </>
+      )}
     </>
   );
 }

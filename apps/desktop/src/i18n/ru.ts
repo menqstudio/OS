@@ -194,6 +194,7 @@ export const ru: Record<DictKey, string> = {
   'action.create': 'Создать',
   'action.cancel': 'Отмена',
   'action.close': 'Закрыть',
+  'action.openNewWindow': 'Открыть в новом окне',
   'action.edit': 'Редактировать',
   'action.retry': 'Повторить',
   'form.newProject': 'Новый проект',

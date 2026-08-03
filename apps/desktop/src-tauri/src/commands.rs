@@ -836,6 +836,31 @@ pub fn cancel_reply(conversation_id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Open a second app window (right-click → "Open in new window"), optionally at a
+/// specific route hash so the user can view two parts of the cockpit side by side.
+/// `route` is sanitized to a bare `[A-Za-z0-9_-]` slug and only ever becomes a `#`
+/// fragment on the app's own index.html — it cannot navigate off-origin.
+#[tauri::command]
+pub fn open_window(app: tauri::AppHandle, route: Option<String>) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(1);
+    let label = format!("bro-win-{}", N.fetch_add(1, Ordering::Relaxed));
+    let clean: String = route
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(40)
+        .collect();
+    let path = if clean.is_empty() { "index.html".to_string() } else { format!("index.html#{clean}") };
+    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(path.into()))
+        .title("BroPS")
+        .inner_size(1200.0, 800.0)
+        .min_inner_size(760.0, 560.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Streaming counterpart of `reply_in_conversation`: emits incremental `delta`
 /// events as the agent produces text, then a `done` event carrying the
 /// persisted message (or an `error` event). Returns Ok even on provider failure

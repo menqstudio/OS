@@ -172,6 +172,9 @@ function useMesh(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
     // Pause the loop entirely when the window is hidden — no GPU spent in the
     // background (and it resumes cleanly on return).
     const onVisibility = () => {
+      // Also pause the CSS ambient animations (aurora bands, cursor light) via a body
+      // class the stylesheet keys `animation-play-state:paused` off — zero GPU in the bg.
+      document.body.classList.toggle('bg-still', document.hidden);
       if (document.hidden) {
         cancelAnimationFrame(raf);
         raf = 0;
@@ -205,29 +208,33 @@ function usePointerLight() {
     root.style.setProperty('--cx', px + 'px');
     root.style.setProperty('--cy', py + 'px');
 
+    let lastTarget: Element | null = null;
     const onMove = (e: PointerEvent) => {
       px = e.clientX;
       py = e.clientY;
-      const t = e.target as Element | null;
-      const surf = t?.closest?.('.surface, .card') as HTMLElement | null;
-      if (surf) {
-        const r = surf.getBoundingClientRect();
-        surf.style.setProperty('--mx', ((e.clientX - r.left) / r.width) * 100 + '%');
-        surf.style.setProperty('--my', ((e.clientY - r.top) / r.height) * 100 + '%');
-      }
-      const tl = t?.closest?.('.tilt') as HTMLElement | null;
-      if (tl) {
-        const tr = tl.getBoundingClientRect();
-        const rx = (e.clientX - tr.left) / tr.width - 0.5;
-        const ry = (e.clientY - tr.top) / tr.height - 0.5;
-        tl.style.setProperty('--rx', (rx * 6).toFixed(2) + 'deg');
-        tl.style.setProperty('--ry', (-ry * 6).toFixed(2) + 'deg');
-      }
+      lastTarget = e.target as Element | null;
+      // Coalesce ALL work — the cursor light AND the per-surface/tilt layout reads —
+      // into one rAF per frame, so a fast pointer never forces a getBoundingClientRect
+      // (a synchronous layout) on every single move event.
       if (!queued && !reduced) {
         queued = true;
         requestAnimationFrame(() => {
           root.style.setProperty('--cx', px + 'px');
           root.style.setProperty('--cy', py + 'px');
+          const surf = lastTarget?.closest?.('.surface, .card') as HTMLElement | null;
+          if (surf) {
+            const r = surf.getBoundingClientRect();
+            surf.style.setProperty('--mx', ((px - r.left) / r.width) * 100 + '%');
+            surf.style.setProperty('--my', ((py - r.top) / r.height) * 100 + '%');
+          }
+          const tl = lastTarget?.closest?.('.tilt') as HTMLElement | null;
+          if (tl) {
+            const tr = tl.getBoundingClientRect();
+            const rx = (px - tr.left) / tr.width - 0.5;
+            const ry = (py - tr.top) / tr.height - 0.5;
+            tl.style.setProperty('--rx', (rx * 6).toFixed(2) + 'deg');
+            tl.style.setProperty('--ry', (-ry * 6).toFixed(2) + 'deg');
+          }
           queued = false;
         });
       }
