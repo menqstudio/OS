@@ -82,8 +82,10 @@ impl ProductionResolver {
 
     /// Provisioned against an explicit pinned root — production uses [`ProductionResolver::provisioned`] (TCB
     /// PRODUCTION anchor); unit tests pass the DEMONSTRATION anchor so they can sign with an in-code private.
+    /// `pub(crate)`: external code can only reach `provisioned` (production pin), so the public demo private
+    /// can never be pinned onto a live turn.
     #[allow(clippy::too_many_arguments)]
-    pub fn provisioned_with_pin(
+    pub(crate) fn provisioned_with_pin(
         pinned: PinnedRoot,
         manifest: KeyManifest,
         root_sig_b64: String,

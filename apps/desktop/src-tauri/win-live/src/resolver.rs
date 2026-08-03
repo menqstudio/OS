@@ -71,9 +71,11 @@ impl ManifestResolver {
     }
 
     /// Resolver pinned to an explicit root — the in-process crypto-chain proof passes the DEMONSTRATION anchor
-    /// so it can sign with an in-code private, without ever pinning it in the production path.
+    /// so it can sign with an in-code private, without ever pinning it in the production path. `pub(crate)` on
+    /// purpose: external code can only reach the production `new` (which pins the TCB production anchor), so the
+    /// publicly-known demo private can never be pinned onto a live turn.
     #[allow(clippy::too_many_arguments)]
-    pub fn with_pinned_root(
+    pub(crate) fn with_pinned_root(
         pinned: PinnedRoot,
         manifest: KeyManifest,
         root_sig_b64: String,

@@ -241,46 +241,73 @@ impl Drop for GenerationPermit {
     }
 }
 
-/// Per-key cancellation flags for in-flight streaming turns. `stream_reply` arms a
-/// flag (via [`arm_cancel`]) before generating and disarms it after; the
-/// `cancel_reply` command sets it (via [`request_cancel`]), and the stream's read
-/// loop breaks at the next delta — the `claude` child is then killed. Keyed by
-/// conversation id, so the frontend Stop button targets exactly one turn.
+/// Per-conversation cancellation flags for in-flight streaming turns. `stream_reply` arms a
+/// flag (returned inside a [`CancelGuard`] that removes exactly its own entry on drop — so a
+/// turn whose future is dropped/panics never leaks a stale entry); `cancel_reply` sets EVERY
+/// flag registered for the conversation, so Stop halts all of that conversation's turns even
+/// when two windows drive it concurrently; the stream's read loop observes the flag and kills
+/// the `claude` child. A `Vec` per key (not a single flag) is what makes the two-window case
+/// correct — a second turn no longer clobbers the first's flag.
+#[allow(clippy::type_complexity)]
 fn cancel_flags(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>> {
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<std::sync::Arc<std::sync::atomic::AtomicBool>>>>
+{
     static F: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+        std::sync::Mutex<std::collections::HashMap<String, Vec<std::sync::Arc<std::sync::atomic::AtomicBool>>>>,
     > = std::sync::OnceLock::new();
     F.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-/// Arm a fresh (not-cancelled) flag for `key` and return it to the streaming turn.
-pub fn arm_cancel(key: &str) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+/// RAII registration of one turn's cancel flag under a conversation key. Dropping it removes
+/// exactly this turn's flag (by pointer identity), covering every return path including a
+/// future dropped mid-`await` when its window closes.
+pub struct CancelGuard {
+    key: String,
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CancelGuard {
+    /// The flag the streaming read loop polls.
+    pub fn flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.flag.clone()
+    }
+}
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        if let Ok(mut m) = cancel_flags().lock() {
+            if let Some(v) = m.get_mut(&self.key) {
+                v.retain(|f| !std::sync::Arc::ptr_eq(f, &self.flag));
+                if v.is_empty() {
+                    m.remove(&self.key);
+                }
+            }
+        }
+    }
+}
+
+/// Arm a fresh (not-cancelled) flag for `key`, registered until the returned guard drops.
+pub fn arm_cancel(key: &str) -> CancelGuard {
     let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     if let Ok(mut m) = cancel_flags().lock() {
-        m.insert(key.to_string(), flag.clone());
+        m.entry(key.to_string()).or_default().push(flag.clone());
     }
-    flag
+    CancelGuard { key: key.to_string(), flag }
 }
 
-/// Request cancellation of the turn armed under `key`. Returns true if one was armed.
+/// Request cancellation of EVERY in-flight turn armed under `key`. Returns true if any were.
 pub fn request_cancel(key: &str) -> bool {
     match cancel_flags().lock() {
-        Ok(m) => m
-            .get(key)
-            .map(|f| {
-                f.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(m) => match m.get(key) {
+            Some(v) if !v.is_empty() => {
+                for f in v {
+                    f.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 true
-            })
-            .unwrap_or(false),
+            }
+            _ => false,
+        },
         Err(_) => false,
-    }
-}
-
-/// Disarm (remove) the flag for `key` when its turn ends — always paired with [`arm_cancel`].
-pub fn disarm_cancel(key: &str) {
-    if let Ok(mut m) = cancel_flags().lock() {
-        m.remove(key);
     }
 }
 
@@ -1010,16 +1037,30 @@ fn write_system_prompt_file(system: &str) -> Result<std::path::PathBuf, String> 
 /// Commands the in-app Bro coding agent may NEVER run, even with Bash enabled — the owner's standing boundary:
 /// never push, delete, or install dependencies without asking. Passed to `claude` as `--disallowedTools`,
 /// which OVERRIDES the allow-list, so these stay blocked while ordinary build/test/inspect commands run.
+// Honest note: `--disallowedTools` is prefix-matching, NOT a hard sandbox — a determined
+// command can still be smuggled through `sh -c`, `env`, chaining, or subshells. The owner
+// deliberately keeps Bro powerful (deny-list, not a restrictive allow-list), so this list
+// closes every CONCRETE bypass an audit surfaced while leaving normal build/test/inspect
+// commands free. It is defense-in-depth, not a boundary of last resort.
 const BRO_BASH_DENY: &[&str] = &[
     // delete
     "Bash(rm:*)", "Bash(rmdir:*)", "Bash(del:*)", "Bash(Remove-Item:*)", "Bash(unlink:*)",
-    // push
-    "Bash(git push:*)",
-    // dependency install
-    "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npm ci:*)",
-    "Bash(pnpm add:*)", "Bash(pnpm install:*)",
-    "Bash(yarn add:*)", "Bash(yarn install:*)",
-    "Bash(cargo add:*)", "Bash(pip install:*)",
+    "Bash(truncate:*)", "Bash(find:* -delete)", "Bash(git clean:*)", "Bash(git rm:*)",
+    // push (incl. the `git -C <dir> push` form and force variants)
+    "Bash(git push:*)", "Bash(git -C:*)", "Bash(git -c:*)",
+    // dependency / global install — every ecosystem the audit flagged
+    "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npm ci:*)", "Bash(npm add:*)", "Bash(npx:*)",
+    "Bash(pnpm add:*)", "Bash(pnpm install:*)", "Bash(pnpm dlx:*)",
+    "Bash(yarn add:*)", "Bash(yarn install:*)", "Bash(yarn dlx:*)",
+    "Bash(cargo add:*)", "Bash(cargo install:*)",
+    "Bash(pip install:*)", "Bash(pip3 install:*)", "Bash(python -m pip:*)", "Bash(python3 -m pip:*)",
+    "Bash(uv pip:*)", "Bash(uv add:*)", "Bash(uvx:*)", "Bash(pipx:*)", "Bash(poetry add:*)",
+    "Bash(bun add:*)", "Bash(bun install:*)", "Bash(bunx:*)",
+    "Bash(deno install:*)", "Bash(go install:*)", "Bash(gem install:*)",
+    "Bash(brew install:*)", "Bash(apt install:*)", "Bash(apt-get install:*)", "Bash(winget install:*)",
+    "Bash(choco install:*)", "Bash(scoop install:*)",
+    // shells that would defeat prefix matching by re-parsing an inner command
+    "Bash(sh:*)", "Bash(bash:*)", "Bash(zsh:*)", "Bash(pwsh:*)", "Bash(powershell:*)", "Bash(cmd:*)", "Bash(env:*)",
 ];
 
 /// The `--tools` (+ permission-mode / disallow) argv fragment. As a coding agent (BROPS_PROJECT_DIR set) Bro
@@ -1146,21 +1187,32 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     // (hung `claude`, auth prompt, network stall) is bounded by a per-read
     // timeout so the UI never spins forever; kill_on_drop reaps the child.
     loop {
-        // User pressed Stop: kill the child now (don't wait on child.wait) and keep
-        // whatever streamed so far — a stopped turn returns its partial reply.
-        if cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst)) {
-            let _ = child.start_kill();
-            return Ok(acc.trim().to_string());
-        }
-        // Bound each read by the earlier of the absolute request deadline and a
-        // per-read stall cap (the agent can pause longer between output lines).
+        // Bound each read by the earlier of the absolute request deadline and a per-read
+        // stall cap (the agent can pause longer between output lines). Poll for a Stop every
+        // 200ms even mid-stall, so cancel is observed promptly — not only when the next line
+        // arrives — then kill the child and keep whatever streamed so far.
         let read_deadline =
             deadline.min(tokio::time::Instant::now() + Duration::from_secs(if agent { 300 } else { 120 }));
-        let line = match tokio::time::timeout_at(read_deadline, lines.next_line()).await {
-            Err(_) => return Err("claude CLI timed out".to_string()),
-            Ok(Ok(Some(l))) => l,
-            Ok(Ok(None)) => break,
-            Ok(Err(e)) => return Err(e.to_string()),
+        let maybe_line: Option<String> = loop {
+            if cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst)) {
+                let _ = child.start_kill();
+                return Ok(acc.trim().to_string());
+            }
+            let poll = (tokio::time::Instant::now() + Duration::from_millis(200)).min(read_deadline);
+            match tokio::time::timeout_at(poll, lines.next_line()).await {
+                Ok(Ok(Some(l))) => break Some(l),
+                Ok(Ok(None)) => break None,
+                Ok(Err(e)) => return Err(e.to_string()),
+                Err(_) => {
+                    if tokio::time::Instant::now() >= read_deadline {
+                        return Err("claude CLI timed out".to_string());
+                    }
+                }
+            }
+        };
+        let line = match maybe_line {
+            Some(l) => l,
+            None => break,
         };
         let line = line.trim();
         if line.is_empty() {

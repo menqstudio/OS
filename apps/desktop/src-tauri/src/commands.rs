@@ -835,16 +835,27 @@ pub fn cancel_reply(conversation_id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Open a second app window (right-click → "Open in new window"), optionally at a
-/// specific route hash so the user can view two parts of the cockpit side by side.
-/// `route` is sanitized to a bare `[A-Za-z0-9_-]` slug and only ever becomes a `#`
-/// fragment on the app's own index.html — it cannot navigate off-origin.
+/// Open a second app window (right-click → "Open in new window") so the user can view two
+/// parts of the cockpit side by side. It always loads the app's own `index.html`
+/// (same-origin — no off-origin navigation); the new window restores the last view from the
+/// app's shared `localStorage`, so the `route` argument is intentionally NOT used in the URL
+/// (a `#fragment` in a `WebviewUrl::App` path does not resolve). A small live-window cap
+/// bounds accidental/injected spawn loops.
 #[tauri::command]
 pub fn open_window(app: tauri::AppHandle, route: Option<String>) -> Result<(), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
-    // The route isn't put in the URL (a `#fragment` in a WebviewUrl::App path fails to
-    // resolve); the new window restores the last view from its shared localStorage.
-    let _ = route;
+    use tauri::Manager;
+    let _ = route; // documented above: route is restored from shared localStorage, not the URL
+    // Cap concurrent secondary windows so a runaway renderer can't exhaust resources.
+    const MAX_SECONDARY_WINDOWS: usize = 8;
+    let open = app
+        .webview_windows()
+        .keys()
+        .filter(|l| l.starts_with("bro-win-"))
+        .count();
+    if open >= MAX_SECONDARY_WINDOWS {
+        return Err(format!("open_window: too many windows open (max {MAX_SECONDARY_WINDOWS})"));
+    }
     static N: AtomicU64 = AtomicU64::new(1);
     let label = format!("bro-win-{}", N.fetch_add(1, Ordering::Relaxed));
     tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App("index.html".into()))
@@ -1048,7 +1059,10 @@ pub async fn stream_reply(
     }
 
     // --- Ungoverned turn: streamed, cancellable via `cancel_reply` (the Stop button) ---
-    let cancel = crate::ai::arm_cancel(&conversation_id);
+    // The guard registers this turn's cancel flag and removes exactly it on drop — covering
+    // every return path AND a future dropped mid-await (its window closed), so no stale entry
+    // leaks and a second window on the same conversation can't clobber this turn's flag.
+    let cancel_guard = crate::ai::arm_cancel(&conversation_id);
     let ch = on_event.clone();
     let result = crate::ai::generate_stream(
         &system,
@@ -1056,10 +1070,9 @@ pub async fn stream_reply(
         move |delta| {
             let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
         },
-        Some(cancel),
+        Some(cancel_guard.flag()),
     )
     .await;
-    crate::ai::disarm_cancel(&conversation_id);
     match result {
         Ok(full) => {
             // A Stop before any token streamed → empty partial: unstick the UI with no

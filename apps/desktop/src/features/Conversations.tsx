@@ -82,9 +82,17 @@ function fmtTime(iso: string): string {
 // (no toast dependency) — reads the clipboard label from the caller.
 function CopyButton({ text, label, doneLabel }: { text: string; label: string; doneLabel: string }) {
   const [done, setDone] = useState(false);
+  const timer = useRef<number | null>(null);
+  // Clear the pending reset timer on unmount (switching conversation remounts the thread) so
+  // it never fires setState on an unmounted component.
+  useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
   const copy = () => {
     void navigator.clipboard?.writeText(text).then(
-      () => { setDone(true); window.setTimeout(() => setDone(false), 1200); },
+      () => {
+        setDone(true);
+        if (timer.current !== null) window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => setDone(false), 1200);
+      },
       () => {},
     );
   };
@@ -228,6 +236,13 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
+      // A failed post must not strand queued follow-ups — drain the next one so the queue
+      // keeps moving (each drained send surfaces its own error if it also fails).
+      if (!cancelledRef.current && queueRef.current.length > 0) {
+        const next = queueRef.current.shift()!;
+        setQueuedCount(queueRef.current.length);
+        void send(next);
+      }
       return;
     }
     setBusy(false);
@@ -277,6 +292,11 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     cancelledRef.current = true;
     queueRef.current = [];
     setQueuedCount(0);
+    // Unstick the UI immediately — even if the backend is mid-stall and takes a beat to
+    // actually kill the child, the composer must return to the user at once. A late done/
+    // return still runs the streaming finally harmlessly (thinking is already false).
+    setThinking(false);
+    setStreamingText('');
     void desktop.cancelReply(conversation.id).catch(() => {});
   };
 

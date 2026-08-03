@@ -280,6 +280,18 @@ export function useIgnition(): {
     } catch {
       /* storage unavailable — treat as cold */
     }
+    // A secondary window (opened via "Open in new window", label `bro-win-*`) skips the gate —
+    // the user already ignited in the window they opened it from. sessionStorage is per-window,
+    // so without this the new window would re-show the Space-to-ignite gate.
+    if (!warm) {
+      try {
+        const label = (globalThis as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } })
+          .__TAURI_INTERNALS__?.metadata?.currentWindow?.label;
+        if (label && label !== 'main') warm = true;
+      } catch {
+        /* not a Tauri window (tests) — treat as cold */
+      }
+    }
     if (warm) {
       setIgnited(true);
       setGateLift(true);
