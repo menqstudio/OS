@@ -2302,6 +2302,207 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
         let i1 = integrations::create(conn, "GitHub", "github")?;
         integrations::set_status(conn, &i1.id, "connected")?;
         integrations::create(conn, "Slack", "slack")?;
+        let i3 = integrations::create(conn, "Linear", "linear")?;
+        integrations::set_status(conn, &i3.id, "connected")?;
+        integrations::create(conn, "PagerDuty", "pagerduty")?;
+
+        // ── Richer starter content ────────────────────────────────────────────
+        // Everything below is honest starter data in the real store — real rows
+        // read back through the same repositories the UI uses. It never touches
+        // the trust chain: no receipt is minted, so message/security trust stays
+        // fail-closed (development_untrusted / NoTrustedManifest), exactly as when
+        // the store is empty. It only makes the cockpit read as a live network
+        // instead of a blank one.
+        let now_ms: i64 = now().parse().unwrap_or(0);
+
+        // A fuller agent network for the lattice, with varied live phases (the
+        // `status` column is honest free text the UI maps to a node state).
+        for (slug, name, role, model) in [
+            ("scout", "Scout", "Research", "claude-sonnet"),
+            ("relay", "Relay", "Comms", "claude-sonnet"),
+            ("ledger", "Ledger", "Finance", "claude-opus"),
+            ("sentry", "Sentry", "Monitoring", "claude-sonnet"),
+        ] {
+            agents::create(conn, slug, name, role, model)?;
+        }
+        for (slug, status) in [
+            ("forge", "working"),
+            ("pixel", "working"),
+            ("probe", "review"),
+            ("shield", "blocked"),
+            ("mason", "completed"),
+            ("relay", "working"),
+            ("sentry", "working"),
+        ] {
+            conn.execute(
+                "UPDATE agents SET status = ?2 WHERE slug = ?1",
+                rusqlite::params![slug, status],
+            )?;
+        }
+
+        // More projects + tasks across statuses so the boards read as active work.
+        let p3 = projects::create(conn, NewProject { name: "AI-OS Cockpit Redesign".into(), description: "Adopt the brops-aios HUD across every view.".into(), priority: "high".into(), workspace_id: None })?;
+        projects::set_status(conn, &p3.id, "active")?;
+        let p4 = projects::create(conn, NewProject { name: "ISP Dispatch Automations".into(), description: "Outage, ONT provisioning and subscriber flows.".into(), priority: "normal".into(), workspace_id: None })?;
+        projects::set_status(conn, &p4.id, "active")?;
+        for (proj, title, prio, done) in [
+            (&p3, "Port the ambient shell", "high", true),
+            (&p3, "Reskin the twelve hero views", "high", true),
+            (&p3, "Seed a live starter workspace", "normal", false),
+            (&p3, "Split per-view instrument CSS", "low", false),
+            (&p4, "Outage auto-dispatch pipeline", "high", false),
+            (&p4, "ONT auto-provision flow", "normal", false),
+            (&p4, "Subscriber welcome sequence", "low", true),
+        ] {
+            let tk = tasks::create(conn, NewTask { project_id: Some(proj.id.clone()), title: title.into(), description: "".into(), priority: prio.into(), assigned_agent_id: None })?;
+            tasks::set_status(conn, &tk.id, if done { "done" } else { "active" })?;
+        }
+
+        // A spread of audit events so the activity ECG has a real heartbeat
+        // (varied types + actors, jittered across the last ~44 hours).
+        let ev_kinds: [(&str, &str, &str, &str); 11] = [
+            ("task.created", "agent", "forge", "task"),
+            ("task.completed", "agent", "probe", "task"),
+            ("run.advanced", "system", "scheduler", "run"),
+            ("message.posted", "user", "gev", "message"),
+            ("approval.requested", "agent", "lezu", "approval"),
+            ("decision.recorded", "user", "gev", "decision"),
+            ("agent.dispatched", "system", "conductor", "agent"),
+            ("automation.fired", "system", "scheduler", "automation"),
+            ("knowledge.added", "agent", "mason", "note"),
+            ("verification.blocked", "system", "broker", "receipt"),
+            ("event.scheduled", "user", "gev", "event"),
+        ];
+        {
+            let mut stmt = conn.prepare(
+                "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            for i in 0..56i64 {
+                let k = ev_kinds[(i as usize) % ev_kinds.len()];
+                let offset = i * 46 * 60 * 1000 + (i % 5) * 7000;
+                let ts = (now_ms - offset).to_string();
+                stmt.execute(rusqlite::params![id(), k.0, k.1, k.2, k.3, id(), ts])?;
+            }
+        }
+
+        // More approvals for the gate (mix of pending and already-decided history).
+        conn.execute(
+            "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, requested_at, decided_at)
+             VALUES (?1,'Deploy runtime config','production broker','A2','medium','pending','mason',?2,NULL),
+                    (?3,'Rotate signing key','key manifest','A3','high','pending','shield',?4,NULL),
+                    (?5,'Restart provisioning worker','ont-provisioner','A1','low','pending','sentry',?6,NULL),
+                    (?7,'Publish release notes','changelog','A1','low','approved','pixel',?8,?9)",
+            rusqlite::params![
+                id(), (now_ms - 3_600_000).to_string(),
+                id(), (now_ms - 7_200_000).to_string(),
+                id(), (now_ms - 1_800_000).to_string(),
+                id(), (now_ms - 90_000_000).to_string(), (now_ms - 86_400_000).to_string()
+            ],
+        )?;
+
+        // More notifications.
+        conn.execute(
+            "INSERT INTO notifications(id, type, severity, title, body, read_at, created_at)
+             VALUES (?1,'run_completed','success','Provisioning run closed','ONT auto-provision finished with evidence.',NULL,?2),
+                    (?3,'approval_required','warning','Key rotation awaits sign-off','A signing-key rotation is queued for your decision.',NULL,?4),
+                    (?5,'run_completed','success','Welcome sequence sent','Subscriber welcome messages delivered.',?6,?6)",
+            rusqlite::params![
+                id(), (now_ms - 600_000).to_string(),
+                id(), (now_ms - 5_400_000).to_string(),
+                id(), (now_ms - 43_200_000).to_string()
+            ],
+        )?;
+
+        // More decisions for the chamber + ledger.
+        decisions::create(conn, "Adopt the brops-aios HUD design", "gev", "The mockup is the target look; port it view by view onto real IPC.")?;
+        decisions::create(conn, "Seed a live starter workspace", "gev", "Ship honest starter rows so the cockpit reads as a live network, trust stays fail-closed.")?;
+        decisions::create(conn, "Per-view CSS is route-lazy", "mason", "Each view's instrument CSS ships in its own chunk to keep first paint lean.")?;
+        decisions::create(conn, "Fonts are separate assets", "pixel", "Variable fonts moved out of the CSS payload into /fonts.")?;
+        decisions::create(conn, "Windows broker runs non-SYSTEM", "shield", "A dedicated low-privilege principal completes the governed turn.")?;
+        decisions::create(conn, "Approvals stay human-in-the-loop", "gev", "No step auto-runs; A2+ actions gate on a deliberate confirm.")?;
+
+        // Richer conversations so the chat canvas reads as active.
+        let c3 = chat::create_conversation(conn, "direct", "Redesign")?;
+        for (role, author, body) in [
+            ("user", "gev", "Bro, the cockpit should look like the aios mockup."),
+            ("agent", "Bro", "Porting the ambient shell and every view onto real IPC now — trust badges stay fail-closed."),
+            ("user", "gev", "And it must feel full, not empty."),
+            ("agent", "Bro", "Seeding a live starter workspace: real rows, honest states, no faked verification."),
+            ("agent", "Pixel", "HUD surfaces, brackets and the power mark are in; light and dark both tuned."),
+        ] {
+            chat::post_message(conn, NewMessage { conversation_id: c3.id.clone(), role: role.into(), author: author.into(), body: body.into() })?;
+        }
+        let c4 = chat::create_conversation(conn, "group", "Dispatch room")?;
+        for (author, body) in [
+            ("Sentry", "NOC alarm cleared on the Kentron node."),
+            ("Relay", "Subscriber notifications delivered for the affected block."),
+            ("Ledger", "SLA credit draft prepared, waiting on finance approval."),
+            ("Scout", "Root cause narrowed to an upstream OLT reset."),
+        ] {
+            chat::post_message(conn, NewMessage { conversation_id: c4.id.clone(), role: "agent".into(), author: author.into(), body: body.into() })?;
+        }
+
+        // More runs + steps for the command reactor.
+        let r3 = runs::create(conn, "Outage auto-dispatch: Kentron", "correlate → locate → dispatch → notify")?;
+        runs::add_step(conn, &r3.id, "Correlate NOC alarms", "3 signals crossed")?;
+        runs::add_step(conn, &r3.id, "Locate fault node", "OLT-Kentron-04")?;
+        let g3 = runs::add_step(conn, &r3.id, "Dispatch nearest crew", "")?;
+        runs::set_step_requires_approval(conn, &g3.id, true)?;
+        runs::add_step(conn, &r3.id, "Notify subscribers", "")?;
+        runs::advance(conn, &r3.id)?;
+        let r4 = runs::create(conn, "ONT auto-provision batch", "detect → bind profile → remote reset")?;
+        runs::add_step(conn, &r4.id, "Detect new ONTs", "12 serials")?;
+        runs::add_step(conn, &r4.id, "Bind service profile", "")?;
+        runs::add_step(conn, &r4.id, "Remote reset", "")?;
+        runs::add_step(conn, &r4.id, "Confirm online", "")?;
+        runs::advance(conn, &r4.id)?;
+        runs::create(conn, "Draft the redesign verification report", "")?;
+
+        // A spread of calendar events (past, today and upcoming) with durations.
+        let day = 86_400_000i64;
+        let hour = 3_600_000i64;
+        let cal: [(&str, &str, &str, i64, i64, i64); 10] = [
+            ("Redesign review", "review", "Cockpit", 0, 10 * hour, 60),
+            ("Dispatch standup", "meeting", "Dispatch room", 0, 14 * hour, 30),
+            ("Key rotation window", "maintenance", "Broker", 1, 2 * hour, 90),
+            ("Foundation sync", "meeting", "Group Chat", 1, 11 * hour, 45),
+            ("ONT rollout", "ops", "Field", 2, 9 * hour, 120),
+            ("Security audit", "review", "Manifest", 3, 15 * hour, 60),
+            ("Subscriber webinar", "event", "Online", 5, 18 * hour, 60),
+            ("SLA finance review", "meeting", "Finance", -1, 16 * hour, 30),
+            ("Post-outage retro", "review", "Dispatch room", -2, 13 * hour, 45),
+            ("Release cut", "ops", "CI", 7, 12 * hour, 30),
+        ];
+        for (title, kind, loc, d, h, dur) in cal {
+            let start = now_ms + d * day + h;
+            events::create(conn, NewEvent {
+                title: title.into(),
+                kind: kind.into(),
+                location: loc.into(),
+                starts_at: start.to_string(),
+                ends_at: Some((start + dur * 60_000).to_string()),
+            })?;
+        }
+
+        // More automations for the manifold (mixed enabled/disabled).
+        let extra_autos = [
+            ("Outage auto-dispatch", "noc.alarm = critical", "dispatch nearest crew", true),
+            ("ONT auto-provision", "olt.new_ont detected", "bind profile + remote reset", true),
+            ("Subscriber welcome", "subscriber.activated", "send welcome sequence", true),
+            ("SLA breach alert", "downtime > sla_threshold", "draft credit + notify finance", false),
+        ];
+        for (name, trigger, action, enabled) in extra_autos {
+            let au = automations::create(conn, NewAutomation { name: name.into(), trigger: trigger.into(), action: action.into() })?;
+            if !enabled {
+                automations::set_enabled(conn, &au.id, false)?;
+            }
+        }
+
+        // A little more knowledge + memory depth.
+        knowledge::create(conn, NewKnowledgeNote { title: "Fail-closed trust".into(), body: "With no production manifest the store resolves NoTrustedManifest; the UI never shows a verified badge it cannot prove.".into(), source: "core/production_trust.rs".into(), tags: "governance,trust".into() })?;
+        knowledge::create(conn, NewKnowledgeNote { title: "Ambient layer".into(), body: "Aurora, mesh field, grid, scanline and cursor light render behind every view at negative z-index.".into(), source: "components/Ambient.tsx".into(), tags: "design,ui".into() })?;
+        memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "The cockpit must look full and alive, like the aios mockup.".into() })?;
 
         Ok(())
     })
