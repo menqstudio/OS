@@ -5,6 +5,7 @@ import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { useToast } from '../components/toast';
 import { desktop, hasBackend } from '../services/desktop';
+import { STR } from './Approvals.strings';
 
 // ── §D `approvals` — Հաստատումներ (Approval gate) ────────────────────────────
 // Mirror, never decide: the desktop READS the engine approval queue and can only
@@ -18,9 +19,15 @@ import { desktop, hasBackend } from '../services/desktop';
 // and a press-and-hold grant key. Every count, tone and verdict is derived from the
 // REAL `listApprovals()` / `readEngineApprovalQueue()` data — nothing is fabricated,
 // and pending stays pending (amber, `idle` mark) until the backend confirms.
+//
+// Every visible/aria string lives in the co-located trilingual catalog
+// `Approvals.strings.ts` (en/hy/ru); shared-i18n strings stay as `t('…')`.
 
 type ActionKind = 'grant' | 'deny' | 'escalate';
 interface Staged { id: string; kind: ActionKind; }
+
+/** Trilingual lookup over the co-located catalog. */
+type L = (k: keyof typeof STR) => string;
 
 const CIRC = 2 * Math.PI * 92; // SLA ring circumference (r=92, matches the mockup)
 const HOLD_MS = 1100;          // deliberate press-and-hold duration to grant
@@ -28,20 +35,20 @@ const HOLD_MS = 1100;          // deliberate press-and-hold duration to grant
 /** Presentation for a REAL approval status — gate tone, pill, power-mark state and
  *  label. Green/`live` is reachable ONLY from a real `approved` status; pending is
  *  always amber + `idle`, never forced green. */
-function statusMeta(status: string, bi: (en: string, hy: string) => string) {
+function statusMeta(status: string, L: L) {
   const s = (status || '').toLowerCase();
   if (s === 'approved' || s === 'granted' || s === 'confirmed')
-    return { gate: 'st-approved', pill: 'live', mark: 'live', face: 'completed', lbl: bi('Approved', 'Հաստատված') };
+    return { gate: 'st-approved', pill: 'live', mark: 'live', face: 'completed', lbl: L('approved') };
   if (s === 'rejected' || s === 'denied')
-    return { gate: 'st-denied', pill: 'off', mark: 'alert', face: 'blocked', lbl: bi('Denied', 'Մերժված') };
+    return { gate: 'st-denied', pill: 'off', mark: 'alert', face: 'blocked', lbl: L('denied') };
   if (s === 'escalated')
-    return { gate: 'st-escalated', pill: 'info', mark: 'thinking', face: 'collaborating', lbl: bi('Escalated · A3', 'Փոխանցված · A3') };
+    return { gate: 'st-escalated', pill: 'info', mark: 'thinking', face: 'collaborating', lbl: L('escalatedA3') };
   if (s === 'expired')
-    return { gate: 'st-expired', pill: 'off', mark: 'idle', face: 'blocked', lbl: bi('Expired · held', 'Ժամկետանց · պահված') };
+    return { gate: 'st-expired', pill: 'off', mark: 'idle', face: 'blocked', lbl: L('expiredHeld') };
   if (s === 'reviewing')
-    return { gate: 'st-reviewing', pill: 'info', mark: 'thinking', face: 'thinking', lbl: bi('Bro reviewing', 'Bro վերլուծում է') };
+    return { gate: 'st-reviewing', pill: 'info', mark: 'thinking', face: 'thinking', lbl: L('broReviewing') };
   // pending / unknown → awaiting a human decision. Amber, idle — never green.
-  return { gate: 'st-waiting', pill: 'warn', mark: 'idle', face: 'waiting', lbl: bi('Awaiting decision', 'Սպասում է որոշման') };
+  return { gate: 'st-waiting', pill: 'warn', mark: 'idle', face: 'waiting', lbl: L('awaitingDecision') };
 }
 
 /** Parse a `requestedAt` that may be an epoch-millis string or an ISO instant. */
@@ -79,8 +86,8 @@ export function Approvals() {
   // Phase-2 is blocked/unreachable — surfaced honestly below the gate, never fabricated.
   const engineQueue = useAsync(() => desktop.readEngineApprovalQueue());
 
-  /** Inline HY/EN the way the thin pages do (shared i18n stays untouched). */
-  const bi = useCallback((en: string, hy: string) => (lang === 'hy' ? hy : en), [lang]);
+  /** Trilingual lookup from the co-located catalog, keyed off the shared `lang`. */
+  const L = useCallback<L>((k) => STR[k][lang] ?? STR[k].en, [lang]);
 
   const [selected, setSelected] = useState(0);
   const [staged, setStaged] = useState<Staged | null>(null);
@@ -134,20 +141,19 @@ export function Approvals() {
       // T-011: real commit is adjudicated behind a Rust-driven native dialog the
       // webview cannot forge; the press-and-hold here is only the in-app pre-commit gate.
       desktop.confirmApproval(id)
-        .then(() => { setVerdict(bi(`Granted: ${label}`, `Հաստատվեց՝ ${label}`)); reload(); })
+        .then(() => { setVerdict(`${L('grantedPrefix')}${label}`); reload(); })
         .catch(onError);
     } else if (kind === 'deny') {
       // T-010: dedicated fail-safe reject path.
       desktop.rejectApproval(id)
-        .then(() => { setVerdict(bi(`Denied: ${label}`, `Մերժվեց՝ ${label}`)); reload(); })
+        .then(() => { setVerdict(`${L('deniedPrefix')}${label}`); reload(); })
         .catch(onError);
     } else {
       // Honest empty request path: no engine escalate command exists in this build.
-      setVerdict(bi(`Escalation unavailable for ${label}`, `Բարձրացումն անհասանելի է՝ ${label}`));
-      toast(bi('Escalation isn’t wired to the engine yet — no request was sent.',
-        'Բարձրացումը դեռ միացված չէ շարժիչին — հարցում չուղարկվեց։'), 'info');
+      setVerdict(`${L('escalationUnavailablePre')}${label}`);
+      toast(L('escalationNotWired'), 'info');
     }
-  }, [data, bi, reload]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, L, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Commit the staged (dialog-confirmed) deny/escalate.
   const commit = useCallback(() => {
@@ -222,13 +228,13 @@ export function Approvals() {
   const header = (
     <header className="pageHead reveal" style={{ '--i': 0 } as CSSProperties}>
       <div>
-        <span className="eyebrow">{bi('HUMAN-IN-THE-LOOP · CONTROL GATE', 'ՄԱՐԴ-ՀԱՆԳՈՒՅՑ ՀՍԿԻՉ · HUMAN-IN-THE-LOOP')}</span>
+        <span className="eyebrow">{L('eyebrowHitl')}</span>
         <h1>{t('nav.approvals')}</h1>
         <p className="sub">{t('approvals.subtitle')}</p>
       </div>
       <div className="right">
         <span className={`pill ${pendingCount > 0 ? 'warn' : 'live'}`}>
-          <b className="mono">{pendingCount}</b>&nbsp;{bi('pending', 'սպասում է')}
+          <b className="mono">{pendingCount}</b>&nbsp;{L('pending')}
         </span>
       </div>
     </header>
@@ -251,7 +257,7 @@ export function Approvals() {
   // ── error / blocked ────────────────────────────────────────────────────────
   if (error) {
     if (!hasBackend()) {
-      return frame(<Card><ErrorState message={bi('Engine unreachable.', 'Շարժիչն անհասանելի է։')} /></Card>);
+      return frame(<Card><ErrorState message={L('engineUnreachable')} /></Card>);
     }
     if (isAuthError(error)) {
       // `blocked` — owner not authenticated: gate locked, all actions disabled.
@@ -259,10 +265,9 @@ export function Approvals() {
         <Card>
           <div className="ap-blocked" role="alert">
             <div className="ap-blocked-glyph" aria-hidden="true">🔒</div>
-            <div className="empty-title">{bi('Owner not authenticated', 'Տերը նույնականացված չէ')}</div>
+            <div className="empty-title">{L('ownerNotAuthenticated')}</div>
             <div className="muted ap-blocked-body">
-              {bi('The approval gate is locked until the owner authenticates with the engine. Grant, deny and escalate stay disabled — the desktop never decides on its own.',
-                'Հաստատման դարպասը կողպված է, մինչև տերը նույնականացվի շարժիչի հետ։ Հաստատել, մերժել և բարձրացնել գործողություններն անջատված են — desktop-ը երբեք ինքնուրույն որոշում չի կայացնում։')}
+              {L('gateLockedBody')}
             </div>
             <div style={{ marginTop: 12 }}>
               <Button small onClick={reload}>{t('action.retry')}</Button>
@@ -273,7 +278,7 @@ export function Approvals() {
     }
     // `error` — engine unreachable.
     const denied = /denied|not permitted|permission/i.test(error);
-    const msg = denied ? `${t('state.permissionDenied')}: ${error}` : `${bi('Engine unreachable.', 'Շարժիչն անհասանելի է։')} ${error}`;
+    const msg = denied ? `${t('state.permissionDenied')}: ${error}` : `${L('engineUnreachable')} ${error}`;
     return frame(<Card><ErrorState message={msg} onRetry={reload} retryLabel={t('action.retry')} /></Card>);
   }
 
@@ -285,9 +290,8 @@ export function Approvals() {
         <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
         <EmptyState
           glyph="✅"
-          title={bi('Gate clear — no pending approvals', 'Դարպասը մաքուր է — չկան սպասող հաստատումներ')}
-          hint={bi('New engine requests will appear here as they arrive.',
-            'Շարժիչի նոր հարցումները կհայտնվեն այստեղ, երբ ստացվեն։')}
+          title={L('gateClear')}
+          hint={L('newRequestsHint')}
         />
       </section>,
     );
@@ -295,7 +299,7 @@ export function Approvals() {
 
   // ── default: the seated gate + queue + real-derived stats strip ────────────
   const stagedItem = staged ? items.find((a) => a.id === staged.id) ?? null : null;
-  const meta = seated ? statusMeta(seated.status, bi) : statusMeta('pending', bi);
+  const meta = seated ? statusMeta(seated.status, L) : statusMeta('pending', L);
   const when = seated ? parseWhen(seated.requestedAt) : null;
   const isPending = !!seated && seated.status === 'pending';
   const opened = !!seated && /^(approved|granted|confirmed)$/i.test(seated.status);
@@ -309,10 +313,10 @@ export function Approvals() {
   const ringOffset = opened ? 0 : pushed ? CIRC : isPending ? (holding ? 0 : CIRC) : 0;
 
   const tiles: Array<[number, string, string]> = [
-    [items.length, bi('in queue', 'հերթում'), 'as-info'],
-    [pendingCount, bi('pending now', 'սպասում է հիմա'), 'as-warn'],
-    [approvedCount, bi('approved', 'հաստատված'), 'as-mint'],
-    [deniedCount, bi('denied · held', 'մերժված'), ''],
+    [items.length, L('inQueue'), 'as-info'],
+    [pendingCount, L('pendingNow'), 'as-warn'],
+    [approvedCount, L('approvedLower'), 'as-mint'],
+    [deniedCount, L('deniedHeld'), ''],
   ];
 
   return frame(
@@ -322,7 +326,7 @@ export function Approvals() {
         className={`gate surface soft lg hud reveal ${meta.gate}`}
         style={{ '--i': 1 } as CSSProperties}
         aria-live="polite"
-        aria-label={seated ? bi(`Approval gate — ${seated.actionType}, ${meta.lbl}`, `Հաստատման դարպաս — ${seated.actionType}, ${meta.lbl}`) : undefined}
+        aria-label={seated ? `${L('approvalGatePrefix')}${seated.actionType}, ${meta.lbl}` : undefined}
       >
         <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
         <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
@@ -330,7 +334,7 @@ export function Approvals() {
 
         <div className="g-head">
           <div className="gh-title">
-            <span className="eyebrow">{bi('CONTROL GATE', 'ՀԱՍՏԱՏՄԱՆ ԴԱՐՊԱՍ · CONTROL GATE')}</span>
+            <span className="eyebrow">{L('controlGate')}</span>
             <h2>{seated?.actionType}</h2>
           </div>
           <div className="gh-tags">
@@ -343,19 +347,19 @@ export function Approvals() {
         <div className={`g-stage${opened ? ' opened' : ''}${pushed ? ' pushed' : ''}`}>
 
           <div className="g-req">
-            <span className="micro">{bi('REQUESTING AGENT', 'ՊԱՀԱՆՋՈՂ ԳՈՐԾԱԿԱԼ')}</span>
+            <span className="micro">{L('requestingAgent')}</span>
             <div className="gr-id">
               <span aria-hidden="true"><Mark state={meta.mark} size={40} /></span>
               <div className="gr-who">
                 <b>{seated?.requestedBy || '—'}</b>
-                <span>{bi('requester', 'հայցող')}</span>
+                <span>{L('requester')}</span>
               </div>
             </div>
             <p className="gr-reason">{seated?.target}</p>
           </div>
 
           <div className="g-seal">
-            <span className="s-cap micro">{bi('ACTION HELD', 'ԳՈՐԾՈՂՈՒԹՅՈՒՆԸ ՊԱՀՎԱԾ Է')}</span>
+            <span className="s-cap micro">{L('actionHeld')}</span>
             <div className="seal-lock" aria-hidden="true">
               <svg className="sla-ring" viewBox="0 0 200 200">
                 <circle className="sr-track" cx="100" cy="100" r="92" />
@@ -375,20 +379,20 @@ export function Approvals() {
               </div>
               <span className="held" />
               <span className="tier-ring">{seated?.level}</span>
-              {opened && <span className="stamp">{bi('APPROVED', 'ՀԱՍՏԱՏՎԱԾ')}</span>}
+              {opened && <span className="stamp">{L('approvedStamp')}</span>}
             </div>
             <div className="sla-read">
               <b className="mono sla-time" aria-hidden="true">
                 {isPending && when ? fmtElapsed(now - when.getTime()) : (opened ? '✓' : pushed ? '—' : '·')}
               </b>
               <span className="micro">
-                {isPending ? bi('waiting', 'սպասում է') : meta.lbl}
+                {isPending ? L('waiting') : meta.lbl}
               </span>
             </div>
           </div>
 
           <div className="g-impact">
-            <span className="micro">{bi('IMPACT SCOPE', 'ԱԶԴԵՑՈՒԹՅԱՆ ՇԱՌԱՎԻՂ')}</span>
+            <span className="micro">{L('impactScope')}</span>
             <div className="im-scope"><span className="dot" aria-hidden="true" />{seated?.target}</div>
             <div className="im-grid">
               <div className="im-row">
@@ -400,11 +404,11 @@ export function Approvals() {
                 <span className="im-v"><b className="mono">{seated?.riskLevel}</b></span>
               </div>
               <div className="im-row">
-                <span className="micro">{bi('Requested by', 'Հայցող')}</span>
+                <span className="micro">{L('requestedByLabel')}</span>
                 <span className="im-v"><b className="mono">{seated?.requestedBy}</b></span>
               </div>
               <div className="im-row">
-                <span className="micro">{bi('Requested at', 'Հայցվել է')}</span>
+                <span className="micro">{L('requestedAtLabel')}</span>
                 <span className="im-v"><b className="mono">{when ? dateFmt.format(when) : (seated?.requestedAt || '—')}</b></span>
               </div>
             </div>
@@ -415,20 +419,20 @@ export function Approvals() {
         {/* ── AUTHORIZATION BAR — the owner is the key ── */}
         <div className="g-authbar">
           <span className="ab-meta micro">
-            {bi(`Requested ${when ? dateFmt.format(when) : (seated?.requestedAt || '—')} · `, `Պահանջվել է ${when ? dateFmt.format(when) : (seated?.requestedAt || '—')} · `)}
-            <b>{seated?.level}</b>{bi(' level', ' մակարդակ')}
+            {`${L('requestedWord')} ${when ? dateFmt.format(when) : (seated?.requestedAt || '—')} · `}
+            <b>{seated?.level}</b>{L('levelSuffix')}
           </span>
           <div className="ab-actions">
             <button
               type="button" className="ab-btn deny" disabled={!isPending}
               onClick={() => seated && setStaged({ id: seated.id, kind: 'deny' })}
-              aria-label={bi('Deny — reject this action', 'Մերժել — մերժել գործողությունը')}
-            >✕ {bi('Deny', 'Մերժել')}</button>
+              aria-label={L('denyAria')}
+            >✕ {L('deny')}</button>
             <button
               type="button" className="ab-btn escalate" disabled={!isPending}
               onClick={() => seated && setStaged({ id: seated.id, kind: 'escalate' })}
-              aria-label={bi('Escalate for higher review', 'Բարձրացնել՝ ավելի բարձր վերանայման')}
-            >↑ {bi('Escalate A3', 'Փոխանցել A3')}</button>
+              aria-label={L('escalateForReview')}
+            >↑ {L('escalateA3')}</button>
             <button
               type="button" className={`ab-btn grant${holding ? ' holding' : ''}`} disabled={!isPending}
               onPointerDown={(e) => { e.preventDefault(); startHold(); }}
@@ -438,13 +442,11 @@ export function Approvals() {
               onKeyDown={(e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); startHold(); } }}
               onKeyUp={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); cancelHold(); } }}
               onBlur={cancelHold}
-              aria-label={opened
-                ? bi('Approved', 'Հաստատված')
-                : bi('Press and hold to grant', 'Սեղմիր և պահիր՝ հաստատելու')}
+              aria-label={opened ? L('approved') : L('pressHoldAria')}
             >
               <span className="grant-fill" aria-hidden="true" />
               <span className="grant-lbl">
-                {opened ? `✓ ${bi('Approved', 'Հաստատված')}` : bi('Press & hold to grant', 'Սեղմիր և պահիր՝ հաստատելու')}
+                {opened ? `✓ ${L('approved')}` : L('pressHoldGrant')}
               </span>
             </button>
           </div>
@@ -452,7 +454,7 @@ export function Approvals() {
       </section>
 
       <div className="ap-hint muted" aria-hidden="true">
-        {`↑/↓ ${bi('select', 'ընտրել')} · ${bi('hold Grant to confirm', 'պահիր՝ հաստատելու')} · d ${bi('deny', 'մերժել')} · e ${bi('escalate', 'բարձրացնել')}`}
+        {`↑/↓ ${L('select')} · ${L('holdGrantConfirm')} · d ${L('denyLower')} · e ${L('escalateLower')}`}
       </div>
 
       {/* Engine approval-QUEUE mirror (read-only). Until the engine queue read answers,
@@ -462,10 +464,8 @@ export function Approvals() {
         <div className="ap-blocked" role="note" style={{ padding: 'var(--s3) var(--s4)', textAlign: 'left' }}>
           <span className="muted">
             {engineQueue.data.state === 'unreachable'
-              ? bi('Engine approval queue unreachable — showing the local mirror only.',
-                'Շարժիչի հաստատումների հերթն անհասանելի է — ցուցադրվում է միայն տեղական արտացոլումը։')
-              : bi('Engine approval queue is sealed — showing the local mirror only.',
-                'Շարժիչի հաստատումների հերթը կնքված է — ցուցադրվում է միայն տեղական արտացոլումը։')}
+              ? L('queueUnreachable')
+              : L('queueSealed')}
             {engineQueue.data.reason ? ` (${engineQueue.data.reason})` : ''}
           </span>
         </div>
@@ -473,15 +473,15 @@ export function Approvals() {
 
       {/* ── PENDING QUEUE ── */}
       <div className="sec-head" style={{ marginTop: 26 }}>
-        <h2>{bi('Approval queue', 'Հաստատման հերթ')}</h2>
+        <h2>{L('approvalQueue')}</h2>
         <span className="note">
-          {bi('Select a row to seat it at the gate · ', 'Ընտրիր տողը՝ դարպասին բերելու համար · ')}
-          <b className="mono">{items.length}</b>{bi(' in queue', ' գործողություն հերթում')}
+          {L('selectRowHint')}
+          <b className="mono">{items.length}</b>{L('inQueueSuffix')}
         </span>
       </div>
-      <div className="queue" role="list" aria-label={bi('Approval queue', 'Հաստատումների հերթ')}>
+      <div className="queue" role="list" aria-label={L('approvalQueueAria')}>
         {items.map((a, i) => {
-          const m = statusMeta(a.status, bi);
+          const m = statusMeta(a.status, L);
           const rw = parseWhen(a.requestedAt);
           const isSel = i === sel;
           const rowPending = a.status === 'pending';
@@ -492,7 +492,7 @@ export function Approvals() {
               className={`q-row surface soft rise state-${m.face}${isSel ? ' on' : ''}`}
               style={{ '--i': i + 2 } as CSSProperties}
               aria-pressed={isSel}
-              aria-label={bi(`${a.actionType}, ${a.target}, ${m.lbl}`, `${a.actionType}, ${a.target}, ${m.lbl}`)}
+              aria-label={`${a.actionType}, ${a.target}, ${m.lbl}`}
               onClick={() => setSelected(i)}
             >
               <span className={`q-tier tier-${a.level}`}>{a.level}</span>
@@ -504,12 +504,12 @@ export function Approvals() {
                 </span>
               </span>
               <span className="q-impact">
-                <span className="micro">{bi('Target', 'Ազդեցություն')}</span>
+                <span className="micro">{L('target')}</span>
                 <b className="mono">{a.target}</b>
                 <span className="q-rev ok">{a.riskLevel}</span>
               </span>
               <span className="q-sla">
-                <span className="micro">{bi('Waiting', 'Ժամկետ')}</span>
+                <span className="micro">{L('waitingLabel')}</span>
                 <b className="mono">{rowPending && rw ? fmtElapsed(now - rw.getTime()) : '—'}</b>
               </span>
               <span className={`pill ${m.pill}`}>{m.lbl}</span>
@@ -519,7 +519,7 @@ export function Approvals() {
       </div>
 
       {/* ── approval-stats strip (real-derived counts) ── */}
-      <section className="surface soft astats-wrap rise" style={{ '--i': 2 } as CSSProperties} aria-label={bi('Approval statistics', 'Հաստատումների վիճակագրություն')}>
+      <section className="surface soft astats-wrap rise" style={{ '--i': 2 } as CSSProperties} aria-label={L('approvalStats')}>
         <div className="astats">
           {tiles.map(([n, label, cls], i) => (
             <div className={`astat rise${cls ? ' ' + cls : ''}`} style={{ '--i': i + 2 } as CSSProperties} key={label}>
@@ -536,17 +536,15 @@ export function Approvals() {
         <ConfirmDialog
           title={
             staged.kind === 'deny'
-              ? bi('Confirm denial', 'Մերժե՞լ')
-              : bi('Escalate for higher review', 'Բարձրացնե՞լ')
+              ? L('confirmDenial')
+              : L('escalateForReview')
           }
           message={
             staged.kind === 'deny'
-              ? bi(`Deny “${stagedItem.actionType}” on ${stagedItem.target}? This is the fail-safe reject path.`,
-                `Մերժե՞լ «${stagedItem.actionType}»՝ ${stagedItem.target}-ի վրա։ Սա fail-safe մերժման ուղին է։`)
-              : bi('Escalation is not wired to the engine in this build — confirming sends no request.',
-                'Բարձրացումը այս տարբերակում միացված չէ շարժիչին — հաստատումը հարցում չի ուղարկում։')
+              ? `${L('denyDialogA')}${stagedItem.actionType}${L('denyDialogB')}${stagedItem.target}${L('denyDialogC')}`
+              : L('escalateNotWiredMsg')
           }
-          confirmLabel={staged.kind === 'deny' ? t('action.reject') : bi('Escalate', 'Բարձրացնել')}
+          confirmLabel={staged.kind === 'deny' ? t('action.reject') : L('escalate')}
           cancelLabel={t('action.cancel')}
           onConfirm={commit}
           onCancel={() => setStaged(null)}

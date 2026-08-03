@@ -6,6 +6,15 @@ import { useAsync } from '../hooks/useAsync';
 import { desktop, hasBackend } from '../services/desktop';
 import { StripChart, type StripPoint } from '../components/charts/Chart';
 import type { ActivityEvent } from '../domain/entities';
+import {
+  STR,
+  blipLabelStr,
+  rateSummaryStr,
+  liveTextStr,
+  telemetryLostStr,
+  peakInlineStr,
+  hiddenTailStr,
+} from './Activity.strings';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // activity ♥ Զարկերակ — the "System Pulse Monitor".
@@ -75,14 +84,12 @@ function useCountUp(target: number, animate: boolean): number {
   return value;
 }
 
-interface Bi { (en: string, hy: string): string }
-
 export function Activity() {
   const { t, lang } = useApp();
   const reduced = usePrefersReducedMotion();
   const state = useAsync<ActivityEvent[]>(() => desktop.listActivity());
 
-  const bi = useCallback<Bi>((en, hy) => (lang === 'hy' ? hy : en), [lang]);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   const [frozen, setFrozen] = useState(false);
   const [sel, setSel] = useState(0);
@@ -114,11 +121,8 @@ export function Activity() {
 
   const blipLabel = useCallback((e: ActivityEvent, i: number) => {
     const target = e.entityId ?? e.entityType ?? '';
-    return bi(
-      `Beat ${i + 1}: ${e.eventType}${target ? ` on ${target}` : ''}`,
-      `Զարկ ${i + 1}․ ${e.eventType}${target ? ` · ${target}` : ''}`,
-    );
-  }, [bi]);
+    return blipLabelStr(lang, i + 1, e.eventType, target);
+  }, [lang]);
 
   // One strip point per real event — StripChart owns geometry + roving keyboard.
   const points = useMemo<StripPoint[]>(
@@ -211,10 +215,7 @@ export function Activity() {
     ? `${String(analytics.busiestHour).padStart(2, '0')}:00`
     : '—';
   // Accessible one-line summary for the (decorative) rate histogram.
-  const rateSummary = bi(
-    `Activity rate — ${metrics.count} beats across ${analytics.binCount} time bins, peak ${analytics.peakCount} around ${peakTime}.`,
-    `Ակտիվության հաճախություն — ${metrics.count} զարկ ${analytics.binCount} ժամային կապոցում, գագաթ՝ ${analytics.peakCount} ${peakTime}-ի մոտ։`,
-  );
+  const rateSummary = rateSummaryStr(lang, metrics.count, analytics.binCount, analytics.peakCount, peakTime);
 
   const selEvent = displayed[sel];
   const openEvent = opened !== null ? displayed[opened] : null;
@@ -222,25 +223,27 @@ export function Activity() {
   // Text-equivalent live region (§D a11y). Only real facts: beat count, derived
   // rate when a real time-span exists, and the focused beat.
   const liveText = state.loading
-    ? bi('Loading activity beatline…', 'Բեռնվում է ակտիվության զարկագիծը…')
-    : bi(
-      `${metrics.count} activity beats.${metrics.rate != null ? ` About ${metrics.rate} per minute.` : ''}${selEvent ? ` Focused beat ${sel + 1} of ${displayed.length}: ${selEvent.eventType}.` : ''}`,
-      `${metrics.count} ակտիվության զարկ։${metrics.rate != null ? ` Մոտ ${metrics.rate} զարկ/րոպե։` : ''}${selEvent ? ` Կիզակետում՝ զարկ ${sel + 1}/${displayed.length}՝ ${selEvent.eventType}։` : ''}`,
+    ? L('loadingBeatline')
+    : liveTextStr(
+      lang,
+      metrics.count,
+      metrics.rate,
+      selEvent ? { pos: sel + 1, total: displayed.length, eventType: selEvent.eventType } : null,
     );
 
   // Header status pill + power mark, driven by the real load state.
   const markState = state.loading ? 'boot' : state.error ? 'alert' : 'live';
   const pillTone = state.loading ? 'info' : state.error ? 'warn' : 'live';
   const pillText = state.loading
-    ? bi('CONNECTING', 'ՄԻԱՆՈՒՄ')
-    : state.error ? bi('OFFLINE', 'ԱՆՋԱՏՎԱԾ') : bi('RHYTHM · STABLE', 'ՌԻԹՄ · ԿԱՅՈՒՆ');
+    ? L('connecting')
+    : state.error ? L('offline') : L('rhythmStable');
 
   // ── Resolve the §D state → the main region ──────────────────────────────────
   let main: ReactNode;
   if (state.loading && state.data === null) {
     main = (
       <StateFrame>
-        <div className="pa-skel" aria-busy="true" aria-label={bi('Loading beatline', 'Բեռնվում է զարկագիծը')}>
+        <div className="pa-skel" aria-busy="true" aria-label={L('loadingBeatlineShort')}>
           <Skeleton rows={4} />
         </div>
       </StateFrame>
@@ -252,10 +255,9 @@ export function Activity() {
       <StateFrame>
         <div className="pa-blocked" role="status">
           <div className="pa-blocked-glyph" aria-hidden="true">⧉</div>
-          <div className="pa-blocked-title">{bi('Telemetry stream blocked', 'Հեռաչափման հոսքն արգելափակված է')}</div>
+          <div className="pa-blocked-title">{L('telemetryBlocked')}</div>
           <p className="note" style={{ maxWidth: 460, marginInline: 'auto' }}>
-            {bi('The runtime telemetry stream did not clear the governance wall. No live data crosses until it is approved.',
-              'Հեռաչափման հոսքը չանցավ կառավարման պատը։ Կենդանի տվյալ չի փոխանցվում մինչ հաստատում։')}
+            {L('telemetryBlockedBody')}
           </p>
           <p className="micro pa-blocked-reason">{state.error}</p>
           <div style={{ marginTop: 12 }}><Button small onClick={state.reload}>{t('action.retry')}</Button></div>
@@ -266,7 +268,7 @@ export function Activity() {
     main = (
       <StateFrame>
         <ErrorState
-          message={bi(`Telemetry stream lost — ${state.error}`, `Հեռաչափման հոսքը կորավ — ${state.error}`)}
+          message={telemetryLostStr(lang, state.error)}
           onRetry={state.reload}
           retryLabel={t('action.retry')}
         />
@@ -277,8 +279,8 @@ export function Activity() {
       <StateFrame>
         <EmptyState
           glyph="♥"
-          title={bi('No activity yet', 'Դեռ ակտիվություն չկա')}
-          hint={bi('Beats will appear here as the engine records events.', 'Զարկերը կհայտնվեն այստեղ, երբ շարժիչը գրանցի իրադարձություններ։')}
+          title={L('noActivity')}
+          hint={L('noActivityHint')}
         />
       </StateFrame>
     );
@@ -293,17 +295,17 @@ export function Activity() {
           {/* left: the ECG strip (real events → StripChart) */}
           <div className="mon-wrap">
             <div className="mon-top">
-              <span className="eyebrow">{bi('LEAD · SYSTEM', 'LEAD · ՀԱՄԱԿԱՐԳ')}</span>
+              <span className="eyebrow">{L('leadSystem')}</span>
               <span className="mon-clock mono">{clock}</span>
               <button
                 type="button"
                 className={`chip mon-freeze${frozen ? ' on' : ''}`}
                 aria-pressed={frozen}
                 onClick={() => setFrozen((f) => !f)}
-                title={bi('Freeze', 'Սառեցնել')}
+                title={L('freeze')}
               >
                 <span className="fz-ico" aria-hidden="true" />
-                {frozen ? bi('Frozen', 'Սառեցված') : bi('Freeze', 'Սառեցնել')}
+                {frozen ? L('frozen') : L('freeze')}
               </button>
             </div>
 
@@ -315,8 +317,7 @@ export function Activity() {
               sweep={!reduced}
               frozen={frozen}
               beats={ECG_BEATS}
-              ariaLabel={bi('Activity beatline — arrow keys scrub beats, Enter opens a beat, Space freezes',
-                'Ակտիվության զարկագիծ — սլաքներով անցեք զարկերով, Enter՝ բացել, Space՝ սառեցնել')}
+              ariaLabel={L('beatlineAria')}
               onSelect={setSel}
               onOpen={setOpened}
               onToggleFreeze={() => setFrozen((f) => !f)}
@@ -325,19 +326,19 @@ export function Activity() {
 
             {/* vitals readout — real derived numbers only */}
             <div className="vitals">
-              <Vread i={4} label={bi('System pulse', 'Համակարգի զարկ')} value={metrics.rate ?? '—'} unit={bi('/min', 'զարկ/ր')} />
-              <Vread i={5} label={bi('Event types', 'Տեսակներ')} value={metrics.types} unit={bi('types', 'տիպ')} />
-              <Vread i={6} label={bi('Plotted', 'Ցուցադրված')} value={displayed.length} unit={`/${metrics.count}`} />
-              <Vread i={7} label={bi('Last beat', 'Վերջին զարկ')} value={clock} />
-              <Vread i={8} label={bi('Peak beats', 'Գագաթ')} value={analytics.peakCount} unit={peakTime} />
-              <Vread i={9} label={bi('Busiest hour', 'Ամենազբաղ ժամ')} value={busiestHourLabel} unit={analytics.busiestHourCount ? String(analytics.busiestHourCount) : undefined} />
+              <Vread i={4} label={L('systemPulse')} value={metrics.rate ?? '—'} unit={L('perMin')} />
+              <Vread i={5} label={L('eventTypes')} value={metrics.types} unit={L('typesUnit')} />
+              <Vread i={6} label={L('plotted')} value={displayed.length} unit={`/${metrics.count}`} />
+              <Vread i={7} label={L('lastBeat')} value={clock} />
+              <Vread i={8} label={L('peakBeats')} value={analytics.peakCount} unit={peakTime} />
+              <Vread i={9} label={L('busiestHour')} value={busiestHourLabel} unit={analytics.busiestHourCount ? String(analytics.busiestHourCount) : undefined} />
             </div>
 
             {/* rate histogram — real event counts per time bin (decorative bars + text summary) */}
             <div className="pa-rate">
               <div className="mon-top">
-                <span className="eyebrow">{bi('EVENTS FLOW · /min', 'ԿԱՆՉԵՐԻ ՀՈՍՔ · /Ր')}</span>
-                <span className="mon-clock mono">{bi(`peak ${analytics.peakCount} · ${peakTime}`, `գագաթ ${analytics.peakCount} · ${peakTime}`)}</span>
+                <span className="eyebrow">{L('eventsFlow')}</span>
+                <span className="mon-clock mono">{peakInlineStr(lang, analytics.peakCount, peakTime)}</span>
               </div>
               <div className="bars" role="img" aria-label={rateSummary}>
                 {analytics.bins.map((c, i) => (
@@ -358,12 +359,12 @@ export function Activity() {
               <span className="vc-ring r2" aria-hidden="true" />
               <span className="vc-disc">
                 <b className="num">{beatCount}</b>
-                <span className="micro">{bi('beats', 'զարկ')}</span>
+                <span className="micro">{L('beats')}</span>
               </span>
             </div>
             <div className="vc-cap">
               <b>{clock}</b>
-              <span className="micro">{bi('last event', 'վերջին իրադարձություն')}</span>
+              <span className="micro">{L('lastEvent')}</span>
             </div>
           </aside>
         </section>
@@ -372,8 +373,8 @@ export function Activity() {
         <div className="pboard">
           <section className="surface soft ptimeline rise" style={cv(2)}>
             <div className="sec-head">
-              <h2>{bi('Beat timeline', 'Զարկերի ժամանակագիծ')}</h2>
-              <span className="note">{bi('recent system events · click to locate on the strip', 'վերջին համակարգային իրադարձությունները · սեղմիր՝ շերտի վրա գտնելու')}</span>
+              <h2>{L('beatTimeline')}</h2>
+              <span className="note">{L('beatTimelineHint')}</span>
             </div>
             <div className="beatline">
               {timeline.map(({ e, i }) => {
@@ -386,7 +387,7 @@ export function Activity() {
                     key={e.id}
                     className={`node${i === sel ? ' sel' : ''}${isNow ? ' now' : ''}`}
                     aria-pressed={i === sel}
-                    aria-label={`${blipLabel(e, i)} · ${bi('intensity', 'ինտենսիվ')} ${intensity}`}
+                    aria-label={`${blipLabel(e, i)} · ${L('intensity')} ${intensity}`}
                     title={blipLabel(e, i)}
                     onClick={() => { setSel(i); setOpened(i); }}
                   >
@@ -396,7 +397,7 @@ export function Activity() {
                     </div>
                     <p className="nd-lbl">{target || e.eventType}</p>
                     <div className="nd-amp">
-                      <span className="micro">{bi('intensity', 'ինտենսիվ')}</span>
+                      <span className="micro">{L('intensity')}</span>
                       <span className="meter" aria-hidden="true" style={{ ['--p']: `${intensity}%` } as CSSProperties}><span /></span>
                       <span className="mono nd-av">{intensity}</span>
                     </div>
@@ -405,19 +406,19 @@ export function Activity() {
               })}
             </div>
             {hiddenCount > 0 && (
-              <p className="note pa-tail">{bi(`+${hiddenCount} earlier beats not plotted`, `+${hiddenCount} ավելի վաղ զարկ չեն գծագրված`)}</p>
+              <p className="note pa-tail">{hiddenTailStr(lang, hiddenCount)}</p>
             )}
           </section>
 
           <section className="surface soft pmetrics rise" style={cv(3)}>
             <div className="sec-head">
-              <h2>{bi('Vitals', 'Կենսանշաններ')}</h2>
-              <span className="pill info">{bi('record only', 'միայն գրանցում')}</span>
+              <h2>{L('vitals')}</h2>
+              <span className="pill info">{L('recordOnly')}</span>
             </div>
 
             {/* real distribution meters — honest tallies straight off the events */}
             <div className="pa-grp">
-              <span className="eyebrow">{bi('By event type', 'Ըստ տեսակի')}</span>
+              <span className="eyebrow">{L('byEventType')}</span>
               <div className="signs" role="list">
                 {analytics.byType.rows.slice(0, 6).map(([type, count]) => (
                   <div className="sign" role="listitem" key={type}>
@@ -430,11 +431,11 @@ export function Activity() {
             </div>
 
             <div className="pa-grp">
-              <span className="eyebrow">{bi('Top actors', 'Ըստ դերակատարի')}</span>
+              <span className="eyebrow">{L('topActors')}</span>
               <div className="signs" role="list">
                 {analytics.byActor.rows.slice(0, 6).map(([actor, count]) => (
                   <div className="sign" role="listitem" key={actor}>
-                    <span className="micro">{actor === analytics.SYS ? bi('system', 'համակարգ') : actor}</span>
+                    <span className="micro">{actor === analytics.SYS ? L('system') : actor}</span>
                     <span className="meter" aria-hidden="true" style={{ ['--p']: `${Math.round((100 * count) / analytics.byActor.max)}%` } as CSSProperties}><span /></span>
                     <b className="mono">{count}</b>
                   </div>
@@ -443,27 +444,26 @@ export function Activity() {
             </div>
 
             <p className="note pa-grp" role="note">
-              {bi('Live runtime telemetry (response, network load, error rate) is not wired to this build, so those vitals are omitted rather than shown as numbers. The beats and counts above are the real event record.',
-                'Կենդանի հեռաչափումը (արձագանք, ցանցի բեռ, սխալի հաճախ.) միացված չէ այս կառուցվածքին, ուստի այդ կենսանշանները բաց են թողնված, ոչ թե ցուցադրված որպես թվեր։ Վերևի զարկերը և հաշվարկները իրական գրառումն են։')}
+              {L('telemetryOmitted')}
             </p>
             <div className="wire" aria-hidden="true" />
 
             {openEvent && (
-              <div className="surface soft pa-detail" role="region" aria-label={bi('Beat detail', 'Զարկի մանրամասն')}>
+              <div className="surface soft pa-detail" role="region" aria-label={L('beatDetail')}>
                 <div className="pa-detail-head">
                   <div className="row" style={{ gap: 8 }}>
                     <span className="pill info">{openEvent.eventType}</span>
                     <span className="pa-detail-title">{blipLabel(openEvent, opened ?? 0)}</span>
                   </div>
-                  <button type="button" className="iconbtn" onClick={() => setOpened(null)} title={bi('Close (Esc)', 'Փակել (Esc)')} aria-label={bi('Close beat detail', 'Փակել')}>✕</button>
+                  <button type="button" className="iconbtn" onClick={() => setOpened(null)} title={L('closeEsc')} aria-label={L('closeBeatDetail')}>✕</button>
                 </div>
                 <div className="pa-detail-grid">
-                  <PaField label={bi('Actor', 'Դերակատար')}>
-                    <span className="row" style={{ gap: 6 }}><Avatar name={openEvent.actorId ?? 'system'} />{openEvent.actorId ?? bi('system', 'համակարգ')}</span>
+                  <PaField label={L('actor')}>
+                    <span className="row" style={{ gap: 6 }}><Avatar name={openEvent.actorId ?? 'system'} />{openEvent.actorId ?? L('system')}</span>
                   </PaField>
-                  <PaField label={bi('Entity', 'Օբյեկտ')}>{openEvent.entityType ?? '—'}</PaField>
-                  <PaField label={bi('Entity ID', 'Օբյեկտի ID')}><code className="pa-mono">{openEvent.entityId ?? '—'}</code></PaField>
-                  <PaField label={bi('When', 'Ե՞րբ')}>{fmtWhen(openEvent.createdAt)}</PaField>
+                  <PaField label={L('entity')}>{openEvent.entityType ?? '—'}</PaField>
+                  <PaField label={L('entityId')}><code className="pa-mono">{openEvent.entityId ?? '—'}</code></PaField>
+                  <PaField label={L('when')}>{fmtWhen(openEvent.createdAt)}</PaField>
                 </div>
               </div>
             )}
@@ -479,8 +479,8 @@ export function Activity() {
       <div className="v-activity">
         <header className="pageHead reveal" style={cv(0)}>
           <div>
-            <span className="eyebrow">{bi('SYSTEM PULSE · VITALS MONITOR', 'ՀԱՄԱԿԱՐԳԻ ԶԱՐԿԵՐԱԿ · VITALS MONITOR')}</span>
-            <h1>{bi('System pulse', 'Համակարգի զարկ')} ♥ Զարկերակ</h1>
+            <span className="eyebrow">{L('pageEyebrow')}</span>
+            <h1>{L('systemPulse')} ♥ Զարկերակ</h1>
             <p className="sub">{t('activity.subtitle')}</p>
           </div>
           <div className="right">

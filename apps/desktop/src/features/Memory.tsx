@@ -9,6 +9,7 @@ import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { MEMORY_KINDS } from '../domain/enums';
 import type { MemoryEntry } from '../domain/entities';
+import { STR, liveCount, refCount } from './Memory.strings';
 
 // ---------------------------------------------------------------------------
 // §D `memory` page — re-skinned to the brops-aios «Ժամանակի հիշողություն /
@@ -26,13 +27,10 @@ import type { MemoryEntry } from '../domain/entities';
 // prefers-reduced-motion via the global aios.css.
 // ---------------------------------------------------------------------------
 
-// Bilingual inline strings for copy that has no shared i18n key yet (the thin
-// pages inline the same way). `t()` is still used for every existing key. New
-// Armenian labels are taken verbatim from the mockup's vocabulary.
-type Lang = 'hy' | 'en' | 'ru';
-function pick(lang: Lang, en: string, hy: string): string {
-  return lang === 'hy' ? hy : en; // ru falls back to en, matching the shell
-}
+// Page-local copy lives in `Memory.strings.ts` as trilingual entries (en/hy/ru)
+// so Russian is correct rather than falling back to English. `t()` is still used
+// for every existing shared key; `L(key)` resolves a page-local label for the
+// active language, and the two count phrases use the parameterised builders.
 
 // Visual tone per memory kind → aios `.pill` modifier (presentation only — no
 // data invented; the kind text itself is always rendered for non-visual convey).
@@ -134,14 +132,11 @@ function NewEntryForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
 // desktop store exposes no `update_memory` command yet) ----------------------
 function EditEntryForm({ entry, onClose }: { entry: MemoryEntry; onClose: () => void }) {
   const { t, lang } = useApp();
-  const L = (en: string, hy: string) => pick(lang, en, hy);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   return (
-    <Modal title={L('Edit memory', 'Խմբագրել հիշողությունը')} onClose={onClose}>
+    <Modal title={L('editTitle')} onClose={onClose}>
       <div className="mem-note" role="note">
-        {L(
-          'Editing a memory is not wired yet — the desktop store has no update command. Fields are shown read-only.',
-          'Հիշողության խմբագրումը դեռ միացված չէ — store-ը թարմացման հրաման չունի։ Դաշտերը միայն ընթերցման համար են։',
-        )}
+        {L('editNotWired')}
       </div>
       <FormRow label={t('memory.content')}>
         <Textarea value={entry.content} readOnly />
@@ -157,7 +152,7 @@ function EditEntryForm({ entry, onClose }: { entry: MemoryEntry; onClose: () => 
         <Button
           variant="primary"
           disabled
-          title={L('Editing arrives with the update command.', 'Խմբագրումը գալիս է թարմացման հրամանի հետ։')}
+          title={L('editArrives')}
         >
           {t('action.save')}
         </Button>
@@ -181,7 +176,7 @@ function MemoryDetail(
   },
 ) {
   const { t, lang } = useApp();
-  const L = (en: string, hy: string) => pick(lang, en, hy);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const sealed = links.filter((l) => l.sealed);
 
   return (
@@ -189,7 +184,7 @@ function MemoryDetail(
       <div className="mr-head">
         <Mark state="idle" size={40} />
         <div className="mr-id">
-          <span className="eyebrow">{`${entry.kind.toUpperCase()} · ${L('MEMORY', 'ՀԻՇՈՂՈՒԹՅՈՒՆ')}`}</span>
+          <span className="eyebrow">{`${entry.kind.toUpperCase()} · ${L('memoryEyebrow')}`}</span>
           <b>{entry.scope}</b>
         </div>
       </div>
@@ -197,22 +192,19 @@ function MemoryDetail(
       <div className="mr-flags">
         <span className={`pill ${kindPill[entry.kind] ?? 'info'}`}>{entry.kind}</span>
         {entry.pinned && <span className="pill info">{t('memory.pinned')}</span>}
-        {blocked && <span className="pill warn">{L('Sealed', 'Կնքված')}</span>}
+        {blocked && <span className="pill warn">{L('sealed')}</span>}
       </div>
 
       {blocked && (
         <div className="mem-blocked" role="status">
-          <strong>{L('References sealed evidence', 'Հղում է կնքված ապացույցին')}</strong>
+          <strong>{L('refSealedEvidence')}</strong>
           <div className="micro" style={{ marginTop: 4, textTransform: 'none', letterSpacing: 0 }}>
-            {L(
-              'This memory points at evidence the local store cannot surface. The referenced material stays sealed:',
-              'Այս հիշողությունը հղում է ապացույցի, որը լոկալ store-ը չի կարող ցուցադրել։ Հղված նյութը մնում է կնքված․',
-            )}
+            {L('sealedExplain')}
           </div>
           <ul className="mem-links" style={{ marginTop: 6 }}>
             {sealed.map((l) => (
               <li key={l.name}>
-                <span className="mem-link mem-link--sealed" title={L('Sealed / unavailable', 'Կնքված / անհասանելի')}>
+                <span className="mem-link mem-link--sealed" title={L('sealedUnavailable')}>
                   ⬡ [[{l.name}]]
                 </span>
               </li>
@@ -231,21 +223,21 @@ function MemoryDetail(
       <div className="mr-meta">
         <span>
           <b className="mono">{fmtDate(entry.createdAt)}</b>
-          <i>{L('formed', 'ձևավորվել է')}</i>
+          <i>{L('formed')}</i>
         </span>
         <span>
           <b className="mono">{fmtDate(entry.updatedAt)}</b>
-          <i>{L('updated', 'թարմացվել է')}</i>
+          <i>{L('updated')}</i>
         </span>
         <span>
           <b className="mono">{links.length}</b>
-          <i>{L('links', 'հղում')}</i>
+          <i>{L('links')}</i>
         </span>
       </div>
 
       {links.length > 0 && (
         <div className="mem-refs">
-          <div className="micro">{L('References', 'Հղումներ')}</div>
+          <div className="micro">{L('references')}</div>
           {/* text-list fallback for the link graph (a11y) */}
           <ul className="mem-links" role="list">
             {links.map((l) => (
@@ -282,7 +274,7 @@ function MemoryDetail(
 
 export function Memory() {
   const { t, lang, focus, clearFocus } = useApp();
-  const L = (en: string, hy: string) => pick(lang, en, hy);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<MemoryEntry | null>(null);
@@ -363,10 +355,10 @@ export function Memory() {
   // only honestly-countable facts appear here.
   const pinnedCount = useMemo(() => all.filter((m) => m.pinned).length, [all]);
   const metrics = useMemo(() => [
-    { v: all.length, label: L('memories · store', 'հիշողություն · store'), tone: '' },
-    { v: pinnedCount, label: L('pinned', 'ամրակցված'), tone: 'info' },
-    { v: blockedIds.size, label: L('sealed refs', 'կնքված հղում'), tone: 'mint' },
-    { v: graph.length, label: L('links', 'հղում'), tone: '' },
+    { v: all.length, label: L('memoriesStore'), tone: '' },
+    { v: pinnedCount, label: L('pinned'), tone: 'info' },
+    { v: blockedIds.size, label: L('sealedRefs'), tone: 'mint' },
+    { v: graph.length, label: L('links'), tone: '' },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [all.length, pinnedCount, blockedIds.size, graph.length, lang]);
 
@@ -412,12 +404,12 @@ export function Memory() {
 
   // Live-region announcement of load state / result count.
   const liveMessage = s.loading && s.data === null
-    ? L('Loading memories…', 'Հիշողությունները բեռնվում են…')
+    ? L('loading')
     : s.error
-      ? L('Could not load memories.', 'Չհաջողվեց բեռնել հիշողությունները։')
+      ? L('loadError')
       : all.length === 0
-        ? L('Bro has no memories yet.', 'Bro-ն դեռ հիշողություններ չունի։')
-        : L(`${filtered.length} of ${all.length} memories.`, `${filtered.length} / ${all.length} հիշողություն։`);
+        ? L('noMemoriesLive')
+        : liveCount(lang, filtered.length, all.length);
 
   const openFirst = () => {
     if (filtered.length > 0) setSelectedId(filtered[0].id);
@@ -431,12 +423,12 @@ export function Memory() {
 
       <header className="pageHead">
         <div>
-          <span className="eyebrow">{L('MEMORY FIELD · TEMPORAL FIELD', 'ՀԻՇՈՂՈՒԹՅԱՆ ԴԱՇՏ · TEMPORAL FIELD')}</span>
+          <span className="eyebrow">{L('fieldEyebrow')}</span>
           <h1>{t('nav.memory')}</h1>
           <p className="sub">{t('memory.subtitle')}</p>
         </div>
         <div className="right">
-          <span className="pill info">{L('Verifiable memory', 'Ստուգելի հիշողություն')}</span>
+          <span className="pill info">{L('verifiable')}</span>
           <Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>
         </div>
       </header>
@@ -462,11 +454,11 @@ export function Memory() {
         {/* ── Memories browser ─────────────────────────────────────────── */}
         <section className="surface soft mem-browser">
           <div className="sec-head">
-            <h2>{L('Memories', 'Հիշողություններ')}</h2>
+            <h2>{L('memoriesHeading')}</h2>
             <span className="note">
               <b className="mono">{filtered.length}</b>{' / '}
               <b className="mono">{all.length}</b>{' '}
-              {L('in field', 'դաշտում')}
+              {L('inField')}
             </span>
           </div>
 
@@ -476,11 +468,11 @@ export function Memory() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); openFirst(); } }}
-            placeholder={L('Search memories…  ( / )', 'Փնտրիր հիշողություններ…  ( / )')}
-            aria-label={L('Search memories', 'Փնտրիր հիշողություններ')}
+            placeholder={L('searchPlaceholder')}
+            aria-label={L('searchLabel')}
           />
 
-          <div className="mem-filters" role="group" aria-label={L('Filter by type', 'Զտել ըստ տեսակի')}>
+          <div className="mem-filters" role="group" aria-label={L('filterByType')}>
             {filterKinds.map((k) => (
               <button
                 key={k}
@@ -489,7 +481,7 @@ export function Memory() {
                 aria-pressed={kindFilter === k}
                 onClick={() => setKindFilter(k)}
               >
-                {k === 'all' ? L('All', 'Բոլորը') : k}
+                {k === 'all' ? L('all') : k}
               </button>
             ))}
           </div>
@@ -501,14 +493,14 @@ export function Memory() {
           ) : all.length === 0 ? (
             <EmptyState
               glyph="❖"
-              title={L('Bro has no memories yet', 'Bro-ն դեռ հիշողություններ չունի')}
-              hint={L('Create the first memory to build persistent context.', 'Ստեղծիր առաջին հիշողությունը՝ մշտական համատեքստ կառուցելու համար։')}
+              title={L('noMemoriesTitle')}
+              hint={L('noMemoriesHint')}
             />
           ) : filtered.length === 0 ? (
             <EmptyState
               glyph="◍"
-              title={L('No memories match', 'Համընկնող հիշողություն չկա')}
-              hint={L('Adjust the search or type filter.', 'Փոխիր որոնումը կամ տեսակի զտիչը։')}
+              title={L('noMatch')}
+              hint={L('noMatchHint')}
             />
           ) : (
             <ul className="mem-list" role="list">
@@ -529,7 +521,7 @@ export function Memory() {
                         {m.pinned && <span className="tag mem-flag">{t('memory.pinned')}</span>}
                         {isBlocked && (
                           <span className="tag mem-flag mem-flag--sealed">
-                            {L('Sealed', 'Կնքված')}
+                            {L('sealed')}
                           </span>
                         )}
                       </span>
@@ -561,19 +553,18 @@ export function Memory() {
                 <div className="mr-head">
                   <Mark state="thinking" size={40} />
                   <div className="mr-id">
-                    <span className="eyebrow">{L('MEMORY CORE', 'ՀԻՇՈՂՈՒԹՅԱՆ ՄԻՋՈՒԿ')}</span>
-                    <b>{L('Pick a memory to inspect it', 'Ընտրիր հիշողություն՝ ստուգելու համար')}</b>
+                    <span className="eyebrow">{L('memoryCore')}</span>
+                    <b>{L('pickMemory')}</b>
                   </div>
                 </div>
                 <p className="mr-body">
-                  {L('Enter opens the focused item · n new · e edit · / search',
-                    'Enter՝ բացել · n՝ նոր · e՝ խմբագրել · /՝ որոնում')}
+                  {L('coreHint')}
                 </p>
                 <div className="mr-core-grid">
-                  <div className="mc-cell"><b className="mono">{all.length}</b><span className="micro">{L('memories', 'հիշողություն')}</span></div>
-                  <div className="mc-cell"><b className="mono">{pinnedCount}</b><span className="micro">{L('pinned', 'ամրակցված')}</span></div>
-                  <div className="mc-cell"><b className="mono">{blockedIds.size}</b><span className="micro">{L('sealed refs', 'կնքված հղում')}</span></div>
-                  <div className="mc-cell"><b className="mono">{graph.length}</b><span className="micro">{L('links', 'հղում')}</span></div>
+                  <div className="mc-cell"><b className="mono">{all.length}</b><span className="micro">{L('memoriesUnit')}</span></div>
+                  <div className="mc-cell"><b className="mono">{pinnedCount}</b><span className="micro">{L('pinned')}</span></div>
+                  <div className="mc-cell"><b className="mono">{blockedIds.size}</b><span className="micro">{L('sealedRefs')}</span></div>
+                  <div className="mc-cell"><b className="mono">{graph.length}</b><span className="micro">{L('links')}</span></div>
                 </div>
               </div>
             )}
@@ -581,15 +572,15 @@ export function Memory() {
 
           <section className="surface soft mem-graph">
             <div className="sec-head">
-              <h2>{L('Link graph', 'Հղումների գրաֆ')}</h2>
-              <span className="note">{L('derived from real [[links]]', 'իրական [[հղումներից]]')}</span>
+              <h2>{L('linkGraph')}</h2>
+              <span className="note">{L('derivedFrom')}</span>
             </div>
             {graph.length === 0 ? (
               <div className="micro" style={{ textTransform: 'none', letterSpacing: 0 }}>
-                {L('No [[links]] between memories yet.', 'Հիշողությունների միջև դեռ [[հղումներ]] չկան։')}
+                {L('noLinks')}
               </div>
             ) : (
-              <ul className="mem-links" role="list" aria-label={L('Memory links', 'Հիշողությունների հղումներ')}>
+              <ul className="mem-links" role="list" aria-label={L('memoryLinks')}>
                 {graph.map((g) => (
                   <li key={g.name} className="mem-graph-row">
                     {g.targetId ? (
@@ -605,8 +596,8 @@ export function Memory() {
                     )}
                     <span className="micro mem-graph-meta">
                       {g.sealed
-                        ? L('sealed', 'կնքված')
-                        : L(`${g.sources} ref${g.sources === 1 ? '' : 's'}`, `${g.sources} հղում`)}
+                        ? L('sealedLower')
+                        : refCount(lang, g.sources)}
                     </span>
                   </li>
                 ))}
@@ -620,8 +611,8 @@ export function Memory() {
       {!s.error && all.length > 0 && (
         <section className="surface soft mem-metrics">
           <div className="sec-head">
-            <h2>{L('Memory state', 'Հիշողության վիճակ')}</h2>
-            <span className="note">{L('counted from the store', 'store-ից հաշված')}</span>
+            <h2>{L('memoryState')}</h2>
+            <span className="note">{L('countedStore')}</span>
           </div>
           <div className="mstats">
             {metrics.map((x, i) => (

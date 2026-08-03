@@ -6,6 +6,7 @@ import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { Metric } from '../domain/entities';
+import { STR } from './Analytics.strings';
 
 // ---------------------------------------------------------------------------
 // analytics ◈ Վերլուծություն — §D page, re-dressed into the AI-OS "Signal Deck".
@@ -23,7 +24,8 @@ import type { Metric } from '../domain/entities';
 // aggregate instead of inventing districts, an autonomy ring, or a channel mix.
 // ---------------------------------------------------------------------------
 
-type L = (en: string, hy: string) => string;
+// Trilingual translator: resolves a STR key to the active language (en fallback).
+type Tr = (k: keyof typeof STR) => string;
 
 // --- staggered-entrance index → the shared `.reveal/.rise` CSS reads `--i` -----
 // (the entrance itself is stilled under prefers-reduced-motion by aios.css).
@@ -88,37 +90,35 @@ function useCountUp(value: number, reduced: boolean): number {
 // + accessible one-line summary + <details> table fallback). This page only maps
 // the real `Metric[]` to the primitive's data shape and supplies bilingual labels.
 function AnPlot(
-  { metrics, hidden, onToggle, L }:
-  { metrics: Metric[]; hidden: ReadonlySet<string>; onToggle: (key: string) => void; L: L },
+  { metrics, hidden, onToggle, tr }:
+  { metrics: Metric[]; hidden: ReadonlySet<string>; onToggle: (key: string) => void; tr: Tr },
 ) {
   const visible = metrics.filter((m) => !hidden.has(m.key));
   const total = visible.reduce((sum, m) => sum + m.value, 0);
   const top = visible.reduce<Metric | null>((best, m) => (best && best.value >= m.value ? best : m), null);
 
   const summary = visible.length === 0
-    ? L('No nodes selected.', 'Ընտրված հանգույց չկա։')
-    : L(
-      `${visible.length} nodes, total ${total}.${top ? ` Highest: ${top.label} (${top.value}).` : ''}`,
-      `${visible.length} հանգույց, ընդամենը ${total}։${top ? ` Ամենաբարձրը՝ ${top.label} (${top.value})։` : ''}`,
-    );
+    ? tr('noNodesSelected')
+    : `${visible.length} ${tr('nodesTotal')} ${total}${tr('sentenceDot')}`
+      + (top ? ` ${tr('highestPrefix')}${top.label} (${top.value})${tr('sentenceDot')}` : '');
 
   return (
     <BarChart
       data={metrics.map((m) => ({ key: m.key, label: m.label, value: m.value }))}
-      caption={L('Distribution by node', 'Բաշխում ըստ հանգույցի')}
+      caption={tr('distByNode')}
       summary={summary}
       hidden={hidden}
       onToggle={onToggle}
-      legendLabel={L('Toggle nodes', 'Փոխարկել հանգույցները')}
-      showLabel={L('Show node', 'Ցուցադրել հանգույցը')}
-      hideLabel={L('Hide node', 'Թաքցնել հանգույցը')}
-      hiddenWord={L('hidden', 'թաքցված')}
-      allHiddenNote={L('All nodes hidden — enable one in the legend.', 'Բոլոր հանգույցները թաքցված են․ միացրեք որևէ մեկը լեգենդից։')}
-      totalLabel={L('Total across nodes', 'Ընդամենը հանգույցներով')}
-      nodeHeader={L('Node', 'Հանգույց')}
-      valueHeader={L('Value', 'Արժեք')}
-      shareHeader={L('Share', 'Բաժին')}
-      tableToggle={L('Show data table', 'Ցուցադրել աղյուսակը')}
+      legendLabel={tr('toggleNodes')}
+      showLabel={tr('showNode')}
+      hideLabel={tr('hideNode')}
+      hiddenWord={tr('hiddenWord')}
+      allHiddenNote={tr('allNodesHidden')}
+      totalLabel={tr('totalAcrossNodes')}
+      nodeHeader={tr('nodeHeader')}
+      valueHeader={tr('value')}
+      shareHeader={tr('share')}
+      tableToggle={tr('showDataTable')}
     />
   );
 }
@@ -127,10 +127,10 @@ function AnPlot(
 // Names what's missing (with a keyboard-reachable <details> table) instead of
 // fabricating a breakdown. Reused for the districts, autonomy and channel panels.
 function AnHonest(
-  { panelClass, title, note, glyph, hint, tableHint, segLabel, valLabel, i, L }:
+  { panelClass, title, note, glyph, hint, tableHint, segLabel, valLabel, i, tr }:
   {
     panelClass: string; title: string; note?: string; glyph: string; hint: string;
-    tableHint: string; segLabel: string; valLabel: string; i: number; L: L;
+    tableHint: string; segLabel: string; valLabel: string; i: number; tr: Tr;
   },
 ) {
   return (
@@ -139,9 +139,9 @@ function AnHonest(
         <h2>{title}</h2>
         {note ? <span className="note">{note}</span> : null}
       </div>
-      <EmptyState glyph={glyph} title={L('No breakdown available', 'Բաժանում առկա չէ')} hint={hint} />
+      <EmptyState glyph={glyph} title={tr('noBreakdown')} hint={hint} />
       <details className="an-table">
-        <summary>{L('Show data table', 'Ցուցադրել աղյուսակը')}</summary>
+        <summary>{tr('showDataTable')}</summary>
         <table>
           <caption className="an-sr">{title}</caption>
           <thead>
@@ -161,7 +161,7 @@ function AnHonest(
 
 export function Analytics() {
   const { t, lang } = useApp();
-  const L: L = (en, hy) => (lang === 'hy' ? hy : en);
+  const Lz: Tr = (k) => STR[k][lang] ?? STR[k].en;
   const s = useAsync(() => desktop.getAnalytics(), []);
 
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
@@ -182,10 +182,10 @@ export function Analytics() {
 
   // aria-live announcement: current data state (node count from real metrics).
   const liveMsg = useMemo(() => {
-    if (s.loading && s.data === null) return L('Loading analytics…', 'Վերլուծությունը բեռնվում է…');
-    if (s.error) return L('Analytics unavailable.', 'Վերլուծությունն անհասանելի է։');
-    if (metrics.length === 0) return L('No analytics data.', 'Վերլուծության տվյալներ չկան։');
-    return L(`${metrics.length} nodes.`, `${metrics.length} հանգույց։`);
+    if (s.loading && s.data === null) return Lz('loadingAnalytics');
+    if (s.error) return Lz('analyticsUnavailable');
+    if (metrics.length === 0) return Lz('noAnalyticsData');
+    return `${metrics.length} ${Lz('nodesDot')}`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.loading, s.error, s.data, metrics.length, lang]);
 
@@ -210,10 +210,7 @@ export function Analytics() {
               <div className="an-blocked-glyph" aria-hidden="true">⛒</div>
               <div className="empty-title">{t('state.permissionDenied')}</div>
               <p className="muted" style={{ maxWidth: 460, margin: '4px auto 0' }}>
-                {L(
-                  'This analytics aggregate is governed. The request was blocked at the wall; nothing was read.',
-                  'Այս վերլուծական ագրեգատը կառավարվող է։ Հարցումը արգելափակվեց պատի մոտ․ ոչինչ չկարդացվեց։',
-                )}
+                {Lz('governedBlocked')}
               </p>
               <div style={{ marginTop: 12 }}>
                 <Button small onClick={s.reload}>{t('action.retry')}</Button>
@@ -238,21 +235,21 @@ export function Analytics() {
           <DeckChrome />
 
           <div className="an-deck-top">
-            <span className="eyebrow">{L('Distribution by node', 'Բաշխում ըստ հանգույցի')}</span>
-            <span className="pill live">{L('STREAM · LIVE', 'ՀՈՍՔ · ԿԵՆԴԱՆԻ')}</span>
+            <span className="eyebrow">{Lz('distByNode')}</span>
+            <span className="pill live">{Lz('streamLive')}</span>
           </div>
 
-          <AnPlot metrics={metrics} hidden={hidden} onToggle={toggle} L={L} />
+          <AnPlot metrics={metrics} hidden={hidden} onToggle={toggle} tr={Lz} />
 
           <div className="wire live" aria-hidden="true" />
 
           <div className="an-deck-foot">
             <span className="capsule">
               <b>{metrics.length}</b>
-              <span>{L('nodes', 'հանգույց')}</span>
+              <span>{Lz('nodes')}</span>
             </span>
             <span className="an-foot-r">
-              <span className="micro">{L('Total across nodes', 'Ընդամենը հանգույցներով')}</span>
+              <span className="micro">{Lz('totalAcrossNodes')}</span>
               <b className="mono">{totalShown}</b>
             </span>
           </div>
@@ -262,48 +259,39 @@ export function Analytics() {
         <div className="an-lower">
           <AnHonest
             panelClass="an-districts"
-            title={L('Distribution by district', 'Բաշխում ըստ շրջանների')}
-            note={L('routed calls', 'ուղղորդված կանչ')}
+            title={Lz('distByDistrict')}
+            note={Lz('routedCalls')}
             glyph="◍"
-            hint={L(
-              'The engine does not expose a per-district aggregate yet, so no breakdown is shown.',
-              'Շարժիչը դեռ չի տրամադրում ըստ շրջանի ագրեգատ, ուստի բաժանում ցուցադրված չէ։',
-            )}
-            tableHint={L('No district aggregate from the engine.', 'Շարժիչից շրջանի ագրեգատ չկա։')}
-            segLabel={L('District', 'Շրջան')}
-            valLabel={L('Value', 'Արժեք')}
+            hint={Lz('districtHint')}
+            tableHint={Lz('districtTableHint')}
+            segLabel={Lz('district')}
+            valLabel={Lz('value')}
             i={3}
-            L={L}
+            tr={Lz}
           />
 
           <aside className="an-side">
             <AnHonest
               panelClass="an-auto"
-              title={L('Autonomy', 'Ինքնավարություն')}
+              title={Lz('autonomy')}
               glyph="◑"
-              hint={L(
-                'The engine does not expose an autonomy-level aggregate yet, so no split is shown.',
-                'Շարժիչը դեռ չի տրամադրում ինքնավարության մակարդակի ագրեգատ, ուստի բաժանում ցուցադրված չէ։',
-              )}
-              tableHint={L('No autonomy aggregate from the engine.', 'Շարժիչից ինքնավարության ագրեգատ չկա։')}
-              segLabel={L('Segment', 'Հատված')}
-              valLabel={L('Value', 'Արժեք')}
+              hint={Lz('autonomyHint')}
+              tableHint={Lz('autonomyTableHint')}
+              segLabel={Lz('segment')}
+              valLabel={Lz('value')}
               i={4}
-              L={L}
+              tr={Lz}
             />
             <AnHonest
               panelClass="an-chan"
-              title={L('Channel split', 'Ալիքների բաժանում')}
+              title={Lz('channelSplit')}
               glyph="◈"
-              hint={L(
-                'The engine does not expose a per-channel aggregate yet, so no split is shown.',
-                'Շարժիչը դեռ չի տրամադրում ըստ ալիքի ագրեգատ, ուստի բաժանում ցուցադրված չէ։',
-              )}
-              tableHint={L('No channel aggregate from the engine.', 'Շարժիչից ալիքի ագրեգատ չկա։')}
-              segLabel={L('Channel', 'Ալիք')}
-              valLabel={L('Value', 'Արժեք')}
+              hint={Lz('channelHint')}
+              tableHint={Lz('channelTableHint')}
+              segLabel={Lz('channel')}
+              valLabel={Lz('value')}
               i={5}
-              L={L}
+              tr={Lz}
             />
           </aside>
         </div>
@@ -318,12 +306,12 @@ export function Analytics() {
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
       <header className="pageHead reveal" style={iv(0)}>
         <div>
-          <span className="eyebrow">{L('INTELLIGENCE CENTRE · ANALYTICS', 'ԻՆՏԵԼԵԿՏԻ ԿԵՆՏՐՈՆ · ANALYTICS')}</span>
+          <span className="eyebrow">{Lz('intelCentre')}</span>
           <h1>{t('nav.analytics')}</h1>
           <p className="sub">{t('analytics.subtitle')}</p>
         </div>
         <div className="right">
-          <span className="pill live">{L('STREAM · LIVE', 'ՀՈՍՔ · ԿԵՆԴԱՆԻ')}</span>
+          <span className="pill live">{Lz('streamLive')}</span>
           <Mark state="live" size={30} />
         </div>
       </header>

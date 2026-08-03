@@ -8,6 +8,7 @@ import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
 import type { GovernanceRead } from '../services/governance';
 import type { Decision } from '../domain/entities';
+import { STR } from './Decisions.strings';
 
 // Scoped supplements to the global `aios.css` decision-chamber design. The page is
 // re-skinned to the "VERDICT CHAMBER" mockup, but every value it shows is REAL:
@@ -70,9 +71,10 @@ export function Decisions() {
   const [evidenceRead, setEvidenceRead] = useState<GovernanceRead | null>(null);
   const [announce, setAnnounce] = useState('');
 
-  // Bilingual inline strings (HY + EN) the way the thin pages do; shared i18n
-  // keys are used where they already exist.
-  const L = (en: string, hy: string) => (lang === 'hy' ? hy : en);
+  // Visible strings are re-sourced from `Decisions.strings.ts` (EN + HY + RU), so the
+  // Russian locale is correct too; shared i18n keys via `t(...)` are used where they
+  // already exist. Falls back to EN if a locale value is ever missing.
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   const dateFmt = useMemo(
     () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
@@ -99,10 +101,10 @@ export function Decisions() {
     const isBlocked = (d: Decision) => /block|reject|den|fail|abort|error/.test((d.status || '').toLowerCase());
     const isPending = (d: Decision) => /wait|pend|propos|review|hold|open|draft/.test((d.status || '').toLowerCase());
     return [
-      { v: ledger.length, label: L('decisions · ledger', 'որոշում · մատյան'), tone: '' },
-      { v: new Set(ledger.map((d) => d.owner).filter(Boolean)).size, label: L('owners', 'հեղինակ'), tone: 'info' },
-      { v: ledger.filter(isPending).length, label: L('awaiting', 'սպասում է'), tone: 'warn' },
-      { v: ledger.filter(isBlocked).length, label: L('blocked', 'արգելափակված'), tone: 'warn' },
+      { v: ledger.length, label: L('ledgerCount'), tone: '' },
+      { v: new Set(ledger.map((d) => d.owner).filter(Boolean)).size, label: L('owners'), tone: 'info' },
+      { v: ledger.filter(isPending).length, label: L('awaiting'), tone: 'warn' },
+      { v: ledger.filter(isBlocked).length, label: L('blocked'), tone: 'warn' },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ledger, lang]);
@@ -153,10 +155,7 @@ export function Decisions() {
   const openEvidence = (d: Decision | null) => {
     if (!d) return;
     setEvidenceOpenId(d.id);
-    setAnnounce(L(
-      `Reading the engine evidence chain for “${d.title}”…`,
-      `Կարդում ենք «${d.title}» որոշման շարժիչի ապացույցների շղթան…`,
-    ));
+    setAnnounce(`${L('readingChainFor')}${d.title}${L('readingChainForEnd')}`);
   };
 
   // Fetch the evidence chain (read-only) whenever a decision's evidence viewer opens.
@@ -169,9 +168,8 @@ export function Decisions() {
       if (!alive) return;
       setEvidenceRead(r);
       setAnnounce(r.state === 'ok'
-        ? L('Engine evidence chain mirrored.', 'Շարժիչի ապացույցների շղթան արտացոլվեց։')
-        : L('Evidence chain is sealed — the engine chain is not exposed to the desktop.',
-          'Ապացույցների շղթան կնքված է — շարժիչի շղթան հասանելի չէ desktop-ին։'));
+        ? L('chainMirrored')
+        : L('chainSealedAnnounce'));
     });
     return () => { alive = false; };
   }, [evidenceOpenId]);
@@ -187,14 +185,14 @@ export function Decisions() {
       else nextIdx = ledger.length - 1;
       setSelectedIndex(nextIdx);
       const d = ledger[nextIdx];
-      if (d) setAnnounce(L(`Selected: ${d.title}`, `Ընտրված է՝ ${d.title}`));
+      if (d) setAnnounce(`${L('selectedPrefix')}${d.title}`);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       openEvidence(ledger[selIdx] ?? null);
     }
   };
 
-  const ledgerLabel = L('Decision ledger (append-only, read-only)', 'Որոշումների մատյան (միայն ավելացվող, կարդալու)');
+  const ledgerLabel = L('ledgerAria');
 
   const renderLedger = () => {
     if (loading) return <Skeleton rows={6} />;
@@ -207,9 +205,8 @@ export function Decisions() {
       return (
         <EmptyState
           glyph="⚖"
-          title={L('No decisions yet', 'Դեռ որոշումներ չկան')}
-          hint={L('The engine ledger is empty. Accepted decisions will appear here.',
-            'Շարժիչի մատյանը դատարկ է։ Ընդունված որոշումները կհայտնվեն այստեղ։')}
+          title={L('noDecisions')}
+          hint={L('ledgerEmptyHint')}
         />
       );
     }
@@ -258,16 +255,15 @@ export function Decisions() {
     if (!evidenceOpen) {
       return (
         <div className="dec-hint">
-          {L('Press Enter or Open evidence to inspect this decision’s engine chain.',
-            'Enter-ով կամ «Բացել ապացույցները»-ով դիտիր այս որոշման շարժիչի շղթան։')}
+          {L('evidenceInspectHint')}
         </div>
       );
     }
     if (evidenceRead === null) {
       return (
         <div role="status">
-          <span className="ev-tag micro">{L('EVIDENCE CHAIN', 'ԱՊԱՑՈՒՅՑԻ ՇՂԹԱ')}</span>
-          <p>{L('Reading the engine evidence chain…', 'Կարդում ենք շարժիչի ապացույցների շղթան…')}</p>
+          <span className="ev-tag micro">{L('evidenceChainLabel')}</span>
+          <p>{L('readingChainShort')}</p>
         </div>
       );
     }
@@ -276,11 +272,10 @@ export function Decisions() {
       return (
         <div role="note">
           <span className="ev-tag micro">
-            {L(`ENGINE EVIDENCE · ${n}`, `ՇԱՐԺԻՉԻ ԱՊԱՑՈՒՅՑ · ${n}`)}
+            {L('engineEvidenceCount')}{n}
           </span>
           <p>
-            {L('Mirrored read-only from the engine chain. The desktop displays it; it never decides on it.',
-              'Արտացոլված է շարժիչի շղթայից միայն ընթերցմամբ։ Desktop-ը ցուցադրում է, բայց երբեք չի որոշում։')}
+            {L('mirroredReadOnly')}
           </p>
         </div>
       );
@@ -290,17 +285,14 @@ export function Decisions() {
       <div role="note">
         <span className="ev-tag micro">
           {evidenceRead.state === 'unreachable'
-            ? L('Evidence chain unreachable', 'Ապացույցների շղթան անհասանելի է')
-            : L('Evidence sealed', 'Ապացույցները կնքված են')}
+            ? L('evidenceUnreachable')
+            : L('evidenceSealed')}
         </span>
         <p>
-          {L(
-            'The engine evidence chain is read-only and is not exposed to the desktop yet. The ledger mirrors the decision; it never holds or fabricates the sealed evidence.',
-            'Շարժիչի ապացույցների շղթան կարդալու է և դեռ հասանելի չէ desktop-ին։ Մատյանն արտացոլում է որոշումը, բայց երբեք չի պահում կամ կեղծում կնքված ապացույցը։',
-          )}
+          {L('sealedBody')}
           {evidenceRead.reason ? (
             <span className="micro" style={{ display: 'block', marginTop: 6 }}>
-              {L('Reason: ', 'Պատճառ՝ ')}{evidenceRead.reason}
+              {L('reasonPrefix')}{evidenceRead.reason}
             </span>
           ) : null}
         </p>
@@ -322,17 +314,17 @@ export function Decisions() {
     const mirrored = evidenceOpenId === d.id && evidenceRead?.state === 'ok';
     const nodes: { label: string; cls: '' | 'done' | 'now' }[] = [
       // The decision is recorded in the append-only ledger — a plain, always-true fact.
-      { label: L('recorded', 'Գրանցված'), cls: 'done' },
+      { label: L('nodeRecorded'), cls: 'done' },
       // Real ledger status: still deliberating (now) · blocked (neutral) · settled (done).
-      { label: L('deliberation', 'Դատում'), cls: blocked ? '' : inProgress ? 'now' : 'done' },
+      { label: L('nodeDeliberation'), cls: blocked ? '' : inProgress ? 'now' : 'done' },
       // Earns `done` ONLY when the engine evidence chain actually mirrored read-only.
-      { label: L('evidence', 'Ապացույց'), cls: mirrored ? 'done' : '' },
+      { label: L('nodeEvidence'), cls: mirrored ? 'done' : '' },
     ];
     const live = nodes.some((n) => n.cls === 'now');
     return (
       <div className="dec-chain-strip">
-        <span className="micro dec-chain-lbl">{L('EVIDENCE CHAIN', 'ԱՊԱՑՈՒՅՑԻ ՇՂԹԱ')}</span>
-        <div className="chain" aria-label={L('Decision evidence chain', 'Որոշման ապացույցների շղթա')}>
+        <span className="micro dec-chain-lbl">{L('evidenceChainLabel')}</span>
+        <div className="chain" aria-label={L('chainAria')}>
           {nodes.map((n, i) => (
             <b key={i} className={n.cls || undefined}>{n.label}</b>
           ))}
@@ -354,9 +346,8 @@ export function Decisions() {
           <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
           <EmptyState
             glyph="⚖"
-            title={L('Chamber unavailable', 'Պալատն անհասանելի է')}
-            hint={L('The decision ledger could not be read from the engine.',
-              'Որոշումների մատյանը չհաջողվեց կարդալ շարժիչից։')}
+            title={L('chamberUnavailable')}
+            hint={L('chamberUnavailableHint')}
           />
         </section>
       );
@@ -368,9 +359,8 @@ export function Decisions() {
           <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
           <EmptyState
             glyph="⚖"
-            title={L('Select a decision', 'Ընտրիր որոշում')}
-            hint={L('Arrow-navigate the ledger; press Enter to open its evidence.',
-              'Սլաքներով շրջիր մատյանում, Enter-ով բացիր ապացույցները։')}
+            title={L('selectDecision')}
+            hint={L('selectDecisionHint')}
           />
         </section>
       );
@@ -387,7 +377,7 @@ export function Decisions() {
 
         <div className="ch-head">
           <div className="ch-title">
-            <span className="eyebrow">{L('DELIBERATION · ENGINE LEDGER', 'ՈՐՈՇՄԱՆ ԴԱՀԼԻՃ · DELIBERATION')}</span>
+            <span className="eyebrow">{L('deliberationEyebrow')}</span>
             <h2>{selected.title}</h2>
             {/* The rationale is the real "why" the engine recorded — shown verbatim,
                 in place of the mockup's fabricated weighted-criteria instrument. */}
@@ -403,8 +393,8 @@ export function Decisions() {
 
         <div className="dec-meta">
           <Field label={t('field.owner')}>{selected.owner || '—'}</Field>
-          <Field label={L('Recorded', 'Գրանցված')}>{fmtDate(selected.createdAt)}</Field>
-          <Field label={L('Updated', 'Թարմացված')}>{fmtDate(selected.updatedAt)}</Field>
+          <Field label={L('recordedField')}>{fmtDate(selected.createdAt)}</Field>
+          <Field label={L('updatedField')}>{fmtDate(selected.updatedAt)}</Field>
         </div>
 
         {/* Evidence-chain lifecycle — real facts only; `done`/`now` are earned,
@@ -413,24 +403,23 @@ export function Decisions() {
 
         {/* chEvidence — evidence readout. Read-only. Opening it reveals the honest
             `ok`/`blocked`/`unreachable` engine state; no evidence is fabricated. */}
-        <section className="ch-foot" aria-label={L('Evidence chain', 'Ապացույցների շղթա')}>
+        <section className="ch-foot" aria-label={L('evidenceChainSection')}>
           <div className="evidence" id="chEvidence" aria-live="polite">
             {renderEvidence()}
           </div>
           <div className="ch-actions">
             <span className="ch-by micro">{selected.owner || '—'}</span>
             <Button small onClick={() => openEvidence(selected)}>
-              {L('Open evidence', 'Բացել ապացույցները')}
+              {L('openEvidence')}
             </Button>
             {/* chReweigh — disabled by design: reweighing is adjudicated by the engine
                 (mirror, never decide); the desktop holds no decision authority. */}
             <Button
               small
               disabled
-              title={L('Reweigh is adjudicated by the engine — the desktop cannot alter the ledger.',
-                'Վերակշռումը որոշում է շարժիչը — desktop-ը չի կարող փոխել մատյանը։')}
+              title={L('reweighTitle')}
             >
-              {L('↻ Reweigh', '↻ Վերակշռել')}
+              {L('reweigh')}
             </Button>
           </div>
         </section>
@@ -461,13 +450,13 @@ export function Decisions() {
 
       <header className="pageHead">
         <div>
-          <span className="eyebrow">{L('VERDICT INTELLIGENCE · DECISION CHAMBER', 'ՈՐՈՇՄԱՆ ԻՆՏԵԼԵԿՏ · VERDICT CHAMBER')}</span>
+          <span className="eyebrow">{L('pageEyebrow')}</span>
           <h1>{t('nav.decisions')}</h1>
           <p className="sub">{t('decisions.subtitle')}</p>
         </div>
         <div className="right">
           {/* Honest posture: the desktop only MIRRORS the engine ledger, read-only. */}
-          <span className="pill info">{L('Read-only mirror', 'Միայն ընթերցում')}</span>
+          <span className="pill info">{L('readOnlyMirror')}</span>
         </div>
       </header>
 
@@ -477,11 +466,11 @@ export function Decisions() {
       {renderChamber()}
 
       <div className="sec-head" style={{ marginTop: 26 }}>
-        <h2>{L('Decision ledger', 'Որոշումների մատյան')}</h2>
+        <h2>{L('decisionLedger')}</h2>
         <span className="note">
-          {L('Select a row to open its chamber', 'Ընտրիր տողը՝ դահլիճը բացելու համար')}
+          {L('selectRowHint')}
           {' · '}<b className="mono">{ledger.length}</b>{' '}
-          {L('active decisions', 'ակտիվ որոշում')}
+          {L('activeDecisions')}
         </span>
       </div>
 

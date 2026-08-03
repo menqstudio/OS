@@ -8,6 +8,7 @@ import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Mark } from '../components/Ambient';
 import type { Automation } from '../domain/entities';
+import { STR } from './Automations.strings';
 
 // ── `automations` ⇶ Ավտոմատներ — the WORKFLOW ENERGY MANIFOLD, dressed as the AI-OS
 // mockup (views/automations.js). Every automation is a horizontal energy conduit:
@@ -68,7 +69,7 @@ const cssVars = (v: Record<string, string>): CSSProperties => v as unknown as CS
 // ── the authoring form (governance guarantee preserved verbatim) ──────────────
 function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { t, lang } = useApp();
-  const L = (en: string, hy: string) => (lang === 'hy' ? hy : en);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const [name, setName] = useState('');
   const [trigger, setTrigger] = useState('');
   const [action, setAction] = useState('');
@@ -98,10 +99,7 @@ function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
           action — every fire is dispatched behind the wall with a verified receipt. */}
       <div className="au-gov" role="note">
         <span aria-hidden="true">🛡</span>
-        <span>{L(
-          'Every automation runs governed — each fire requires a lease and a verified receipt. Ungoverned actions are refused.',
-          'Յուրաքանչյուր ավտոմատ աշխատում է կառավարվող — ամեն գործարկում պահանջում է լիզինգ և հաստատված ստացական։ Չկառավարվող գործողությունները մերժվում են։',
-        )}</span>
+        <span>{L('govern')}</span>
       </div>
       <FormRow label={t('field.name')}>
         <Input value={name} autoFocus onChange={(e) => setName(e.target.value)} />
@@ -122,7 +120,7 @@ function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
 
 export function Automations() {
   const { t, lang } = useApp();
-  const L = (en: string, hy: string) => (lang === 'hy' ? hy : en);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   const [creating, setCreating] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -141,9 +139,9 @@ export function Automations() {
   const items = useMemo(() => s.data ?? [], [s.data]);
 
   const stateLabel = (st: RuntimeState): string => ({
-    idle: L('Armed', 'Զինված'),
-    off: L('Off', 'Անջատված'),
-    blocked: L('Sealed', 'Փակված'),
+    idle: L('armedState'),
+    off: L('offState'),
+    blocked: L('sealedState'),
   }[st]);
 
   // Honest state derivation — never fabricates a run it cannot observe.
@@ -276,32 +274,26 @@ export function Automations() {
     return () => window.removeEventListener('keydown', onKey);
   }, [creating, pendingDelete]);
 
-  const governLine = L(
-    'Every automation runs governed — each fire requires a lease and a verified receipt. Ungoverned actions are refused.',
-    'Յուրաքանչյուր ավտոմատ աշխատում է կառավարվող — ամեն գործարկում պահանջում է լիզինգ և հաստատված ստացական։ Չկառավարվող գործողությունները մերժվում են։',
-  );
-  const telemetryPending = L(
-    'Run counts, success rate and the recent-fire log appear once the runs backend is connected — none are shown until then.',
-    'Վազքի քանակը, հաջողության տոկոսը և վերջին բռնկումների գրանցամատյանը կհայտնվեն, երբ միանա գործարկումների backend-ը — մինչ այդ ոչ մեկը չի ցուցադրվում։',
-  );
+  const governLine = L('govern');
+  const telemetryPending = L('telemetry');
 
   // ── Index legend / filter states present in the honest vocabulary ────────────
   const FILTERS: Array<'all' | RuntimeState> = ['all', 'idle', 'off', 'blocked'];
   const filterLabel = (f: 'all' | RuntimeState): string =>
-    (f === 'all' ? L('All', 'Բոլորը') : stateLabel(f));
+    (f === 'all' ? L('allFilter') : stateLabel(f));
 
   const header = (
     <header className="pageHead">
       <div>
-        <span className="eyebrow">{L('Workflow Energy Manifold', 'ԱՇԽԱՏԱՆՔԱՅԻՆ ԷՆԵՐԳԱ-ՄԱՆԻՖՈԼԴ')}</span>
+        <span className="eyebrow">{L('workflowManifold')}</span>
         <h1>{t('nav.automations')}</h1>
         <p className="sub">{t('automations.subtitle')}</p>
       </div>
       <div className="right">
         {items.length > 0 && (
-          <span className="pill info" id="auSched">{L('Scheduler · sweep', 'Պլանավորիչ · սկան')}</span>
+          <span className="pill info" id="auSched">{L('schedSweep')}</span>
         )}
-        <Button variant="primary" onClick={() => setCreating(true)} title={L('New  ( n )', 'Նոր  ( n )')}>
+        <Button variant="primary" onClick={() => setCreating(true)} title={L('newN')}>
           {t('action.new')}
         </Button>
       </div>
@@ -313,7 +305,7 @@ export function Automations() {
     <div className="au-blocked" role="alert">
       <div className="au-blocked-title">
         <span aria-hidden="true">⛔</span>
-        {L('Blocked by the wall', 'Արգելափակված է պատով')}
+        {L('blockedByWall')}
       </div>
       <div className="au-blocked-reason">{reason}</div>
       <div className="au-blocked-fix">{fix}</div>
@@ -336,7 +328,7 @@ export function Automations() {
         aria-selected={isSel}
         tabIndex={isSel ? 0 : -1}
         className={`lane ${STATE_CLASS[st]}${st === 'idle' ? ' au-live' : ''}${isSel ? ' sel' : ''}${off ? ' au-off' : ''}`}
-        aria-label={`${a.name}, ${a.trigger || L('any event', 'ցանկացած իրադարձություն')}, ${stateLabel(st)}`}
+        aria-label={`${a.name}, ${a.trigger || L('anyEvent')}, ${stateLabel(st)}`}
         onClick={() => select(a)}
         onFocus={() => { if (!isSel) select(a); }}
       >
@@ -360,7 +352,7 @@ export function Automations() {
         </span>
         <span className="ln-read">
           <b className="mono">—</b>
-          <i className="micro">{L('runs/hr', 'վազք/ժ')}</i>
+          <i className="micro">{L('runsPerHr')}</i>
         </span>
         <span className={`ln-state ${STATE_TONE[st]}`}><i />{stateLabel(st)}</span>
       </button>
@@ -371,11 +363,11 @@ export function Automations() {
   const renderSchematic = () => {
     if (!selected) {
       return (
-        <div className="schem" role="region" aria-label={L('Schematic', 'Սխեմա')}>
+        <div className="schem" role="region" aria-label={L('schematic')}>
           <div className="au-pick">
             <Mark state="idle" size={44} />
-            <div className="au-empty-title">{L('Select a conduit', 'Ընտրեք խողովակ')}</div>
-            <p className="muted">{L('Choose a conduit to forge its schematic.', 'Ընտրեք խողովակ՝ դրա սխեման ձուլելու համար։')}</p>
+            <div className="au-empty-title">{L('selectConduit')}</div>
+            <p className="muted">{L('chooseConduit')}</p>
           </div>
         </div>
       );
@@ -386,7 +378,7 @@ export function Automations() {
     const denial = actionError && actionError.id === a.id ? actionError.message : null;
 
     return (
-      <div className="schem" role="region" aria-label={`${L('Schematic', 'Սխեմա')} — ${a.name}`}>
+      <div className="schem" role="region" aria-label={`${L('schematic')} — ${a.name}`}>
         <div className="sc-head">
           <Mark state={STATE_MARK[st]} size={46} />
           <div className="sc-id">
@@ -409,10 +401,7 @@ export function Automations() {
 
         {denial && isDenial(denial) && renderBlocked(
           denial,
-          L(
-            'A guard tripped or the wall denied this action. Resolve the guard condition or request approval, then retry.',
-            'Պահապանը գործարկվեց կամ պատը մերժեց այս գործողությունը։ Լուծեք պահապանի պայմանը կամ պահանջեք հաստատում, ապա կրկնեք։',
-          ),
+          L('guardFix'),
         )}
         {denial && !isDenial(denial) && <div className="form-error">{denial}</div>}
 
@@ -427,24 +416,24 @@ export function Automations() {
               <span className="sc-pulse" aria-hidden="true" />
               <span className="sc-node sc-src">
                 <span className="sc-g" aria-hidden="true">⌁</span>
-                <span className="sc-nl"><b>{L('Trigger', 'Բռնկիչ')}</b><i className="micro">{a.trigger || '—'}</i></span>
+                <span className="sc-nl"><b>{L('trigger')}</b><i className="micro">{a.trigger || '—'}</i></span>
               </span>
               <span className={`sc-node ${sealed ? 'is-sealed' : 'is-armed'}`}>
                 <span className="sc-g" aria-hidden="true">{sealed ? '⊘' : '◇'}</span>
-                <span className="sc-nl"><b>{L('Governed', 'Կառավարվող')}</b><i className="micro">{L('guard', 'պահապան')}</i></span>
+                <span className="sc-nl"><b>{L('governed')}</b><i className="micro">{L('guard')}</i></span>
               </span>
               <span className="sc-node is-armed">
                 <span className="sc-g" aria-hidden="true">▸</span>
-                <span className="sc-nl"><b>{a.action || '—'}</b><i className="micro">{L('action', 'գործողություն')}</i></span>
+                <span className="sc-nl"><b>{a.action || '—'}</b><i className="micro">{L('action')}</i></span>
               </span>
               <span className="sc-node is-pending">
                 <span className="sc-g" aria-hidden="true">⬢</span>
-                <span className="sc-nl"><b>{L('Outlet', 'Ելք')}</b><i className="micro">{L('dispatch', 'առաքում')}</i></span>
+                <span className="sc-nl"><b>{L('outlet')}</b><i className="micro">{L('dispatch')}</i></span>
               </span>
             </div>
             <div className="sc-legend">
-              <span className="micro">{L('Trigger', 'Բռնկիչ')}՝ <b>{a.trigger || '—'}</b></span>
-              <span className="micro sc-next">{L('Action', 'Գործողություն')}՝ <b>{a.action || '—'}</b></span>
+              <span className="micro">{L('triggerLabel')} <b>{a.trigger || '—'}</b></span>
+              <span className="micro sc-next">{L('actionLabel')} <b>{a.action || '—'}</b></span>
             </div>
           </div>
 
@@ -453,31 +442,31 @@ export function Automations() {
           <div className="sc-side">
             <div className="au-facts">
               <div className="au-fact">
-                <span className="au-fk">{L('State', 'ՎԻՃԱԿ')}</span>
+                <span className="au-fk">{L('stateFact')}</span>
                 <span className={`ln-state ${STATE_TONE[st]}`}><i />{stateLabel(st)}</span>
               </div>
               <div className="au-fact">
-                <span className="au-fk">{L('Created', 'ՍՏԵՂԾՎԱԾ')}</span>
+                <span className="au-fk">{L('createdFact')}</span>
                 <span className="mono">{fmtDate(a.createdAt)}</span>
               </div>
               <div className="au-fact">
-                <span className="au-fk">{L('Updated', 'ԹԱՐՄԱՑՎԱԾ')}</span>
+                <span className="au-fk">{L('updatedFact')}</span>
                 <span className="mono">{fmtDate(a.updatedAt)}</span>
               </div>
               <div className="au-fact">
-                <span className="au-fk">{L('Owner', 'ՏԵՐ')}</span>
+                <span className="au-fk">{L('ownerFact')}</span>
                 <span>—</span>
               </div>
             </div>
             <div className="au-block">
-              <span className="micro">{L('Governed telemetry', 'ԿԱՌԱՎԱՐՎՈՂ ՀԵՌԱՉԱՓ')}</span>
+              <span className="micro">{L('governedTelemetry')}</span>
               <p className="au-note muted">{telemetryPending}</p>
             </div>
           </div>
         </div>
 
         <div className="sc-foot">
-          <span className="micro sc-foot-h">{L('Recent fires', 'Վերջին բռնկումներ')}</span>
+          <span className="micro sc-foot-h">{L('recentFires')}</span>
           <p className="au-note muted">{telemetryPending}</p>
         </div>
       </div>
@@ -510,8 +499,8 @@ export function Automations() {
           <code className="ar-slug mono">#{a.id.slice(0, 8)}</code>
         </span>
         <span className="ar-trig micro">{a.trigger || '—'}</span>
-        <span className="ar-num"><b className="mono">—</b><span className="micro">{L('runs', 'վազք')}</span></span>
-        <span className="ar-num"><b className="mono">—</b><span className="micro">{L('success', 'հաջող.')}</span></span>
+        <span className="ar-num"><b className="mono">—</b><span className="micro">{L('runs')}</span></span>
+        <span className="ar-num"><b className="mono">—</b><span className="micro">{L('success')}</span></span>
         <span className={`ln-state ${STATE_TONE[st]}`}><i />{stateLabel(st)}</span>
       </button>
     );
@@ -521,10 +510,10 @@ export function Automations() {
   let body: ReactNode;
   if (s.loading && s.data === null) {
     body = (
-      <section className="mani surface soft lg hud" aria-busy="true" aria-label={L('Manifold', 'Մանիֆոլդ')}>
+      <section className="mani surface soft lg hud" aria-busy="true" aria-label={L('manifold')}>
         <span className="bracket tl" /><span className="bracket tr" />
         <span className="bracket bl" /><span className="bracket br" />
-        <div className="muted" aria-live="polite">{L('Charging the manifold…', 'Մանիֆոլդը լիցքավորվում է…')}</div>
+        <div className="muted" aria-live="polite">{L('chargingManifold')}</div>
         <div className="au-skel" aria-hidden="true"><i /><i /><i /><i /></div>
       </section>
     );
@@ -538,36 +527,30 @@ export function Automations() {
     );
   } else if (s.error && isDenial(s.error)) {
     body = (
-      <section className="mani surface soft lg hud" role="alert" aria-label={L('Manifold', 'Մանիֆոլդ')}>
+      <section className="mani surface soft lg hud" role="alert" aria-label={L('manifold')}>
         <span className="bracket tl" /><span className="bracket tr" />
         {renderBlocked(
           `${t('state.permissionDenied')}: ${s.error}`,
-          L(
-            'This automation store is denied in the current mode or scope. Switch to work mode, or request the required scope/approval, then retry.',
-            'Այս ավտոմատների պահեստը մերժված է ընթացիկ ռեժիմում կամ շրջանակում։ Անցեք work ռեժիմ կամ պահանջեք անհրաժեշտ շրջանակ/հաստատում, ապա կրկնեք։',
-          ),
+          L('storeDenied'),
         )}
       </section>
     );
   } else if (s.error) {
     body = (
-      <section className="mani surface soft lg hud" role="alert" aria-label={L('Manifold', 'Մանիֆոլդ')}>
-        <span className="eyebrow st-blocked">{L('Manifold', 'ՄԱՆԻՖՈԼԴ')}</span>
+      <section className="mani surface soft lg hud" role="alert" aria-label={L('manifold')}>
+        <span className="eyebrow st-blocked">{L('manifoldEyebrow')}</span>
         <p className="muted" style={{ margin: '10px 0 14px', maxWidth: '60ch' }}>{s.error}</p>
-        <button type="button" className="au-btn" onClick={s.reload}>{L('Retry', 'Կրկնել')}</button>
+        <button type="button" className="au-btn" onClick={s.reload}>{L('retry')}</button>
       </section>
     );
   } else if (items.length === 0) {
     body = (
       <section className="mani surface soft lg hud au-empty" role="status">
         <span className="au-empty-glyph" aria-hidden="true">⇶</span>
-        <div className="au-empty-title">{L('No conduits yet', 'Դեռ խողովակներ չկան')}</div>
-        <p className="muted">{L(
-          'Forge your first conduit — every run stays governed and verified.',
-          'Ձուլեք ձեր առաջին խողովակը — ամեն գործարկում մնում է կառավարվող և հաստատված։',
-        )}</p>
+        <div className="au-empty-title">{L('noConduits')}</div>
+        <p className="muted">{L('forgeFirst')}</p>
         <button type="button" className="au-btn" onClick={() => setCreating(true)}>
-          {L('Forge conduit', 'Ձուլել խողովակ')}
+          {L('forgeConduit')}
         </button>
       </section>
     );
@@ -584,15 +567,15 @@ export function Automations() {
 
           <div className="mani-head">
             <div className="mh-title">
-              <span className="eyebrow">{L('Energy Manifold', 'ԷՆԵՐԳԱ-ՄԱՆԻՖՈԼԴ')}</span>
+              <span className="eyebrow">{L('energyManifold')}</span>
               <span className="mh-sub micro">
-                {L('Trigger ▸ gates ▸ outlet', 'Բռնկիչ ▸ դարպասներ ▸ ելք')} · {items.length} {L('conduits', 'խողովակ')}
+                {L('triggerGatesOutlet')} · {items.length} {L('conduits')}
               </span>
             </div>
             <div className="mh-gauge">
               <div className="mh-press">
                 <b className="mono">{counts.idle}</b>
-                <span className="micro">{L('armed conduits', 'զինված խողովակ')}</span>
+                <span className="micro">{L('armedConduits')}</span>
               </div>
             </div>
           </div>
@@ -602,12 +585,12 @@ export function Automations() {
             id="manifold"
             ref={manifoldRef}
             role="listbox"
-            aria-label={L('Automation manifold', 'Ավտոմատների մանիֆոլդ')}
+            aria-label={L('automationManifold')}
             onKeyDown={onManifoldKey}
           >
             {filtered.length > 0
               ? filtered.map(renderLane)
-              : <p className="muted" style={{ padding: 'var(--s4)' }}>{L('No conduit in this state.', 'Այս վիճակում խողովակ չկա։')}</p>}
+              : <p className="muted" style={{ padding: 'var(--s4)' }}>{L('noConduitInState')}</p>}
           </div>
 
           <div className="mani-foot">
@@ -616,7 +599,7 @@ export function Automations() {
                 <span key={st} className={`mn-leg ${STATE_TONE[st]}`}><i />{stateLabel(st)}</span>
               ))}
             </div>
-            <span className="micro">{L('valve = trigger · gate = governed step', 'փական = բռնկիչ · դարպաս = կառավարվող քայլ')}</span>
+            <span className="micro">{L('valveGate')}</span>
           </div>
 
           <div className="wire live" />
@@ -626,8 +609,8 @@ export function Automations() {
 
         {/* ── AUTOMATION INDEX (quiet data tier) ─────────────────────────────── */}
         <div className="sec-head" style={{ marginTop: 26 }}>
-          <h2>{L('Automation index', 'Ավտոմատների ինդեքս')}</h2>
-          <div className="afilter" role="group" aria-label={L('Filter by state', 'Զտել վիճակով')}>
+          <h2>{L('automationIndex')}</h2>
+          <div className="afilter" role="group" aria-label={L('filterByState')}>
             {FILTERS.map((f) => (
               <button
                 key={f}
@@ -651,18 +634,18 @@ export function Automations() {
         {/* ── manifold census (honest — every count is real) ──────────────────── */}
         <section className="surface soft astats-wrap rise">
           <div className="astats">
-            <div className="astat"><b>{items.length}</b><span className="micro">{L('conduits · manifold', 'ավտոմատ · մանիֆոլդ')}</span></div>
-            <div className="astat as-info"><b>{counts.idle}</b><span className="micro">{L('armed', 'զինված')}</span></div>
-            <div className="astat"><b>{counts.off}</b><span className="micro">{L('off', 'անջատված')}</span></div>
-            <div className="astat au-danger"><b>{counts.blocked}</b><span className="micro">{L('sealed', 'փակված')}</span></div>
+            <div className="astat"><b>{items.length}</b><span className="micro">{L('conduitsManifold')}</span></div>
+            <div className="astat as-info"><b>{counts.idle}</b><span className="micro">{L('armed')}</span></div>
+            <div className="astat"><b>{counts.off}</b><span className="micro">{L('off')}</span></div>
+            <div className="astat au-danger"><b>{counts.blocked}</b><span className="micro">{L('sealed')}</span></div>
           </div>
           <div className="wire" />
         </section>
 
         <div className="au-kbd" aria-hidden="true">
-          <span><kbd>n</kbd> {L('New', 'Նոր')}</span>
-          <span><kbd>↑</kbd><kbd>↓</kbd> {L('Navigate', 'Նավարկել')}</span>
-          <span><kbd>↵</kbd> {L('Open', 'Բացել')}</span>
+          <span><kbd>n</kbd> {L('kbdNew')}</span>
+          <span><kbd>↑</kbd><kbd>↓</kbd> {L('navigate')}</span>
+          <span><kbd>↵</kbd> {L('open')}</span>
         </div>
       </>
     );

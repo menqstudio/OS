@@ -9,67 +9,7 @@ import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
 import type { Notification } from '../domain/entities';
-
-// ── page-local strings ──────────────────────────────────────────────────────
-// The shared i18n dictionaries are not edited here (per task scope); the thin
-// pages inline literals, so this page carries its own HY + EN copy and falls
-// back to EN for any other language. New labels reuse the brops-aios "SIGNAL
-// PRISM" mockup's Armenian strings verbatim, with no interpolation (counts are
-// rendered as separate <b> nodes, never spliced into a translated sentence).
-const STRINGS = {
-  filterAll: { en: 'All', hy: 'Բոլորը' },
-  filterUnread: { en: 'Unread', hy: 'Չկարդացված' },
-  clearTitle: { en: 'All clear', hy: 'Ամեն ինչ մաքուր է' },
-  clearHint: { en: 'No signals right now.', hy: 'Այս պահին ազդանշաններ չկան։' },
-  open: { en: 'Open', hy: 'Բացել' },
-  collapse: { en: 'Collapse', hy: 'Փակել' },
-  dismiss: { en: 'Dismiss', hy: 'Անտեսել' },
-  unread: { en: 'unread', hy: 'չկարդացված' },
-  keyboardHint: {
-    en: '↑/↓ navigate · Enter open · x dismiss',
-    hy: '↑/↓ նավարկել · Enter բացել · x անտեսել',
-  },
-  feedLabel: { en: 'Signal feed', hy: 'Ազդանշանների հոսք' },
-  filtersLabel: { en: 'Filter signals', hy: 'Զտել ազդանշանները' },
-  liveCount: { en: 'signals shown', hy: 'ազդանշան ցուցադրված է' },
-  // reskin — mockup vocabulary (HY verbatim from PAGES['notifications'])
-  eyebrowPrism: { en: 'SIGNAL PRISM · TRIAGE', hy: 'ԱԶԴԱՆՇԱՆՆԵՐԻ ՊՐԻԶՄԱ · SIGNAL PRISM' },
-  flowActive: { en: 'FLOW · ACTIVE', hy: 'ՀՈՍՔ · ԱԿՏԻՎ' },
-  flowIdle: { en: 'FLOW · IDLE', hy: 'ՀՈՍՔ · ԱՆԳՈՐԾ' },
-  readOnlyMirror: { en: 'Read-only mirror', hy: 'Միայն ընթերցում' },
-  triageNow: { en: 'CURRENT TRIAGE', hy: 'ԸՆԹԱՑԻԿ ՏՐԻԱԺ' },
-  triageEmpty: { en: 'Inbox is clear — nothing awaiting triage.', hy: 'Մուտքը մաքուր է — տրիաժի սպասող ազդանշան չկա։' },
-  statTotal: { en: 'signals', hy: 'ազդանշան' },
-  statUnread: { en: 'unread', hy: 'չկարդացված' },
-  statShown: { en: 'shown', hy: 'ցուցադրված' },
-  inboxHeading: { en: 'Ranked intake', hy: 'Դասակարգված մուտք' },
-  inboxNote: {
-    en: 'sorted by priority · pick a band to filter',
-    hy: 'առաջնահերթությամբ դասավորված · սեղմիր շերտը՝ զտելու',
-  },
-  unitSignal: { en: 'sig', hy: 'ազդ' },
-  gateHeading: { en: 'Engine governance signals', hy: 'Շարժիչի կառավարման ազդանշաններ' },
-  gateTitle: { en: 'Governance stream sealed', hy: 'Կառավարման հոսքը կնքված է' },
-  gateBody: {
-    en: 'The engine governance-event stream is not connected to this desktop yet. Signals '
-      + 'from the engine ledger appear here once the read bridge lands — the desktop mirrors, '
-      + 'it never decides.',
-    hy: 'Շարժիչի կառավարման իրադարձությունների հոսքը դեռ միացված չէ այս աշխատասեղանին։ '
-      + 'Շարժիչի մատյանի ազդանշանները կհայտնվեն այստեղ, երբ ընթերցման կամուրջը պատրաստ լինի — '
-      + 'աշխատասեղանը արտացոլում է, երբեք չի որոշում։',
-  },
-  gateChainReading: { en: 'READING', hy: 'ԸՆԹԵՐՑՈՒՄ' },
-  gateChainMirror: { en: 'MIRROR', hy: 'ԱՐՏԱՑՈԼՈՒՄ' },
-  gateChainEngine: { en: 'ENGINE', hy: 'ՇԱՐԺԻՉ' },
-} as const;
-
-const SEVERITY_HY: Record<string, string> = {
-  info: 'Տեղեկություն',
-  success: 'Հաջողություն',
-  warning: 'Զգուշացում',
-  error: 'Սխալ',
-  critical: 'Կրիտիկական',
-};
+import { STR, SEVERITY } from './Notifications.strings';
 
 // Fixed priority order for the severity filter chips (most severe first).
 const SEVERITY_ORDER = ['critical', 'error', 'warning', 'success', 'info'];
@@ -109,9 +49,10 @@ export function Notifications() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const itemRefs = useRef(new Map<string, HTMLDivElement>());
 
-  const tr = (k: keyof typeof STRINGS): string => (lang === 'hy' ? STRINGS[k].hy : STRINGS[k].en);
+  const L = (k: keyof typeof STR): string => STR[k][lang] ?? STR[k].en;
   const severityLabel = (sev: string): string =>
-    lang === 'hy' ? (SEVERITY_HY[sev] ?? sev) : sev.charAt(0).toUpperCase() + sev.slice(1);
+    (SEVERITY as Record<string, Record<string, string>>)[sev]?.[lang]
+      ?? sev.charAt(0).toUpperCase() + sev.slice(1);
 
   const dateFmt = useMemo(
     () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
@@ -209,7 +150,7 @@ export function Notifications() {
         type="button"
         className={`nsig-band${active ? ' is-sel' : ''}`}
         aria-pressed={active}
-        aria-label={`${label} · ${count} ${tr('statTotal')}`}
+        aria-label={`${label} · ${count} ${L('statTotal')}`}
         onClick={() => setFilter(value)}
         style={{ ['--tone' as string]: tone } as CSSProperties}
       >
@@ -218,7 +159,7 @@ export function Notifications() {
           <span className="nsig-band-lbl">{label}</span>
           <span className="nsig-band-n num">
             <b className="count">{count}</b>
-            <i aria-hidden="true">{tr('unitSignal')}</i>
+            <i aria-hidden="true">{L('unitSignal')}</i>
           </span>
         </span>
       </button>
@@ -235,26 +176,26 @@ export function Notifications() {
       {/* ── header ─────────────────────────────────────────────────────────── */}
       <header className="pageHead reveal">
         <div>
-          <span className="eyebrow">{tr('eyebrowPrism')}</span>
+          <span className="eyebrow">{L('eyebrowPrism')}</span>
           <h1>{t('nav.notifications')}</h1>
           <p className="sub">{t('notifications.subtitle')}</p>
         </div>
         <div className="right">
           {/* Honest flow state: "active" only means there are unread signals to work. */}
           <span className={`pill ${flowLive ? 'live' : 'off'}`}>
-            {flowLive ? tr('flowActive') : tr('flowIdle')}
+            {flowLive ? L('flowActive') : L('flowIdle')}
           </span>
-          <span className="pill info">{tr('readOnlyMirror')}</span>
+          <span className="pill info">{L('readOnlyMirror')}</span>
         </div>
       </header>
 
       {/* ── hero · current triage (real lead signal + real derived counts) ───── */}
-      <section className="nsig-hero surface soft lg hud reveal" aria-label={tr('triageNow')}>
+      <section className="nsig-hero surface soft lg hud reveal" aria-label={L('triageNow')}>
         <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
         <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
 
         <div className="nsig-now">
-          <span className="eyebrow">{tr('triageNow')}</span>
+          <span className="eyebrow">{L('triageNow')}</span>
           {loading ? (
             <Skeleton rows={2} />
           ) : lead ? (
@@ -266,13 +207,13 @@ export function Notifications() {
                 <div className="row" style={{ gap: 8 }}>
                   <StatusPill status={lead.severity} />
                   {lead.readAt === null && (
-                    <span className="micro nsig-now-unread">{tr('unread')}</span>
+                    <span className="micro nsig-now-unread">{L('unread')}</span>
                   )}
                 </div>
               </div>
             </div>
           ) : (
-            <p className="nsig-now-title muted">{tr('triageEmpty')}</p>
+            <p className="nsig-now-title muted">{L('triageEmpty')}</p>
           )}
         </div>
 
@@ -280,36 +221,36 @@ export function Notifications() {
         <div className="nsig-hud">
           <div className="capsule">
             <b className="num">{items.length}</b>
-            <span>{tr('statTotal')}</span>
+            <span>{L('statTotal')}</span>
           </div>
           <div className="capsule nsig-hud-warn">
             <b className="num">{unreadCount}</b>
-            <span>{tr('statUnread')}</span>
+            <span>{L('statUnread')}</span>
           </div>
           <div className="capsule">
             <b className="num">{visible.length}</b>
-            <span>{tr('statShown')}</span>
+            <span>{L('statShown')}</span>
           </div>
         </div>
       </section>
 
       {/* ── ranked intake ────────────────────────────────────────────────────── */}
       <div className="sec-head" style={{ marginTop: 26 }}>
-        <h2>{tr('inboxHeading')}</h2>
-        <span className="note">{tr('inboxNote')}</span>
+        <h2>{L('inboxHeading')}</h2>
+        <span className="note">{L('inboxNote')}</span>
       </div>
 
-      <div className="nsig-bands" role="group" aria-label={tr('filtersLabel')}>
-        {band('unread', tr('filterUnread'), unreadCount, 'var(--menq-color-warning)')}
-        {band('all', tr('filterAll'), items.length, 'var(--brops-accent)')}
+      <div className="nsig-bands" role="group" aria-label={L('filtersLabel')}>
+        {band('unread', L('filterUnread'), unreadCount, 'var(--menq-color-warning)')}
+        {band('all', L('filterAll'), items.length, 'var(--brops-accent)')}
         {severities.map((sev) =>
           band(sev, severityLabel(sev), items.filter((n) => n.severity === sev).length, severityColor(sev)))}
       </div>
-      <div className="nsig-hint micro">{tr('keyboardHint')}</div>
+      <div className="nsig-hint micro">{L('keyboardHint')}</div>
 
       {/* Live region: new/changed signals are announced politely. */}
       <p className="nsig-sr" aria-live="polite">
-        {`${visible.length} ${tr('liveCount')}`}
+        {`${visible.length} ${L('liveCount')}`}
       </p>
 
       {loading ? (
@@ -317,12 +258,12 @@ export function Notifications() {
       ) : state.error ? (
         <ErrorState message={state.error} onRetry={state.reload} />
       ) : visible.length === 0 ? (
-        <EmptyState title={tr('clearTitle')} hint={tr('clearHint')} glyph="✓" />
+        <EmptyState title={L('clearTitle')} hint={L('clearHint')} glyph="✓" />
       ) : (
         <div
           className="nsig-feed"
           role="feed"
-          aria-label={tr('feedLabel')}
+          aria-label={L('feedLabel')}
           aria-busy={state.loading}
           onKeyDown={onFeedKeyDown}
         >
@@ -331,7 +272,7 @@ export function Notifications() {
             const isExpanded = n.id === expandedId;
             const isUnread = n.readAt === null;
             const accent = severityColor(n.severity);
-            const label = `${severityLabel(n.severity)}: ${n.title}${isUnread ? ` — ${tr('unread')}` : ''}`;
+            const label = `${severityLabel(n.severity)}: ${n.title}${isUnread ? ` — ${L('unread')}` : ''}`;
             return (
               <div
                 key={n.id}
@@ -360,16 +301,16 @@ export function Notifications() {
                   <div className="nsig-srow-title">{n.title}</div>
                   <div className="nsig-srow-foot">
                     <Button small variant="ghost" onClick={() => toggleExpand(n.id)}>
-                      {isExpanded ? tr('collapse') : tr('open')}
+                      {isExpanded ? L('collapse') : L('open')}
                     </Button>
                     {isUnread && (
                       <Button
                         small
                         variant="ghost"
-                        title={`${tr('dismiss')}: ${n.title}`}
+                        title={`${L('dismiss')}: ${n.title}`}
                         onClick={() => markRead(n.id)}
                       >
-                        {tr('dismiss')}
+                        {L('dismiss')}
                       </Button>
                     )}
                   </div>
@@ -396,11 +337,11 @@ export function Notifications() {
           unreachable — rendered as such from the ACTUAL GovernanceRead, never a
           fabricated stream. The desktop mirrors; it never decides. */}
       <div className="sec-head" style={{ marginTop: 30 }}>
-        <h2>{tr('gateHeading')}</h2>
-        <span className="note">{tr('readOnlyMirror')}</span>
+        <h2>{L('gateHeading')}</h2>
+        <span className="note">{L('readOnlyMirror')}</span>
       </div>
 
-      <section className="nsig-gate surface soft cut" role="status" aria-label={tr('gateTitle')}>
+      <section className="nsig-gate surface soft cut" role="status" aria-label={L('gateTitle')}>
         {/* Mark posture: idle while reading/mirrored, alert when the chain is
             sealed/unreachable — an honest "not connected" cue, never a green seal. */}
         <Mark
@@ -410,31 +351,27 @@ export function Notifications() {
         />
         <div className="nsig-gate-txt">
           <div className="nsig-gate-title">
-            {gov.data?.state === 'ok'
-              ? (lang === 'hy' ? 'Կառավարման հոսքն արտացոլված է' : 'Governance stream mirrored')
-              : tr('gateTitle')}
+            {gov.data?.state === 'ok' ? L('gateTitleOk') : L('gateTitle')}
           </div>
           <div className="muted nsig-gate-body">
             {gov.data === null
-              ? (lang === 'hy' ? 'Կարդում ենք շարժիչի կառավարման հոսքը…' : 'Reading the engine governance stream…')
+              ? L('gateReading')
               : gov.data.state === 'ok'
-                ? (lang === 'hy'
-                  ? `${gov.data.records?.length ?? 0} իրադարձություն արտացոլված է շարժիչի շղթայից։`
-                  : `${gov.data.records?.length ?? 0} event(s) mirrored from the engine chain.`)
-                : tr('gateBody')}
+                ? `${gov.data.records?.length ?? 0} ${L('gateMirrored')}`
+                : L('gateBody')}
           </div>
           {gov.data && gov.data.state !== 'ok' && gov.data.reason ? (
             <div className="micro nsig-gate-reason">
-              {(lang === 'hy' ? 'Պատճառ՝ ' : 'Reason: ')}{gov.data.reason}
+              {L('gateReasonLabel')}{gov.data.reason}
             </div>
           ) : null}
           {/* Honest read-path chain: engine → mirror. The middle node is `now`
               only when the read genuinely resolved `ok`; otherwise the mirror
               hop stays un-lit (sealed). */}
           <div className="chain nsig-gate-chain" aria-hidden="true">
-            <b className="done">{tr('gateChainEngine')}</b>
-            <b className={gov.data?.state === 'ok' ? 'now' : ''}>{tr('gateChainMirror')}</b>
-            <b>{gov.data === null ? tr('gateChainReading') : tr('gateChainMirror')}</b>
+            <b className="done">{L('gateChainEngine')}</b>
+            <b className={gov.data?.state === 'ok' ? 'now' : ''}>{L('gateChainMirror')}</b>
+            <b>{gov.data === null ? L('gateChainReading') : L('gateChainMirror')}</b>
           </div>
         </div>
       </section>

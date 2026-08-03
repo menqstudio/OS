@@ -13,87 +13,7 @@ import { useToast } from '../components/toast';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { DirEntry } from '../domain/entities';
-
-// ── local strings ───────────────────────────────────────────────────────────
-// The thin pages inline HY/EN copy for page-local labels rather than editing the
-// shared i18n dictionaries. Only English + Armenian are authored; every other
-// language (e.g. 'ru') falls back to English.
-type LKey =
-  | 'filter' | 'clearFilter' | 'all' | 'folders' | 'files' | 'items' | 'hits'
-  | 'planePick' | 'planePickHint' | 'edit' | 'readonly' | 'refresh'
-  | 'guardOpen' | 'guardRead' | 'guardSealed'
-  | 'blockedTitle' | 'blockedHint' | 'selected' | 'clearSel' | 'noMatch' | 'noMatchHint'
-  | 'entryFile' | 'entryFolder' | 'preview' | 'keysHint'
-  | 'eyebrow' | 'indexing' | 'path' | 'home' | 'kinds' | 'bench';
-
-const STRINGS: Record<'en' | 'hy', Record<LKey, string>> = {
-  en: {
-    filter: 'Filter files…',
-    clearFilter: 'Clear filter',
-    all: 'All',
-    folders: 'Folders',
-    files: 'Files',
-    items: 'items',
-    hits: 'matches',
-    planePick: 'Select a file to preview',
-    planePickHint: 'Use ↑ ↓ to move, Enter to preview, Space to select.',
-    edit: 'Edit',
-    readonly: 'Read-only',
-    refresh: 'Refresh',
-    guardOpen: 'open',
-    guardRead: 'read-only',
-    guardSealed: 'sealed',
-    blockedTitle: 'Sealed — cannot open',
-    blockedHint: 'The engine scope guard denied this file. Reason:',
-    selected: 'Selected',
-    clearSel: 'Clear',
-    noMatch: 'No files match',
-    noMatchHint: 'Try a different filter.',
-    entryFile: 'file',
-    entryFolder: 'folder',
-    preview: 'Preview',
-    keysHint: '/ filter · ↑↓ move · Enter preview · Space select',
-    eyebrow: 'DATA BENCH · SPATIAL WORKSPACE',
-    indexing: 'Bro · indexing',
-    path: 'Path',
-    home: 'Home',
-    kinds: 'Filter by kind',
-    bench: 'File bench',
-  },
-  hy: {
-    filter: 'Զտել ֆայլերը…',
-    clearFilter: 'Մաքրել զտիչը',
-    all: 'Բոլորը',
-    folders: 'Թղթապանակներ',
-    files: 'Ֆայլեր',
-    items: 'տարր',
-    hits: 'համընկնում',
-    planePick: 'Ընտրիր ֆայլ նախադիտման համար',
-    planePickHint: 'Օգտագործիր ↑ ↓ շարժվելու, Enter՝ նախադիտելու, Space՝ ընտրելու համար։',
-    edit: 'Խմբագրել',
-    readonly: 'Միայն ընթերցում',
-    refresh: 'Թարմացնել',
-    guardOpen: 'բաց',
-    guardRead: 'միայն ընթերցում',
-    guardSealed: 'կնքված',
-    blockedTitle: 'Կնքված է — հնարավոր չէ բացել',
-    blockedHint: 'Շարժիչի scope-պահակը մերժեց այս ֆայլը։ Պատճառ՝',
-    selected: 'Ընտրված',
-    clearSel: 'Մաքրել',
-    noMatch: 'Ֆայլ չի համընկնում',
-    noMatchHint: 'Փորձիր այլ զտիչ։',
-    entryFile: 'ֆայլ',
-    entryFolder: 'թղթապանակ',
-    preview: 'Նախադիտում',
-    keysHint: '/ զտել · ↑↓ շարժվել · Enter նախադիտել · Space ընտրել',
-    eyebrow: 'ՏՎՅԱԼ-ՍԵՂԱՆ · SPATIAL WORKSPACE',
-    indexing: 'Bro · ինդեքսավորում',
-    path: 'Ուղի',
-    home: 'Տուն',
-    kinds: 'Զտիչ ըստ տեսակի',
-    bench: 'Ֆայլերի աշխատասեղան',
-  },
-};
+import { STR } from './Files.strings';
 
 // Reconstruct clickable breadcrumb segments from the REAL current path string
 // (from `listDir`). Ancestor segments become navigable to their reconstructed
@@ -111,11 +31,6 @@ function crumbSegments(path?: string): { label: string; nav?: string }[] {
   });
   if (segs.length) segs[segs.length - 1].nav = undefined; // current dir — not a link
   return segs;
-}
-
-function useLocal(): (k: LKey) => string {
-  const { lang } = useApp();
-  return useCallback((k: LKey) => (STRINGS[lang === 'hy' ? 'hy' : 'en'])[k], [lang]);
 }
 
 // Per-file guard state, per the §D file guard vocabulary (open / read / sealed).
@@ -235,8 +150,8 @@ function PreviewPlane({ entry, onGuard, onEdit }: {
   onGuard: (path: string, guard: Guard) => void;
   onEdit: (entry: DirEntry) => void;
 }) {
-  const { t } = useApp();
-  const L = useLocal();
+  const { t, lang } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const s = useAsync(() => desktop.readFile(entry.path), [entry.path]);
 
   const denied = s.error != null && isGuardDenied(s.error);
@@ -298,8 +213,8 @@ function PreviewPlane({ entry, onGuard, onEdit }: {
 }
 
 export function Files() {
-  const { t } = useApp();
-  const L = useLocal();
+  const { t, lang } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   // undefined path == home directory (resolved by the backend).
   const [path, setPath] = useState<string | undefined>(undefined);
   const [query, setQuery] = useState('');

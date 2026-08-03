@@ -10,6 +10,7 @@ import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { KnowledgeNote } from '../domain/entities';
+import { STR, fmt } from './Knowledge.strings';
 
 // ---------------------------------------------------------------------------
 // §D `knowledge` page — re-skinned to the brops-aios «Նեյրո-քարտեզ / Neural
@@ -50,7 +51,7 @@ function ArticleEditor(
   { note: KnowledgeNote | null; onCancel: () => void; onSaved: (created: KnowledgeNote) => void },
 ) {
   const { t, lang } = useApp();
-  const L = (en: string, hy: string) => (lang === 'hy' ? hy : en);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const isEdit = note !== null;
 
   const [title, setTitle] = useState(note?.title ?? '');
@@ -89,25 +90,22 @@ function ArticleEditor(
     }
   };
 
-  const heading = isEdit ? L('Edit article', 'Խմբագրել հոդվածը') : t('knowledge.newNote');
+  const heading = isEdit ? L('editArticle') : t('knowledge.newNote');
 
   return (
     <section className="surface soft kb-panel">
       <div className="sec-head">
         <h2>{heading}</h2>
-        <span className="note">{L('Codex editor', 'Կոդեքսի խմբագրիչ')}</span>
+        <span className="note">{L('codexEditor')}</span>
       </div>
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-      <div className="kb-editor" onKeyDown={onKey} role="group" aria-label={L('Article editor', 'Հոդվածի խմբագրիչ')}>
+      <div className="kb-editor" onKeyDown={onKey} role="group" aria-label={L('articleEditor')}>
         {isEdit && (
           <div className="kb-blocked" role="note">
             <div className="kb-blocked-glyph" aria-hidden="true">✎⃠</div>
-            <div className="kb-blocked-title">{L('Editing not available yet', 'Խմբագրումը դեռ հասանելի չէ')}</div>
+            <div className="kb-blocked-title">{L('editNotAvailable')}</div>
             <div className="kb-blocked-body">
-              {L(
-                'The desktop knowledge store has no update command yet, so this article cannot be re-saved. Its text is shown read-only below.',
-                'Desktop-ի գիտելիքի պահոցը դեռ չունի թարմացման հրաման, ուստի այս հոդվածը չի կարող վերապահվել։ Տեքստը ցուցադրվում է միայն կարդալու համար։',
-              )}
+              {L('editBlockedBody')}
             </div>
           </div>
         )}
@@ -126,7 +124,7 @@ function ArticleEditor(
         </label>
         <label className="form-row">
           <span className="field-label">{t('knowledge.source')}</span>
-          <Input value={source} disabled={isEdit} placeholder={L('Citation — URL, book, or note', 'Հղում — URL, գիրք կամ նշում')}
+          <Input value={source} disabled={isEdit} placeholder={L('sourcePlaceholder')}
             onChange={(e: ChangeEvent<HTMLInputElement>) => setSource(e.target.value)} />
         </label>
         <label className="form-row">
@@ -137,16 +135,16 @@ function ArticleEditor(
 
         <div className="row between kb-editor-foot">
           <span className="kb-keyhint">
-            <span className="kb-kbd">⌘/Ctrl</span> + <span className="kb-kbd">S</span> {L('to save', 'պահելու համար')}
+            <span className="kb-kbd">⌘/Ctrl</span> + <span className="kb-kbd">S</span> {L('toSave')}
             {'  ·  '}
-            <span className="kb-kbd">Esc</span> {L('to cancel', 'չեղարկելու համար')}
+            <span className="kb-kbd">Esc</span> {L('toCancel')}
           </span>
           <div className="row" style={{ gap: 'var(--s3)' }}>
             <Button variant="ghost" onClick={onCancel}>{t('action.cancel')}</Button>
             <Button
               variant="primary"
               disabled={!canSave}
-              title={isEdit ? L('Editing an existing article is not available yet.', 'Առկա հոդվածի խմբագրումը դեռ հասանելի չէ։') : undefined}
+              title={isEdit ? L('editExistingBlocked') : undefined}
               onClick={submit}
             >
               {t('action.save')}
@@ -160,7 +158,7 @@ function ArticleEditor(
 
 export function Knowledge() {
   const { t, lang, focus, clearFocus } = useApp();
-  const L = (en: string, hy: string) => (lang === 'hy' ? hy : en);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   const [query, setQuery] = useState('');
   const [collection, setCollection] = useState<string>(COLLECTION_ALL);
@@ -206,10 +204,10 @@ export function Knowledge() {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([name, count]) => ({ id: name, label: `#${name}`, count }));
     const out: { id: string; label: string; count: number }[] = [
-      { id: COLLECTION_ALL, label: L('All articles', 'Բոլոր հոդվածները'), count: notes.length },
+      { id: COLLECTION_ALL, label: L('allArticles'), count: notes.length },
       ...tagList,
     ];
-    if (untagged > 0) out.push({ id: COLLECTION_UNTAGGED, label: L('Untagged', 'Առանց պիտակի'), count: untagged });
+    if (untagged > 0) out.push({ id: COLLECTION_UNTAGGED, label: L('untagged'), count: untagged });
     return out;
   }, [all.data, lang]);
 
@@ -242,9 +240,9 @@ export function Knowledge() {
   );
   const citedCount = useMemo(() => notes.filter((n) => n.source.trim()).length, [notes]);
   const metrics = useMemo(() => [
-    { v: notes.length, label: L('articles · store', 'հոդված · store'), tone: '' },
-    { v: tagCount, label: L('collections', 'հավաքածու'), tone: 'info' },
-    { v: citedCount, label: L('cited', 'հղումով'), tone: 'mint' },
+    { v: notes.length, label: L('metricArticles'), tone: '' },
+    { v: tagCount, label: L('metricCollections'), tone: 'info' },
+    { v: citedCount, label: L('metricCited'), tone: 'mint' },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [notes.length, tagCount, citedCount, lang]);
 
@@ -278,7 +276,7 @@ export function Knowledge() {
     if (s.loading) return;
     if (!isFiltering) { setAnnounce(''); return; }
     const n = articles.length;
-    setAnnounce(L(`${n} ${n === 1 ? 'article' : 'articles'} found`, `Գտնվեց ${n} հոդված`));
+    setAnnounce(fmt.articlesFound(lang, n));
   }, [articles.length, isFiltering, s.loading, lang]);
 
   const reloadAll = () => { s.reload(); all.reload(); };
@@ -288,7 +286,7 @@ export function Knowledge() {
     setSelectedId(created.id);
     setCollection(COLLECTION_ALL);
     setQuery('');
-    setAnnounce(L(`Article “${created.title}” saved`, `«${created.title}» հոդվածը պահվեց`));
+    setAnnounce(fmt.articleSaved(lang, created.title));
     reloadAll();
   };
 
@@ -297,7 +295,7 @@ export function Knowledge() {
     setPendingDelete(null);
     setEditor(null);
     if (selectedId === id) setSelectedId(null);
-    setAnnounce(gone ? L(`Article “${gone.title}” deleted`, `«${gone.title}» հոդվածը ջնջվեց`) : '');
+    setAnnounce(gone ? fmt.articleDeleted(lang, gone.title) : '');
     desktop.deleteKnowledge(id).then(reloadAll).catch(reloadAll);
   };
 
@@ -327,16 +325,14 @@ export function Knowledge() {
       return isFiltering ? (
         <EmptyState
           glyph="⁂"
-          title={L('No matching articles', 'Համընկնող հոդվածներ չկան')}
-          hint={L('No article matches this search or collection. Clear the filter to see all knowledge.',
-            'Ոչ մի հոդված չի համընկնում այս որոնման կամ հավաքածուի հետ։ Մաքրիր զտիչը՝ ամբողջ գիտելիքը տեսնելու համար։')}
+          title={L('noMatchTitle')}
+          hint={L('noMatchHint')}
         />
       ) : (
         <EmptyState
           glyph="⁂"
-          title={L('Bro has no knowledge yet', 'Bro-ն դեռ գիտելիք չունի')}
-          hint={L('Create the first article to start the knowledge base.',
-            'Ստեղծիր առաջին հոդվածը՝ գիտելիքի բազան սկսելու համար։')}
+          title={L('emptyTitle')}
+          hint={L('emptyHint')}
         />
       );
     }
@@ -345,7 +341,7 @@ export function Knowledge() {
         ref={listRef}
         className="kb-list"
         role="listbox"
-        aria-label={L('Articles', 'Հոդվածներ')}
+        aria-label={L('articlesLabel')}
         aria-activedescendant={activeId ? `kb-row-${activeId}` : undefined}
         tabIndex={0}
         onKeyDown={onListKey}
@@ -409,15 +405,14 @@ export function Knowledge() {
           <div className="kb-core-head">
             <Mark state="thinking" size={40} />
             <div className="kb-core-id">
-              <span className="eyebrow">{L('CODEX CORE', 'ԿՈԴԵՔՍԻ ՄԻՋՈՒԿ')}</span>
-              <b>{L('Select an article', 'Ընտրիր հոդված')}</b>
+              <span className="eyebrow">{L('codexCore')}</span>
+              <b>{L('selectArticle')}</b>
             </div>
           </div>
           <EmptyState
             glyph="⁂"
-            title={L('Select an article', 'Ընտրիր հոդված')}
-            hint={L('Pick an article from the list, or press New to write one.',
-              'Ընտրիր հոդված ցանկից կամ սեղմիր «Նոր»՝ գրելու համար։')}
+            title={L('selectArticle')}
+            hint={L('selectArticleHint')}
           />
         </section>
       );
@@ -430,14 +425,14 @@ export function Knowledge() {
         <article className="kb-article" role="article" aria-label={selected.title}>
           <div className="kb-article-head">
             <div className="kb-article-id">
-              <span className="eyebrow">{L('KNOWLEDGE NODE · ARTICLE', 'ԳԻՏԵԼԻՔ-ՀԱՆԳՈՒՅՑ · ARTICLE')}</span>
+              <span className="eyebrow">{L('knowledgeNode')}</span>
               <h2>{selected.title}</h2>
             </div>
             <div className="row kb-article-acts" style={{ gap: 'var(--s2)' }}>
               <Button
                 small
                 onClick={() => setEditor(selected)}
-                title={L('Open the editor for this article', 'Բացել այս հոդվածի խմբագրիչը')}
+                title={L('openEditor')}
               >
                 {t('action.edit')}
               </Button>
@@ -446,7 +441,7 @@ export function Knowledge() {
                   small
                   variant="ghost"
                   onClick={() => setPendingDelete(selected.id)}
-                  title={L('Delete this article', 'Ջնջել այս հոդվածը')}
+                  title={L('deleteArticle')}
                 >
                   {t('action.delete')}
                 </Button>
@@ -454,15 +449,15 @@ export function Knowledge() {
             </div>
           </div>
 
-          <section aria-label={L('Article body', 'Հոդվածի բովանդակություն')}>
+          <section aria-label={L('articleBody')}>
             {selected.body
               ? <div className="kb-body">{selected.body}</div>
-              : <div className="muted">{L('This article has no body text.', 'Այս հոդվածը մարմնի տեքստ չունի։')}</div>}
+              : <div className="muted">{L('noBody')}</div>}
           </section>
 
           {/* Citation view — the note's `source` rendered as a numbered citation. */}
-          <section className="kb-section" aria-label={L('Citations', 'Հղումներ')}>
-            <h3>{L('Citation', 'Հղում')}</h3>
+          <section className="kb-section" aria-label={L('citations')}>
+            <h3>{L('citation')}</h3>
             {selected.source ? (
               <div className="kb-cite">
                 <span className="kb-cite-mark mono">[1]</span>
@@ -470,7 +465,7 @@ export function Knowledge() {
               </div>
             ) : (
               <div className="muted" style={{ fontSize: 13 }}>
-                {L('No source recorded for this article.', 'Այս հոդվածի համար աղբյուր գրանցված չէ։')}
+                {L('noSource')}
               </div>
             )}
           </section>
@@ -485,7 +480,7 @@ export function Knowledge() {
                     type="button"
                     className="tag kb-tag-btn"
                     onClick={() => { setCollection(tag); setEditor(null); }}
-                    title={L(`Filter to #${tag}`, `Զտել #${tag}`)}
+                    title={fmt.filterToTag(lang, tag)}
                   >
                     #{tag}
                   </button>
@@ -494,15 +489,15 @@ export function Knowledge() {
             </section>
           )}
 
-          <section className="kb-section" aria-label={L('Details', 'Մանրամասներ')}>
+          <section className="kb-section" aria-label={L('details')}>
             <div className="kb-meta">
               <span className="capsule">
                 <b>{fmtDate(selected.createdAt)}</b>
-                <span>{L('Created', 'Ստեղծված')}</span>
+                <span>{L('created')}</span>
               </span>
               <span className="capsule">
                 <b>{fmtDate(selected.updatedAt)}</b>
-                <span>{L('Updated', 'Թարմացված')}</span>
+                <span>{L('updated')}</span>
               </span>
             </div>
           </section>
@@ -517,12 +512,12 @@ export function Knowledge() {
 
       <header className="pageHead">
         <div>
-          <span className="eyebrow">{L('KNOWLEDGE BASE · NEURAL MAP', 'ԳԻՏԵԼԻՔԻ ԲԱԶԱ · NEURAL MAP')}</span>
+          <span className="eyebrow">{L('knowledgeBaseEyebrow')}</span>
           <h1>{t('nav.knowledge')}</h1>
           <p className="sub">{t('knowledge.subtitle')}</p>
         </div>
         <div className="right">
-          <span className="pill info">{L('Bro recall · active', 'Bro վերհիշում · ակտիվ')}</span>
+          <span className="pill info">{L('recallActive')}</span>
           <Button variant="primary" onClick={() => { setEditor('new'); }}>{t('action.new')}</Button>
         </div>
       </header>
@@ -548,11 +543,11 @@ export function Knowledge() {
           <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
 
           <div className="sec-head">
-            <h2>{L('Search index', 'Որոնման ինդեքս')}</h2>
+            <h2>{L('searchIndex')}</h2>
             <span className="note">
               <b className="mono">{articles.length}</b>{' / '}
               <b className="mono">{notes.length}</b>{' '}
-              {L('nodes', 'հանգույց')}
+              {L('nodes')}
             </span>
           </div>
 
@@ -571,7 +566,7 @@ export function Knowledge() {
 
           {/* Collections — real groupings over the notes' tags, as FTS chips. */}
           {collections.length > 1 && (
-            <div className="kb-chips" role="group" aria-label={L('Collections', 'Հավաքածուներ')}>
+            <div className="kb-chips" role="group" aria-label={L('collections')}>
               {collections.map((c) => (
                 <button
                   key={c.id || 'all'}
@@ -598,8 +593,8 @@ export function Knowledge() {
       {!s.error && notes.length > 0 && (
         <section className="surface soft kb-metrics">
           <div className="sec-head">
-            <h2>{L('Knowledge base', 'Գիտելիքի բազա')}</h2>
-            <span className="note">{L('counted from the store', 'store-ից հաշված')}</span>
+            <h2>{L('knowledgeBase')}</h2>
+            <span className="note">{L('countedFromStore')}</span>
           </div>
           <div className="kstats">
             {metrics.map((x, i) => (

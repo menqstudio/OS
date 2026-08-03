@@ -5,6 +5,7 @@ import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Mark } from '../components/Ambient';
 import { TrustSelftestPanel } from '../components/TrustSelftest';
+import { STR } from './Security.strings';
 
 // ⛨ Անվտանգություն — Evidence chain / posture (Phase-2 §D), re-dressed into the
 // AI-OS design language (aios.css) as a "manifest instrument" + posture strip.
@@ -43,20 +44,12 @@ const MARK_BY_INTEGRITY: Record<Integrity, string> = {
 };
 
 /** One residual/deferred engine security item (roadmap §K, O-1..O-5). The
- *  desktop has no live status feed for these, so each renders "unverified". */
-interface Residual {
-  id: string;
-  en: string;
-  hy: string;
-}
+ *  desktop has no live status feed for these, so each renders "unverified".
+ *  Display names are trilingual and live in Security.strings.ts under
+ *  `residual.<id>` — the id here doubles as the strings key. */
+type ResidualId = 'O-1' | 'O-2' | 'O-3' | 'O-4' | 'O-5';
 
-const RESIDUALS: Residual[] = [
-  { id: 'O-1', en: 'Bytecode-shadow', hy: 'Բայթկոդի ստվեր' },
-  { id: 'O-2', en: 'Audit-head anchor', hy: 'Աուդիտի գլխի խարիսխ' },
-  { id: 'O-3', en: 'Conductor session token', hy: 'Դիրիժորի սեսիայի թոքեն' },
-  { id: 'O-4', en: 'Control-room actor', hy: 'Կառավարման սենյակի դերակատար' },
-  { id: 'O-5', en: 'Evidence high-water', hy: 'Ապացույցի վերին սահման' },
-];
+const RESIDUAL_IDS: ResidualId[] = ['O-1', 'O-2', 'O-3', 'O-4', 'O-5'];
 
 const cv = (i: number): CSSProperties => ({ ['--i']: i } as CSSProperties);
 
@@ -80,7 +73,7 @@ export function Security() {
   // blocked/unreachable (the engine chain read is not answering yet); the desktop
   // never claims a "verified" chain of its own — it mirrors, it does not adjudicate.
   const chain = useAsync(() => desktop.readEvidenceChain(), []);
-  const tr = (en: string, hy: string) => (lang === 'hy' ? hy : en);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   const backend = hasBackend();
   // Honest derivation from the real chain read — never a fabricated "verified".
@@ -142,30 +135,24 @@ export function Security() {
   );
 
   // Honest "no read command wired" notice reused by every engine-truth section.
-  const blockedNote = (extraEn: string, extraHy: string) => (
+  const blockedNote = (noteKey: keyof typeof STR) => (
     <div className="sec-blocked" role="note">
-      <span className="pill warn">{tr('Blocked', 'Արգելափակված')}</span>
-      <span className="note">{tr(extraEn, extraHy)}</span>
+      <span className="pill warn">{L('blocked')}</span>
+      <span className="note">{L(noteKey)}</span>
     </div>
   );
 
   // --- Honest posture labels (live region text) --------------------------------------
   const integrityLabel = integrity === 'checking'
-    ? tr('Verifying…', 'Ստուգվում է…')
+    ? L('verifying')
     : integrity === 'broken'
-      ? tr('Chain read failed', 'Շղթայի ընթերցումը ձախողվեց')
-      : tr('Integrity unverified', 'Ամբողջականությունը չհաստատված');
+      ? L('chainReadFailed')
+      : L('integrityUnverified');
   const integrityDetail = integrity === 'checking'
-    ? tr('Reading the evidence chain…', 'Կարդում ենք ապացույցների շղթան…')
+    ? L('readingChain')
     : integrity === 'broken'
-      ? tr(
-        'The evidence-chain read failed — the desktop cannot confirm integrity. The engine adjudicates; retry the read in the posture section below.',
-        'Ապացույցների շղթայի ընթերցումը ձախողվեց — աշխատասեղանը չի կարող հաստատել ամբողջականությունը։ Շարժիչը որոշում է. կրկնեք ընթերցումը ստորև։',
-      )
-      : tr(
-        'Chain integrity is adjudicated by the engine (Ed25519). The read-only evidence-chain command is not wired into the desktop yet, so integrity cannot be confirmed here.',
-        'Շղթայի ամբողջականությունը որոշում է շարժիչը (Ed25519)։ Միայն-ընթերցման ապացույցների շղթայի հրամանը դեռ միացված չէ աշխատասեղանին, ուստի ամբողջականությունն այստեղ չի հաստատվում։',
-      );
+      ? L('integrityDetailBroken')
+      : L('integrityDetailBlocked');
 
   // --- 0 · THE MANIFEST · chain-integrity instrument (REAL chain read, live region) --
   const integrityHero = (
@@ -181,9 +168,9 @@ export function Security() {
       <div className="mani-head">
         <div className="mh-title">
           <h2 className="eyebrow" id="sec-integrity-h">
-            {tr('Evidence-chain integrity', 'Ապացույցների շղթայի ամբողջականություն')}
+            {L('integrityHeading')}
           </h2>
-          <span className="mh-sub micro">{tr('Adjudicated by the engine · Ed25519', 'Որոշում է շարժիչը · Ed25519')}</span>
+          <span className="mh-sub micro">{L('adjudicatedByEngine')}</span>
         </div>
         <span className="sec-idx" aria-hidden="true">1</span>
       </div>
@@ -201,7 +188,7 @@ export function Security() {
           <span className={`pill ${PILL_BY_INTEGRITY[integrity]}`}>{integrityLabel}</span>
           <p className="mc-detail">{integrityDetail}</p>
           {chainReason ? (
-            <p className="mc-reason micro">{tr('Engine reason: ', 'Շարժիչի պատճառ՝ ')}{chainReason}</p>
+            <p className="mc-reason micro">{L('engineReason')}{chainReason}</p>
           ) : null}
         </div>
       </div>
@@ -210,11 +197,11 @@ export function Security() {
       <div className="wire" />
       {/* Honest link chain: the three engine-truth surfaces, NONE confirmed
           (no `.done`/`.now`) — mirroring the blocked posture, not implying trust. */}
-      <div className="chain" aria-label={tr('Engine surfaces — none confirmed', 'Շարժիչի մակերեսներ — չհաստատված')}>
-        <b>{tr('DIGEST', 'DIGEST')}</b>
-        <b>{tr('CHAIN', 'ՇՂԹԱ')}</b>
-        <b>{tr('LEASES', 'ՎԱՐՁ.')}</b>
-        <span className="micro chain-note">{tr('unverified', 'չհաստատված')}</span>
+      <div className="chain" aria-label={L('engineSurfacesNoneConfirmed')}>
+        <b>{L('digestChip')}</b>
+        <b>{L('chainChip')}</b>
+        <b>{L('leasesChip')}</b>
+        <span className="micro chain-note">{L('unverifiedLower')}</span>
       </div>
     </section>
   );
@@ -234,7 +221,7 @@ export function Security() {
         <span className="sec-idx" aria-hidden="true">2</span>
       </div>
       <p className="sec-hint micro">
-        {tr('Live posture counts from the engine audit summary.', 'Կենդանի ցուցանիշներ շարժիչի աուդիտի ամփոփումից։')}
+        {L('postureHint')}
       </p>
       {s.loading && s.data === null ? (
         <Skeleton rows={3} />
@@ -265,19 +252,16 @@ export function Security() {
   const digestSection = section(
     2,
     'sec-digest',
-    tr('Control-plane digest', 'Կառավարման հարթության ամփոփ (digest)'),
-    tr('Read-only protected-control-plane digest.', 'Միայն-ընթերցման պաշտպանված կառավարման հարթության digest։'),
+    L('digestTitle'),
+    L('digestHint'),
     <>
       <div className="sec-digest-row">
         <span className="micro">SHA-256</span>
         <code className="sec-digest-val mono">—</code>
       </div>
-      {blockedNote(
-        'The protected control-plane digest is held by the engine and mirrored read-only; the engine chain read is not answering yet, so no digest is shown (never a fabricated one).',
-        'Պաշտպանված կառավարման հարթության digest-ը պահվում է շարժիչում և արտացոլվում է միայն ընթերցմամբ. շարժիչի շղթայի ընթերցումը դեռ չի պատասխանում, ուստի digest ցույց չի տրվում (երբեք կեղծ)։',
-      )}
+      {blockedNote('digestBlockedNote')}
       {chainReason ? (
-        <p className="note sec-reason micro">{tr('Engine reason: ', 'Շարժիչի պատճառ՝ ')}{chainReason}</p>
+        <p className="note sec-reason micro">{L('engineReason')}{chainReason}</p>
       ) : null}
     </>,
   );
@@ -286,16 +270,16 @@ export function Security() {
   const residualSection = section(
     3,
     'sec-residual',
-    tr('Residual items (O-1..O-5)', 'Մնացորդային կետեր (O-1..O-5)'),
-    tr('Deferred engine security items; each closed by its own audited task.', 'Հետաձգված շարժիչի անվտանգության կետեր. յուրաքանչյուրը փակվում է առանձին աուդիտով։'),
+    L('residualTitle'),
+    L('residualHint'),
     <ul className="sec-residual-list" role="list">
-      {RESIDUALS.map((r) => (
-        <li key={r.id} className="sec-residual-item" role="listitem">
+      {RESIDUAL_IDS.map((id) => (
+        <li key={id} className="sec-residual-item" role="listitem">
           <span className="sec-residual-lead">
-            <span className="tag">{r.id}</span>
-            <span className="sec-residual-name">{tr(r.en, r.hy)}</span>
+            <span className="tag">{id}</span>
+            <span className="sec-residual-name">{L(`residual.${id}`)}</span>
           </span>
-          <span className="pill warn">{tr('Unverified', 'Չհաստատված')}</span>
+          <span className="pill warn">{L('unverified')}</span>
         </li>
       ))}
     </ul>,
@@ -305,12 +289,9 @@ export function Security() {
   const registrySection = section(
     4,
     'sec-registry',
-    tr('Key & lease registry', 'Բանալիների և վարձակալությունների ռեեստր'),
-    tr('Ownership held by the engine Ed25519 system.', 'Սեփականությունը պահվում է շարժիչի Ed25519 համակարգում։'),
-    blockedNote(
-      'By design the desktop caches no keys or leases; the registry lives in the engine and no read command is wired here.',
-      'Ըստ նախագծման աշխատասեղանը չի պահում բանալիներ կամ վարձակալություններ. ռեեստրը շարժիչում է, ընթերցման հրաման այստեղ միացված չէ։',
-    ),
+    L('registryTitle'),
+    L('registryHint'),
+    blockedNote('registryBlockedNote'),
   );
 
   // --- 5 · Recent sensitive events (REAL data) ---------------------------------------
@@ -348,7 +329,7 @@ export function Security() {
       <div className="v-security sec-page" onKeyDown={onKeyDown}>
         <header className="pageHead reveal" style={cv(0)}>
           <div>
-            <span className="eyebrow">{tr('TRUST & DEFENSE CORE', 'ՎՍՏԱՀՈՒԹՅԱՆ ՄԻՋՈՒԿ')}</span>
+            <span className="eyebrow">{L('eyebrowCore')}</span>
             <h1>{t('nav.security')}</h1>
             <p className="sub">{t('security.subtitle')}</p>
           </div>
@@ -359,7 +340,7 @@ export function Security() {
         </header>
 
         <p className="sec-nav-hint micro">
-          {tr('Press 1–6, or [ and ] to move between sections.', 'Սեղմեք 1–6, կամ [ և ] բաժինների միջև տեղափոխվելու համար։')}
+          {L('navHint')}
         </p>
 
         <div className="sec-sections">

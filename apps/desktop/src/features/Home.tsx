@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { useApp } from '../app/store';
 import { Button, Async, Input, TileGroup, StatTile, EmptyState, Skeleton } from '../components/ui';
 import { Mark } from '../components/Ambient';
@@ -8,6 +8,7 @@ import { useAsync } from '../hooks/useAsync';
 import { Beatline, BarChart } from '../components/charts/Chart';
 import { Markdown } from '../components/markdown';
 import { useToast } from '../components/toast';
+import { STR, taskSummary, activitySummary } from './Home.strings';
 
 // Real status → aios `.pill` modifier. The pill only re-skins a status that the
 // backend actually returned — it never invents a "verified"/"live" state.
@@ -117,9 +118,10 @@ export function Home() {
   const activity = useAsync(() => desktop.listActivity(), []);
   const allApprovals = useAsync(() => desktop.listApprovals(), []);
 
-  // Inline bilingual labels for the new instruments (mockup Armenian / English),
-  // mirroring Activity.tsx — no shared i18n file is touched. Fixed strings only.
-  const bi = useCallback((en: string, hy: string) => (lang === 'hy' ? hy : en), [lang]);
+  // Page-local trilingual labels for the new instruments, sourced from
+  // Home.strings. `t()` still serves every shared dict key; L() resolves the
+  // page-local copy for the active language, falling back to English.
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   // Task completion + attention — counts of real task statuses from listTasks().
   const taskStats = useMemo(() => {
@@ -285,29 +287,29 @@ export function Home() {
       <div className="hx-instruments">
         {/* Derived ratios — each a plain quotient of two real counts. Shows "—"
             until its source has loaded (never a placeholder number). */}
-        <div className="hx-ratios" role="group" aria-label={bi('Derived ratios', 'Ածանցյալ հարաբերակցություններ')}>
+        <div className="hx-ratios" role="group" aria-label={L('derivedRatios')}>
           <div className="hx-ratio">
             <b>{agentStats.busyPct ?? '—'}{agentStats.busyPct != null && <i>%</i>}</b>
-            <span className="micro">{bi('agents busy', 'զբաղված գործակալ')}</span>
+            <span className="micro">{L('agentsBusy')}</span>
           </div>
           <div className="hx-ratio">
             <b>{taskStats.blockedPct ?? '—'}{taskStats.blockedPct != null && <i>%</i>}</b>
-            <span className="micro">{bi('tasks blocked', 'արգելափակ առաջադրանք')}</span>
+            <span className="micro">{L('tasksBlocked')}</span>
           </div>
           <div className="hx-ratio">
             <b>{approvalStats.pendingPct ?? '—'}{approvalStats.pendingPct != null && <i>%</i>}</b>
-            <span className="micro">{bi('approvals pending', 'սպասող հաստատում')}</span>
+            <span className="micro">{L('approvalsPending')}</span>
           </div>
         </div>
 
         <div className="hx-board">
           {/* Task-progress ring — done / total from listTasks(). */}
           <section className="surface soft hx-resolve reveal">
-            <div className="sec-head"><h2>{bi('Task progress', 'Առաջադրանքների ընթացք')}</h2></div>
+            <div className="sec-head"><h2>{L('taskProgress')}</h2></div>
             {allTasks.loading && allTasks.data === null ? (
               <Skeleton rows={3} />
             ) : allTasks.error ? (
-              <p className="hx-note note">{bi('Progress unavailable', 'Ընթացքն անհասանելի է')}</p>
+              <p className="hx-note note">{L('progressUnavailable')}</p>
             ) : taskStats.total === 0 ? (
               <EmptyState glyph="◇" title={t('home.emptyPriorities')} />
             ) : (
@@ -322,15 +324,12 @@ export function Home() {
                   </svg>
                   <span className="read">
                     <b>{taskStats.donePct}<i>%</i></b>
-                    <span>{bi('done', 'ավարտ')}</span>
+                    <span>{L('done')}</span>
                   </span>
                 </div>
                 {/* Accessible text equivalent for the ring — the real counts behind it. */}
                 <p className="hx-note note">
-                  {bi(
-                    `${taskStats.done} of ${taskStats.total} tasks done · ${taskStats.active} active · ${taskStats.blocked} blocked`,
-                    `${taskStats.done}/${taskStats.total} ավարտ · ${taskStats.active} ակտիվ · ${taskStats.blocked} արգելափակ`,
-                  )}
+                  {taskSummary(lang, taskStats.done, taskStats.total, taskStats.active, taskStats.blocked)}
                 </p>
               </>
             )}
@@ -339,23 +338,23 @@ export function Home() {
           {/* Agents-by-status distribution — grouped counts from listAgents(). The
               BarChart carries its own summary + data-table for a11y. */}
           <section className="surface soft reveal">
-            <div className="sec-head"><h2>{bi('Agents by status', 'Գործակալներն ըստ վիճակի')}</h2></div>
+            <div className="sec-head"><h2>{L('agentsByStatus')}</h2></div>
             {agents.loading && agents.data === null ? (
               <Skeleton rows={4} />
             ) : agents.error ? (
-              <p className="hx-note note">{bi('Distribution unavailable', 'Բաշխումն անհասանելի է')}</p>
+              <p className="hx-note note">{L('distributionUnavailable')}</p>
             ) : agentStats.total === 0 ? (
               <EmptyState glyph="⬡" title={t('home.emptyAgents')} />
             ) : (
               <BarChart
                 data={agentStats.dist}
-                caption={bi('Agents by status', 'Գործակալներն ըստ վիճակի')}
-                unit={bi('agents', 'գործ.')}
-                totalLabel={bi('Total', 'Ընդամենը')}
-                nodeHeader={bi('Status', 'Վիճակ')}
-                valueHeader={bi('Count', 'Քանակ')}
-                shareHeader={bi('Share', 'Բաժին')}
-                tableToggle={bi('Show data table', 'Ցույց տալ աղյուսակը')}
+                caption={L('agentsByStatus')}
+                unit={L('agentsUnit')}
+                totalLabel={L('total')}
+                nodeHeader={L('statusHeader')}
+                valueHeader={L('countHeader')}
+                shareHeader={L('shareHeader')}
+                tableToggle={L('showDataTable')}
               />
             )}
           </section>
@@ -364,24 +363,21 @@ export function Home() {
               Beatline carries its own summary + data-table for a11y. */}
           <section className="surface soft reveal">
             <div className="sec-head">
-              <h2>{bi('Recent activity', 'Վերջին ակտիվություն')}</h2>
-              <span className="note">{bi('events per interval', 'իրադարձ. ընդմիջումով')}</span>
+              <h2>{L('recentActivity')}</h2>
+              <span className="note">{L('eventsPerInterval')}</span>
             </div>
             {activity.error ? (
-              <p className="hx-note note">{bi('Activity unavailable', 'Ակտիվությունն անհասանելի է')}</p>
+              <p className="hx-note note">{L('activityUnavailable')}</p>
             ) : (
               <Beatline
                 data={flow.points}
                 loading={activity.loading && activity.data === null}
-                caption={bi('Recent activity — events over time', 'Վերջին ակտիվություն — իրադարձ. ժամանակի ընթացքում')}
-                summary={bi(
-                  `${flow.total} recent events across ${FLOW_BUCKETS} intervals. Peak ${flow.peak} in an interval.`,
-                  `${flow.total} վերջին իրադարձ. ${FLOW_BUCKETS} ընդմիջումով։ Պիկ՝ ${flow.peak} մեկ ընդմիջումում։`,
-                )}
-                unit={bi('events', 'իրադ.')}
-                valueHeader={bi('Events', 'Իրադ.')}
-                labelHeader={bi('Time', 'Ժամ')}
-                emptyTitle={bi('No activity yet', 'Դեռ ակտիվություն չկա')}
+                caption={L('recentActivityCaption')}
+                summary={activitySummary(lang, flow.total, FLOW_BUCKETS, flow.peak)}
+                unit={L('eventsUnit')}
+                valueHeader={L('eventsHeader')}
+                labelHeader={L('timeHeader')}
+                emptyTitle={L('noActivityYet')}
               />
             )}
           </section>

@@ -16,7 +16,7 @@ import { Mark } from './Ambient';
  */
 export function TrustSelftestPanel() {
   const { lang } = useApp();
-  const tr = (en: string, hy: string) => (lang === 'hy' ? hy : en);
+  const tr = (en: string, hy: string, ru: string) => (lang === 'hy' ? hy : lang === 'ru' ? ru : en);
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [result, setResult] = useState<TrustSelftestResult | null>(null);
   const [error, setError] = useState<string>('');
@@ -38,36 +38,37 @@ export function TrustSelftestPanel() {
   const passed = result?.available === true && result.bound && result.production_verified;
 
   return (
-    <section className="sec-section surface soft reveal trust-selftest" aria-label={tr('Trust chain self-test', 'Վստահության շղթայի ինքնաստուգում')}>
+    <section className="sec-section surface soft reveal trust-selftest" aria-label={tr('Trust chain self-test', 'Վստահության շղթայի ինքնաստուգում', 'Самопроверка цепочки доверия')}>
       <span className="sec-idx micro" aria-hidden="true">◇</span>
-      <span className="eyebrow">{tr('LIVE TRUST CHAIN', 'ԿԵՆԴԱՆԻ ՎՍՏԱՀՈՒԹՅԱՆ ՇՂԹԱ')}</span>
-      <h2>{tr('Governed trust-chain self-test', 'Կառավարվող վստահության շղթայի ինքնաստուգում')}</h2>
+      <span className="eyebrow">{tr('LIVE TRUST CHAIN', 'ԿԵՆԴԱՆԻ ՎՍՏԱՀՈՒԹՅԱՆ ՇՂԹԱ', 'ЖИВАЯ ЦЕПОЧКА ДОВЕРИЯ')}</span>
+      <h2>{tr('Governed trust-chain self-test', 'Կառավարվող վստահության շղթայի ինքնաստուգում', 'Самопроверка управляемой цепочки доверия')}</h2>
       <p className="ts-desc">
         {tr(
           'Runs the real in-process chain — challenge → lease → attest → sign → verify — and reports the genuine receipt. It never flips live AI turns.',
           'Գործարկում է իրական in-process շղթան՝ մարտահրավեր → lease → attest → ստորագրություն → ստուգում — և զեկուցում է իսկական ստացականը։ Երբեք չի փոխում կենդանի AI քայլերը։',
+          'Запускает реальную in-process цепочку — вызов → аренда → аттестация → подпись → проверка — и сообщает подлинную квитанцию. Никогда не меняет статус живых ИИ-ходов.',
         )}
       </p>
 
       <div className="ts-actions">
         <button type="button" className="iconbtn ts-run" onClick={run} disabled={state === 'running'} style={{ width: 'auto', padding: '0 16px' }}>
           {state === 'running'
-            ? tr('Running…', 'Ընթացքում…')
-            : tr('Run trust self-test', 'Գործարկել ինքնաստուգումը')}
+            ? tr('Running…', 'Ընթացքում…', 'Выполняется…')
+            : tr('Run trust self-test', 'Գործարկել ինքնաստուգումը', 'Запустить самопроверку')}
         </button>
         <Mark state={state === 'running' ? 'thinking' : passed ? 'live' : 'idle'} size={22} />
       </div>
 
       <div className="ts-out" aria-live="polite">
         {state === 'idle' && (
-          <p className="muted micro">{tr('Not run yet.', 'Դեռ չի գործարկվել։')}</p>
+          <p className="muted micro">{tr('Not run yet.', 'Դեռ չի գործարկվել։', 'Ещё не запускалось.')}</p>
         )}
         {state === 'error' && (
-          <p className="pill warn" role="status">{tr('Self-test failed: ', 'Ինքնաստուգումը ձախողվեց՝ ') + error}</p>
+          <p className="pill warn" role="status">{tr('Self-test failed: ', 'Ինքնաստուգումը ձախողվեց՝ ', 'Самопроверка не удалась: ') + error}</p>
         )}
         {state === 'done' && result && !result.available && (
           <p className="pill off" role="status">
-            {tr('Unavailable on this platform (Windows build only).', 'Անհասանելի այս հարթակում (միայն Windows-ի բիլդ)։')}
+            {tr('Unavailable on this platform (Windows build only).', 'Անհասանելի այս հարթակում (միայն Windows-ի բիլդ)։', 'Недоступно на этой платформе (только сборка Windows).')}
           </p>
         )}
         {state === 'done' && passed && (
@@ -81,11 +82,11 @@ export function TrustSelftestPanel() {
               <b className="now">trusted_verified</b>
             </div>
             <p className="ts-verdict">
-              <span className="pill info">{tr('SELF-TEST PASSED', 'ԻՆՔՆԱՍՏՈՒԳՈՒՄ՝ ԱՆՑԱԾ')}</span>
+              <span className="pill info">{tr('SELF-TEST PASSED', 'ԻՆՔՆԱՍՏՈՒԳՈՒՄ՝ ԱՆՑԱԾ', 'САМОПРОВЕРКА ПРОЙДЕНА')}</span>
               <span className="mono ts-detail">{result.detail}</span>
             </p>
             <p className="ts-caveat" role="note">
-              <b>{tr('Honest posture: ', 'Ազնիվ դիրք՝ ')}</b>
+              <b>{tr('Honest posture: ', 'Ազնիվ դիրք՝ ', 'Честная позиция: ')}</b>
               {result.custody_note}
             </p>
           </div>

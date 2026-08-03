@@ -5,6 +5,7 @@ import { Mark } from '../components/Ambient';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { Integration } from '../domain/entities';
+import { STR } from './Integrations.strings';
 
 // ── Health derivation ─────────────────────────────────────────────────────────
 // Health is derived from the connector's real `status` field (no fabricated
@@ -31,7 +32,7 @@ function isGovernanceBlock(message: string): boolean {
 
 export function Integrations() {
   const { t, lang } = useApp();
-  const L = (en: string, hy: string) => (lang === 'hy' ? hy : en);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const s = useAsync(() => desktop.listIntegrations(), []);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -75,9 +76,9 @@ export function Integrations() {
     ?? null;
 
   const healthLabel = (h: Health) =>
-    h === 'healthy' ? L('Connected', 'Միացած')
-      : h === 'unhealthy' ? L('Unhealthy', 'Անսարք')
-        : L('Disconnected', 'Անջատված');
+    h === 'healthy' ? L('healthConnected')
+      : h === 'unhealthy' ? L('healthUnhealthy')
+        : L('healthDisconnected');
   // aios pill variant for the health state; error recolours via `.pill.cst-err`.
   const healthPill = (h: Health) =>
     h === 'healthy' ? 'live' : h === 'unhealthy' ? 'warn cst-err' : 'off';
@@ -91,9 +92,8 @@ export function Integrations() {
         setBusyId(null);
         setNotice({
           kind: 'ok',
-          text: status === 'connected'
-            ? L(`${i.name} connected`, `${i.name}՝ միացված է`)
-            : L(`${i.name} disconnected`, `${i.name}՝ անջատված է`),
+          text: (status === 'connected' ? L('connectedNamed') : L('disconnectedNamed'))
+            .replace('{name}', i.name),
         });
         s.reload();
       })
@@ -183,7 +183,7 @@ export function Integrations() {
         <div className="cd-head">
           <span className={`cd-badge st-${stKeyOf(h)}`} aria-hidden="true" />
           <div className="cd-id">
-            <span className="eyebrow">{i.provider} · {L('CHANNEL', 'ԱԼԻՔ')}</span>
+            <span className="eyebrow">{i.provider} · {L('channel')}</span>
             <b>{i.name}</b>
           </div>
           <span className={`pill ${healthPill(h)}`}>{healthLabel(h)}</span>
@@ -192,70 +192,61 @@ export function Integrations() {
         {/* error state — connector unhealthy */}
         {i.status === 'error' && (
           <div className="intg-blocked intg-blocked--error" role="alert">
-            <div className="intg-blocked-title">⚠ {L('Connector unhealthy', 'Միակցիչն անսարք է')}</div>
+            <div className="intg-blocked-title">⚠ {L('connectorUnhealthy')}</div>
             <div className="micro">
-              {L(
-                'This connector reported an error on its last health check. Reconnect to run its check again, or provision it through the engine / operator.',
-                'Այս միակցիչը վերջին ստուգման ժամանակ սխալ է հաղորդել։ Վերամիացրե՛ք ստուգումը կրկնելու համար, կամ տրամադրե՛ք այն շարժիչի/օպերատորի միջոցով։',
-              )}
+              {L('connectorUnhealthyBody')}
             </div>
             <div style={{ marginTop: 10 }}>
               <Button small variant="primary" disabled={busyId === i.id} onClick={() => setStatus(i, 'connected')}>
-                {L('Reconnect', 'Վերամիացնել')}
+                {L('reconnect')}
               </Button>
             </div>
           </div>
         )}
 
         {/* per-connector config (real fields; the desktop holds no config schema/secret) */}
-        <section aria-label={L('Configuration', 'Կարգավորում')}>
-          <div className="intg-section-title">{L('Configuration', 'Կարգավորում')}</div>
+        <section aria-label={L('configuration')}>
+          <div className="intg-section-title">{L('configuration')}</div>
           <div className="intg-fields">
-            <Field label={L('Provider', 'Մատակարար')}>{i.provider}</Field>
-            <Field label={L('Status', 'Կարգավիճակ')}>
+            <Field label={L('provider')}>{i.provider}</Field>
+            <Field label={L('status')}>
               <span className={`pill ${healthPill(h)}`}>{healthLabel(h)}</span>
             </Field>
-            <Field label={L('Added', 'Ավելացված')}>
+            <Field label={L('added')}>
               {isNaN(created.getTime()) ? '—' : dateFmt.format(created)}
             </Field>
-            <Field label={L('Last checked', 'Վերջին ստուգում')}>
+            <Field label={L('lastChecked')}>
               {isNaN(updated.getTime()) ? '—' : dateFmt.format(updated)}
             </Field>
           </div>
         </section>
 
         {/* auth handoff — clearly labeled; the desktop stores NO external secret */}
-        <section aria-label={L('Authentication', 'Նույնականացում')}>
-          <div className="intg-section-title">{L('Authentication', 'Նույնականացում')}</div>
+        <section aria-label={L('authentication')}>
+          <div className="intg-section-title">{L('authentication')}</div>
           <div className="intg-auth">
-            <span className="pill info">{L('Handoff → engine / operator', 'Փոխանցում → շարժիչ/օպերատոր')}</span>
+            <span className="pill info">{L('handoff')}</span>
             <p className="micro" style={{ margin: '8px 0 0' }}>
-              {L(
-                'Secrets are held by the engine / operator — this desktop stores none. Connecting hands authentication off to the governed engine; no credential is persisted here.',
-                'Գաղտնիքները պահվում են շարժիչի/օպերատորի կողմից — այս աշխատասեղանը ոչ մեկը չի պահում։ Միանալիս նույնականացումը փոխանցվում է կառավարվող շարժիչին. այստեղ ոչ մի հավատարմագիր չի պահվում։',
-              )}
+              {L('authBody')}
             </p>
           </div>
         </section>
 
         {/* inbound triggers + outbound sinks — no backing command exists yet, so
             the honest `blocked` state (not provisioned + how to provision). */}
-        <section aria-label={L('Triggers & sinks', 'Հրահրիչներ և ընդունիչներ')}>
-          <div className="intg-section-title">{L('Inbound triggers & outbound sinks', 'Մուտքային հրահրիչներ և ելքային ընդունիչներ')}</div>
+        <section aria-label={L('triggersSinks')}>
+          <div className="intg-section-title">{L('triggersSinksTitle')}</div>
           <div className="intg-blocked" role="note">
-            <div className="intg-blocked-title">🔒 {L('Mapping not provisioned', 'Կապակցումը տրամադրված չէ')}</div>
+            <div className="intg-blocked-title">🔒 {L('mappingNotProvisioned')}</div>
             <div className="micro">
-              {L(
-                'Trigger and sink mapping is not provisioned on this desktop. It stays blocked so an inbound event can never start ungoverned work and a sink can only send verified results.',
-                'Հրահրիչ–ընդունիչ կապակցումն այս աշխատասեղանում տրամադրված չէ։ Այն արգելափակված է մնում, որպեսզի մուտքային իրադարձությունը երբեք չմեկնարկի չկառավարվող աշխատանք, իսկ ընդունիչն ուղարկի միայն ստուգված արդյունքներ։',
-              )}
+              {L('mappingBody')}
             </div>
             <div className="intg-provision">
-              <div className="eyebrow">{L('How to provision', 'Ինչպես տրամադրել')}</div>
+              <div className="eyebrow">{L('howToProvision')}</div>
               <ol className="intg-steps">
-                <li>{L('Ask the operator to register the connector secret in the engine.', 'Խնդրե՛ք օպերատորին գրանցել միակցիչի գաղտնիքը շարժիչում։')}</li>
-                <li>{L('Map inbound events to a governed task class (receipt required).', 'Կապե՛ք մուտքային իրադարձությունները կառավարվող առաջադրանքի դասին (անհրաժեշտ է անդորրագիր)։')}</li>
-                <li>{L('Map an outbound sink that sends only verified results.', 'Կապե՛ք ելքային ընդունիչ, որն ուղարկում է միայն ստուգված արդյունքներ։')}</li>
+                <li>{L('provisionStep1')}</li>
+                <li>{L('provisionStep2')}</li>
+                <li>{L('provisionStep3')}</li>
               </ol>
             </div>
           </div>
@@ -286,14 +277,14 @@ export function Integrations() {
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
       <header className="pageHead">
         <div>
-          <span className="eyebrow">{L('INTEGRATIONS · SYSTEM MAP', 'ԻՆՏԵԳՐՈՒՄՆԵՐ · SYSTEM CONSTELLATION')}</span>
+          <span className="eyebrow">{L('headerEyebrow')}</span>
           <h1>{t('nav.integrations')}</h1>
           <p className="sub">{t('integrations.subtitle')}</p>
         </div>
         <div className="right">
           {!loading && !s.error && (
             <span className={`pill ${totals.anyConnected ? 'live' : 'off'}`}>
-              {totals.connected} {L('connected', 'միացած')}
+              {totals.connected} {L('connectedLower')}
             </span>
           )}
           <Mark state={totals.anyConnected ? 'live' : 'idle'} size={30} />
@@ -307,7 +298,7 @@ export function Integrations() {
             {notice.kind === 'blocked' && <span aria-hidden="true">🔒 </span>}
             {notice.kind === 'error' && <span aria-hidden="true">⚠ </span>}
             {notice.kind === 'blocked'
-              ? `${L('Blocked', 'Արգելափակված')}: ${notice.text}`
+              ? `${L('blocked')}: ${notice.text}`
               : notice.text}
           </div>
         )}
@@ -315,28 +306,27 @@ export function Integrations() {
 
       {/* ── HERO · real-derived telemetry band ─────────────────────────────── */}
       {!loading && !s.error && items.length > 0 && (
-        <section className="surface soft lg hud intg-hero" aria-label={L('Integration overview', 'Ինտեգրումների ընդհանուր պատկեր')}>
+        <section className="surface soft lg hud intg-hero" aria-label={L('integrationOverview')}>
           <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
           <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
           <div className="intg-stats">
-            <span className="capsule"><b>{totals.total}</b><span>{L('integrations', 'ինտեգրում')}</span></span>
-            <span className="capsule"><b>{totals.connected}</b><span>{L('active channel', 'ակտիվ ալիք')}</span></span>
-            <span className={`capsule ${totals.attention > 0 ? 'is-warn' : ''}`}><b>{totals.attention}</b><span>{L('attention', 'ուշադրություն')}</span></span>
+            <span className="capsule"><b>{totals.total}</b><span>{L('integrationsUnit')}</span></span>
+            <span className="capsule"><b>{totals.connected}</b><span>{L('activeChannel')}</span></span>
+            <span className={`capsule ${totals.attention > 0 ? 'is-warn' : ''}`}><b>{totals.attention}</b><span>{L('attention')}</span></span>
           </div>
           <div className="wire live" aria-hidden="true" />
           <p className="micro intg-scale">
-            {L('State is read from each connector — live only when genuinely connected.',
-              'Վիճակը կարդացվում է յուրաքանչյուր միակցիչից՝ միացած է միայն իրապես կապվածը։')}
+            {L('stateScale')}
           </p>
         </section>
       )}
 
       <div className="intg-layout">
         {/* ── REGISTRY · the real connector catalog ─────────────────────────── */}
-        <section className="surface soft intg-registry" aria-label={L('Connector catalog', 'Միակցիչների կատալոգ')}>
+        <section className="surface soft intg-registry" aria-label={L('connectorCatalog')}>
           <div className="sec-head">
-            <h2>{L('Connection registry', 'Միացման ռեեստր')}</h2>
-            <span className="note">{L('Select a row to inspect its channel.', 'ընտրիր տողը՝ մանրամասները բացելու համար')}</span>
+            <h2>{L('connectionRegistry')}</h2>
+            <span className="note">{L('selectRowHint')}</span>
           </div>
 
           <div className="intg-search">
@@ -346,8 +336,8 @@ export function Integrations() {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={L('Search catalog  (/)', 'Փնտրել կատալոգը  (/)')}
-              aria-label={L('Search connector catalog', 'Փնտրել միակցիչների կատալոգում')}
+              placeholder={L('searchPlaceholder')}
+              aria-label={L('searchAria')}
             />
           </div>
 
@@ -359,29 +349,29 @@ export function Integrations() {
             // empty state: no integrations + browse CTA
             <EmptyState
               glyph="🔌"
-              title={L('No integrations', 'Ինտեգրումներ չկան')}
-              hint={L('Connect a governed service to start.', 'Սկսելու համար միացրե՛ք կառավարվող ծառայություն։')}
+              title={L('noIntegrations')}
+              hint={L('noIntegrationsHint')}
             />
           ) : ordered.length === 0 ? (
             <EmptyState
               glyph="🔎"
-              title={L('No matches', 'Համընկնումներ չկան')}
-              hint={L('No connector matches your search.', 'Ձեր որոնմանը համապատասխան միակցիչ չկա։')}
+              title={L('noMatches')}
+              hint={L('noMatchesHint')}
             />
           ) : (
             <div className="creg">
               {connected.length > 0 && (
                 <div className="creg-group">
-                  <div className="creg-head"><span className="creg-gname">{L('Connected', 'Միացված')}</span></div>
-                  <div role="list" aria-label={L('Connected connectors', 'Միացված միակցիչներ')} className="intg-list">
+                  <div className="creg-head"><span className="creg-gname">{L('groupConnected')}</span></div>
+                  <div role="list" aria-label={L('connectedConnectors')} className="intg-list">
                     {connected.map((i) => renderRow(i, ordered.indexOf(i)))}
                   </div>
                 </div>
               )}
               {available.length > 0 && (
                 <div className="creg-group">
-                  <div className="creg-head"><span className="creg-gname">{L('Available', 'Հասանելի')}</span></div>
-                  <div role="list" aria-label={L('Available connectors', 'Հասանելի միակցիչներ')} className="intg-list">
+                  <div className="creg-head"><span className="creg-gname">{L('groupAvailable')}</span></div>
+                  <div role="list" aria-label={L('availableConnectors')} className="intg-list">
                     {available.map((i) => renderRow(i, ordered.indexOf(i)))}
                   </div>
                 </div>
@@ -394,17 +384,14 @@ export function Integrations() {
         </section>
 
         {/* ── DETAIL · selected connector ───────────────────────────────────── */}
-        <section className="surface soft intg-board" aria-label={L('Connector detail', 'Միակցիչի մանրամասներ')}>
+        <section className="surface soft intg-board" aria-label={L('connectorDetail')}>
           {selected ? (
             renderDetail(selected)
           ) : (
             <EmptyState
               glyph="🔌"
-              title={L('Select a connector', 'Ընտրե՛ք միակցիչ')}
-              hint={L(
-                'Choose a connector to view its configuration, health, authentication handoff, and trigger / sink mapping.',
-                'Ընտրե՛ք միակցիչ՝ դրա կարգավորումը, առողջությունը, նույնականացման փոխանցումը և հրահրիչ/ընդունիչ կապակցումը տեսնելու համար։',
-              )}
+              title={L('selectConnector')}
+              hint={L('selectConnectorHint')}
             />
           )}
         </section>
