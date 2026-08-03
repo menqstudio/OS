@@ -1,36 +1,43 @@
 ---
 id: hr-compensation-design
-version: 1.0.0
+version: 1.1.0
 status: active
 ---
 
-# Hr Compensation Design
+# HR Compensation Design
 
 ## Trigger
-Use this skill when a task materially requires hr compensation design expertise.
+Use when the task is to design or evaluate compensation structure: leveling frameworks, salary bands, pay-mix (base/bonus/equity), geo differentials, offer construction, merit/promotion cycles, pay-equity analysis, or sales commission plans. Do NOT use for individual performance-management coaching (route to people-org-leadership) or binding employment-contract language (route to legal-compliance-contracts).
 
 ## Inputs
-A bounded task contract, repository evidence, constraints, risk level, and required output format.
+- Role, level, location, and job architecture/leveling definitions.
+- Market data source and percentile target (e.g., 50th/75th), and the compensation philosophy (lead/match/lag).
+- Budget/merit pool, current pay of affected population, and pay-equity constraints.
+- For variable pay: quota/OTE targets, accelerators, caps, and payout mechanics.
 
 ## Workflow
-1. Confirm identity, mode grant, task scope, and required evidence.
-2. Read the canonical SST and relevant source files to EOF.
-3. Reproduce defects or establish a baseline before mutation.
-4. Make the smallest scoped change and preserve append-only identifiers.
-5. Run registered validation and negative tests.
-6. Produce evidence, rollback instructions, and an explicit residual-risk verdict.
+1. Anchor to job architecture: confirm the level and its scope/impact definition before touching numbers; comp follows leveling, never the reverse.
+2. Benchmark against the stated market source and percentile; adjust for geo and function; document the data vintage.
+3. Construct or validate the band (min/mid/max), targeting the philosophy; check band overlap between adjacent levels is intentional.
+4. Set pay mix appropriate to role (higher variable for sales/exec, higher base for eng/ops); model total-comp not just base.
+5. Run pay-equity check: compare like-for-like (level, location, tenure) across gender/ethnicity where data permits; flag unexplained gaps for remediation before finalizing.
+6. Model cost: individual offer/change × affected population against budget; show merit-pool impact and compression risks.
+7. For commission plans: verify plan pays for the right behavior, has no perverse incentive, defines quota relief and clawback, and caps only where deliberate.
 
 ## Outputs
-A scoped implementation or analysis, reproducible commands, evidence paths, verification results, and residual risks.
+- Band structure or offer recommendation with market rationale and percentile positioning.
+- Pay-mix and total-comp model with budget/cost impact.
+- Pay-equity findings and remediation flags.
+- Commission plan mechanics (OTE, accelerators, caps, clawback) where applicable.
 
 ## Safety limits
-No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. Ambiguous mutation targets fail closed.
+No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. Never expose individual compensation data beyond the grant, extend binding offers, or alter payroll. Treat all comp data as confidential PII. Do not invent market benchmarks. Ambiguous mutation targets fail closed.
 
 ## Handoffs
-Escalate cross-domain decisions to the owning SST role. Medium, high, and critical work requires an independent verifier. Release actions hand off only to the Push Executor.
+Binding offer letters and employment terms to legal-compliance-contracts. Performance calibration and manager coaching to people-org-leadership. Sales-quota strategy to sales-revenue-growth. Escalate cross-domain decisions to the owning SST role; medium, high, and critical work requires an independent verifier; any offer/payroll action hands off only to the authorized executor.
 
 ## Verification
-Success requires schema-valid artifacts, registered tests, exploit regression coverage, clean rollback, and exact-head evidence. Claims without reproducible evidence remain RED.
+Confirm every number traces to a cited market source and stated percentile; bands respect leveling and intended overlap; pay-equity check ran and gaps are flagged; cost model reconciles to budget; commission plans have no unbounded or perverse payout. Comp figures without a benchmark source remain RED.
 
 ## Failure and rollback
-Stop on missing authority, stale receipts, inconsistent SSTs, failed tests, or unverifiable state. Restore the original tree before reporting recovery and never call partial recovery GREEN.
+Stop on missing leveling, absent market data, undefined budget, or a request to finalize offers/payroll without grant. Discard the model, restore prior figures, and report the missing input. Never present an unbenchmarked or equity-unchecked structure as final or GREEN.

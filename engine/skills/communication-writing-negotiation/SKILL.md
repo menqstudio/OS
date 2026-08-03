@@ -1,36 +1,42 @@
 ---
 id: communication-writing-negotiation
-version: 1.0.0
+version: 1.1.0
 status: active
 ---
 
 # Communication Writing Negotiation
 
 ## Trigger
-Use this skill when a task materially requires communication writing negotiation expertise.
+Use when the task is to draft, edit, or structure high-stakes written communication (announcements, exec updates, RFP responses, apology/incident notices, difficult stakeholder emails), or to design negotiation strategy (pricing, contracts, renewals, cross-team disputes). Do NOT use for legal-binding contract language (route to legal-compliance-contracts) or paid campaign copy (route to marketing-brand).
 
 ## Inputs
-A bounded task contract, repository evidence, constraints, risk level, and required output format.
+- Audience (role, seniority, prior context, what they already believe).
+- Desired action or decision, and the single most important message (the "BLUF").
+- Constraints: tone, length, channel, confidentiality tier, hard deadlines.
+- For negotiation: interests (not positions) of both sides, BATNA, ZOPA estimate, walk-away, tradeable variables, and authority limits.
 
 ## Workflow
-1. Confirm identity, mode grant, task scope, and required evidence.
-2. Read the canonical SST and relevant source files to EOF.
-3. Reproduce defects or establish a baseline before mutation.
-4. Make the smallest scoped change and preserve append-only identifiers.
-5. Run registered validation and negative tests.
-6. Produce evidence, rollback instructions, and an explicit residual-risk verdict.
+1. State the objective in one sentence and the ONE decision/action the reader must take; write that as the opening line (BLUF/front-loaded ask).
+2. Map audience: what they know, fear, and need to say yes; choose channel and length to match decision weight.
+3. Draft with pyramid structure — conclusion first, then 2-4 supporting reasons, then evidence; cut hedging, passive voice, and throat-clearing.
+4. For negotiation: separate people from problem, list interests behind positions, enumerate tradeable variables, anchor with justified reasoning, and prepare 3 concession packages tied to reciprocal asks.
+5. Pressure-test: read as the recipient, find the strongest objection, and pre-empt it explicitly.
+6. Tighten to the shortest version that keeps clarity; verify every claim is factually supported by supplied evidence, not invented.
+7. Add a clear next step, owner, and deadline.
 
 ## Outputs
-A scoped implementation or analysis, reproducible commands, evidence paths, verification results, and residual risks.
+- Final message or negotiation brief with BLUF, structured body, explicit ask/next step.
+- Negotiation plan: interests map, BATNA/ZOPA, anchor, concession ladder with reciprocal triggers.
+- Alternate tone/length variants when channel is uncertain, plus a one-line rationale for tone choices.
 
 ## Safety limits
-No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. Ambiguous mutation targets fail closed.
+No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. Never send or post on the user's behalf; produce drafts only. Do not fabricate facts, quotes, commitments, or authority. Ambiguous mutation or send targets fail closed.
 
 ## Handoffs
-Escalate cross-domain decisions to the owning SST role. Medium, high, and critical work requires an independent verifier. Release actions hand off only to the Push Executor.
+Binding contractual terms to legal-compliance-contracts. Public/brand-facing campaigns to marketing-brand. Compensation or offer negotiations touching pay bands to hr-compensation-design. Escalate cross-domain decisions to the owning SST role; medium, high, and critical work requires an independent verifier; release/send actions hand off only to the authorized executor.
 
 ## Verification
-Success requires schema-valid artifacts, registered tests, exploit regression coverage, clean rollback, and exact-head evidence. Claims without reproducible evidence remain RED.
+Confirm BLUF answers the reader's decision in the first two lines; every factual claim traces to a supplied source; the ask has owner and deadline; tone matches audience; no unauthorized commitment or fabricated authority appears. Negotiation brief must show BATNA and walk-away. Claims without traceable evidence remain RED.
 
 ## Failure and rollback
-Stop on missing authority, stale receipts, inconsistent SSTs, failed tests, or unverifiable state. Restore the original tree before reporting recovery and never call partial recovery GREEN.
+Stop on missing authority, unverifiable facts, undefined audience, or any request to send externally without grant. Discard the working draft, restore the prior text, and report the blocker with the missing input named. Never call a partially verified draft final or GREEN.
