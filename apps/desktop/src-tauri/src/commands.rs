@@ -886,11 +886,14 @@ pub async fn stream_reply(
             .iter()
             .map(|m| crate::ai::ChatMsg {
                 role: if m.role == "user" { "user".to_string() } else { "assistant".to_string() },
-                content: m.body.clone(),
+                // Keep speaker attribution: a group room must not flatten to anonymous
+                // "assistant" turns — prefix each line with its author so the model sees
+                // who said what.
+                content: format!("{}: {}", m.author, m.body),
             })
             .collect();
         let system = format!(
-            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. Reply concisely, directly, and helpfully to the latest message. Do not claim to have taken actions you cannot actually take."
+            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what. Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
         );
         (system, history)
     };
@@ -1629,11 +1632,14 @@ pub async fn reply_in_conversation(
             .iter()
             .map(|m| crate::ai::ChatMsg {
                 role: if m.role == "user" { "user".to_string() } else { "assistant".to_string() },
-                content: m.body.clone(),
+                // Keep speaker attribution: a group room must not flatten to anonymous
+                // "assistant" turns — prefix each line with its author so the model sees
+                // who said what.
+                content: format!("{}: {}", m.author, m.body),
             })
             .collect();
         let system = format!(
-            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. Reply concisely, directly, and helpfully to the latest message. Do not claim to have taken actions you cannot actually take."
+            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what. Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
         );
         (system, history)
     };
