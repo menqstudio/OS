@@ -16,9 +16,13 @@ import type { ActivityEvent } from '../domain/entities';
 // (hero brackets, pulse-rail core, beat timeline, vitals panel) is re-dressed to
 // the aios "vitals monitor" mockup, but every number shown is DERIVED from the
 // real events array (total beats, event types, plotted count, rate/min, last-beat
-// time). The mockup's live runtime telemetry — avg response, network load, error
-// rate, per-beat intensity, sparklines, rhythm % — has no backing IPC, so it is
-// omitted rather than fabricated; the honest "telemetry not connected" note stays.
+// time). The richer instruments are honest too, computed straight from the events:
+// the rate histogram bins events by createdAt (count per time bin); per-beat
+// intensity is that beat's bin density (busy burst → tall, isolated → short);
+// the distribution meters are real per-eventType and per-actor tallies; peak /
+// busiest-hour come from the same bins. The mockup's live runtime telemetry that
+// has NO backing signal — avg response, network load, error rate, rhythm % — is
+// still omitted rather than fabricated; the honest "telemetry not connected" note stays.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Longest run of blips we plot before collapsing the tail into a "+N" note. */
@@ -134,6 +138,63 @@ export function Activity() {
     return { count, latest, earliest, spanMin, rate, types };
   }, [events]);
 
+  // Richer instruments — all derived from the same real events array. Nothing here
+  // is generated: histogram = counts per time bin; intensity = a beat's bin density;
+  // distributions = real tallies; peak / busiest-hour read straight off the bins.
+  const analytics = useMemo(() => {
+    const ts = events
+      .map((e) => parseTime(e.createdAt))
+      .filter((n): n is number => n != null)
+      .sort((a, b) => a - b);
+    const n = ts.length;
+    const min = n ? ts[0] : 0;
+    const max = n ? ts[n - 1] : 0;
+    const span = max - min;
+
+    // Rate histogram: bucket every event into 12–24 equal time bins (never more
+    // bins than events), bar height = real count in that bin.
+    const binCount = Math.max(1, Math.min(24, n));
+    const bins = new Array<number>(binCount).fill(0);
+    const binOf = (t: number): number => {
+      if (span <= 0) return 0;
+      const idx = Math.floor(((t - min) / span) * binCount);
+      return idx >= binCount ? binCount - 1 : idx < 0 ? 0 : idx;
+    };
+    for (const t of ts) bins[binOf(t)] += 1;
+    const maxBin = Math.max(1, ...bins);
+    const peakIdx = bins.indexOf(Math.max(...bins));
+    const binMs = span > 0 ? span / binCount : 0;
+    const peakStart = min + peakIdx * binMs;
+    const peakCount = bins[peakIdx] ?? 0;
+
+    // Per-beat intensity 0..100 = density of the bin the beat falls in (real signal).
+    const intensityOf = (t: number | null): number =>
+      t == null ? 0 : Math.round((100 * bins[binOf(t)]) / maxBin);
+
+    // Real distribution tallies (sorted desc), per eventType and per actor.
+    const tally = (key: (e: ActivityEvent) => string) => {
+      const m = new Map<string, number>();
+      for (const e of events) m.set(key(e), (m.get(key(e)) ?? 0) + 1);
+      const rows = [...m.entries()].sort((a, b) => b[1] - a[1]);
+      return { rows, max: rows.length ? rows[0][1] : 1 };
+    };
+    const SYS = ' system';
+    const byType = tally((e) => e.eventType);
+    const byActor = tally((e) => e.actorId ?? SYS);
+
+    // Busiest local clock hour (real count of events in that hour-of-day).
+    const hours = new Map<number, number>();
+    for (const t of ts) {
+      const h = new Date(t).getHours();
+      hours.set(h, (hours.get(h) ?? 0) + 1);
+    }
+    let busiestHour: number | null = null;
+    let busiestHourCount = 0;
+    for (const [h, c] of hours) if (c > busiestHourCount) { busiestHour = h; busiestHourCount = c; }
+
+    return { bins, maxBin, binCount, span, peakStart, peakCount, intensityOf, byType, byActor, SYS, busiestHour, busiestHourCount };
+  }, [events]);
+
   // Timeline: real events, newest first, carrying their strip index for cross-link.
   const timeline = useMemo(
     () => displayed
@@ -145,6 +206,15 @@ export function Activity() {
   const animate = !reduced && !state.loading && !state.error;
   const beatCount = useCountUp(metrics.count, animate);
   const clock = metrics.latest != null ? fmtTime(String(metrics.latest)) : '—';
+  const peakTime = analytics.span > 0 ? fmtTime(String(analytics.peakStart)) : clock;
+  const busiestHourLabel = analytics.busiestHour != null
+    ? `${String(analytics.busiestHour).padStart(2, '0')}:00`
+    : '—';
+  // Accessible one-line summary for the (decorative) rate histogram.
+  const rateSummary = bi(
+    `Activity rate — ${metrics.count} beats across ${analytics.binCount} time bins, peak ${analytics.peakCount} around ${peakTime}.`,
+    `Ակտիվության հաճախություն — ${metrics.count} զարկ ${analytics.binCount} ժամային կապոցում, գագաթ՝ ${analytics.peakCount} ${peakTime}-ի մոտ։`,
+  );
 
   const selEvent = displayed[sel];
   const openEvent = opened !== null ? displayed[opened] : null;
@@ -259,6 +329,25 @@ export function Activity() {
               <Vread i={5} label={bi('Event types', 'Տեսակներ')} value={metrics.types} unit={bi('types', 'տիպ')} />
               <Vread i={6} label={bi('Plotted', 'Ցուցադրված')} value={displayed.length} unit={`/${metrics.count}`} />
               <Vread i={7} label={bi('Last beat', 'Վերջին զարկ')} value={clock} />
+              <Vread i={8} label={bi('Peak beats', 'Գագաթ')} value={analytics.peakCount} unit={peakTime} />
+              <Vread i={9} label={bi('Busiest hour', 'Ամենազբաղ ժամ')} value={busiestHourLabel} unit={analytics.busiestHourCount ? String(analytics.busiestHourCount) : undefined} />
+            </div>
+
+            {/* rate histogram — real event counts per time bin (decorative bars + text summary) */}
+            <div className="pa-rate">
+              <div className="mon-top">
+                <span className="eyebrow">{bi('EVENTS FLOW · /min', 'ԿԱՆՉԵՐԻ ՀՈՍՔ · /Ր')}</span>
+                <span className="mon-clock mono">{bi(`peak ${analytics.peakCount} · ${peakTime}`, `գագաթ ${analytics.peakCount} · ${peakTime}`)}</span>
+              </div>
+              <div className="bars" role="img" aria-label={rateSummary}>
+                {analytics.bins.map((c, i) => (
+                  <i
+                    key={i}
+                    style={{ height: `${c === 0 ? 0 : Math.round((100 * c) / analytics.maxBin)}%`, animationDelay: `${i * 0.03}s` } as CSSProperties}
+                  />
+                ))}
+              </div>
+              <p className="note rate-cap">{rateSummary}</p>
             </div>
           </div>
 
@@ -290,13 +379,14 @@ export function Activity() {
               {timeline.map(({ e, i }) => {
                 const isNow = metrics.latest != null && parseTime(e.createdAt) === metrics.latest;
                 const target = e.entityId ?? e.entityType ?? '';
+                const intensity = analytics.intensityOf(parseTime(e.createdAt));
                 return (
                   <button
                     type="button"
                     key={e.id}
                     className={`node${i === sel ? ' sel' : ''}${isNow ? ' now' : ''}`}
                     aria-pressed={i === sel}
-                    aria-label={blipLabel(e, i)}
+                    aria-label={`${blipLabel(e, i)} · ${bi('intensity', 'ինտենսիվ')} ${intensity}`}
                     title={blipLabel(e, i)}
                     onClick={() => { setSel(i); setOpened(i); }}
                   >
@@ -305,6 +395,11 @@ export function Activity() {
                       <span className="mono nd-time">{fmtTime(e.createdAt)}</span>
                     </div>
                     <p className="nd-lbl">{target || e.eventType}</p>
+                    <div className="nd-amp">
+                      <span className="micro">{bi('intensity', 'ինտենսիվ')}</span>
+                      <span className="meter" aria-hidden="true" style={{ ['--p']: `${intensity}%` } as CSSProperties}><span /></span>
+                      <span className="mono nd-av">{intensity}</span>
+                    </div>
                   </button>
                 );
               })}
@@ -319,7 +414,35 @@ export function Activity() {
               <h2>{bi('Vitals', 'Կենսանշաններ')}</h2>
               <span className="pill info">{bi('record only', 'միայն գրանցում')}</span>
             </div>
-            <p className="note" role="note">
+
+            {/* real distribution meters — honest tallies straight off the events */}
+            <div className="pa-grp">
+              <span className="eyebrow">{bi('By event type', 'Ըստ տեսակի')}</span>
+              <div className="signs" role="list">
+                {analytics.byType.rows.slice(0, 6).map(([type, count]) => (
+                  <div className="sign" role="listitem" key={type}>
+                    <span className="micro">{type}</span>
+                    <span className="meter" aria-hidden="true" style={{ ['--p']: `${Math.round((100 * count) / analytics.byType.max)}%` } as CSSProperties}><span /></span>
+                    <b className="mono">{count}</b>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pa-grp">
+              <span className="eyebrow">{bi('Top actors', 'Ըստ դերակատարի')}</span>
+              <div className="signs" role="list">
+                {analytics.byActor.rows.slice(0, 6).map(([actor, count]) => (
+                  <div className="sign" role="listitem" key={actor}>
+                    <span className="micro">{actor === analytics.SYS ? bi('system', 'համակարգ') : actor}</span>
+                    <span className="meter" aria-hidden="true" style={{ ['--p']: `${Math.round((100 * count) / analytics.byActor.max)}%` } as CSSProperties}><span /></span>
+                    <b className="mono">{count}</b>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <p className="note pa-grp" role="note">
               {bi('Live runtime telemetry (response, network load, error rate) is not wired to this build, so those vitals are omitted rather than shown as numbers. The beats and counts above are the real event record.',
                 'Կենդանի հեռաչափումը (արձագանք, ցանցի բեռ, սխալի հաճախ.) միացված չէ այս կառուցվածքին, ուստի այդ կենսանշանները բաց են թողնված, ոչ թե ցուցադրված որպես թվեր։ Վերևի զարկերը և հաշվարկները իրական գրառումն են։')}
             </p>
@@ -428,4 +551,13 @@ const PA_STYLE = `
 .v-activity .pa-mono { font-family: var(--f-mono, monospace); font-size: .9em; }
 .v-activity .row { display: inline-flex; align-items: center; }
 @media (max-width: 640px) { .v-activity .pa-detail-grid { grid-template-columns: 1fr; } }
+
+/* six vitals readouts now flow instead of forcing four columns */
+.v-activity .vitals { grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); }
+/* rate histogram block + the labelled distribution groups (reuse .bars/.signs/.sign) */
+.v-activity .pa-rate { margin-top: var(--s2); }
+.v-activity .pa-rate .rate-cap { margin-top: 8px; }
+.v-activity .pa-grp { margin-top: 16px; }
+.v-activity .pa-grp .eyebrow { display: block; margin-bottom: 8px; }
+.v-activity .pa-grp .signs { margin-top: 0; }
 `;

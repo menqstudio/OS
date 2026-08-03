@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useCallback, useMemo, useState, type CSSProperties } from 'react';
 import { useApp } from '../app/store';
-import { Button, Async, Input, TileGroup, StatTile } from '../components/ui';
+import { Button, Async, Input, TileGroup, StatTile, EmptyState, Skeleton } from '../components/ui';
 import { Mark } from '../components/Ambient';
 import { statusTone } from '../domain/enums';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
+import { Beatline, BarChart } from '../components/charts/Chart';
 import { Markdown } from '../components/markdown';
 import { useToast } from '../components/toast';
 
@@ -23,8 +24,24 @@ function pillTone(status: string): string {
 
 const label = (s: string) => s.replace(/_/g, ' ');
 
+// Ring geometry (r=60) mirrored from the aios ring gauge — --len/--off drive the
+// same dash sweep. Pure constants; carry no data.
+const RING_R = 60;
+const RING_LEN = 2 * Math.PI * RING_R;
+// Equal time-buckets for the activity throughput sparkline.
+const FLOW_BUCKETS = 12;
+
+// Parse an event timestamp (ISO or epoch string) to ms, or null if unparseable.
+// Same honest derivation Activity.tsx uses for its beat timeline.
+function parseTime(raw: string): number | null {
+  const n = Number(raw);
+  const d = new Date(Number.isNaN(n) ? raw : n);
+  const ms = d.getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
 export function Home() {
-  const { t, setRoute } = useApp();
+  const { t, setRoute, lang } = useApp();
   const toast = useToast();
   const [q, setQ] = useState('');
   const [answer, setAnswer] = useState('');
@@ -94,12 +111,86 @@ export function Home() {
   const agents = useAsync(() => desktop.listAgents(), []);
   const projects = useAsync(() => desktop.listProjects(), []);
 
+  // Additional REAL desktop reads that back the derived instruments below. Each is a
+  // plain list command; nothing here fabricates a value the backend didn't return.
+  const allTasks = useAsync(() => desktop.listTasks(), []);
+  const activity = useAsync(() => desktop.listActivity(), []);
+  const allApprovals = useAsync(() => desktop.listApprovals(), []);
+
+  // Inline bilingual labels for the new instruments (mockup Armenian / English),
+  // mirroring Activity.tsx — no shared i18n file is touched. Fixed strings only.
+  const bi = useCallback((en: string, hy: string) => (lang === 'hy' ? hy : en), [lang]);
+
+  // Task completion + attention — counts of real task statuses from listTasks().
+  const taskStats = useMemo(() => {
+    const rows = allTasks.data ?? [];
+    const total = rows.length;
+    const by = (s: string) => rows.filter((x) => x.status === s).length;
+    const done = by('done');
+    const active = by('active');
+    const blocked = by('blocked');
+    return {
+      total, done, active, blocked,
+      donePct: total ? Math.round((done / total) * 100) : 0,
+      blockedPct: total ? Math.round((blocked / total) * 100) : null,
+    };
+  }, [allTasks.data]);
+
+  // Agent engagement + status distribution — grouped counts from listAgents().
+  const agentStats = useMemo(() => {
+    const rows = agents.data ?? [];
+    const total = rows.length;
+    const busySet = new Set(['working', 'thinking', 'observing', 'review']);
+    const busy = rows.filter((a) => busySet.has(a.status)).length;
+    const counts = new Map<string, number>();
+    for (const a of rows) counts.set(a.status, (counts.get(a.status) ?? 0) + 1);
+    const dist = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([status, value]) => ({ key: status, label: label(status), value }));
+    return { total, busyPct: total ? Math.round((busy / total) * 100) : null, dist };
+  }, [agents.data]);
+
+  // Approval backlog share — pending / all approvals from the unfiltered read.
+  const approvalStats = useMemo(() => {
+    const rows = allApprovals.data ?? [];
+    const total = rows.length;
+    const pending = rows.filter((a) => a.status === 'pending').length;
+    return { total, pending, pendingPct: total ? Math.round((pending / total) * 100) : null };
+  }, [allApprovals.data]);
+
+  // Recent-activity throughput — real events bucketed into equal time windows across
+  // their own span (same parseTime derivation as Activity's beatline).
+  const flow = useMemo(() => {
+    const rows = activity.data ?? [];
+    const times = rows
+      .map((e) => parseTime(e.createdAt))
+      .filter((n): n is number => n != null)
+      .sort((a, b) => a - b);
+    if (times.length === 0) return { points: [] as { label: string; value: number }[], total: 0, peak: 0 };
+    const min = times[0];
+    const max = times[times.length - 1];
+    const span = max - min || 1;
+    const counts = new Array<number>(FLOW_BUCKETS).fill(0);
+    for (const tn of times) {
+      const idx = Math.min(FLOW_BUCKETS - 1, Math.floor(((tn - min) / span) * FLOW_BUCKETS));
+      counts[idx] += 1;
+    }
+    const fmt = new Intl.DateTimeFormat(lang, { hour: '2-digit', minute: '2-digit' });
+    const points = counts.map((value, i) => ({
+      label: fmt.format(new Date(min + ((i + 0.5) / FLOW_BUCKETS) * span)),
+      value,
+    }));
+    return { points, total: times.length, peak: Math.max(...counts) };
+  }, [activity.data, lang]);
+
   const showAnswerBlock = asking || answer || askError || blocked;
   // The greeting power-mark tracks the real interaction state — nothing else.
   const markState = askError || blocked ? 'alert' : asking ? 'thinking' : 'live';
 
   return (
-    <div className="v-home">
+    <>
+      <style>{HOME_STYLE}</style>
+      <div className="v-home">
       {/* ── HERO · Ask Bro + at-a-glance counts ─────────────────────────── */}
       <section className="briefing surface soft lg hud reveal">
         <span className="bracket tl" aria-hidden="true" />
@@ -189,6 +280,113 @@ export function Home() {
           </TileGroup>
         </div>
       </section>
+
+      {/* ── INSTRUMENTS · honest read-outs derived from the real arrays ───── */}
+      <div className="hx-instruments">
+        {/* Derived ratios — each a plain quotient of two real counts. Shows "—"
+            until its source has loaded (never a placeholder number). */}
+        <div className="hx-ratios" role="group" aria-label={bi('Derived ratios', 'Ածանցյալ հարաբերակցություններ')}>
+          <div className="hx-ratio">
+            <b>{agentStats.busyPct ?? '—'}{agentStats.busyPct != null && <i>%</i>}</b>
+            <span className="micro">{bi('agents busy', 'զբաղված գործակալ')}</span>
+          </div>
+          <div className="hx-ratio">
+            <b>{taskStats.blockedPct ?? '—'}{taskStats.blockedPct != null && <i>%</i>}</b>
+            <span className="micro">{bi('tasks blocked', 'արգելափակ առաջադրանք')}</span>
+          </div>
+          <div className="hx-ratio">
+            <b>{approvalStats.pendingPct ?? '—'}{approvalStats.pendingPct != null && <i>%</i>}</b>
+            <span className="micro">{bi('approvals pending', 'սպասող հաստատում')}</span>
+          </div>
+        </div>
+
+        <div className="hx-board">
+          {/* Task-progress ring — done / total from listTasks(). */}
+          <section className="surface soft hx-resolve reveal">
+            <div className="sec-head"><h2>{bi('Task progress', 'Առաջադրանքների ընթացք')}</h2></div>
+            {allTasks.loading && allTasks.data === null ? (
+              <Skeleton rows={3} />
+            ) : allTasks.error ? (
+              <p className="hx-note note">{bi('Progress unavailable', 'Ընթացքն անհասանելի է')}</p>
+            ) : taskStats.total === 0 ? (
+              <EmptyState glyph="◇" title={t('home.emptyPriorities')} />
+            ) : (
+              <>
+                <div
+                  className="ring hx-ring"
+                  style={{ ['--len']: RING_LEN.toFixed(1), ['--off']: (RING_LEN * (1 - taskStats.donePct / 100)).toFixed(1) } as CSSProperties}
+                >
+                  <svg viewBox="0 0 140 140" aria-hidden="true">
+                    <circle className="track" cx="70" cy="70" r={RING_R} />
+                    <circle className="value mint" cx="70" cy="70" r={RING_R} />
+                  </svg>
+                  <span className="read">
+                    <b>{taskStats.donePct}<i>%</i></b>
+                    <span>{bi('done', 'ավարտ')}</span>
+                  </span>
+                </div>
+                {/* Accessible text equivalent for the ring — the real counts behind it. */}
+                <p className="hx-note note">
+                  {bi(
+                    `${taskStats.done} of ${taskStats.total} tasks done · ${taskStats.active} active · ${taskStats.blocked} blocked`,
+                    `${taskStats.done}/${taskStats.total} ավարտ · ${taskStats.active} ակտիվ · ${taskStats.blocked} արգելափակ`,
+                  )}
+                </p>
+              </>
+            )}
+          </section>
+
+          {/* Agents-by-status distribution — grouped counts from listAgents(). The
+              BarChart carries its own summary + data-table for a11y. */}
+          <section className="surface soft reveal">
+            <div className="sec-head"><h2>{bi('Agents by status', 'Գործակալներն ըստ վիճակի')}</h2></div>
+            {agents.loading && agents.data === null ? (
+              <Skeleton rows={4} />
+            ) : agents.error ? (
+              <p className="hx-note note">{bi('Distribution unavailable', 'Բաշխումն անհասանելի է')}</p>
+            ) : agentStats.total === 0 ? (
+              <EmptyState glyph="⬡" title={t('home.emptyAgents')} />
+            ) : (
+              <BarChart
+                data={agentStats.dist}
+                caption={bi('Agents by status', 'Գործակալներն ըստ վիճակի')}
+                unit={bi('agents', 'գործ.')}
+                totalLabel={bi('Total', 'Ընդամենը')}
+                nodeHeader={bi('Status', 'Վիճակ')}
+                valueHeader={bi('Count', 'Քանակ')}
+                shareHeader={bi('Share', 'Բաժին')}
+                tableToggle={bi('Show data table', 'Ցույց տալ աղյուսակը')}
+              />
+            )}
+          </section>
+
+          {/* Recent-activity throughput — real events time-bucketed from listActivity().
+              Beatline carries its own summary + data-table for a11y. */}
+          <section className="surface soft reveal">
+            <div className="sec-head">
+              <h2>{bi('Recent activity', 'Վերջին ակտիվություն')}</h2>
+              <span className="note">{bi('events per interval', 'իրադարձ. ընդմիջումով')}</span>
+            </div>
+            {activity.error ? (
+              <p className="hx-note note">{bi('Activity unavailable', 'Ակտիվությունն անհասանելի է')}</p>
+            ) : (
+              <Beatline
+                data={flow.points}
+                loading={activity.loading && activity.data === null}
+                caption={bi('Recent activity — events over time', 'Վերջին ակտիվություն — իրադարձ. ժամանակի ընթացքում')}
+                summary={bi(
+                  `${flow.total} recent events across ${FLOW_BUCKETS} intervals. Peak ${flow.peak} in an interval.`,
+                  `${flow.total} վերջին իրադարձ. ${FLOW_BUCKETS} ընդմիջումով։ Պիկ՝ ${flow.peak} մեկ ընդմիջումում։`,
+                )}
+                unit={bi('events', 'իրադ.')}
+                valueHeader={bi('Events', 'Իրադ.')}
+                labelHeader={bi('Time', 'Ժամ')}
+                emptyTitle={bi('No activity yet', 'Դեռ ակտիվություն չկա')}
+              />
+            )}
+          </section>
+        </div>
+      </div>
 
       {/* ── BOARD · the four real-data queues ───────────────────────────── */}
       <div className="grid wide">
@@ -280,6 +478,33 @@ export function Home() {
           </Async>
         </section>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
+
+// Page-local chrome only: the derived-instruments strip, the three-up instrument
+// board layout, and a reduced-motion guard for the ring sweep. Everything visual
+// otherwise is shared aios classes (.ring/.surface/.sec-head/.chart/.barchart).
+const HOME_STYLE = `
+.v-home .hx-instruments{display:grid;gap:16px;margin-top:20px}
+.v-home .hx-ratios{display:flex;flex-wrap:wrap;gap:12px}
+.v-home .hx-ratio{flex:1 1 140px;display:grid;gap:3px;padding:12px 14px;border-radius:var(--r);
+  border:1px solid rgb(var(--line-rgb)/.7);background:rgb(var(--raised-rgb)/.5)}
+.v-home .hx-ratio b{font-family:var(--f-mono);font-size:24px;font-weight:700;line-height:1;letter-spacing:-.02em}
+.v-home .hx-ratio b i{font-style:normal;font-size:13px;color:var(--ink-muted);font-weight:400;margin-left:1px}
+.v-home .hx-ratio .micro{color:var(--ink-muted)}
+.v-home .hx-board{display:grid;gap:20px;grid-template-columns:minmax(220px,.8fr) 1fr 1fr}
+.v-home .hx-board>section{padding:20px}
+.v-home .hx-resolve{display:grid;gap:14px;justify-items:center}
+.v-home .hx-resolve .sec-head{width:100%}
+.v-home .hx-note{color:var(--ink-muted);text-align:center;max-width:36ch;margin-inline:auto}
+@media (max-width:1080px){
+  .v-home .hx-board{grid-template-columns:1fr 1fr}
+  .v-home .hx-resolve{grid-column:1 / -1}
+}
+@media (max-width:720px){ .v-home .hx-board{grid-template-columns:1fr} }
+@media (prefers-reduced-motion:reduce){
+  .v-home .hx-ring .value{animation:none;stroke-dashoffset:var(--off)}
+}
+`;

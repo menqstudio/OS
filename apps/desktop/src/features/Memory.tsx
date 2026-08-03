@@ -1,38 +1,46 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Badge, Skeleton, ErrorState, EmptyState,
+  Button, Skeleton, ErrorState, EmptyState,
   Modal, FormRow, Input, Textarea, Select, ConfirmDialog,
 } from '../components/ui';
+import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
-import { MEMORY_KINDS, type Tone } from '../domain/enums';
+import { MEMORY_KINDS } from '../domain/enums';
 import type { MemoryEntry } from '../domain/entities';
 
 // ---------------------------------------------------------------------------
-// §D `memory` page. Data source: desktop memory store (`list_memory` /
-// `create_memory` / `set_memory_pinned` / `delete_memory`). Fields the store
-// records: scope, kind, content, pinned. Two concepts the §D spec lists —
-// `[[name]]` link graph and per-memory confidence — are NOT columns in the
-// store. We derive links honestly from real content and, where the store
-// records nothing (confidence, an update/edit command, sealed-evidence flags),
-// we render the honest "not recorded / unavailable" affordance the spec's
-// `blocked`/empty states require rather than fabricate values.
+// §D `memory` page — re-skinned to the brops-aios «Ժամանակի հիշողություն /
+// Temporal Field» mockup. Every value shown is REAL: the desktop memory store
+// (`list_memory` / `create_memory` / `set_memory_pinned` / `delete_memory`).
+// Fields the store records: scope, kind, content, pinned, createdAt, updatedAt.
+// The mockup's fabricated instruments — the plotted temporal field (per-memory
+// `t`/`y`/salience coordinates), the consolidation beam + scan telemetry, the
+// consolidation ledger, per-memory confidence/recall/retention %, and the fixed
+// "14 memories · 86% retention" counters — have NO backing in the `MemoryEntry`
+// entity and are therefore OMITTED, never faked. Two §D concepts (the `[[name]]`
+// link graph and sealed evidence) are derived honestly from real content, and
+// where the store records nothing (an update/edit command) we render the honest
+// "not wired / sealed" affordance the spec requires. Motion honours
+// prefers-reduced-motion via the global aios.css.
 // ---------------------------------------------------------------------------
 
 // Bilingual inline strings for copy that has no shared i18n key yet (the thin
-// pages inline the same way). `t()` is still used for every existing key.
+// pages inline the same way). `t()` is still used for every existing key. New
+// Armenian labels are taken verbatim from the mockup's vocabulary.
 type Lang = 'hy' | 'en' | 'ru';
 function pick(lang: Lang, en: string, hy: string): string {
   return lang === 'hy' ? hy : en; // ru falls back to en, matching the shell
 }
 
-// Visual tone per memory type (presentation only — no data invented).
-const kindTone: Record<string, Tone> = {
+// Visual tone per memory kind → aios `.pill` modifier (presentation only — no
+// data invented; the kind text itself is always rendered for non-visual convey).
+const kindPill: Record<string, string> = {
   fact: 'info',
-  preference: 'accent',
-  note: 'neutral',
-  reference: 'warning',
+  preference: 'mint',
+  note: 'off',
+  reference: 'warn',
 };
 
 // `[[name]]` wiki-links parsed out of real memory content.
@@ -158,13 +166,14 @@ function EditEntryForm({ entry, onClose }: { entry: MemoryEntry; onClose: () => 
   );
 }
 
-// --- Detail pane ------------------------------------------------------------
+// --- Recall rail · detail of a selected memory ------------------------------
 function MemoryDetail(
-  { entry, links, blocked, onJump, onEdit, onPinToggle, onDelete }:
+  { entry, links, blocked, fmtDate, onJump, onEdit, onPinToggle, onDelete }:
   {
     entry: MemoryEntry;
     links: ResolvedLink[];
     blocked: boolean;
+    fmtDate: (raw: string) => string;
     onJump: (id: string) => void;
     onEdit: () => void;
     onPinToggle: () => void;
@@ -176,93 +185,98 @@ function MemoryDetail(
   const sealed = links.filter((l) => l.sealed);
 
   return (
-    <Panel
-      title={L('Detail', 'Մանրամասն')}
-      actions={
-        <span className="row" style={{ gap: 8 }}>
-          <Button small onClick={onEdit} title={`${t('action.edit')} · e`}>{t('action.edit')}</Button>
-          <Button small onClick={onPinToggle}>{entry.pinned ? t('memory.unpin') : t('memory.pin')}</Button>
-          <Button
-            small
-            variant="ghost"
-            disabled
-            title={t('action.deleteDisabledSafety')}
-            onClick={onDelete}
-          >
+    <div className="mr-detail" data-id={entry.id}>
+      <div className="mr-head">
+        <Mark state="idle" size={40} />
+        <div className="mr-id">
+          <span className="eyebrow">{`${entry.kind.toUpperCase()} · ${L('MEMORY', 'ՀԻՇՈՂՈՒԹՅՈՒՆ')}`}</span>
+          <b>{entry.scope}</b>
+        </div>
+      </div>
+
+      <div className="mr-flags">
+        <span className={`pill ${kindPill[entry.kind] ?? 'info'}`}>{entry.kind}</span>
+        {entry.pinned && <span className="pill info">{t('memory.pinned')}</span>}
+        {blocked && <span className="pill warn">{L('Sealed', 'Կնքված')}</span>}
+      </div>
+
+      {blocked && (
+        <div className="mem-blocked" role="status">
+          <strong>{L('References sealed evidence', 'Հղում է կնքված ապացույցին')}</strong>
+          <div className="micro" style={{ marginTop: 4, textTransform: 'none', letterSpacing: 0 }}>
+            {L(
+              'This memory points at evidence the local store cannot surface. The referenced material stays sealed:',
+              'Այս հիշողությունը հղում է ապացույցի, որը լոկալ store-ը չի կարող ցուցադրել։ Հղված նյութը մնում է կնքված․',
+            )}
+          </div>
+          <ul className="mem-links" style={{ marginTop: 6 }}>
+            {sealed.map((l) => (
+              <li key={l.name}>
+                <span className="mem-link mem-link--sealed" title={L('Sealed / unavailable', 'Կնքված / անհասանելի')}>
+                  ⬡ [[{l.name}]]
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <p className="mem-body">{entry.content}</p>
+
+      <div className="mr-tags">
+        <span className="tag">{entry.scope}</span>
+        <span className="tag">{entry.kind}</span>
+      </div>
+
+      <div className="mr-meta">
+        <span>
+          <b className="mono">{fmtDate(entry.createdAt)}</b>
+          <i>{L('formed', 'ձևավորվել է')}</i>
+        </span>
+        <span>
+          <b className="mono">{fmtDate(entry.updatedAt)}</b>
+          <i>{L('updated', 'թարմացվել է')}</i>
+        </span>
+        <span>
+          <b className="mono">{links.length}</b>
+          <i>{L('links', 'հղում')}</i>
+        </span>
+      </div>
+
+      {links.length > 0 && (
+        <div className="mem-refs">
+          <div className="micro">{L('References', 'Հղումներ')}</div>
+          {/* text-list fallback for the link graph (a11y) */}
+          <ul className="mem-links" role="list">
+            {links.map((l) => (
+              <li key={l.name}>
+                {l.targetId ? (
+                  <button
+                    type="button"
+                    className="mem-link mem-link--resolved"
+                    onClick={() => l.targetId && onJump(l.targetId)}
+                  >
+                    [[{l.name}]]
+                  </button>
+                ) : (
+                  <span className="mem-link mem-link--sealed">⬡ [[{l.name}]]</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mr-foot">
+        <Button small onClick={onEdit} title={`${t('action.edit')} · e`}>{t('action.edit')}</Button>
+        <Button small onClick={onPinToggle}>{entry.pinned ? t('memory.unpin') : t('memory.pin')}</Button>
+        <span className="mr-forget">
+          <Button small variant="ghost" onClick={onDelete}>
             {t('action.delete')}
           </Button>
         </span>
-      }
-    >
-      <div className="stack">
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <Badge tone={kindTone[entry.kind] ?? 'accent'}>{entry.kind}</Badge>
-          <span className="muted">{entry.scope}</span>
-          {entry.pinned && <Badge tone="warning">{t('memory.pinned')}</Badge>}
-          {blocked && <Badge tone="danger">{L('Blocked', 'Արգելափակված')}</Badge>}
-        </div>
-
-        {blocked && (
-          <div className="mem-blocked" role="status">
-            <strong>{L('References sealed evidence', 'Հղում է կնքված ապացույցին')}</strong>
-            <div className="muted" style={{ marginTop: 4 }}>
-              {L(
-                'This memory points at evidence the local store cannot surface. The referenced material stays sealed:',
-                'Այս հիշողությունը հղում է ապացույցի, որը լոկալ store-ը չի կարող ցուցադրել։ Հղված նյութը մնում է կնքված․',
-              )}
-            </div>
-            <ul className="mem-links" style={{ marginTop: 6 }}>
-              {sealed.map((l) => (
-                <li key={l.name}>
-                  <span className="mem-link mem-link--sealed" title={L('Sealed / unavailable', 'Կնքված / անհասանելի')}>
-                    🔒 [[{l.name}]]
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="mem-detail-content">{entry.content}</div>
-
-        <div className="mem-meta">
-          <div className="field">
-            <span className="field-label">{L('Confidence', 'Վստահություն')}</span>
-            <span className="muted" title={L('The memory store does not record a confidence score yet.', 'Store-ը դեռ վստահության միավոր չի պահում։')}>
-              {L('not recorded', 'չգրանցված')}
-            </span>
-          </div>
-          <div className="field">
-            <span className="field-label">{L('Links', 'Հղումներ')}</span>
-            <span>{links.length}</span>
-          </div>
-        </div>
-
-        {links.length > 0 && (
-          <div className="stack" style={{ gap: 6 }}>
-            <div className="field-label">{L('References', 'Հղումներ')}</div>
-            {/* text-list fallback for the link graph (a11y) */}
-            <ul className="mem-links" role="list">
-              {links.map((l) => (
-                <li key={l.name}>
-                  {l.targetId ? (
-                    <button
-                      type="button"
-                      className="mem-link mem-link--resolved"
-                      onClick={() => l.targetId && onJump(l.targetId)}
-                    >
-                      [[{l.name}]]
-                    </button>
-                  ) : (
-                    <span className="mem-link mem-link--sealed">🔒 [[{l.name}]]</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
-    </Panel>
+    </div>
   );
 }
 
@@ -280,6 +294,17 @@ export function Memory() {
 
   const s = useAsync(() => desktop.listMemory(), []);
   const all = useMemo(() => s.data ?? [], [s.data]);
+
+  const dateFmt = useMemo(
+    () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
+    [lang],
+  );
+  const fmtDate = (raw: string): string => {
+    const v = raw?.trim();
+    if (!v) return '—';
+    const d = new Date(isNaN(Number(v)) ? v : Number(v));
+    return isNaN(d.getTime()) ? v : dateFmt.format(d);
+  };
 
   // Resolve every `[[name]]` reference across the loaded memories once.
   const linksByMemory = useMemo(() => {
@@ -331,6 +356,19 @@ export function Memory() {
     () => all.find((m) => m.id === selectedId) ?? null,
     [all, selectedId],
   );
+
+  // Honest metric strip — derived ENTIRELY from the real memory array. The
+  // mockup's fixed counters (14 memories, 4 sealed, 2 pinned, 86% retention) and
+  // its retention telemetry have no backing in the store, so they are omitted;
+  // only honestly-countable facts appear here.
+  const pinnedCount = useMemo(() => all.filter((m) => m.pinned).length, [all]);
+  const metrics = useMemo(() => [
+    { v: all.length, label: L('memories · store', 'հիշողություն · store'), tone: '' },
+    { v: pinnedCount, label: L('pinned', 'ամրակցված'), tone: 'info' },
+    { v: blockedIds.size, label: L('sealed refs', 'կնքված հղում'), tone: 'mint' },
+    { v: graph.length, label: L('links', 'հղում'), tone: '' },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [all.length, pinnedCount, blockedIds.size, graph.length, lang]);
 
   // Consume a command-palette / global-search deep-link (kind: 'memory').
   useEffect(() => {
@@ -388,14 +426,20 @@ export function Memory() {
   const filterKinds = ['all', ...MEMORY_KINDS];
 
   return (
-    <>
+    <div className="v-memory">
       <style>{MEMORY_CSS}</style>
 
-      <PageHeader
-        title={t('nav.memory')}
-        subtitle={t('memory.subtitle')}
-        actions={<Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>}
-      />
+      <header className="pageHead">
+        <div>
+          <span className="eyebrow">{L('MEMORY FIELD · TEMPORAL FIELD', 'ՀԻՇՈՂՈՒԹՅԱՆ ԴԱՇՏ · TEMPORAL FIELD')}</span>
+          <h1>{t('nav.memory')}</h1>
+          <p className="sub">{t('memory.subtitle')}</p>
+        </div>
+        <div className="right">
+          <span className="pill info">{L('Verifiable memory', 'Ստուգելի հիշողություն')}</span>
+          <Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>
+        </div>
+      </header>
 
       {creating && <NewEntryForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
 
@@ -414,102 +458,134 @@ export function Memory() {
 
       <div className="mem-sr-only" aria-live="polite" role="status">{liveMessage}</div>
 
-      <div className="chat-layout">
-        <Panel title={L('Memories', 'Հիշողություններ')}>
-          <div className="stack">
-            <Input
-              ref={searchRef}
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); openFirst(); } }}
-              placeholder={L('Search memories…  ( / )', 'Փնտրիր հիշողություններ…  ( / )')}
-              aria-label={L('Search memories', 'Փնտրիր հիշողություններ')}
-            />
-
-            <div className="mem-filters" role="group" aria-label={L('Filter by type', 'Զտել ըստ տեսակի')}>
-              {filterKinds.map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  className={`mem-chip${kindFilter === k ? ' mem-chip--active' : ''}`}
-                  aria-pressed={kindFilter === k}
-                  onClick={() => setKindFilter(k)}
-                >
-                  {k === 'all' ? L('All', 'Բոլորը') : k}
-                </button>
-              ))}
-            </div>
-
-            {s.loading && s.data === null ? (
-              <Skeleton rows={5} />
-            ) : s.error ? (
-              <ErrorState message={s.error} onRetry={s.reload} />
-            ) : all.length === 0 ? (
-              <EmptyState
-                glyph="❖"
-                title={L('Bro has no memories yet', 'Bro-ն դեռ հիշողություններ չունի')}
-                hint={L('Create the first memory to build persistent context.', 'Ստեղծիր առաջին հիշողությունը՝ մշտական համատեքստ կառուցելու համար։')}
-              />
-            ) : filtered.length === 0 ? (
-              <EmptyState
-                glyph="◍"
-                title={L('No memories match', 'Համընկնող հիշողություն չկա')}
-                hint={L('Adjust the search or type filter.', 'Փոխիր որոնումը կամ տեսակի զտիչը։')}
-              />
-            ) : (
-              <ul className="mem-list" role="list">
-                {filtered.map((m) => {
-                  const active = m.id === selectedId;
-                  const isBlocked = blockedIds.has(m.id);
-                  return (
-                    <li key={m.id} role="listitem">
-                      <button
-                        type="button"
-                        className={`mem-item${active ? ' mem-item--active' : ''}`}
-                        aria-current={active ? 'true' : undefined}
-                        onClick={() => setSelectedId(m.id)}
-                      >
-                        <span className="mem-item-top">
-                          <Badge tone={kindTone[m.kind] ?? 'accent'}>{m.kind}</Badge>
-                          <span className="muted mem-item-scope">{m.scope}</span>
-                          {m.pinned && <span className="mem-pin" title={t('memory.pinned')}>📌</span>}
-                          {isBlocked && <span className="mem-lock" title={L('References sealed evidence', 'Հղում է կնքված ապացույցին')}>🔒</span>}
-                        </span>
-                        <span className="mem-item-body">{contentPreview(m.content)}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+      <div className="mboard mem-shell">
+        {/* ── Memories browser ─────────────────────────────────────────── */}
+        <section className="surface soft mem-browser">
+          <div className="sec-head">
+            <h2>{L('Memories', 'Հիշողություններ')}</h2>
+            <span className="note">
+              <b className="mono">{filtered.length}</b>{' / '}
+              <b className="mono">{all.length}</b>{' '}
+              {L('in field', 'դաշտում')}
+            </span>
           </div>
-        </Panel>
 
-        <div className="stack">
-          {selected ? (
-            <MemoryDetail
-              entry={selected}
-              links={linksByMemory.get(selected.id) ?? []}
-              blocked={blockedIds.has(selected.id)}
-              onJump={(id) => setSelectedId(id)}
-              onEdit={() => setEditing(selected)}
-              onPinToggle={() => togglePin(selected.id, !selected.pinned)}
-              onDelete={() => setPendingDelete(selected.id)}
+          <Input
+            ref={searchRef}
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); openFirst(); } }}
+            placeholder={L('Search memories…  ( / )', 'Փնտրիր հիշողություններ…  ( / )')}
+            aria-label={L('Search memories', 'Փնտրիր հիշողություններ')}
+          />
+
+          <div className="mem-filters" role="group" aria-label={L('Filter by type', 'Զտել ըստ տեսակի')}>
+            {filterKinds.map((k) => (
+              <button
+                key={k}
+                type="button"
+                className="chip mem-filter"
+                aria-pressed={kindFilter === k}
+                onClick={() => setKindFilter(k)}
+              >
+                {k === 'all' ? L('All', 'Բոլորը') : k}
+              </button>
+            ))}
+          </div>
+
+          {s.loading && s.data === null ? (
+            <Skeleton rows={5} />
+          ) : s.error ? (
+            <ErrorState message={s.error} onRetry={s.reload} />
+          ) : all.length === 0 ? (
+            <EmptyState
+              glyph="❖"
+              title={L('Bro has no memories yet', 'Bro-ն դեռ հիշողություններ չունի')}
+              hint={L('Create the first memory to build persistent context.', 'Ստեղծիր առաջին հիշողությունը՝ մշտական համատեքստ կառուցելու համար։')}
+            />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              glyph="◍"
+              title={L('No memories match', 'Համընկնող հիշողություն չկա')}
+              hint={L('Adjust the search or type filter.', 'Փոխիր որոնումը կամ տեսակի զտիչը։')}
             />
           ) : (
-            <Panel>
-              <EmptyState
-                glyph="❖"
-                title={L('Pick a memory to inspect it', 'Ընտրիր հիշողություն՝ ստուգելու համար')}
-                hint={L('Enter opens the focused item · n new · e edit · / search', 'Enter՝ բացել · n՝ նոր · e՝ խմբագրել · /՝ որոնում')}
-              />
-            </Panel>
+            <ul className="mem-list" role="list">
+              {filtered.map((m) => {
+                const active = m.id === selectedId;
+                const isBlocked = blockedIds.has(m.id);
+                return (
+                  <li key={m.id}>
+                    <button
+                      type="button"
+                      className={`mem-item${active ? ' mem-item--active' : ''}`}
+                      aria-current={active ? 'true' : undefined}
+                      onClick={() => setSelectedId(m.id)}
+                    >
+                      <span className="mem-item-top">
+                        <span className={`pill ${kindPill[m.kind] ?? 'info'} mem-kind`}>{m.kind}</span>
+                        <span className="micro mem-item-scope">{m.scope}</span>
+                        {m.pinned && <span className="tag mem-flag">{t('memory.pinned')}</span>}
+                        {isBlocked && (
+                          <span className="tag mem-flag mem-flag--sealed">
+                            {L('Sealed', 'Կնքված')}
+                          </span>
+                        )}
+                      </span>
+                      <span className="mem-item-body">{contentPreview(m.content)}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           )}
+        </section>
 
-          <Panel title={L('Link graph', 'Հղումների գրաֆ')}>
+        {/* ── Recall rail + link graph ─────────────────────────────────── */}
+        <div className="mem-right">
+          <aside className="mrail" aria-live="polite">
+            {selected ? (
+              <MemoryDetail
+                entry={selected}
+                links={linksByMemory.get(selected.id) ?? []}
+                blocked={blockedIds.has(selected.id)}
+                fmtDate={fmtDate}
+                onJump={(id) => setSelectedId(id)}
+                onEdit={() => setEditing(selected)}
+                onPinToggle={() => togglePin(selected.id, !selected.pinned)}
+                onDelete={() => setPendingDelete(selected.id)}
+              />
+            ) : (
+              <div className="mr-core">
+                <div className="mr-head">
+                  <Mark state="thinking" size={40} />
+                  <div className="mr-id">
+                    <span className="eyebrow">{L('MEMORY CORE', 'ՀԻՇՈՂՈՒԹՅԱՆ ՄԻՋՈՒԿ')}</span>
+                    <b>{L('Pick a memory to inspect it', 'Ընտրիր հիշողություն՝ ստուգելու համար')}</b>
+                  </div>
+                </div>
+                <p className="mr-body">
+                  {L('Enter opens the focused item · n new · e edit · / search',
+                    'Enter՝ բացել · n՝ նոր · e՝ խմբագրել · /՝ որոնում')}
+                </p>
+                <div className="mr-core-grid">
+                  <div className="mc-cell"><b className="mono">{all.length}</b><span className="micro">{L('memories', 'հիշողություն')}</span></div>
+                  <div className="mc-cell"><b className="mono">{pinnedCount}</b><span className="micro">{L('pinned', 'ամրակցված')}</span></div>
+                  <div className="mc-cell"><b className="mono">{blockedIds.size}</b><span className="micro">{L('sealed refs', 'կնքված հղում')}</span></div>
+                  <div className="mc-cell"><b className="mono">{graph.length}</b><span className="micro">{L('links', 'հղում')}</span></div>
+                </div>
+              </div>
+            )}
+          </aside>
+
+          <section className="surface soft mem-graph">
+            <div className="sec-head">
+              <h2>{L('Link graph', 'Հղումների գրաֆ')}</h2>
+              <span className="note">{L('derived from real [[links]]', 'իրական [[հղումներից]]')}</span>
+            </div>
             {graph.length === 0 ? (
-              <div className="muted">
+              <div className="micro" style={{ textTransform: 'none', letterSpacing: 0 }}>
                 {L('No [[links]] between memories yet.', 'Հիշողությունների միջև դեռ [[հղումներ]] չկան։')}
               </div>
             ) : (
@@ -525,9 +601,9 @@ export function Memory() {
                         [[{g.name}]]
                       </button>
                     ) : (
-                      <span className="mem-link mem-link--sealed">🔒 [[{g.name}]]</span>
+                      <span className="mem-link mem-link--sealed">⬡ [[{g.name}]]</span>
                     )}
-                    <span className="muted mem-graph-meta">
+                    <span className="micro mem-graph-meta">
                       {g.sealed
                         ? L('sealed', 'կնքված')
                         : L(`${g.sources} ref${g.sources === 1 ? '' : 's'}`, `${g.sources} հղում`)}
@@ -536,57 +612,98 @@ export function Memory() {
                 ))}
               </ul>
             )}
-          </Panel>
+          </section>
         </div>
       </div>
-    </>
+
+      {/* ── Honest metric strip (real derived counts only) ─────────────── */}
+      {!s.error && all.length > 0 && (
+        <section className="surface soft mem-metrics">
+          <div className="sec-head">
+            <h2>{L('Memory state', 'Հիշողության վիճակ')}</h2>
+            <span className="note">{L('counted from the store', 'store-ից հաշված')}</span>
+          </div>
+          <div className="mstats">
+            {metrics.map((x, i) => (
+              <div
+                key={i}
+                className={`mstat${x.tone ? ` ms-${x.tone}` : ''}`}
+                style={{ ['--i' as string]: i + 3 } as CSSProperties}
+              >
+                <b className="mono num">{x.v}</b>
+                <span className="micro">{x.label}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
-// Local styles — scoped by `mem-` prefix; reuse tokens + existing chat-layout.
+// Local styles — scoped under `.v-memory`; reuse aios tokens. The temporal-field
+// hero, consolidation beam/ledger and retention telemetry from the mockup are
+// intentionally NOT rendered (their data is fabricated); these styles dress the
+// real browser · recall-rail · link-graph · honest-metric surfaces only.
 const MEMORY_CSS = `
-.mem-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+.v-memory .mem-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.mem-filters { display: flex; flex-wrap: wrap; gap: 6px; }
-.mem-chip { background: transparent; border: 1px solid var(--brops-border);
-  color: var(--brops-muted); border-radius: var(--menq-radius-pill);
-  padding: 3px 10px; font-size: 12px; font-weight: 600; cursor: pointer; text-transform: capitalize;
-  transition: background var(--menq-motion-fast), border-color var(--menq-motion-fast), color var(--menq-motion-fast); }
-.mem-chip:hover { background: var(--menq-color-hover); }
-.mem-chip--active { color: var(--brops-accent); border-color: var(--brops-accent); background: var(--menq-color-selected); }
-.mem-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.mem-item { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left;
-  background: transparent; color: var(--brops-text); cursor: pointer;
-  border: 1px solid transparent; border-radius: var(--menq-radius-md); padding: 9px 11px; font: inherit;
-  transition: background var(--menq-motion-fast), border-color var(--menq-motion-fast); }
-.mem-item:hover { background: var(--menq-color-hover); }
-.mem-item--active { background: var(--menq-color-selected); border-color: var(--brops-accent); }
-.mem-item-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.mem-item-scope { font-size: 12px; }
-.mem-pin, .mem-lock { font-size: 12px; }
-.mem-item-body { font-size: 13px; color: var(--brops-text); overflow: hidden;
+.v-memory .mem-shell { align-items: start; }
+.v-memory .mem-browser, .v-memory .mem-graph, .v-memory .mem-metrics { padding: var(--s5); }
+.v-memory .mem-browser { display: grid; gap: var(--s4); }
+.v-memory .mem-right { display: grid; gap: var(--s5); }
+
+.v-memory .mem-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.v-memory .mem-filter { height: 26px; padding: 0 11px; font-size: var(--t-micro); text-transform: capitalize; cursor: pointer; }
+.v-memory .mem-filter[aria-pressed="true"] { color: var(--cyan); border-color: rgb(var(--cyan-rgb)/.5);
+  background: rgb(var(--cyan-rgb)/.09); box-shadow: 0 0 16px rgb(var(--cyan-rgb)/.12); }
+
+.v-memory .mem-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
+  max-height: 62vh; overflow-y: auto; }
+.v-memory .mem-item { display: flex; flex-direction: column; gap: 6px; width: 100%; text-align: left;
+  background: rgb(var(--raised-rgb)/.4); color: var(--ink); cursor: pointer; font: inherit;
+  border: 1px solid rgb(var(--line-rgb)/.7); border-radius: var(--r); padding: 10px 12px;
+  transition: background var(--fast), border-color var(--fast), transform var(--fast); }
+.v-memory .mem-item:hover { border-color: rgb(var(--cyan-rgb)/.35); transform: translateY(-1px); }
+.v-memory .mem-item:focus-visible { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 2px rgb(var(--cyan-rgb)/.4); }
+.v-memory .mem-item--active { border-color: rgb(var(--cyan-rgb)/.55); background: rgb(var(--cyan-rgb)/.08); }
+.v-memory .mem-item-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.v-memory .mem-kind { text-transform: capitalize; }
+.v-memory .mem-item-scope { color: var(--ink-muted); }
+.v-memory .mem-flag { color: var(--cyan-soft); }
+.v-memory .mem-flag--sealed { color: var(--warning); border-color: rgb(var(--warning-rgb)/.32); }
+.v-memory .mem-item-body { font-size: var(--t-small); color: var(--ink-muted); overflow: hidden;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.mem-detail-content { white-space: pre-wrap; line-height: 1.5; }
-.mem-meta { display: flex; gap: var(--menq-space-5); flex-wrap: wrap; }
-.mem-note { font-size: 12px; color: var(--menq-color-warning);
-  background: color-mix(in srgb, var(--menq-color-warning) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--menq-color-warning) 30%, transparent);
-  border-radius: var(--menq-radius-md); padding: 8px 11px; margin-bottom: var(--menq-space-4); }
-.mem-blocked { border: 1px solid color-mix(in srgb, var(--menq-color-danger) 34%, transparent);
-  background: color-mix(in srgb, var(--menq-color-danger) 10%, transparent);
-  border-radius: var(--menq-radius-md); padding: 10px 12px; }
-.mem-blocked strong { color: var(--menq-color-danger); }
-.mem-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.mem-graph-row { display: flex; align-items: center; justify-content: space-between; gap: var(--menq-space-3); }
-.mem-graph-meta { font-size: 12px; }
-.mem-link { font-family: var(--menq-font-mono); font-size: 12px; border-radius: var(--menq-radius-sm);
-  padding: 2px 6px; border: 1px solid var(--brops-border); }
-.mem-link--resolved { background: var(--menq-color-selected); color: var(--brops-accent);
-  border-color: transparent; cursor: pointer; }
-.mem-link--resolved:hover { filter: brightness(1.08); }
-.mem-link--sealed { color: var(--menq-color-danger);
-  background: color-mix(in srgb, var(--menq-color-danger) 10%, transparent); border-color: transparent; }
+
+.v-memory .mr-flags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: var(--s4); }
+.v-memory .mem-body { white-space: pre-wrap; line-height: 1.55; font-size: var(--t-small);
+  color: var(--ink); margin: 0 0 var(--s4); }
+.v-memory .mr-forget { display: inline-flex; }
+.v-memory .mr-forget:hover .btn { color: var(--danger); border-color: rgb(var(--danger-rgb)/.4); }
+
+.v-memory .mem-refs { margin-top: var(--s4); display: grid; gap: 6px; }
+.v-memory .mem-blocked { border: 1px solid rgb(var(--danger-rgb)/.34);
+  background: rgb(var(--danger-rgb)/.08); border-radius: var(--r); padding: 10px 12px; margin-bottom: var(--s4); }
+.v-memory .mem-blocked strong { color: var(--danger); }
+.v-memory .mem-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.v-memory .mem-graph-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
+.v-memory .mem-graph-meta { color: var(--ink-muted); }
+.v-memory .mem-link { font-family: var(--f-mono); font-size: var(--t-micro); border-radius: var(--r-sm);
+  padding: 3px 7px; border: 1px solid rgb(var(--line-rgb)/.7); background: transparent; color: var(--ink-muted); }
+.v-memory .mem-link--resolved { background: rgb(var(--cyan-rgb)/.09); color: var(--cyan);
+  border-color: rgb(var(--cyan-rgb)/.3); cursor: pointer; }
+.v-memory .mem-link--resolved:hover { border-color: rgb(var(--cyan-rgb)/.5); box-shadow: 0 0 14px rgb(var(--cyan-rgb)/.12); }
+.v-memory .mem-link--sealed { color: var(--warning); background: rgb(var(--warning-rgb)/.08);
+  border-color: rgb(var(--warning-rgb)/.28); }
+
+.v-memory .mem-note { font-size: var(--t-small); color: var(--warning);
+  background: rgb(var(--warning-rgb)/.1); border: 1px solid rgb(var(--warning-rgb)/.3);
+  border-radius: var(--r); padding: 9px 12px; margin-bottom: var(--s4); }
+
+@media (max-width: 960px) {
+  .v-memory .mem-list { max-height: none; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .mem-item, .mem-chip { transition: none; }
+  .v-memory .mem-item { transition: none; }
 }
 `;

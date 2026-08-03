@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useApp } from '../app/store';
-import {
-  PageHeader, Panel, Button, Badge, Skeleton, ErrorState, EmptyState, Field,
-} from '../components/ui';
+import { Button, Skeleton, ErrorState, EmptyState, Field } from '../components/ui';
+import { Mark } from '../components/Ambient';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
-import { statusTone, type Tone } from '../domain/enums';
 import type { Integration } from '../domain/entities';
 
 // ── Health derivation ─────────────────────────────────────────────────────────
@@ -16,6 +14,12 @@ function healthOf(status: string): Health {
   if (status === 'connected') return 'healthy';
   if (status === 'error') return 'unhealthy';
   return 'idle';
+}
+
+// aios health-token key (drives the --stc hue on the scoped `.st-*` classes that
+// already ship in aios.css). live only when a connector is genuinely connected.
+function stKeyOf(h: Health): 'live' | 'error' | 'paused' {
+  return h === 'healthy' ? 'live' : h === 'unhealthy' ? 'error' : 'paused';
 }
 
 // A backend rejection that reads like a governance/secret refusal is surfaced as
@@ -46,6 +50,13 @@ export function Integrations() {
 
   const items = s.data ?? [];
 
+  // Telemetry — every count derived from the REAL array (never fabricated).
+  const totals = useMemo(() => {
+    const connected = items.filter((i) => i.status === 'connected').length;
+    const attention = items.filter((i) => i.status === 'error').length;
+    return { total: items.length, connected, attention, anyConnected: connected > 0 };
+  }, [items]);
+
   // Filter + partition the catalog into "connected" (configured) and "available"
   // (never connected). `error` connectors stay in the connected group so their
   // unhealthy state is visible where an owner expects a working connector.
@@ -64,11 +75,12 @@ export function Integrations() {
     ?? null;
 
   const healthLabel = (h: Health) =>
-    h === 'healthy' ? L('Healthy', 'Կայուն')
+    h === 'healthy' ? L('Connected', 'Միացած')
       : h === 'unhealthy' ? L('Unhealthy', 'Անսարք')
-        : L('Not connected', 'Չմիացված');
-  const healthTone = (h: Health): Tone =>
-    h === 'healthy' ? 'success' : h === 'unhealthy' ? 'danger' : 'neutral';
+        : L('Disconnected', 'Անջատված');
+  // aios pill variant for the health state; error recolours via `.pill.cst-err`.
+  const healthPill = (h: Health) =>
+    h === 'healthy' ? 'live' : h === 'unhealthy' ? 'warn cst-err' : 'off';
 
   // ── Enable/disable (Space) + connect/disconnect action ──────────────────────
   const setStatus = (i: Integration, status: 'connected' | 'disconnected') => {
@@ -144,18 +156,18 @@ export function Integrations() {
         <button
           type="button"
           ref={(el) => { rowRefs.current[idx] = el; }}
-          className={`intg-row ${active ? 'intg-row--active' : ''}`}
+          className={`creg-row ${active ? 'is-sel' : ''}`}
           aria-label={aria}
           aria-current={active ? 'true' : undefined}
           onClick={() => { setSelectedId(i.id); setNotice(null); }}
           onKeyDown={(e) => onRowKeyDown(e, idx, i)}
         >
-          <span className="row" style={{ gap: 8, minWidth: 0 }}>
-            <span className={`intg-dot intg-dot--${h}`} aria-hidden="true" />
-            <span className="intg-row-name">{i.name}</span>
-            <span className="muted intg-row-provider">{i.provider}</span>
+          <span className={`cr-dot st-${stKeyOf(h)}`} aria-hidden="true" />
+          <span className="cr-main">
+            <b>{i.name}</b>
+            <span className="micro">{i.provider}</span>
           </span>
-          <Badge tone={statusTone[i.status] ?? 'neutral'}>{i.status}</Badge>
+          <span className={`pill ${healthPill(h)}`}>{healthLabel(h)}</span>
         </button>
       </div>
     );
@@ -167,23 +179,21 @@ export function Integrations() {
     const created = new Date(i.createdAt);
     const updated = new Date(i.updatedAt);
     return (
-      <div className="intg-detail intg-enter" key={i.id}>
-        <div className="panel-head">
-          <div className="row" style={{ gap: 10, minWidth: 0 }}>
-            <span className={`intg-dot intg-dot--${h}`} aria-hidden="true" />
-            <div>
-              <div className="panel-title">{i.name}</div>
-              <div className="muted">{i.provider}</div>
-            </div>
+      <div className="cst-detail rise" key={i.id}>
+        <div className="cd-head">
+          <span className={`cd-badge st-${stKeyOf(h)}`} aria-hidden="true" />
+          <div className="cd-id">
+            <span className="eyebrow">{i.provider} · {L('CHANNEL', 'ԱԼԻՔ')}</span>
+            <b>{i.name}</b>
           </div>
-          <Badge tone={healthTone(h)}>{healthLabel(h)}</Badge>
+          <span className={`pill ${healthPill(h)}`}>{healthLabel(h)}</span>
         </div>
 
         {/* error state — connector unhealthy */}
         {i.status === 'error' && (
           <div className="intg-blocked intg-blocked--error" role="alert">
             <div className="intg-blocked-title">⚠ {L('Connector unhealthy', 'Միակցիչն անսարք է')}</div>
-            <div className="muted">
+            <div className="micro">
               {L(
                 'This connector reported an error on its last health check. Reconnect to run its check again, or provision it through the engine / operator.',
                 'Այս միակցիչը վերջին ստուգման ժամանակ սխալ է հաղորդել։ Վերամիացրե՛ք ստուգումը կրկնելու համար, կամ տրամադրե՛ք այն շարժիչի/օպերատորի միջոցով։',
@@ -203,9 +213,8 @@ export function Integrations() {
           <div className="intg-fields">
             <Field label={L('Provider', 'Մատակարար')}>{i.provider}</Field>
             <Field label={L('Status', 'Կարգավիճակ')}>
-              <Badge tone={statusTone[i.status] ?? 'neutral'}>{i.status}</Badge>
+              <span className={`pill ${healthPill(h)}`}>{healthLabel(h)}</span>
             </Field>
-            <Field label={L('Health', 'Առողջություն')}>{healthLabel(h)}</Field>
             <Field label={L('Added', 'Ավելացված')}>
               {isNaN(created.getTime()) ? '—' : dateFmt.format(created)}
             </Field>
@@ -219,8 +228,8 @@ export function Integrations() {
         <section aria-label={L('Authentication', 'Նույնականացում')}>
           <div className="intg-section-title">{L('Authentication', 'Նույնականացում')}</div>
           <div className="intg-auth">
-            <Badge tone="info">{L('Handoff → engine / operator', 'Փոխանցում → շարժիչ/օպերատոր')}</Badge>
-            <p className="muted" style={{ margin: '8px 0 0' }}>
+            <span className="pill info">{L('Handoff → engine / operator', 'Փոխանցում → շարժիչ/օպերատոր')}</span>
+            <p className="micro" style={{ margin: '8px 0 0' }}>
               {L(
                 'Secrets are held by the engine / operator — this desktop stores none. Connecting hands authentication off to the governed engine; no credential is persisted here.',
                 'Գաղտնիքները պահվում են շարժիչի/օպերատորի կողմից — այս աշխատասեղանը ոչ մեկը չի պահում։ Միանալիս նույնականացումը փոխանցվում է կառավարվող շարժիչին. այստեղ ոչ մի հավատարմագիր չի պահվում։',
@@ -235,14 +244,14 @@ export function Integrations() {
           <div className="intg-section-title">{L('Inbound triggers & outbound sinks', 'Մուտքային հրահրիչներ և ելքային ընդունիչներ')}</div>
           <div className="intg-blocked" role="note">
             <div className="intg-blocked-title">🔒 {L('Mapping not provisioned', 'Կապակցումը տրամադրված չէ')}</div>
-            <div className="muted">
+            <div className="micro">
               {L(
                 'Trigger and sink mapping is not provisioned on this desktop. It stays blocked so an inbound event can never start ungoverned work and a sink can only send verified results.',
                 'Հրահրիչ–ընդունիչ կապակցումն այս աշխատասեղանում տրամադրված չէ։ Այն արգելափակված է մնում, որպեսզի մուտքային իրադարձությունը երբեք չմեկնարկի չկառավարվող աշխատանք, իսկ ընդունիչն ուղարկի միայն ստուգված արդյունքներ։',
               )}
             </div>
             <div className="intg-provision">
-              <div className="field-label">{L('How to provision', 'Ինչպես տրամադրել')}</div>
+              <div className="eyebrow">{L('How to provision', 'Ինչպես տրամադրել')}</div>
               <ol className="intg-steps">
                 <li>{L('Ask the operator to register the connector secret in the engine.', 'Խնդրե՛ք օպերատորին գրանցել միակցիչի գաղտնիքը շարժիչում։')}</li>
                 <li>{L('Map inbound events to a governed task class (receipt required).', 'Կապե՛ք մուտքային իրադարձությունները կառավարվող առաջադրանքի դասին (անհրաժեշտ է անդորրագիր)։')}</li>
@@ -253,7 +262,7 @@ export function Integrations() {
         </section>
 
         {/* primary action (enable/disable) */}
-        <div className="form-actions">
+        <div className="cd-foot">
           {i.status === 'connected' ? (
             <Button variant="ghost" disabled={busyId === i.id} onClick={() => setStatus(i, 'disconnected')}>
               {t('integrations.disconnect')}
@@ -271,12 +280,25 @@ export function Integrations() {
   const loading = s.loading && s.data === null;
 
   return (
-    <>
+    <div className="v-integrations">
       <IntegrationsStyle />
-      <PageHeader
-        title={t('nav.integrations')}
-        subtitle={t('integrations.subtitle')}
-      />
+
+      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      <header className="pageHead">
+        <div>
+          <span className="eyebrow">{L('INTEGRATIONS · SYSTEM MAP', 'ԻՆՏԵԳՐՈՒՄՆԵՐ · SYSTEM CONSTELLATION')}</span>
+          <h1>{t('nav.integrations')}</h1>
+          <p className="sub">{t('integrations.subtitle')}</p>
+        </div>
+        <div className="right">
+          {!loading && !s.error && (
+            <span className={`pill ${totals.anyConnected ? 'live' : 'off'}`}>
+              {totals.connected} {L('connected', 'միացած')}
+            </span>
+          )}
+          <Mark state={totals.anyConnected ? 'live' : 'idle'} size={30} />
+        </div>
+      </header>
 
       {/* live region: connect / disconnect / refusal announcements */}
       <div className="intg-live" role="status" aria-live="polite">
@@ -291,8 +313,32 @@ export function Integrations() {
         )}
       </div>
 
+      {/* ── HERO · real-derived telemetry band ─────────────────────────────── */}
+      {!loading && !s.error && items.length > 0 && (
+        <section className="surface soft lg hud intg-hero" aria-label={L('Integration overview', 'Ինտեգրումների ընդհանուր պատկեր')}>
+          <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
+          <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
+          <div className="intg-stats">
+            <span className="capsule"><b>{totals.total}</b><span>{L('integrations', 'ինտեգրում')}</span></span>
+            <span className="capsule"><b>{totals.connected}</b><span>{L('active channel', 'ակտիվ ալիք')}</span></span>
+            <span className={`capsule ${totals.attention > 0 ? 'is-warn' : ''}`}><b>{totals.attention}</b><span>{L('attention', 'ուշադրություն')}</span></span>
+          </div>
+          <div className="wire live" aria-hidden="true" />
+          <p className="micro intg-scale">
+            {L('State is read from each connector — live only when genuinely connected.',
+              'Վիճակը կարդացվում է յուրաքանչյուր միակցիչից՝ միացած է միայն իրապես կապվածը։')}
+          </p>
+        </section>
+      )}
+
       <div className="intg-layout">
-        <Panel title={L('Connector catalog', 'Միակցիչների կատալոգ')}>
+        {/* ── REGISTRY · the real connector catalog ─────────────────────────── */}
+        <section className="surface soft intg-registry" aria-label={L('Connector catalog', 'Միակցիչների կատալոգ')}>
+          <div className="sec-head">
+            <h2>{L('Connection registry', 'Միացման ռեեստր')}</h2>
+            <span className="note">{L('Select a row to inspect its channel.', 'ընտրիր տողը՝ մանրամասները բացելու համար')}</span>
+          </div>
+
           <div className="intg-search">
             <input
               ref={searchRef}
@@ -323,121 +369,132 @@ export function Integrations() {
               hint={L('No connector matches your search.', 'Ձեր որոնմանը համապատասխան միակցիչ չկա։')}
             />
           ) : (
-            <div className="stack">
+            <div className="creg">
               {connected.length > 0 && (
-                <div>
-                  <div className="intg-group-title">{L('Connected', 'Միացված')}</div>
+                <div className="creg-group">
+                  <div className="creg-head"><span className="creg-gname">{L('Connected', 'Միացված')}</span></div>
                   <div role="list" aria-label={L('Connected connectors', 'Միացված միակցիչներ')} className="intg-list">
                     {connected.map((i) => renderRow(i, ordered.indexOf(i)))}
                   </div>
                 </div>
               )}
               {available.length > 0 && (
-                <div>
-                  <div className="intg-group-title">{L('Available', 'Հասանելի')}</div>
+                <div className="creg-group">
+                  <div className="creg-head"><span className="creg-gname">{L('Available', 'Հասանելի')}</span></div>
                   <div role="list" aria-label={L('Available connectors', 'Հասանելի միակցիչներ')} className="intg-list">
                     {available.map((i) => renderRow(i, ordered.indexOf(i)))}
                   </div>
                 </div>
               )}
               {!hasBackend() && (
-                <div className="muted intg-hint">{t('state.offlineBanner')}</div>
+                <div className="micro intg-hint">{t('state.offlineBanner')}</div>
               )}
             </div>
           )}
-        </Panel>
+        </section>
 
-        <div>
+        {/* ── DETAIL · selected connector ───────────────────────────────────── */}
+        <section className="surface soft intg-board" aria-label={L('Connector detail', 'Միակցիչի մանրամասներ')}>
           {selected ? (
-            <Panel>{renderDetail(selected)}</Panel>
+            renderDetail(selected)
           ) : (
-            <Panel>
-              <EmptyState
-                glyph="🔌"
-                title={L('Select a connector', 'Ընտրե՛ք միակցիչ')}
-                hint={L(
-                  'Choose a connector to view its configuration, health, authentication handoff, and trigger / sink mapping.',
-                  'Ընտրե՛ք միակցիչ՝ դրա կարգավորումը, առողջությունը, նույնականացման փոխանցումը և հրահրիչ/ընդունիչ կապակցումը տեսնելու համար։',
-                )}
-              />
-            </Panel>
+            <EmptyState
+              glyph="🔌"
+              title={L('Select a connector', 'Ընտրե՛ք միակցիչ')}
+              hint={L(
+                'Choose a connector to view its configuration, health, authentication handoff, and trigger / sink mapping.',
+                'Ընտրե՛ք միակցիչ՝ դրա կարգավորումը, առողջությունը, նույնականացման փոխանցումը և հրահրիչ/ընդունիչ կապակցումը տեսնելու համար։',
+              )}
+            />
           )}
-        </div>
+        </section>
       </div>
-    </>
+    </div>
   );
 }
 
 // Scoped styles for this page (kept inside the feature file per the build
-// contract). Colors/spacing resolve through the shared design tokens; motion
-// honours prefers-reduced-motion.
+// contract). Colors/spacing resolve through the shared aios design tokens;
+// motion honours prefers-reduced-motion. Health hues come from the `.st-*`
+// tokens already defined under `.v-integrations` in aios.css.
 function IntegrationsStyle() {
   return (
     <style>{`
-.intg-layout { display: grid; grid-template-columns: minmax(240px, 340px) 1fr; gap: var(--menq-space-4); align-items: start; }
-@media (max-width: 860px) { .intg-layout { grid-template-columns: 1fr; } }
+.v-integrations .intg-hero { position:relative; padding:var(--s5) var(--s6); margin-bottom:var(--s5);
+  display:flex; flex-direction:column; gap:var(--s3); }
+.v-integrations .intg-stats { display:flex; flex-wrap:wrap; gap:var(--s3); }
+.v-integrations .intg-stats .capsule.is-warn { color:var(--warning);
+  border-color:rgb(var(--warning-rgb)/.3); background:rgb(var(--warning-rgb)/.08); }
+.v-integrations .intg-stats .capsule.is-warn b { color:var(--warning); }
+.v-integrations .intg-scale { color:var(--ink-muted); margin:0; }
 
-.intg-live { min-height: 0; }
-.intg-notice { margin-bottom: var(--menq-space-4); padding: 9px 13px; border-radius: var(--menq-radius-md);
-  font-size: 13px; border: 1px solid var(--brops-border); background: var(--menq-color-hover); color: var(--brops-text); }
-.intg-notice--ok { border-color: color-mix(in srgb, var(--menq-color-success) 50%, transparent);
-  background: color-mix(in srgb, var(--menq-color-success) 12%, transparent); }
-.intg-notice--error { border-color: color-mix(in srgb, var(--menq-color-danger) 50%, transparent);
-  background: color-mix(in srgb, var(--menq-color-danger) 12%, transparent); }
-.intg-notice--blocked { border-color: color-mix(in srgb, var(--menq-color-warning) 50%, transparent);
-  background: color-mix(in srgb, var(--menq-color-warning) 12%, transparent); }
+.v-integrations .intg-layout { display:grid; grid-template-columns:minmax(260px,380px) 1fr;
+  gap:var(--s5); align-items:start; }
+@media (max-width:860px){ .v-integrations .intg-layout { grid-template-columns:1fr; } }
 
-.intg-search { margin-bottom: var(--menq-space-2); }
+.v-integrations .intg-registry, .v-integrations .intg-board { padding:var(--s5); }
 
-.intg-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
-  color: var(--brops-muted); margin: var(--menq-space-2) 0 6px; }
-.intg-list { display: flex; flex-direction: column; gap: 4px; }
+.v-integrations .intg-live { min-height:0; }
+.v-integrations .intg-notice { margin-bottom:var(--s4); padding:9px 13px; border-radius:var(--r);
+  font-size:var(--t-small); border:1px solid rgb(var(--line-rgb)/.8); background:rgb(var(--raised-rgb)/.5); color:var(--ink); }
+.v-integrations .intg-notice--ok { border-color:rgb(var(--success-rgb)/.4); background:rgb(var(--success-rgb)/.09); }
+.v-integrations .intg-notice--error { border-color:rgb(var(--danger-rgb)/.4); background:rgb(var(--danger-rgb)/.09); }
+.v-integrations .intg-notice--blocked { border-color:rgb(var(--warning-rgb)/.4); background:rgb(var(--warning-rgb)/.09); }
 
-.intg-row { display: flex; align-items: center; justify-content: space-between; gap: var(--menq-space-3);
-  width: 100%; text-align: left; background: transparent; color: var(--brops-text); cursor: pointer;
-  border: 1px solid transparent; border-radius: var(--menq-radius-md); padding: 9px 11px; font: inherit; }
-.intg-row:hover { background: var(--menq-color-hover); }
-.intg-row:focus-visible { outline: 2px solid var(--menq-color-focus); outline-offset: 1px; }
-.intg-row--active { background: var(--menq-color-selected); border-color: var(--brops-accent); }
-.intg-row-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.intg-row-provider { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.v-integrations .intg-search { margin:var(--s3) 0 var(--s4); }
 
-.intg-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--brops-muted); }
-.intg-dot--healthy { background: var(--menq-color-success); box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 60%, transparent);
-  animation: intg-pulse 2s infinite; }
-.intg-dot--unhealthy { background: var(--menq-color-danger); }
-.intg-dot--idle { background: var(--brops-muted); }
+.v-integrations .creg { display:flex; flex-direction:column; gap:var(--s4); }
+.v-integrations .creg-head { display:flex; align-items:baseline; gap:8px; margin-bottom:6px; }
+.v-integrations .creg-gname { font-family:var(--f-mono); font-size:var(--t-micro); text-transform:uppercase;
+  letter-spacing:.1em; color:var(--ink-muted); }
+.v-integrations .intg-list { display:flex; flex-direction:column; gap:5px; }
 
-@keyframes intg-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 55%, transparent); }
-  70% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--menq-color-success) 0%, transparent); }
-  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 0%, transparent); }
-}
+.v-integrations .creg-row { display:flex; align-items:center; gap:11px; width:100%; text-align:left;
+  background:rgb(var(--raised-rgb)/.4); color:var(--ink); cursor:pointer;
+  border:1px solid rgb(var(--line-rgb)/.6); border-radius:var(--r); padding:10px 12px; font:inherit;
+  transition:border-color .14s, background .14s; }
+.v-integrations .creg-row:hover { background:rgb(var(--raised-rgb)/.8); border-color:rgb(var(--cyan-rgb)/.3); }
+.v-integrations .creg-row.is-sel { border-color:rgb(var(--cyan-rgb)/.55);
+  box-shadow:0 0 18px rgb(var(--cyan-rgb)/.12), inset 0 0 14px rgb(var(--cyan-rgb)/.05); }
+.v-integrations .cr-main { display:flex; flex-direction:column; gap:1px; min-width:0; flex:1; }
+.v-integrations .cr-main b { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.v-integrations .cr-main .micro { color:var(--ink-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.v-integrations .creg-row .pill { flex:0 0 auto; }
 
-.intg-detail { display: flex; flex-direction: column; gap: var(--menq-space-4); }
-.intg-enter { animation: intg-enter var(--menq-motion-med) ease-out; }
-@keyframes intg-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.v-integrations .cr-dot { width:9px; height:9px; border-radius:50%; flex:none;
+  background:rgb(var(--stc,var(--muted-rgb))/.95); box-shadow:0 0 9px rgb(var(--stc,var(--muted-rgb))/.7); }
+.v-integrations .cr-dot.st-live { animation:intgPulse 2.4s ease-in-out infinite; }
 
-.intg-section-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; }
-.intg-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--menq-space-3); }
-@media (max-width: 560px) { .intg-fields { grid-template-columns: 1fr; } }
+@keyframes intgPulse { 0%,100%{ box-shadow:0 0 9px rgb(var(--stc)/.7); } 50%{ box-shadow:0 0 15px rgb(var(--stc)/.95); } }
 
-.intg-auth { border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md); padding: var(--menq-space-3); }
+.v-integrations .cst-detail { display:flex; flex-direction:column; gap:var(--s4); }
+.v-integrations .cd-head { display:flex; align-items:center; gap:11px; }
+.v-integrations .cd-badge { width:12px; height:12px; border-radius:50%; flex:none;
+  background:rgb(var(--stc,var(--muted-rgb))/.95); box-shadow:0 0 12px rgb(var(--stc,var(--muted-rgb))/.7); }
+.v-integrations .cd-id { min-width:0; flex:1; }
+.v-integrations .cd-id b { display:block; font-family:var(--f-display,inherit); font-size:17px; font-weight:700; }
+.v-integrations .cd-head .pill { flex:0 0 auto; }
 
-.intg-blocked { border: 1px dashed var(--brops-border); border-radius: var(--menq-radius-md);
-  padding: var(--menq-space-4); background: var(--menq-color-hover); }
-.intg-blocked--error { border-style: solid; border-color: color-mix(in srgb, var(--menq-color-danger) 45%, transparent);
-  background: color-mix(in srgb, var(--menq-color-danger) 8%, transparent); }
-.intg-blocked-title { font-weight: 600; margin-bottom: 6px; }
-.intg-provision { margin-top: var(--menq-space-3); }
-.intg-steps { margin: 6px 0 0; padding-left: 18px; color: var(--brops-muted); display: flex; flex-direction: column; gap: 4px; }
+.v-integrations .intg-section-title { font-weight:600; font-size:var(--t-small); margin-bottom:8px; }
+.v-integrations .intg-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--s3); }
+@media (max-width:560px){ .v-integrations .intg-fields { grid-template-columns:1fr; } }
 
-.intg-hint { font-size: 12px; margin-top: var(--menq-space-2); }
+.v-integrations .intg-auth { border:1px solid rgb(var(--line-rgb)/.8); border-radius:var(--r); padding:var(--s3); }
 
-@media (prefers-reduced-motion: reduce) {
-  .intg-dot--healthy { animation: none; }
-  .intg-enter { animation: none; }
-}
+.v-integrations .intg-blocked { border:1px dashed rgb(var(--line-rgb)/.9); border-radius:var(--r);
+  padding:var(--s4); background:rgb(var(--raised-rgb)/.45); }
+.v-integrations .intg-blocked .micro { color:var(--ink-muted); }
+.v-integrations .intg-blocked--error { border-style:solid; border-color:rgb(var(--danger-rgb)/.45);
+  background:rgb(var(--danger-rgb)/.08); }
+.v-integrations .intg-blocked-title { font-weight:600; margin-bottom:6px; }
+.v-integrations .intg-provision { margin-top:var(--s3); }
+.v-integrations .intg-steps { margin:6px 0 0; padding-left:18px; color:var(--ink-muted);
+  display:flex; flex-direction:column; gap:4px; }
+
+.v-integrations .cd-foot { display:flex; gap:10px; flex-wrap:wrap; }
+.v-integrations .intg-hint { color:var(--ink-muted); margin-top:var(--s3); }
+
+@media (prefers-reduced-motion:reduce){ .v-integrations .cr-dot.st-live { animation:none; } }
     `}</style>
   );
 }
