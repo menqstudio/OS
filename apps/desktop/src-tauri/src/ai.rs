@@ -963,6 +963,40 @@ fn write_system_prompt_file(system: &str) -> Result<std::path::PathBuf, String> 
     Err("could not create a unique system prompt file".to_string())
 }
 
+/// Commands the in-app Bro coding agent may NEVER run, even with Bash enabled — the owner's standing boundary:
+/// never push, delete, or install dependencies without asking. Passed to `claude` as `--disallowedTools`,
+/// which OVERRIDES the allow-list, so these stay blocked while ordinary build/test/inspect commands run.
+const BRO_BASH_DENY: &[&str] = &[
+    // delete
+    "Bash(rm:*)", "Bash(rmdir:*)", "Bash(del:*)", "Bash(Remove-Item:*)", "Bash(unlink:*)",
+    // push
+    "Bash(git push:*)",
+    // dependency install
+    "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npm ci:*)",
+    "Bash(pnpm add:*)", "Bash(pnpm install:*)",
+    "Bash(yarn add:*)", "Bash(yarn install:*)",
+    "Bash(cargo add:*)", "Bash(pip install:*)",
+];
+
+/// The `--tools` (+ permission-mode / disallow) argv fragment. As a coding agent (BROPS_PROJECT_DIR set) Bro
+/// gets the file tools PLUS Bash in acceptEdits mode, bounded by [`BRO_BASH_DENY`] so it can build/test/inspect
+/// and edit the repo but can't push/delete/install. Unset ⇒ NO tools at all (the fail-closed sandboxed chat).
+fn tool_args(agent: bool) -> Vec<String> {
+    let mut a: Vec<String> = vec!["--tools".into()];
+    if agent {
+        a.push("Read Edit Write Grep Glob Bash".into());
+        a.push("--permission-mode".into());
+        a.push("acceptEdits".into());
+        a.push("--disallowedTools".into());
+        for pat in BRO_BASH_DENY {
+            a.push((*pat).into());
+        }
+    } else {
+        a.push(String::new()); // "" → disable ALL built-in tools
+    }
+    a
+}
+
 /// Build the argv (after the binary) for a `claude -p` chat call. Centralized so
 /// the security lockdown is guaranteed present on every path and unit-testable.
 /// The chat is a pure text completion: no built-in tools, no MCP servers, and no
@@ -983,18 +1017,7 @@ fn claude_args(system_file: &std::path::Path, streaming: bool, model: Option<&st
     }
     a.push("--append-system-prompt-file".into());
     a.push(system_file.to_string_lossy().into_owned());
-    // Tools: as a coding agent (BROPS_PROJECT_DIR set) Bro gets ONLY the file tools
-    // (Read/Edit/Write/Grep/Glob) in acceptEdits mode — never Bash or any executor,
-    // so it can read+edit the repo but can't push/delete/install/run commands. Unset
-    // ⇒ no tools at all (the fail-closed sandboxed chat).
-    a.push("--tools".into());
-    if bro_agent_dir().is_some() {
-        a.push("Read Edit Write Grep Glob".into());
-        a.push("--permission-mode".into());
-        a.push("acceptEdits".into());
-    } else {
-        a.push(String::new()); // "" → disable ALL built-in tools
-    }
+    a.extend(tool_args(bro_agent_dir().is_some()));
     a.push("--strict-mcp-config".into()); // ignore every MCP config (we pass none)
     a.push("--setting-sources".into());
     a.push("project".into()); // only project settings (empty sandbox) — excludes user hooks/plugins/MCP
@@ -1629,6 +1652,29 @@ mod tests {
                 || a == "--allowedTools" || a == "--allowed-tools"));
             assert!(!args.iter().any(|a| a == "default"), "must not pass --tools default");
         }
+    }
+
+    #[test]
+    fn tool_args_agent_enables_bounded_bash_chat_disables_all() {
+        // Sandboxed chat (no project dir): ALL built-in tools off, no Bash, no deny-list needed.
+        let chat = tool_args(false);
+        let pos = chat.iter().position(|a| a == "--tools").expect("--tools present");
+        assert_eq!(chat.get(pos + 1), Some(&String::new()), "chat disables all tools");
+        assert!(!chat.iter().any(|a| a.contains("Bash")), "chat has no Bash");
+        assert!(!chat.iter().any(|a| a == "--disallowedTools"), "chat needs no deny-list");
+
+        // Coding agent: file tools + Bash in acceptEdits, bounded by the deny-list.
+        let agent = tool_args(true);
+        let tpos = agent.iter().position(|a| a == "--tools").expect("--tools present");
+        assert_eq!(agent.get(tpos + 1), Some(&"Read Edit Write Grep Glob Bash".to_string()));
+        assert!(agent.iter().any(|a| a == "acceptEdits"), "agent runs acceptEdits");
+        assert!(agent.iter().any(|a| a == "--disallowedTools"), "agent carries the deny-list");
+        // push / delete / install are hard-blocked regardless of the allow-list.
+        for needle in ["Bash(git push:*)", "Bash(rm:*)", "Bash(npm install:*)", "Bash(pip install:*)"] {
+            assert!(agent.iter().any(|a| a == needle), "deny-list must block {needle}");
+        }
+        // never bypass permissions or pass an allow-list flag.
+        assert!(!agent.iter().any(|a| a == "--dangerously-skip-permissions" || a == "--allowedTools"));
     }
 
     #[test]
