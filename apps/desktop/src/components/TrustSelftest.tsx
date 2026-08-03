@@ -42,7 +42,7 @@ export function TrustSelftestPanel() {
       <span className="sec-idx micro" aria-hidden="true">◇</span>
       <span className="eyebrow">{tr('LIVE TRUST CHAIN', 'ԿԵՆԴԱՆԻ ՎՍՏԱՀՈՒԹՅԱՆ ՇՂԹԱ')}</span>
       <h2>{tr('Governed trust-chain self-test', 'Կառավարվող վստահության շղթայի ինքնաստուգում')}</h2>
-      <p className="sec-hint">
+      <p className="ts-desc">
         {tr(
           'Runs the real in-process chain — challenge → lease → attest → sign → verify — and reports the genuine receipt. It never flips live AI turns.',
           'Գործարկում է իրական in-process շղթան՝ մարտահրավեր → lease → attest → ստորագրություն → ստուգում — և զեկուցում է իսկական ստացականը։ Երբեք չի փոխում կենդանի AI քայլերը։',
@@ -98,6 +98,8 @@ export function TrustSelftestPanel() {
 }
 
 const TS_STYLE = `
+.trust-selftest h2 { margin: 2px 0 8px; }
+.trust-selftest .ts-desc { margin: 0 0 14px; color: var(--ink-muted); max-width: 72ch; line-height: 1.5; }
 .trust-selftest .ts-actions { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; }
 .trust-selftest .ts-run { height: 34px; border: 1px solid rgb(var(--cyan-rgb)/.4); color: var(--cyan); border-radius: var(--r-sm); background: rgb(var(--cyan-rgb)/.06); }
 .trust-selftest .ts-run:hover:not(:disabled) { background: rgb(var(--cyan-rgb)/.12); }
