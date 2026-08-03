@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "T-010 deny-by-default capability set for the BroPS main window. Every app IPC command is declared in the app manifest (build.rs); this file grants allow-* explicitly per the Wave-2b risk tiers (docs/design/WAVE_2B_CAPABILITY_APPROVAL_DESIGN.md). Generic decide_approval is DENIED (approve requires renderer-independent native confirmation, T-011); reject_approval is the fail-safe reject path. The four L2 hard-delete commands (delete_conversation/knowledge/memory/event) are DENIED until they gain soft-delete+undo or native confirmation (T-011). A command with no allow-* here is uninvokable from this window.",
   "windows": [
-    "main"
+    "main",
+    "bro-win-*"
   ],
   "permissions": [
     "core:default",

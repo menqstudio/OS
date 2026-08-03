@@ -40,6 +40,16 @@ export const STR = {
     hy: 'հաղորդագրություն հերթում',
     ru: 'сообщений в очереди',
   },
+  copy: {
+    en: 'Copy',
+    hy: 'Պատճենել',
+    ru: 'Копировать',
+  },
+  copied: {
+    en: 'Copied',
+    hy: 'Պատճենվեց',
+    ru: 'Скопировано',
+  },
   thinkingCap: {
     en: 'THINKING',
     hy: 'ՄՏԱԾՈՒՄ',

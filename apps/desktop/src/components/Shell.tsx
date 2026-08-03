@@ -237,7 +237,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               type="button"
               role="menuitem"
               onClick={() => {
-                void desktop.openWindow(route).catch(() => {});
+                void desktop.openWindow(route).catch((e) => console.error('open_window failed:', e));
                 setCtxMenu(null);
               }}
             >

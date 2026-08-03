@@ -78,6 +78,29 @@ function fmtTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+// One-click copy of a message body, with a brief ✓ confirmation. Self-contained
+// (no toast dependency) — reads the clipboard label from the caller.
+function CopyButton({ text, label, doneLabel }: { text: string; label: string; doneLabel: string }) {
+  const [done, setDone] = useState(false);
+  const copy = () => {
+    void navigator.clipboard?.writeText(text).then(
+      () => { setDone(true); window.setTimeout(() => setDone(false), 1200); },
+      () => {},
+    );
+  };
+  return (
+    <button
+      type="button"
+      className={`t-copy${done ? ' done' : ''}`}
+      aria-label={done ? doneLabel : label}
+      title={done ? doneLabel : label}
+      onClick={copy}
+    >
+      <span aria-hidden="true">{done ? '✓' : '⧉'}</span>
+    </button>
+  );
+}
+
 function MessageThread({ conversation, onActivity }: { conversation: Conversation; onActivity: () => void }) {
   const { t, lang } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
@@ -337,6 +360,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
                     <span className="t-who">{m.author}</span>
                     {badge && <Badge tone={badge.tone}>{t(badge.key)}</Badge>}
                     {time && <span className="t-time mono">{time}</span>}
+                    <CopyButton text={m.body} label={L('copy')} doneLabel={L('copied')} />
                   </div>
                 </div>
               </article>

@@ -234,12 +234,11 @@ pub fn list_approvals(state: State<AppState>) -> Result<Vec<Approval>, String> {
 /// approver identity is derived server-side from the invoking window, not
 /// taken from the request body.
 ///
-/// TODO(M-1): route approvals through a native confirmation the renderer
-/// cannot script — `tauri-plugin-dialog`'s blocking `confirm` invoked from
-/// Rust here, showing the run intent and step title. Needs
-/// `tauri-plugin-dialog = "2"` in src-tauri/Cargo.toml and
-/// `.plugin(tauri_plugin_dialog::init())` in lib.rs; no webview capability is
-/// required when the dialog is driven from Rust.
+/// M-1 DONE: renderer-independent native confirmation is implemented in
+/// [`confirm_approval`] (T-011) — a `tauri-plugin-dialog` blocking dialog driven from
+/// Rust (off the main thread), showing the FULL execution payload and binding the
+/// nonce + request digest atomically. This generic `approve` verb stays fail-closed on
+/// purpose; the ONLY approve path is `confirm_approval`. `reject` uses `reject_approval`.
 #[tauri::command]
 pub fn decide_approval(
     state: State<AppState>,
@@ -843,21 +842,17 @@ pub fn cancel_reply(conversation_id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn open_window(app: tauri::AppHandle, route: Option<String>) -> Result<(), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
+    // The route isn't put in the URL (a `#fragment` in a WebviewUrl::App path fails to
+    // resolve); the new window restores the last view from its shared localStorage.
+    let _ = route;
     static N: AtomicU64 = AtomicU64::new(1);
     let label = format!("bro-win-{}", N.fetch_add(1, Ordering::Relaxed));
-    let clean: String = route
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .take(40)
-        .collect();
-    let path = if clean.is_empty() { "index.html".to_string() } else { format!("index.html#{clean}") };
-    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(path.into()))
+    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App("index.html".into()))
         .title("BroPS")
         .inner_size(1200.0, 800.0)
         .min_inner_size(760.0, 560.0)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("open_window: {e}"))?;
     Ok(())
 }
 

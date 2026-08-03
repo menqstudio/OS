@@ -2341,6 +2341,13 @@ body.ignited .shimmer{opacity:1}
 .v-chat .bubble.me{border-top-right-radius:5px;background:rgb(var(--hi-rgb)/.55)}
 .v-chat .btext{color:var(--ink)}
 .v-chat .t-time{font-size:9.5px;color:var(--ink-muted);letter-spacing:.04em;padding:0 4px}
+/* one-click copy on each message — subtle, reveals on turn hover */
+.v-chat .t-copy{margin-left:2px;width:22px;height:20px;display:inline-grid;place-items:center;border:0;
+  border-radius:6px;background:none;color:var(--ink-muted);cursor:pointer;font-size:12px;opacity:.5;
+  transition:opacity var(--fast),color var(--fast),background var(--fast)}
+.v-chat .turn:hover .t-copy{opacity:.85}
+.v-chat .t-copy:hover{background:rgb(var(--cyan-rgb)/.12);color:var(--ink)}
+.v-chat .t-copy.done{color:var(--cyan);opacity:1}
 
 /* inline @mention chip */
 .v-chat .mn{font-family:var(--f-mono);font-size:12.5px;font-weight:600;color:var(--cyan-soft);
@@ -6293,3 +6300,129 @@ body.ignited .shimmer{opacity:1}
   .v-tasks .mtask.freeing{opacity:1;transform:none}
 }
 
+
+/* ============ RESPONSIVE SWEEP (all views) ============ */
+/* Appended last on purpose: every selector below already exists in aios.css.
+   Because this block is last in the file, its rules win over earlier per-view
+   media queries at equal specificity, so no !important is needed. Tier 1
+   guarantees single-column by 900px; Tier 2 stacks the remaining inline rows
+   and shrinks spacing on phones. */
+
+/* ---------- TABLET TIER : force every two-pane / fixed-sidebar grid to collapse ---------- */
+@media (max-width: 900px){
+  .v-activity .pulse-hero{ grid-template-columns:1fr }
+  .v-activity .pboard{ grid-template-columns:1fr }
+  .v-agents .ros-wrap{ grid-template-columns:1fr }
+  .v-analytics .an-lower{ grid-template-columns:1fr }
+  .v-approvals .g-stage{ grid-template-columns:1fr }
+  .v-automations .sc-grid{ grid-template-columns:1fr }
+  .v-automations .sc-side{ grid-template-columns:1fr 1fr }
+  .v-calendar .cal-lower{ grid-template-columns:1fr }
+  .v-chat .chat-shell{ grid-template-columns:1fr }
+  .v-chat .ctx-rail{ position:static; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)) }
+  .v-command .cmd-grid{ grid-template-columns:1fr }
+  .v-command .cmd-rail{ position:static; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)) }
+  .v-files .tray{ grid-template-columns:1fr }
+  .v-group .grp{ grid-template-columns:1fr }
+  .v-home .board{ grid-template-columns:1fr }
+  .v-integrations .cst-body{ grid-template-columns:1fr }
+  .v-integrations .cst-lower{ grid-template-columns:1fr }
+  .v-knowledge .kmap-body{ grid-template-columns:1fr }
+  .v-library .cx-grid{ grid-template-columns:1fr }
+  .v-memory .mf-stage{ grid-template-columns:1fr }
+  .v-memory .mboard{ grid-template-columns:1fr }
+  .v-notifications .prism-hero{ grid-template-columns:1fr }
+  .v-notifications .np-board{ grid-template-columns:1fr }
+  .v-projects .pf-board{ grid-template-columns:1fr }
+  .v-research .rc-body{ grid-template-columns:1fr }
+  .v-research .rc-main{ grid-template-columns:1fr }
+  .v-security .sec-grid{ grid-template-columns:1fr }
+  .v-security .sec-lower{ grid-template-columns:1fr }
+  .v-settings .bay-rig{ grid-template-columns:1fr; gap:var(--s3) }
+
+  .grid.wide{ grid-template-columns:repeat(auto-fill,minmax(260px,1fr)) }
+
+  /* KPI / stat strips : 4- and 3-up drop to 2-up */
+  .v-analytics .an-kpis{ grid-template-columns:repeat(2,1fr) }
+  .v-approvals .astats{ grid-template-columns:repeat(2,1fr) }
+  .v-automations .astats{ grid-template-columns:repeat(2,1fr) }
+  .v-decisions .dstats{ grid-template-columns:repeat(2,1fr) }
+  .v-files .fstats{ grid-template-columns:repeat(2,1fr) }
+  .v-home .ledger{ grid-template-columns:repeat(2,1fr) }
+  .v-integrations .cst-stats{ grid-template-columns:repeat(2,1fr) }
+  .v-integrations .cst-summary{ grid-template-columns:repeat(2,1fr) }
+  .v-knowledge .kstats{ grid-template-columns:repeat(2,1fr) }
+  .v-library .lstats{ grid-template-columns:repeat(2,1fr) }
+  .v-memory .mr-meta{ grid-template-columns:repeat(2,1fr) }
+  .v-projects .kpis{ grid-template-columns:repeat(2,1fr) }
+  .v-research .rc-stats{ grid-template-columns:repeat(2,1fr) }
+  .v-tasks .board{ grid-template-columns:repeat(2,minmax(0,1fr)) }
+
+  .pageHead{ gap:12px; margin-bottom:18px }
+}
+
+/* ---------- PHONE TIER : full single-column stacking + tighter spacing ---------- */
+@media (max-width: 560px){
+  :root{ --s5:16px; --s6:18px; --s8:24px; --s10:30px }
+  .stage{ padding-left:13px; padding-right:13px }
+
+  .pageHead{ flex-direction:column; align-items:flex-start; gap:10px; margin-bottom:16px }
+  .pageHead .right{ margin-left:0; width:100%; flex-wrap:wrap }
+
+  .v-analytics .an-kpis,
+  .v-approvals .astats,
+  .v-automations .astats,
+  .v-decisions .dstats,
+  .v-files .fstats,
+  .v-home .ledger,
+  .v-integrations .cst-stats,
+  .v-integrations .cst-summary,
+  .v-knowledge .kstats,
+  .v-library .lstats,
+  .v-memory .mr-meta,
+  .v-memory .mstats,
+  .v-memory .mr-core-grid,
+  .v-projects .kpis,
+  .v-research .rc-stats,
+  .v-files .tr-meta,
+  .v-library .cx-stats,
+  .v-notifications .tr-hud,
+  .v-settings .mc-specs,
+  .v-settings .theme-tiles{ grid-template-columns:1fr }
+
+  .v-tasks .board{ grid-template-columns:1fr }
+  .v-home .board{ grid-template-columns:1fr }
+  .v-automations .sc-side{ grid-template-columns:1fr }
+
+  /* dense inline "row" grids : drop trailing fixed columns, let content wrap */
+  .v-analytics .an-drow{ grid-template-columns:auto minmax(0,1fr) auto; gap:8px }
+  .v-approvals .q-row{ grid-template-columns:auto minmax(0,1fr) auto; gap:10px }
+  .v-automations .rrow{ grid-template-columns:30px minmax(0,1fr) auto; gap:10px }
+  .v-automations .arow{ grid-template-columns:auto minmax(0,1fr) auto; gap:10px }
+  .v-decisions .crit{ grid-template-columns:auto minmax(0,1fr); row-gap:8px }
+  .v-decisions .led{ grid-template-columns:auto minmax(0,1fr) auto; row-gap:8px }
+  .v-files .frow{ grid-template-columns:auto minmax(0,1fr) auto; gap:10px }
+  .v-integrations .creg-row{ grid-template-columns:auto minmax(0,1fr) auto }
+  .v-knowledge .krow{ grid-template-columns:auto minmax(0,1fr) }
+  .v-library .lrow{ grid-template-columns:auto minmax(0,1fr) auto }
+  .v-projects .lane{ grid-template-columns:auto minmax(0,1fr); gap:10px 14px }
+  .v-research .rc-srow{ grid-template-columns:auto minmax(0,1fr) auto; gap:10px }
+  .v-security .feed-row{ grid-template-columns:auto minmax(0,1fr) }
+  .v-security .sbx-row{ grid-template-columns:auto minmax(0,1fr) auto; row-gap:8px }
+  .v-settings .toggle-row{ grid-template-columns:auto minmax(0,1fr) auto; gap:8px }
+
+  .v-decisions .c-diverge{ grid-template-columns:1fr }
+
+  .v-calendar .cal-wds,
+  .v-calendar .cal-grid{ gap:4px }
+
+  .v-tasks .board-bar{ flex-wrap:wrap }
+
+  .v-files .fl-mono,
+  .v-library .codex,
+  .v-security .deny-scroll,
+  .v-agents .lattice-stage,
+  .v-calendar .rib-scroll,
+  .v-tasks .crit-rail,
+  .v-automations .sc-tabs{ max-width:100%; overflow-x:auto }
+}
