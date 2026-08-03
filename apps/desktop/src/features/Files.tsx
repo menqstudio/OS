@@ -1,12 +1,14 @@
 import {
+  Fragment,
   useCallback, useEffect, useMemo, useRef, useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Button, Badge, Skeleton, ErrorState, EmptyState,
+  Button, Badge, Skeleton, ErrorState, EmptyState,
   Modal, Textarea, ConfirmDialog,
 } from '../components/ui';
+import { Mark } from '../components/Ambient';
 import { useToast } from '../components/toast';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -21,7 +23,8 @@ type LKey =
   | 'planePick' | 'planePickHint' | 'edit' | 'readonly' | 'refresh'
   | 'guardOpen' | 'guardRead' | 'guardSealed'
   | 'blockedTitle' | 'blockedHint' | 'selected' | 'clearSel' | 'noMatch' | 'noMatchHint'
-  | 'entryFile' | 'entryFolder' | 'preview' | 'keysHint';
+  | 'entryFile' | 'entryFolder' | 'preview' | 'keysHint'
+  | 'eyebrow' | 'indexing' | 'path' | 'home' | 'kinds' | 'bench';
 
 const STRINGS: Record<'en' | 'hy', Record<LKey, string>> = {
   en: {
@@ -50,6 +53,12 @@ const STRINGS: Record<'en' | 'hy', Record<LKey, string>> = {
     entryFolder: 'folder',
     preview: 'Preview',
     keysHint: '/ filter · ↑↓ move · Enter preview · Space select',
+    eyebrow: 'DATA BENCH · SPATIAL WORKSPACE',
+    indexing: 'Bro · indexing',
+    path: 'Path',
+    home: 'Home',
+    kinds: 'Filter by kind',
+    bench: 'File bench',
   },
   hy: {
     filter: 'Զտել ֆայլերը…',
@@ -77,8 +86,32 @@ const STRINGS: Record<'en' | 'hy', Record<LKey, string>> = {
     entryFolder: 'թղթապանակ',
     preview: 'Նախադիտում',
     keysHint: '/ զտել · ↑↓ շարժվել · Enter նախադիտել · Space ընտրել',
+    eyebrow: 'ՏՎՅԱԼ-ՍԵՂԱՆ · SPATIAL WORKSPACE',
+    indexing: 'Bro · ինդեքսավորում',
+    path: 'Ուղի',
+    home: 'Տուն',
+    kinds: 'Զտիչ ըստ տեսակի',
+    bench: 'Ֆայլերի աշխատասեղան',
   },
 };
+
+// Reconstruct clickable breadcrumb segments from the REAL current path string
+// (from `listDir`). Ancestor segments become navigable to their reconstructed
+// path; the last segment is the current directory. No fabrication — every label
+// and target is derived from the real path the backend resolved.
+function crumbSegments(path?: string): { label: string; nav?: string }[] {
+  if (!path) return [];
+  const sep = path.includes('\\') ? '\\' : '/';
+  const segs: { label: string; nav?: string }[] = [];
+  let acc = '';
+  path.split(sep).forEach((part, i) => {
+    if (part === '') { if (i === 0) acc = sep; return; }
+    acc = acc === '' || acc === sep ? acc + part : acc + sep + part;
+    segs.push({ label: part, nav: acc });
+  });
+  if (segs.length) segs[segs.length - 1].nav = undefined; // current dir — not a link
+  return segs;
+}
 
 function useLocal(): (k: LKey) => string {
   const { lang } = useApp();
@@ -399,6 +432,20 @@ export function Files() {
     [entries, selectedPaths],
   );
 
+  const segs = useMemo(() => crumbSegments(s.data?.path), [s.data?.path]);
+
+  // Stats derived ENTIRELY from the real, loaded directory listing — never the
+  // fabricated guard-tier counts of the mockup (a file's guard is only known
+  // after it is actually read, so those are omitted here).
+  const statCells: { v: number; label: string; tone: '' | 'info' | 'mint' | 'warn' }[] = [
+    { v: entries.length, label: L('items'), tone: '' },
+    { v: folderCount, label: L('folders'), tone: 'info' },
+    { v: fileCount, label: L('files'), tone: 'mint' },
+    filtering
+      ? { v: hits.length, label: L('hits'), tone: 'warn' }
+      : { v: selectedPaths.size, label: L('selected'), tone: 'warn' },
+  ];
+
   const guardBadge = (g: Guard) => {
     if (g === 'read') return <Badge tone="info">{L('guardRead')}</Badge>;
     if (g === 'sealed') return <Badge tone="danger">{L('guardSealed')}</Badge>;
@@ -406,158 +453,220 @@ export function Files() {
   };
 
   return (
-    <>
-      <PageHeader title={t('nav.files')} subtitle={t('files.subtitle')} />
+    <div className="v-files">
+      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      <header className="pageHead reveal">
+        <div>
+          <span className="eyebrow">{L('eyebrow')}</span>
+          <h1>{t('nav.files')}</h1>
+          <p className="sub">{t('files.subtitle')}</p>
+        </div>
+        <div className="right">
+          <span className="pill info">{L('indexing')}</span>
+          <Mark state="live" size={30} />
+        </div>
+      </header>
 
-      <div className="chat-layout">
-        {/* ── file index (frows / fCount) + query (fQuery / fHits / fChips) ── */}
-        <Panel
-          title={s.data?.path ?? t('state.loading')}
-          actions={
-            <div className="row" style={{ gap: 6 }}>
-              <Button
-                small
-                variant="ghost"
-                onClick={() => s.data?.parent && navigate(s.data.parent)}
-                disabled={!s.data?.parent}
-                title={t('files.up')}
-              >
-                ↑ {t('files.up')}
-              </Button>
-              <Button small variant="ghost" onClick={s.reload} title={L('refresh')}>⟳</Button>
-            </div>
-          }
-        >
-          <div className="fx-toolbar">
-            <div className="fx-search">
-              <input
-                ref={queryRef}
-                className="input"
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={L('filter')}
-                aria-label={L('filter')}
-              />
-            </div>
-            <div className="fx-chips" role="group" aria-label={L('all')}>
-              {chips.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={`fx-chip ${kindFilter === c.id ? 'fx-chip--active' : ''}`}
-                  aria-pressed={kindFilter === c.id}
-                  onClick={() => setKindFilter(c.id)}
-                >
-                  {c.label} <span className="fx-chip-n">{c.n}</span>
-                </button>
-              ))}
-            </div>
+      {/* ── HERO · the data bench ──────────────────────────────────────────── */}
+      <section className="bench surface soft lg hud reveal" aria-label={L('bench')}>
+        <span className="bracket tl" aria-hidden="true" />
+        <span className="bracket tr" aria-hidden="true" />
+        <span className="bracket bl" aria-hidden="true" />
+        <span className="bracket br" aria-hidden="true" />
+
+        {/* command bar — real breadcrumb + filter + kind chips + actions */}
+        <div className="bench-bar">
+          <nav className="crumb" aria-label={L('path')}>
+            {segs.length === 0 ? (
+              <b aria-current="page">{s.loading ? t('state.loading') : L('home')}</b>
+            ) : segs.map((seg, i) => (
+              <Fragment key={seg.nav ?? `cur-${seg.label}`}>
+                {i > 0 && <i aria-hidden="true">/</i>}
+                {seg.nav ? (
+                  <button type="button" className="crumb-seg" onClick={() => navigate(seg.nav)}>
+                    {seg.label}
+                  </button>
+                ) : (
+                  <b aria-current="page">{seg.label}</b>
+                )}
+              </Fragment>
+            ))}
+          </nav>
+
+          <div className="fsearch">
+            <span className="fs-ic" aria-hidden="true">⌕</span>
+            <input
+              ref={queryRef}
+              className="fs-input"
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={L('filter')}
+              aria-label={L('filter')}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <span className="fs-hits mono">{hits.length}/{entries.length}</span>
           </div>
 
-          {/* aria-live status: announces the current hit count as the filter changes */}
-          <div className="fx-count" role="status" aria-live="polite">{countLabel}</div>
+          <div className="fchips" role="group" aria-label={L('kinds')}>
+            {chips.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className={`chip${kindFilter === c.id ? ' on' : ''}`}
+                aria-pressed={kindFilter === c.id}
+                onClick={() => setKindFilter(c.id)}
+              >
+                {c.label} <span className="fx-chip-n mono">{c.n}</span>
+              </button>
+            ))}
+          </div>
 
-          {s.loading && s.data === null && <Skeleton rows={6} />}
-          {s.error && <ErrorState message={s.error} onRetry={s.reload} />}
-          {s.data && entries.length === 0 && (
-            <EmptyState glyph="📁" title={t('files.empty')} />
-          )}
-          {s.data && entries.length > 0 && hits.length === 0 && (
-            <EmptyState glyph="🔍" title={L('noMatch')} hint={L('noMatchHint')} />
-          )}
-          {s.data && hits.length > 0 && (
-            <div
-              ref={gridRef}
-              className="fx-grid"
-              role="grid"
-              tabIndex={0}
-              aria-label={t('nav.files')}
-              aria-activedescendant={`fx-row-${safeCursor}`}
-              aria-rowcount={hits.length}
-              onKeyDown={onGridKeyDown}
+          <div className="fx-actions">
+            <button
+              type="button"
+              className="chip"
+              onClick={() => s.data?.parent && navigate(s.data.parent)}
+              disabled={!s.data?.parent}
+              title={t('files.up')}
+              aria-label={t('files.up')}
             >
-              {hits.map((e, i) => {
-                const g = guardOf(e);
-                const isCursor = i === safeCursor;
-                const isSelected = selectedPaths.has(e.path);
-                const isPreview = preview?.path === e.path;
-                const typeWord = e.isDir ? L('entryFolder') : L('entryFile');
-                const guardWord = g === 'read' ? L('guardRead') : g === 'sealed' ? L('guardSealed') : L('guardOpen');
-                return (
-                  <div
-                    key={e.path}
-                    id={`fx-row-${i}`}
-                    role="row"
-                    aria-selected={isSelected}
-                    aria-label={`${e.name}, ${typeWord}, ${guardWord}`}
-                    className={`fx-row${isCursor ? ' fx-row--cursor' : ''}${isSelected ? ' fx-row--selected' : ''}${isPreview ? ' fx-row--preview' : ''}`}
-                    onClick={() => { setCursor(i); openEntry(e); }}
-                  >
-                    <span className="fx-name" role="gridcell">
-                      <span aria-hidden="true">{e.isDir ? '📁' : '📄'}</span>
-                      <span className="n">{e.name}</span>
-                    </span>
-                    <span className="fx-meta">
-                      {guardBadge(g)}
-                      {e.isDir ? (
-                        <Badge tone="neutral">{t('files.folder')}</Badge>
-                      ) : (
-                        <span className="muted">{formatSize(e.sizeBytes)}</span>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
+              ↑
+            </button>
+            <button type="button" className="chip" onClick={s.reload} title={L('refresh')} aria-label={L('refresh')}>
+              ⟳
+            </button>
+          </div>
+        </div>
+
+        {/* aria-live status: announces the current hit count as the filter changes */}
+        <div className="fx-count" role="status" aria-live="polite">{countLabel}</div>
+
+        <div className="fx-bench-body">
+          {/* ── the real, keyboard-navigable file index ── */}
+          <div className="fx-col-list">
+            {s.loading && s.data === null && <Skeleton rows={6} />}
+            {s.error && <ErrorState message={s.error} onRetry={s.reload} />}
+            {s.data && entries.length === 0 && (
+              <EmptyState glyph="📁" title={t('files.empty')} />
+            )}
+            {s.data && entries.length > 0 && hits.length === 0 && (
+              <EmptyState glyph="🔍" title={L('noMatch')} hint={L('noMatchHint')} />
+            )}
+            {s.data && hits.length > 0 && (
+              <div
+                ref={gridRef}
+                className="fx-grid"
+                role="grid"
+                tabIndex={0}
+                aria-label={t('nav.files')}
+                aria-activedescendant={`fx-row-${safeCursor}`}
+                aria-rowcount={hits.length}
+                onKeyDown={onGridKeyDown}
+              >
+                {hits.map((e, i) => {
+                  const g = guardOf(e);
+                  const isCursor = i === safeCursor;
+                  const isSelected = selectedPaths.has(e.path);
+                  const isPreview = preview?.path === e.path;
+                  const typeWord = e.isDir ? L('entryFolder') : L('entryFile');
+                  const guardWord = g === 'read' ? L('guardRead') : g === 'sealed' ? L('guardSealed') : L('guardOpen');
+                  return (
+                    <div
+                      key={e.path}
+                      id={`fx-row-${i}`}
+                      role="row"
+                      aria-selected={isSelected}
+                      aria-label={`${e.name}, ${typeWord}, ${guardWord}`}
+                      className={`fx-row${isCursor ? ' fx-row--cursor' : ''}${isSelected ? ' fx-row--selected' : ''}${isPreview ? ' fx-row--preview' : ''}`}
+                      onClick={() => { setCursor(i); openEntry(e); }}
+                    >
+                      <span className="fx-name" role="gridcell">
+                        <span aria-hidden="true">{e.isDir ? '📁' : '📄'}</span>
+                        <span className="n">{e.name}</span>
+                      </span>
+                      <span className="fx-meta">
+                        {guardBadge(g)}
+                        {e.isDir ? (
+                          <Badge tone="neutral">{t('files.folder')}</Badge>
+                        ) : (
+                          <span className="muted">{formatSize(e.sizeBytes)}</span>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* tray: files marked with Space */}
+            {selectedList.length > 0 && (
+              <div className="fx-tray" role="group" aria-label={L('selected')}>
+                <strong>{L('selected')}: {selectedList.length}</strong>
+                <span className="muted fx-tray-names">
+                  {selectedList.map((e) => e.name).join(', ')}
+                </span>
+                <Button small variant="ghost" onClick={() => setSelectedPaths(new Set())}>
+                  {L('clearSel')}
+                </Button>
+              </div>
+            )}
+
+            <div className="fx-keys muted" aria-hidden="true">{L('keysHint')}</div>
+          </div>
+
+          {/* ── the inspector: preview / edit of the selected real file ── */}
+          <div className="fx-col-plane">
+            <h2 className="fx-plane-title">{preview ? preview.name : L('preview')}</h2>
+            {preview ? (
+              <PreviewPlane
+                key={preview.path}
+                entry={preview}
+                onGuard={reportGuard}
+                onEdit={setEditing}
+              />
+            ) : (
+              <EmptyState glyph="▤" title={L('planePick')} hint={L('planePickHint')} />
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ── telemetry strip — counts from the real listing ─────────────────── */}
+      <section className="surface soft fstats-wrap rise" aria-label={t('nav.files')}>
+        <div className="fstats">
+          {statCells.map((c) => (
+            <div key={c.label} className={`fstat${c.tone ? ` fs-${c.tone}` : ''}`}>
+              <b className="num">{c.v}</b>
+              <span className="micro">{c.label}</span>
             </div>
-          )}
-
-          {/* tray: files marked with Space */}
-          {selectedList.length > 0 && (
-            <div className="fx-tray" role="group" aria-label={L('selected')}>
-              <strong>{L('selected')}: {selectedList.length}</strong>
-              <span className="muted fx-tray-names">
-                {selectedList.map((e) => e.name).join(', ')}
-              </span>
-              <Button small variant="ghost" onClick={() => setSelectedPaths(new Set())}>
-                {L('clearSel')}
-              </Button>
-            </div>
-          )}
-
-          <div className="fx-keys muted" aria-hidden="true">{L('keysHint')}</div>
-        </Panel>
-
-        {/* ── plane / preview ── */}
-        <Panel title={preview ? preview.name : L('preview')}>
-          {preview ? (
-            <PreviewPlane
-              key={preview.path}
-              entry={preview}
-              onGuard={reportGuard}
-              onEdit={setEditing}
-            />
-          ) : (
-            <EmptyState glyph="▤" title={L('planePick')} hint={L('planePickHint')} />
-          )}
-        </Panel>
-      </div>
+          ))}
+        </div>
+      </section>
 
       {editing && <FileEditor entry={editing} onClose={() => setEditing(null)} />}
 
       <style>{`
-        .fx-toolbar { display: flex; gap: var(--menq-space-3); align-items: center; flex-wrap: wrap; }
-        .fx-search { flex: 1; min-width: 160px; }
-        .fx-search .input { width: 100%; }
-        .fx-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-        .fx-chip { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px;
-          padding: 5px 10px; border-radius: var(--menq-radius-pill); cursor: pointer;
-          color: var(--brops-muted); background: transparent; border: 1px solid var(--brops-border);
-          transition: background var(--menq-motion-fast), border-color var(--menq-motion-fast), color var(--menq-motion-fast); }
-        .fx-chip:hover { background: var(--menq-color-hover); }
-        .fx-chip--active { color: var(--brops-accent); background: var(--menq-color-selected); border-color: var(--brops-accent); font-weight: 600; }
+        .v-files .bench-bar .crumb-seg { font: inherit; font-family: var(--f-mono);
+          color: var(--ink-muted); background: none; border: 0; padding: 0 3px; cursor: pointer; border-radius: 5px; }
+        .v-files .bench-bar .crumb-seg:hover { color: var(--cyan-soft); }
+        .v-files .bench-bar .crumb-seg:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cyan); }
+        .v-files .fchips .chip .fx-chip-n { font-size: 11px; opacity: .75; padding-left: 2px; }
+        .v-files .fx-actions { display: flex; gap: 6px; align-items: center; }
+        .v-files .fx-actions .chip { width: 34px; justify-content: center; padding: 0; }
+        .v-files .fx-count { font-size: 12px; color: var(--ink-muted); margin: 4px 2px var(--s4); }
+        .v-files .fx-bench-body { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.05fr);
+          gap: var(--s5); align-items: start; }
+        .v-files .fx-col-list, .v-files .fx-col-plane { min-width: 0; }
+        .v-files .fx-col-plane { border-left: 1px solid rgb(var(--line-rgb)/.6); padding-left: var(--s5); }
+        .v-files .fx-plane-title { font-size: var(--t-h2); margin: 0 0 var(--s4); }
+        @media (max-width: 820px) {
+          .v-files .fx-bench-body { grid-template-columns: 1fr; }
+          .v-files .fx-col-plane { border-left: 0; padding-left: 0;
+            border-top: 1px solid rgb(var(--line-rgb)/.6); padding-top: var(--s5); }
+        }
         .fx-chip-n { font-variant-numeric: tabular-nums; opacity: 0.8; }
-        .fx-count { font-size: 12px; color: var(--brops-muted); }
         .fx-grid { display: flex; flex-direction: column; gap: 2px; max-height: 52vh; overflow-y: auto;
           outline: none; border-radius: var(--menq-radius-md); }
         .fx-grid:focus-visible { box-shadow: 0 0 0 2px var(--menq-color-focus); }
@@ -589,6 +698,6 @@ export function Files() {
           .fx-row, .fx-chip { transition: none; }
         }
       `}</style>
-    </>
+    </div>
   );
 }

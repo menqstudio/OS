@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useApp } from '../app/store';
 import {
-  PageHeader, Panel, Rail, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Select, Skeleton,
+  PageHeader, Rail, Button, Async, EmptyState, Modal, FormRow, Input, Select, Skeleton,
   ErrorState, ConfirmDialog, Badge,
 } from '../components/ui';
-import { desktop } from '../services/desktop';
+import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Markdown } from '../components/markdown';
+import { Mark } from '../components/Ambient';
 import type { Conversation, Message } from '../domain/entities';
 import type { Tone } from '../domain/enums';
 
@@ -36,13 +37,54 @@ function activeMention(text: string, caret: number): { start: number; query: str
   return { start: i, query: text.slice(i + 1, caret) };
 }
 
+/** Per-view CSS. The chat canvas + context rail are dressed by the global aios
+ *  theme (`.v-chat …`); only the app-plumbing bits the mockup has no design for
+ *  (the conversation-list column, reply-as control, honest error strips and the
+ *  honest rate readout) get their tweaks here, all scoped under `.v-chat`. */
+const VIEW_CSS = `
+.v-chat .chat-workspace{display:grid;grid-template-columns:minmax(198px,238px) minmax(0,1fr);gap:18px;align-items:start}
+.v-chat .chat-main{min-width:0}
+.v-chat .th-actions{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+.v-chat .th-actions .select{width:auto;padding:4px 8px}
+.v-chat .t-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.v-chat .turn.me .t-meta{flex-direction:row-reverse}
+.v-chat .t-who{font-family:var(--f-mono);font-size:11px;letter-spacing:.05em;color:var(--ink-muted)}
+.v-chat .chat-alert{margin:0 18px 8px;font-size:12px;line-height:1.5;color:var(--warning);display:flex;gap:6px;align-items:flex-start}
+.v-chat .attn-mark{display:flex;justify-content:center;margin:4px 0 14px}
+.v-chat .rate-stat{display:flex;align-items:baseline;gap:9px;margin-top:6px}
+.v-chat .rate-stat b{font-size:27px;font-family:var(--f-mono);color:var(--ink)}
+.v-chat .rate-note{margin:9px 0 0;font-size:11.5px;color:var(--ink-muted);line-height:1.5}
+@media (max-width:1100px){.v-chat .chat-workspace{grid-template-columns:1fr}}
+`;
+
+/** Monogram avatar in the aios `.sigil` idiom, with a live-state dot. Purely
+ *  decorative (identity is carried by the adjacent author text), so aria-hidden. */
+function Sigil({ name, state = 'idle' }: { name: string; state?: string }) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const mono = parts.length === 0 ? '·'
+    : parts.length === 1 ? parts[0].slice(0, 2).toUpperCase()
+    : (parts[0][0] + parts[1][0]).toUpperCase();
+  return (
+    <span className={`sigil st-${state}`} aria-hidden="true">
+      <span className="st-dot" />{mono}
+    </span>
+  );
+}
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function MessageThread({ conversation, onActivity }: { conversation: Conversation; onActivity: () => void }) {
   const { t } = useApp();
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
   const ai = useAsync(() => desktop.aiStatus(), []);
   const agents = useAsync(() => desktop.listAgents(), []);
   const isGroup = conversation.kind === 'group';
-  const agentNames = (agents.data ?? []).map((a) => a.displayName);
+  const agentList = agents.data ?? [];
+  const agentNames = agentList.map((a) => a.displayName);
   const [selectedAgent, setSelectedAgent] = useState('Bro');
   const [streamingAuthor, setStreamingAuthor] = useState('Bro');
   const [draft, setDraft] = useState('');
@@ -57,6 +99,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const [replyError, setReplyError] = useState<string | null>(null);
   // @mention autocomplete over agent display names.
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const threadRef = useRef<HTMLDivElement | null>(null);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const mentionMatches = mention
@@ -94,6 +137,19 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     });
   };
 
+  // The composer "@" affordance: drop an `@` at the caret and open the picker,
+  // reusing the exact same mention pipeline typing `@` triggers.
+  const onAtClick = () => {
+    const base = draft && !/\s$/.test(draft) ? `${draft} ` : draft;
+    const next = `${base}@`;
+    setDraft(next);
+    syncMention(next, next.length);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) { el.focus(); el.setSelectionRange(next.length, next.length); }
+    });
+  };
+
   const onDraftKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (!showMentions) return;
     if (e.key === 'ArrowDown') {
@@ -124,6 +180,8 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
       const userMsg = await desktop.postMessage({ conversationId: conversation.id, role: 'user', author: t('chat.you'), body });
       setExtra((prev) => [...prev, userMsg]);
       setDraft('');
+      // Focus management on send: return the caret to the composer for the next turn.
+      requestAnimationFrame(() => inputRef.current?.focus());
       onActivity();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -166,77 +224,120 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const history = s.data ?? [];
   const allMessages = [...history, ...extra];
 
+  // Keep the newest turn in view as history loads and the reply streams in.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [allMessages.length, streamingText, thinking]);
+
+  // Assistant power-mark state: thinking while a reply streams, live when a
+  // backend is present, idle when there is none.
+  const markState = thinking ? 'thinking' : (hasBackend() ? 'live' : 'idle');
+  const liveWord = thinking ? 'գրում է…' : 'պատրաստ';
+  const attnPill = thinking ? 'live' : (ai.data && !ai.data.ready ? 'warn' : 'info');
+  const attnWord = thinking ? 'ՄՏԱԾՈՒՄ' : (ai.data && !ai.data.ready ? 'ԱՆՀԱՍԱՆԵԼԻ' : 'ՊԱՏՐԱՍՏ');
+  const participantCount = agentList.length + 1; // agents + Bro
+
   return (
-    <Panel
-      title={conversation.title}
-      actions={!isGroup && agentNames.length > 0 ? (
-        <Select
-          value={selectedAgent}
-          onChange={(e) => setSelectedAgent(e.target.value)}
-          style={{ width: 'auto', padding: '4px 8px' }}
-          title={t('chat.replyAs')}
+    <div className="chat-shell">
+
+      {/* ── MAIN · the conversation stream ─────────────────────────────────── */}
+      <section className="chat-canvas surface soft lg" aria-label={conversation.title}>
+
+        <header className="thread-head">
+          <div className="th-topic">
+            <span className="eyebrow">{isGroup ? 'ԽՄԲԱՅԻՆ ԶՐՈՒՅՑ' : 'ԿԵՆԴԱՆԻ ԶՐՈՒՅՑ'}</span>
+            <h2>{conversation.title}</h2>
+          </div>
+          <div className="th-actions">
+            {!isGroup && agentNames.length > 0 && (
+              <Select
+                value={selectedAgent}
+                onChange={(e) => setSelectedAgent(e.target.value)}
+                title={t('chat.replyAs')}
+                aria-label={t('chat.replyAs')}
+              >
+                <option value="Bro">Bro</option>
+                {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              </Select>
+            )}
+            <span className={`th-live${thinking ? '' : ' idle'}`}>
+              <span className="th-live-dot" aria-hidden="true" />
+              <span className="micro">{liveWord}</span>
+            </span>
+          </div>
+        </header>
+
+        {/* the message log — a labelled polite live region */}
+        <div
+          className={`thread${thinking ? ' streaming' : ''}`}
+          id="thread"
+          ref={threadRef}
+          role="log"
+          aria-label={t('chat.conversations')}
+          aria-live="polite"
+          aria-busy={thinking}
         >
-          <option value="Bro">Bro</option>
-          {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
-        </Select>
-      ) : undefined}
-    >
-      <div className="chat-thread">
-        {s.loading && s.data === null && <Skeleton rows={4} />}
-        {s.error && <ErrorState message={s.error} onRetry={s.reload} />}
-        {s.data !== null && !s.error && allMessages.length === 0 && !thinking && (
-          <EmptyState title={t('chat.noMessages')} hint={t('chat.noMessagesHint')} />
-        )}
-        {allMessages.length > 0 && (
-          <div className="stack">
-            {allMessages.map((m) => {
-              const badge = m.role === 'agent' ? receiptBadge(m.receipt) : null;
-              return (
-                <div key={m.id} className={`chat-msg chat-msg--${m.role === 'user' ? 'mine' : 'other'}`}>
-                  <Avatar name={m.author} />
-                  <div className="chat-bubble">
-                    <div className="chat-author">
-                      {m.author}
-                      {badge && <Badge tone={badge.tone}>{t(badge.key)}</Badge>}
+          {s.loading && s.data === null && <Skeleton rows={4} />}
+          {s.error && <ErrorState message={s.error} onRetry={s.reload} />}
+          {s.data !== null && !s.error && allMessages.length === 0 && !thinking && (
+            <EmptyState title={t('chat.noMessages')} hint={t('chat.noMessagesHint')} />
+          )}
+
+          {allMessages.map((m) => {
+            const mine = m.role === 'user';
+            const badge = m.role === 'agent' ? receiptBadge(m.receipt) : null;
+            const time = fmtTime(m.createdAt);
+            return (
+              <article key={m.id} className={`turn ${mine ? 'me' : 'bro'}`}>
+                <span className="t-av"><Sigil name={m.author} /></span>
+                <div className="t-body">
+                  <div className={`bubble ${mine ? 'me' : 'bro'}`}>
+                    <div className="btext">
+                      {mine ? m.body : <Markdown text={m.body} />}
                     </div>
-                    {m.role === 'user'
-                      ? <div className="md-plain">{m.body}</div>
-                      : <Markdown text={m.body} />}
+                  </div>
+                  <div className="t-meta">
+                    <span className="t-who">{m.author}</span>
+                    {badge && <Badge tone={badge.tone}>{t(badge.key)}</Badge>}
+                    {time && <span className="t-time mono">{time}</span>}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-        {thinking && (
-          <div className="chat-msg chat-msg--other">
-            <Avatar name={streamingAuthor} />
-            <div className="chat-bubble">
-              <div className="chat-author">{streamingAuthor}</div>
-              {streamingText
-                ? <span className="chat-stream"><Markdown text={streamingText} /><span className="chat-cursor" /></span>
-                : <span className="chat-typing"><span></span><span></span><span></span></span>}
-            </div>
-          </div>
-        )}
-      </div>
-      {error && <div className="form-error">{error}</div>}
-      {replyError && (
-        <div className="chat-hint" style={{ marginBottom: 8 }}>⚠ {t('chat.replyFailed')}: {replyError}</div>
-      )}
-      {ai.data && !ai.data.ready && !replyError && (
-        <div className="chat-hint" style={{ marginBottom: 8 }}>⚠ {ai.data.detail}</div>
-      )}
-      <form
-        className="chat-composer"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        <div className="chat-composer-field">
+              </article>
+            );
+          })}
+
+          {thinking && (
+            <article className="turn bro now">
+              <span className="tbeam" aria-hidden="true"><span className="tbeam-run" /></span>
+              <span className="t-av"><Sigil name={streamingAuthor} state="thinking" /></span>
+              <div className="t-body">
+                <div className="bubble bro">
+                  <div className="btext">
+                    {streamingText
+                      ? <><Markdown text={streamingText} /><span className="caret" aria-hidden="true" /></>
+                      : <span className="typing" aria-hidden="true"><i /><i /><i /></span>}
+                  </div>
+                </div>
+                <div className="t-meta"><span className="t-who">{streamingAuthor}</span></div>
+              </div>
+            </article>
+          )}
+        </div>
+
+        {/* honest error / status strips — never lose the user's posted message */}
+        {error && <p className="chat-alert" role="alert">⚠ {error}</p>}
+        {replyError && <p className="chat-alert" role="status">⚠ {t('chat.replyFailed')}: {replyError}</p>}
+        {ai.data && !ai.data.ready && !replyError && <p className="chat-alert" role="status">⚠ {ai.data.detail}</p>}
+
+        {/* composer — @mention picker over REAL agents + keyboard submit */}
+        <form
+          className="composer"
+          autoComplete="off"
+          onSubmit={(e) => { e.preventDefault(); send(); }}
+        >
           {showMentions && (
-            <ul className="mention-popup" role="listbox" aria-label={t('chat.composer')}>
+            <ul className="mention-popup mention-pop open" role="listbox" aria-label={t('chat.composer')}>
               {mentionMatches.map((n, idx) => (
                 <li key={n} role="option" aria-selected={idx === mentionActive}>
                   <button
@@ -245,26 +346,109 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
                     // onMouseDown (not onClick) so the input keeps focus for caret restore.
                     onMouseDown={(e) => { e.preventDefault(); insertMention(n); }}
                   >
-                    <Avatar name={n} />
+                    <Sigil name={n} />
                     <span>{n}</span>
                   </button>
                 </li>
               ))}
             </ul>
           )}
-          <Input
-            ref={inputRef}
-            value={draft}
-            onChange={onDraftChange}
-            onKeyDown={onDraftKeyDown}
-            onBlur={() => setMention(null)}
-            placeholder={t('chat.composer')}
-            autoFocus
-          />
-        </div>
-        <Button type="submit" variant="primary" disabled={busy || thinking}>{t('action.send')}</Button>
-      </form>
-    </Panel>
+          <div className="comp-bar">
+            <button
+              type="button"
+              className={`comp-at${showMentions ? ' on' : ''}`}
+              aria-label={t('chat.replyAs')}
+              aria-expanded={showMentions}
+              onClick={onAtClick}
+            >@</button>
+            <Input
+              ref={inputRef}
+              className="comp-input"
+              value={draft}
+              onChange={onDraftChange}
+              onKeyDown={onDraftKeyDown}
+              onBlur={() => setMention(null)}
+              placeholder={t('chat.composer')}
+              aria-label={t('chat.composer')}
+              autoFocus
+            />
+            <button type="submit" className="comp-send" aria-label={t('action.send')} disabled={busy || thinking}>
+              <span className="cs-glyph" aria-hidden="true">➤</span>
+            </button>
+          </div>
+        </form>
+
+      </section>
+
+      {/* ── RAIL · live context, all derived from real data ────────────────── */}
+      <aside className="ctx-rail">
+
+        {/* Attention field — the assistant's live state, honestly sourced from
+            aiStatus + the streaming flag (no fabricated confidence telemetry). */}
+        <section className="surface cut hud ctx-attn" aria-label="Ուշադրության դաշտ">
+          <i className="bracket tl" /><i className="bracket tr" />
+          <i className="bracket bl" /><i className="bracket br" />
+          <div className="ctx-head">
+            <span className="eyebrow">ՈՒՇԱԴՐՈՒԹՅԱՆ ԴԱՇՏ</span>
+            <span className={`pill ${attnPill}`}>{attnWord}</span>
+          </div>
+          <p className="ctx-note">Ի՞նչ վիճակում է Bro-ն հենց հիմա։ Bro's live state right now.</p>
+          <div className="attn-mark"><Mark state={markState} size={72} /></div>
+          <div className="ctx-recalls">
+            <span className="micro rc-lbl">ՀԱՄԱՏԵՔՍՏ</span>
+            <ul className="recall-list">
+              <li className="recall"><span className="rk" /><b className="mono">{allMessages.length}</b>&nbsp;ՀԱՂՈՐԴԱԳՐՈՒԹՅՈՒՆ</li>
+              <li className="recall"><span className="rk" /><b className="mono">{agentList.length}</b>&nbsp;ԳՈՐԾԱԿԱԼ</li>
+              {ai.data && !ai.data.ready && <li className="recall"><span className="rk" />{ai.data.detail}</li>}
+            </ul>
+          </div>
+        </section>
+
+        {/* In the room — REAL participants: Bro + the agents from listAgents. */}
+        <section className="surface soft ctx-room">
+          <div className="cr-head">
+            <span className="eyebrow">ՍԵՆՅԱԿՈՒՄ</span>
+            <span className="micro">{participantCount}&nbsp;·&nbsp;ՄԱՍՆԱԿԻՑ</span>
+          </div>
+          <div className="room-list">
+            <div className="rm">
+              <span className="rm-av"><Sigil name="Bro" state={thinking ? 'working' : 'idle'} /></span>
+              <span className="rm-who"><b>Bro</b><span>Միջուկ · օրկեստրավար</span></span>
+              <i className={`rm-st st-${thinking ? 'working' : 'idle'}`}>{thinking ? 'ԱՇԽԱՏՈՒՄ' : 'ՊԱՐԱՊ'}</i>
+            </div>
+            <Async state={agents} emptyTitle={t('state.empty')}>
+              {(list) => (
+                <>
+                  {list.map((a) => {
+                    const active = thinking && streamingAuthor === a.displayName;
+                    return (
+                      <div key={a.id} className="rm">
+                        <span className="rm-av"><Sigil name={a.displayName} state={active ? 'working' : 'idle'} /></span>
+                        <span className="rm-who"><b>{a.displayName}</b><span>{a.role}</span></span>
+                        <i className={`rm-st st-${active ? 'working' : 'idle'}`}>{active ? 'ԱՇԽԱՏՈՒՄ' : 'ՊԱՐԱՊ'}</i>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </Async>
+          </div>
+        </section>
+
+        {/* Response — the mockup's writing-tempo sparkline has no real source, so
+            we show an honest real readout (this conversation's message count)
+            instead of fabricated telemetry. */}
+        <section className="surface soft ctx-rate">
+          <div className="cr-head"><span className="eyebrow">ԱՐՁԱԳԱՆՔ</span></div>
+          <div className="rate-stat">
+            <b>{conversation.messageCount}</b>
+            <span className="micro">ՀԱՂՈՐԴԱԳՐՈՒԹՅՈՒՆ</span>
+          </div>
+          <p className="rate-note">Կենդանի գրելու տեմպ չի չափվում։ Live typing tempo is not tracked.</p>
+        </section>
+
+      </aside>
+    </div>
   );
 }
 
@@ -392,7 +576,9 @@ export function Conversations({ kind }: { kind: Kind }) {
   };
 
   return (
-    <>
+    <div className="v-chat">
+      <style>{VIEW_CSS}</style>
+
       <PageHeader
         title={t(titleKey)}
         subtitle={t(subtitleKey)}
@@ -428,7 +614,7 @@ export function Conversations({ kind }: { kind: Kind }) {
         />
       )}
 
-      <div className="chat-layout">
+      <div className="chat-workspace">
         {/* Conversation rail — the Rail primitive's plain-panel variant, so it
             adopts the rail model without adding a second complementary landmark
             or changing the panel padding. */}
@@ -473,15 +659,15 @@ export function Conversations({ kind }: { kind: Kind }) {
           </Async>
         </Rail>
 
-        <div>
+        <div className="chat-main">
           {(() => {
             const conversations = s.data ?? [];
             const active = conversations.find((c) => c.id === (selectedId ?? conversations[0]?.id)) ?? null;
             if (!active) {
               return (
-                <Panel>
+                <section className="chat-canvas surface soft lg" aria-label={t('chat.pickHint')}>
                   <EmptyState glyph={kind === 'group' ? '👥' : '💬'} title={t('chat.pickHint')} />
-                </Panel>
+                </section>
               );
             }
             // key on the conversation id so switching remounts the thread —
@@ -490,6 +676,6 @@ export function Conversations({ kind }: { kind: Kind }) {
           })()}
         </div>
       </div>
-    </>
+    </div>
   );
 }
