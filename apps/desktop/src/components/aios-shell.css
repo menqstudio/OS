@@ -1,0 +1,91 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Shell additions — the few rail controls the React shell adds on top of the
+   mockup's foundation (aios.css): a flex side rail so the control footer pins to
+   the bottom, nav count badges, the in-rail language select, and the prototype
+   banner. Everything else (.app / .side / .brand / .mark / .nav a / .stage) is
+   inherited verbatim from aios.css.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* make the rail a column so nav grows and the control footer sits at the bottom */
+.side {
+  display: flex;
+  flex-direction: column;
+}
+.side .nav {
+  flex: 1 1 auto;
+}
+
+/* nav items are the mockup's `.nav a`; carry a live count chip on the right */
+.nav a {
+  position: relative;
+}
+.nav-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  display: inline-grid;
+  place-items: center;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--bg);
+  background: var(--cyan);
+  box-shadow: 0 0 10px rgb(var(--cyan-rgb) / 0.6);
+}
+
+/* control footer at the base of the rail */
+.side-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 14px 10px 4px;
+  margin-top: 10px;
+  border-top: 1px solid rgb(var(--line-rgb) / 0.7);
+}
+.side-foot .lang-select {
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color var(--fast), color var(--fast);
+}
+.side-foot .lang-select:hover {
+  border-color: rgb(var(--cyan-rgb) / 0.4);
+  color: var(--cyan);
+}
+.side-foot .side-ver {
+  flex-basis: 100%;
+  padding: 8px 2px 0;
+}
+
+/* prototype banner shown inside the stage when no Tauri backend is present */
+.stage > .proto-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 7px 13px;
+  border-radius: var(--r-pill);
+  border: 1px solid rgb(var(--warning-rgb) / 0.28);
+  background: rgb(var(--warning-rgb) / 0.08);
+  color: var(--warning);
+  font-family: var(--f-mono);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* the power-on gate's lockup is a real <button>; strip its chrome */
+#gate .lockup {
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
