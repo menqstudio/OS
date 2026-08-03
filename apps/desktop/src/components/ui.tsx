@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import './ui.css';
 import { statusTone, type Tone } from '../domain/enums';
+import { statusLabel } from '../domain/statusLabels';
 import type { AsyncState } from '../hooks/useAsync';
 import { hasBackend } from '../services/desktop';
 import { useApp, useAppOptional } from '../app/store';
@@ -49,8 +50,9 @@ export function Badge({ children, tone = 'neutral' }: { children: React.ReactNod
 }
 
 export function StatusPill({ status }: { status: string }) {
+  const app = useAppOptional();
   const tone = statusTone[status] ?? 'neutral';
-  return <Badge tone={tone}>{status.replace(/_/g, ' ')}</Badge>;
+  return <Badge tone={tone}>{statusLabel(status, app?.lang ?? 'en')}</Badge>;
 }
 
 export function EmptyState({ title, hint, glyph = '◍' }: { title: string; hint?: string; glyph?: string }) {

@@ -3,6 +3,7 @@ import { useApp } from '../app/store';
 import { Button, Async, Input, TileGroup, StatTile, EmptyState, Skeleton } from '../components/ui';
 import { Mark } from '../components/Ambient';
 import { statusTone } from '../domain/enums';
+import { statusLabel } from '../domain/statusLabels';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Beatline, BarChart } from '../components/charts/Chart';
@@ -23,7 +24,6 @@ function pillTone(status: string): string {
   }
 }
 
-const label = (s: string) => s.replace(/_/g, ' ');
 
 // Ring geometry (r=60) mirrored from the aios ring gauge — --len/--off drive the
 // same dash sweep. Pure constants; carry no data.
@@ -148,9 +148,9 @@ export function Home() {
     for (const a of rows) counts.set(a.status, (counts.get(a.status) ?? 0) + 1);
     const dist = [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
-      .map(([status, value]) => ({ key: status, label: label(status), value }));
+      .map(([status, value]) => ({ key: status, label: statusLabel(status, lang), value }));
     return { total, busyPct: total ? Math.round((busy / total) * 100) : null, dist };
-  }, [agents.data]);
+  }, [agents.data, lang]);
 
   // Approval backlog share — pending / all approvals from the unfiltered read.
   const approvalStats = useMemo(() => {
@@ -400,7 +400,7 @@ export function Home() {
                   <li key={x.id} className="nba-item">
                     <span className="nba-rank mono" aria-hidden="true">◆</span>
                     <div className="nba-txt"><b>{x.title}</b></div>
-                    <span className={`pill ${pillTone(x.status)}`.trim()}>{label(x.status)}</span>
+                    <span className={`pill ${pillTone(x.status)}`.trim()}>{statusLabel(x.status, lang)}</span>
                   </li>
                 ))}
               </ul>
@@ -422,7 +422,7 @@ export function Home() {
                   <li key={a.id} className="nba-item">
                     <span className="nba-rank mono" aria-hidden="true">⚑</span>
                     <div className="nba-txt"><b>{a.actionType}</b><span className="micro">{a.level}</span></div>
-                    <span className="pill warn">{label(a.status)}</span>
+                    <span className="pill warn">{statusLabel(a.status, lang)}</span>
                   </li>
                 ))}
               </ul>
@@ -444,7 +444,7 @@ export function Home() {
                   <li key={a.id} className="nba-item">
                     <span className="nba-rank mono" aria-hidden="true">⬡</span>
                     <div className="nba-txt"><b>{a.displayName}</b><span className="micro">{a.role}</span></div>
-                    <span className={`pill ${pillTone(a.status)}`.trim()}>{label(a.status)}</span>
+                    <span className={`pill ${pillTone(a.status)}`.trim()}>{statusLabel(a.status, lang)}</span>
                   </li>
                 ))}
               </ul>
@@ -466,7 +466,7 @@ export function Home() {
                   <li key={p.id} className="nba-item">
                     <span className="nba-rank mono" aria-hidden="true">▤</span>
                     <div className="nba-txt"><b>{p.name}</b></div>
-                    <span className={`pill ${pillTone(p.status)}`.trim()}>{label(p.status)}</span>
+                    <span className={`pill ${pillTone(p.status)}`.trim()}>{statusLabel(p.status, lang)}</span>
                   </li>
                 ))}
               </ul>

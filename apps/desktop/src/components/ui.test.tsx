@@ -48,7 +48,7 @@ describe('StatusPill', () => {
     const { container } = render(<StatusPill status="done" />);
     const badge = container.querySelector('span.badge');
     expect(badge).toHaveClass('badge--success'); // statusTone.done === 'success'
-    expect(badge).toHaveTextContent('done');
+    expect(badge).toHaveTextContent('Done'); // localized label (no provider → English)
   });
 
   it('maps "blocked" to the danger tone', () => {
@@ -61,9 +61,9 @@ describe('StatusPill', () => {
     expect(container.querySelector('span.badge')).toHaveClass('badge--neutral');
   });
 
-  it('replaces underscores with spaces in the label', () => {
+  it('localizes a status label (underscores → spaces, capitalized)', () => {
     render(<StatusPill status="awaiting_approval" />);
-    expect(screen.getByText('awaiting approval')).toBeInTheDocument();
+    expect(screen.getByText('Awaiting approval')).toBeInTheDocument();
   });
 
   // Cross-check every entry in the statusTone map renders with its mapped class.
