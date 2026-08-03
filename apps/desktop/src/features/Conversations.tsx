@@ -253,23 +253,33 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     setThinking(true);
     setStreamingText('');
     try {
-      const responders = isGroup
-        ? (agentNames.slice(0, 2).length ? agentNames.slice(0, 2) : ['Bro'])
-        : [selectedAgent];
+      // #3 mention routing: if the message @mentions specific agents, THEY answer (in the
+      // order named); otherwise a group room falls back to the first couple of specialists
+      // and a direct chat to the selected agent.
+      const mentioned = agentNames.filter((n) =>
+        new RegExp(`@${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\b|\\s|$)`, 'i').test(body),
+      );
+      const responders = mentioned.length
+        ? mentioned
+        : isGroup
+          ? (agentNames.slice(0, 2).length ? agentNames.slice(0, 2) : ['Bro'])
+          : [selectedAgent];
       for (const who of responders) {
         if (cancelledRef.current) break;
         setStreamingAuthor(who);
         setStreamingText('');
-        let failed = false;
         await desktop.streamReply(conversation.id, (ev) => {
           if (ev.type === 'delta') setStreamingText((prev) => prev + ev.text);
           else if (ev.type === 'done') setExtra((prev) => [...prev, ev.message]);
-          else if (ev.type === 'error') { setReplyError(ev.message); failed = true; }
+          else if (ev.type === 'error') setReplyError(ev.message);
           // Governed turn Blocked by desktop receipt verification: a transient
           // turn-level notice, NO persisted agent message (Wave 3a Blocks every turn).
-          else if (ev.type === 'blocked') { setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`); failed = true; }
+          else if (ev.type === 'blocked') setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`);
         }, who);
-        if (failed || cancelledRef.current) break; // stop the chain on error or Stop
+        // #4 per-agent isolation: one agent's error/block no longer aborts the whole room —
+        // its error is surfaced inline and the remaining agents still get their turn. Only a
+        // user Stop breaks the chain.
+        if (cancelledRef.current) break;
       }
     } catch (e: unknown) {
       setReplyError(e instanceof Error ? e.message : String(e));
