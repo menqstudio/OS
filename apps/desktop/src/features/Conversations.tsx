@@ -196,7 +196,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     setError(null);
     setReplyError(null);
     try {
-      const userMsg = await desktop.postMessage({ conversationId: conversation.id, role: 'user', author: t('chat.you'), body });
+      const userMsg = await desktop.postMessage({ conversationId: conversation.id, author: t('chat.you'), body });
       setExtra((prev) => [...prev, userMsg]);
       if (!override) setDraft('');
       // Focus management on send: return the caret to the composer for the next turn.

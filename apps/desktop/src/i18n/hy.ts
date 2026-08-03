@@ -88,6 +88,8 @@ export const hy: Record<DictKey, string> = {
   'agents.subtitle': 'Սահմանափակ լիազորություններով մասնագետներ',
   'knowledge.subtitle': 'Որոնելի, աղբյուրավորված գիտելիք',
   'memory.subtitle': 'Ստուգելի մշտական հիշողություն',
+  'research.subtitle': 'Աղբյուրներ և բաց հարցեր',
+  'library.subtitle': 'Կրկնակի օգտագործելի բաղադրիչներ',
   'knowledge.search': 'Փնտրիր գիտելիք…',
   'knowledge.newNote': 'Նոր նշում',
   'knowledge.source': 'Աղբյուր',
@@ -159,6 +161,8 @@ export const hy: Record<DictKey, string> = {
   'notifications.subtitle': 'Միայն գործնական ազդանշաններ',
   'settings.subtitle': 'Լեզու, տեսք և նախապատվություններ',
   'generic.subtitle': 'Նախատիպային աշխատատարածք',
+  'generic.title': 'Դեռ միացված չէ backend-ին',
+  'generic.hint': 'Այս աշխատատարածքը դեռ backend չունի — իրական տվյալ կցուցադրվի, երբ backend-ը իրականացվի։',
 
   'settings.appearance': 'Արտաքին տեսք',
   'settings.theme': 'Թեմա',

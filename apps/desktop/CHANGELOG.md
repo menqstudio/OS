@@ -3,9 +3,20 @@
 - **Purpose:** Record notable repository changes, most recent first.
 - **Scope:** Documentation and, later, released application changes. Future work is in [ROADMAP.md](docs/ROADMAP.md).
 - **Owner:** Gev.
-- **Last updated:** 2026-07-27.
+- **Last updated:** 2026-08-03.
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository. Since the monorepo merge into `menqstudio/OS`, cockpit changes also flow through the OS-level security-remediation waves; the exact live state (branch/PR/blockers) is the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).
+
+## 2026-08-03 — production custody, in-app agent, cockpit UX (branch `feat/windows-broker-machineproof`, not merged)
+
+On top of the trust chain proven earlier, this cycle graduated custody and hardened the in-app experience. All on the feature branch — no push; production `trusted_verified` for live turns stays fail-closed pending the operator's sidecar infrastructure ([`src-tauri/win-live/WIRING_LIVE_TRUST.md`](src-tauri/win-live/WIRING_LIVE_TRUST.md)).
+
+- **Production custody graduated** (`1bda438`, `4912d6c`): `win_gen_root` offline root-key ceremony + [`CUSTODY_CEREMONY.md`](src-tauri/win-live/CUSTODY_CEREMONY.md); `tcb::ROOT_PUBLIC_KEY_HEX` is now the operator's key whose private half is offline, with a SEPARATE compiled-in demonstration anchor for the in-process proof/tests (PinnedRoot made injectable in both resolvers). `win_provision` refuses a non-matching root (proven). Nothing in-tree can forge a production manifest.
+- **In-app Bro → bounded coding agent with Bash** (`abc0d95`): file tools + Bash in acceptEdits, hard `--disallowedTools` deny-list (never push / delete / install). Owner-authorized.
+- **Fixed the in-app "claude CLI timed out"** (`4008056`): the agent loaded the target repo's `.claude` (CLAUDE.md startup contract + a Stop hook) via `--setting-sources project`; switched to `--setting-sources ""` (no user/project hooks — tools/permission come from CLI flags) and gave the agent a 900s budget vs a chat's 180s.
+- **Chat UX** (`4008056`): a Stop button (cancels the turn, keeps the partial via a per-conversation cancel registry + `cancel_reply`) and type-while-thinking (a follow-up sent mid-turn queues and auto-fires), both in direct and group chat.
+- **Responsive + perf + windows** (`1c247f5`, `91f3ce8`): a hamburger nav drawer below 860px (the rail was previously stuck off-canvas) + a 1560px content cap for 4K; lighter ambient (aurora blur 52→34, pause-when-hidden, coalesced pointer layout reads); right-click **Open in new window** (`open_window`); route↔URL-hash sync so a new window / reload lands on the same view; Escape closes overlays.
+- **Audit fixes:** 8 nav items showed the `generic.subtitle` "Prototype workspace" despite having real backed views → pointed at their real subtitles (+ new `research`/`library` subtitles ×3 languages); `Generic.tsx` strings moved under i18n and guarded against an unknown route; the two remaining Windows subprocess spawns (broker recorder, win-live executor) get `CREATE_NO_WINDOW`; human chat input now uses the hardened `post_user_message` (server fixes the role) instead of `post_message`.
 
 ## 2026-07-22 — OS-monorepo security remediation (Waves 1–3a)
 

@@ -696,6 +696,11 @@ pub mod linux {
             );
             let _ = std::fs::remove_file(&report_path);
             let mut command = Command::new(&cfg.recorder_command[0]);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash on spawn
+            }
             command.args(&cfg.recorder_command[1..]);
             command.args([
                 "--store",

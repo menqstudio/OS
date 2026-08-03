@@ -158,7 +158,13 @@ mod win {
         };
         let executor_path = cfg.executor_path.clone();
         let produce = move |_plan: &ExecutionPlan| -> Result<Vec<u8>, ()> {
-            let out = std::process::Command::new(&executor_path).output().map_err(|_| ())?;
+            let mut cmd = std::process::Command::new(&executor_path);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash on spawn
+            }
+            let out = cmd.output().map_err(|_| ())?;
             if !out.status.success() || out.stdout.is_empty() {
                 return Err(());
             }

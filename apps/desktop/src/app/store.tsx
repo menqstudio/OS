@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import type { Lang, Theme } from '../domain/enums';
-import type { RouteId } from './nav';
+import { ALL_ITEMS, type RouteId } from './nav';
 import { translate, type DictKey } from '../i18n';
 
 /** A deep-link target: which entity a screen should auto-open on arrival.
@@ -51,12 +51,16 @@ const LS = {
 // The route a window opens on: the URL hash (`#tasks`) when present — so a reload or a
 // right-click "Open in new window" lands on the same view — else home. An unknown slug
 // is harmless (the router falls back to a generic view).
+const isRoute = (id: string): id is RouteId => ALL_ITEMS.some((i) => i.id === id);
+
 function routeFromHash(): RouteId {
   if (typeof window === 'undefined') return 'home';
   const h = window.location.hash.replace(/^#/, '').trim();
-  if (/^[a-zA-Z][\w-]*$/.test(h)) return h as RouteId;
-  // No hash (a fresh main-window launch): return to the last view the user was on.
-  return LS.get<RouteId>('brops.route', 'home');
+  // Only a KNOWN route id is honored — an unknown hash never becomes the route (which
+  // would fall through to the Generic placeholder), it falls back to the last view.
+  if (isRoute(h)) return h;
+  const last = LS.get<RouteId>('brops.route', 'home');
+  return isRoute(last) ? last : 'home';
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {

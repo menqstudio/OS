@@ -88,6 +88,8 @@ export const ru: Record<DictKey, string> = {
   'agents.subtitle': 'Специалисты с ограниченными полномочиями',
   'knowledge.subtitle': 'Поисковые знания с указанием источников',
   'memory.subtitle': 'Проверяемая постоянная память',
+  'research.subtitle': 'Источники и открытые вопросы',
+  'library.subtitle': 'Переиспользуемые блоки',
   'knowledge.search': 'Искать знания…',
   'knowledge.newNote': 'Новая заметка',
   'knowledge.source': 'Источник',
@@ -159,6 +161,8 @@ export const ru: Record<DictKey, string> = {
   'notifications.subtitle': 'Только полезные оповещения',
   'settings.subtitle': 'Язык, тема и предпочтения',
   'generic.subtitle': 'Прототип рабочего пространства',
+  'generic.title': 'Пока не подключено к backend',
+  'generic.hint': 'У этого рабочего пространства пока нет backend — реальные данные появятся, когда он будет реализован.',
 
   'settings.appearance': 'Внешний вид',
   'settings.theme': 'Тема',

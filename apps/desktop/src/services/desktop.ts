@@ -129,9 +129,14 @@ export const desktop = {
     invoke<Conversation>('create_conversation', { kind, title }),
   listMessages: (conversationId: string) =>
     invoke<Message[]>('list_messages', { conversationId }).then((ms) => ms.map(normalizeMessage)),
-  postMessage: (input: NewMessage) =>
-    invoke<Message>('post_message', {
-      input: { ...input, role: allowedRole(input.role) },
+  // Human chat input goes through post_user_message: the renderer sends only the
+  // conversation, body and author — the server FIXES the role to `user`, so a
+  // compromised renderer can't flip a message into the agent/markdown path (L-4b/P1-6).
+  postMessage: (input: { conversationId: string; body: string; author?: string }) =>
+    invoke<Message>('post_user_message', {
+      conversationId: input.conversationId,
+      body: input.body,
+      author: input.author ?? null,
     }).then(normalizeMessage),
   // Agent messages are minted server-side only (P1-6). The webview passes ONLY the
   // opaque one-time resultId from a finished stream_ask (never the answer body); the
