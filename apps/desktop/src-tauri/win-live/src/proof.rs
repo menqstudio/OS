@@ -100,9 +100,10 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
     let challenge_key_id = "brops-live-challenge-1".to_string(); // gitleaks:allow (fake public key-id)
     let sup_attest_key_id = "brops-live-sup-attest-1".to_string(); // gitleaks:allow (fake public key-id)
     let signer_key_id = "brops-live-signer-1".to_string(); // gitleaks:allow (fake public key-id)
-    // Root anchor is the TCB-pinned key (audit P1-a): the manifest is signed with the TCB root and verified
-    // against the compiled-in public key, never a config/generated root.
-    let root_key_id = tcb::ROOT_KEY_ID.to_string();
+    // Root anchor is the DEMONSTRATION key (tcb::DEMO_*), NOT the production anchor: this in-process proof
+    // signs with an in-code private to exercise the whole crypto chain host-independently. Production trust is
+    // pinned to tcb::ROOT_PUBLIC_KEY_HEX alone (operator's offline root), which this proof never touches.
+    let root_key_id = tcb::DEMO_ROOT_KEY_ID.to_string();
     let supervisor_id = "brops-supervisor".to_string();
     let executor_id = "brops-executor".to_string();
     let builder_id = "brops-builder".to_string();
@@ -135,15 +136,16 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
     });
     let manifest: KeyManifest =
         serde_json::from_value(manifest_json).map_err(|e| format!("manifest_build: {e}"))?;
-    // The operator's OFFLINE root private key signs the manifest (in production it lives offline; here a test
-    // constant). The TCB compiles in only the corresponding PUBLIC key (tcb::root_public_key_hex()).
-    let offline_root_seed =
-        "0011223344556677001122334455667700112233445566770011223344556677"; // gitleaks:allow (offline test root)
-    let offline_root = crypto::signing_key(&crypto::hex32(offline_root_seed).expect("root seed"));
-    let root_sig = crypto::sign_b64std(&offline_root, &manifest.canonical_bytes());
+    // The DEMONSTRATION root private signs the manifest — an in-code test seed whose public is tcb::DEMO_ROOT_
+    // PUBLIC_KEY_HEX. This is exactly why it is NOT production custody: the seed is in the source. The real
+    // production root private lives offline and its public (tcb::ROOT_PUBLIC_KEY_HEX) is pinned separately.
+    let demo_root_seed =
+        "0011223344556677001122334455667700112233445566770011223344556677"; // gitleaks:allow (demo test root)
+    let demo_root = crypto::signing_key(&crypto::hex32(demo_root_seed).expect("root seed"));
+    let root_sig = crypto::sign_b64std(&demo_root, &manifest.canonical_bytes());
     let pinned_root = PinnedRoot {
-        root_key_id: tcb::ROOT_KEY_ID.to_string(),
-        public_key_hex: tcb::root_public_key_hex(),
+        root_key_id: tcb::DEMO_ROOT_KEY_ID.to_string(),
+        public_key_hex: tcb::demo_root_public_key_hex(),
     };
     verify_manifest(&manifest, &root_sig, &pinned_root).map_err(|e| format!("verify_manifest: {e:?}"))?;
     let floor = AntiRollbackFloor { highest_epoch: 2, highest_hash: manifest.content_hash() };
@@ -240,7 +242,11 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
         requested_at_ms: now_ms,
         author: "Bro".to_string(),
     };
-    let resolver = ManifestResolver::new(
+    let resolver = ManifestResolver::with_pinned_root(
+        PinnedRoot {
+            root_key_id: tcb::DEMO_ROOT_KEY_ID.to_string(),
+            public_key_hex: tcb::demo_root_public_key_hex(),
+        },
         manifest,
         root_sig,
         floor,

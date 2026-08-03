@@ -5,27 +5,46 @@
 //! cannot swap the root, because the driver builds its `PinnedRoot` from THIS module and refuses any manifest
 //! not signed by it. `config.json`'s `root_pub_hex` is advisory only and is cross-checked against this anchor.
 //!
-//! PROOF-KIT NOTE (honest): to keep the kit self-contained we also embed a FIXED root SEED so the provisioner
-//! can sign the manifest. In PRODUCTION the root PRIVATE key is held OFFLINE and ONLY [`root_public_key_hex`]
-//! (derived from it) is compiled into the TCB; the manifest is signed offline with the private root. The
-//! pinning property proven here — the verifier trusts a compiled-in public key, never the config — is
-//! identical either way.
+//! CUSTODY (production): the PRODUCTION root below ([`ROOT_PUBLIC_KEY_HEX`]) is a real operator-generated key
+//! whose PRIVATE half is held OFFLINE (see `win_gen_root` + `CUSTODY_CEREMONY.md`) and never appears in any
+//! binary or on the serving box. Only that offline private can sign a manifest the driver will accept.
+//!
+//! DEMONSTRATION root ([`DEMO_ROOT_PUBLIC_KEY_HEX`]): a SEPARATE anchor used ONLY by the in-process crypto-chain
+//! proof (`proof::in_process_turn`) and unit tests, so the whole challenge→lease→attest→sign→verify chain can
+//! be exercised host-independently with an in-code private. It is NEVER a production anchor — the production
+//! path pins [`ROOT_PUBLIC_KEY_HEX`] alone, so a party who knows the demo private still cannot forge a
+//! production manifest. The pinning property (verifier trusts a compiled-in public key, never the config) is
+//! identical for both.
 
 use crate::crypto;
 
-/// The pinned root key id.
-pub const ROOT_KEY_ID: &str = "brops-tcb-root-1"; // gitleaks:allow (fake public key-id)
+/// The pinned PRODUCTION root key id.
+pub const ROOT_KEY_ID: &str = "brops-tcb-root-1"; // gitleaks:allow (public key-id)
 
-/// The TCB-pinned root PUBLIC key hex — the ONLY root material compiled into the broker (audit condition 1).
-/// The root PRIVATE key is held OFFLINE by the operator and never appears in a deployed binary or on the
-/// serving box; the manifest is signed offline with it (see win_provision --root-key). The driver pins THIS
-/// public key and refuses any manifest not signed by the corresponding private root.
+/// The TCB-pinned PRODUCTION root PUBLIC key hex — the ONLY root material compiled into the broker (audit
+/// condition 1). The root PRIVATE key is held OFFLINE by the operator and never appears in a deployed binary or
+/// on the serving box; the manifest is signed offline with it (see `win_gen_root` / `win_provision --root-key`).
+/// The driver pins THIS public key and refuses any manifest not signed by the corresponding private root.
 pub const ROOT_PUBLIC_KEY_HEX: &str =
-    "59cfbe7b22c066c63f7c18fc698b58f63215d0705ebab5cd306bc37a49efeede"; // gitleaks:allow (public key)
+    "3c83c2bc0e72c068824e2eebf663b6ed4cda337ff806c0b46e534aee19da0df5"; // gitleaks:allow (public key)
 
-/// The TCB-pinned root PUBLIC key hex — the anchor the driver pins (never from config, never a private key).
+/// The TCB-pinned PRODUCTION root PUBLIC key hex — the anchor the driver pins (never config, never a private).
 pub fn root_public_key_hex() -> String {
     ROOT_PUBLIC_KEY_HEX.to_string()
+}
+
+/// The DEMONSTRATION root key id — used ONLY by the in-process chain proof + unit tests, never production.
+pub const DEMO_ROOT_KEY_ID: &str = "brops-tcb-demo-root-1"; // gitleaks:allow (demo public key-id)
+
+/// The DEMONSTRATION root PUBLIC key hex. Its private half is the fixed test seed embedded in `proof.rs`, which
+/// is exactly why it is NOT a production anchor: anyone with the source could sign under it. Kept separate from
+/// [`ROOT_PUBLIC_KEY_HEX`] so exercising the crypto chain in-process never grants production trust.
+pub const DEMO_ROOT_PUBLIC_KEY_HEX: &str =
+    "59cfbe7b22c066c63f7c18fc698b58f63215d0705ebab5cd306bc37a49efeede"; // gitleaks:allow (demo public key)
+
+/// The demonstration root PUBLIC key hex — pinned ONLY by the in-process proof + tests.
+pub fn demo_root_public_key_hex() -> String {
+    DEMO_ROOT_PUBLIC_KEY_HEX.to_string()
 }
 
 /// The anti-rollback-floor integrity keypair — compiled into the broker TCB (audit R1). UNLIKE the root

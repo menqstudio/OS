@@ -47,10 +47,34 @@ pub struct ManifestResolver {
     signer_key_id: String,
     sup_attest_key_id: String,
     facts: ResolvedFacts,
+    /// The root the manifest is verified against. In production this is the TCB PRODUCTION anchor
+    /// (`crate::tcb`, never config); the in-process proof passes the demonstration anchor instead.
+    pinned: PinnedRoot,
 }
 
 impl ManifestResolver {
+    /// Production resolver: the manifest is pinned to the TCB PRODUCTION root (`crate::tcb`), never config.
     pub fn new(
+        manifest: KeyManifest,
+        root_sig_b64: String,
+        floor: AntiRollbackFloor,
+        floor_path: PathBuf,
+        signer_key_id: String,
+        sup_attest_key_id: String,
+        facts: ResolvedFacts,
+    ) -> Self {
+        let pinned = PinnedRoot {
+            root_key_id: tcb::ROOT_KEY_ID.to_string(),
+            public_key_hex: tcb::root_public_key_hex(),
+        };
+        Self::with_pinned_root(pinned, manifest, root_sig_b64, floor, floor_path, signer_key_id, sup_attest_key_id, facts)
+    }
+
+    /// Resolver pinned to an explicit root — the in-process crypto-chain proof passes the DEMONSTRATION anchor
+    /// so it can sign with an in-code private, without ever pinning it in the production path.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_pinned_root(
+        pinned: PinnedRoot,
         manifest: KeyManifest,
         root_sig_b64: String,
         floor: AntiRollbackFloor,
@@ -67,6 +91,7 @@ impl ManifestResolver {
             signer_key_id,
             sup_attest_key_id,
             facts,
+            pinned,
         }
     }
 
@@ -174,12 +199,8 @@ impl TurnResolver for ManifestResolver {
         _request_nonce: &str,
     ) -> Result<ResolvedTurn, TurnReason> {
         let now = now_ms();
-        // (1) TCB-pinned root — never from config.
-        let pinned = PinnedRoot {
-            root_key_id: tcb::ROOT_KEY_ID.to_string(),
-            public_key_hex: tcb::root_public_key_hex(),
-        };
-        verify_manifest(&self.manifest, &self.root_sig_b64, &pinned)
+        // (1) Pinned root (production: TCB PRODUCTION anchor, never config; proof: demonstration anchor).
+        verify_manifest(&self.manifest, &self.root_sig_b64, &self.pinned)
             .map_err(|_| TurnReason::UpstreamBlocked)?;
 
         // (2) anti-rollback: advance + persist atomically (fix P2).

@@ -45,6 +45,9 @@ struct Provisioned {
     signer_key_id: String,
     sup_attest_key_id: String,
     facts: ResolvedFacts,
+    /// The root the manifest is verified against — the TCB PRODUCTION anchor (`crate::tcb`, never config) in
+    /// production; a demonstration anchor only in unit tests via [`ProductionResolver::provisioned_with_pin`].
+    pinned: PinnedRoot,
 }
 
 /// The broker's production resolver. `None` inner ⇒ no trusted manifest ⇒ fail-closed (every turn Blocks).
@@ -69,6 +72,26 @@ impl ProductionResolver {
         sup_attest_key_id: String,
         facts: ResolvedFacts,
     ) -> Self {
+        // Production: the manifest is pinned to the TCB PRODUCTION root (`crate::tcb`), never a config value.
+        let pinned = PinnedRoot {
+            root_key_id: tcb::ROOT_KEY_ID.to_string(),
+            public_key_hex: tcb::ROOT_PUBLIC_KEY_HEX.to_string(),
+        };
+        Self::provisioned_with_pin(pinned, manifest, root_sig_b64, floor, signer_key_id, sup_attest_key_id, facts)
+    }
+
+    /// Provisioned against an explicit pinned root — production uses [`ProductionResolver::provisioned`] (TCB
+    /// PRODUCTION anchor); unit tests pass the DEMONSTRATION anchor so they can sign with an in-code private.
+    #[allow(clippy::too_many_arguments)]
+    pub fn provisioned_with_pin(
+        pinned: PinnedRoot,
+        manifest: KeyManifest,
+        root_sig_b64: String,
+        floor: AntiRollbackFloor,
+        signer_key_id: String,
+        sup_attest_key_id: String,
+        facts: ResolvedFacts,
+    ) -> Self {
         ProductionResolver {
             inner: Some(Provisioned {
                 manifest,
@@ -77,6 +100,7 @@ impl ProductionResolver {
                 signer_key_id,
                 sup_attest_key_id,
                 facts,
+                pinned,
             }),
         }
     }
@@ -115,12 +139,9 @@ impl TurnResolver for ProductionResolver {
         let p = self.inner.as_ref().ok_or(TurnReason::UpstreamBlocked)?;
         let now = now_ms();
 
-        // (1) Verify the manifest against the TCB-pinned root — never a config-supplied root.
-        let pinned = PinnedRoot {
-            root_key_id: tcb::ROOT_KEY_ID.to_string(),
-            public_key_hex: tcb::ROOT_PUBLIC_KEY_HEX.to_string(),
-        };
-        verify_manifest(&p.manifest, &p.root_sig_b64, &pinned).map_err(|_| TurnReason::UpstreamBlocked)?;
+        // (1) Verify the manifest against the pinned root — the TCB PRODUCTION anchor in production (never a
+        //     config-supplied root); a demonstration anchor only under `provisioned_with_pin` in tests.
+        verify_manifest(&p.manifest, &p.root_sig_b64, &p.pinned).map_err(|_| TurnReason::UpstreamBlocked)?;
 
         // (2) Anti-rollback: accept only an epoch at/above the durable floor; advance in-memory.
         {
@@ -188,13 +209,22 @@ mod tests {
         assert!(matches!(r.resolve(&req(), "bt", "nonce"), Err(TurnReason::UpstreamBlocked)));
     }
 
+    // The DEMONSTRATION root the tests pin — never the production anchor. Its private is the in-code seed
+    // below; production trust pins tcb::ROOT_PUBLIC_KEY_HEX (the operator's offline root) alone.
+    fn demo_pin() -> PinnedRoot {
+        PinnedRoot {
+            root_key_id: tcb::DEMO_ROOT_KEY_ID.to_string(),
+            public_key_hex: tcb::DEMO_ROOT_PUBLIC_KEY_HEX.to_string(),
+        }
+    }
+
     #[test]
     fn provisioned_resolver_resolves_a_root_signed_manifest() {
-        // The OFFLINE root private that matches the compiled-in tcb::ROOT_PUBLIC_KEY_HEX (59cfbe...).
+        // The DEMONSTRATION root private that matches the compiled-in tcb::DEMO_ROOT_PUBLIC_KEY_HEX (59cfbe...).
         let root = SigningKey::from_bytes(&seed32(
-            "0011223344556677001122334455667700112233445566770011223344556677", // gitleaks:allow (test key)
+            "0011223344556677001122334455667700112233445566770011223344556677", // gitleaks:allow (demo test key)
         ));
-        assert_eq!(hex(root.verifying_key().as_bytes()), tcb::ROOT_PUBLIC_KEY_HEX);
+        assert_eq!(hex(root.verifying_key().as_bytes()), tcb::DEMO_ROOT_PUBLIC_KEY_HEX);
         // Two production keys (signer + supervisor-attestation).
         let signer = SigningKey::from_bytes(&seed32(
             "1111111111111111111111111111111111111111111111111111111111111111", // gitleaks:allow (test key)
@@ -206,7 +236,7 @@ mod tests {
         let sup_pub = hex(sup.verifying_key().as_bytes());
         let manifest: KeyManifest = serde_json::from_value(json!({
             "manifest_epoch": 2u64,
-            "root_key_id": tcb::ROOT_KEY_ID,
+            "root_key_id": tcb::DEMO_ROOT_KEY_ID,
             "keys": [
                 { "key_id": "signer-1", "public_key_hex": signer_pub, "trust_class": "production",
                   "valid_from_ms": 1, "valid_to_ms": 9999999999999i64, "key_epoch": 2u64, "revoked": false,
@@ -224,17 +254,18 @@ mod tests {
             generation_config_sha256: "c".repeat(64), requested_at: "1900000000000".into(),
             run_id: "run".into(), task_id: "task".into(), requested_at_ms: 1_900_000_000_000, author: "Bro".into(),
         };
-        let r = ProductionResolver::provisioned(
-            manifest, root_sig, floor, "signer-1".into(), "sup-1".into(), facts,
+        let r = ProductionResolver::provisioned_with_pin(
+            demo_pin(), manifest, root_sig, floor, "signer-1".into(), "sup-1".into(), facts,
         );
         let resolved = r.resolve(&req(), "bt", "nonce").expect("valid manifest resolves");
         assert_eq!(resolved.isolated_signer_key_id, "signer-1");
         assert_eq!(hex(&resolved.isolated_signer_public_key), signer_pub);
         assert_eq!(hex(&resolved.supervisor_attestation_public_key), sup_pub);
         // A manifest whose root signature is garbage must fail closed.
-        let r2 = ProductionResolver::provisioned(
+        let r2 = ProductionResolver::provisioned_with_pin(
+            demo_pin(),
             serde_json::from_value(json!({
-                "manifest_epoch": 2u64, "root_key_id": tcb::ROOT_KEY_ID, "keys": []
+                "manifest_epoch": 2u64, "root_key_id": tcb::DEMO_ROOT_KEY_ID, "keys": []
             })).unwrap(),
             "bogus".into(),
             AntiRollbackFloor { highest_epoch: 2, highest_hash: "x".into() },
