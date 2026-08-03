@@ -69,7 +69,7 @@ function useMesh(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
     const ctx = cv.getContext('2d');
     if (!ctx) return;
     const reduced = prefersReducedMotion();
-    const AGENTS = 38;
+    const AGENTS = 26;
     let W = 0;
     let H = 0;
     let DPR = 1;
@@ -77,7 +77,7 @@ function useMesh(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
     let raf = 0;
 
     function seed() {
-      DPR = Math.min(devicePixelRatio || 1, 2);
+      DPR = Math.min(devicePixelRatio || 1, 1);
       W = cv!.width = innerWidth * DPR;
       H = cv!.height = innerHeight * DPR;
       cv!.style.width = innerWidth + 'px';
@@ -147,7 +147,19 @@ function useMesh(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
           ctx.fill();
         }
       }
-      if (!reduced) raf = requestAnimationFrame(draw);
+    }
+
+    // Throttle the ambient field to ~30fps. It drifts slowly, so half the frames
+    // are imperceptible — but at 60fps its constant repaint forces every
+    // backdrop-filter surface above it to recompute its blur each frame, which is a
+    // real typing-lag / GPU-load source. Cheaper backdrop, same look.
+    let lastPaint = 0;
+    function frame(ts: number) {
+      if (ts - lastPaint >= 33) {
+        lastPaint = ts;
+        draw();
+      }
+      raf = requestAnimationFrame(frame);
     }
 
     const onResize = () => {
@@ -155,7 +167,8 @@ function useMesh(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
       if (reduced) draw();
     };
     seed();
-    draw();
+    if (reduced) draw();
+    else raf = requestAnimationFrame(frame);
     addEventListener('resize', onResize, { passive: true });
     return () => {
       cancelAnimationFrame(raf);

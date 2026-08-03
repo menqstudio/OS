@@ -406,6 +406,22 @@ fn resolve() -> Result<Provider, String> {
     resolve_provider(&env)
 }
 
+/// Windows: mark console subprocesses with CREATE_NO_WINDOW so the GUI app never
+/// flashes a console/`cmd` window per turn (the `claude` CLI and the sidecar are
+/// console binaries). No-op on other platforms.
+fn hide_console(cmd: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    {
+        // tokio::process::Command exposes `creation_flags` inherently on Windows.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
 /// Readiness probe for the local `claude` CLI. Spawns `claude --version` with
 /// kill_on_drop so a hung/hostile binary is reaped on timeout (no orphan piling
 /// up across repeated status polls), and drains its output bounded so it can't
@@ -417,6 +433,7 @@ async fn claude_version_ok(bin: &str) -> bool {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    hide_console(&mut cmd);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(_) => return false,
@@ -728,10 +745,15 @@ fn pid_liveness(pid: u32) -> Option<bool> {
         // don't include our PID, a failed spawn, or a non-zero exit all yield
         // `None` so cleanup falls back to the (conservative) age rule instead of
         // deleting a possibly-live sibling's sandbox.
-        let out = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
-            .stdin(std::process::Stdio::null())
-            .output();
+        let mut tl = std::process::Command::new("tasklist");
+        tl.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .stdin(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            tl.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash on cleanup
+        }
+        let out = tl.output();
         match out {
             Ok(o) if o.status.success() => {
                 let text = String::from_utf8_lossy(&o.stdout);
@@ -953,6 +975,7 @@ async fn claude_cli_stream<F: FnMut(&str)>(
         // Ensure the child is killed if this future is dropped or returns early
         // (timeout, read error) — never leak a running `claude` process.
         .kill_on_drop(true);
+    hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN, or pick another provider via BROPS_AI_PROVIDER (ungoverned providers need BROPS_ALLOW_UNGOVERNED=1).")
     })?;
@@ -1097,6 +1120,7 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN to its path, or pick another provider via BROPS_AI_PROVIDER (ungoverned providers need BROPS_ALLOW_UNGOVERNED=1).")
     })?;
@@ -1394,6 +1418,7 @@ async fn governed_sidecar_call(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not run the governed engine sidecar (`{python} {sidecar}`): {e}. Set BROPS_GOVERNED_PYTHON / BROPS_GOVERNED_SIDECAR, or unset BROPS_ALLOW_GOVERNED_ENGINE.")
     })?;
