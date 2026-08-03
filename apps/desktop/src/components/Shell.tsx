@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import './layout.css';
 import { useApp } from '../app/store';
 import { NAV } from '../app/nav';
@@ -75,6 +75,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
     e.preventDefault();
     setCtxMenu({ x: e.clientX, y: e.clientY });
   };
+  // Escape closes the transient overlays (nav drawer, context menu).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setNavOpen(false); setCtxMenu(null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <>

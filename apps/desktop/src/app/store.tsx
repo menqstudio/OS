@@ -48,8 +48,19 @@ const LS = {
   },
 };
 
+// The route a window opens on: the URL hash (`#tasks`) when present — so a reload or a
+// right-click "Open in new window" lands on the same view — else home. An unknown slug
+// is harmless (the router falls back to a generic view).
+function routeFromHash(): RouteId {
+  if (typeof window === 'undefined') return 'home';
+  const h = window.location.hash.replace(/^#/, '').trim();
+  if (/^[a-zA-Z][\w-]*$/.test(h)) return h as RouteId;
+  // No hash (a fresh main-window launch): return to the last view the user was on.
+  return LS.get<RouteId>('brops.route', 'home');
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [route, setRouteState] = useState<RouteId>('home');
+  const [route, setRouteState] = useState<RouteId>(routeFromHash);
   const [focus, setFocus] = useState<FocusTarget | null>(null);
   const [theme, setTheme] = useState<Theme>(() => LS.get<Theme>('brops.theme', 'dark'));
   const [lang, setLangState] = useState<Lang>(() => LS.get<Lang>('brops.lang', 'en'));
@@ -73,6 +84,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.setAttribute('lang', lang);
     LS.set('brops.lang', lang);
   }, [lang]);
+
+  // Keep the URL hash in sync with the active route so a reload or a new window opens
+  // on the same view. replaceState (not push) keeps the back stack clean.
+  useEffect(() => {
+    const h = `#${route}`;
+    if (typeof window !== 'undefined' && window.location.hash !== h) {
+      window.history.replaceState(null, '', h);
+    }
+    LS.set('brops.route', route);
+  }, [route]);
 
   const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), []);
   const setLang = useCallback((l: Lang) => setLangState(l), []);
