@@ -423,13 +423,19 @@ export function Command() {
                       <Select
                         value={r.status}
                         onChange={(e) => changeStatus(r.id, e.target.value)}
+                        // A terminal run cannot change status; and 'succeeded'/'failed' are DERIVED
+                        // from step outcomes (M-6), never user-set — so offer only settable states
+                        // (keeping the current one visible) and lock finished runs entirely.
+                        disabled={['succeeded', 'failed', 'cancelled'].includes(r.status)}
                         style={{ width: 'auto', padding: '4px 8px' }}
                         title={t('field.status')}
                         aria-label={t('field.status')}
                       >
-                        {RUN_STATUSES.map((st) => (
-                          <option key={st} value={st}>{statusLabel(st, lang)}</option>
-                        ))}
+                        {RUN_STATUSES
+                          .filter((st) => st === r.status || (st !== 'succeeded' && st !== 'failed'))
+                          .map((st) => (
+                            <option key={st} value={st}>{statusLabel(st, lang)}</option>
+                          ))}
                       </Select>
                     </div>
                   ))}

@@ -786,6 +786,20 @@ pub fn create_run(state: State<AppState>, intent: String, plan: String) -> Resul
 #[tauri::command]
 pub fn set_run_status(state: State<AppState>, id: String, status: String) -> Result<Run, String> {
     let conn = locked(&state)?;
+    // Honesty guard (M-6): 'succeeded'/'failed' are TERMINAL states advance() DERIVES from the actual
+    // step outcomes (a run with any failed step reports 'failed', never 'succeeded'). The renderer
+    // must never assert them directly, or it could paint a run 'succeeded' over failed/incomplete
+    // work. advance() and the Gate::Rejected path call repo::runs::set_status directly (not this
+    // command), so this guard constrains only the untrusted webview.
+    if matches!(status.as_str(), "succeeded" | "failed") {
+        return Err("run success/failure is derived from step outcomes, not set directly".to_string());
+    }
+    // A run that already reached a terminal state must not be un-terminated back into execution
+    // (which would let advance() re-process a finished run).
+    let run = repo::runs::get(&conn, &id).map_err(|e| e.to_string())?;
+    if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
+        return Err(format!("run is {} (terminal) and cannot change status", run.status));
+    }
     repo::runs::set_status(&conn, &id, &status).map_err(|e| e.to_string())
 }
 
