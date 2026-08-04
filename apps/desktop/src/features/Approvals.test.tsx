@@ -4,8 +4,8 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 // Mock the Tauri IPC boundary with a call-tracking spy so the tests can assert
 // BOTH what the page renders AND — the cardinal invariant — which engine commands
 // it does (and does NOT) send. Approvals is a mirror-never-decide surface: it may
-// only *request* a verdict the engine adjudicates, and escalate has no engine
-// command in this build, so its path must send nothing and say so honestly.
+// only *request* a verdict the engine adjudicates (grant / deny). A higher-review
+// ("escalate") tier has no engine command, so no such control is offered at all.
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (cmd: string, args?: unknown) => invokeMock(cmd, args),
@@ -61,27 +61,17 @@ describe('Approvals — mirror-never-decide honesty invariants', () => {
     expect(screen.getAllByText('Send external email').length).toBeGreaterThan(0);
   });
 
-  it('ESCALATE never sends an engine command — it reports honestly and decides nothing', async () => {
+  it('offers NO escalate control — a do-nothing action is not shipped', async () => {
     setup();
     await waitFor(() => expect(screen.getAllByText('vendor@example.com').length).toBeGreaterThan(0));
 
-    // Open the escalate confirm from the authorization bar (accessible name = aria-label).
-    fireEvent.click(screen.getByRole('button', { name: 'Escalate for higher review' }));
+    // A higher-review ("escalate") tier has no engine command, so the UI must not
+    // present one at all — no button and no "not wired" placeholder dialog.
+    expect(screen.queryByRole('button', { name: /escalate/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/not wired to the engine/i)).not.toBeInTheDocument();
 
-    // The dialog states, honestly, that escalation is not wired — confirming sends nothing.
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText(/not wired to the engine/i)).toBeInTheDocument();
-
-    // Confirm the escalate.
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Escalate' }));
-
-    // The cardinal invariant: NO decide command was ever sent to the engine.
-    await waitFor(() => {
-      expect(invokeMock).not.toHaveBeenCalledWith('confirm_approval', expect.anything());
-      expect(invokeMock).not.toHaveBeenCalledWith('reject_approval', expect.anything());
-    });
-    // …and the verdict is announced honestly as unavailable, never as a fake success.
-    expect(screen.getByText(/Escalation unavailable for/i)).toBeInTheDocument();
+    // The only real actions remain grant (press-and-hold) and deny (fail-safe).
+    expect(screen.getByRole('button', { name: 'Deny — reject this action' })).toBeInTheDocument();
   });
 
   it('DENY routes through the real fail-safe reject command', async () => {

@@ -18,12 +18,6 @@ export const STR = {
   // ── verdict announcements (interpolated with the item label) ───────────────
   grantedPrefix:            { en: 'Granted: ',  hy: 'Հաստատվեց՝ ', ru: 'Одобрено: ' },
   deniedPrefix:             { en: 'Denied: ',   hy: 'Մերժվեց՝ ',   ru: 'Отклонено: ' },
-  escalationUnavailablePre: { en: 'Escalation unavailable for ', hy: 'Բարձրացումն անհասանելի է՝ ', ru: 'Эскалация недоступна для ' },
-  escalationNotWired: {
-    en: 'Escalation isn’t wired to the engine yet — no request was sent.',
-    hy: 'Բարձրացումը դեռ միացված չէ շարժիչին — հարցում չուղարկվեց։',
-    ru: 'Эскалация ещё не подключена к движку — запрос не был отправлен.',
-  },
 
   // ── page header ────────────────────────────────────────────────────────────
   eyebrowHitl: {
@@ -37,9 +31,9 @@ export const STR = {
   engineUnreachable:     { en: 'Engine unreachable.', hy: 'Շարժիչն անհասանելի է։', ru: 'Движок недоступен.' },
   ownerNotAuthenticated: { en: 'Owner not authenticated', hy: 'Տերը նույնականացված չէ', ru: 'Владелец не аутентифицирован' },
   gateLockedBody: {
-    en: 'The approval gate is locked until the owner authenticates with the engine. Grant, deny and escalate stay disabled — the desktop never decides on its own.',
-    hy: 'Հաստատման դարպասը կողպված է, մինչև տերը նույնականացվի շարժիչի հետ։ Հաստատել, մերժել և բարձրացնել գործողություններն անջատված են — desktop-ը երբեք ինքնուրույն որոշում չի կայացնում։',
-    ru: 'Шлюз одобрения заблокирован, пока владелец не аутентифицируется в движке. Одобрение, отклонение и эскалация остаются отключёнными — десктоп никогда не принимает решение сам.',
+    en: 'The approval gate is locked until the owner authenticates with the engine. Grant and deny stay disabled — the desktop never decides on its own.',
+    hy: 'Հաստատման դարպասը կողպված է, մինչև տերը նույնականացվի շարժիչի հետ։ Հաստատել և մերժել գործողություններն անջատված են — desktop-ը երբեք ինքնուրույն որոշում չի կայացնում։',
+    ru: 'Шлюз одобрения заблокирован, пока владелец не аутентифицируется в движке. Одобрение и отклонение остаются отключёнными — десктоп никогда не принимает решение сам.',
   },
   gateClear: {
     en: 'Gate clear — no pending approvals',
@@ -75,8 +69,6 @@ export const STR = {
   levelSuffix:   { en: ' level', hy: ' մակարդակ', ru: ' уровень' },
   denyAria:      { en: 'Deny — reject this action', hy: 'Մերժել — մերժել գործողությունը', ru: 'Отклонить — отклонить это действие' },
   deny:          { en: 'Deny', hy: 'Մերժել', ru: 'Отклонить' },
-  escalateForReview: { en: 'Escalate for higher review', hy: 'Բարձրացնել՝ ավելի բարձր վերանայման', ru: 'Передать на вышестоящее рассмотрение' },
-  escalateA3:    { en: 'Escalate A3', hy: 'Փոխանցել A3', ru: 'Передать A3' },
   pressHoldAria: { en: 'Press and hold to grant', hy: 'Սեղմիր և պահիր՝ հաստատելու', ru: 'Нажмите и удерживайте для одобрения' },
   pressHoldGrant:{ en: 'Press & hold to grant', hy: 'Սեղմիր և պահիր՝ հաստատելու', ru: 'Нажмите и удерживайте' },
 
@@ -84,7 +76,6 @@ export const STR = {
   select:           { en: 'select', hy: 'ընտրել', ru: 'выбрать' },
   holdGrantConfirm: { en: 'hold Grant to confirm', hy: 'պահիր՝ հաստատելու', ru: 'удерживайте «Одобрить» для подтверждения' },
   denyLower:        { en: 'deny', hy: 'մերժել', ru: 'отклонить' },
-  escalateLower:    { en: 'escalate', hy: 'բարձրացնել', ru: 'передать' },
 
   // ── engine queue mirror notice ─────────────────────────────────────────────
   queueUnreachable: {
@@ -118,10 +109,4 @@ export const STR = {
     hy: '-ի վրա։ Սա fail-safe մերժման ուղին է։',
     ru: '? Это отказоустойчивый путь отклонения.',
   },
-  escalateNotWiredMsg: {
-    en: 'Escalation is not wired to the engine in this build — confirming sends no request.',
-    hy: 'Բարձրացումը այս տարբերակում միացված չէ շարժիչին — հաստատումը հարցում չի ուղարկում։',
-    ru: 'Эскалация в этой сборке не подключена к движку — подтверждение не отправляет запрос.',
-  },
-  escalate: { en: 'Escalate', hy: 'Բարձրացնել', ru: 'Передать' },
 } as const;

@@ -11,9 +11,9 @@ import { STR } from './Approvals.strings';
 // ── §D `approvals` — Հաստատումներ (Approval gate) ────────────────────────────
 // Mirror, never decide: the desktop READS the engine approval queue and can only
 // *request* a verdict — grant (native-confirmed) / deny (fail-safe) — which the
-// engine's Ed25519 system adjudicates. Escalate has no engine command in this
-// build, so its request path renders honestly as unavailable rather than faking a
-// result. Owner-not-authenticated → `blocked`; engine-unreachable → `error`.
+// engine's Ed25519 system adjudicates. A higher-review ("escalate") tier has no
+// engine command yet, so no such action is offered rather than shipping a control
+// that does nothing. Owner-not-authenticated → `blocked`; engine-unreachable → `error`.
 //
 // This view is re-skinned onto the design mockup's APPROVAL GATE (`.gate .surface`
 // with `st-*` status tones), a real-derived approval-stats strip (`.astats-wrap`),
@@ -24,7 +24,7 @@ import { STR } from './Approvals.strings';
 // Every visible/aria string lives in the co-located trilingual catalog
 // `Approvals.strings.ts` (en/hy/ru); shared-i18n strings stay as `t('…')`.
 
-type ActionKind = 'grant' | 'deny' | 'escalate';
+type ActionKind = 'grant' | 'deny';
 interface Staged { id: string; kind: ActionKind; }
 
 /** Trilingual lookup over the co-located catalog. */
@@ -132,8 +132,8 @@ export function Approvals() {
     toast(`${t('approvals.decideFailed')}: ${msg}`, 'error');
   };
 
-  // The single real action path. grant/deny go through the real engine-request
-  // commands; escalate has no command, so it reports honestly and sends nothing.
+  // The single real action path. Both grant and deny go through real engine-request
+  // commands the desktop cannot forge — there is no local-only verdict path.
   const runAction = useCallback((id: string, kind: ActionKind) => {
     const item = (data ?? []).find((a) => a.id === id);
     if (!item || item.status !== 'pending') return; // only pending items are actionable
@@ -144,19 +144,15 @@ export function Approvals() {
       desktop.confirmApproval(id)
         .then(() => { setVerdict(`${L('grantedPrefix')}${label}`); reload(); })
         .catch(onError);
-    } else if (kind === 'deny') {
+    } else {
       // T-010: dedicated fail-safe reject path.
       desktop.rejectApproval(id)
         .then(() => { setVerdict(`${L('deniedPrefix')}${label}`); reload(); })
         .catch(onError);
-    } else {
-      // Honest empty request path: no engine escalate command exists in this build.
-      setVerdict(`${L('escalationUnavailablePre')}${label}`);
-      toast(L('escalationNotWired'), 'info');
     }
   }, [data, L, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Commit the staged (dialog-confirmed) deny/escalate.
+  // Commit the staged (dialog-confirmed) deny.
   const commit = useCallback(() => {
     if (!staged) return;
     const { id, kind } = staged;
@@ -185,8 +181,8 @@ export function Approvals() {
 
   useEffect(() => cancelHold, [sel, cancelHold]); // seating a new row cancels any in-flight hold
 
-  // Keyboard: ↑/↓ select; d stages a deny, e stages an escalate (both open the
-  // confirm dialog). Grant is the deliberate press-and-hold on its button.
+  // Keyboard: ↑/↓ select; d stages a deny (opens the confirm dialog). Grant is the
+  // deliberate press-and-hold on its button.
   useEffect(() => {
     if (staged) return;
     const onKey = (e: KeyboardEvent) => {
@@ -200,7 +196,6 @@ export function Approvals() {
       if (!cur || cur.status !== 'pending') return;
       const k = e.key.toLowerCase();
       if (k === 'd') { e.preventDefault(); setStaged({ id: cur.id, kind: 'deny' }); }
-      else if (k === 'e') { e.preventDefault(); setStaged({ id: cur.id, kind: 'escalate' }); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -241,7 +236,7 @@ export function Approvals() {
     </header>
   );
 
-  // Verdict announcer — always mounted so grant/deny/escalate results are read out.
+  // Verdict announcer — always mounted so grant/deny results are read out.
   const liveRegion = (
     <div className="ap-sr" role="status" aria-live="assertive" aria-atomic="true">{verdict}</div>
   );
@@ -430,11 +425,6 @@ export function Approvals() {
               aria-label={L('denyAria')}
             >✕ {L('deny')}</button>
             <button
-              type="button" className="ab-btn escalate" disabled={!isPending}
-              onClick={() => seated && setStaged({ id: seated.id, kind: 'escalate' })}
-              aria-label={L('escalateForReview')}
-            >↑ {L('escalateA3')}</button>
-            <button
               type="button" className={`ab-btn grant${holding ? ' holding' : ''}`} disabled={!isPending}
               onPointerDown={(e) => { e.preventDefault(); startHold(); }}
               onPointerUp={cancelHold}
@@ -455,7 +445,7 @@ export function Approvals() {
       </section>
 
       <div className="ap-hint muted" aria-hidden="true">
-        {`↑/↓ ${L('select')} · ${L('holdGrantConfirm')} · d ${L('denyLower')} · e ${L('escalateLower')}`}
+        {`↑/↓ ${L('select')} · ${L('holdGrantConfirm')} · d ${L('denyLower')}`}
       </div>
 
       {/* Engine approval-QUEUE mirror (read-only). Until the engine queue read answers,
@@ -532,20 +522,12 @@ export function Approvals() {
         <div className="wire live" aria-hidden="true" />
       </section>
 
-      {/* deny / escalate go through a confirm dialog (grant uses press-and-hold). */}
-      {staged && stagedItem && staged.kind !== 'grant' && (
+      {/* deny goes through a confirm dialog (grant uses press-and-hold). */}
+      {staged && stagedItem && staged.kind === 'deny' && (
         <ConfirmDialog
-          title={
-            staged.kind === 'deny'
-              ? L('confirmDenial')
-              : L('escalateForReview')
-          }
-          message={
-            staged.kind === 'deny'
-              ? `${L('denyDialogA')}${stagedItem.actionType}${L('denyDialogB')}${stagedItem.target}${L('denyDialogC')}`
-              : L('escalateNotWiredMsg')
-          }
-          confirmLabel={staged.kind === 'deny' ? t('action.reject') : L('escalate')}
+          title={L('confirmDenial')}
+          message={`${L('denyDialogA')}${stagedItem.actionType}${L('denyDialogB')}${stagedItem.target}${L('denyDialogC')}`}
+          confirmLabel={t('action.reject')}
           cancelLabel={t('action.cancel')}
           onConfirm={commit}
           onCancel={() => setStaged(null)}
