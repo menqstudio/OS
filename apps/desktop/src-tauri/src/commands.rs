@@ -1903,6 +1903,114 @@ pub fn get_security_summary(state: State<AppState>) -> Result<SecuritySummary, S
     repo::security::summary(&conn).map_err(|e| e.to_string())
 }
 
+/// Windows: invoke the configured model (`cmd /C <cmd>`, the prompt on stdin) and return its stdout as the
+/// bytes the chain's executor produced. Err on spawn/exit/empty — the governed turn then fails closed and no
+/// message is posted.
+#[cfg(windows)]
+fn run_demonstration_model(prompt: &str, cmd: &str) -> Result<Vec<u8>, ()> {
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", cmd])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|_| ())?;
+    if let Some(mut si) = child.stdin.take() {
+        use std::io::Write;
+        let _ = si.write_all(prompt.as_bytes());
+    }
+    match child.wait_with_output() {
+        Ok(o) if o.status.success() && !o.stdout.is_empty() => Ok(o.stdout),
+        _ => Err(()),
+    }
+}
+
+/// A live DEMONSTRATION-verified chat reply (Windows). Runs a NON-streamed governed turn where the chain's
+/// executor invokes the configured model (`BROPS_SELFTEST_MODEL_CMD`) with the conversation transcript, so the
+/// reply is produced INSIDE the chain and then bound + `verify_and_accept`'d under the compiled-in
+/// DEMONSTRATION anchor. On success the reply is posted and recorded so its badge derives to
+/// `demonstration_verified` — a REAL, honest green, but demonstration custody (demo anchor + a non-session-0
+/// executor), NEVER production `trusted_verified`. Fail-closed: non-Windows, no configured model, an empty
+/// conversation/reply, or a chain that does not verify → Err, and no message is posted.
+#[tauri::command]
+pub fn demonstration_verified_reply(
+    state: State<AppState>,
+    conversation_id: String,
+    agent: Option<String>,
+) -> Result<Message, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = (&state, &conversation_id, &agent);
+        Err("demonstration-verified turns are available only on the Windows build".to_string())
+    }
+    #[cfg(windows)]
+    {
+        // A real demonstration reply needs a model; without one, fail closed (never post a placeholder as a
+        // chat reply).
+        let cmd = std::env::var("BROPS_SELFTEST_MODEL_CMD")
+            .ok()
+            .filter(|c| !c.trim().is_empty())
+            .ok_or_else(|| {
+                "set BROPS_SELFTEST_MODEL_CMD to a model CLI (e.g. `claude -p`) to run a demonstration-verified turn".to_string()
+            })?;
+
+        // Prompt = the author-prefixed transcript + a system line.
+        let prompt = {
+            let conn = locked(&state)?;
+            let msgs = repo::chat::list_messages(&conn, &conversation_id, None, None).map_err(|e| e.to_string())?;
+            if msgs.is_empty() {
+                return Err("nothing to reply to in this conversation".to_string());
+            }
+            let transcript = msgs.iter().map(|m| format!("{}: {}", m.author, m.body)).collect::<Vec<_>>().join("\n");
+            format!(
+                "You are Bro, the assistant in the BroPS desktop app for its owner, Gev. Reply concisely to the \
+                 latest message, in the conversation's language. Do not claim actions you cannot take.\n\n{transcript}\n\nBro:"
+            )
+        };
+
+        // The chain's executor closure produces the reply by invoking the model with `prompt`.
+        let captured = std::cell::RefCell::new(Vec::<u8>::new());
+        let produce = || -> Result<Vec<u8>, ()> {
+            let out = run_demonstration_model(&prompt, &cmd)?;
+            if out.is_empty() {
+                return Err(());
+            }
+            *captured.borrow_mut() = out.clone();
+            Ok(out)
+        };
+        let dir = std::env::temp_dir().join(format!("brops-demo-turn-{}", brops_core::id()));
+        let now_ms: i64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let outcome = brops_win_live::proof::in_process_turn_produce(&dir, now_ms, produce)
+            .map_err(|e| format!("demonstration chain error: {e}"))?;
+        let _ = std::fs::remove_dir_all(&dir);
+        if !(outcome.bound && outcome.production_verified) {
+            return Err(format!("demonstration chain did not verify: {}", outcome.trust_str));
+        }
+        let reply = String::from_utf8_lossy(&captured.into_inner()).trim().to_string();
+        if reply.is_empty() {
+            return Err("the model produced an empty reply".to_string());
+        }
+
+        // Post + record, then re-read so the returned message carries receipt = "demonstration_verified".
+        let author = agent.unwrap_or_else(|| "Bro".to_string());
+        let conn = locked(&state)?;
+        let msg = repo::chat::post_message(
+            &conn,
+            NewMessage { conversation_id, role: "agent".to_string(), author, body: reply },
+        )
+        .map_err(|e| e.to_string())?;
+        repo::chat::record_demonstration_verified(&conn, &msg.id).map_err(|e| e.to_string())?;
+        repo::chat::list_messages(&conn, &msg.conversation_id, None, None)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|m| m.id == msg.id)
+            .ok_or_else(|| "posted demonstration message could not be read back".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

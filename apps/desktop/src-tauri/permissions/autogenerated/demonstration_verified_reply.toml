@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-demonstration-verified-reply"
+description = "Enables the demonstration_verified_reply command without any pre-configured scope."
+commands.allow = ["demonstration_verified_reply"]
+
+[[permission]]
+identifier = "deny-demonstration-verified-reply"
+description = "Denies the demonstration_verified_reply command without any pre-configured scope."
+commands.deny = ["demonstration_verified_reply"]

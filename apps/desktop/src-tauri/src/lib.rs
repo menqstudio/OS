@@ -174,6 +174,7 @@ pub fn run() {
             commands::ai_status,
             commands::reply_in_conversation,
             commands::stream_reply,
+            commands::demonstration_verified_reply,
             commands::cancel_reply,
             commands::open_window,
             commands::stream_ask,

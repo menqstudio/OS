@@ -240,6 +240,10 @@
       "tier": "X",
       "grant": "allow"
     },
+    "demonstration_verified_reply": {
+      "tier": "X",
+      "grant": "allow"
+    },
     "save_ask_to_chat": {
       "tier": "L1",
       "grant": "allow"

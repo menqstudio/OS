@@ -79,6 +79,7 @@
     "allow-ai-status",
     "allow-reply-in-conversation",
     "allow-stream-reply",
+    "allow-demonstration-verified-reply",
     "allow-cancel-reply",
     "allow-stream-ask",
     "allow-stream-run-step",
