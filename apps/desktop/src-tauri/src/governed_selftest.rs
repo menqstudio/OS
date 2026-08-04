@@ -61,11 +61,13 @@ supervisor/signer sidecar remain pending before real turns can reach trusted_ver
 /// production; on any spawn/exit/empty error it falls back to the demo bytes (the turn never fails on the
 /// model seam — the chain's own fail-closed still governs).
 #[cfg(windows)]
-fn run_selftest_model() -> Vec<u8> {
-    const DEMO: &[u8] = b"BROPS windows governed output v1";
-    let cmd = match std::env::var("BROPS_SELFTEST_MODEL_CMD") {
-        Ok(c) if !c.trim().is_empty() => c,
-        _ => return DEMO.to_vec(),
+const SELFTEST_DEMO_OUTPUT: &[u8] = b"BROPS windows governed output v1";
+
+#[cfg(windows)]
+fn run_selftest_model(cmd: Option<&str>) -> Vec<u8> {
+    let cmd = match cmd {
+        Some(c) if !c.trim().is_empty() => c,
+        _ => return SELFTEST_DEMO_OUTPUT.to_vec(),
     };
     let prompt = "In one short sentence, confirm the BroPS governed trust chain produced this reply.";
     // `cmd /C <cmd>` so the operator can point it at any model CLI; the prompt rides in on stdin.
@@ -77,7 +79,7 @@ fn run_selftest_model() -> Vec<u8> {
         .spawn();
     let mut child = match spawned {
         Ok(c) => c,
-        Err(_) => return DEMO.to_vec(),
+        Err(_) => return SELFTEST_DEMO_OUTPUT.to_vec(),
     };
     if let Some(mut si) = child.stdin.take() {
         use std::io::Write;
@@ -85,7 +87,7 @@ fn run_selftest_model() -> Vec<u8> {
     }
     match child.wait_with_output() {
         Ok(o) if o.status.success() && !o.stdout.is_empty() => o.stdout,
-        _ => DEMO.to_vec(),
+        _ => SELFTEST_DEMO_OUTPUT.to_vec(),
     }
 }
 
@@ -104,8 +106,9 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
         // governed execution step), so the receipt binds exactly what the chain's executor produced — not a
         // pre-computed value merely signed after the fact. Capture it to surface the honest end-to-end answer.
         let captured = std::cell::RefCell::new(Vec::<u8>::new());
+        let cmd_env = std::env::var("BROPS_SELFTEST_MODEL_CMD").ok();
         let produce = || -> Result<Vec<u8>, ()> {
-            let out = run_selftest_model();
+            let out = run_selftest_model(cmd_env.as_deref());
             if out.is_empty() {
                 return Err(());
             }
@@ -140,5 +143,28 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             custody_note: CUSTODY_NOTE.to_string(),
             platform_note: "non-windows".to_string(),
         })
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_seam_defaults_to_the_demonstration_output() {
+        // No configured command (and CI) → the fixed demonstration bytes, so the chain still exercises
+        // end-to-end without any external model dependency.
+        assert_eq!(run_selftest_model(None), SELFTEST_DEMO_OUTPUT);
+        assert_eq!(run_selftest_model(Some("   ")), SELFTEST_DEMO_OUTPUT, "blank command is treated as unset");
+    }
+
+    #[test]
+    fn model_seam_uses_a_configured_command_stdout() {
+        // A configured command's stdout is exactly what the chain will bind + verify — proving a real model
+        // CLI can be plugged in. `echo` is a cmd.exe builtin, so this needs no external tool.
+        let out = run_selftest_model(Some("echo governed-ok"));
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.contains("governed-ok"), "the configured command's stdout is the reply: {text:?}");
+        assert_ne!(out, SELFTEST_DEMO_OUTPUT, "a working command must not fall back to the demo bytes");
     }
 }
