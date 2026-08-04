@@ -178,6 +178,7 @@ pub enum WindowsBrokerViolation {
     UnexpectedHandleSlot(i32),
     MissingHandleSlot(i32),
     WrongHandleRole(i32),
+    DuplicateHandleSlot(i32),
 }
 
 /// Verify the executor's restricted token: ONLY allowlisted privileges, low/untrusted integrity,
@@ -281,14 +282,22 @@ pub fn verify_image(spec: &ImageVerificationSpec, facts: &ImageFacts) -> Result<
     Ok(())
 }
 
-/// Verify the STARTUPINFOEX explicit handle list: exactly slots {0..=6}, each in its required role, and
-/// nothing beyond slot 6 (the Windows equivalent of the FD 3–6 survival + no-extra-FD rule).
+/// Verify the STARTUPINFOEX explicit handle list: exactly slots {0..=6}, each in its required role, each
+/// provided EXACTLY once, and nothing beyond slot 6 (the Windows equivalent of the FD 3–6 survival +
+/// no-extra-FD rule). A duplicate slot is rejected: even in an otherwise-valid role it would hand the
+/// executor an EXTRA inherited handle (e.g. a second write end of the output pipe, or an extra read handle
+/// to the store input), which violates the "EXACTLY the 3–6 data handles" contract and could smuggle a
+/// capability past the FD-count floor.
 pub fn verify_startupinfo_handle_list(
     handles: &[(i32, HandleRole)],
 ) -> Result<(), WindowsBrokerViolation> {
+    let mut seen: BTreeSet<i32> = BTreeSet::new();
     for (slot, _) in handles {
         if expected_handle_role(*slot).is_none() {
             return Err(WindowsBrokerViolation::UnexpectedHandleSlot(*slot));
+        }
+        if !seen.insert(*slot) {
+            return Err(WindowsBrokerViolation::DuplicateHandleSlot(*slot));
         }
     }
     for slot in 0..=6i32 {
@@ -402,6 +411,18 @@ mod tests {
         assert_eq!(verify_startupinfo_handle_list(&missing), Err(WindowsBrokerViolation::MissingHandleSlot(4)));
         let mut wrong = handles(); wrong[3] = (3, HandleRole::OutputPipe);
         assert_eq!(verify_startupinfo_handle_list(&wrong), Err(WindowsBrokerViolation::WrongHandleRole(3)));
+    }
+
+    #[test]
+    fn handle_list_rejects_a_duplicated_slot_even_in_a_valid_role() {
+        // A duplicate slot in an otherwise-valid role smuggles an EXTRA inherited handle past the FD-count
+        // floor (e.g. a second write end of the output pipe, or an extra store-input read handle). The
+        // contract is EXACTLY slots 0..=6, one each — a duplicate MUST fail closed, not pass because every
+        // slot 0..=6 is "present at least once".
+        let mut dup_out = handles(); dup_out.push((6, HandleRole::OutputPipe));
+        assert_eq!(verify_startupinfo_handle_list(&dup_out), Err(WindowsBrokerViolation::DuplicateHandleSlot(6)));
+        let mut dup_in = handles(); dup_in.push((3, HandleRole::StoreInput));
+        assert_eq!(verify_startupinfo_handle_list(&dup_in), Err(WindowsBrokerViolation::DuplicateHandleSlot(3)));
     }
 
     fn sids() -> ServiceSids {
