@@ -11,7 +11,7 @@ import type {
   ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
   DirListing, FileContent, Integration, KnowledgeNote, LibraryItem, MemoryEntry, Message, MessageRole, Metric,
   NewAutomation, NewEvent,
-  NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject, NewResearchItem, NewTask,
+  NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewProject, NewResearchItem, NewTask,
   Notification, Project, ResearchItem, Run,
   RunStep, SearchResult, SecuritySummary, Task,
 } from '../domain/entities';

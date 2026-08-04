@@ -257,8 +257,6 @@ def _real_callables(
         "signing boundary is proven by the engine-isolation CI job and --self-test-signed"
     )
 
-    return run_task, read_result
-
 
 # --------------------------------------------------------------------------- #
 # Entry

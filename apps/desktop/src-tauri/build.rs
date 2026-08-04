@@ -9,9 +9,12 @@ fn main() {
     // no `allow-*` grant is uninvokable from the window (deny-by-default).
     //
     // INVARIANT (enforced by tools/check_capabilities.py in CI): this list must be
-    // exactly the set of commands registered in `src/lib.rs` generate_handler!, and
-    // exactly the set classified in `command-policy.json`. Adding a
-    // command in one place without the others fails CI — no manual-count drift.
+    // exactly the set of commands registered in `src/lib.rs` generate_handler! MINUS the
+    // handful named in that checker's INTENTIONALLY_UNGATED allowlist (the governed-turn /
+    // governance-mirror / trust-selftest commands deliberately kept outside the window
+    // capability policy), and exactly the set classified in `command-policy.json`. Adding a
+    // command in one place without the others — or a NEW module-scoped command not added to
+    // the allowlist — fails CI, so nothing is ever silently ungated.
     const COMMANDS: &[&str] = &[
         // projects
         "list_projects",
