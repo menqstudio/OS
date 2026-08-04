@@ -1,6 +1,8 @@
 import React from 'react';
 import type { RouteId } from '../app/nav';
 import { Generic } from './Generic';
+import { useApp } from '../app/store';
+import { ErrorState } from '../components/ui';
 
 // Route-based code splitting: every backend-backed screen is lazy-loaded so the
 // initial webview payload carries only the shell + <Generic> fallback, not all 22
@@ -37,11 +39,51 @@ const screens: Partial<Record<RouteId, React.FC>> = {
   settings: lazy(() => import('./Settings'), 'Settings'),
 };
 
+/** Honest fallback when a route's chunk fails to load or its page throws on mount —
+ *  the §D route `error` state, instead of a blank webview. */
+function RouteMountError({ route, onRetry }: { route: RouteId; onRetry: () => void }) {
+  const { lang } = useApp();
+  const msg =
+    ({ en: `The "${route}" page failed to load.`, hy: `«${route}» էջը չբեռնվեց։`, ru: `Страница «${route}» не загрузилась.` } as const)[lang] ??
+    `The "${route}" page failed to load.`;
+  const retry = ({ en: 'Retry', hy: 'Կրկնել', ru: 'Повторить' } as const)[lang] ?? 'Retry';
+  return (
+    <div className="screen-error" role="alert">
+      <ErrorState message={msg} onRetry={onRetry} retryLabel={retry} />
+    </div>
+  );
+}
+
+interface BoundaryProps {
+  route: RouteId;
+  children: React.ReactNode;
+}
+/** Route-level error boundary: catches a lazy-chunk load failure or a page mount/render
+ *  throw so one broken page can't blank the whole app. Navigating to a different route
+ *  clears a prior error automatically; the fallback also offers a Retry. */
+class RouteErrorBoundary extends React.Component<BoundaryProps, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidUpdate(prev: BoundaryProps) {
+    if (prev.route !== this.props.route && this.state.failed) this.setState({ failed: false });
+  }
+  render() {
+    if (this.state.failed) {
+      return <RouteMountError route={this.props.route} onRetry={() => this.setState({ failed: false })} />;
+    }
+    return this.props.children;
+  }
+}
+
 export function Screen({ route }: { route: RouteId }) {
   const C = screens[route];
   return (
-    <React.Suspense fallback={<div className="screen-loading" aria-busy="true" />}>
-      {C ? <C /> : <Generic route={route} />}
-    </React.Suspense>
+    <RouteErrorBoundary route={route}>
+      <React.Suspense fallback={<div className="screen-loading" aria-busy="true" />}>
+        {C ? <C /> : <Generic route={route} />}
+      </React.Suspense>
+    </RouteErrorBoundary>
   );
 }

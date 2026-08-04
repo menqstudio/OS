@@ -1,0 +1,46 @@
+name: design-gates
+
+# Design-system integrity gates (Phase 4 DoD): fail the PR if the typed design tokens
+# (theme/tokens.ts) drift from the CSS custom properties (theme/aios.css), or if any
+# committed token text-pair falls below WCAG AA contrast in either theme. Both checkers
+# are stdlib-only and need no build. This wires the two previously-unenforced checkers
+# (tools/check_token_parity.py, tools/check_contrast.py) into CI so "drift check green"
+# and the contrast gate are actually gated, not just available.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  design-gates:
+    name: Cockpit · design tokens (drift + contrast)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      # Gate self-tests first — prove the checkers themselves are sound before we trust
+      # their verdict on the real tokens.
+      - name: Checker self-tests
+        working-directory: tools
+        run: python -m unittest test_check_token_parity test_check_contrast
+
+      # Fail-closed: any token that disagrees between tokens.ts and aios.css in either
+      # theme fails the job.
+      - name: Token parity (tokens.ts <-> aios.css)
+        run: python tools/check_token_parity.py
+
+      # Fail-closed: any committed text-pair below WCAG AA in either theme fails the job.
+      - name: Contrast (WCAG AA, both themes)
+        run: python tools/check_contrast.py
