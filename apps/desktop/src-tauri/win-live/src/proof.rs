@@ -85,8 +85,17 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 }
 
 /// Run one full governed turn in-process over a fresh content-addressed store at `store_dir`, using `now_ms`
-/// as the single wall-clock for every core (the freshness gates are wide-enough that one instant is valid).
+/// as the single wall-clock for every core, with a fixed demonstration output. Self-test entry point.
 pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, String> {
+    in_process_turn_output(store_dir, now_ms, b"BROPS windows governed output v1")
+}
+
+/// Same in-process governed chain, but the executor emits `output` — the EXACT bytes to be signed and bound.
+/// This is the seam a live turn uses: the desktop obtains the model's reply (Claude), then runs the chain with
+/// that reply as the output, so the signed receipt binds the REAL answer. Custody here is still the compiled-in
+/// DEMONSTRATION anchor (see `tcb::DEMO_*`) — the caller MUST surface it as demonstration custody, never as
+/// production, until an operator-provisioned offline-rooted manifest drives the chain (WIRING_LIVE_TRUST.md).
+pub fn in_process_turn_output(store_dir: &Path, now_ms: i64, output: &[u8]) -> Result<ProofOutcome, String> {
     std::fs::create_dir_all(store_dir).map_err(|e| format!("store dir: {e}"))?;
 
     // ---- keys (four ed25519 keypairs) ----
@@ -206,8 +215,15 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
             Err(())
         }
     };
-    let produce =
-        |_plan: &ExecutionPlan| -> Result<Vec<u8>, ()> { Ok(b"BROPS windows governed output v1".to_vec()) };
+    // The executor re-emits the caller-provided output (a live turn passes the model's reply here); the
+    // signer signs exactly these bytes and verify_and_accept binds them. A live turn is fail-closed: an
+    // empty output can never be produced.
+    let produce = |_plan: &ExecutionPlan| -> Result<Vec<u8>, ()> {
+        if output.is_empty() {
+            return Err(());
+        }
+        Ok(output.to_vec())
+    };
     let params = ExecutionParams {
         store_dir: store_dir.to_path_buf(),
         receipt_id: "brops-live-receipt-1".to_string(),
@@ -311,5 +327,27 @@ mod tests {
             "production trust must resolve under the root-signed manifest: {}",
             outcome.trust_str
         );
+    }
+
+    #[test]
+    fn live_output_is_signed_and_bound_by_the_chain() {
+        // The live seam: an arbitrary reply (what a model produced) is what gets signed and bound —
+        // trusted_verified is over the REAL answer, not a fixed demo string. (Custody is still demo.)
+        let dir = std::env::temp_dir().join(format!("brops-winlive-live-{}", brops_core::id()));
+        let now = 1_900_000_000_000i64;
+        let reply = b"Bro: here is the verified live answer to your question.";
+        let outcome = in_process_turn_output(&dir, now, reply).expect("live governed turn must commit");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(outcome.bound, "the real reply bytes must be bound: {}", outcome.trust_str);
+        assert!(outcome.production_verified, "chain must verify the live output: {}", outcome.trust_str);
+    }
+
+    #[test]
+    fn empty_live_output_fails_closed() {
+        let dir = std::env::temp_dir().join(format!("brops-winlive-empty-{}", brops_core::id()));
+        let now = 1_900_000_000_000i64;
+        let r = in_process_turn_output(&dir, now, b"");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(r.is_err(), "an empty output must never produce a committed/verified turn");
     }
 }
