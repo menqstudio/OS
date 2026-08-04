@@ -45,3 +45,25 @@ fn demonstration_verified_badge_derives_from_the_recorded_row_only() {
     repo::chat::record_demonstration_verified(&c, &m.id).expect("idempotent record");
     assert_eq!(receipt_of(&c, &conv.id, &m.id).as_deref(), Some("demonstration_verified"));
 }
+
+#[test]
+fn post_message_demonstration_verified_posts_and_badges_atomically() {
+    let c = db::open_in_memory().expect("open migrated db");
+    let conv = repo::chat::create_conversation(&c, "direct", "Bro").expect("conversation");
+
+    // The combined writer returns the message already carrying the demonstration badge — the reply and
+    // its anchor are committed in one transaction, so the returned Message is immediately consistent.
+    let m = repo::chat::post_message_demonstration_verified(
+        &c,
+        NewMessage {
+            conversation_id: conv.id.clone(),
+            role: "agent".to_string(),
+            author: "Bro".to_string(),
+            body: "verified reply bytes".to_string(),
+        },
+    )
+    .expect("post + record atomically");
+    assert_eq!(m.receipt.as_deref(), Some("demonstration_verified"), "returned message is badged");
+    // And a fresh read derives the same badge (the anchor row was really committed).
+    assert_eq!(receipt_of(&c, &conv.id, &m.id).as_deref(), Some("demonstration_verified"));
+}

@@ -1956,6 +1956,12 @@ pub fn demonstration_verified_reply(
     }
     #[cfg(windows)]
     {
+        // Authority guard (mirrors stream_reply / reply_in_conversation): sanitize the requested
+        // author now so no control/colon characters can reach the transcript the chain hashes, and
+        // validate it against the live roster below — a compromised renderer must not be able to mint
+        // a green-badged reply attributed to an arbitrary identity.
+        let requested_author = sanitize_author(agent);
+
         // A real demonstration reply needs a model; without one, fail closed (never post a placeholder as a
         // chat reply).
         let cmd = std::env::var("BROPS_SELFTEST_MODEL_CMD")
@@ -2000,25 +2006,33 @@ pub fn demonstration_verified_reply(
         if !(outcome.bound && outcome.production_verified) {
             return Err(format!("demonstration chain did not verify: {}", outcome.trust_str));
         }
-        let reply = String::from_utf8_lossy(&captured.into_inner()).trim().to_string();
+        // Post the EXACT bytes the chain bound + verified as the message body — no trim, no lossy
+        // substitution — so the demonstration_verified badge covers text that is byte-identical to
+        // what the receipt cryptographically bound. The chain strict-UTF8-blocks non-UTF8 output, so a
+        // verified (bound) turn is always valid UTF-8; still fail closed rather than mangle.
+        let reply = String::from_utf8(captured.into_inner())
+            .map_err(|_| "demonstration output was not valid UTF-8".to_string())?;
         if reply.is_empty() {
             return Err("the model produced an empty reply".to_string());
         }
 
-        // Post + record, then re-read so the returned message carries receipt = "demonstration_verified".
-        let author = agent.unwrap_or_else(|| "Bro".to_string());
         let conn = locked(&state)?;
-        let msg = repo::chat::post_message(
+        // Roster authority guard: attribute the reply only to a real agent, else fall back to Bro.
+        let author = if repo::agents::list(&conn)
+            .map(|v| v.iter().any(|a| a.display_name == requested_author))
+            .unwrap_or(false)
+        {
+            requested_author
+        } else {
+            "Bro".to_string()
+        };
+        // Post + record the demonstration anchor atomically; the returned message already carries
+        // receipt = "demonstration_verified" via the projection.
+        repo::chat::post_message_demonstration_verified(
             &conn,
             NewMessage { conversation_id, role: "agent".to_string(), author, body: reply },
         )
-        .map_err(|e| e.to_string())?;
-        repo::chat::record_demonstration_verified(&conn, &msg.id).map_err(|e| e.to_string())?;
-        repo::chat::list_messages(&conn, &msg.conversation_id, None, None)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .find(|m| m.id == msg.id)
-            .ok_or_else(|| "posted demonstration message could not be read back".to_string())
+        .map_err(|e| e.to_string())
     }
 }
 

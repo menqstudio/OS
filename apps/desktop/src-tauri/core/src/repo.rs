@@ -1089,6 +1089,40 @@ pub mod chat {
         Ok(())
     }
 
+    /// Post an agent message AND record its DEMONSTRATION anchor in ONE transaction, returning the
+    /// message with its derived `demonstration_verified` badge. Doing both atomically means the reply
+    /// and its badge land together or not at all — a mid-way failure can never leave a verified reply
+    /// persisted as an ordinary un-badged message. Same honesty contract as
+    /// [`record_demonstration_verified`]: the caller invokes this ONLY after the in-process governed
+    /// chain returned trusted_verified for THESE exact body bytes.
+    pub fn post_message_demonstration_verified(conn: &Connection, input: NewMessage) -> CoreResult<Message> {
+        if !is_valid(&input.role, MESSAGE_ROLES) {
+            return Err(CoreError::Invalid { field: "role", value: input.role });
+        }
+        let now = now();
+        let id = id();
+        super::atomic(conn, |tx| {
+            get_conversation(tx, &input.conversation_id)?;
+            tx.execute(
+                "INSERT INTO messages(id, conversation_id, role, author, body, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![id, input.conversation_id, input.role, input.author, input.body, now],
+            )?;
+            tx.execute(
+                "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![now, input.conversation_id],
+            )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at) VALUES (?1, ?2)",
+                rusqlite::params![id, now],
+            )?;
+            super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
+            Ok(())
+        })?;
+        let sql = format!("SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m WHERE m.id = ?1");
+        conn.query_row(&sql, [id.clone()], map_message).map_err(not_found(&id))
+    }
+
     /// Delete a conversation and (via the FK cascade) all of its messages.
     /// Rejects an unknown conversation.
     pub fn delete_conversation(conn: &Connection, id: &str) -> CoreResult<()> {
