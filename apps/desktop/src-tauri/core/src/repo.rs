@@ -1044,6 +1044,23 @@ pub mod chat {
             .map_err(not_found(&id))
     }
 
+    /// Record that a message's reply was produced + verified IN-PROCESS under the DEMONSTRATION anchor, so
+    /// [`MESSAGE_RECEIPT_PROJECTION`] derives its badge to `demonstration_verified`. Idempotent
+    /// (`INSERT OR IGNORE`). This is NEVER production trust — the caller writes it ONLY after the in-process
+    /// governed chain returns trusted_verified for THIS exact message, and this demonstration table is separate
+    /// from the CHECK-constrained production trust records (`receipt_verification_attempts`).
+    pub fn record_demonstration_verified(conn: &Connection, message_id: &str) -> CoreResult<()> {
+        let now = now();
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at) VALUES (?1, ?2)",
+                rusqlite::params![message_id, now],
+            )?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     /// Delete a conversation and (via the FK cascade) all of its messages.
     /// Rejects an unknown conversation.
     pub fn delete_conversation(conn: &Connection, id: &str) -> CoreResult<()> {
