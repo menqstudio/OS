@@ -7,6 +7,13 @@
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository. Since the monorepo merge into `menqstudio/OS`, cockpit changes also flow through the OS-level security-remediation waves; the exact live state (branch/PR/blockers) is the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).
 
+## 2026-08-04 — comprehensive what's-left audit remediation (PR #53, CI green)
+
+- **State-doc drift fixed (P1-5):** the canonical docs (`NEXT_CHAT`/`PROJECT_STATE`/`TASKS`/`config/current_state.json`) recorded a six-commit-stale branch head; the Coordination CI gate validates `status_tokens` verbatim, not the head SHA, so the drift was invisible. Head pointer + `shipped_this_cycle.range` refreshed and the post-pointer commits folded into the CURRENT block. Coordination gate GREEN.
+- **Per-page smoke tests (P2-1):** the audit flagged ~19 feature pages with no dedicated test. Added focused smoke tests for the eight highest-risk / governance- and data-sensitive surfaces — **Approvals** (escalate never sends an engine command — the cardinal mirror-never-decide invariant; deny → real `reject_approval`), **Command** (real run ledger + step chain), **Files** (real `list_dir` mirror; no `read_file` until a file is opened), **Security** (honest "Integrity unverified", never a fabricated verified chain), **Notifications** (real store; Dismiss → real `mark_notification_read`), **Agents**, **Projects**, **Tasks**. Shared test infra now stubs `matchMedia` / `scrollIntoView` / `ResizeObserver` (all absent in jsdom). Full frontend suite: **19 files / 172 tests green**, `tsc --noEmit` clean.
+- **Doc hygiene (P2-4):** `apps/desktop/docs/ROADMAP.md` given a banner pointing to the canonical repo-root `MASTER_EXECUTION_ROADMAP.md`.
+- **Deferred, on purpose:** the audit's P1-2 (consolidate the four copy-pasted governed blocks in `commands.rs`) and P0-1 (Wave-3a governed-accept author) are trust-critical refactors whose payoff is gated on the live-wiring that needs the sidecar/custody infra — not landed unreviewed. The shipped app stays fail-closed; no trust/gate semantics changed.
+
 ## 2026-08-04 — group chat, skill library, hardening, and the live-verified seam (PR #53, CI green)
 
 - **Group chat, first-class** (schema **0017** `conversation_participants`, `SCHEMA_VERSION 17`): explicit room roster + a create-modal multi-select; the reply fan-out targets the roster, overridable by @mention; per-agent error isolation (one agent's failure no longer aborts the room); each transcript line keeps its speaker's name so a room isn't flattened to anonymous "assistant"; the system prompt names who's present.
