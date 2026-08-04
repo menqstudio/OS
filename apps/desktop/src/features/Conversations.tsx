@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useApp } from '../app/store';
+import type { RouteId } from '../app/nav';
 import {
   PageHeader, Rail, Button, Async, EmptyState, Modal, FormRow, Input, Select, Skeleton,
   ErrorState, ConfirmDialog, Badge,
@@ -8,7 +9,7 @@ import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Markdown } from '../components/markdown';
 import { Mark } from '../components/Ambient';
-import type { Conversation, Message } from '../domain/entities';
+import type { Conversation, Message, SearchResult } from '../domain/entities';
 import type { Tone } from '../domain/enums';
 import { STR } from './Conversations.strings';
 
@@ -43,6 +44,12 @@ function activeMention(text: string, caret: number): { start: number; query: str
  *  (the conversation-list column, reply-as control, honest error strips and the
  *  honest rate readout) get their tweaks here, all scoped under `.v-chat`. */
 const VIEW_CSS = `
+.v-chat .recall-link{display:flex;align-items:baseline;gap:0;width:100%;text-align:left;background:none;border:0;padding:0;margin:0;
+  color:inherit;font:inherit;cursor:pointer;min-width:0}
+.v-chat .recall-link:hover .rc-t{color:var(--ink);text-decoration:underline}
+.v-chat .recall-link:focus-visible{outline:2px solid rgb(var(--cyan-rgb)/.6);outline-offset:2px;border-radius:6px}
+.v-chat .recall-link .rc-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.v-chat .recall-link .rc-sub{color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .v-chat .chat-workspace{display:grid;grid-template-columns:minmax(198px,238px) minmax(0,1fr);gap:18px;align-items:start}
 .v-chat .chat-main{min-width:0}
 .v-chat .th-actions{display:flex;align-items:center;gap:10px;flex:0 0 auto}
@@ -110,13 +117,33 @@ function CopyButton({ text, label, doneLabel }: { text: string; label: string; d
 }
 
 function MessageThread({ conversation, onActivity }: { conversation: Conversation; onActivity: () => void }) {
-  const { t, lang } = useApp();
+  const { t, lang, openEntity } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
   const ai = useAsync(() => desktop.aiStatus(), []);
   const agents = useAsync(() => desktop.listAgents(), []);
   // The explicit room roster (0017). When set, it drives who answers a group message.
   const participants = useAsync(() => desktop.listConversationParticipants(conversation.id), [conversation.id]);
+
+  // Recall (Phase 5 · chat context): retrieve memory/knowledge/etc. relevant to the latest
+  // user turn and surface it in the context rail — a REAL search_all retrieval, not a message
+  // counter. Governance-free (reads local stores), so it works regardless of the fail-closed
+  // trust gate. Keyed off the persisted history so it refetches only when the query changes.
+  const recallQuery = useMemo(() => {
+    const msgs = s.data ?? [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role !== 'agent') return (msgs[i].body ?? '').trim().slice(0, 120);
+    }
+    return '';
+  }, [s.data]);
+  const recall = useAsync(
+    () => (recallQuery.length >= 3 ? desktop.searchAll(recallQuery) : Promise.resolve([] as SearchResult[])),
+    [recallQuery],
+  );
+  // Surface only cross-store recall — never the chat itself — top few.
+  const recalled = (recall.data ?? [])
+    .filter((r) => r.route !== 'chat' && r.route !== 'groupChat' && r.kind !== 'conversation' && r.kind !== 'message')
+    .slice(0, 4);
   const isGroup = conversation.kind === 'group';
   const agentList = agents.data ?? [];
   const agentNames = agentList.map((a) => a.displayName);
@@ -515,6 +542,27 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
               <li className="recall"><span className="rk" /><b className="mono">{agentList.length}</b>&nbsp;{L('agentsUnit')}</li>
               {ai.data && !ai.data.ready && <li className="recall"><span className="rk" />{ai.data.detail}</li>}
             </ul>
+            {recalled.length > 0 && (
+              <>
+                <span className="micro rc-lbl">{L('recalledLabel')}</span>
+                <ul className="recall-list" aria-label={L('recalledLabel')}>
+                  {recalled.map((r) => (
+                    <li className="recall" key={`${r.kind}-${r.id}`}>
+                      <button
+                        type="button"
+                        className="recall-link"
+                        title={r.subtitle ? `${r.title} — ${r.subtitle}` : r.title}
+                        onClick={() => openEntity(r.route as RouteId, r.kind, r.id)}
+                      >
+                        <span className="rk" />
+                        <b className="rc-t">{r.title}</b>
+                        {r.subtitle && <span className="rc-sub">&nbsp;·&nbsp;{r.subtitle}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
         </section>
 

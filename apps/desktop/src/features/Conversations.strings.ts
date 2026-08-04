@@ -90,6 +90,11 @@ export const STR = {
     hy: 'ՀԱՄԱՏԵՔՍՏ',
     ru: 'КОНТЕКСТ',
   },
+  recalledLabel: {
+    en: 'RECALLED',
+    hy: 'ՎԵՐՀԻՇՎԱԾ',
+    ru: 'ПРИПОМНЕНО',
+  },
   messagesUnit: {
     en: 'MESSAGES',
     hy: 'ՀԱՂՈՐԴԱԳՐՈՒԹՅՈՒՆ',
