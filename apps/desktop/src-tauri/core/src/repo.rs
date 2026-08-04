@@ -1730,31 +1730,41 @@ pub mod runs {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
         super::atomic(conn, |tx| {
+            let step = get_step(tx, id)?;
+            // A step with a live execution claim (execution_attempt_id set) is owned by an in-flight
+            // attempt — only complete_step_execution / fail_step_execution (both attempt-guarded) may
+            // move it. Reject a bare status change here so a renderer cannot side-step the T-011
+            // in-flight mutual-exclusion guards (which key off status IN ('active','pending')) by
+            // flipping a claimed step to 'skipped'/'failed' mid-execution — which would let a SECOND
+            // step in the run be claimed concurrently and could drop the real verified result.
+            if step.execution_attempt_id.is_some() {
+                return Err(CoreError::Invalid {
+                    field: "status",
+                    value: "step is executing (claimed) — its status is owned by the execution attempt".to_string(),
+                });
+            }
             // Enforce the approval gate here too, not just in advance()/stream_run_step:
             // a gated step can never be marked `done` without a matching approval,
             // whichever command sets it. Gate read and UPDATE share one transaction.
-            if status == "done" {
-                let step = get_step(tx, id)?;
-                if step.requires_approval {
-                    if !super::approvals::approved_for(
-                        tx,
-                        id,
-                        super::approvals::RUN_STEP_ENTITY_TYPE,
-                        super::approvals::RUN_STEP_ACTION_TYPE,
-                    )? {
-                        return Err(CoreError::Invalid {
-                            field: "status",
-                            value: "step requires approval before it can be completed".to_string(),
-                        });
-                    }
-                    // one grant unlocks one completion (M-2)
-                    super::approvals::consume_for(
-                        tx,
-                        id,
-                        super::approvals::RUN_STEP_ENTITY_TYPE,
-                        super::approvals::RUN_STEP_ACTION_TYPE,
-                    )?;
+            if status == "done" && step.requires_approval {
+                if !super::approvals::approved_for(
+                    tx,
+                    id,
+                    super::approvals::RUN_STEP_ENTITY_TYPE,
+                    super::approvals::RUN_STEP_ACTION_TYPE,
+                )? {
+                    return Err(CoreError::Invalid {
+                        field: "status",
+                        value: "step requires approval before it can be completed".to_string(),
+                    });
                 }
+                // one grant unlocks one completion (M-2)
+                super::approvals::consume_for(
+                    tx,
+                    id,
+                    super::approvals::RUN_STEP_ENTITY_TYPE,
+                    super::approvals::RUN_STEP_ACTION_TYPE,
+                )?;
             }
             let changed = tx.execute(
                 "UPDATE run_steps SET status = ?1, updated_at = ?2 WHERE id = ?3",

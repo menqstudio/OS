@@ -405,6 +405,24 @@ mod tests {
         assert!(repo::runs::set_step_status(&c, &step.id, "done").is_ok());
     }
 
+    #[test]
+    fn set_step_status_refuses_a_step_with_a_live_execution_claim() {
+        let c = conn();
+        let r = repo::runs::create(&c, "run", "").unwrap();
+        let s = repo::runs::add_step(&c, &r.id, "step", "").unwrap();
+        // Claim the step for execution — this writes execution_attempt_id (the claim token).
+        let attempt = repo::runs::claim_step_for_execution(&c, &s.id, "sess-1").unwrap();
+        // A bare renderer status change must now be refused: the in-flight attempt owns the row,
+        // so it cannot be side-stepped to 'skipped'/'failed' while a turn is running (T-011).
+        assert!(matches!(
+            repo::runs::set_step_status(&c, &s.id, "skipped"),
+            Err(CoreError::Invalid { field: "status", .. })
+        ));
+        // The only legitimate mover of a claimed step is the attempt-guarded completion.
+        let done = repo::runs::complete_step_execution(&c, &s.id, &attempt, "result").unwrap();
+        assert_eq!(done.status, "done");
+    }
+
     // T-011: a pending approval carries its durable origin_principal, a one-time
     // nonce, and a request digest bound to the current entity state. Returns
     // (step_id, approval_id, nonce, request_digest).
