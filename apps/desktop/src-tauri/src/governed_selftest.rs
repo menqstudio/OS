@@ -23,8 +23,16 @@ pub struct TrustSelftest {
     pub available: bool,
     /// The committed message's trust state: `"trusted_verified"` on a bound run, else empty.
     pub trust_state: String,
-    /// The resolver classified the receipt against a root-verified production manifest.
+    /// The resolved receipt key's `trust_class` is Production. AUDIT NOTE (dim-1 P2): this alone does NOT
+    /// mean a real production ROOT signed the manifest — the in-process self-test ALWAYS runs under the
+    /// compiled-in DEMONSTRATION anchor, so this is Production-CLASS crypto at demonstration custody. A
+    /// consumer MUST NOT render this as real production trust while `demonstration_custody` is true.
     pub production_verified: bool,
+    /// True when the root of trust is the compiled-in DEMONSTRATION anchor (a public constant), NOT a real
+    /// offline-root-verified production manifest. The in-process self-test always uses the demonstration
+    /// anchor, so this is ALWAYS true for this command — it is the explicit, un-missable flag that pairs with
+    /// `production_verified` so the boolean can never be read as production trust on its own.
+    pub demonstration_custody: bool,
     /// The committed body read back as `trusted_verified`.
     pub bound: bool,
     /// The kit's own trust string (e.g. `trusted_verified(production key=… epoch=…)`).
@@ -58,6 +66,7 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             available: true,
             trust_state: if outcome.bound { "trusted_verified".to_string() } else { String::new() },
             production_verified: outcome.production_verified,
+            demonstration_custody: true, // the in-process self-test always runs under the TCB demonstration anchor
             bound: outcome.bound,
             detail: outcome.trust_str,
             custody_note: CUSTODY_NOTE.to_string(),
@@ -70,6 +79,7 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             available: false,
             trust_state: String::new(),
             production_verified: false,
+            demonstration_custody: true, // this build never proves production trust
             bound: false,
             detail: "The in-process governed trust self-test is compiled only for the Windows build.".to_string(),
             custody_note: CUSTODY_NOTE.to_string(),

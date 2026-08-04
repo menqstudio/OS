@@ -54,15 +54,21 @@ async function governanceRead(
 }
 
 /**
- * Result of the governed trust-chain self-test. `bound && production_verified`
- * means a REAL `trusted_verified` receipt was produced by the in-process chain
- * (real ed25519 crypto). `custody_note` states the honest posture — the root is a
- * demonstration anchor, not an offline-HSM key — and `available` is false off Windows.
+ * Result of the governed trust-chain self-test. `bound && production_verified` means a
+ * Production-CLASS `trusted_verified` receipt was produced by the in-process chain (real
+ * ed25519 crypto) — but `demonstration_custody` is ALWAYS true here (the root is the
+ * compiled-in demonstration anchor, not an offline-root-verified production manifest), so
+ * this must NEVER be shown as real production trust. `custody_note` states the honest
+ * posture; `available` is false off Windows.
  */
 export interface TrustSelftest {
   available: boolean;
   trust_state: string;
   production_verified: boolean;
+  /** True when the trust root is the demonstration anchor, not a real production root.
+   *  Always true for this self-test — pair it with `production_verified` so the boolean
+   *  can never be read as production trust on its own. */
+  demonstration_custody: boolean;
   bound: boolean;
   detail: string;
   custody_note: string;

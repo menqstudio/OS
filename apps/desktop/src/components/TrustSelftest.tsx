@@ -83,6 +83,9 @@ export function TrustSelftestPanel() {
             </div>
             <p className="ts-verdict">
               <span className="pill info">{tr('SELF-TEST PASSED', 'ԻՆՔՆԱՍՏՈՒԳՈՒՄ՝ ԱՆՑԱԾ', 'САМОПРОВЕРКА ПРОЙДЕНА')}</span>
+              {result.demonstration_custody && (
+                <span className="pill warn">{tr('DEMONSTRATION CUSTODY', 'ՑՈՒՑԱԴՐԱԿԱՆ ՊԱՀՊԱՆՈՒԹՅՈՒՆ', 'ДЕМОНСТРАЦИОННОЕ ХРАНЕНИЕ')}</span>
+              )}
               <span className="mono ts-detail">{result.detail}</span>
             </p>
             <p className="ts-caveat" role="note">
