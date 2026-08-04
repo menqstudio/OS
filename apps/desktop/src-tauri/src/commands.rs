@@ -892,7 +892,11 @@ const GOVERNED_PLACEHOLDER_HASH: &str =
 /// posts the accepted message itself, so the caller never double-posts). The caller delivers the
 /// returned `ReceiptOutcome` its own way — a stream event or a returned `Message`. Keeping this in one
 /// place means the verify wiring can only be changed for both callers at once (was copy-pasted; audit).
-async fn run_governed_conversation_turn(
+///
+/// `pub` (crate-internal) so the AI-surface inventory gate (tools/check_ai_surfaces.py) resolves the
+/// governed_turn call through this ONE helper-hop and correctly attributes it to the two calling
+/// commands, rather than mis-binding it to a neighbouring fn.
+pub async fn run_governed_conversation_turn(
     state: &State<'_, AppState>,
     conversation_id: &str,
     system: &str,
