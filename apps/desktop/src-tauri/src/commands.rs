@@ -328,6 +328,17 @@ pub fn reject_approval(
     Ok(rejected)
 }
 
+/// Escalate to higher review — a **separate**, non-verdict sibling of `reject_approval`.
+/// It neither approves nor rejects: it routes a pending approval to the A3 review tier and
+/// notifies the owner, authorizing no execution. Pending-only + atomic + audited in the repo
+/// layer, so a compromised renderer cannot turn it into an approve, and it grants no privilege
+/// (so, like reject, it needs no native confirmation). Re-escalating a non-pending row errors.
+#[tauri::command]
+pub fn escalate_approval(state: State<AppState>, id: String) -> Result<Approval, String> {
+    let conn = locked(&state)?;
+    repo::approvals::escalate(&conn, &id).map_err(|e| e.to_string())
+}
+
 /// At most ONE native confirmation dialog may be open at a time (design §9.1): a
 /// concurrent `confirm_approval` fails closed, so a compromised renderer cannot stack
 /// dialogs to cause click-confusion or a prompt-spam DoS. Released on drop (RAII).

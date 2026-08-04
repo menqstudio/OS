@@ -18,6 +18,7 @@ export const STR = {
   // ── verdict announcements (interpolated with the item label) ───────────────
   grantedPrefix:            { en: 'Granted: ',  hy: 'Հաստատվեց՝ ', ru: 'Одобрено: ' },
   deniedPrefix:             { en: 'Denied: ',   hy: 'Մերժվեց՝ ',   ru: 'Отклонено: ' },
+  escalatedPrefix:          { en: 'Escalated to A3 review: ', hy: 'Փոխանցվեց A3 վերանայման՝ ', ru: 'Передано на рассмотрение A3: ' },
 
   // ── page header ────────────────────────────────────────────────────────────
   eyebrowHitl: {
@@ -31,9 +32,9 @@ export const STR = {
   engineUnreachable:     { en: 'Engine unreachable.', hy: 'Շարժիչն անհասանելի է։', ru: 'Движок недоступен.' },
   ownerNotAuthenticated: { en: 'Owner not authenticated', hy: 'Տերը նույնականացված չէ', ru: 'Владелец не аутентифицирован' },
   gateLockedBody: {
-    en: 'The approval gate is locked until the owner authenticates with the engine. Grant and deny stay disabled — the desktop never decides on its own.',
-    hy: 'Հաստատման դարպասը կողպված է, մինչև տերը նույնականացվի շարժիչի հետ։ Հաստատել և մերժել գործողություններն անջատված են — desktop-ը երբեք ինքնուրույն որոշում չի կայացնում։',
-    ru: 'Шлюз одобрения заблокирован, пока владелец не аутентифицируется в движке. Одобрение и отклонение остаются отключёнными — десктоп никогда не принимает решение сам.',
+    en: 'The approval gate is locked until the owner authenticates with the engine. Grant, deny and escalate stay disabled — the desktop never decides on its own.',
+    hy: 'Հաստատման դարպասը կողպված է, մինչև տերը նույնականացվի շարժիչի հետ։ Հաստատել, մերժել և բարձրացնել գործողություններն անջատված են — desktop-ը երբեք ինքնուրույն որոշում չի կայացնում։',
+    ru: 'Шлюз одобрения заблокирован, пока владелец не аутентифицируется в движке. Одобрение, отклонение и эскалация остаются отключёнными — десктоп никогда не принимает решение сам.',
   },
   gateClear: {
     en: 'Gate clear — no pending approvals',
@@ -69,6 +70,8 @@ export const STR = {
   levelSuffix:   { en: ' level', hy: ' մակարդակ', ru: ' уровень' },
   denyAria:      { en: 'Deny — reject this action', hy: 'Մերժել — մերժել գործողությունը', ru: 'Отклонить — отклонить это действие' },
   deny:          { en: 'Deny', hy: 'Մերժել', ru: 'Отклонить' },
+  escalateForReview: { en: 'Escalate for higher review', hy: 'Բարձրացնել՝ ավելի բարձր վերանայման', ru: 'Передать на вышестоящее рассмотрение' },
+  escalateA3:    { en: 'Escalate A3', hy: 'Փոխանցել A3', ru: 'Передать A3' },
   pressHoldAria: { en: 'Press and hold to grant', hy: 'Սեղմիր և պահիր՝ հաստատելու', ru: 'Нажмите и удерживайте для одобрения' },
   pressHoldGrant:{ en: 'Press & hold to grant', hy: 'Սեղմիր և պահիր՝ հաստատելու', ru: 'Нажмите и удерживайте' },
 
@@ -76,6 +79,7 @@ export const STR = {
   select:           { en: 'select', hy: 'ընտրել', ru: 'выбрать' },
   holdGrantConfirm: { en: 'hold Grant to confirm', hy: 'պահիր՝ հաստատելու', ru: 'удерживайте «Одобрить» для подтверждения' },
   denyLower:        { en: 'deny', hy: 'մերժել', ru: 'отклонить' },
+  escalateLower:    { en: 'escalate', hy: 'բարձրացնել', ru: 'передать' },
 
   // ── engine queue mirror notice ─────────────────────────────────────────────
   queueUnreachable: {
@@ -109,4 +113,12 @@ export const STR = {
     hy: '-ի վրա։ Սա fail-safe մերժման ուղին է։',
     ru: '? Это отказоустойчивый путь отклонения.',
   },
+  escalateDialogA: { en: 'Escalate “', hy: 'Բարձրացնե՞լ «', ru: 'Передать «' },
+  escalateDialogB: { en: '” on ', hy: '»՝ ', ru: '» на ' },
+  escalateDialogC: {
+    en: '? It routes to A3 review and notifies the owner — it neither grants nor denies.',
+    hy: '-ի վրա։ Կուղղորդվի A3 վերանայման և կծանուցի տիրոջը — ոչ հաստատում է, ոչ մերժում։',
+    ru: '? Направляется на рассмотрение A3 и уведомляет владельца — не одобряет и не отклоняет.',
+  },
+  escalate: { en: 'Escalate', hy: 'Բարձրացնել', ru: 'Передать' },
 } as const;

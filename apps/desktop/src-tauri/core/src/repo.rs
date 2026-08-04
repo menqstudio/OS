@@ -799,6 +799,34 @@ pub mod approvals {
         })?;
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
     }
+
+    /// Escalate a pending approval to higher review (tier A3). This is deliberately NOT a
+    /// verdict: the approval is neither granted nor denied and authorizes no execution — it is
+    /// routed to the highest review tier and the owner is notified. Because it decides nothing,
+    /// it needs no engine adjudication, but it is still pending-only + atomic + audited, and the
+    /// owner-facing notification makes the escalation visible. Re-escalating a non-pending row is
+    /// a no-op error (NotFound), so an already-decided or already-escalated approval cannot move.
+    pub fn escalate(conn: &Connection, id: &str) -> CoreResult<Approval> {
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE approvals SET status = 'escalated', level = 'A3' WHERE id = ?1 AND status = 'pending'",
+                rusqlite::params![id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(format!("pending approval {id}")));
+            }
+            let target: String =
+                tx.query_row("SELECT target FROM approvals WHERE id = ?1", [id], |r| r.get(0))?;
+            tx.execute(
+                "INSERT INTO notifications(id, type, severity, title, body, read_at, created_at)
+                 VALUES (?1, 'approval_required', 'warning', 'Escalated for higher review', ?2, NULL, ?3)",
+                rusqlite::params![crate::id(), format!("{target} was escalated to A3 review."), now()],
+            )?;
+            super::audit::record(tx, "approval.escalated", "user", "gev", "approval", id)?;
+            Ok(())
+        })?;
+        conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
+    }
 }
 
 pub mod notifications {

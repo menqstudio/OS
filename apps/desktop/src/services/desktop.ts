@@ -119,6 +119,10 @@ export const desktop = {
   // "confirmed" flag. Generic decide_approval remains capability-denied.
   confirmApproval: (id: string) =>
     invoke<Approval>('confirm_approval', { id }),
+  // A non-verdict sibling of reject: routes a pending approval to higher review (A3) and
+  // notifies the owner. It authorizes nothing, so it needs no native confirmation.
+  escalateApproval: (id: string) =>
+    invoke<Approval>('escalate_approval', { id }),
 
   // notifications
   listNotifications: () => invoke<Notification[]>('list_notifications'),

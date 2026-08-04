@@ -228,6 +228,10 @@
       "tier": "A",
       "grant": "allow"
     },
+    "escalate_approval": {
+      "tier": "A",
+      "grant": "allow"
+    },
     "remove_task_dependency": {
       "tier": "L1",
       "grant": "allow"

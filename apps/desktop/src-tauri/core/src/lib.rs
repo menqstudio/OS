@@ -360,6 +360,29 @@ mod tests {
     }
 
     #[test]
+    fn escalate_routes_to_a3_notifies_and_decides_nothing() {
+        let c = conn();
+        let ap = repo::approvals::create(&c, "Send external email", "vendor@example.com", "A2", "medium", "gev", None, None, "webview:test", "sess-test", &crate::id()).unwrap();
+        assert_eq!(ap.status, "pending");
+
+        let before = repo::notifications::list(&c, None, None).unwrap().len();
+        let esc = repo::approvals::escalate(&c, &ap.id).unwrap();
+
+        // Real state transition: routed to the highest review tier, still un-decided (no verdict).
+        assert_eq!(esc.status, "escalated");
+        assert_eq!(esc.level, "A3");
+        assert!(esc.decided_at.is_none(), "escalation is not a verdict — it must not set decided_at");
+
+        // Owner is notified so the escalation is visible.
+        let after = repo::notifications::list(&c, None, None).unwrap();
+        assert_eq!(after.len(), before + 1);
+        assert!(after.iter().any(|n| n.title == "Escalated for higher review"));
+
+        // Pending-only: re-escalating an already-escalated (non-pending) row errors, so it cannot move again.
+        assert!(matches!(repo::approvals::escalate(&c, &ap.id), Err(CoreError::NotFound(_))));
+    }
+
+    #[test]
     fn set_step_status_cannot_bypass_the_approval_gate() {
         let c = conn();
         let r = repo::runs::create(&c, "gated", "").unwrap();

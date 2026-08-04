@@ -122,6 +122,7 @@ pub fn run() {
             commands::list_approvals,
             commands::decide_approval,
             commands::reject_approval,
+            commands::escalate_approval,
             commands::confirm_approval,
             commands::list_notifications,
             commands::mark_notification_read,
