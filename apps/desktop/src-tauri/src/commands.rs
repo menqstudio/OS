@@ -15,6 +15,14 @@ use tauri::State;
 type Conn<'a> = std::sync::MutexGuard<'a, rusqlite::Connection>;
 
 fn locked<'a>(state: &'a State<AppState>) -> Result<Conn<'a>, String> {
+    // DELIBERATE fail-closed asymmetry: unlike the benign sibling locks (pending_answers,
+    // reject/confirm rate-limiters, ai cancel flags) which recover from poisoning with
+    // `unwrap_or_else(|p| p.into_inner())`, the single DB-connection mutex does NOT. A poison here
+    // means a command handler panicked WHILE holding the guard — potentially mid-transaction on
+    // trust-critical data — so the connection's state is unknown. Surfacing the PoisonError (every
+    // subsequent DB command fails) is the conservative choice: never keep serving from a connection
+    // whose last operation aborted unexpectedly. Recovering it would trade a fail-closed stop for a
+    // possibly-inconsistent app, which this codebase must not do.
     state.db.lock().map_err(|e| e.to_string())
 }
 

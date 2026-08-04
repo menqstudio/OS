@@ -188,16 +188,30 @@ mod win {
                 return 3;
             }
 
-            // (2) Lower integrity to Low (best-effort; report but don't hard-fail the primitive proof).
+            // (2) Lower integrity to Low. This is a REAL containment step, not decoration: if the
+            // drop fails the token is still at the base (Medium/High) integrity, so we must fail
+            // CLOSED here rather than attest a Low-integrity token that was never actually lowered.
             if let Err(e) = set_low_integrity(restricted) {
-                eprintln!("restricted_launch: set_low_integrity (non-fatal): {e:?}");
+                eprintln!("restricted_launch: set_low_integrity failed: {e:?}");
+                let _ = CloseHandle(restricted);
+                return 4;
             }
 
-            // (3) Read observed facts + gate with the pure predicate.
-            let privileges = token_privilege_names(restricted).unwrap_or_default();
+            // (3) Read observed facts + gate with the pure predicate. A privilege-enumeration FAILURE
+            // must fail closed — an unreadable privilege set is NOT a clean one, and defaulting to
+            // empty would silently pass the allowlist that exists to reject escalation privileges.
+            let privileges = match token_privilege_names(restricted) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("restricted_launch: token_privilege_names failed: {e:?}");
+                    let _ = CloseHandle(restricted);
+                    return 5;
+                }
+            };
             // windows-rs wraps the BOOL return as a Result (Ok == the token IS restricted).
             let is_restricted = IsTokenRestricted(restricted).is_ok();
-            // We set Low above; report Low if the set succeeded (the predicate only accepts Low/Untrusted).
+            // integrity is now guaranteed Low: set_low_integrity above hard-failed otherwise, so this
+            // is an OBSERVED fact (the drop succeeded), not an assumed one.
             let observed = ObservedToken {
                 privileges: privileges.clone(),
                 integrity: IntegrityLevel::Low,

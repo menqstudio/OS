@@ -410,6 +410,15 @@ impl Supervisor {
                 _ => return refuse("accept-open", "malformed"),
             }
         }
+        // Type-check the three identity fields too, so the get_str(...).unwrap() in the
+        // request_sha256 recompute below can never panic on a non-string (e.g. `"workspace_id": 1`).
+        // The core re-validates its own inputs and fails CLOSED rather than trusting that the upstream
+        // signer only ever emits string identities.
+        for k in ["workspace_id", "install_id", "request_nonce"] {
+            if get_str(payload, k).is_none() {
+                return refuse("accept-open", "malformed");
+            }
+        }
         let issued_at = match get_i64(payload, "challenge_issued_at_ms") {
             Some(n) => n,
             None => return refuse("accept-open", "malformed"),
