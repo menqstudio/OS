@@ -423,6 +423,16 @@ mod tests {
         assert_eq!(done.status, "done");
     }
 
+    #[test]
+    fn fail_step_and_run_marks_both_failed_in_one_transaction() {
+        let c = conn();
+        let r = repo::runs::create(&c, "run", "").unwrap();
+        let s = repo::runs::add_step(&c, &r.id, "step", "").unwrap();
+        repo::runs::fail_step_and_run(&c, &s.id, &r.id).unwrap();
+        assert_eq!(repo::runs::get_step(&c, &s.id).unwrap().status, "failed");
+        assert_eq!(repo::runs::get(&c, &r.id).unwrap().status, "failed");
+    }
+
     // T-011: a pending approval carries its durable origin_principal, a one-time
     // nonce, and a request digest bound to the current entity state. Returns
     // (step_id, approval_id, nonce, request_digest).

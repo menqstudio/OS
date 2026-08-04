@@ -907,6 +907,12 @@ pub fn open_window(app: tauri::AppHandle, route: Option<String>) -> Result<(), S
     let _ = route; // documented above: route is restored from shared localStorage, not the URL
     // Cap concurrent secondary windows so a runaway renderer can't exhaust resources.
     const MAX_SECONDARY_WINDOWS: usize = 8;
+    // Serialize the count → check → build critical section: Tauri dispatches commands concurrently,
+    // so without this several open_window calls could each observe the same stale count, all pass the
+    // cap, and all build (exceeding it). Window creation is rare and user-initiated, so a short mutex
+    // is cheaper and clearer than an atomic slot reservation with rollback.
+    static OPEN_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _gate = OPEN_GATE.lock().unwrap_or_else(|p| p.into_inner());
     let open = app
         .webview_windows()
         .keys()
@@ -1253,8 +1259,12 @@ pub async fn stream_run_step(
                 )
                 .map_err(|e| e.to_string())?
                 {
-                    let _ = repo::runs::set_step_status(&conn, &s.id, "failed");
-                    let _ = repo::runs::set_status(&conn, &run_id, "failed");
+                    // Fail the step and its run atomically; surface a real error rather than
+                    // swallowing it and reporting a rejection that did not persist.
+                    if let Err(e) = repo::runs::fail_step_and_run(&conn, &s.id, &run_id) {
+                        let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
+                        return Ok(());
+                    }
                     Gate::Rejected
                 } else if let Some(pending) =
                     repo::approvals::pending_for(&conn, &s.id).map_err(|e| e.to_string())?

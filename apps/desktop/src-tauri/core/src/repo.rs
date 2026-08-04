@@ -1778,6 +1778,26 @@ pub mod runs {
         get_step(conn, id)
     }
 
+    /// Fail a step AND its run together in ONE transaction. Used when a step's approval was
+    /// rejected: previously the step and run were failed by two separate committed writes with both
+    /// Results discarded, so a crash (or an error on the second) could leave the step 'failed' while
+    /// the run stayed non-terminal. Direct terminal writes — this is an internal outcome, not a
+    /// renderer-driven transition, so it does not go through set_status/set_step_status.
+    pub fn fail_step_and_run(conn: &Connection, step_id: &str, run_id: &str) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "UPDATE run_steps SET status = 'failed', updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![now(), step_id],
+            )?;
+            tx.execute(
+                "UPDATE runs SET status = 'failed', updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![now(), run_id],
+            )?;
+            super::audit::record(tx, "run_step.rejected", "system", "system", "run_step", step_id)?;
+            Ok(())
+        })
+    }
+
     /// Advance a run's execution by one step: mark the active step done and
     /// activate the next pending one. When no pending steps remain the run
     /// terminates: `failed` if any step failed, `succeeded` only when the work
