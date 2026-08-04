@@ -81,6 +81,11 @@ export const ru: Record<DictKey, string> = {
   'chat.saveToChat': 'Сохранить в чат',
   'chat.receiptVerified': 'Проверено',
   'chat.receiptDev': 'Dev / не доверенный',
+  'chat.receiptDemo': 'Проверено · демо',
+  'chat.demoVerify': 'Демо-проверка',
+  'chat.demoVerifying': 'Проверка…',
+  'chat.demoVerifyTitle': 'Создать один ответ внутри управляемой цепочки и проверить его (демо-хранение — не production).',
+  'chat.demoVerifyFailed': 'Демо-проверка не удалась',
   'chat.governedBlocked': 'Управляемый ответ заблокирован (не проверен)',
 
   'projects.subtitle': 'Работа, ориентированная на цель',

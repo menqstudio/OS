@@ -19,8 +19,10 @@ import { STR } from './Conversations.strings';
  *  produces no message, so it never reaches here. Pure — unit-tested. */
 export function receiptBadge(
   receipt: Message['receipt'],
-): { tone: Tone; key: 'chat.receiptVerified' | 'chat.receiptDev' } | null {
+): { tone: Tone; key: 'chat.receiptVerified' | 'chat.receiptDev' | 'chat.receiptDemo' } | null {
   if (receipt === 'trusted_verified') return { tone: 'success', key: 'chat.receiptVerified' };
+  // Real crypto verification, but DEMONSTRATION custody — a distinct badge, never the production green.
+  if (receipt === 'demonstration_verified') return { tone: 'info', key: 'chat.receiptDemo' };
   if (receipt === 'development_untrusted') return { tone: 'warning', key: 'chat.receiptDev' };
   return null;
 }
@@ -155,6 +157,10 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const [selectedAgent, setSelectedAgent] = useState('Bro');
   const [streamingAuthor, setStreamingAuthor] = useState('Bro');
   const [draft, setDraft] = useState('');
+  // Demonstration-verified reply (opt-in): runs the reply through the in-process governed chain and
+  // surfaces it with a demonstration-custody badge. Fail-closed (honest error) when not configured.
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoErr, setDemoErr] = useState<string | null>(null);
   // Messages posted during this mounted session, appended optimistically on top
   // of the loaded history so the reply appears with no reload flash. Reset when
   // the component remounts per conversation (keyed on conversation.id).
@@ -344,6 +350,21 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     void desktop.cancelReply(conversation.id).catch(() => {});
   };
 
+  // Run one DEMONSTRATION-verified reply: the reply is produced inside the in-process governed chain and
+  // verified; on success it appears with the demonstration-custody badge. Honest fail-closed error otherwise.
+  const runDemoVerify = async () => {
+    setDemoErr(null);
+    setDemoBusy(true);
+    try {
+      await desktop.demonstrationVerifiedReply(conversation.id, isGroup ? undefined : selectedAgent);
+      s.reload();
+    } catch (e) {
+      setDemoErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDemoBusy(false);
+    }
+  };
+
   const history = s.data ?? [];
   const allMessages = [...history, ...extra];
 
@@ -399,6 +420,15 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
                 {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
               </Select>
             )}
+            <Button
+              variant="ghost"
+              small
+              onClick={runDemoVerify}
+              disabled={demoBusy || thinking}
+              title={t('chat.demoVerifyTitle')}
+            >
+              {demoBusy ? t('chat.demoVerifying') : t('chat.demoVerify')}
+            </Button>
             <span className={`th-live${thinking ? '' : ' idle'}`}>
               <span className="th-live-dot" aria-hidden="true" />
               <span className="micro">{liveWord}</span>
@@ -467,6 +497,7 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
         {/* honest error / status strips — never lose the user's posted message */}
         {error && <p className="chat-alert" role="alert">⚠ {error}</p>}
         {replyError && <p className="chat-alert" role="status">⚠ {t('chat.replyFailed')}: {replyError}</p>}
+        {demoErr && <p className="chat-alert" role="status">⚠ {t('chat.demoVerifyFailed')}: {demoErr}</p>}
         {ai.data && !ai.data.ready && !replyError && <p className="chat-alert" role="status">⚠ {ai.data.detail}</p>}
 
         {/* composer — @mention picker over REAL agents + keyboard submit */}

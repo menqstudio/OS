@@ -110,9 +110,11 @@ export interface Message {
   createdAt: string;
   /** Server-derived receipt trust badge for a governed turn (read-only; never
    *  webview-set). 'development_untrusted' → amber dev/untrusted badge; 'trusted_verified'
-   *  → green "Verified" badge (Wave 3b only); absent/null → no badge (ungoverned, or a
+   *  → green production "Verified" badge (Wave 3b only); 'demonstration_verified' → the reply
+   *  was produced INSIDE the in-process chain + verified under the DEMONSTRATION anchor (real
+   *  crypto, demonstration custody — NEVER production); absent/null → no badge (ungoverned, or a
    *  blocked governed turn — which produces no message, so it never shows here). */
-  receipt?: 'development_untrusted' | 'trusted_verified' | null;
+  receipt?: 'development_untrusted' | 'trusted_verified' | 'demonstration_verified' | null;
 }
 
 export interface NewMessage {

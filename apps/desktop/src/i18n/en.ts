@@ -79,6 +79,11 @@ export const en = {
   'chat.saveToChat': 'Save to chat',
   'chat.receiptVerified': 'Verified',
   'chat.receiptDev': 'Dev / untrusted',
+  'chat.receiptDemo': 'Verified · demo',
+  'chat.demoVerify': 'Demo-verify',
+  'chat.demoVerifying': 'Verifying…',
+  'chat.demoVerifyTitle': 'Produce one reply inside the governed chain and verify it (demonstration custody — not production).',
+  'chat.demoVerifyFailed': 'Demo-verify failed',
   'chat.governedBlocked': 'Governed reply blocked (unverified)',
 
   'projects.subtitle': 'Objective-centered work',

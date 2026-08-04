@@ -256,6 +256,14 @@ export const desktop = {
     invoke<Message>('reply_in_conversation', { conversationId, agent: agent ?? null })
       .then(normalizeMessage),
 
+  // A live DEMONSTRATION-verified reply (Windows): the reply is produced INSIDE the in-process
+  // governed chain and verified under the demonstration anchor, so the returned message carries
+  // receipt='demonstration_verified' (real crypto, demonstration custody — never production).
+  // Requires BROPS_SELFTEST_MODEL_CMD; rejects (fail-closed) otherwise or off Windows.
+  demonstrationVerifiedReply: (conversationId: string, agent?: string) =>
+    invoke<Message>('demonstration_verified_reply', { conversationId, agent: agent ?? null })
+      .then(normalizeMessage),
+
   // ai streaming: emits {type:'delta'|'done'|'error'} over a channel while the
   // agent produces text. Resolves when the stream ends.
   streamReply: (conversationId: string, onEvent: (e: StreamEvent) => void, agent?: string) => {

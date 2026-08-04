@@ -81,6 +81,11 @@ export const hy: Record<DictKey, string> = {
   'chat.saveToChat': 'Պահել զրույցում',
   'chat.receiptVerified': 'Ստուգված',
   'chat.receiptDev': 'Dev / չվստահված',
+  'chat.receiptDemo': 'Ստուգված · դեմո',
+  'chat.demoVerify': 'Դեմո-ստուգում',
+  'chat.demoVerifying': 'Ստուգվում է…',
+  'chat.demoVerifyTitle': 'Ստեղծել մեկ պատասխան կառավարվող շղթայի ներսում և ստուգել այն (դեմո custody — ոչ production)։',
+  'chat.demoVerifyFailed': 'Դեմո-ստուգումը ձախողվեց',
   'chat.governedBlocked': 'Governed պատասխանը արգելափակված է (չստուգված)',
 
   'projects.subtitle': 'Նպատակակենտրոն աշխատանք',
