@@ -1951,6 +1951,17 @@ pub fn get_security_summary(state: State<AppState>) -> Result<SecuritySummary, S
 /// message is posted.
 #[cfg(windows)]
 fn run_demonstration_model(prompt: &str, cmd: &str) -> Result<Vec<u8>, ()> {
+    use std::io::{Read, Write};
+    // Hard bounds mirroring the streaming chat path (ai.rs), so a demonstration turn can never hang
+    // or exhaust memory on the command thread:
+    //  - background the stdin write on a detached thread, so a full stdin pipe cannot deadlock
+    //    against an unread stdout pipe (the classic write_all-then-read deadlock),
+    //  - read stdout through a cap so a runaway reply cannot grow unbounded,
+    //  - bound the whole thing with an absolute deadline, so a hung model (auth prompt, network
+    //    stall) is killed and the turn fails closed instead of blocking the command forever.
+    const MAX_STDOUT_BYTES: u64 = 9 * 1024 * 1024;
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(180);
+
     let mut child = std::process::Command::new("cmd")
         .args(["/C", cmd])
         .stdin(std::process::Stdio::piped())
@@ -1958,13 +1969,55 @@ fn run_demonstration_model(prompt: &str, cmd: &str) -> Result<Vec<u8>, ()> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|_| ())?;
+
+    // Feed the prompt on a detached thread; dropping the stdin handle closes it so the child sees EOF.
     if let Some(mut si) = child.stdin.take() {
-        use std::io::Write;
-        let _ = si.write_all(prompt.as_bytes());
+        let bytes = prompt.as_bytes().to_vec();
+        std::thread::spawn(move || {
+            let _ = si.write_all(&bytes);
+        });
     }
-    match child.wait_with_output() {
-        Ok(o) if o.status.success() && !o.stdout.is_empty() => Ok(o.stdout),
-        _ => Err(()),
+
+    // Drain (capped) stdout on a thread and hand it back over a channel, so the wait can be bounded.
+    let (tx, rx) = std::sync::mpsc::channel();
+    if let Some(so) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = so.take(MAX_STDOUT_BYTES).read_to_end(&mut buf);
+            let _ = tx.send(buf);
+        });
+    }
+
+    let out = match rx.recv_timeout(DEADLINE) {
+        Ok(b) => b,
+        // Timed out (or the reader vanished): kill the child and fail closed.
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(());
+        }
+    };
+
+    // Reap without blocking: the reader returned on EOF (clean exit) or on the cap (child may still
+    // be writing). Poll briefly for a clean exit; if it will not exit, kill it rather than block.
+    let reap_by = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if std::time::Instant::now() < reap_by => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(());
+            }
+        }
+    };
+    if status.success() && !out.is_empty() {
+        Ok(out)
+    } else {
+        Err(())
     }
 }
 
