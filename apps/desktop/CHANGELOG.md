@@ -12,7 +12,7 @@ BroPS was intentionally recreated from zero; prior history is not part of this r
 - **Production custody proven (local, with the Owner):** the Owner ran the offline-root ceremony live —
   `win_provision` verified the offline seed against the TCB pin `3c83c2bc…` and signed the manifest offline;
   `win_live_turn` over real named pipes (3 servers + executor) reached
-  `trusted_verified(production key=brops-live-signer-1 epoch=2) production_verified=true bound=true` under the
+  `trusted_verified(production signer id brops-live-signer-1, epoch 2) production_verified=true bound=true` under the
   REAL production root. Honest graduation from demonstration custody. This is a LOCAL proof, **not** the
   shipped badge — `platform_governed_execution_supported()` stays false.
 - **Builder-side adversarial audit** (Owner-designated; 5 fresh reviewers, each attacking one dimension). Verdict
