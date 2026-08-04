@@ -74,6 +74,14 @@
       "tier": "X",
       "grant": "allow"
     },
+    "run_automation": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "list_automation_runs": {
+      "tier": "R",
+      "grant": "allow"
+    },
     "delete_conversation": {
       "tier": "L2",
       "grant": "deny",

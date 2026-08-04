@@ -259,6 +259,15 @@ export interface Automation {
   updatedAt: string;
 }
 
+/** One recorded execution of an automation's action (run log). `outcome` is 'ok' | 'failed'. */
+export interface AutomationRun {
+  id: string;
+  automationId: string;
+  ranAt: string;
+  outcome: string;
+  detail: string;
+}
+
 export interface NewAutomation {
   name: string;
   trigger: string;

@@ -3,7 +3,7 @@
 
 use crate::AppState;
 use brops_core::{
-    repo, ActivityEvent, Agent, Approval, Automation, Conversation, Decision, Event, Integration,
+    repo, ActivityEvent, Agent, Approval, Automation, AutomationRun, Conversation, Decision, Event, Integration,
     KnowledgeNote, LibraryItem, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
     NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject, NewResearchItem,
     NewTask, Notification, Project, ResearchItem, Run, RunStep, SearchResult, SecuritySummary, Task,
@@ -1838,6 +1838,21 @@ pub fn set_automation_enabled(state: State<AppState>, id: String, enabled: bool)
 pub fn delete_automation(state: State<AppState>, id: String) -> Result<(), String> {
     let conn = locked(&state)?;
     repo::automations::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Run an automation NOW: perform its (local, no-AI) action and append a row to its run log,
+/// returning that row so the UI can show the outcome. A disabled automation refuses to run.
+#[tauri::command]
+pub fn run_automation(state: State<AppState>, id: String) -> Result<AutomationRun, String> {
+    let conn = locked(&state)?;
+    repo::automations::run(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// The run history for one automation (newest first).
+#[tauri::command]
+pub fn list_automation_runs(state: State<AppState>, id: String) -> Result<Vec<AutomationRun>, String> {
+    let conn = locked(&state)?;
+    repo::automations::list_runs(&conn, &id).map_err(|e| e.to_string())
 }
 
 // --- integrations ---

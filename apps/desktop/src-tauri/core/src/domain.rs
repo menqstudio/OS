@@ -252,6 +252,14 @@ camel! {
         pub updated_at: String,
     }
 
+    pub struct AutomationRun {
+        pub id: String,
+        pub automation_id: String,
+        pub ran_at: String,
+        pub outcome: String,
+        pub detail: String,
+    }
+
     pub struct Integration {
         pub id: String,
         pub name: String,

@@ -167,6 +167,8 @@ pub fn run() {
             commands::create_automation,
             commands::set_automation_enabled,
             commands::delete_automation,
+            commands::run_automation,
+            commands::list_automation_runs,
             commands::list_integrations,
             commands::set_integration_status,
             commands::search_all,

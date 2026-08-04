@@ -93,6 +93,8 @@ fn main() {
         "create_automation",
         "set_automation_enabled",
         "delete_automation",
+        "run_automation",
+        "list_automation_runs",
         // integrations
         "list_integrations",
         "set_integration_status",

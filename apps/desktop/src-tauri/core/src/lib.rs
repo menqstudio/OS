@@ -26,7 +26,7 @@ pub mod supervisor_ledger;
 pub mod repo;
 
 pub use domain::{
-    ActivityEvent, Agent, Approval, Automation, Conversation, CoreError, CoreResult, Decision,
+    ActivityEvent, Agent, Approval, Automation, AutomationRun, Conversation, CoreError, CoreResult, Decision,
     Event, Integration, KnowledgeNote, LibraryItem, Message, MemoryEntry, Metric, NewAutomation,
     NewEvent, NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject,
     NewResearchItem, NewTask, Notification, Project, ResearchItem, Run, RunStep, SearchResult,
@@ -431,6 +431,37 @@ mod tests {
         repo::runs::fail_step_and_run(&c, &s.id, &r.id).unwrap();
         assert_eq!(repo::runs::get_step(&c, &s.id).unwrap().status, "failed");
         assert_eq!(repo::runs::get(&c, &r.id).unwrap().status, "failed");
+    }
+
+    #[test]
+    fn automation_run_executes_local_actions_and_logs_the_outcome() {
+        let c = conn();
+        // notify: raises a real notification
+        let a = repo::automations::create(&c, NewAutomation { name: "greeter".into(), trigger: "manual".into(), action: "notify: hello".into() }).unwrap();
+        let before = repo::notifications::list(&c, None, None).unwrap().len();
+        let run = repo::automations::run(&c, &a.id).unwrap();
+        assert_eq!(run.outcome, "ok");
+        assert!(run.detail.contains("notified"), "detail was {:?}", run.detail);
+        assert_eq!(repo::notifications::list(&c, None, None).unwrap().len(), before + 1);
+
+        // task: creates a real task
+        let a2 = repo::automations::create(&c, NewAutomation { name: "maker".into(), trigger: "manual".into(), action: "task: do the thing".into() }).unwrap();
+        let run2 = repo::automations::run(&c, &a2.id).unwrap();
+        assert_eq!(run2.outcome, "ok");
+        assert!(run2.detail.contains("created task"));
+
+        // unknown verb: a recorded FAILED run — never a silent no-op and never a hard error
+        let a3 = repo::automations::create(&c, NewAutomation { name: "bad".into(), trigger: "manual".into(), action: "frobnicate: x".into() }).unwrap();
+        assert_eq!(repo::automations::run(&c, &a3.id).unwrap().outcome, "failed");
+
+        // disabled: refuses to run at all
+        repo::automations::set_enabled(&c, &a.id, false).unwrap();
+        assert!(repo::automations::run(&c, &a.id).is_err());
+
+        // the run log records each run, newest first
+        let log = repo::automations::list_runs(&c, &a.id).unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].outcome, "ok");
     }
 
     // T-011: a pending approval carries its durable origin_principal, a one-time

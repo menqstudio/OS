@@ -2017,6 +2017,96 @@ pub mod automations {
         get(conn, id)
     }
 
+    fn map_run(r: &Row) -> rusqlite::Result<AutomationRun> {
+        Ok(AutomationRun {
+            id: r.get("id")?,
+            automation_id: r.get("automation_id")?,
+            ran_at: r.get("ran_at")?,
+            outcome: r.get("outcome")?,
+            detail: r.get("detail")?,
+        })
+    }
+
+    /// Perform an automation's ACTION locally and return (outcome, human detail). The action is a
+    /// small honest `verb: argument` vocabulary that maps to LOCAL effects only — no AI provider is
+    /// reached (an AI-touching action would have to route through the governed, fail-closed chain, not
+    /// fire unattended). An unrecognized verb is a recorded 'failed' outcome, never a silent no-op.
+    ///   notify: <text>  -> raise a notification
+    ///   task:   <title> -> create a task
+    fn execute_action(conn: &Connection, action: &str) -> CoreResult<(&'static str, String)> {
+        let trimmed = action.trim();
+        let (verb, arg) = match trimmed.split_once(':') {
+            Some((v, a)) => (v.trim().to_lowercase(), a.trim().to_string()),
+            None => {
+                return Ok(("failed", format!("unrecognized action (expected `verb: argument`): {trimmed}")))
+            }
+        };
+        if arg.is_empty() {
+            return Ok(("failed", format!("action '{verb}' has no argument")));
+        }
+        match verb.as_str() {
+            "notify" => {
+                super::atomic(conn, |tx| {
+                    tx.execute(
+                        "INSERT INTO notifications(id, type, severity, title, body, read_at, created_at)
+                         VALUES (?1, 'automation', 'info', 'Automation', ?2, NULL, ?3)",
+                        rusqlite::params![crate::id(), arg, now()],
+                    )?;
+                    Ok(())
+                })?;
+                Ok(("ok", format!("notified: {arg}")))
+            }
+            "task" => {
+                tasks::create(
+                    conn,
+                    NewTask {
+                        project_id: None,
+                        title: arg.clone(),
+                        description: String::new(),
+                        priority: "normal".to_string(),
+                        assigned_agent_id: None,
+                    },
+                )?;
+                Ok(("ok", format!("created task: {arg}")))
+            }
+            other => Ok(("failed", format!("unknown action verb '{other}' (supported: notify, task)"))),
+        }
+    }
+
+    /// Run an automation NOW: perform its action (locally, fail-closed for anything AI) and append a
+    /// row to the run log, returning it. A disabled automation refuses to run.
+    pub fn run(conn: &Connection, id: &str) -> CoreResult<AutomationRun> {
+        let automation = get(conn, id)?;
+        if !automation.enabled {
+            return Err(CoreError::Invalid {
+                field: "enabled",
+                value: "automation is disabled".to_string(),
+            });
+        }
+        let (outcome, detail) = execute_action(conn, &automation.action)?;
+        let run_id = crate::id();
+        let now = now();
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO automation_runs(id, automation_id, ran_at, outcome, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![run_id, id, now, outcome, detail],
+            )?;
+            super::audit::record(tx, "automation.ran", "user", "gev", "automation", id)?;
+            Ok(())
+        })?;
+        conn.query_row("SELECT * FROM automation_runs WHERE id = ?1", [&run_id], map_run)
+            .map_err(not_found(&run_id))
+    }
+
+    /// The run history for one automation, newest first.
+    pub fn list_runs(conn: &Connection, automation_id: &str) -> CoreResult<Vec<AutomationRun>> {
+        let mut s = conn.prepare(
+            "SELECT * FROM automation_runs WHERE automation_id = ?1 ORDER BY ran_at DESC LIMIT ?2",
+        )?;
+        let rows = s.query_map(rusqlite::params![automation_id, super::MAX_PAGE], map_run)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             let changed = tx.execute("DELETE FROM automations WHERE id = ?1", [id])?;

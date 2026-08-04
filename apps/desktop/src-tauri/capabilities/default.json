@@ -72,6 +72,8 @@
     "allow-create-automation",
     "allow-set-automation-enabled",
     "allow-delete-automation",
+    "allow-run-automation",
+    "allow-list-automation-runs",
     "allow-list-integrations",
     "allow-set-integration-status",
     "allow-search-all",

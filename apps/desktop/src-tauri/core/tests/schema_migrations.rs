@@ -72,10 +72,10 @@ fn migrate_applies_all_versions_in_order_to_a_fresh_db() {
     c.pragma_update(None, "foreign_keys", "ON").unwrap();
     db::migrate(&c).unwrap();
 
-    assert_eq!(db::SCHEMA_VERSION, 19, "crate SCHEMA_VERSION must be 19");
-    assert_eq!(db::current_version(&c).unwrap(), 19);
-    // The ledger is contiguous 1..=19 — nothing skipped, nothing double-counted.
-    assert_eq!(applied_versions(&c), (1..=19).collect::<Vec<i64>>());
+    assert_eq!(db::SCHEMA_VERSION, 20, "crate SCHEMA_VERSION must be 20");
+    assert_eq!(db::current_version(&c).unwrap(), 20);
+    // The ledger is contiguous 1..=20 — nothing skipped, nothing double-counted.
+    assert_eq!(applied_versions(&c), (1..=20).collect::<Vec<i64>>());
     // 0017 created the group-chat participants roster table.
     let has_participants: i64 = c
         .query_row(
@@ -105,6 +105,15 @@ fn migrate_applies_all_versions_in_order_to_a_fresh_db() {
         )
         .unwrap();
     assert_eq!(esc_guarded, 2, "0019 must allow 'escalated' in both approvals.status guards");
+    // 0020 created the automation run-log table.
+    let has_runs: i64 = c
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='automation_runs'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(has_runs, 1, "0020 must create automation_runs");
 }
 
 #[test]
@@ -411,7 +420,7 @@ fn migrate_is_idempotent_in_process() {
     db::migrate(&c).unwrap();
     assert_eq!(db::current_version(&c).unwrap(), db::SCHEMA_VERSION);
     assert_eq!(applied_versions(&c), before, "re-running migrate must not add ledger rows");
-    assert_eq!(before.len(), 19);
+    assert_eq!(before.len(), 20);
 }
 
 #[test]
@@ -426,10 +435,10 @@ fn migrate_is_idempotent_across_a_real_file_reopen() {
 
     {
         let c1 = db::open(path).unwrap();
-        assert_eq!(db::current_version(&c1).unwrap(), 19);
+        assert_eq!(db::current_version(&c1).unwrap(), 20);
     } // c1 dropped
 
     let c2 = db::open(path).unwrap(); // reopen re-runs migrate() (idempotent)
-    assert_eq!(db::current_version(&c2).unwrap(), 19);
-    assert_eq!(applied_versions(&c2), (1..=19).collect::<Vec<i64>>());
+    assert_eq!(db::current_version(&c2).unwrap(), 20);
+    assert_eq!(applied_versions(&c2), (1..=20).collect::<Vec<i64>>());
 }

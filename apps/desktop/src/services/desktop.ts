@@ -8,7 +8,7 @@ import {
   parseGovernanceRead, type GovernanceRead, type GovernanceSurface,
 } from './governance';
 import type {
-  ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
+  ActivityEvent, Agent, AiStatus, Approval, Automation, AutomationRun, CalendarEvent, Conversation, Decision,
   DirListing, FileContent, Integration, KnowledgeNote, LibraryItem, MemoryEntry, Message, MessageRole, Metric,
   NewAutomation, NewEvent,
   NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewProject, NewResearchItem, NewTask,
@@ -219,6 +219,9 @@ export const desktop = {
   setAutomationEnabled: (id: string, enabled: boolean) =>
     invoke<Automation>('set_automation_enabled', { id, enabled }),
   deleteAutomation: (id: string) => invoke<void>('delete_automation', { id }),
+  // Run an automation NOW: performs its local (no-AI) action and returns the recorded run.
+  runAutomation: (id: string) => invoke<AutomationRun>('run_automation', { id }),
+  listAutomationRuns: (id: string) => invoke<AutomationRun[]>('list_automation_runs', { id }),
 
   // integrations
   listIntegrations: () => invoke<Integration[]>('list_integrations'),

@@ -5,11 +5,22 @@
 // duplicate them here. Every entry carries en/hy/ru; the page selects with
 // `L(key) = STR[key][lang] ?? STR[key].en`.
 export const STR = {
+  // ── run-now action ───────────────────────────────────────────────────────────
+  runNow: {
+    en: 'Run now',
+    hy: 'Գործարկել հիմա',
+    ru: 'Запустить сейчас',
+  },
+  runNowTitle: {
+    en: "Run this automation's action now. Local actions (notify, create task) run directly; anything that reaches the model/engine routes through the governed, fail-closed chain.",
+    hy: 'Գործարկել այս ավտոմատի գործողությունը հիմա։ Տեղական գործողությունները (notify, task) աշխատում են ուղղակի; մոդելին/շարժիչին հասնողը անցնում է կառավարվող, fail-closed շղթայով։',
+    ru: 'Запустить действие этой автоматизации сейчас. Локальные действия (notify, task) выполняются напрямую; всё, что доходит до модели/движка, идёт через управляемую, отказоустойчивую цепочку.',
+  },
   // ── governance guarantee (authoring modal + selected conduit) ────────────────
   govern: {
-    en: 'Every automation runs governed — each fire requires a lease and a verified receipt. Ungoverned actions are refused.',
-    hy: 'Յուրաքանչյուր ավտոմատ աշխատում է կառավարվող — ամեն գործարկում պահանջում է լիզինգ և հաստատված ստացական։ Չկառավարվող գործողությունները մերժվում են։',
-    ru: 'Каждая автоматизация выполняется под управлением — каждый запуск требует аренды и проверенной квитанции. Неуправляемые действия отклоняются.',
+    en: 'Local actions (notify, create task) run directly and reversibly. Any action that reaches the model or engine routes through the governed chain — a lease and a verified receipt — and is refused if it cannot be verified (fail-closed today).',
+    hy: 'Տեղական գործողությունները (notify, task ստեղծել) աշխատում են ուղղակի և հետշրջելի։ Մոդելին կամ շարժիչին հասնող ցանկացած գործողություն անցնում է կառավարվող շղթայով՝ լիզինգ և հաստատված ստացական, և մերժվում է, եթե չի հաստատվում (այսօր fail-closed)։',
+    ru: 'Локальные действия (notify, создать задачу) выполняются напрямую и обратимо. Любое действие, доходящее до модели или движка, идёт через управляемую цепочку — аренда и проверенная квитанция — и отклоняется, если не может быть проверено (сегодня fail-closed).',
   },
   telemetry: {
     en: 'Run counts, success rate and the recent-fire log appear once the runs backend is connected — none are shown until then.',

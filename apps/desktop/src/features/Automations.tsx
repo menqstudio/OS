@@ -36,10 +36,11 @@ import { STR } from './Automations.strings';
 // disabled and sealed conduits are still. Readouts stay "—" throughout. The
 // SCHEDULER SWEEP likewise walks only armed intake valves. Reduced motion stills all.
 //
-// DESIGN-TIME GOVERNANCE GUARANTEE (kept intact). Authoring cannot produce an
-// ungoverned automation — every fire is dispatched behind the wall with a verified
-// receipt. The note lives in the authoring form AND is surfaced as the schematic's
-// governed guard gate + guarantee line.
+// GOVERNANCE GUARANTEE (honest). "Run now" executes an automation's action: local,
+// reversible, non-AI actions (notify, create task) run DIRECTLY; any action that would
+// reach the model/engine routes through the governed, fail-closed chain (a lease + a
+// verified receipt) and is refused if it can't be verified. The note lives in the
+// authoring form AND is surfaced as the schematic's governed guard gate + guarantee line.
 
 // The three states honestly derivable from the entity + a live denial.
 type RuntimeState = 'idle' | 'off' | 'blocked';
@@ -95,8 +96,8 @@ function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
   return (
     <Modal title={t('automations.newRule')} onClose={onClose}>
       {error && <div className="form-error">{error}</div>}
-      {/* Design-time governance guarantee: authoring cannot produce an ungoverned
-          action — every fire is dispatched behind the wall with a verified receipt. */}
+      {/* Governance guarantee (honest): local actions run directly; any action reaching
+          the model/engine routes through the governed, fail-closed chain (see `govern`). */}
       <div className="au-gov" role="note">
         <span aria-hidden="true">🛡</span>
         <span>{L('govern')}</span>
@@ -213,6 +214,23 @@ export function Automations() {
     setPendingDelete(null);
     if (selectedId === id) setSelectedId(null);
     desktop.deleteAutomation(id).then(() => s.reload()).catch(() => s.reload());
+  };
+
+  // Run an automation NOW: its local (no-AI) action fires and the honest outcome (ok/failed + detail)
+  // is announced. A disabled automation refuses server-side; the button is also disabled for it.
+  const runNow = (a: Automation) => {
+    desktop
+      .runAutomation(a.id)
+      .then((r) => {
+        setActionError(null);
+        setAnnounce(`${a.name}: ${r.outcome === 'ok' ? '✓' : '⚠'} ${r.detail}`);
+        s.reload();
+      })
+      .catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        setActionError({ id: a.id, message });
+        setAnnounce(isDenial(message) ? `${a.name}: ${stateLabel('blocked')}` : message);
+      });
   };
 
   // ── Manifold keyboard model (listbox): arrows move selection (follows focus),
@@ -390,6 +408,9 @@ export function Automations() {
         </div>
 
         <div className="sc-actions">
+          <Button variant="ghost" onClick={() => runNow(a)} disabled={!a.enabled} title={L('runNowTitle')}>
+            {L('runNow')}
+          </Button>
           <Button variant="ghost" onClick={() => toggle(a)}>
             {t(a.enabled ? 'automations.disable' : 'automations.enable')}
           </Button>
