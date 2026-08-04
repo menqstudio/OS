@@ -6,6 +6,13 @@
 //! length-prefixed frames the pure chain speaks (`brops_core::ipc_framing`). The client side implements the
 //! broker's `HopConn`/`HopConnector`, so the SAME `GovernedChain` that passed the in-process proof runs
 //! unchanged over real pipes.
+//!
+//! Two syscall-flag hardenings close a pipe-squat / broker-impersonation path (audit P0): the SERVER creates
+//! with `FILE_FLAG_FIRST_PIPE_INSTANCE` (a rogue that squatted the trusted pipe name makes our create
+//! fail-closed rather than coexist), and every CLIENT connect passes `SECURITY_SQOS_PRESENT |
+//! SECURITY_IDENTIFICATION` (a server we connect to can only *identify* us, never obtain an impersonation
+//! token to act AS the broker). The peer-SID gate remains the primary boundary; these remove the transport
+//! preconditions for defeating it.
 
 #![cfg(windows)]
 
@@ -27,8 +34,8 @@ use windows::Win32::Security::{
     SECURITY_DESCRIPTOR,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE,
-    OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
+    CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_SHARE_MODE,
+    OPEN_EXISTING, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
 };
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
@@ -114,9 +121,15 @@ pub fn run_server(pipe_name: &str, allowed_peer_sid: &str, core: &dyn DispatchCo
         unsafe {
             let mut sd = SECURITY_DESCRIPTOR::default();
             let sa = null_dacl_sa(&mut sd);
+            // FILE_FLAG_FIRST_PIPE_INSTANCE (audit P0, pipe-squat): this process MUST be the first/only
+            // creator of the pipe name. If a rogue local process (the in-scope sidecar-RCE SID, or the
+            // interactive login/renderer SID) has already stood up an instance of this trusted pipe name,
+            // CreateNamedPipeW fails with ERROR_ACCESS_DENIED/ALREADY_EXISTS ⇒ the server does NOT coexist
+            // with a squatter (fail-closed detection). Paired with the client-side SECURITY_IDENTIFICATION
+            // SQOS below, which independently prevents a rogue server from impersonating the broker.
             let h = CreateNamedPipeW(
                 PCWSTR(wide.as_ptr()),
-                PIPE_ACCESS_DUPLEX,
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
                 PIPE_UNLIMITED_INSTANCES,
                 PIPE_BUF,
@@ -173,7 +186,14 @@ fn open_client(pipe_name: &str) -> Result<HANDLE, ()> {
                 FILE_SHARE_MODE(0),
                 None,
                 OPEN_EXISTING,
-                FILE_FLAGS_AND_ATTRIBUTES(0),
+                // SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION (audit P0, broker impersonation): pin the
+                // impersonation level the SERVER we connect to may obtain to *Identification* only. Without
+                // this, a named-pipe client defaults to SecurityImpersonation, so a rogue server that squatted
+                // the pipe name could `ImpersonateNamedPipeClient` and act AS the broker (relaying a
+                // broker-SID token onward to the signer/authority and passing their peer-SID gate). An
+                // identification-level token cannot be used to open another pipe as the broker, closing the
+                // relay. The kernel-attested server-side SID gate still only needs to READ our SID.
+                SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
                 None,
             )
         };

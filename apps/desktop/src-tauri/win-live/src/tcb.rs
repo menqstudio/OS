@@ -47,14 +47,28 @@ pub fn demo_root_public_key_hex() -> String {
     DEMO_ROOT_PUBLIC_KEY_HEX.to_string()
 }
 
-/// The anti-rollback-floor integrity keypair — compiled into the broker TCB (audit R1). UNLIKE the root
-/// (whose private half is offline in production), the broker WRITES the floor at runtime, so it needs a
-/// runtime signing key held in the TCB. The floor is signed with this key on every advance and verified on
-/// load; a config-dir adversary who resets `floor.json` cannot forge a matching `floor.sig` (they cannot
-/// write the broker binary), so a rollback-to-an-older-genuine-manifest is caught. The trust boundary is
-/// "cannot modify the broker TCB", the same boundary the whole broker rests on.
+/// The anti-rollback-floor integrity keypair — compiled into the broker.
+///
+/// SECURITY REALITY (audit P0, corrected — the earlier claim below was FALSE): this seed is a public
+/// compile-time constant in open source, so its signature is NOT a defense against an adversary who can read
+/// the source AND write the deployment directory. Such an attacker recomputes `floor_signing_key()` and
+/// forges a lowered, validly-signed `floor.json`, rolling the anti-rollback floor back to replay an older,
+/// genuinely-root-signed manifest (e.g. reviving a since-revoked signer key) → `trusted_verified` WITHOUT the
+/// offline root. The floor signature therefore only detects ACCIDENTAL corruption / non-source-reading
+/// tampering; it is a defense-in-depth corruption check, not the anti-rollback trust boundary.
+///
+/// THE REAL anti-rollback boundary is the OS write-protection on the deployment directory: `floor.json` must
+/// be writable ONLY by the broker service principal (a dedicated service account whose SID is NOT the
+/// interactive login and NOT the in-scope sidecar). In the cross-account deployment that is the shipped
+/// target, the in-scope attacker cannot write `floor.json` at all, so the rollback is out of scope. Provision
+/// MUST enforce that ACL; strong protection against a same-principal compromise requires a TPM/hardware
+/// monotonic counter (roadmap). See win-live/WINDOWS_ANTIROLLBACK_HARDENING.md.
+///
+/// (The earlier comment claimed "a config-dir adversary cannot forge floor.sig because they cannot write the
+/// broker binary." That is wrong: forging the signature needs only the seed, which is a readable source
+/// constant — writing the binary was never required.)
 pub const FLOOR_SEED_HEX: &str =
-    "8899aabbccddeeff8899aabbccddeeff8899aabbccddeeff8899aabbccddeeff"; // gitleaks:allow (TCB floor-integrity key)
+    "8899aabbccddeeff8899aabbccddeeff8899aabbccddeeff8899aabbccddeeff"; // gitleaks:allow (public corruption-check key, NOT a trust boundary)
 
 pub fn floor_signing_key() -> ed25519_dalek::SigningKey {
     let seed = crypto::hex32(FLOOR_SEED_HEX).expect("valid floor seed hex");

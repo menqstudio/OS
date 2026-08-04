@@ -251,6 +251,13 @@ mod linux {
             Some(sig) => sig.trim().to_string(),
             None => return fail_closed(),
         };
+        // Anti-rollback floor (audit P0, honest note): this Linux broker path reads only {highest_epoch,
+        // highest_hash} and does NOT verify a signature — and a signature would not help anyway, since any
+        // floor-integrity key here would also be a public source constant (see win-live tcb::FLOOR_SEED_HEX).
+        // The real anti-rollback boundary is the OS write-protection on the deployment dir: floor_path MUST be
+        // owned by / writable only by the broker service principal (file mode 0600, dedicated UID; the
+        // in-scope sidecar runs as a DIFFERENT UID and cannot write it). See WINDOWS_ANTIROLLBACK_HARDENING.md
+        // (the Windows twin) + the TPM/monotonic-counter roadmap item for a same-principal-compromise defense.
         let floor = match s(&["trust", "floor_path"])
             .and_then(|p| std::fs::read_to_string(p).ok())
             .and_then(|b| serde_json::from_str::<Value>(&b).ok())

@@ -135,8 +135,12 @@ fn main() {
     let content_hash = manifest.content_hash();
     std::fs::write(root.join("manifest.json"), &manifest_bytes).expect("write manifest");
     std::fs::write(root.join("manifest.sig"), &root_sig).expect("write manifest.sig");
-    // Anti-rollback floor as ONE self-contained TCB-signed file (audit R1 + D): a config-dir adversary who
-    // resets floor.json cannot forge the embedded TCB signature, so the reset is caught on load.
+    // Anti-rollback floor as ONE self-contained signed file (atomic single-file write, audit D). SECURITY
+    // REALITY (audit P0): the floor signing key is a PUBLIC source constant, so the embedded signature is a
+    // corruption check only, NOT the anti-rollback boundary — a source-reading adversary who can write this
+    // dir CAN forge a lowered signed floor. The real boundary is the OS write-ACL that MUST restrict this
+    // deployment dir (and floor.json) to the broker service principal only; provisioning/deployment must set
+    // that ACL. See WINDOWS_ANTIROLLBACK_HARDENING.md.
     let floor = AntiRollbackFloor { highest_epoch: 2, highest_hash: content_hash };
     std::fs::write(root.join("floor.json"), brops_win_live::resolver::signed_floor_file(&floor))
         .expect("write floor");

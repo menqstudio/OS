@@ -126,10 +126,15 @@ pub fn floor_body(floor: &AntiRollbackFloor) -> Vec<u8> {
     .expect("floor serializes")
 }
 
-/// The self-contained signed floor file: the `{highest_epoch, highest_hash}` body PLUS a TCB signature over
+/// The self-contained signed floor file: the `{highest_epoch, highest_hash}` body PLUS a signature over
 /// exactly that body, in ONE JSON object. A single file → a single atomic rename on write (audit D: no
-/// json/sig split that a crash could desync), and the reset/tamper defense of R1 (a config-dir adversary
-/// cannot forge `sig` without the TCB floor key).
+/// json/sig split that a crash could desync).
+///
+/// SECURITY REALITY (audit P0): the signing key ([`tcb::floor_signing_key`]) is a PUBLIC source constant, so
+/// this signature is a corruption/accidental-tamper check ONLY — it does NOT stop a source-reading adversary
+/// who can write the deployment dir from forging a lowered floor. The real anti-rollback boundary is the OS
+/// write-ACL on the deployment dir (broker-principal-only write). See `tcb::FLOOR_SEED_HEX` +
+/// `WINDOWS_ANTIROLLBACK_HARDENING.md`.
 pub fn signed_floor_file(floor: &AntiRollbackFloor) -> Vec<u8> {
     let sig = crypto::sign_b64url(&tcb::floor_signing_key(), &floor_body(floor));
     serde_json::to_vec(&serde_json::json!({
@@ -172,9 +177,14 @@ fn verify_ed25519_hex(public_key_hex: &str, msg: &[u8], sig_b64url: &str) -> boo
     }
 }
 
-/// Load the anti-rollback floor from the self-contained signed `floor.json` and verify its TCB integrity tag
-/// (audit R1 + D). Refuses (Err) if `sig` is missing or does not verify under the TCB floor key over the
-/// exact `{highest_epoch, highest_hash}` body — i.e. a reset/tampered floor is REJECTED (fail-closed).
+/// Load the anti-rollback floor from the self-contained signed `floor.json` and verify its integrity tag.
+/// Refuses (Err) if `sig` is missing or does not verify over the exact `{highest_epoch, highest_hash}` body.
+///
+/// SECURITY REALITY (audit P0): the verifying key is a PUBLIC source constant, so this catches accidental
+/// corruption / non-source-reading tampering only — a source-reading adversary who can write the deployment
+/// dir CAN produce a validly-signed lowered floor. This verification is defense-in-depth on top of the actual
+/// boundary, which is the OS write-ACL restricting `floor.json` to the broker service principal. See
+/// `tcb::FLOOR_SEED_HEX` + `WINDOWS_ANTIROLLBACK_HARDENING.md`.
 pub fn load_verified_floor(floor_path: &Path) -> Result<AntiRollbackFloor, String> {
     let raw = std::fs::read(floor_path).map_err(|e| format!("floor read: {e}"))?;
     let v: serde_json::Value = serde_json::from_slice(&raw).map_err(|e| format!("floor parse: {e}"))?;
@@ -254,10 +264,13 @@ mod tests {
     use super::*;
     use brops_core::key_manifest::AntiRollbackFloor;
 
-    // Audit R1: a TCB-signed floor loads; a config-dir adversary who RESETS floor.json (to replay an
-    // older genuinely-root-signed manifest) cannot forge floor.sig, so load_verified_floor rejects it.
+    // Corruption-check test: a signed floor loads; an UNSIGNED reset (or accidental corruption of the sig)
+    // is rejected fail-closed. NOTE (audit P0): this only proves the corruption check — a SOURCE-READING
+    // adversary who recomputes floor_signing_key() from the public FLOOR_SEED_HEX CAN forge a validly-signed
+    // lowered floor, so this signature is not the anti-rollback boundary. The real boundary is the OS
+    // write-ACL on the deployment dir (broker-principal-only); see WINDOWS_ANTIROLLBACK_HARDENING.md.
     #[test]
-    fn floor_integrity_accepts_tcb_signed_and_rejects_reset() {
+    fn floor_integrity_accepts_signed_and_rejects_unsigned_reset() {
         let dir = std::env::temp_dir().join(format!("brops-floor-{}", brops_core::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let floor_path = dir.join("floor.json");
