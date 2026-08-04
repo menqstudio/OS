@@ -53,6 +53,13 @@ export interface Approval {
   entityId: string | null;
   requestedAt: string;
   decidedAt: string | null;
+  // T-011 provenance the backend serializes as "safe to display" (domain.rs); optional because
+  // older rows / non-native decisions may not carry them. The enforcement tokens (nonce,
+  // request/confirmation digests, origin session) are #[serde(skip_serializing)] and never reach here.
+  originPrincipal?: string | null;
+  confirmedAt?: string | null;
+  confirmedBy?: string | null;
+  confirmationMethod?: string | null;
 }
 
 export interface Notification {
@@ -302,6 +309,9 @@ export interface DirListing {
   path: string;
   parent: string | null;
   entries: DirEntry[];
+  // True when the backend capped the listing (directory exceeded MAX_DIR_ENTRIES); the UI must
+  // surface this so a capped directory is not misread as "these are all the files".
+  truncated: boolean;
 }
 
 export interface FileContent {

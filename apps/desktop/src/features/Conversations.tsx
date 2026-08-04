@@ -350,6 +350,15 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     void desktop.cancelReply(conversation.id).catch(() => {});
   };
 
+  // Switching or closing this thread mid-reply must not leave the backend generating a response the
+  // user will never see (wasted model tokens/compute): on unmount, run the same teardown as the Stop
+  // button — break the responder loop and cancel the in-flight turn. MessageThread is keyed by
+  // conversation id, so selecting another conversation unmounts this instance and fires this cleanup.
+  useEffect(() => () => {
+    cancelledRef.current = true;
+    void desktop.cancelReply(conversation.id).catch(() => {});
+  }, [conversation.id]);
+
   // Run one DEMONSTRATION-verified reply: the reply is produced inside the in-process governed chain and
   // verified; on success it appears with the demonstration-custody badge. Honest fail-closed error otherwise.
   const runDemoVerify = async () => {

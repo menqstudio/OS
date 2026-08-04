@@ -460,6 +460,12 @@ export function Files() {
         {/* aria-live status: announces the current hit count as the filter changes */}
         <div className="fx-count" role="status" aria-live="polite">{countLabel}</div>
 
+        {/* Honest under-count notice: the backend caps very large directories, so tell the user
+            rather than let them read a capped listing as the complete set. */}
+        {s.data?.truncated && (
+          <div className="fx-count" role="alert">⚠ {L('truncated')}</div>
+        )}
+
         <div className="fx-bench-body">
           {/* ── the real, keyboard-navigable file index ── */}
           <div className="fx-col-list">

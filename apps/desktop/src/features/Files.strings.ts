@@ -8,6 +8,11 @@ export const STR = {
     hy: 'Զտել ֆայլերը…',
     ru: 'Фильтр файлов…',
   },
+  truncated: {
+    en: 'This folder has more files than shown — the listing was capped.',
+    hy: 'Այս պանակն ավելի շատ ֆայլ ունի, քան ցուցադրված է — ցանկը սահմանափակվել է։',
+    ru: 'В этой папке больше файлов, чем показано — список ограничен.',
+  },
   clearFilter: {
     en: 'Clear filter',
     hy: 'Մաքրել զտիչը',
