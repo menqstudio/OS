@@ -884,6 +884,98 @@ const GOVERNED_GENERATION_CONFIG: &str = "brops.governed-engine.sidecar.v1";
 const GOVERNED_PLACEHOLDER_HASH: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
+/// Run ONE governed conversation turn end-to-end and return its verified receipt outcome (or a
+/// fail-closed error string). This is the single source of the challenge→turn→verify wiring shared
+/// by the two conversation reply commands (`stream_reply` and `reply_in_conversation`) — it prepares
+/// the turn ONCE (one trim, one hash), issues the one-time nonce challenge, runs the turn behind the
+/// wall, and verifies+records the signed receipt (desktop authority; `verify_and_record_receipt`
+/// posts the accepted message itself, so the caller never double-posts). The caller delivers the
+/// returned `ReceiptOutcome` its own way — a stream event or a returned `Message`. Keeping this in one
+/// place means the verify wiring can only be changed for both callers at once (was copy-pasted; audit).
+async fn run_governed_conversation_turn(
+    state: &State<'_, AppState>,
+    conversation_id: &str,
+    system: &str,
+    history: &[crate::ai::ChatMsg],
+) -> Result<brops_core::receipt_store::ReceiptOutcome, String> {
+    let started_ms: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    // Prepare ONCE: the challenge, the bridge request, and the desktop Expected all derive from this
+    // same trimmed+hashed context — nothing re-trims or re-hashes a different input downstream.
+    let prepared = crate::ai::prepare_governed_turn(
+        system,
+        history,
+        started_ms,
+        GOVERNED_WORKSPACE_ID,
+        GOVERNED_INSTALL_ID,
+        GOVERNED_GENERATION_CONFIG,
+    )?;
+    let ctx = &prepared.context;
+    let issued = brops_core::receipt::IssuedRequest {
+        workspace_id: &ctx.workspace_id,
+        install_id: &ctx.install_id,
+        request_nonce: &ctx.request_nonce,
+        system_sha256: &ctx.system_sha256,
+        history_sha256: &ctx.history_sha256,
+        generation_config_sha256: &ctx.generation_config_sha256,
+        requested_at: &ctx.requested_at,
+    };
+    // Issue the one-time challenge (at request-start time) BEFORE the turn.
+    {
+        let conn = locked(state)?;
+        brops_core::receipt_store::issue_challenge(&conn, conversation_id, &issued, started_ms)
+            .map_err(|e| e.to_string())?;
+    }
+    // Run buffered (no DB lock held across the async sidecar call).
+    let governed = crate::ai::governed_turn(&prepared).await;
+    // Freshness / verified_at use a FRESH clock taken AFTER the turn.
+    let verify_ms: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(started_ms);
+    let outcome = match &governed {
+        // Transport failure: a terminal block with the REAL bounded reason, consuming the nonce.
+        Err(transport) => {
+            let reason = brops_core::receipt_store::bounded_reason(transport);
+            let conn = locked(state)?;
+            brops_core::receipt_store::record_pre_verification_block(
+                &conn, &ctx.request_nonce, &reason, verify_ms,
+            )
+        }
+        // A receipt (possibly unsigned/malformed): verify it — desktop authority.
+        Ok(reply) => {
+            let output = reply.reply.clone().into_bytes();
+            let expected = brops_core::receipt::Expected {
+                request: issued,
+                supervisor_id: GOVERNED_SUPERVISOR_ID,
+                policy_id: GOVERNED_POLICY_ID,
+                policy_version: GOVERNED_POLICY_VERSION,
+                policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
+                containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
+                allowed_executors: &[],
+                allowed_builders: &[],
+            };
+            let turn = brops_core::receipt_store::GovernedTurn {
+                wire: brops_core::receipt_store::ReceiptWire {
+                    envelope_jcs_b64: &reply.envelope_jcs_b64,
+                    signature_b64: &reply.signature_b64,
+                },
+                expected,
+                output: &output,
+                now_ms: verify_ms,
+                freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
+            };
+            let conn = locked(state)?;
+            brops_core::receipt_store::verify_and_record_receipt(
+                &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
+            )
+        }
+    };
+    outcome.map_err(|e| e.to_string())
+}
+
 /// Stop an in-flight streaming turn for `conversation_id` (the Stop button). Sets the
 /// armed cancellation flag; the stream's read loop breaks at the next delta and kills
 /// the `claude` child, keeping whatever streamed so far. A no-op (still Ok) if no turn
@@ -999,109 +1091,9 @@ pub async fn stream_reply(
         }
         Ok(false) => { /* fall through to the ungoverned streaming path below */ }
         Ok(true) => {
-            let started_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            // Prepare the turn ONCE (audit R2 P0): trim the history a single time and
-            // hash the EXACT system + trimmed history into the canonical context. The
-            // challenge, the bridge request (structured system + history), and the
-            // desktop Expected ALL derive from this same prepared data — nothing
-            // re-trims or re-hashes a different input downstream.
-            let prepared = match crate::ai::prepare_governed_turn(
-                &system,
-                &history,
-                started_ms,
-                GOVERNED_WORKSPACE_ID,
-                GOVERNED_INSTALL_ID,
-                GOVERNED_GENERATION_CONFIG,
-            ) {
-                Ok(p) => p,
-                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-            };
-            let ctx = &prepared.context;
-            let issued = brops_core::receipt::IssuedRequest {
-                workspace_id: &ctx.workspace_id,
-                install_id: &ctx.install_id,
-                request_nonce: &ctx.request_nonce,
-                system_sha256: &ctx.system_sha256,
-                history_sha256: &ctx.history_sha256,
-                generation_config_sha256: &ctx.generation_config_sha256,
-                requested_at: &ctx.requested_at,
-            };
-
-            // Issue the one-time challenge (at request-start time) BEFORE the turn.
-            {
-                let conn = match locked(&state) {
-                    Ok(c) => c,
-                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                };
-                if let Err(e) =
-                    brops_core::receipt_store::issue_challenge(&conn, &conversation_id, &issued, started_ms)
-                {
-                    let _ = on_event.send(StreamEvent::Error { message: e.to_string() });
-                    return Ok(());
-                }
-            }
-
-            // Run the turn buffered (no DB lock held across the async sidecar call). The
-            // exact prepared data (structured system + trimmed history + the same
-            // context) rides in the bridge request so the signer sees the nonce.
-            let governed = crate::ai::governed_turn(&prepared).await;
-            // Freshness / verified_at use a FRESH clock taken AFTER the turn — never the
-            // stale request-start time.
-            let verify_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(started_ms);
-
-            let outcome = match &governed {
-                // Transport failure: a terminal block with the REAL reason (not a
-                // fabricated empty receipt), consuming the nonce in one tx.
-                Err(transport) => {
-                    // Bound the (possibly hostile/huge) transport error to the SAME
-                    // value stored durably and shown to the UI, so they can't diverge.
-                    let reason = brops_core::receipt_store::bounded_reason(transport);
-                    let conn = match locked(&state) {
-                        Ok(c) => c,
-                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                    };
-                    brops_core::receipt_store::record_pre_verification_block(
-                        &conn, &ctx.request_nonce, &reason, verify_ms,
-                    )
-                }
-                // A receipt (possibly unsigned/malformed): verify it — desktop authority.
-                Ok(reply) => {
-                    let output = reply.reply.clone().into_bytes();
-                    let expected = brops_core::receipt::Expected {
-                        request: issued,
-                        supervisor_id: GOVERNED_SUPERVISOR_ID,
-                        policy_id: GOVERNED_POLICY_ID,
-                        policy_version: GOVERNED_POLICY_VERSION,
-                        policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        allowed_executors: &[],
-                        allowed_builders: &[],
-                    };
-                    let turn = brops_core::receipt_store::GovernedTurn {
-                        wire: brops_core::receipt_store::ReceiptWire {
-                            envelope_jcs_b64: &reply.envelope_jcs_b64,
-                            signature_b64: &reply.signature_b64,
-                        },
-                        expected,
-                        output: &output,
-                        now_ms: verify_ms,
-                        freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
-                    };
-                    let conn = match locked(&state) {
-                        Ok(c) => c,
-                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                    };
-                    brops_core::receipt_store::verify_and_record_receipt(
-                        &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
-                    )
-                }
-            };
+            // The whole challenge -> turn -> verify pipeline lives in one shared helper (the
+            // conversation reply commands must change it in lockstep); we only deliver the outcome.
+            let outcome = run_governed_conversation_turn(&state, &conversation_id, &system, &history).await;
 
             match outcome {
                 // Accepted (Wave 3b only): receipt_store ALREADY posted the message —
@@ -1763,74 +1755,8 @@ pub async fn reply_in_conversation(
         Err(e) => return Err(e),
         Ok(false) => { /* fall through to the ungoverned path below */ }
         Ok(true) => {
-            let started_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let prepared = crate::ai::prepare_governed_turn(
-                &system,
-                &history,
-                started_ms,
-                GOVERNED_WORKSPACE_ID,
-                GOVERNED_INSTALL_ID,
-                GOVERNED_GENERATION_CONFIG,
-            )?;
-            let ctx = &prepared.context;
-            let issued = brops_core::receipt::IssuedRequest {
-                workspace_id: &ctx.workspace_id,
-                install_id: &ctx.install_id,
-                request_nonce: &ctx.request_nonce,
-                system_sha256: &ctx.system_sha256,
-                history_sha256: &ctx.history_sha256,
-                generation_config_sha256: &ctx.generation_config_sha256,
-                requested_at: &ctx.requested_at,
-            };
-            {
-                let conn = locked(&state)?;
-                brops_core::receipt_store::issue_challenge(&conn, &conversation_id, &issued, started_ms)
-                    .map_err(|e| e.to_string())?;
-            }
-            let governed = crate::ai::governed_turn(&prepared).await;
-            let verify_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(started_ms);
-            let outcome = match &governed {
-                Err(transport) => {
-                    let reason = brops_core::receipt_store::bounded_reason(transport);
-                    let conn = locked(&state)?;
-                    brops_core::receipt_store::record_pre_verification_block(
-                        &conn, &ctx.request_nonce, &reason, verify_ms,
-                    )
-                }
-                Ok(reply) => {
-                    let output = reply.reply.clone().into_bytes();
-                    let expected = brops_core::receipt::Expected {
-                        request: issued,
-                        supervisor_id: GOVERNED_SUPERVISOR_ID,
-                        policy_id: GOVERNED_POLICY_ID,
-                        policy_version: GOVERNED_POLICY_VERSION,
-                        policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        allowed_executors: &[],
-                        allowed_builders: &[],
-                    };
-                    let turn = brops_core::receipt_store::GovernedTurn {
-                        wire: brops_core::receipt_store::ReceiptWire {
-                            envelope_jcs_b64: &reply.envelope_jcs_b64,
-                            signature_b64: &reply.signature_b64,
-                        },
-                        expected,
-                        output: &output,
-                        now_ms: verify_ms,
-                        freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
-                    };
-                    let conn = locked(&state)?;
-                    brops_core::receipt_store::verify_and_record_receipt(
-                        &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
-                    )
-                }
-            };
+            // Same shared challenge -> turn -> verify pipeline as stream_reply; only the delivery differs.
+            let outcome = run_governed_conversation_turn(&state, &conversation_id, &system, &history).await;
             return match outcome {
                 // Accepted: receipt_store ALREADY posted the message — read it back, do not double-post.
                 Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrusted { message_id, .. }) => {
