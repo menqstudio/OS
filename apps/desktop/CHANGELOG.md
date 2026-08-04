@@ -7,6 +7,16 @@
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository. Since the monorepo merge into `menqstudio/OS`, cockpit changes also flow through the OS-level security-remediation waves; the exact live state (branch/PR/blockers) is the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).
 
+## 2026-08-04 — group chat, skill library, hardening, and the live-verified seam (PR #53, CI green)
+
+- **Group chat, first-class** (schema **0017** `conversation_participants`, `SCHEMA_VERSION 17`): explicit room roster + a create-modal multi-select; the reply fan-out targets the roster, overridable by @mention; per-agent error isolation (one agent's failure no longer aborts the room); each transcript line keeps its speaker's name so a room isn't flattened to anonymous "assistant"; the system prompt names who's present.
+- **Attribution hardening (independent review):** the author sanitizer strips `:` so a renderer name can't forge a second speaker into `history_sha256`; the reply's attributed author is resolved against the real agent list (unknown → Bro); the "In the room" rail shows the real roster, not every agent.
+- **Skills:** all **42** `engine/skills/*/SKILL.md` rewritten to domain-grade guidance (v1.1.0) with the fail-closed Safety/Handoffs preserved.
+- **Supply-chain:** patched the npm `undici` high advisory (7.29.0 override); the three new cryptography X.509/PKCS#7 advisories are waived with per-advisory notes (the engine uses only Ed25519 — a 50.0.0 bump broke the governance runtime).
+- **Capability:** `open_window` + `cancel_reply` + the two participants commands declared across manifest/policy/capabilities (T-010 gate green, 76 commands).
+- **Live-verified seam:** `proof::in_process_turn_output` lets the governed chain sign+bind a REAL reply (not a fixed demo string), fail-closed on empty. Custody stays the demonstration anchor; the desktop governed-live path + an honest "demonstration custody" badge and production custody (offline-root ceremony + running the sidecar) are the remaining operator-gated steps ([`src-tauri/win-live/WIRING_LIVE_TRUST.md`](src-tauri/win-live/WIRING_LIVE_TRUST.md)).
+- Two independent audits (security/trust + correctness) with every finding fixed; the one latent P0 (Wave-3a governed-accept author) is annotated for the wiring. A GitHub Release (`brops-desktop-v0.1.0`) carries the Windows installer.
+
 ## 2026-08-03 — production custody, in-app agent, cockpit UX (branch `feat/windows-broker-machineproof`, not merged)
 
 On top of the trust chain proven earlier, this cycle graduated custody and hardened the in-app experience. The branch is not merged to `main`, but a tagged **GitHub Release `brops-desktop-v0.1.0`** (published 2026-08-03, target `feat/windows-broker-machineproof`) ships the Windows installer (`BroPS_0.1.0_x64-setup.exe` + `BroPS_0.1.0_x64_en-US.msi`). Production `trusted_verified` for live turns stays fail-closed pending the operator's sidecar infrastructure ([`src-tauri/win-live/WIRING_LIVE_TRUST.md`](src-tauri/win-live/WIRING_LIVE_TRUST.md)); the shipped Windows governed gate (`platform_governed_execution_supported()`) stays false.
