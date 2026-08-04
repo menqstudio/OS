@@ -7,6 +7,32 @@
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository. Since the monorepo merge into `menqstudio/OS`, cockpit changes also flow through the OS-level security-remediation waves; the exact live state (branch/PR/blockers) is the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).
 
+## 2026-08-04 — production custody proven + Windows trust-chain audit + P0 fixes (PR #53, CI green)
+
+- **Production custody proven (local, with the Owner):** the Owner ran the offline-root ceremony live —
+  `win_provision` verified the offline seed against the TCB pin `3c83c2bc…` and signed the manifest offline;
+  `win_live_turn` over real named pipes (3 servers + executor) reached
+  `trusted_verified(production key=brops-live-signer-1 epoch=2) production_verified=true bound=true` under the
+  REAL production root. Honest graduation from demonstration custody. This is a LOCAL proof, **not** the
+  shipped badge — `platform_governed_execution_supported()` stays false.
+- **Builder-side adversarial audit** (Owner-designated; 5 fresh reviewers, each attacking one dimension). Verdict
+  **NOT GREEN but central guarantee HOLDS** — no fresh production forgery is possible without the offline root;
+  root custody, output→receipt binding, and the server-side peer-SID gate are sound. Full verdict:
+  `win-live/proof/BUILDER_AUDIT_VERDICT_2026-08-04.md`. This is builder evidence, not the independent Architect
+  verdict (still pending).
+- **P0-2 fixed — pipe squat + broker impersonation:** the client now connects with
+  `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION` (a rogue server can only identify us, never impersonate the
+  broker onward to the signer) and the server creates with `FILE_FLAG_FIRST_PIPE_INSTANCE` (a squatter of the
+  trusted pipe name makes our create fail-closed). Owner re-ran the live-turn proof → still `trusted_verified`.
+- **P0-1 corrected — anti-rollback honesty:** `FLOOR_SEED_HEX` is a public source constant, so the old
+  "cannot forge floor.sig" claim was false. No fake verification was added; every false claim now states the
+  reality (the floor signature is a corruption check; the real boundary is the deploy-dir OS write-ACL), with
+  the real closure (ACL + per-deploy sealed floor key + TPM counter) specified in
+  `WINDOWS_ANTIROLLBACK_HARDENING.md`.
+- **Trust-UI honesty (dim-1 P2):** the self-test now carries an explicit `demonstration_custody` flag and a
+  distinct "DEMONSTRATION CUSTODY" badge, so `production_verified` can never be read as production trust on its
+  own.
+
 ## 2026-08-04 — comprehensive what's-left audit remediation (PR #53, CI green)
 
 - **State-doc drift fixed (P1-5):** the canonical docs (`NEXT_CHAT`/`PROJECT_STATE`/`TASKS`/`config/current_state.json`) recorded a six-commit-stale branch head; the Coordination CI gate validates `status_tokens` verbatim, not the head SHA, so the drift was invisible. Head pointer + `shipped_this_cycle.range` refreshed and the post-pointer commits folded into the CURRENT block. Coordination gate GREEN.
