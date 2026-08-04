@@ -95,6 +95,16 @@ export const STR = {
     hy: 'ՎԵՐՀԻՇՎԱԾ',
     ru: 'ПРИПОМНЕНО',
   },
+  handoffEyebrow: {
+    en: 'HANDOFFS',
+    hy: 'ՓՈԽԱՆՑՈՒՄՆԵՐ',
+    ru: 'ПЕРЕДАЧИ',
+  },
+  handoffsUnit: {
+    en: 'handoffs',
+    hy: 'փոխանցում',
+    ru: 'передач',
+  },
   messagesUnit: {
     en: 'MESSAGES',
     hy: 'ՀԱՂՈՐԴԱԳՐՈՒԹՅՈՒՆ',

@@ -44,6 +44,10 @@ function activeMention(text: string, caret: number): { start: number; query: str
  *  (the conversation-list column, reply-as control, honest error strips and the
  *  honest rate readout) get their tweaks here, all scoped under `.v-chat`. */
 const VIEW_CSS = `
+.v-chat .handoff-chain{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:8px 0 0;padding:0;list-style:none}
+.v-chat .handoff-chain .ho-node{display:inline-flex;align-items:center;min-width:0}
+.v-chat .handoff-chain .ho-node:not(:first-child)::before{content:'\\2192';color:var(--ink-muted);margin-right:8px;font-family:var(--f-mono)}
+.v-chat .handoff-chain .ho-who{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px}
 .v-chat .recall-link{display:flex;align-items:baseline;gap:0;width:100%;text-align:left;background:none;border:0;padding:0;margin:0;
   color:inherit;font:inherit;cursor:pointer;min-width:0}
 .v-chat .recall-link:hover .rc-t{color:var(--ink);text-decoration:underline}
@@ -343,6 +347,19 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   const history = s.data ?? [];
   const allMessages = [...history, ...extra];
 
+  // Handoff chain (Phase 7 · group rooms): the ordered sequence of DISTINCT consecutive
+  // speakers across the room's turns — a real, transcript-derived readout of who handed off
+  // to whom, with handoffs = speaker changes. Governance-free (derived from the persisted
+  // authors), so it works while the trust gate is fail-closed. Never fabricated.
+  const handoffChain: string[] = [];
+  if (isGroup) {
+    for (const m of allMessages) {
+      const who = (m.author ?? '').trim();
+      if (who && handoffChain[handoffChain.length - 1] !== who) handoffChain.push(who);
+    }
+  }
+  const handoffCount = Math.max(0, handoffChain.length - 1);
+
   // Keep the newest turn in view as history loads and the reply streams in.
   useEffect(() => {
     const el = threadRef.current;
@@ -596,6 +613,21 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
             </Async>
           </div>
         </section>
+
+        {/* Handoffs (group) — the real transcript-derived chain of who handed off to whom. */}
+        {isGroup && handoffChain.length > 1 && (
+          <section className="surface soft ctx-handoff">
+            <div className="cr-head">
+              <span className="eyebrow">{L('handoffEyebrow')}</span>
+              <span className="micro"><b className="mono">{handoffCount}</b>&nbsp;{L('handoffsUnit')}</span>
+            </div>
+            <ol className="handoff-chain" aria-label={L('handoffEyebrow')}>
+              {handoffChain.map((who, i) => (
+                <li className="ho-node" key={`${who}-${i}`}><b className="ho-who">{who}</b></li>
+              ))}
+            </ol>
+          </section>
+        )}
 
         {/* Response — the mockup's writing-tempo sparkline has no real source, so
             we show an honest real readout (this conversation's message count)
