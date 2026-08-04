@@ -24,3 +24,13 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
 if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !== 'function') {
   Element.prototype.scrollIntoView = () => {};
 }
+
+// jsdom does not implement ResizeObserver; several views observe a stage element to
+// react to size. Provide an inert stub so those mount effects don't throw.
+if (typeof globalThis !== 'undefined' && typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver !== 'function') {
+  (globalThis as { ResizeObserver: unknown }).ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
