@@ -913,16 +913,21 @@ pub mod chat {
         })
     }
 
-    /// SQL projection (Wave 3a slice 3): a message's trust-badge receipt = the outcome
-    /// of its accepted verification attempt (`development_untrusted` | `trusted_verified`),
-    /// else NULL. A `blocked` verdict has no message, so it never appears here. Every
-    /// message SELECT that feeds `map_message` must include this `AS receipt` column and
-    /// alias the `messages` table `m`.
-    const MESSAGE_RECEIPT_PROJECTION: &str = "(SELECT a.outcome \
-         FROM receipt_verification_attempts a \
-         WHERE a.message_id = m.id \
-           AND a.outcome IN ('development_untrusted', 'trusted_verified') \
-         LIMIT 1)";
+    /// SQL projection (Wave 3a slice 3 + demonstration): a message's trust-badge receipt = the outcome of its
+    /// accepted verification attempt (`development_untrusted` | `trusted_verified`); else, as a FALLBACK, the
+    /// honest `demonstration_verified` when the reply was produced + verified in-process under the DEMONSTRATION
+    /// anchor (a separate additive table — never the production trust records). A real production receipt always
+    /// wins (it is the first COALESCE arm). A `blocked` verdict has no message, so it never appears here. Every
+    /// message SELECT that feeds `map_message` must include this `AS receipt` column and alias `messages` as `m`.
+    const MESSAGE_RECEIPT_PROJECTION: &str = "COALESCE(\
+         (SELECT a.outcome \
+            FROM receipt_verification_attempts a \
+            WHERE a.message_id = m.id \
+              AND a.outcome IN ('development_untrusted', 'trusted_verified') \
+            LIMIT 1), \
+         (SELECT 'demonstration_verified' \
+            FROM demonstration_verified_messages d \
+            WHERE d.message_id = m.id))";
 
     fn map_message(r: &Row) -> rusqlite::Result<Message> {
         Ok(Message {

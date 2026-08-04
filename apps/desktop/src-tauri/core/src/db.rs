@@ -21,7 +21,8 @@ const MIGRATION_0014: &str = include_str!("../schema/0014_receipt_verification.s
 const MIGRATION_0015: &str = include_str!("../schema/0015_library_research.sql");
 const MIGRATION_0016: &str = include_str!("../schema/0016_held_answer_outcome.sql");
 const MIGRATION_0017: &str = include_str!("../schema/0017_conversation_participants.sql");
-pub const SCHEMA_VERSION: i64 = 17;
+const MIGRATION_0018: &str = include_str!("../schema/0018_demonstration_verified.sql");
+pub const SCHEMA_VERSION: i64 = 18;
 
 /// Open a database file with foreign keys and WAL enabled, and migrate it.
 pub fn open(path: &str) -> CoreResult<Connection> {
@@ -86,6 +87,7 @@ pub fn migrate(conn: &Connection) -> CoreResult<()> {
         (15, MIGRATION_0015),
         (16, MIGRATION_0016),
         (17, MIGRATION_0017),
+        (18, MIGRATION_0018),
     ] {
         if is_applied(conn, version)? {
             continue;
