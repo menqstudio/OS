@@ -131,17 +131,24 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   // The explicit room roster (0017). When set, it drives who answers a group message.
   const participants = useAsync(() => desktop.listConversationParticipants(conversation.id), [conversation.id]);
 
+  // Messages posted during this mounted session, appended optimistically on top
+  // of the loaded history so the reply appears with no reload flash. Reset when
+  // the component remounts per conversation (keyed on conversation.id). Declared
+  // before the recall query below so recall reflects turns sent this session.
+  const [extra, setExtra] = useState<Message[]>([]);
+
   // Recall (Phase 5 · chat context): retrieve memory/knowledge/etc. relevant to the latest
   // user turn and surface it in the context rail — a REAL search_all retrieval, not a message
   // counter. Governance-free (reads local stores), so it works regardless of the fail-closed
-  // trust gate. Keyed off the persisted history so it refetches only when the query changes.
+  // trust gate. Scans the persisted history PLUS the session-appended messages (`extra`), so a
+  // question asked in the current session updates recall immediately — not only after a remount.
   const recallQuery = useMemo(() => {
-    const msgs = s.data ?? [];
+    const msgs = [...(s.data ?? []), ...extra];
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role !== 'agent') return (msgs[i].body ?? '').trim().slice(0, 120);
     }
     return '';
-  }, [s.data]);
+  }, [s.data, extra]);
   const recall = useAsync(
     () => (recallQuery.length >= 3 ? desktop.searchAll(recallQuery) : Promise.resolve([] as SearchResult[])),
     [recallQuery],
@@ -161,10 +168,6 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
   // surfaces it with a demonstration-custody badge. Fail-closed (honest error) when not configured.
   const [demoBusy, setDemoBusy] = useState(false);
   const [demoErr, setDemoErr] = useState<string | null>(null);
-  // Messages posted during this mounted session, appended optimistically on top
-  // of the loaded history so the reply appears with no reload flash. Reset when
-  // the component remounts per conversation (keyed on conversation.id).
-  const [extra, setExtra] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [streamingText, setStreamingText] = useState('');
