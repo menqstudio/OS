@@ -1535,39 +1535,6 @@ pub mod runs {
     /// done without a matching approval, whichever function sets it (M-3). The
     /// gate read, the UPDATE, and the approval consumption run in one
     /// transaction so the guarantee lives with the write.
-    pub fn set_step_result(conn: &Connection, id: &str, result: &str) -> CoreResult<RunStep> {
-        super::atomic(conn, |tx| {
-            let step = get_step(tx, id)?;
-            if step.requires_approval {
-                if !super::approvals::approved_for(
-                    tx,
-                    id,
-                    super::approvals::RUN_STEP_ENTITY_TYPE,
-                    super::approvals::RUN_STEP_ACTION_TYPE,
-                )? {
-                    return Err(CoreError::Invalid {
-                        field: "status",
-                        value: "step requires approval before it can be completed".to_string(),
-                    });
-                }
-                // one grant unlocks one completion (M-2)
-                super::approvals::consume_for(
-                    tx,
-                    id,
-                    super::approvals::RUN_STEP_ENTITY_TYPE,
-                    super::approvals::RUN_STEP_ACTION_TYPE,
-                )?;
-            }
-            tx.execute(
-                "UPDATE run_steps SET result = ?1, status = 'done', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![result, now(), id],
-            )?;
-            super::audit::record(tx, "run_step.executed", "user", "gev", "run_step", id)?;
-            Ok(())
-        })?;
-        get_step(conn, id)
-    }
-
     /// T-011: atomically CLAIM a runnable step for execution BEFORE the provider is
     /// called, so one approval starts exactly one execution. In one transaction it
     /// refuses if the run already has a step mid-execution, then claims this step by

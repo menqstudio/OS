@@ -284,8 +284,11 @@ mod tests {
         assert_eq!(n.title, "step one");
         assert_eq!(n.result, "");
 
-        // recording a result marks the step done and stores the text
-        let done = repo::runs::set_step_result(&c, &n.id, "produced output").unwrap();
+        // recording a result goes through the T-011 claim->complete path (the only production
+        // completion route): claim the runnable step, then complete its single execution
+        // attempt, which marks it done and stores the text.
+        let attempt = repo::runs::claim_step_for_execution(&c, &n.id, "sess-test").unwrap();
+        let done = repo::runs::complete_step_execution(&c, &n.id, &attempt, "produced output").unwrap();
         assert_eq!(done.status, "done");
         assert_eq!(done.result, "produced output");
 
@@ -293,7 +296,8 @@ mod tests {
         let n2 = repo::runs::next_runnable_step(&c, &r.id).unwrap().unwrap();
         assert_eq!(n2.title, "step two");
 
-        repo::runs::set_step_result(&c, &n2.id, "second output").unwrap();
+        let attempt2 = repo::runs::claim_step_for_execution(&c, &n2.id, "sess-test").unwrap();
+        repo::runs::complete_step_execution(&c, &n2.id, &attempt2, "second output").unwrap();
         // all steps done -> nothing runnable remains
         assert!(repo::runs::next_runnable_step(&c, &r.id).unwrap().is_none());
     }
