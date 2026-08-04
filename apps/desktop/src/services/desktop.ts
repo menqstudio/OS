@@ -130,8 +130,6 @@ export const desktop = {
 
   // decisions
   listDecisions: () => invoke<Decision[]>('list_decisions'),
-  createDecision: (title: string, rationale: string) =>
-    invoke<Decision>('create_decision', { title, rationale }),
 
   // activity
   listActivity: () => invoke<ActivityEvent[]>('list_activity'),
@@ -202,8 +200,6 @@ export const desktop = {
   listRunSteps: (runId: string) => invoke<RunStep[]>('list_run_steps', { runId }),
   addRunStep: (runId: string, title: string, detail: string, requiresApproval = false) =>
     invoke<RunStep>('add_run_step', { runId, title, detail, requiresApproval }),
-  setRunStepStatus: (id: string, status: string) =>
-    invoke<RunStep>('set_run_step_status', { id, status }),
   advanceRun: (runId: string) => invoke<Run>('advance_run', { runId }),
   // execute the next runnable step via the AI provider, streaming its result.
   streamRunStep: (runId: string, onEvent: (e: RunStepEvent) => void) => {
@@ -242,11 +238,8 @@ export const desktop = {
   // reply to `blocked`, and only a well-formed schema-valid reply to `ok`. The renderer
   // supplies no key/lease and never decides — it can only surface engine truth or an
   // honest blocked/unreachable state.
-  readDecisionLedger: () => governanceRead('decisionLedger', 'read_decision_ledger'),
   readEvidenceChain: (taskId?: string) =>
     governanceRead('evidenceChain', 'read_evidence_chain', { taskId: taskId ?? null }),
-  readVerifierVerdicts: (taskId?: string) =>
-    governanceRead('verdicts', 'read_verifier_verdicts', { taskId: taskId ?? null }),
   readEngineApprovalQueue: () => governanceRead('approvalQueue', 'read_engine_approval_queue'),
 
   // Governed trust-chain self-test: runs the REAL in-process challenge→sign→verify→
@@ -256,9 +249,6 @@ export const desktop = {
 
   // ai (live agent replies)
   aiStatus: () => invoke<AiStatus>('ai_status'),
-  replyInConversation: (conversationId: string, agent?: string) =>
-    invoke<Message>('reply_in_conversation', { conversationId, agent: agent ?? null })
-      .then(normalizeMessage),
 
   // A live DEMONSTRATION-verified reply (Windows): the reply is produced INSIDE the in-process
   // governed chain and verified under the demonstration anchor, so the returned message carries
