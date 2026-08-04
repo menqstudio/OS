@@ -5,6 +5,17 @@
 // duplicate them here. Every entry carries en/hy/ru; the page selects with
 // `L(key) = STR[key][lang] ?? STR[key].en`.
 export const STR = {
+  // ── create-form field hints (the honest small vocabulary) ────────────────────
+  triggerHint: {
+    en: 'every: 5m · every: 1h · every: 1d · manual',
+    hy: 'every: 5m · every: 1h · every: 1d · manual',
+    ru: 'every: 5m · every: 1h · every: 1d · manual',
+  },
+  actionHint: {
+    en: 'notify: <text> · task: <title>',
+    hy: 'notify: <տեքստ> · task: <վերնագիր>',
+    ru: 'notify: <текст> · task: <заголовок>',
+  },
   // ── run-now action ───────────────────────────────────────────────────────────
   runNow: {
     en: 'Run now',

@@ -93,6 +93,29 @@ pub fn run() {
             // Sweep AI sandbox directories left by crashed/killed prior runs.
             ai::cleanup_stale_sandboxes();
             app.manage(AppState { db: Mutex::new(conn), _instance_lock: instance_lock });
+
+            // Phase 8: the local automation scheduler. Once a minute it fires every ENABLED
+            // automation whose interval trigger (`every: <N>{m|h|d}`) is due, running its LOCAL
+            // action and logging the run. Only local, non-AI actions ever fire unattended — an
+            // AI-reaching action routes through the governed, fail-closed chain, never this loop.
+            // A poisoned DB mutex is skipped (fail-closed, consistent with `locked`).
+            let scheduler_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    ticker.tick().await;
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    if let Some(state) = scheduler_handle.try_state::<AppState>() {
+                        if let Ok(conn) = state.db.lock() {
+                            let _ = brops_core::repo::automations::run_due(&conn, now_ms);
+                        }
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

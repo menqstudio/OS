@@ -464,6 +464,42 @@ mod tests {
         assert_eq!(log[0].outcome, "ok");
     }
 
+    #[test]
+    fn scheduler_fires_due_interval_automations_only() {
+        let c = conn();
+        let t0 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // interval trigger => scheduled
+        let sched = repo::automations::create(&c, NewAutomation { name: "hourly".into(), trigger: "every: 1m".into(), action: "notify: tick".into() }).unwrap();
+        // manual trigger => never fired by the scheduler
+        let manual = repo::automations::create(&c, NewAutomation { name: "manual".into(), trigger: "manual".into(), action: "notify: never".into() }).unwrap();
+        // disabled interval => skipped
+        let off = repo::automations::create(&c, NewAutomation { name: "off".into(), trigger: "every: 1m".into(), action: "notify: off".into() }).unwrap();
+        repo::automations::set_enabled(&c, &off.id, false).unwrap();
+
+        // never-run + due => the scheduled one fires; manual + disabled do not.
+        let fired = repo::automations::run_due(&c, t0).unwrap();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].automation_id, sched.id);
+        assert_eq!(repo::automations::list_runs(&c, &manual.id).unwrap().len(), 0);
+        assert_eq!(repo::automations::list_runs(&c, &off.id).unwrap().len(), 0);
+
+        // within the interval => not due
+        assert_eq!(repo::automations::run_due(&c, t0 + 1_000).unwrap().len(), 0);
+        // a full interval later => due again
+        assert_eq!(repo::automations::run_due(&c, t0 + 120_000).unwrap().len(), 1);
+        assert_eq!(repo::automations::list_runs(&c, &sched.id).unwrap().len(), 2);
+
+        // parse_interval_ms vocabulary
+        assert_eq!(repo::automations::parse_interval_ms("every: 5m"), Some(300_000));
+        assert_eq!(repo::automations::parse_interval_ms("every: 2h"), Some(7_200_000));
+        assert_eq!(repo::automations::parse_interval_ms("manual"), None);
+        assert_eq!(repo::automations::parse_interval_ms("every: 0m"), None);
+    }
+
     // T-011: a pending approval carries its durable origin_principal, a one-time
     // nonce, and a request digest bound to the current entity state. Returns
     // (step_id, approval_id, nonce, request_digest).

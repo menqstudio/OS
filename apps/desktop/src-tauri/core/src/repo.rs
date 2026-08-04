@@ -2107,6 +2107,57 @@ pub mod automations {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Parse a time trigger `every: <N>{m|h|d}` into an interval in milliseconds. Anything else
+    /// (empty, `manual`, an unrecognized shape) is None — those automations are NOT scheduled and
+    /// only run via an explicit "Run now". Keeping the vocabulary tiny + explicit keeps scheduling
+    /// honest and predictable.
+    pub fn parse_interval_ms(trigger: &str) -> Option<i64> {
+        let rest = trigger.trim().to_lowercase();
+        let rest = rest.strip_prefix("every:")?.trim().to_string();
+        if rest.len() < 2 {
+            return None;
+        }
+        let (num, unit) = rest.split_at(rest.len() - 1);
+        let n: i64 = num.trim().parse().ok()?;
+        if n <= 0 {
+            return None;
+        }
+        match unit {
+            "m" => Some(n * 60_000),
+            "h" => Some(n * 3_600_000),
+            "d" => Some(n * 86_400_000),
+            _ => None,
+        }
+    }
+
+    /// The local scheduler tick: fire every ENABLED automation whose interval trigger is DUE (never
+    /// run, or last run at least one interval ago), running its LOCAL action and logging the run.
+    /// Returns the runs fired this tick. Only local, non-AI actions ever fire unattended here — an
+    /// AI-reaching action would route through the governed, fail-closed chain, not this loop.
+    pub fn run_due(conn: &Connection, now_ms: i64) -> CoreResult<Vec<AutomationRun>> {
+        let mut fired = Vec::new();
+        for a in list(conn)? {
+            if !a.enabled {
+                continue;
+            }
+            let interval = match parse_interval_ms(&a.trigger) {
+                Some(i) => i,
+                None => continue, // manual / unrecognized → not scheduled
+            };
+            let last_ms = list_runs(conn, &a.id)?
+                .first()
+                .and_then(|r| r.ran_at.parse::<i64>().ok());
+            let due = match last_ms {
+                Some(t) => now_ms.saturating_sub(t) >= interval,
+                None => true,
+            };
+            if due {
+                fired.push(run(conn, &a.id)?);
+            }
+        }
+        Ok(fired)
+    }
+
     pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             let changed = tx.execute("DELETE FROM automations WHERE id = ?1", [id])?;

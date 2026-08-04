@@ -106,10 +106,10 @@ function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
         <Input value={name} autoFocus onChange={(e) => setName(e.target.value)} />
       </FormRow>
       <FormRow label={t('field.trigger')}>
-        <Input value={trigger} onChange={(e) => setTrigger(e.target.value)} />
+        <Input value={trigger} onChange={(e) => setTrigger(e.target.value)} placeholder={L('triggerHint')} />
       </FormRow>
       <FormRow label={t('field.action')}>
-        <Input value={action} onChange={(e) => setAction(e.target.value)} />
+        <Input value={action} onChange={(e) => setAction(e.target.value)} placeholder={L('actionHint')} />
       </FormRow>
       <div className="form-actions">
         <Button type="button" variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
