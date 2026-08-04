@@ -90,12 +90,29 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
     in_process_turn_output(store_dir, now_ms, b"BROPS windows governed output v1")
 }
 
-/// Same in-process governed chain, but the executor emits `output` — the EXACT bytes to be signed and bound.
-/// This is the seam a live turn uses: the desktop obtains the model's reply (Claude), then runs the chain with
-/// that reply as the output, so the signed receipt binds the REAL answer. Custody here is still the compiled-in
-/// DEMONSTRATION anchor (see `tcb::DEMO_*`) — the caller MUST surface it as demonstration custody, never as
-/// production, until an operator-provisioned offline-rooted manifest drives the chain (WIRING_LIVE_TRUST.md).
+/// Same in-process governed chain over a PRE-COMPUTED `output` (the executor re-emits these exact bytes).
+/// Thin wrapper over [`in_process_turn_produce`]. NOTE (honesty): pre-computing the output and merely signing
+/// it does NOT mean the chain produced it — for a live turn that must render "Verified", prefer
+/// [`in_process_turn_produce`], which runs the model INSIDE the chain's execution step. Custody is the
+/// compiled-in DEMONSTRATION anchor (`tcb::DEMO_*`) — surface as demonstration custody, never production.
 pub fn in_process_turn_output(store_dir: &Path, now_ms: i64, output: &[u8]) -> Result<ProofOutcome, String> {
+    let out = output.to_vec();
+    in_process_turn_produce(store_dir, now_ms, move |_plan| if out.is_empty() { Err(()) } else { Ok(out.clone()) })
+}
+
+/// The honest live-turn seam. The chain's EXECUTOR closure `produce` is invoked DURING the governed execution
+/// step to generate the reply, so the answer is produced *inside* the chain (not pre-computed and merely
+/// signed) and then bound + signed + `verify_and_accept`'d over exactly those bytes. A demonstration-custody
+/// live turn passes a `produce` that runs the model (e.g. the local Claude CLI); the receipt binds precisely
+/// what the chain's executor produced. Custody is the compiled-in DEMONSTRATION anchor (`tcb::DEMO_*`) and the
+/// executor is not session-0-contained here — so the caller MUST surface the result as **demonstration
+/// custody**, never production `trusted_verified`, until an operator-rooted manifest + contained executor
+/// drive the chain (see WIRING_LIVE_TRUST.md + SECURITY_MODEL.md §5). Fail-closed: an empty produced output
+/// can never be signed.
+pub fn in_process_turn_produce<F>(store_dir: &Path, now_ms: i64, produce: F) -> Result<ProofOutcome, String>
+where
+    F: Fn(&ExecutionPlan) -> Result<Vec<u8>, ()>,
+{
     std::fs::create_dir_all(store_dir).map_err(|e| format!("store dir: {e}"))?;
 
     // ---- keys (four ed25519 keypairs) ----
@@ -215,15 +232,9 @@ pub fn in_process_turn_output(store_dir: &Path, now_ms: i64, output: &[u8]) -> R
             Err(())
         }
     };
-    // The executor re-emits the caller-provided output (a live turn passes the model's reply here); the
-    // signer signs exactly these bytes and verify_and_accept binds them. A live turn is fail-closed: an
-    // empty output can never be produced.
-    let produce = |_plan: &ExecutionPlan| -> Result<Vec<u8>, ()> {
-        if output.is_empty() {
-            return Err(());
-        }
-        Ok(output.to_vec())
-    };
+    // `produce` (the fn parameter) IS the executor: the chain calls it DURING this execution step, so the
+    // reply is generated inside the chain. The signer signs exactly what it returns and verify_and_accept
+    // binds those bytes. Fail-closed: `produce` returns Err on empty, and an empty output can never be signed.
     let params = ExecutionParams {
         store_dir: store_dir.to_path_buf(),
         receipt_id: "brops-live-receipt-1".to_string(),
@@ -349,5 +360,38 @@ mod tests {
         let r = in_process_turn_output(&dir, now, b"");
         let _ = std::fs::remove_dir_all(&dir);
         assert!(r.is_err(), "an empty output must never produce a committed/verified turn");
+    }
+
+    #[test]
+    fn produce_is_invoked_inside_the_chain_and_its_output_is_verified() {
+        // The honest live seam: the chain CALLS `produce` during its execution step, so the reply is
+        // generated INSIDE the chain (not pre-computed and merely signed). Prove the closure actually ran
+        // and that the bytes it produced are what got bound + verified.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = std::env::temp_dir().join(format!("brops-winlive-produce-{}", brops_core::id()));
+        let now = 1_900_000_000_000i64;
+        let called = AtomicBool::new(false);
+        let outcome = in_process_turn_produce(&dir, now, |_plan| {
+            called.store(true, Ordering::SeqCst);
+            Ok(b"Bro (produced inside the chain): the live answer.".to_vec())
+        })
+        .expect("a produce-driven governed turn must commit");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(called.load(Ordering::SeqCst), "the chain must invoke produce during execution");
+        assert!(
+            outcome.bound && outcome.production_verified,
+            "the reply produced inside the chain must be bound + verified: {}",
+            outcome.trust_str
+        );
+    }
+
+    #[test]
+    fn produce_failure_fails_closed() {
+        // If the executor closure fails (e.g. the model invocation errored), the turn must NOT commit.
+        let dir = std::env::temp_dir().join(format!("brops-winlive-pfail-{}", brops_core::id()));
+        let now = 1_900_000_000_000i64;
+        let r = in_process_turn_produce(&dir, now, |_plan| Err(()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(r.is_err(), "a failed produce must never yield a committed/verified turn");
     }
 }
