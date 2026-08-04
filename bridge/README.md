@@ -26,15 +26,18 @@ Webview → Tauri cmd (Rust) → localhost auth IPC → engine sidecar (Python)
 - **`contracts/`** — the request/response contract: `task-request.schema.json` (desktop → sidecar)
   and `bridge-result.schema.json` (`{ ok, result, receipt, error }`, **VERIFIED-receipt-mandatory**).
 - **`engine_adapter.py`** (adapter) — `run_governed_turn(request, *, run_task, verify_receipt,
-  read_result)`. **Fail-closed** (any error / non-`completed` run → NO result) and **VERIFIED-receipt
-  mandatory** (a result only with `receipt.verified == true`). Holds no keys — verification is an
-  injected callback; engine core untouched (the adapter only *calls* `run_task`).
+  read_result)`. **Fail-closed** (any error / non-`completed` run → NO result) and **signed-receipt
+  mandatory** (a result only with a signed receipt — `envelope_jcs_b64` + `signature_b64` — that the
+  DESKTOP verifies; there is deliberately **no** wire `verified` boolean the sidecar could self-assert,
+  per `bridge-result.schema.json`). Holds no keys — verification is an injected callback; engine core
+  untouched (the adapter only *calls* `run_task`).
 - **`engine_sidecar.py`** (sidecar transport) — the process the desktop shells out to: reads one
   task-request on **stdin**, writes one bridge-result on **stdout**, hosting `run_governed_turn`. Always
   exits 0 (the verdict travels in `ok`); every error path is fail-closed.
 - **`apps/desktop` `Provider::GovernedEngine`** (desktop provider, `src-tauri/src/ai.rs`) — **opt-in,
   default OFF**; spawns the sidecar (task-request via stdin, bounded reads, deadline, kill-on-drop) and
-  **re-enforces** `ok && receipt.verified` desktop-side, else fail-closed. Existing `claude-cli` /
+  **re-enforces** `ok` **and a desktop-verified signature** (recompute JCS + Ed25519 `verify_strict` over
+  `envelope_jcs_b64` against a pinned key — never a wire `verified` flag), else fail-closed. Existing `claude-cli` /
   `anthropic` / `ollama` paths are byte-for-byte unchanged.
 - **`tests/`** — **18** unit tests (10 adapter + 8 sidecar). `cd bridge && python -m unittest discover -s tests`.
   Plus 4 Rust tests for the desktop verify-gate + lease-free request shape.
@@ -53,7 +56,8 @@ Prove the transport + the verified-receipt invariant with canned callables (self
 ```
 echo '{"task_id":"t-smoke","task_class":"standard-builder","rationale":"say hi"}' \
   | python bridge/engine_sidecar.py --self-test
-# → {"ok": true, "result": "SELF-TEST OK …", "receipt": {…,"verified": true}, "error": null}
+# → {"ok": true, "result": "SELF-TEST OK …", "receipt": {…, "envelope_jcs_b64": "…", "signature_b64": "…"}, "error": null}
+#   (the desktop VERIFIES that signature; the sidecar never asserts a `verified` boolean)
 ```
 Unprovisioned **real** mode is fail-closed (no result):
 ```
