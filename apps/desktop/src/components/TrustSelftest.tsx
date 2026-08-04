@@ -88,6 +88,12 @@ export function TrustSelftestPanel() {
               )}
               <span className="mono ts-detail">{result.detail}</span>
             </p>
+            {result.answer && (
+              <p className="ts-answer" role="note">
+                <b>{tr('Reply produced inside the chain + verified: ', 'Շղթայի ներսում արտադրված + ստուգված պատասխան՝ ', 'Ответ, произведённый внутри цепочки и проверенный: ')}</b>
+                <span className="ts-answer-body">{result.answer}</span>
+              </p>
+            )}
             <p className="ts-caveat" role="note">
               <b>{tr('Honest posture: ', 'Ազնիվ դիրք՝ ', 'Честная позиция: ')}</b>
               {result.custody_note}

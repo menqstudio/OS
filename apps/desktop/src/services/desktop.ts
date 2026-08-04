@@ -71,6 +71,10 @@ export interface TrustSelftest {
   demonstration_custody: boolean;
   bound: boolean;
   detail: string;
+  /** The reply the chain's executor produced INSIDE the governed turn and which the receipt
+   *  bound + verified. A real model answer when BROPS_SELFTEST_MODEL_CMD is set, else a fixed
+   *  demonstration string. Always demonstration custody. */
+  answer: string;
   custody_note: string;
   platform_note: string;
 }

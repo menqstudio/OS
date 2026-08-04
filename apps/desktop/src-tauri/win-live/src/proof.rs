@@ -97,7 +97,7 @@ pub fn in_process_turn(store_dir: &Path, now_ms: i64) -> Result<ProofOutcome, St
 /// compiled-in DEMONSTRATION anchor (`tcb::DEMO_*`) — surface as demonstration custody, never production.
 pub fn in_process_turn_output(store_dir: &Path, now_ms: i64, output: &[u8]) -> Result<ProofOutcome, String> {
     let out = output.to_vec();
-    in_process_turn_produce(store_dir, now_ms, move |_plan| if out.is_empty() { Err(()) } else { Ok(out.clone()) })
+    in_process_turn_produce(store_dir, now_ms, move || if out.is_empty() { Err(()) } else { Ok(out.clone()) })
 }
 
 /// The honest live-turn seam. The chain's EXECUTOR closure `produce` is invoked DURING the governed execution
@@ -111,7 +111,7 @@ pub fn in_process_turn_output(store_dir: &Path, now_ms: i64, output: &[u8]) -> R
 /// can never be signed.
 pub fn in_process_turn_produce<F>(store_dir: &Path, now_ms: i64, produce: F) -> Result<ProofOutcome, String>
 where
-    F: Fn(&ExecutionPlan) -> Result<Vec<u8>, ()>,
+    F: Fn() -> Result<Vec<u8>, ()>,
 {
     std::fs::create_dir_all(store_dir).map_err(|e| format!("store dir: {e}"))?;
 
@@ -235,6 +235,10 @@ where
     // `produce` (the fn parameter) IS the executor: the chain calls it DURING this execution step, so the
     // reply is generated inside the chain. The signer signs exactly what it returns and verify_and_accept
     // binds those bytes. Fail-closed: `produce` returns Err on empty, and an empty output can never be signed.
+    // The GovernedChain executor takes a plan-aware closure; the plan is not needed to produce here (the
+    // caller's `produce` already knows its prompt), so wrap and ignore it — this keeps `produce` a simple
+    // `Fn()` on the public API without leaking `ExecutionPlan` to callers.
+    let exec_produce = |_plan: &ExecutionPlan| -> Result<Vec<u8>, ()> { produce() };
     let params = ExecutionParams {
         store_dir: store_dir.to_path_buf(),
         receipt_id: "brops-live-receipt-1".to_string(),
@@ -253,7 +257,7 @@ where
         evidence_last_sequence: 3,
         evidence_head_sequence: 3,
     };
-    let exec = GovernedExecutionCore::new(params, produce, attest, now_ms);
+    let exec = GovernedExecutionCore::new(params, exec_produce, attest, now_ms);
 
     // ---- production manifest resolver (audit P1-b + P2): verify-manifest-vs-TCB + anti-rollback + PERSIST
     //      floor + resolve keys INSIDE the chain resolution, feeding the pinned keys verify_and_accept uses. ----
@@ -371,7 +375,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("brops-winlive-produce-{}", brops_core::id()));
         let now = 1_900_000_000_000i64;
         let called = AtomicBool::new(false);
-        let outcome = in_process_turn_produce(&dir, now, |_plan| {
+        let outcome = in_process_turn_produce(&dir, now, || {
             called.store(true, Ordering::SeqCst);
             Ok(b"Bro (produced inside the chain): the live answer.".to_vec())
         })
@@ -390,7 +394,7 @@ mod tests {
         // If the executor closure fails (e.g. the model invocation errored), the turn must NOT commit.
         let dir = std::env::temp_dir().join(format!("brops-winlive-pfail-{}", brops_core::id()));
         let now = 1_900_000_000_000i64;
-        let r = in_process_turn_produce(&dir, now, |_plan| Err(()));
+        let r = in_process_turn_produce(&dir, now, || Err(()));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(r.is_err(), "a failed produce must never yield a committed/verified turn");
     }
