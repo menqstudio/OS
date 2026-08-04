@@ -1,3 +1,16 @@
+// ARCHITECTURE NOTE (Phase-4 theme reconcile — read before wiring this in).
+// This provider is a REFERENCE implementation and is INTENTIONALLY NOT MOUNTED. Runtime
+// theming is owned by two stylesheet layers switched by a single `data-theme` attribute:
+//   • `theme/aios.css` — the `--*` design vars (dark `:root` + light `:root[data-theme=light]`)
+//   • `theme/tokens.css` — the typed `--menq-*` token contract (both themes), which the
+//     components actually consume (Chart, ui, Decisions, Files, Notifications, …).
+// `app/store.tsx` (AppProvider) is the runtime theme authority: it sets `data-theme` on
+// <html> (default dark, persisted), which switches BOTH stylesheet layers at once. The
+// TYPED source of truth is `tokens.ts`, kept in lockstep with `tokens.css` by the
+// design-gates CI (token-drift + WCAG-AA contrast). So the `--menq-*` layer is fully
+// runtime-functional via the stylesheet WITHOUT this JS provider — mounting it would only
+// re-write the same variables inline. Keep it as a typed reference / opt-in; do not add a
+// second runtime theme authority without removing AppProvider's `data-theme` toggle first.
 import React from 'react';
 import {
   cssVariables,
