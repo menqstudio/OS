@@ -37,7 +37,7 @@ several "closed" verdicts was softer than it looked. Addressed here:
 | `bound` is a tautology (`CommittedMessage::new` hardcodes trust_state) | ⚠️ OPEN |
 | `production_verified` never asks WHICH root anchor verified the manifest | ⚠️ OPEN |
 | NULL DACL makes `FILE_FLAG_FIRST_PIPE_INSTANCE` inert | ⚠️ OPEN |
-| A failed model call is replaced by a hardcoded constant the chain then signs | ⚠️ OPEN — honesty-critical |
+| A failed model call is replaced by a hardcoded constant the chain then signs | ✅ **CLOSED.** The fallback itself is legitimate — the self-test exists to prove the CHAIN, with or without a model — but it was INVISIBLE: no `BROPS_SELFTEST_MODEL_CMD` (the default), a spawn failure, a non-zero exit or empty output all silently became a built-in constant that the chain bound and the UI showed beside `trusted_verified`. The receipt was honest about custody and the screen was misleading about what answered. `AnswerSource` now travels with the answer (model / no-model-configured / model-failed), the UI renders **NO MODEL RAN** and says which of the two reasons, and 3 tests cover all three cases. |
 | Windows kit: no §2.5 floor, no anti-rollback floor | ⚠️ OPEN |
 
 ## Keystone soundness-blockers (independent audit 2026-08-06) — the gate depends on these

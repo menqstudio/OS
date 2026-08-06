@@ -41,6 +41,11 @@ pub struct TrustSelftest {
     /// verified — the honest end-to-end artifact. With `BROPS_SELFTEST_MODEL_CMD` set this is a real model
     /// answer; otherwise a fixed demonstration string. Always demonstration custody (see `demonstration_custody`).
     pub answer: String,
+    /// Whether a model produced `answer`, or the built-in placeholder was bound instead — and
+    /// which of the two reasons (remediation audit, honesty finding).
+    pub answer_source: AnswerSource,
+    /// The same fact as a plain bool, so a UI cannot render the verdict without it.
+    pub answer_is_from_a_model: bool,
     /// The honest custody posture — the crypto is real, the root is a demonstration anchor.
     pub custody_note: String,
     /// Which build produced this (windows / non-windows).
@@ -60,14 +65,42 @@ supervisor/signer sidecar remain pending before real turns can reach trusted_ver
 /// the chain still exercises with no external dependency. Either way this is DEMONSTRATION custody, never
 /// production; on any spawn/exit/empty error it falls back to the demo bytes (the turn never fails on the
 /// model seam — the chain's own fail-closed still governs).
+///
+/// That fallback is legitimate — the self-test exists to prove the CHAIN works, with or without a model —
+/// but it must never be invisible. `AnswerSource` travels with the answer so a UI cannot show a placeholder
+/// beside `trusted_verified` without saying which one it is (remediation audit, honesty finding).
 #[cfg(windows)]
 const SELFTEST_DEMO_OUTPUT: &[u8] = b"BROPS windows governed output v1";
 
-#[cfg(windows)]
-fn run_selftest_model(cmd: Option<&str>) -> Vec<u8> {
+/// Where the self-test's answer came from (remediation audit, honesty finding).
+///
+/// The chain signs whatever the executor closure produces, and it signs it honestly — that part
+/// was never in doubt. What was wrong is that a FAILED or ABSENT model was indistinguishable
+/// from a real one in everything the user could see: no `BROPS_SELFTEST_MODEL_CMD` (the default
+/// case), a spawn failure, a non-zero exit or empty output all silently became a built-in
+/// constant, which the chain then bound and the UI presented beside `trusted_verified`. A
+/// verified receipt over a placeholder is a true statement about custody and a false impression
+/// about what answered.
+#[derive(serde::Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerSource {
+    /// A configured model ran and produced these exact bytes.
+    Model,
+    /// No model was configured — the built-in placeholder was bound instead.
+    BuiltinPlaceholderNoModelConfigured,
+    /// A model was configured but did not run, or produced nothing usable.
+    BuiltinPlaceholderModelFailed,
+}
+
+fn run_selftest_model(cmd: Option<&str>) -> (Vec<u8>, AnswerSource) {
     let cmd = match cmd {
         Some(c) if !c.trim().is_empty() => c,
-        _ => return SELFTEST_DEMO_OUTPUT.to_vec(),
+        _ => {
+            return (
+                SELFTEST_DEMO_OUTPUT.to_vec(),
+                AnswerSource::BuiltinPlaceholderNoModelConfigured,
+            )
+        }
     };
     let prompt = "In one short sentence, confirm the BroPS governed trust chain produced this reply.";
     // `cmd /C <cmd>` so the operator can point it at any model CLI; the prompt rides in on stdin.
@@ -79,15 +112,17 @@ fn run_selftest_model(cmd: Option<&str>) -> Vec<u8> {
         .spawn();
     let mut child = match spawned {
         Ok(c) => c,
-        Err(_) => return SELFTEST_DEMO_OUTPUT.to_vec(),
+        Err(_) => {
+            return (SELFTEST_DEMO_OUTPUT.to_vec(), AnswerSource::BuiltinPlaceholderModelFailed)
+        }
     };
     if let Some(mut si) = child.stdin.take() {
         use std::io::Write;
         let _ = si.write_all(prompt.as_bytes());
     }
     match child.wait_with_output() {
-        Ok(o) if o.status.success() && !o.stdout.is_empty() => o.stdout,
-        _ => SELFTEST_DEMO_OUTPUT.to_vec(),
+        Ok(o) if o.status.success() && !o.stdout.is_empty() => (o.stdout, AnswerSource::Model),
+        _ => (SELFTEST_DEMO_OUTPUT.to_vec(), AnswerSource::BuiltinPlaceholderModelFailed),
     }
 }
 
@@ -107,11 +142,13 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
         // pre-computed value merely signed after the fact. Capture it to surface the honest end-to-end answer.
         let captured = std::cell::RefCell::new(Vec::<u8>::new());
         let cmd_env = std::env::var("BROPS_SELFTEST_MODEL_CMD").ok();
+        let source = std::cell::Cell::new(AnswerSource::BuiltinPlaceholderNoModelConfigured);
         let produce = || -> Result<Vec<u8>, ()> {
-            let out = run_selftest_model(cmd_env.as_deref());
+            let (out, from) = run_selftest_model(cmd_env.as_deref());
             if out.is_empty() {
                 return Err(());
             }
+            source.set(from);
             *captured.borrow_mut() = out.clone();
             Ok(out)
         };
@@ -126,6 +163,11 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             bound: outcome.bound,
             detail: outcome.trust_str,
             answer,
+            // The user is told WHAT answered, beside the verdict about custody. A verified
+            // receipt over a placeholder is honest about the chain and silent about the model
+            // unless this says so.
+            answer_source: source.get(),
+            answer_is_from_a_model: source.get() == AnswerSource::Model,
             custody_note: CUSTODY_NOTE.to_string(),
             platform_note: "windows".to_string(),
         })
@@ -140,6 +182,8 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             bound: false,
             detail: "The in-process governed trust self-test is compiled only for the Windows build.".to_string(),
             answer: String::new(),
+            answer_source: AnswerSource::BuiltinPlaceholderNoModelConfigured,
+            answer_is_from_a_model: false,
             custody_note: CUSTODY_NOTE.to_string(),
             platform_note: "non-windows".to_string(),
         })
@@ -151,20 +195,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn model_seam_defaults_to_the_demonstration_output() {
+    fn model_seam_defaults_to_the_demonstration_output_and_says_so() {
         // No configured command (and CI) → the fixed demonstration bytes, so the chain still exercises
-        // end-to-end without any external model dependency.
-        assert_eq!(run_selftest_model(None), SELFTEST_DEMO_OUTPUT);
-        assert_eq!(run_selftest_model(Some("   ")), SELFTEST_DEMO_OUTPUT, "blank command is treated as unset");
+        // end-to-end without any external model dependency. The SOURCE has to travel with it: a
+        // placeholder that reports itself as a model answer is how a verified receipt over a constant
+        // became indistinguishable from a verified receipt over a real reply.
+        let (out, src) = run_selftest_model(None);
+        assert_eq!(out, SELFTEST_DEMO_OUTPUT);
+        assert_eq!(src, AnswerSource::BuiltinPlaceholderNoModelConfigured);
+        let (out, src) = run_selftest_model(Some("   "));
+        assert_eq!(out, SELFTEST_DEMO_OUTPUT, "blank command is treated as unset");
+        assert_eq!(src, AnswerSource::BuiltinPlaceholderNoModelConfigured);
+    }
+
+    #[test]
+    fn a_failing_model_is_reported_as_a_failure_not_as_an_answer() {
+        // The case that mattered most: a configured model that does not work. The bytes fall back,
+        // and the source says the model FAILED — distinct from never having been configured.
+        let (out, src) = run_selftest_model(Some("exit 1"));
+        assert_eq!(out, SELFTEST_DEMO_OUTPUT);
+        assert_eq!(src, AnswerSource::BuiltinPlaceholderModelFailed);
     }
 
     #[test]
     fn model_seam_uses_a_configured_command_stdout() {
         // A configured command's stdout is exactly what the chain will bind + verify — proving a real model
         // CLI can be plugged in. `echo` is a cmd.exe builtin, so this needs no external tool.
-        let out = run_selftest_model(Some("echo governed-ok"));
+        let (out, src) = run_selftest_model(Some("echo governed-ok"));
         let text = String::from_utf8_lossy(&out);
         assert!(text.contains("governed-ok"), "the configured command's stdout is the reply: {text:?}");
         assert_ne!(out, SELFTEST_DEMO_OUTPUT, "a working command must not fall back to the demo bytes");
+        assert_eq!(src, AnswerSource::Model);
     }
 }

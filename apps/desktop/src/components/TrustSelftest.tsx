@@ -90,8 +90,22 @@ export function TrustSelftestPanel() {
             </p>
             {result.answer && (
               <p className="ts-answer" role="note">
-                <b>{tr('Reply produced inside the chain + verified: ', 'Շղթայի ներսում արտադրված + ստուգված պատասխան՝ ', 'Ответ, произведённый внутри цепочки и проверенный: ')}</b>
+                <b>
+                  {result.answer_is_from_a_model
+                    ? tr('Model reply produced inside the chain + verified: ', 'Մոդելի պատասխան՝ արտադրված շղթայի ներսում + ստուգված՝ ', 'Ответ модели, произведённый внутри цепочки и проверенный: ')
+                    : tr('Built-in placeholder — NO model produced this. Bound + verified by the chain: ', 'Ներկառուցված լրացուցիչ տեքստ — սա ՈՉ ՄԻ մոդել չի արտադրել։ Կապված + ստուգված շղթայի կողմից՝ ', 'Встроенная заглушка — её НЕ произвела никакая модель. Связана и проверена цепочкой: ')}
+                </b>
                 <span className="ts-answer-body">{result.answer}</span>
+              </p>
+            )}
+            {!result.answer_is_from_a_model && result.answer && (
+              /* The chain genuinely bound these bytes — that part is true. What would be false is
+                 letting the verdict imply a model answered. Say which, and why there is no model. */
+              <p className="ts-caveat" role="note">
+                <span className="pill warn">{tr('NO MODEL RAN', 'ՄՈԴԵԼ ՉԻ ԱՇԽԱՏԵԼ', 'МОДЕЛЬ НЕ ЗАПУСКАЛАСЬ')}</span>{' '}
+                {result.answer_source === 'builtin_placeholder_model_failed'
+                  ? tr('A model was configured but did not run or returned nothing; the chain bound the built-in placeholder instead.', 'Մոդելը կարգավորված էր, բայց չաշխատեց կամ ոչինչ չվերադարձրեց. շղթան կապեց ներկառուցված լրացուցիչ տեքստը։', 'Модель была настроена, но не запустилась или ничего не вернула; цепочка связала встроенную заглушку.')
+                  : tr('No model is configured for the self-test (BROPS_SELFTEST_MODEL_CMD), so the chain bound the built-in placeholder. This proves the CHAIN, not the model.', 'Ինքնաստուգման համար մոդել կարգավորված չէ (BROPS_SELFTEST_MODEL_CMD), ուստի շղթան կապեց ներկառուցված տեքստը։ Սա ապացուցում է ՇՂԹԱՆ, ոչ թե մոդելը։', 'Для самопроверки модель не настроена (BROPS_SELFTEST_MODEL_CMD), поэтому цепочка связала встроенную заглушку. Это доказывает ЦЕПОЧКУ, а не модель.')}
               </p>
             )}
             <p className="ts-caveat" role="note">
