@@ -138,6 +138,12 @@ export function Automations() {
 
   const s = useAsync(() => desktop.listAutomations(), []);
   const items = useMemo(() => s.data ?? [], [s.data]);
+  // The selected conduit's real run history (Phase 8). Refetches when the selection changes and is
+  // reloaded after a "Run now"; empty for a never-run automation.
+  const runs = useAsync(
+    () => (selectedId ? desktop.listAutomationRuns(selectedId) : Promise.resolve([])),
+    [selectedId],
+  );
 
   const stateLabel = (st: RuntimeState): string => ({
     idle: L('armedState'),
@@ -225,6 +231,7 @@ export function Automations() {
         setActionError(null);
         setAnnounce(`${a.name}: ${r.outcome === 'ok' ? '✓' : '⚠'} ${r.detail}`);
         s.reload();
+        runs.reload();
       })
       .catch((e: unknown) => {
         const message = e instanceof Error ? e.message : String(e);
@@ -488,7 +495,23 @@ export function Automations() {
 
         <div className="sc-foot">
           <span className="micro sc-foot-h">{L('recentFires')}</span>
-          <p className="au-note muted">{telemetryPending}</p>
+          {/* REAL run history (Phase 8): the automation_runs log, newest first. Honest empty state
+              for a never-run conduit; no fabricated telemetry. */}
+          {runs.data && runs.data.length > 0 ? (
+            <ul className="au-runs" role="list">
+              {runs.data.slice(0, 6).map((r) => (
+                <li key={r.id} className="au-run">
+                  <span className={`pill ${r.outcome === 'ok' ? 'mint' : 'warn'}`}>
+                    {r.outcome === 'ok' ? '✓' : '⚠'}
+                  </span>
+                  <span className="au-run-detail">{r.detail}</span>
+                  <span className="micro mono au-run-time">{fmtDate(r.ranAt)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="au-note muted">{L('noRuns')}</p>
+          )}
         </div>
       </div>
     );
@@ -721,6 +744,10 @@ const CSS = `
 .v-automations .au-block{margin-top:14px}
 .v-automations .au-block .micro{display:block;margin-bottom:6px}
 .v-automations .au-note{font-size:12px;line-height:1.55;margin:0;max-width:52ch}
+.v-automations .au-runs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.v-automations .au-run{display:flex;align-items:center;gap:10px;font-size:12px}
+.v-automations .au-run-detail{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.v-automations .au-run-time{flex:0 0 auto;color:var(--ink-muted)}
 
 .v-automations .astat.au-danger b{color:var(--danger)}
 

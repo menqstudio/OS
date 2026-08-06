@@ -16,6 +16,11 @@ export const STR = {
     hy: 'notify: <տեքստ> · task: <վերնագիր>',
     ru: 'notify: <текст> · task: <заголовок>',
   },
+  noRuns: {
+    en: 'No runs yet — use “Run now”, or wait for an interval trigger to fire.',
+    hy: 'Դեռ գործարկումներ չկան — սեղմիր «Գործարկել հիմա» կամ սպասիր interval trigger-ի։',
+    ru: 'Запусков ещё нет — нажмите «Запустить сейчас» или дождитесь интервального триггера.',
+  },
   // ── run-now action ───────────────────────────────────────────────────────────
   runNow: {
     en: 'Run now',
