@@ -25,8 +25,9 @@
 > vector, so error text is bounded and `_try_write` degrades instead of letting a `FrameError` escape and
 > kill the lease-issuing process. **F-02/F-18 is now PARTIAL**: `record_handle`/`lease_handle`/`execution_receipt_handle` left the
 > broker's `produced` and are built + published by the supervisor per run (the live kit's placeholder
-> blobs are deleted); `containment_evidence_handle` and the four `evidence_*` counters are still
-> deployment constants, so **do not read F-02 as closed**.
+> blobs are deleted); the RECORDER now writes a per-run containment report the broker content-addresses (a missing
+> report is a refusal), so the ONLY static values left are the four `evidence_*` counters — nothing
+> measures a real recorder evidence chain. **Do not read F-02 as closed.**
 > **REMAINING: 11 blockers** — F-02/F-18 (the open half above),
 > F-08 (request↔output binding), F-09's acceptance-CAS *lease-budget* framing is satisfied but the
 > §2.5 TCB floor **F-10** has no caller, F-07/F-17/F-28 (self-certifying + world-writable custody),

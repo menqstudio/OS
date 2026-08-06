@@ -2811,11 +2811,25 @@ reply enum literal appears in exactly one routing row.
 > handles the receipt names therefore address documents describing THIS run. The live kit's
 > placeholder `record` / `lease` / `execution_receipt` store blobs are deleted with them.
 >
-> **What is still open in F-02/F-18.** `containment_evidence_handle` remains a provisioner stub —
-> it is the one artifact the EXECUTION must produce (the launcher/executor's containment report),
-> and wiring it is the remaining half. The four `evidence_*` counters remain deployment constants:
+> **(j) F-02, containment — the report is now written by the run.** The recorder takes a
+> `--containment-out` path and, on a successful launch, writes a `brops.containment-evidence.v1`
+> document stating what IT observed: the pinned launcher/executor image digests, the lease file
+> and its digest, the cgroup, the §2.7 descriptor contract it established, its own real uid/gid
+> (the invoker gate the launcher binds to), the launcher exit, and the output length. The broker
+> content-addresses it into the protected store and names that handle; a missing or empty report
+> is a REFUSAL, not a fallback. The Windows kit writes its own per-run report whose
+> `containment_mode` says plainly that it is not the §2.7 setuid model.
+>
+> The launcher's own three verdicts (FD contract, drop order, post-drop capability state) are
+> attested here by their CONSEQUENCE — any failure means no `fexecve` and a non-zero exit, so
+> `launcher_exit == 0` is the observable form of "the gate passed". Reporting them directly needs
+> a 4th argv token or a 7th descriptor, and both are fixed by the §2.7 closed-argv / FD contract:
+> that is an Architect decision, so the report states what it saw and does not overclaim.
+>
+> **What is still open in F-02/F-18.** The four `evidence_*` counters remain deployment constants:
 > nothing measures a real recorder evidence chain, so the receipt's strongest-sounding claim still
-> carries no information about the run. Do not read F-02 as closed.
+> carries no information about the run. That is now the ONLY static half left — the live kit's
+> `facts` block contains nothing else. Do not read F-02 as closed.
 >
 > **What this amendment does NOT fix at all.** The request↔output binding (**F-08**), the TCB
 > integrity floor (**F-10**) and the custody defects (**F-07/F-17/F-28**) are untouched.

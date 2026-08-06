@@ -640,7 +640,6 @@ pub mod linux {
         // record / execution-receipt handles and the four evidence-head counters are config
         // constants rather than measurements of this run. F-01 makes them supervisor-recorded
         // and write-once; it does not yet make them derived. Do not read this as closed.)
-        pub containment_evidence_handle: String,
         pub evidence_final_event_hash: String,
         pub evidence_event_count: i64,
         pub evidence_last_sequence: i64,
@@ -704,7 +703,9 @@ pub mod linux {
                 "{}/live-{}-{}.out",
                 cfg.report_dir, plan.broker_turn_id, plan.lease.execution_attempt_id
             );
+            let containment_path = format!("{report_path}.containment.json");
             let _ = std::fs::remove_file(&report_path);
+            let _ = std::fs::remove_file(&containment_path);
             let mut command = Command::new(&cfg.recorder_command[0]);
             #[cfg(windows)]
             {
@@ -725,6 +726,11 @@ pub mod linux {
                 cfg.cgroup_arg.as_str(),
                 "--out",
                 report_path.as_str(),
+                // F-02: the recorder writes the containment evidence for THIS run here; the broker
+                // content-addresses it below. It used to be a provisioner stub whose handle every
+                // receipt of the deployment named.
+                "--containment-out",
+                containment_path.as_str(),
             ]);
             // Spawn (not `status()`) so the child's real pid can be reported to the supervisor
             // BEFORE we block on it: the §5 state machine flips EXECUTION_STARTING → EXECUTING
@@ -779,7 +785,7 @@ pub mod linux {
                 "execution_attempt_id": plan.lease.execution_attempt_id,
                 "produced": {
                     "output_handle": output_handle,
-                    "containment_evidence_handle": cfg.containment_evidence_handle,
+                    "containment_evidence_handle": containment_handle,
                     // F-02: `record_handle`, `lease_handle` and `execution_receipt_handle` are
                     // gone from here. The supervisor BUILDS those documents from its own
                     // acceptance + completion rows and publishes them to the protected store, so

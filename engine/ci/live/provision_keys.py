@@ -81,16 +81,15 @@ STORE_INPUTS = {
     "history": b"[]",
     "generation_config": b'{"engine":"live","temperature":0}',
     "policy_bundle": b'{"policy":"brops.live.policy.v1","rules":[]}',
-    "containment_evidence": b'{"containment":"ok","namespace":"live"}',
-    # F-02/F-18: the `record`, `lease` and `execution_receipt` STUBS are gone. They were literal
+    # F-02/F-18: the `containment_evidence`, `record`, `lease` and `execution_receipt` STUBS are gone. They were literal
     # placeholder JSON the provisioner wrote once, whose content addresses every receipt of this
     # deployment then named — so the isolated signer's "deep protected-chain verification" only
     # proved that those constant bytes existed. The SUPERVISOR now builds the governed-turn record
     # and the execution receipt from its own acceptance + completion rows, and addresses the exact
     # canonical lease bytes it persisted at acceptance, publishing all three into this store per run.
     #
-    # `containment_evidence` is still a stub: it is the one artifact the EXECUTION must produce
-    # (the launcher/executor's containment report), and wiring that is the remaining half of F-02.
+    # The RECORDER now writes a per-run containment report (`--containment-out`) which the broker
+    # content-addresses into this store, so the containment handle names what this run actually did.
 }
 
 # STILL a deployment constant — the open half of audit F-02/F-18. The evidence chain these
@@ -309,7 +308,6 @@ def main() -> int:
         # rather than left behind, so nobody reading this config can conclude the broker still
         # supplies the identities the signer allowlists.
         "facts": {
-            "containment_evidence_handle": handles["containment_evidence"],
             "evidence_final_event_hash": EVIDENCE_FINAL_EVENT_HASH,
             "evidence_event_count": EVIDENCE_EVENT_COUNT,
             "evidence_last_sequence": EVIDENCE_LAST_SEQUENCE,

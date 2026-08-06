@@ -29,7 +29,11 @@ use crate::crypto;
 #[derive(Clone)]
 pub struct ExecutionParams {
     pub store_dir: PathBuf,
-    pub containment_evidence_handle: String,
+    /// What containment this kit actually applied, named honestly in the per-run containment
+    /// evidence (audit F-02). The Windows kit has no §2.7 setuid launcher: its cross-account
+    /// session-0 containment is proven separately (win-live/proof/CROSS_ACCOUNT_PROOF.md), so the
+    /// report must not imply the Linux model.
+    pub containment_mode: String,
     pub evidence_final_event_hash: String,
     pub evidence_event_count: i64,
     pub evidence_last_sequence: i64,
@@ -80,6 +84,29 @@ where
         std::fs::write(cfg.store_dir.join(&output_handle), &output)
             .map_err(|_| TurnReason::UpstreamBlocked)?;
 
+        // (2b) F-02: a per-run CONTAINMENT REPORT, content-addressed into the protected store. This
+        //      replaces a provisioner stub whose handle every receipt of the deployment named, which
+        //      made the isolated signer's §1.5 containment gate a check on a constant. It states only
+        //      what this kit observed — including, in `containment_mode`, that this is NOT the Linux
+        //      §2.7 recorder → setuid launcher → contained executor model.
+        let containment = {
+            let doc = json!({
+                "protocol": "brops.containment-evidence.v1",
+                "containment_mode": cfg.containment_mode,
+                "execution_attempt_id": plan.lease.execution_attempt_id,
+                "run_id": r.run_id,
+                "output_handle": output_handle,
+                "output_bytes": output.len(),
+                "completed_at_ms": self.now_ms,
+            });
+            // serde_json's Map is a BTreeMap: sorted keys + compact separators, so identical facts
+            // always content-address identically.
+            serde_json::to_vec(&doc).map_err(|_| TurnReason::UpstreamBlocked)?
+        };
+        let containment_handle = crypto::sha256_hex(&containment);
+        std::fs::write(cfg.store_dir.join(&containment_handle), &containment)
+            .map_err(|_| TurnReason::UpstreamBlocked)?;
+
         // (3) Tell the supervisor the run is up, then report ONLY what it produced. Every id, nonce
         //     and identity is deliberately absent: the supervisor holds those from the challenge it
         //     accepted, and supplying them here would re-open F-01 through a second door.
@@ -99,7 +126,7 @@ where
             "execution_attempt_id": attempt,
             "produced": {
                 "output_handle": output_handle,
-                "containment_evidence_handle": cfg.containment_evidence_handle,
+                "containment_evidence_handle": containment_handle,
                 // F-02: record/lease/execution-receipt handles are supervisor-derived now.
                 "completed_at_ms": now,
                 "evidence_final_event_hash": cfg.evidence_final_event_hash,

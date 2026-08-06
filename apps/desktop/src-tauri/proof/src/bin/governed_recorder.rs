@@ -65,6 +65,16 @@ mod linux {
         };
         let cgroup = flag(args, "--cgroup").unwrap_or_else(|| "cgroup-live".to_string());
         let out_path = flag(args, "--out");
+        // Where to write the CONTAINMENT REPORT for this run (audit F-02). Optional so the flag can
+        // be added without breaking an older caller, but the broker always passes it and refuses the
+        // turn if the file does not appear — so its absence is never silently tolerated.
+        let containment_out = flag(args, "--containment-out");
+
+        // Keep plain copies for the containment report: the originals are moved into CStrings below.
+        let launcher_for_report = launcher.clone();
+        let executor_for_report = executor.clone();
+        let lease_for_report = lease.clone();
+        let cgroup_for_report = cgroup.clone();
 
         // Pre-build every C string + open the store inputs BEFORE fork (only async-signal-safe libc runs
         // between fork and execve).
@@ -189,6 +199,64 @@ mod linux {
                 let _ = std::fs::remove_file(&p);
             }
         }
+        // ---- containment evidence for THIS run (audit F-02) ----
+        //
+        // `containment_evidence_handle` used to address a provisioner stub — literal placeholder JSON
+        // written once, whose content address every receipt of the deployment then named. The isolated
+        // signer refuses to mint an envelope when the containment handle does not resolve (§1.5), so
+        // that gate proved only that the stub existed.
+        //
+        // These are facts THIS process observed. The launcher's own verdicts (the §2.7 FD contract, the
+        // privilege-drop order, the post-drop capability state, and the executor image integrity vs the
+        // lease pin) are attested here by their CONSEQUENCE: any one of them failing means no `fexecve`
+        // and a non-zero exit, so `launcher_exit == 0` is the observable form of "the gate passed". The
+        // launcher cannot report them directly without a 4th argv token or a 7th descriptor, and both
+        // are fixed by the rev-30 §2.7 closed-argv / FD contract — changing that is an Architect
+        // decision, so this report states what it saw and does not overclaim.
+        if let Some(cp) = containment_out.as_deref() {
+            if exit_code == 0 && !is_execve_fail && !report.is_empty() {
+                let sha = |p: &str| -> String {
+                    std::fs::read(p)
+                        .map(|b| brops_core::governed_message_store::sha256_hex(&b))
+                        .unwrap_or_default()
+                };
+                let (ruid, rgid) = unsafe { (libc::getuid(), libc::getgid()) };
+                // Sorted keys + compact separators: the bytes are content-addressed, so the encoding
+                // must be deterministic for the same facts.
+                let doc = serde_json::json!({
+                    "protocol": "brops.containment-evidence.v1",
+                    "cgroup": cgroup_for_report,
+                    "executor_path": executor_for_report,
+                    "executor_sha256": sha(&executor_for_report),
+                    "fd_contract": "0=/dev/null:ro,1=/dev/null:wo,2=/dev/null:wo,3=system:ro,4=history:ro,5=generation_config:ro,6=output:wo",
+                    "invoker_gid": rgid,
+                    "invoker_uid": ruid,
+                    "launcher_exit": exit_code,
+                    "launcher_gate": "passed",
+                    "launcher_path": launcher_for_report,
+                    "launcher_sha256": sha(&launcher_for_report),
+                    "lease_path": lease_for_report,
+                    "lease_sha256": sha(&lease_for_report),
+                    "output_bytes": report.len(),
+                });
+                // serde_json's Map is a BTreeMap by default: `to_vec` emits sorted keys with compact
+                // separators, so identical facts always content-address identically.
+                let bytes = match serde_json::to_vec(&doc) {
+                    Ok(b) => b,
+                    Err(_) => return err("recorder: cannot encode containment report"),
+                };
+                if std::fs::write(cp, &bytes).is_err() {
+                    return err("recorder: cannot write --containment-out");
+                }
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(cp, std::fs::Permissions::from_mode(0o644));
+            } else {
+                // A refused/empty run has no containment to evidence. Remove any stale file so the
+                // broker cannot address a previous run's report for this one.
+                let _ = std::fs::remove_file(cp);
+            }
+        }
+
         let report_str = String::from_utf8_lossy(&report);
         println!("EXECUTOR_REPORT: {report_str}");
         println!("RESULT: recorder launcher_exit={exit_code} report_bytes={}", report.len());

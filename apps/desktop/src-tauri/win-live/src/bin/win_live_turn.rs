@@ -183,7 +183,8 @@ mod win {
         let f = &cfg.facts;
         let params = ExecutionParams {
             store_dir: std::path::PathBuf::from(&cfg.store_dir),
-            containment_evidence_handle: f.containment_evidence_handle.clone(),
+            containment_mode: "windows-live-kit:spawned executor, session-0 containment proven separately"
+                .to_string(),
             evidence_final_event_hash: f.evidence_final_event_hash.clone(),
             evidence_event_count: f.evidence_event_count,
             evidence_last_sequence: f.evidence_last_sequence,

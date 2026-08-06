@@ -139,7 +139,8 @@ where
     let history_sha256 = seed(store_dir, b"brops-history-v1");
     let generation_config_sha256 = seed(store_dir, b"brops-generation-config-v1");
     let policy_bundle_handle = seed(store_dir, b"brops-policy-bundle-v1");
-    let containment_evidence_handle = seed(store_dir, b"brops-containment-evidence-v1");
+    // F-02: no pre-seeded containment stub either — the execution writes a per-run containment
+    // report into this store and names its content address.
     // F-02: no pre-seeded record/lease/execution-receipt blobs. The supervisor BUILDS those
     // documents from its own acceptance + completion rows and publishes them to this store, so the
     // handles the receipt names address artifacts of THIS run rather than provisioner stubs.
@@ -248,7 +249,7 @@ where
     let exec_produce = |_plan: &ExecutionPlan| -> Result<Vec<u8>, ()> { produce() };
     let params = ExecutionParams {
         store_dir: store_dir.to_path_buf(),
-        containment_evidence_handle,
+        containment_mode: "windows-proof-kit:in-process, no setuid launcher".to_string(),
         evidence_final_event_hash,
         evidence_event_count: 3,
         evidence_last_sequence: 3,
