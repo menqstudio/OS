@@ -2,9 +2,9 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof are now CONSOLIDATED on branch feat/cockpit-pages (PR #48, base chore/main-resync), superseding the earlier split (PR #46 impl / PR #31 design / PR #32 impl). The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green). tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #48 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "1e8597c215955ffa02247c2da209d443851490e0",
+    "baseline_main_head_at_sync": "b91f23569490f8fed8b16985f304ac3db2c1dec7",
     "snapshot_branch": "feat/govern-stream-run-step",
-    "live_main_resolution": "baseline_main_head_at_sync is the current live main HEAD 1e8597c (the squash-merge of PR #51, Phase-2 slice 2 — stream_ask governed + held-answer core, on top of #48/#49/#50). The active workflow branch feat/govern-stream-run-step (PR #52) is a DIRECT child of main (base == main), so the pull_request base-sha baseline check APPLIES and passes: baseline_main_head_at_sync == the PR base sha == main tip.",
+    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD b91f235 (the squash-merge of PR #52, Phase-2 slice 3 — stream_run_step governed, which closed the last ungoverned provider back door). The active workflow branch fix/release-setup-node-pin (PR #54) is a DIRECT child of that main tip (base == main), so the pull_request base-sha baseline check APPLIES and passes: baseline_main_head_at_sync == the PR base sha == main tip. It was left at 1e8597c after #52 merged, which is why every PR branched from main failed the repo-state verifier on a stale baseline rather than on anything in its own diff.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #50). PR #50's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
