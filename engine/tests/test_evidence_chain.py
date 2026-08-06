@@ -264,6 +264,18 @@ class CompletionIntegrationTests(EvidenceFixture):
             encoding="utf-8")
         import bro_completion
         self.completion = bro_completion
+        # (audit R-06) The anti-rollback floor must be PROVISIONED: an absent one refuses rather
+        # than reading as "no floor required", because `rm -rf head-floor/` used to turn the whole
+        # check off silently. Bootstrapping it is a deliberate act, so the fixture performs it.
+        floor_dir = self.store / "head-floor"
+        floor_dir.mkdir(parents=True, exist_ok=True)
+        (floor_dir / "_index.json").write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        # This process owns that directory, which R-06 refuses by default — a mark the policed
+        # account can rewind is not a mark. A test harness has no second principal; say so.
+        ack = unittest.mock.patch.dict(
+            os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"})
+        ack.start()
+        self.addCleanup(ack.stop)
 
     def chain_check(self, ids, task_id="task-1"):
         with unittest.mock.patch.dict(os.environ,
@@ -347,6 +359,36 @@ class CompletionIntegrationTests(EvidenceFixture):
         with self.assertRaises(CompletionError) as caught:
             self.chain_check(self.chain)
         self.assertIn("unreadable", str(caught.exception))
+
+    # ---- audit R-06: deleting the mark must not delete the floor -----------------------
+
+    def test_removing_the_whole_floor_directory_refuses_instead_of_disabling_the_check(self):
+        # The original F-13/F-14 attack needed exactly one capability: write access to the
+        # evidence store. Before this, that same capability defeated the FIX — `rm -rf
+        # head-floor/` and the floor silently stopped existing, so every later run passed.
+        from bro_completion import CompletionError
+        self.reseal_head(5)
+        self.chain_check(self.chain)
+        shutil.rmtree(self.store / "head-floor")
+        with self.assertRaises(CompletionError) as caught:
+            self.chain_check(self.chain)
+        self.assertIn("not provisioned", str(caught.exception))
+
+    def test_removing_one_tasks_mark_is_caught_by_the_index(self):
+        # Finer-grained version of the same attack: leave the directory, delete one file. The
+        # index still names the task, so this is a REMOVED mark, not a first sighting.
+        from bro_completion import CompletionError
+        self.reseal_head(5)
+        self.chain_check(self.chain)
+        (self.store / "head-floor" / "task-1.floor.json").unlink()
+        with self.assertRaises(CompletionError) as caught:
+            self.chain_check(self.chain)
+        self.assertIn("was removed", str(caught.exception))
+
+    def test_a_task_never_measured_still_starts_cleanly(self):
+        # The refusals above must not make a genuinely new task unusable.
+        self.write_chain("task-fresh", ["work-started", "tests-passed"])
+        self.assertEqual(len(self.chain_check(["task-fresh-e1", "task-fresh-e2"], "task-fresh")), 64)
 
     def test_evidence_store_inside_the_repository_denied(self):
         from bro_completion import CompletionError

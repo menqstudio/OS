@@ -5,6 +5,7 @@ import os
 import pathlib
 import re
 import shlex
+import stat
 import subprocess
 import time
 from typing import Any
@@ -217,9 +218,12 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
         durable_floor = _load_head_floor(resolved_store, task_id)
         floor = durable_floor if min_head_sequence is None else max(
             min_head_sequence, durable_floor)
+        # `floor or None` used to disable the check whenever the mark read 0 (R-06). A recorded
+        # zero is a floor like any other; only a genuinely-new task has no mark, and 0 is then
+        # trivially satisfied by any positive head anyway.
         digest = validate_chain(task_id, event_ids, resolved_keys,
                                 store=resolved_store,
-                                min_head_sequence=floor or None)
+                                min_head_sequence=floor)
         # Advance the mark only after the chain verified, and only upward. A later run
         # presenting a genuinely signed but OLDER head — the retained anchor of a
         # self-consistent truncated chain — is then refused against this record.
@@ -230,29 +234,104 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
         raise CompletionError(str(exc)) from exc
 
 
-def _head_floor_dir(store: pathlib.Path) -> pathlib.Path:
-    """Where the durable evidence high-water marks live (audit F-13/F-14).
+#: The marker file that says "this deployment HAS an anti-rollback floor". Its absence is the
+#: difference between a deployment that never had one and a deployment whose one was deleted —
+#: without it, `rm -rf head-floor/` silently turned the floor off and every later run passed
+#: (audit **R-06**). It also carries the roster of every task ever marked, so removing a single
+#: task's mark is caught too: the roster still names the task, and a task on the roster with no
+#: mark is a removed mark, not a first sighting.
+_FLOOR_INDEX = "_index.json"
 
-    ``BRO_EVIDENCE_HEAD_FLOOR`` when set — a deployment that can put the marks under a
-    principal the builder cannot write should do exactly that. Otherwise a subdirectory
-    of the external evidence store, which needs no new configuration and still supplies
-    the property the tautology lacked: durability ACROSS calls. The residual is stated
-    rather than implied — whoever can write the store can also clear the mark — and
-    pointing the env elsewhere closes it.
+
+def _head_floor_dir(store: pathlib.Path) -> pathlib.Path:
+    """Where the durable evidence high-water marks live (audit **F-13/F-14**, **R-06**).
+
+    ``BRO_EVIDENCE_HEAD_FLOOR`` when set — a deployment that can put the marks under a principal
+    the builder cannot write should do exactly that. It is held to the SAME custody rule as the
+    operator-root pin: an anti-rollback mark the reading account owns is one it can rewrite, so a
+    self-owned floor directory is refused unless the deployment has acknowledged having no
+    principal separation. Without the env var the marks sit beside the external evidence store,
+    which needs no new configuration; that placement is weaker by construction and the
+    acknowledgement rule applies there too.
     """
-    if os.getenv("BRO_EVIDENCE_HEAD_FLOOR"):
-        return _external_dir("BRO_EVIDENCE_HEAD_FLOOR")
-    return store / "head-floor"
+    directory = (
+        _external_dir("BRO_EVIDENCE_HEAD_FLOOR")
+        if os.getenv("BRO_EVIDENCE_HEAD_FLOOR")
+        else store / "head-floor"
+    )
+    _refuse_self_owned_floor(directory)
+    return directory
+
+
+def _refuse_self_owned_floor(directory: pathlib.Path) -> None:
+    """A floor the reading account owns or can write is not a floor (**R-06**).
+
+    The original F-13/F-14 attack needed exactly one capability: write access to the evidence
+    store. Leaving the mark writable by that same principal means the fix costs the attacker
+    nothing — they delete or rewind the mark instead of swapping the head. Same escape hatch as
+    the operator pin, and for the same honest reason: some deployments have no second principal,
+    and they must SAY so rather than be silently exempted.
+    """
+    if not directory.exists() or os.name != "posix":
+        return
+    from bro_signature import PIN_SELF_OWNED_ACK_VALUE, ENV_PIN_SELF_OWNED_ACK
+
+    if os.environ.get(ENV_PIN_SELF_OWNED_ACK, "").strip() == PIN_SELF_OWNED_ACK_VALUE:
+        return
+    info = directory.stat()
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise CompletionError(
+            f"the evidence head floor {directory} is group/other-writable; an anti-rollback mark "
+            "anyone can rewind is not an anti-rollback mark")
+    if info.st_uid == os.geteuid():
+        raise CompletionError(
+            f"the evidence head floor {directory} is owned by the very account it polices, which "
+            f"can delete or rewind it at will; place it under another principal or set "
+            f"{ENV_PIN_SELF_OWNED_ACK}=acknowledged to acknowledge that this deployment has no "
+            "principal separation")
+
+
+def _load_floor_index(directory: pathlib.Path) -> set[str]:
+    """Every task this deployment has ever recorded a mark for.
+
+    A MISSING index is not an empty one: it means the floor was never provisioned, or was
+    deleted. Both refuse — the whole point of R-06 is that `rm -rf` must not read as "no floor
+    required". A deployment bootstraps by creating the directory with an empty index, which is a
+    deliberate act rather than an accident of a missing path.
+    """
+    path = directory / _FLOOR_INDEX
+    try:
+        recorded = json.loads(path.read_text(encoding="utf-8"))["tasks"]
+    except FileNotFoundError as exc:
+        raise CompletionError(
+            f"no evidence head floor at {directory}: the anti-rollback floor is not provisioned, "
+            "or has been removed. Create the directory with "
+            '{"tasks": []} in _index.json to bootstrap it deliberately — an absent floor must '
+            "not read as 'no floor required'") from exc
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise CompletionError(
+            f"the evidence head floor index at {directory} is unreadable: {exc}") from exc
+    if not isinstance(recorded, list) or not all(isinstance(t, str) for t in recorded):
+        raise CompletionError(f"the evidence head floor index at {directory} is malformed")
+    return set(recorded)
 
 
 def _load_head_floor(store: pathlib.Path, task_id: str) -> int:
-    """The recorded high-water mark for ``task_id``; 0 when none has been recorded.
+    """The recorded high-water mark for ``task_id``; 0 only when this task is genuinely new.
 
-    A corrupt or non-integer record is NOT treated as absent: that would let a rollback
-    be laundered into a fresh start by truncating one small file. It refuses instead.
+    A corrupt or non-integer record is NOT treated as absent — that would let a rollback be
+    laundered into a fresh start by truncating one small file — and neither is a MISSING record
+    for a task the index knows about, which is a deleted mark (**R-06**).
     """
-    path = _head_floor_dir(store) / f"{task_id}.floor.json"
+    directory = _head_floor_dir(store)
+    known = _load_floor_index(directory)
+    path = directory / f"{task_id}.floor.json"
     if not path.exists():
+        if task_id in known:
+            raise CompletionError(
+                f"the evidence head floor for {task_id} is missing but the floor index still "
+                "names the task: the mark was removed. Refusing rather than restarting the "
+                "anti-rollback floor at zero")
         return 0
     try:
         recorded = json.loads(path.read_text(encoding="utf-8"))["head_sequence"]
@@ -267,12 +346,15 @@ def _load_head_floor(store: pathlib.Path, task_id: str) -> int:
 
 
 def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int) -> None:
-    """Raise the recorded mark to ``head_sequence``. Never lowers it."""
+    """Raise the recorded mark to ``head_sequence``, and enrol the task in the index.
+
+    Never lowers the mark, and never removes a task from the index — a task that has been
+    measured once must stay measurable, or deleting its mark would be a way back to zero.
+    """
     if head_sequence <= _load_head_floor(store, task_id):
         return
     directory = _head_floor_dir(store)
     try:
-        directory.mkdir(parents=True, exist_ok=True)
         final = directory / f"{task_id}.floor.json"
         temporary = directory / f"{task_id}.floor.json.tmp"
         temporary.write_text(
@@ -281,6 +363,14 @@ def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int) -
         # Rename over the old mark so a crash mid-write cannot leave a truncated file
         # that the loader above would (correctly) refuse forever.
         temporary.replace(final)
+
+        known = _load_floor_index(directory)
+        if task_id not in known:
+            index = directory / _FLOOR_INDEX
+            index_tmp = directory / (_FLOOR_INDEX + ".tmp")
+            index_tmp.write_text(
+                json.dumps({"tasks": sorted(known | {task_id})}), encoding="utf-8")
+            index_tmp.replace(index)
     except OSError as exc:
         raise CompletionError(
             f"cannot record the evidence head floor for {task_id}: {exc}") from exc

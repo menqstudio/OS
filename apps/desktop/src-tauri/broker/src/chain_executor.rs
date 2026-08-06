@@ -524,46 +524,6 @@ impl OwnedEnvelope {
 /// The real Linux sub-chain: drives the AF_UNIX challenge-authority / supervisor / isolated-signer hops via
 /// a real socket [`HopConnector`], and (once provisioned) the privileged execution spawn. The pure
 /// orchestration above is host-independent; only the socket transport + the setuid spawn live here.
-/// The four evidence-head values, READ from the recorder's per-run chain (audit **F-02**).
-///
-/// Constructed only on the Linux execution path; the parser is host-independent and unit-tested
-/// everywhere, so a non-Linux library build legitimately has no constructor for it.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-struct RunEvidence {
-    final_event_hash: String,
-    event_count: i64,
-    last_sequence: i64,
-    head_sequence: i64,
-}
-
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-impl RunEvidence {
-    /// Parse the recorder's `brops.run-evidence-chain.v1` document. Every field is required and
-    /// must be well-formed — a chain the broker cannot read is a run it cannot evidence, and a
-    /// default here would silently restore the constants this replaced.
-    fn parse(bytes: &[u8]) -> Result<Self, TurnReason> {
-        let v: Value = serde_json::from_slice(bytes).map_err(|_| TurnReason::UpstreamBlocked)?;
-        if v.get("protocol").and_then(Value::as_str) != Some("brops.run-evidence-chain.v1") {
-            return Err(TurnReason::UpstreamBlocked);
-        }
-        let i = |k: &str| -> Result<i64, TurnReason> {
-            v.get(k).and_then(Value::as_i64).filter(|n| *n > 0).ok_or(TurnReason::UpstreamBlocked)
-        };
-        let final_event_hash = v
-            .get("final_event_hash")
-            .and_then(Value::as_str)
-            .filter(|h| h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
-            .ok_or(TurnReason::UpstreamBlocked)?
-            .to_string();
-        Ok(RunEvidence {
-            final_event_hash,
-            event_count: i("event_count")?,
-            last_sequence: i("last_sequence")?,
-            head_sequence: i("head_sequence")?,
-        })
-    }
-}
-
 #[cfg(target_os = "linux")]
 pub mod linux {
     use super::*;
@@ -748,10 +708,18 @@ pub mod linux {
                 cfg.report_dir, plan.broker_turn_id, plan.lease.execution_attempt_id
             );
             let containment_path = format!("{report_path}.containment.json");
-            let evidence_path = format!("{report_path}.evidence.json");
+            // (audit F-01, second finding) The evidence chain is written into the RECORDER's own
+            // state directory, named by the attempt id, because that is where the supervisor reads
+            // it from. The broker cannot write there — which is precisely why the supervisor can
+            // believe what it finds. It is also why the broker does not clear a stale file here: it
+            // has no business touching the recorder's evidence, and a stale chain is caught by the
+            // supervisor's own output-digest check rather than by the broker's good manners.
+            let evidence_path = format!(
+                "{}/{}.evidence.json",
+                cfg.evidence_state_dir, plan.lease.execution_attempt_id
+            );
             let _ = std::fs::remove_file(&report_path);
             let _ = std::fs::remove_file(&containment_path);
-            let _ = std::fs::remove_file(&evidence_path);
             let mut command = Command::new(&cfg.recorder_command[0]);
             #[cfg(windows)]
             {
@@ -847,13 +815,6 @@ pub mod linux {
                 );
             }
 
-            // (2c) F-02: read the recorder's per-run evidence chain. Its absence is a refusal, not a
-            //      fallback to a constant — the four evidence values decide the supervisor's
-            //      anti-rollback floor, and a constant made that floor compare a value against itself.
-            let evidence_bytes =
-                std::fs::read(&evidence_path).map_err(|_| TurnReason::UpstreamBlocked)?;
-            let evidence = super::RunEvidence::parse(&evidence_bytes)?;
-
             // (3) `complete-run` — report ONLY what this run actually produced, once. Every id,
             //     nonce, identity and acceptance timestamp is deliberately absent: the supervisor
             //     already holds those from the signed challenge it accepted, and taking them here
@@ -873,12 +834,10 @@ pub mod linux {
                     // the handles the receipt names address artifacts of THIS run instead of
                     // deployment constants the broker copied out of a world-readable config.
                     "completed_at_ms": now,
-                    // F-02: measured, not configured. A missing or malformed chain is a refusal —
-                    // a run whose evidence cannot be read must not be completed, let alone attested.
-                    "evidence_final_event_hash": evidence.final_event_hash,
-                    "evidence_event_count": evidence.event_count,
-                    "evidence_last_sequence": evidence.last_sequence,
-                    "evidence_head_sequence": evidence.head_sequence,
+                    // F-01: the four evidence values are GONE from the wire. The supervisor reads
+                    // the recorder's chain ITSELF and derives them, and refuses this completion if
+                    // `output_handle` is not the digest the recorder captured — so naming the
+                    // output no longer names what gets attested.
                 },
             });
             self.supervisor_op(&complete)?;
@@ -1432,60 +1391,4 @@ mod tests {
         assert!(r.message.is_none());
     }
 
-    // ---- F-02: the evidence head must be MEASURED, and unreadable evidence must refuse -------------
-
-    fn evidence_doc() -> Value {
-        json!({
-            "protocol": "brops.run-evidence-chain.v1",
-            "final_event_hash": "ab".repeat(32),
-            "event_count": 3,
-            "last_sequence": 3,
-            "head_sequence": 9,
-        })
-    }
-
-    #[test]
-    fn a_well_formed_run_evidence_chain_supplies_the_four_head_values() {
-        let e = RunEvidence::parse(&serde_json::to_vec(&evidence_doc()).unwrap()).expect("parses");
-        assert_eq!(e.final_event_hash, "ab".repeat(32));
-        assert_eq!((e.event_count, e.last_sequence, e.head_sequence), (3, 3, 9));
-    }
-
-    #[test]
-    fn evidence_that_cannot_be_read_is_refused_rather_than_defaulted() {
-        // Every one of these used to be impossible to reach, because the values came from config and
-        // were therefore always present and always the same. A default here would put that back.
-        assert!(RunEvidence::parse(b"not json").is_err());
-        let mut wrong = evidence_doc();
-        wrong["protocol"] = json!("brops.something-else.v1");
-        assert!(RunEvidence::parse(&serde_json::to_vec(&wrong).unwrap()).is_err());
-        for field in ["final_event_hash", "event_count", "last_sequence", "head_sequence"] {
-            let mut missing = evidence_doc();
-            missing.as_object_mut().unwrap().remove(field);
-            assert!(
-                RunEvidence::parse(&serde_json::to_vec(&missing).unwrap()).is_err(),
-                "{field} must be required"
-            );
-        }
-    }
-
-    #[test]
-    fn a_non_positive_or_non_digest_head_is_refused() {
-        // A zero/negative sequence is not a head the anti-rollback floor can order, and a
-        // non-canonical digest is not a chain terminus.
-        for (field, bad) in [
-            ("event_count", json!(0)),
-            ("last_sequence", json!(-1)),
-            ("head_sequence", json!(0)),
-            ("final_event_hash", json!("AB".repeat(32))),
-            ("final_event_hash", json!("beef")),
-        ] {
-            let mut doc = evidence_doc();
-            doc[field] = bad.clone();
-            assert!(
-                RunEvidence::parse(&serde_json::to_vec(&doc).unwrap()).is_err(),
-                "{field}={bad} must be refused"
-            );
-        }
-    }
 }

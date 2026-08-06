@@ -182,15 +182,15 @@ mod win {
                 Err(())
             }
         };
-        let f = &cfg.facts;
         let params = ExecutionParams {
             store_dir: std::path::PathBuf::from(&cfg.store_dir),
             containment_mode: "windows-live-kit:spawned executor, session-0 containment proven separately"
                 .to_string(),
-            evidence_final_event_hash: f.evidence_final_event_hash.clone(),
-            evidence_event_count: f.evidence_event_count,
-            evidence_last_sequence: f.evidence_last_sequence,
-            evidence_head_sequence: f.evidence_head_sequence,
+            // F-02/F-01: the four `facts.evidence_*` deployment constants are gone. The execution
+            // measures its own chain and the supervisor derives the head from it, so the evidence
+            // head describes THIS run instead of naming the same value for every run of the kit.
+            evidence_dir: std::path::PathBuf::from(&cfg.store_dir).join("run-evidence"),
+            head_sequence: cfg.facts.evidence_head_sequence,
         };
         let exec = GovernedExecutionCore::new(params, produce, supervisor_op, now);
 

@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import shlex
 import shutil
@@ -33,6 +34,25 @@ def build_evidence(store: pathlib.Path, keys: dict, task_id: str, count: int) ->
     "evidence/completed.json" and it believed them. Evidence has to resolve now,
     which means the tests have to produce some.
     """
+    # (audit R-06) The L-4 anti-rollback floor must be PROVISIONED: an absent one refuses rather
+    # than reading as "no floor required", because deleting it used to turn the check off
+    # silently. Bootstrapping is a deliberate act, and a fixture that builds an evidence store is
+    # exactly where a deployment would perform it.
+    floor_dir = store / "head-floor"
+    floor_dir.mkdir(parents=True, exist_ok=True)
+    index = floor_dir / "_index.json"
+    if not index.exists():
+        index.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+    # This process owns the floor it is about to be policed by, which R-06 refuses — a mark the
+    # policed account can rewind is not a mark. A test process IS a deployment with no principal
+    # separation, so the honest thing is to say so rather than to weaken the rule. `setdefault`
+    # so a suite that wants to exercise the refusal can still unset it.
+    #
+    # (The refusal is POSIX-only, so it fired on Linux CI while every local Windows run passed —
+    # the same "the test is skipped on the platform you develop on" blind spot the remediation
+    # audit found 22 instances of. Recorded here so the next reader knows why it is set.)
+    os.environ.setdefault("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", "acknowledged")
+
     previous, ids, digest = None, [], ""
     for sequence in range(1, count + 1):
         event_id = f"{task_id}-e{sequence}"

@@ -52,6 +52,7 @@ from governed_supervisor_server import (  # noqa: E402
     OP_EXECUTION_STARTED,
     OP_LAUNCH_GATE,
     REFUSE_COMPLETION_CONFLICT,
+    REFUSE_EVIDENCE_MISMATCH,
     REFUSE_ILLEGAL_STATE,
     REFUSE_NO_TERMINAL_RUN,
     REFUSE_UNKNOWN_ATTEMPT,
@@ -164,13 +165,46 @@ def _produced(**over):
         output_handle="d" * 64,
         containment_evidence_handle="e" * 64,
         completed_at_ms=NOW + 1_000,
-        evidence_final_event_hash="2" * 64,
-        evidence_event_count=3,
-        evidence_last_sequence=3,
-        evidence_head_sequence=12,
     )
     facts.update(over)
     return facts
+
+def _run_evidence(output_handle, *, head_sequence=12, event_count=3):
+    """A recorder evidence chain the supervisor can derive the head from (audit F-01).
+
+    Built around a given `output_handle` so a test can model both the honest case and a broker
+    naming output the recorder never captured.
+    """
+    import hashlib as _h, json as _j
+
+    def canon(payload):
+        return _j.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def sha(data):
+        return _h.sha256(data).hexdigest()
+
+    payloads = [("lease-validated", {"n": i}) for i in range(1, event_count)]
+    payloads.append(("output-captured", {"launcher_exit": 0, "output_sha256": output_handle}))
+    previous, events = None, []
+    for sequence, (event_type, payload) in enumerate(payloads, start=1):
+        event = {
+            "event_type": event_type,
+            "payload": payload,
+            "payload_sha256": sha(canon(payload)),
+            "previous_event_hash": previous,
+            "sequence": sequence,
+        }
+        previous = sha(canon(event))
+        events.append(event)
+    return _j.dumps({
+        "event_count": len(events),
+        "events": events,
+        "final_event_hash": previous,
+        "head_sequence": head_sequence,
+        "last_sequence": len(events),
+        "protocol": "brops.run-evidence-chain.v1",
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
 
 
 #: The supervisor publishes its own terminal artifacts (F-02); here the "store" is a dict, so
@@ -230,6 +264,7 @@ def _handle(conn, config=None, now=NOW, ledger_conn=None):
         _clock(now),
         ledger_conn=ledger_conn if ledger_conn is not None else _ledger(),
         publish_artifact=_publish,
+        read_run_evidence=lambda attempt: _run_evidence("d" * 64),
         sign_attestation=_sign_attestation,
         supervisor_attestation_key_id=ATTEST_KEY_ID,
     )
@@ -245,6 +280,7 @@ def _call(request, *, config, ledger_conn, now=NOW):
         _clock(now),
         conn=ledger_conn,
         publish_artifact=_publish,
+        read_run_evidence=lambda attempt: _run_evidence("d" * 64),
         sign_attestation=_sign_attestation,
         supervisor_attestation_key_id=ATTEST_KEY_ID,
     )
@@ -532,10 +568,24 @@ class CompleteRunDispatchTests(_LifecycleBase):
         self._to_executing(attempt)
         self._op({"op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
                   "produced": _produced()})
+        # Differ in a field the recorder's evidence does NOT govern, so the write-once conflict
+        # is what refuses this — a differing `output_handle` is now caught earlier and harder
+        # (see the F-01 test below), which would have masked the property under test.
+        reply = self._op({"op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+                          "produced": _produced(completed_at_ms=NOW + 9_000)})
+        self.assertFalse(reply["ok"])
+        self.assertEqual(reply["reason"], REFUSE_COMPLETION_CONFLICT)
+
+    def test_naming_output_the_recorder_never_captured_is_refused(self):
+        """audit **F-01**: `output_handle` is the digest of the exact reply the desktop commits.
+        It is still reported by the executing chain, but the supervisor now checks it against the
+        `output-captured` digest in the recorder's own chain — which the broker cannot write."""
+        attempt = self._accept()
+        self._to_executing(attempt)
         reply = self._op({"op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
                           "produced": _produced(output_handle="9" * 64)})
         self.assertFalse(reply["ok"])
-        self.assertEqual(reply["reason"], REFUSE_COMPLETION_CONFLICT)
+        self.assertEqual(reply["reason"], REFUSE_EVIDENCE_MISMATCH)
 
     def test_completion_without_execution_is_an_illegal_state_move(self):
         attempt = self._accept()  # LEASE_READY, never launched
@@ -673,6 +723,7 @@ class UnknownOpTests(unittest.TestCase):
         reply = handle_connection(
             conn, BROKER_UID, _config(), _verify_sig, _recompute, _clock(NOW),
             ledger_conn=None, publish_artifact=_publish,
+            read_run_evidence=lambda attempt: _run_evidence("d" * 64),
         )
         self.assertFalse(reply["ok"])
         self.assertNotIn("lease", reply)
@@ -685,6 +736,7 @@ class UnknownOpTests(unittest.TestCase):
         reply = handle_connection(
             conn, BROKER_UID, _config(), _verify_sig, _recompute, lambda: "not-an-int",
             ledger_conn=_ledger(), publish_artifact=_publish,
+            read_run_evidence=lambda attempt: _run_evidence("d" * 64),
         )
         self.assertFalse(reply["ok"])
         self.assertNotIn("lease", reply)
@@ -726,6 +778,7 @@ class ServeLoopTests(unittest.TestCase):
         serve_forever(
             accept_one, BROKER_UID, _config(), _verify_sig, _recompute, _clock(NOW),
             ledger_conn=_ledger(), publish_artifact=_publish,
+            read_run_evidence=lambda attempt: _run_evidence("d" * 64),
         )
 
         self.assertTrue(served[0].closed)

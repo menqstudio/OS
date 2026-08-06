@@ -550,9 +550,19 @@ def gate_and_start(conn: sqlite3.Connection, execution_attempt_id: str, now_ms: 
 # Completion — the WRITE-ONCE record of what the run produced (+ the evidence floor).
 # ---------------------------------------------------------------------------
 
-#: The only §4.9 evidence values the supervisor cannot derive itself, so the executing
-#: chain reports them — ONCE, for an attempt the supervisor already authorized. Every
-#: OTHER evidence field comes from the acceptance row or the supervisor's own config.
+#: The store handles the executing chain reports — ONCE, for an attempt the supervisor
+#: already authorized. Every OTHER evidence field comes from the acceptance row, the
+#: supervisor's own config, or the RECORDER's evidence chain.
+#:
+#: (audit **F-01**, second finding) ``output_handle`` used to be taken at face value here,
+#: which left the oracle open in its most valuable form: it is the digest of the exact reply
+#: the desktop commits, and the isolated signer "re-derives" it by reading ``store/<handle>``
+#: — tautological for a content-addressed store, since it only proves a blob with that digest
+#: exists, not that the executor produced it. The caller could therefore name ANY bytes it had
+#: written and the whole chain agreed with itself. It is still reported here, but the
+#: supervisor now REFUSES a completion whose ``output_handle`` disagrees with the
+#: ``output-captured`` digest in the recorder's own evidence chain, which the broker cannot
+#: write. See :func:`derive_evidence_from_chain`.
 COMPLETION_HANDLE_FIELDS: Tuple[str, ...] = (
     "output_handle",
     "containment_evidence_handle",
@@ -571,19 +581,88 @@ DERIVED_HANDLE_FIELDS: Tuple[str, ...] = (
     "lease_handle",
     "execution_receipt_handle",
 )
-COMPLETION_DIGEST_FIELDS: Tuple[str, ...] = ("evidence_final_event_hash",)
 COMPLETION_TS_FIELDS: Tuple[str, ...] = ("completed_at_ms",)
-COMPLETION_COUNT_FIELDS: Tuple[str, ...] = (
+
+#: The evidence head, DERIVED by the supervisor from the recorder's chain — never taken from
+#: the wire (audit **F-01**/**F-02**). These four decide the anti-rollback floor, so a caller
+#: that could name them could also choose the floor it is measured against.
+DERIVED_EVIDENCE_FIELDS: Tuple[str, ...] = (
+    "evidence_final_event_hash",
     "evidence_event_count",
     "evidence_last_sequence",
     "evidence_head_sequence",
 )
-COMPLETION_FIELDS: Tuple[str, ...] = (
-    COMPLETION_HANDLE_FIELDS
-    + COMPLETION_DIGEST_FIELDS
-    + COMPLETION_TS_FIELDS
-    + COMPLETION_COUNT_FIELDS
-)
+COMPLETION_DIGEST_FIELDS: Tuple[str, ...] = ()
+COMPLETION_COUNT_FIELDS: Tuple[str, ...] = ()
+COMPLETION_FIELDS: Tuple[str, ...] = COMPLETION_HANDLE_FIELDS + COMPLETION_TS_FIELDS
+
+
+class EvidenceMismatch(LedgerError):
+    """The reported ``output_handle`` is not the digest the recorder actually captured."""
+
+
+def derive_evidence_from_chain(chain_bytes: bytes, output_handle: str) -> Dict[str, Any]:
+    """Derive the evidence head from the RECORDER's chain, and bind the reply digest to it.
+
+    ``chain_bytes`` are read by the supervisor from a directory only the recorder can write —
+    not from the wire, and not from the content-addressed store, because a store handle the
+    caller names is a document the caller can also have written. That is the whole point: the
+    supervisor is finally looking at something the executing chain could not choose.
+
+    Returns the four evidence values to record. Raises if the chain is unreadable, malformed,
+    missing its ``output-captured`` event, or reports a different output digest than the
+    completion claims — the last of which is the surviving F-01 forgery path.
+    """
+    try:
+        chain = json.loads(chain_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise LedgerError("run evidence chain is unreadable: %s" % exc) from exc
+    if not isinstance(chain, Mapping) or chain.get("protocol") != "brops.run-evidence-chain.v1":
+        raise LedgerError("run evidence chain is not a brops.run-evidence-chain.v1 document")
+
+    events = chain.get("events")
+    if not isinstance(events, list) or not events:
+        raise LedgerError("run evidence chain carries no events")
+    captured = [e for e in events if isinstance(e, Mapping) and e.get("event_type") == "output-captured"]
+    if len(captured) != 1:
+        raise LedgerError("run evidence chain must carry exactly one output-captured event")
+
+    # The event commits to its payload by digest, so the payload has to be presented too. The
+    # recorder writes both; a chain that carries the digest without the bytes cannot be checked.
+    payload = captured[0].get("payload")
+    if not isinstance(payload, Mapping):
+        raise LedgerError("output-captured event carries no payload to check")
+    if _sha256_hex(canonical_bytes(payload)) != captured[0].get("payload_sha256"):
+        raise LedgerError("output-captured payload does not match its own digest")
+
+    captured_digest = payload.get("output_sha256")
+    if not _is_lower_sha256_hex(captured_digest):
+        raise LedgerError("output-captured payload has no output_sha256 digest")
+    if captured_digest != output_handle:
+        # THE check. The reply the desktop is about to commit is not the reply the recorder
+        # captured from the executor, so nothing about this run may be attested.
+        raise EvidenceMismatch(
+            "output_handle %r is not the digest the recorder captured (%r)"
+            % (output_handle, captured_digest))
+
+    derived = {
+        "evidence_final_event_hash": chain.get("final_event_hash"),
+        "evidence_event_count": chain.get("event_count"),
+        "evidence_last_sequence": chain.get("last_sequence"),
+        "evidence_head_sequence": chain.get("head_sequence"),
+    }
+    if not _is_lower_sha256_hex(derived["evidence_final_event_hash"]):
+        raise LedgerError("run evidence chain has no final_event_hash digest")
+    for field in ("evidence_event_count", "evidence_last_sequence", "evidence_head_sequence"):
+        if not _is_pos_i63(derived[field]):
+            raise LedgerError("run evidence chain %s must be a positive integer" % field)
+    # A head claiming N events but a different last sequence is malformed. The check lives here
+    # now: it is a property of the head the supervisor DERIVED, not of a field a caller sent.
+    if derived["evidence_last_sequence"] != derived["evidence_event_count"]:
+        raise InvalidHead("last_sequence != event_count")
+    if len(events) != derived["evidence_event_count"]:
+        raise InvalidHead("event_count does not match the number of events in the chain")
+    return derived
 
 
 def validate_completion_facts(produced: Any) -> Dict[str, Any]:
@@ -618,8 +697,6 @@ def validate_completion_facts(produced: Any) -> Dict[str, Any]:
     for field in COMPLETION_COUNT_FIELDS:
         if not _is_pos_i63(produced[field]):
             raise LedgerError("%s must be a positive int (>= 1)" % field)
-    if produced["evidence_last_sequence"] != produced["evidence_event_count"]:
-        raise InvalidHead("last_sequence != event_count")
     return {field: produced[field] for field in COMPLETION_FIELDS}
 
 
@@ -636,6 +713,7 @@ def _evidence_floor_cas(conn: sqlite3.Connection, install_id: str, task_id: str,
     event_count = facts["evidence_event_count"]
     last_sequence = facts["evidence_last_sequence"]
     final_event_hash = facts["evidence_final_event_hash"]
+
 
     row = conn.execute(
         "SELECT highest_head_sequence, event_count, last_sequence, final_event_hash"
@@ -705,16 +783,25 @@ def record_completion(conn: sqlite3.Connection, execution_attempt_id: str,
     advance, and the ``FOREIGN KEY`` on the completion table refuses the insert outright.
     """
     facts = validate_completion_facts(produced)
-    # The three supervisor-derived handles (F-02) join the record here, never through `produced`.
-    for field in DERIVED_HANDLE_FIELDS:
-        value = derived.get(field)
-        if not _is_lower_sha256_hex(value):
+    # Everything the SUPERVISOR derives joins the record here, never through `produced`: the
+    # three terminal-artifact handles it builds and publishes (F-02), and the evidence head it
+    # reads out of the recorder's chain (F-01). `derived` is exhaustive — an unexpected key is a
+    # seam breach, not a field to ignore.
+    allowed_derived = set(DERIVED_HANDLE_FIELDS) | set(DERIVED_EVIDENCE_FIELDS)
+    unexpected = set(derived) - allowed_derived
+    if unexpected:
+        raise LedgerError("unexpected derived field(s) %s" % sorted(unexpected))
+    missing = allowed_derived - set(derived)
+    if missing:
+        raise LedgerError("missing derived field(s) %s" % sorted(missing))
+    for field in DERIVED_HANDLE_FIELDS + ("evidence_final_event_hash",):
+        if not _is_lower_sha256_hex(derived.get(field)):
             raise LedgerError("derived %s must be 64 lowercase hex chars" % field)
-        facts[field] = value
-    if set(derived) - set(DERIVED_HANDLE_FIELDS):
-        raise LedgerError(
-            "unexpected derived handle(s) %s" % sorted(set(derived) - set(DERIVED_HANDLE_FIELDS))
-        )
+    for field in ("evidence_event_count", "evidence_last_sequence", "evidence_head_sequence"):
+        if not _is_pos_i63(derived.get(field)):
+            raise LedgerError("derived %s must be a positive integer" % field)
+    for field in sorted(allowed_derived):
+        facts[field] = derived[field]
     facts_sha256 = _sha256_hex(canonical_bytes(facts))
 
     with _Tx(conn) as tx:
@@ -739,9 +826,9 @@ def record_completion(conn: sqlite3.Connection, execution_attempt_id: str,
                     execution_attempt_id, facts["output_handle"],
                     facts["containment_evidence_handle"], facts["record_handle"],
                     facts["lease_handle"], facts["execution_receipt_handle"],
-                    facts["completed_at_ms"], facts["evidence_final_event_hash"],
-                    facts["evidence_event_count"], facts["evidence_last_sequence"],
-                    facts["evidence_head_sequence"], facts_sha256, now_ms,
+                    facts["completed_at_ms"], derived["evidence_final_event_hash"],
+                    derived["evidence_event_count"], derived["evidence_last_sequence"],
+                    derived["evidence_head_sequence"], facts_sha256, now_ms,
                 ),
             )
         except sqlite3.IntegrityError as exc:
@@ -762,8 +849,10 @@ def record_completion(conn: sqlite3.Connection, execution_attempt_id: str,
         # the try above so a floor refusal is never mistaken for a uniqueness collision —
         # StaleEvidence / EvidenceFork propagate and roll the whole completion back.
         if inserted:
+            # The floor reads the DERIVED evidence, not the wire facts: a caller that could
+            # name its own head could also choose the floor it is measured against (F-01).
             _evidence_floor_cas(tx, acceptance["install_id"], acceptance["task_id"],
-                                facts, now_ms)
+                                derived, now_ms)
         outcome = CREATED if inserted else IDEMPOTENT
 
         if acceptance["state"] != COMPLETED:

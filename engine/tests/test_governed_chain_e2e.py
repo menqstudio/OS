@@ -117,6 +117,51 @@ class _Key:
             return False
 
 
+def build_run_evidence(output_bytes, *, head_sequence=7, output_sha256=None):
+    """A recorder evidence chain shaped exactly like `governed_recorder` writes one.
+
+    The supervisor derives the evidence head from this and refuses a completion whose
+    `output_handle` is not the `output-captured` digest (audit F-01), so tests that want to
+    model a lying broker pass an `output_sha256` that does not match the bytes.
+    """
+    import hashlib as _h, json as _j
+
+    def canon(payload):
+        return _j.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def sha(data):
+        return _h.sha256(data).hexdigest()
+
+    payloads = [
+        ("lease-validated", {"lease_path": "/tcb/executor.lease", "lease_sha256": sha(b"lease")}),
+        ("execution-launched", {"cgroup": "cg-e2e", "executor_sha256": sha(b"executor")}),
+        ("output-captured", {
+            "launcher_exit": 0,
+            "output_bytes": len(output_bytes),
+            "output_sha256": output_sha256 or sha(output_bytes),
+        }),
+    ]
+    previous, events = None, []
+    for sequence, (event_type, payload) in enumerate(payloads, start=1):
+        event = {
+            "event_type": event_type,
+            "payload": payload,
+            "payload_sha256": sha(canon(payload)),
+            "previous_event_hash": previous,
+            "sequence": sequence,
+        }
+        previous = sha(canon(event))
+        events.append(event)
+    return _j.dumps({
+        "event_count": len(events),
+        "events": events,
+        "final_event_hash": previous,
+        "head_sequence": head_sequence,
+        "last_sequence": len(events),
+        "protocol": "brops.run-evidence-chain.v1",
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
 class GovernedChainE2E(unittest.TestCase):
     """One test class, one full chain, driven step by step so a failure names the hop."""
 
@@ -132,6 +177,13 @@ class GovernedChainE2E(unittest.TestCase):
 
         # ---- the content-addressed protected store the signer reads ----
         self.store = ArtifactStore()
+        # attempt_id -> the recorder's evidence chain for that attempt (F-01). The supervisor
+        # reads this; no test writes it through the wire.
+        self.run_evidence = {}
+        # The real recorder keeps a durable, monotonic head-sequence counter, so successive runs
+        # of a deployment present growing heads. Model that: reusing one number across turns is
+        # an evidence FORK, and the floor is right to refuse it.
+        self.next_head_sequence = 7
         self.handles = {
             name: self.store.put(data)
             for name, data in {
@@ -223,6 +275,10 @@ class GovernedChainE2E(unittest.TestCase):
             # The supervisor publishes its own terminal artifacts into the SAME protected store
             # the isolated signer reads (F-02), so the handles it names really resolve.
             publish_artifact=self.store.put,
+            # F-01: the supervisor reads the RECORDER's chain itself. In the live kit this is a
+            # recorder-owned directory the broker cannot write; here it is the fixture's own map,
+            # which is the same property — the caller does not supply it.
+            read_run_evidence=self.run_evidence.get,
             sign_attestation=self.attest_key.sign,
             supervisor_attestation_key_id=SUP_ATTEST_KEY_ID,
         )
@@ -270,6 +326,9 @@ class GovernedChainE2E(unittest.TestCase):
         # "Execution": in the Linux kit this is the recorder → setuid launcher → contained
         # executor. Here the reply bytes are simply content-addressed into the store.
         output_handle = self.store.put(output)
+        self.run_evidence[attempt] = build_run_evidence(
+            output, head_sequence=self.next_head_sequence)
+        self.next_head_sequence += 1
 
         completed = self._supervisor({
             "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
@@ -277,10 +336,6 @@ class GovernedChainE2E(unittest.TestCase):
                 "output_handle": output_handle,
                 "containment_evidence_handle": self.handles["containment"],
                 "completed_at_ms": NOW,
-                "evidence_final_event_hash": _sha256_hex(b"evidence-head-1"),
-                "evidence_event_count": 3,
-                "evidence_last_sequence": 3,
-                "evidence_head_sequence": 7,
             },
         })
         self.assertTrue(completed["ok"], completed)
@@ -447,16 +502,14 @@ class GovernedChainE2E(unittest.TestCase):
             "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt,
             "process_group_id": "77", "cgroup_id": "cg-e2e", "execution_started_marker": None,
         }, now=accept_at)
+        reply = b"reply for the clock test"
+        self.run_evidence[attempt] = build_run_evidence(reply, head_sequence=21)
         self._supervisor({
             "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
             "produced": {
-                "output_handle": self.store.put(b"reply for the clock test"),
+                "output_handle": self.store.put(reply),
                 "containment_evidence_handle": self.handles["containment"],
                 "completed_at_ms": NOW,
-                "evidence_final_event_hash": _sha256_hex(b"evidence-head-clock"),
-                "evidence_event_count": 1,
-                "evidence_last_sequence": 1,
-                "evidence_head_sequence": 21,
             },
         })
         attn = self._attest(attempt)
@@ -575,20 +628,77 @@ class GovernedChainE2E(unittest.TestCase):
             "process_group_id": "4243", "cgroup_id": "cg-e2e",
             "execution_started_marker": None,
         })
+        rolled_back = b"rolled-back run"
+        # BELOW the floor the first turn established.
+        self.run_evidence[attempt] = build_run_evidence(rolled_back, head_sequence=6)
         refusal = self._supervisor({
             "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
             "produced": {
-                "output_handle": self.store.put(b"rolled-back run"),
+                "output_handle": self.store.put(rolled_back),
                 "containment_evidence_handle": self.handles["containment"],
                 "completed_at_ms": NOW,
-                "evidence_final_event_hash": _sha256_hex(b"evidence-head-OLD"),
-                "evidence_event_count": 2,
-                "evidence_last_sequence": 2,
-                "evidence_head_sequence": 6,   # BELOW the floor the first turn established
             },
         })
         self.assertFalse(refusal["ok"])
         self.assertEqual(refusal["reason"], "stale_evidence")
+        self.assertFalse(self._attest(attempt)["ok"])
+
+    def test_a_broker_naming_output_the_recorder_never_captured_is_refused(self):
+        """audit **F-01**, the surviving oracle: `output_handle` is the digest of the exact
+        reply the desktop commits, and it used to be taken from the wire at face value. The
+        isolated signer "re-derives" it by reading `store/<handle>` — tautological for a
+        content-addressed store — and the final verifier compares the delivered bytes against
+        that same handle. So a broker could write ANY bytes, name their digest, deliver them,
+        and every check agreed with itself while the executor's real output was discarded.
+
+        The supervisor now reads the recorder's chain from a directory the broker cannot write
+        and refuses a completion whose `output_handle` is not what the recorder captured.
+        """
+        challenge = self._issue_challenge(nonce="6ba7b815-9dad-11d1-80b4-00c04fd430c8")
+        accepted = self._supervisor({"op": OP_ACCEPT_OPEN, "challenge_doc": challenge})
+        attempt = accepted["lease"]["execution_attempt_id"]
+        self._supervisor({"op": OP_LAUNCH_GATE, "execution_attempt_id": attempt})
+        self._supervisor({
+            "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt,
+            "process_group_id": "99", "cgroup_id": "cg-e2e", "execution_started_marker": None,
+        })
+
+        # The recorder captured the real reply; the broker substitutes its own text.
+        self.run_evidence[attempt] = build_run_evidence(REPLY_BYTES, head_sequence=31)
+        forged = b"I am the reply the user will see, and no executor produced me."
+        refusal = self._supervisor({
+            "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+            "produced": {
+                "output_handle": self.store.put(forged),
+                "containment_evidence_handle": self.handles["containment"],
+                "completed_at_ms": NOW,
+            },
+        })
+        self.assertFalse(refusal["ok"], refusal)
+        self.assertEqual(refusal["reason"], "evidence_mismatch")
+        # And nothing downstream exists to sign: no completion row, so no attestation.
+        self.assertFalse(self._attest(attempt)["ok"])
+
+    def test_a_run_the_supervisor_cannot_observe_is_not_recordable(self):
+        # No evidence chain at all — a deployment where the recorder never wrote one, or a
+        # caller pointing at an attempt it did not execute. Refuse rather than record.
+        challenge = self._issue_challenge(nonce="6ba7b816-9dad-11d1-80b4-00c04fd430c8")
+        accepted = self._supervisor({"op": OP_ACCEPT_OPEN, "challenge_doc": challenge})
+        attempt = accepted["lease"]["execution_attempt_id"]
+        self._supervisor({"op": OP_LAUNCH_GATE, "execution_attempt_id": attempt})
+        self._supervisor({
+            "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt,
+            "process_group_id": "98", "cgroup_id": "cg-e2e", "execution_started_marker": None,
+        })
+        refusal = self._supervisor({
+            "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+            "produced": {
+                "output_handle": self.store.put(b"unobserved"),
+                "containment_evidence_handle": self.handles["containment"],
+                "completed_at_ms": NOW,
+            },
+        })
+        self.assertFalse(refusal["ok"], refusal)
         self.assertFalse(self._attest(attempt)["ok"])
 
     def test_a_tampered_output_blob_breaks_the_signed_binding(self):
