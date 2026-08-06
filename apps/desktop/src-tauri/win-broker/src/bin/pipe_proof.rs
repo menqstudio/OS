@@ -10,8 +10,18 @@
 //!   pipe_proof client <pipe>                         # connects + writes a byte + reads the server ack.
 //!
 //! The pipe uses a NULL DACL (everyone may CONNECT) so a different service account can reach it — exactly like
-//! the Linux 0777 socket. The trust boundary is the peer-SID auth (SO_PEERCRED equivalent), NOT the DACL: the
-//! server reads the *kernel-attested* client SID via ImpersonateNamedPipeClient and checks the allowlist.
+//! the Linux 0777 socket. The trust boundary *this binary demonstrates* is the peer-SID auth (SO_PEERCRED
+//! equivalent), NOT the DACL: the server reads the *kernel-attested* client SID via
+//! ImpersonateNamedPipeClient and checks the allowlist.
+//!
+//! **Do not copy the NULL DACL into a serving path** (remediation audit R3). A NULL DACL is not merely
+//! "anyone may connect": it grants everyone `FILE_ALL_ACCESS`, which includes `FILE_CREATE_PIPE_INSTANCE`,
+//! so any local principal can add an instance of the pipe name and collect connections. Reasoning about it
+//! as the Linux `0777` socket is what made the live kit's `FILE_FLAG_FIRST_PIPE_INSTANCE` "pipe-squat fix"
+//! inert. It is acceptable HERE and only here: this binary creates a throwaway pipe, carries no keys and
+//! serves no governed turn, and its entire purpose is to let an arbitrary second account attempt a
+//! connection so the SID gate can refuse it. The live kit's serving pipes now carry an explicit restrictive
+//! DACL — see `win-live/src/pipe_acl.rs`.
 //!
 //! On non-Windows this binary is an inert stub so the workspace still builds on the Linux CI runner.
 

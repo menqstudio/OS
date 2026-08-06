@@ -7,9 +7,14 @@ prerequisite and is already half-done (the operator's offline root is pinned).
 
 ## Where we are
 
-- The crypto chain (challenge → lease → attest → sign → `verify_and_accept`) is **real
-  and proven** — in-process (`proof::in_process_turn`) and over real Windows named pipes
-  (`bin/win_live_turn.rs` + `win_authority`/`win_supervisor`/`win_signer`).
+- The crypto chain (challenge → lease → attest → sign → `verify_and_accept`) is **real and
+  reproducibly proven in-process** (`proof::in_process_turn`, run by `cargo test -p
+  brops-win-live` on any host — it uses the demonstration anchor, so it reports demonstration
+  custody, never production). The named-pipe path (`bin/win_live_turn.rs` +
+  `win_authority`/`win_supervisor`/`win_signer`) is **built but not reproducibly proven from
+  this tree**: `proof/win_live_proof.ps1` needs the operator's offline root private key, which
+  is deliberately not here, and no CI workflow runs any of it. See
+  [`proof/CROSS_ACCOUNT_PROOF.md`](./proof/CROSS_ACCOUNT_PROOF.md).
 - Production **custody** is graduated: `tcb::ROOT_PUBLIC_KEY_HEX` is the operator's key
   whose private half is offline. Nothing in-tree can forge a production manifest.
 - **Live chat still runs fail-closed**: the app uses the ungoverned `claude-cli` provider,
@@ -56,14 +61,24 @@ still Blocks.
 
 1. **Custody** — finish [`CUSTODY_CEREMONY.md`](./CUSTODY_CEREMONY.md): your offline root is
    already pinned; provision a deployment signing the manifest with your offline private:
-   `win_provision --root-dir <deploy> --root-key <offline seed> --allowed-broker-sid <SID>
-   --executor-path <path to the rebuilt win_executor.exe>`.
+   `win_provision --root-dir <deploy> --root-key <offline seed> --root-provenance external
+   --allowed-broker-sid <SID> --executor-path <path to the rebuilt win_executor.exe>
+   --challenge-account <acct> --supervisor-account <acct> --signer-account <acct>`.
+   `--root-provenance` is the custody DECLARATION and has no default: nothing in the tool can
+   tell where the seed it was handed came from, and only `external` can ever render production.
 2. **Build the sidecar bins** (`cargo build --release --bin win_authority --bin win_supervisor
-   --bin win_signer --bin win_executor --bin win_live_turn`) and record the win_executor SHA
-   into provisioning (step 1's `--executor-path`).
-3. **Run the three server cores** (each in its own process, peer-SID-gated pipes):
+   --bin win_signer --bin win_executor --bin win_live_turn --bin win_tcb_pin`) and record the
+   win_executor SHA into provisioning (step 1's `--executor-path`).
+3. **Measure the deployment (§2.5 TCB integrity floor)** — run elevated, after provisioning and
+   before anything starts: `win_tcb_pin --root-dir <deploy> --bin-dir <bins> --out
+   <deploy>\tcb-pin.json`. It pins the five binaries and the four steering files, locks the
+   manifest to SYSTEM/Administrators, and self-checks the floor it just wrote. **Until this
+   exists the kit will not serve**: each server exits 5 and the driver returns
+   `blocked reason=tcb_integrity_floor`. That is the intended fail-closed state, not a bug.
+   Re-run it after ANY rebuild or config change — the pin is a start-time measurement.
+4. **Run the three server cores** (each in its own process, peer-SID-gated pipes):
    `win_authority`, `win_supervisor`, `win_signer`, pointed at `<deploy>/config.json`.
-4. **Point the app at governed mode**: set `BROPS_ALLOW_GOVERNED_ENGINE=1` (+ the deploy
+5. **Point the app at governed mode**: set `BROPS_ALLOW_GOVERNED_ENGINE=1` (+ the deploy
    dir), unset `BROPS_ALLOW_UNGOVERNED`, and select the governed provider. Each message then
    runs the real chain; the UI shows `trusted_verified` **only** when `verify_and_accept`
    passes under your manifest.

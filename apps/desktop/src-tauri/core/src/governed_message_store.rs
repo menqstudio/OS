@@ -139,6 +139,69 @@ pub fn persist_committed(
     ))
 }
 
+/// What an independent post-commit re-read establishes about a [`CommittedMessage`] projection: it is
+/// backed by a durable committed row, and the body it carries hashes to the digest the signed envelope
+/// committed to (the row's `body_sha256`, which [`persist_committed`] proved equal to
+/// `envelope.output_sha256` before making the row durable).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommittedBinding {
+    pub message_id: String,
+    /// The envelope-committed body digest as stored in the durable row (lowercase hex).
+    pub envelope_body_sha256: String,
+}
+
+/// Check that a [`CommittedMessage`] projection is actually backed by the durable committed row it
+/// claims, re-reading the row and recomputing the digest here.
+///
+/// WHY this exists, plainly. A driver that wanted to report whether a turn was "bound" used to read
+/// `message.trust_state == TRUSTED_VERIFIED`. That value is a hardcoded constant in
+/// `CommittedMessage::new` — it is `trusted_verified` for every projection ever constructed, so the
+/// comparison could not fail and the reported boolean was decoration. The falsifiable question a caller
+/// holding a projection can still ask is a DELIVERY question: is this projection backed by a durable
+/// `trusted_verified` row, and does the body it is about to display hash to that row's
+/// envelope-committed digest? Everything below can be false — a rolled-back transaction, a projection
+/// for a message that was never committed, a row or a projection altered after the commit, a stored
+/// digest that no longer matches its body.
+///
+/// LIMIT: this re-verifies delivery, not cryptography. The envelope signature and the
+/// output-length/digest gates are `governed_verification::verify_and_accept`'s job and are NOT redone
+/// here; this only ensures nothing between that acceptance and the caller substituted the bytes.
+pub fn verify_committed_binding(
+    conn: &Connection,
+    message: &CommittedMessage,
+) -> Result<CommittedBinding, TurnReason> {
+    let row: Option<(String, String, String, String, i64)> = conn
+        .query_row(
+            "SELECT body, body_sha256, trust_state, author, created_at_ms
+               FROM governed_messages WHERE message_id = ?1",
+            params![message.message_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .ok();
+    // No durable row ⇒ the projection is not backed by a commit (rolled back, or never persisted).
+    let (body, body_sha256, trust_state, author, created_at_ms) =
+        row.ok_or(TurnReason::CommitReadbackMismatch)?;
+
+    if body != message.body {
+        return Err(TurnReason::CommitReadbackMismatch);
+    }
+    // The binding itself: the bytes the caller will report must hash to the digest the envelope
+    // committed to. Recomputed here rather than trusted from either side.
+    if sha256_hex(message.body.as_bytes()) != body_sha256 {
+        return Err(TurnReason::CommitReadbackMismatch);
+    }
+    // Defence in depth behind the table CHECK constraint: a row reached through a schema that lacks it
+    // (an older DB, a hand-made table) must not pass.
+    if trust_state != TRUSTED_VERIFIED {
+        return Err(TurnReason::CommitReadbackMismatch);
+    }
+    if author != message.author || created_at_ms != message.created_at_ms {
+        return Err(TurnReason::CommitReadbackMismatch);
+    }
+
+    Ok(CommittedBinding { message_id: message.message_id.clone(), envelope_body_sha256: body_sha256 })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +326,107 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1, "a matching readback must leave exactly one committed trusted_verified row");
+    }
+
+    // ---- verify_committed_binding ------------------------------------------------------------------
+    //
+    // Each case below is constructed so that EXACTLY ONE of the checks in `verify_committed_binding`
+    // rejects it. Delete that check and the corresponding test starts passing where it must not.
+
+    #[test]
+    fn committed_binding_returns_the_envelope_digest_for_a_real_committed_row() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        let b = verify_committed_binding(&conn, &msg).unwrap();
+        assert_eq!(b.message_id, "m-1");
+        assert_eq!(b.envelope_body_sha256, sha256_hex(b"hello world"));
+    }
+
+    #[test]
+    fn committed_binding_refuses_a_projection_with_no_durable_row() {
+        // The row-exists check in isolation: a projection whose message_id was never committed (a
+        // rolled-back turn, or a projection minted by something other than persist_committed). Every
+        // other check is unreachable because there is nothing to compare against.
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        let ghost = CommittedMessage::new("never-committed".into(), "Bro".into(), "hi".into(), 1);
+        assert_eq!(
+            verify_committed_binding(&conn, &ghost),
+            Err(TurnReason::CommitReadbackMismatch)
+        );
+    }
+
+    #[test]
+    fn committed_binding_refuses_a_row_whose_body_drifted_from_the_projection() {
+        // The body-equality check in isolation. Only `body` is rewritten, so the row's stored
+        // body_sha256 still equals SHA-256 of the PROJECTION's body — the digest check passes and only
+        // the body comparison can catch the drift.
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        conn.execute("UPDATE governed_messages SET body = 'TAMPERED' WHERE message_id = 'm-1'", [])
+            .unwrap();
+        assert_eq!(verify_committed_binding(&conn, &msg), Err(TurnReason::CommitReadbackMismatch));
+    }
+
+    #[test]
+    fn committed_binding_refuses_a_body_that_does_not_hash_to_the_stored_envelope_digest() {
+        // The digest check in isolation: body and projection still agree, so the body-equality check
+        // passes; only recomputing SHA-256 against the stored envelope digest catches it.
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        conn.execute(
+            "UPDATE governed_messages SET body_sha256 = ?1 WHERE message_id = 'm-1'",
+            params![sha256_hex(b"a DIFFERENT body")],
+        )
+        .unwrap();
+        assert_eq!(verify_committed_binding(&conn, &msg), Err(TurnReason::CommitReadbackMismatch));
+    }
+
+    #[test]
+    fn committed_binding_refuses_a_row_that_is_not_trusted_verified() {
+        // The trust-state check in isolation. `create_schema`'s CHECK constraint makes this
+        // unreachable through the normal table, so the test builds the same table WITHOUT the
+        // constraint — the shape an older/hand-made DB could present. Body, digest, author and
+        // timestamp all agree; only the trust state is wrong.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE governed_messages (
+                message_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, broker_turn_id TEXT NOT NULL,
+                author TEXT NOT NULL, body TEXT NOT NULL, body_sha256 TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL, trust_state TEXT NOT NULL);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO governed_messages VALUES ('m-1','c','bt','Bro','hello world',?1,7,'unverified')",
+            params![sha256_hex(b"hello world")],
+        )
+        .unwrap();
+        let msg = CommittedMessage::new("m-1".into(), "Bro".into(), "hello world".into(), 7);
+        assert_eq!(verify_committed_binding(&conn, &msg), Err(TurnReason::CommitReadbackMismatch));
+    }
+
+    #[test]
+    fn committed_binding_refuses_a_projection_whose_identity_fields_drifted() {
+        // The author/created_at check in isolation: the body and its digest are untouched, so the two
+        // content checks pass and only the identity comparison can reject the substitution.
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        let restamped =
+            CommittedMessage::new(msg.message_id.clone(), msg.author.clone(), msg.body.clone(), 1);
+        assert_eq!(
+            verify_committed_binding(&conn, &restamped),
+            Err(TurnReason::CommitReadbackMismatch)
+        );
+        let reauthored =
+            CommittedMessage::new(msg.message_id.clone(), "Someone Else".into(), msg.body.clone(), msg.created_at_ms);
+        assert_eq!(
+            verify_committed_binding(&conn, &reauthored),
+            Err(TurnReason::CommitReadbackMismatch)
+        );
     }
 
     #[test]

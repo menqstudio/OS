@@ -25,6 +25,11 @@ mod win {
     pub fn main() {
         let cfg_path = arg("--config").expect("--config required");
         let cfg = Config::load(&cfg_path).expect("config");
+        // §2.5 TCB integrity floor (audit R2) BEFORE the attestation seed is touched.
+        brops_win_live::tcb_floor::enforce_or_exit(
+            "governed-supervisor",
+            cfg.tcb_pin_manifest_path().as_deref(),
+        );
         let seed = read_seed(&cfg.keys.attest_seed).expect("attest seed");
         let core = Supervisor::new(SupervisorConfig {
             supervisor_id: cfg.facts.supervisor_id.clone(),

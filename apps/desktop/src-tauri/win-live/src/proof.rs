@@ -21,7 +21,8 @@ use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
 use brops_core::governed_turn_ipc::{REQUEST_PROTOCOL, TRUSTED_VERIFIED};
 use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
 use brops_core::key_manifest::{
-    check_and_advance, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest, PinnedRoot,
+    check_and_advance, resolve_production_key, verify_manifest_anchored, AntiRollbackFloor, KeyManifest,
+    PinnedRoot, RootAnchor, RootProvenance,
 };
 use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
 
@@ -34,7 +35,14 @@ use crate::servers::{
 use crate::tcb;
 
 pub struct ProofOutcome {
+    /// TRUE only for a manifest anchored by a root whose custody is EXTERNAL to this kit. This proof
+    /// signs with the compiled-in DEMONSTRATION root, so it is always `false` here — see
+    /// [`ProofOutcome::chain_bound`], which is the property this proof actually establishes.
     pub production_verified: bool,
+    /// The governed chain resolved a production-class key under a verified anchor and bound the turn —
+    /// i.e. the whole challenge→lease→attest→sign→verify chain really ran. Separate from, and weaker
+    /// than, the custody claim above.
+    pub chain_bound: bool,
     pub bound: bool,
     pub trust_str: String,
 }
@@ -169,11 +177,20 @@ where
         "0011223344556677001122334455667700112233445566770011223344556677"; // gitleaks:allow (demo test root)
     let demo_root = crypto::signing_key(&crypto::hex32(demo_root_seed).expect("root seed"));
     let root_sig = crypto::sign_b64std(&demo_root, &manifest.canonical_bytes());
-    let pinned_root = PinnedRoot {
-        root_key_id: tcb::DEMO_ROOT_KEY_ID.to_string(),
-        public_key_hex: tcb::demo_root_public_key_hex(),
+    // The anchor's CUSTODY is `Demonstration` and is declared as such: its private half is the seed two
+    // lines above, in this source file. `verify_manifest_anchored` returns the token that carries that
+    // fact into `resolve_trust_state`, which is why this proof can never render `Production` however
+    // completely the chain runs. That is the correct outcome, not a limitation to work around.
+    let root_anchor = RootAnchor {
+        pinned: PinnedRoot {
+            root_key_id: tcb::DEMO_ROOT_KEY_ID.to_string(),
+            public_key_hex: tcb::demo_root_public_key_hex(),
+        },
+        provenance: RootProvenance::Demonstration,
     };
-    verify_manifest(&manifest, &root_sig, &pinned_root).map_err(|e| format!("verify_manifest: {e:?}"))?;
+    let verified_root = verify_manifest_anchored(&manifest, &root_sig, &root_anchor)
+        .map_err(|e| format!("verify_manifest: {e:?}"))?;
+
     let floor = AntiRollbackFloor { highest_epoch: 2, highest_hash: manifest.content_hash() };
     check_and_advance(&floor, &manifest).map_err(|e| format!("anti_rollback: {e:?}"))?;
     // Keep-alive clone + resolved signer pubkey for the final trust classification (the resolver, below, is
@@ -276,10 +293,9 @@ where
         author: "Bro".to_string(),
     };
     let resolver = ManifestResolver::with_pinned_root(
-        PinnedRoot {
-            root_key_id: tcb::DEMO_ROOT_KEY_ID.to_string(),
-            public_key_hex: tcb::demo_root_public_key_hex(),
-        },
+        // The SAME anchor key the token above was issued under — the resolver re-verifies the manifest
+        // against it inside the chain, which is the enforcement path.
+        root_anchor.pinned.clone(),
         manifest,
         root_sig,
         floor,
@@ -322,19 +338,26 @@ where
     };
     let ts = resolve_trust_state(
         Some(&manifest_for_trust),
+        Some(&verified_root),
         &signer_key_id,
         RECEIPT_ENVELOPE_ARTIFACT_TYPE,
         now_ms,
         &verified_under,
     );
     let production_verified = ts.is_production_verified();
+    let chain_bound = ts.is_chain_bound();
     let trust_str = match &ts {
-        TrustState::Production { key_id, key_epoch } => {
-            format!("trusted_verified(production key={key_id} epoch={key_epoch})")
+        TrustState::Production { key_id, key_epoch, root_key_id } => {
+            format!("trusted_verified(production key={key_id} epoch={key_epoch} root={root_key_id})")
         }
+        TrustState::DemonstrationCustody { key_id, key_epoch, root_key_id, root_provenance } => format!(
+            "trusted_verified(demonstration_custody key={key_id} epoch={key_epoch} root={root_key_id} \
+             root_provenance={})",
+            root_provenance.as_str()
+        ),
         TrustState::NoTrustedManifest(r) => format!("no_trusted_manifest({r})"),
     };
-    Ok(ProofOutcome { production_verified, bound, trust_str })
+    Ok(ProofOutcome { production_verified, chain_bound, bound, trust_str })
 }
 
 #[cfg(test)]
@@ -349,10 +372,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(outcome.bound, "committed body must be trusted_verified: {}", outcome.trust_str);
         assert!(
-            outcome.production_verified,
-            "production trust must resolve under the root-signed manifest: {}",
+            outcome.chain_bound,
+            "the chain must resolve a production-class key under the verified anchor: {}",
             outcome.trust_str
         );
+        // The custody half, asserted in the direction that matters. This proof signs the manifest with
+        // the compiled-in demonstration root, so it MUST NOT reach a production verdict — anyone with
+        // the source can mint that manifest. The assertion used to be the opposite way round, which is
+        // precisely the overclaim the anchor-provenance work removed.
+        assert!(
+            !outcome.production_verified,
+            "a demonstration-anchored manifest must never render production: {}",
+            outcome.trust_str
+        );
+        assert!(outcome.trust_str.contains("demonstration_custody"), "{}", outcome.trust_str);
     }
 
     #[test]
@@ -365,7 +398,8 @@ mod tests {
         let outcome = in_process_turn_output(&dir, now, reply).expect("live governed turn must commit");
         let _ = std::fs::remove_dir_all(&dir);
         assert!(outcome.bound, "the real reply bytes must be bound: {}", outcome.trust_str);
-        assert!(outcome.production_verified, "chain must verify the live output: {}", outcome.trust_str);
+        assert!(outcome.chain_bound, "chain must verify the live output: {}", outcome.trust_str);
+        assert!(!outcome.production_verified, "custody is demo, not production: {}", outcome.trust_str);
     }
 
     #[test]
@@ -394,10 +428,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(called.load(Ordering::SeqCst), "the chain must invoke produce during execution");
         assert!(
-            outcome.bound && outcome.production_verified,
+            outcome.bound && outcome.chain_bound,
             "the reply produced inside the chain must be bound + verified: {}",
             outcome.trust_str
         );
+        assert!(!outcome.production_verified, "custody is demo, not production: {}", outcome.trust_str);
     }
 
     #[test]

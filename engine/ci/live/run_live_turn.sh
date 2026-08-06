@@ -311,9 +311,13 @@ echo "$RESULT_LINE"
 if echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*production_verified=true bound=true root_anchor=external'; then
   echo "LIVE GOVERNED TURN: GREEN — genuine production trusted_verified (externally-anchored root)"
   exit 0
-elif echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*bound=true root_anchor=kit_generated'; then
-  echo "LIVE GOVERNED TURN: GREEN — chain bound a trusted_verified turn"
-  echo "  NOT a production claim: the root anchor is kit-generated, so custody is unproven (F-17)."
+elif echo "$RESULT_LINE" | grep -qE 'demonstration_custody.*bound=true'; then
+  # The kit-anchored branch no longer contains the word "production" ANYWHERE, and that is the
+  # fix rather than a regression to work around (remediation audit): the trust state a
+  # kit/demonstration root can reach is now a distinct value, `demonstration_custody`, instead
+  # of `production` with a caveat printed beside it. A caveat is something a reader can skip.
+  echo "LIVE GOVERNED TURN: GREEN — the chain bound a verified turn"
+  echo "  NOT a production claim: the root anchor is kit-generated, so custody is unproven."
   exit 0
 else
   echo "LIVE GOVERNED TURN: RED / BLOCKED (fail-closed — no fabricated acceptance)"

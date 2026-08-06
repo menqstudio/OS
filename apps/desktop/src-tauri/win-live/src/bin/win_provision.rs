@@ -8,7 +8,7 @@ use serde_json::json;
 use std::path::Path;
 
 use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
-use brops_core::key_manifest::{AntiRollbackFloor, KeyManifest};
+use brops_core::key_manifest::{AntiRollbackFloor, KeyManifest, RootProvenance};
 use brops_win_live::config::*;
 use brops_win_live::crypto;
 use brops_win_live::tcb;
@@ -112,6 +112,22 @@ fn main() {
         eprintln!("win_provision: --root-key <offline root private seed hex> required");
         std::process::exit(2);
     });
+    // The CUSTODY declaration. Nothing in this tool can tell whether the seed it was just handed came
+    // off airgapped media or was generated on this box thirty seconds ago — the arithmetic is identical
+    // either way. So the operator declares it, explicitly, with no default: an unstated provenance would
+    // otherwise silently become "external" and the whole production claim would rest on an omission.
+    let root_provenance = arg(&args, "--root-provenance")
+        .and_then(|s| RootProvenance::parse(&s).map(|_| s))
+        .unwrap_or_else(|| {
+            eprintln!(
+                "win_provision: --root-provenance <external|kit_generated|demonstration> required"
+            );
+            eprintln!("  external      = the root private was generated and is held OFFLINE, outside this kit");
+            eprintln!("  kit_generated = this kit generated the root keypair (a real chain, same party both ends)");
+            eprintln!("  demonstration = a fixture anchor whose private half is in the source tree");
+            eprintln!("  Only `external` can ever render a production trusted_verified.");
+            std::process::exit(2);
+        });
     let root_signing = {
         let hex = std::fs::read_to_string(&root_key_path).unwrap_or_else(|e| {
             eprintln!("win_provision: cannot read --root-key {root_key_path}: {e}");
@@ -250,6 +266,7 @@ fn main() {
             floor_path: root.join("floor.json").to_string_lossy().to_string(),
             root_key_id,
             root_pub_hex: root_pub,
+            root_provenance,
             signer_key_id,
             supervisor_attestation_key_id: sup_attest_key_id,
         },
@@ -293,8 +310,19 @@ fn main() {
             allowed_supervisors: vec![supervisor_id],
         },
         executor_path,
+        // Audit R2: where the §2.5 pin manifest WILL live. Provisioning only names it; it cannot build
+        // it, because the pin must measure config.json itself (which does not exist until the line
+        // below) and the binaries in their deployed location. Run `win_tcb_pin` next — until it has,
+        // every server bin and the driver refuse to serve, which is the intended fail-closed state.
+        tcb_pin_manifest: root.join("tcb-pin.json").to_string_lossy().to_string(),
     };
     let cfg_path = root.join("config.json");
     std::fs::write(&cfg_path, serde_json::to_vec_pretty(&cfg).unwrap()).expect("write config");
     println!("RESULT: provisioned root={} config={}", root.display(), cfg_path.display());
+    println!(
+        "NEXT: win_tcb_pin --root-dir {} --bin-dir <dir with win_*.exe> --out {}",
+        root.display(),
+        root.join("tcb-pin.json").display()
+    );
+    println!("      (the §2.5 TCB integrity floor refuses to serve until that manifest exists)");
 }

@@ -23,6 +23,12 @@ pub struct Config {
     pub identities: Identities,
     /// The executor image the driver spawns to produce the governed output.
     pub executor_path: String,
+    /// Path to the deployment's §2.5 TCB pin manifest (audit R2). `#[serde(default)]` so an older
+    /// config still PARSES — but an empty value makes [`crate::tcb_floor::verify_deployment_tcb`]
+    /// refuse, so an un-upgraded deployment fails closed rather than serving unmeasured. The env var
+    /// [`crate::tcb_floor::WIN_TCB_PIN_MANIFEST_ENV`] overrides it (see [`Config::tcb_pin_manifest_path`]).
+    #[serde(default)]
+    pub tcb_pin_manifest: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -63,6 +69,14 @@ pub struct Trust {
     pub floor_path: String,
     pub root_key_id: String,
     pub root_pub_hex: String,
+    /// CUSTODY provenance the OPERATOR declared for the root anchor at provisioning time — one of
+    /// `external` / `kit_generated` / `demonstration`. It is a declaration, not a proof: no code can
+    /// tell where the private key `win_provision --root-key` was handed came from, so the operator
+    /// states it and the driver carries it into the trust verdict. `#[serde(default)]` keeps older
+    /// configs parseable; an empty or unrecognised value makes the driver refuse (`blocked`), never
+    /// default to `external`.
+    #[serde(default)]
+    pub root_provenance: String,
     pub signer_key_id: String,
     pub supervisor_attestation_key_id: String,
 }
@@ -118,6 +132,17 @@ impl Config {
     pub fn load(path: &str) -> Result<Config, String> {
         let raw = std::fs::read_to_string(path).map_err(|e| format!("config read: {e}"))?;
         serde_json::from_str(&raw).map_err(|e| format!("config parse: {e}"))
+    }
+
+    /// Where this deployment's §2.5 pin manifest lives: the env var wins (an operator can point a
+    /// running deployment at a re-pinned manifest without rewriting a config that is itself pinned),
+    /// otherwise the config field. `None` when neither is set — which the floor treats as a refusal,
+    /// never as "no floor required".
+    pub fn tcb_pin_manifest_path(&self) -> Option<String> {
+        std::env::var(crate::tcb_floor::WIN_TCB_PIN_MANIFEST_ENV)
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| Some(self.tcb_pin_manifest.clone()).filter(|s| !s.is_empty()))
     }
 }
 

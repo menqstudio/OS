@@ -27,7 +27,10 @@ mod win {
     use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
     use brops_core::governed_turn_ipc::{REQUEST_PROTOCOL, TRUSTED_VERIFIED};
     use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
-    use brops_core::key_manifest::{resolve_production_key, verify_manifest, KeyManifest, PinnedRoot};
+    use brops_core::key_manifest::{
+        resolve_production_key, verify_manifest_anchored, KeyManifest, PinnedRoot, RootAnchor,
+        RootProvenance,
+    };
     use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
 
     use brops_win_live::config::Config;
@@ -81,6 +84,18 @@ mod win {
             Err(e) => return blocked(&format!("config:{e}")),
         };
 
+        // ---- (0) §2.5 TCB integrity floor (audit R2) ----
+        // Before ANY trust anchor is read. The manifest/floor/config this driver is about to pin its whole
+        // verdict on are themselves pinned artifacts; if they or the four binaries have moved since the
+        // deployment was measured, the turn is `blocked`, not `trusted_verified`. Fail-closed: an
+        // unconfigured or unreadable pin manifest blocks too.
+        if let Err(why) =
+            brops_win_live::tcb_floor::verify_deployment_tcb(cfg.tcb_pin_manifest_path().as_deref())
+        {
+            eprintln!("win_live_turn: §2.5 TCB integrity floor not satisfied: {why}");
+            return blocked("tcb_integrity_floor");
+        }
+
         // ---- (A) pin root, verify manifest, anti-rollback, resolve keys ----
         let manifest_bytes = match std::fs::read_to_string(&cfg.trust.manifest_path) {
             Ok(b) => b,
@@ -103,9 +118,22 @@ mod win {
         if !cfg.trust.root_pub_hex.is_empty() && cfg.trust.root_pub_hex != pinned_root.public_key_hex {
             return blocked("config_root_disagrees_with_tcb");
         }
-        if verify_manifest(&manifest, &root_sig, &pinned_root).is_err() {
-            return blocked("manifest_root_signature_invalid");
-        }
+        // The anchor's CUSTODY provenance is the operator's declaration from provisioning. It is typed
+        // and closed: absent, empty or misspelled is a REFUSAL, never a silent fall-back to `external`.
+        // The key itself is still pinned by the TCB — provenance answers a different question (who could
+        // have produced a manifest under this anchor), and no signature check can answer it.
+        let anchor_provenance = match RootProvenance::parse(&cfg.trust.root_provenance) {
+            Some(p) => p,
+            None => return blocked("root_anchor_provenance_unknown"),
+        };
+        let root_anchor = RootAnchor { pinned: pinned_root.clone(), provenance: anchor_provenance };
+        // `verify_manifest_anchored` (not `verify_manifest`): it returns the evidence of WHICH anchor the
+        // signature verified under, and that evidence is what `resolve_trust_state` requires before it
+        // will render a production verdict.
+        let verified_root = match verify_manifest_anchored(&manifest, &root_sig, &root_anchor) {
+            Ok(v) => v,
+            Err(_) => return blocked("manifest_root_signature_invalid"),
+        };
         // Load + TCB-integrity-verify the anti-rollback floor (audit R1): a reset/tampered floor.json is
         // rejected because floor.sig will not verify under the TCB floor key.
         let floor = match brops_win_live::resolver::load_verified_floor(std::path::Path::new(&cfg.trust.floor_path)) {
@@ -233,6 +261,7 @@ mod win {
         };
         let ts = resolve_trust_state(
             Some(&manifest_for_trust),
+            Some(&verified_root),
             &cfg.trust.signer_key_id,
             RECEIPT_ENVELOPE_ARTIFACT_TYPE,
             now,
@@ -240,12 +269,22 @@ mod win {
         );
         let production_verified = ts.is_production_verified();
         let ts_str = match &ts {
-            TrustState::Production { key_id, key_epoch } => {
-                format!("trusted_verified(production key={key_id} epoch={key_epoch})")
+            TrustState::Production { key_id, key_epoch, root_key_id } => {
+                format!("trusted_verified(production key={key_id} epoch={key_epoch} root={root_key_id})")
+            }
+            TrustState::DemonstrationCustody { key_id, key_epoch, root_key_id, root_provenance } => {
+                format!(
+                    "trusted_verified(demonstration_custody key={key_id} epoch={key_epoch} \
+                     root={root_key_id} root_provenance={})",
+                    root_provenance.as_str()
+                )
             }
             TrustState::NoTrustedManifest(r) => format!("no_trusted_manifest({r})"),
         };
-        println!("RESULT: {ts_str} production_verified={production_verified} bound={bound}");
+        println!(
+            "RESULT: {ts_str} production_verified={production_verified} bound={bound} root_anchor={}",
+            anchor_provenance.as_str()
+        );
         if production_verified && bound {
             0
         } else {
