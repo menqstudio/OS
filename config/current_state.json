@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof are now CONSOLIDATED on branch feat/cockpit-pages (PR #48, base chore/main-resync), superseding the earlier split (PR #46 impl / PR #31 design / PR #32 impl). The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green). tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #48 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "1e8597c215955ffa02247c2da209d443851490e0",
+    "baseline_main_head_at_sync": "b91f23569490f8fed8b16985f304ac3db2c1dec7",
     "snapshot_branch": "feat/govern-stream-run-step",
-    "live_main_resolution": "baseline_main_head_at_sync is the current live main HEAD 1e8597c (the squash-merge of PR #51, Phase-2 slice 2 — stream_ask governed + held-answer core, on top of #48/#49/#50). The active workflow branch feat/govern-stream-run-step (PR #52) is a DIRECT child of main (base == main), so the pull_request base-sha baseline check APPLIES and passes: baseline_main_head_at_sync == the PR base sha == main tip.",
+    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD b91f235 (the squash-merge of PR #52, Phase-2 slice 3 — stream_run_step governed, which closed the last ungoverned provider back door). The active workflow branch fix/release-setup-node-pin (PR #54) is a DIRECT child of that main tip (base == main), so the pull_request base-sha baseline check APPLIES and passes: baseline_main_head_at_sync == the PR base sha == main tip. It was left at 1e8597c after #52 merged, which is why every PR branched from main failed the repo-state verifier on a stale baseline rather than on anything in its own diff.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #50). PR #50's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "feat/govern-stream-run-step"
+    "branch": "fix/release-setup-node-pin"
   },
   "prs": [],
   "status_tokens": {
@@ -135,11 +135,11 @@
     "CI-green is NOT design/audit-green; the Linux production proof is NOT a Windows production proof (Windows broker is a release blocker)."
   ],
   "current_workflow_pr": {
-    "number": 52,
-    "branch": "feat/govern-stream-run-step",
+    "number": 54,
+    "branch": "fix/release-setup-node-pin",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #52 body, kept in lockstep with every push. check_repo_state requires event head == live headRefOid == marker. Base is main directly (branch is a child of main tip 1e8597c), so the base-sha baseline check applies: baseline_main_head_at_sync == the PR base sha.",
-    "note": "PR #52 = Phase-2 slice 3 (final) — stream_run_step routed through the governed wall. It produces a run step result (persisted under a claiming attempt), so it reuses the slice-2 conversation-less held accept: the governed turn's VERIFIED body becomes the step result via complete_step_execution; a governed Block fails the attempt (no ungoverned result persisted). ai::generate_stream demoted to the dev-only fallthrough. ALL THREE ungoverned provider back doors (reply_in_conversation #50, stream_ask #51, stream_run_step) are now closed — no production command reaches the model provider except through the governance wall. No gate-logic change; no production trusted_verified; fail-closed preserved."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #54 body, kept in lockstep with every push. check_repo_state requires event head == live headRefOid == marker. Base is main directly, so the base-sha baseline check applies: baseline_main_head_at_sync == the PR base sha.",
+    "note": "PR #54 = the release-workflow supply-chain hotfix against main: the setup-node pin in .github/workflows/release.yml named a SHA that does not exist in actions/setup-node, so the release workflow could not resolve its own action; it is re-pinned to the real v4.1.0 commit and tools/check_action_pins.py (11 self-tests, wired as the supply-chain `action-pins` job) now fails the build on any unresolvable or unpinned action reference instead of leaving it to be discovered at release time. Also carries the two supply-chain remediations main still lacks — the undici ^7.29.0 override that clears the un-waived high npm advisory, and the three triaged cryptography X.509/PKCS#7 waivers for surfaces the engine's Ed25519-only usage never reaches — so this PR is green on its own base rather than depending on PR #53 merging first."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",

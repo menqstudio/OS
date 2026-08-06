@@ -208,6 +208,25 @@ jobs:
           path: sbom/
           if-no-files-found: error
 
+  action-pins:
+    name: Action pins - consistency gate (F-46)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # Stdlib only, no network. A SHA pin is only wrong RELATIVE to other pins, so nothing else
+      # in CI could see this: release.yml carried actions/setup-PYTHON's commit under
+      # actions/setup-node, which GitHub cannot resolve, so every `v*` tag push died at that step
+      # and no installer was ever produced. This gate holds one action to one pin and — the rule
+      # that catches it — one commit to one action.
+      - name: Action pin consistency gate
+        run: python tools/check_action_pins.py
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_action_pins
+
   gitleaks:
     name: Secrets - gitleaks
     runs-on: ubuntu-latest
