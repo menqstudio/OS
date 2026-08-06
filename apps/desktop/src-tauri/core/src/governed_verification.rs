@@ -11,6 +11,10 @@
 //! handle; a mismatch Blocks").
 //!
 //! ## What the broker verifies here (rev-30 §7.1, in order)
+//!
+//! PARTIAL vs the spec (audit round 3): the receipt-id uniqueness and one-time nonce consume below
+//! are implemented; §7.1's FRESHNESS window is MISSING. A reader who sees `§7.1` beside this list
+//! will otherwise take the whole section as satisfied — which is how the earlier P0s survived review.
 //!  1. **Envelope identity** — `artifact_type` is the frozen §4.9 const and `key_id` equals the pinned
 //!     isolated-signer key id; `supervisor_attestation_key_id` equals the pinned attestation key id.
 //!  2. **Isolated-signer signature** — Ed25519 (`verify_strict`) over `JCS(payload)` under the pinned
