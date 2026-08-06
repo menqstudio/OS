@@ -23,6 +23,23 @@
 **Prior assessment:** [`2026-08-06-independent-audit.md`](./2026-08-06-independent-audit.md) — the
 25-agent zero-trust audit that produced the 12 soundness-blockers the remediation addressed.
 
+## Round-2 remediation audit (2026-08-06) — RED, and what has been done about it
+
+The SECOND audit of the remediation returned RED again. No new P0 was found, but the ground under
+several "closed" verdicts was softer than it looked. Addressed here:
+
+| Finding | Status |
+|---|---|
+| **P1 — Windows signing seeds are plaintext until first read** | ✅ **CLOSED.** `win_provision::write_seed` now restricts each seed to its owning account before anything can read it, and DELETES the seed and aborts if the ACL cannot be applied. This was the shortest path in the repository from an in-scope adversary to a forged `production_verified=true`: `attest.seed` + `signer.seed` are the two production keys `verify_and_accept` checks, and reading them skips the governed chain entirely rather than defeating it. `seedstore.rs`'s "the boundary is cryptographic, not just an ACL" claim is corrected — that is true AFTER the lazy seal, and the window before it was exactly the exposure. |
+| **F-08's enforcement had zero tests** | ✅ **CLOSED.** The four cited tests covered the lease parser and the fd→pin map; the digest-and-compare that IS F-08 had none, so deleting the check left every suite green. The decision is now a pure `verify_store_inputs` with 4 tests (per-slot mismatch, transposition, unreadable input), AND the live CI job runs a NEGATIVE case: it tampers with a pinned store input and requires the launcher to refuse. That is the test deleting the enforcement cannot pass. |
+| **52 tests in the production crates run in no CI job** | ✅ **CLOSED.** New `governed-crates` job tests launcher, executor, broker, live driver and both Windows crates. `brops-executor` was never compiled by CI at all. The Tauri host crate still is not built (webkit2gtk) — stated, not papered over. |
+| Windows machine-proof script rejected by its own provisioner (exit 3) | ⚠️ OPEN |
+| `bound` is a tautology (`CommittedMessage::new` hardcodes trust_state) | ⚠️ OPEN |
+| `production_verified` never asks WHICH root anchor verified the manifest | ⚠️ OPEN |
+| NULL DACL makes `FILE_FLAG_FIRST_PIPE_INSTANCE` inert | ⚠️ OPEN |
+| A failed model call is replaced by a hardcoded constant the chain then signs | ✅ **CLOSED.** The fallback itself is legitimate — the self-test exists to prove the CHAIN, with or without a model — but it was INVISIBLE: no `BROPS_SELFTEST_MODEL_CMD` (the default), a spawn failure, a non-zero exit or empty output all silently became a built-in constant that the chain bound and the UI showed beside `trusted_verified`. The receipt was honest about custody and the screen was misleading about what answered. `AnswerSource` now travels with the answer (model / no-model-configured / model-failed), the UI renders **NO MODEL RAN** and says which of the two reasons, and 3 tests cover all three cases. |
+| Windows kit: no §2.5 floor, no anti-rollback floor | ⚠️ OPEN |
+
 ## Keystone soundness-blockers (independent audit 2026-08-06) — the gate depends on these
 
 `platform_governed_execution_supported()` cannot be flipped until every row here is ✅, a SEPARATE

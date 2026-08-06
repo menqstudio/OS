@@ -69,6 +69,17 @@ export interface TrustSelftest {
    *  Always true for this self-test — pair it with `production_verified` so the boolean
    *  can never be read as production trust on its own. */
   demonstration_custody: boolean;
+  /**
+   * Where `answer` came from. A failed or absent model used to be indistinguishable from a real
+   * one: the built-in placeholder was bound by the chain and shown beside `trusted_verified`, so
+   * the receipt was honest about custody and the screen was misleading about what answered
+   * (remediation audit, honesty finding). Rendering the verdict without this is the defect.
+   */
+  answer_source:
+    | 'model'
+    | 'builtin_placeholder_no_model_configured'
+    | 'builtin_placeholder_model_failed';
+  answer_is_from_a_model: boolean;
   bound: boolean;
   detail: string;
   /** The reply the chain's executor produced INSIDE the governed turn and which the receipt
