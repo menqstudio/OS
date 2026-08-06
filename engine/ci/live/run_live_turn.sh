@@ -97,17 +97,6 @@ install -m 0755 "$DRIVER_BIN" "$BIN/live_turn"; chown 0:0 "$BIN/live_turn"
 LAUNCHER_SHA=$(sha256sum "$TCB/privileged-launcher.bin" | cut -d' ' -f1)
 EXECUTOR_SHA=$(sha256sum "$TCB/contained-executor.bin" | cut -d' ' -f1)
 
-# ----- the launcher's §4.3 VALIDATED lease FILE (root-owned, non-writable) -------------------------
-RECORDER_GID=$(id -g "$RECORDER_USER"); EXECUTOR_UID=$(id -u "$EXECUTOR_USER"); EXECUTOR_GID=$(id -g "$EXECUTOR_USER")
-cat > "$TCB/executor.lease" <<LEASE
-recorder_uid=$(id -u "$RECORDER_USER")
-recorder_gid=$RECORDER_GID
-executor_uid=$EXECUTOR_UID
-executor_gid=$EXECUTOR_GID
-executor_executable_sha256=$EXECUTOR_SHA
-LEASE
-chown 0:0 "$TCB/executor.lease"; chmod 0644 "$TCB/executor.lease"
-
 # ----- keys + manifest + store + shared config -----------------------------------------------------
 echo "== provisioning keys + root-signed manifest + store + config =="
 python3 "$PYLIVE/provision_keys.py" --root-dir "$LIVE" \
@@ -116,6 +105,39 @@ python3 "$PYLIVE/provision_keys.py" --root-dir "$LIVE" \
   || { echo "FAIL: provision_keys.py"; exit 1; }
 
 CONFIG="$LIVE/config.json"
+
+# ----- the launcher's §4.3 VALIDATED lease FILE (root-owned, non-writable) -------------------------
+# Written AFTER provisioning because it now also pins the three governed REQUEST inputs (audit F-08):
+# the digests below are taken from the very files the recorder opens as fds 3/4/5, and the launcher
+# re-hashes those held descriptors before it will exec. Overwrite `$STORE/system` after this point and
+# the launcher refuses — which is exactly the divergence (executed prompt != attested prompt) that had
+# no enforcement anywhere in the chain.
+RECORDER_GID=$(id -g "$RECORDER_USER"); EXECUTOR_UID=$(id -u "$EXECUTOR_USER"); EXECUTOR_GID=$(id -g "$EXECUTOR_USER")
+SYSTEM_SHA=$(sha256sum "$STORE/system" | cut -d' ' -f1)
+HISTORY_SHA=$(sha256sum "$STORE/history" | cut -d' ' -f1)
+GENCFG_SHA=$(sha256sum "$STORE/generation_config" | cut -d' ' -f1)
+# The config the supervisor attests from MUST carry the same three digests, or the launcher would be
+# pinning bytes nobody attests. Assert it here rather than discovering the divergence in a signature.
+python3 - "$CONFIG" "$SYSTEM_SHA" "$HISTORY_SHA" "$GENCFG_SHA" <<'PYCHECK' || { echo "FAIL: request digests diverge from the provisioned store bytes"; exit 1; }
+import json, sys
+cfg = json.load(open(sys.argv[1]))["resolved"]
+want = dict(zip(("system_sha256", "history_sha256", "generation_config_sha256"), sys.argv[2:5]))
+bad = {k: (cfg.get(k), v) for k, v in want.items() if cfg.get(k) != v}
+if bad:
+    print("attested-vs-store digest mismatch:", bad, file=sys.stderr)
+    sys.exit(1)
+PYCHECK
+cat > "$TCB/executor.lease" <<LEASE
+recorder_uid=$(id -u "$RECORDER_USER")
+recorder_gid=$RECORDER_GID
+executor_uid=$EXECUTOR_UID
+executor_gid=$EXECUTOR_GID
+executor_executable_sha256=$EXECUTOR_SHA
+system_sha256=$SYSTEM_SHA
+history_sha256=$HISTORY_SHA
+generation_config_sha256=$GENCFG_SHA
+LEASE
+chown 0:0 "$TCB/executor.lease"; chmod 0644 "$TCB/executor.lease"
 
 # Each private key readable ONLY by the owning service; public hex + manifest + config world-readable.
 chown "$CHALLENGE_USER":  "$KEYS/challenge.priv";          chmod 0400 "$KEYS/challenge.priv"
