@@ -216,6 +216,19 @@ chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
 # INHERIT. State them: root-owned, 0755, no group or other write, for the whole pinned tree.
 chown 0:0 "$LIVE" "$TCB" "$BIN"; chmod 0755 "$LIVE" "$TCB" "$BIN"
 chown -R 0:0 "$LIVE/engine"; find "$LIVE/engine" -type d -exec chmod 0755 {} +
+# /opt is drwxrwxrwx on the hosted runner image, and the floor is right to refuse that: anyone who
+# can write /opt can rename /opt/brops-live aside and substitute an entire tree, which defeats every
+# content pin below it. A real operator would have to fix this before deploying, so the kit fixes it
+# here rather than pretending the deployment root is safe.
+echo "== hardening the deployment root (/opt was $(stat -c %A /opt)) =="
+chown 0:0 /opt; chmod 0755 /opt
+# The mode bits are only the whole truth if there is no ACL beside them. These directories carry
+# default ACLs inherited from the runner image (the `+` in ls), and the probe reads mode and
+# ownership, not ACLs — a documented narrowing that can only make it MORE permissive than reality.
+# Strip the ACLs from the pinned tree so the two agree, instead of relying on the narrowing.
+if command -v setfacl >/dev/null 2>&1; then
+  setfacl -Rb /opt "$LIVE" 2>/dev/null || true
+fi
 # The floor refuses on an ancestor a non-TCB principal could write, and "which bit, on which
 # directory" is exactly what a refusal needs to be actionable. Print the pinned set's ancestors.
 echo "== TCB ancestor modes (the §2.5 floor checks these) =="
