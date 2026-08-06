@@ -2033,6 +2033,7 @@ pub mod automations {
     /// fire unattended). An unrecognized verb is a recorded 'failed' outcome, never a silent no-op.
     ///   notify: <text>  -> raise a notification
     ///   task:   <title> -> create a task
+    ///   note:   <title> -> create a knowledge note
     fn execute_action(conn: &Connection, action: &str) -> CoreResult<(&'static str, String)> {
         let trimmed = action.trim();
         let (verb, arg) = match trimmed.split_once(':') {
@@ -2069,7 +2070,19 @@ pub mod automations {
                 )?;
                 Ok(("ok", format!("created task: {arg}")))
             }
-            other => Ok(("failed", format!("unknown action verb '{other}' (supported: notify, task)"))),
+            "note" => {
+                knowledge::create(
+                    conn,
+                    NewKnowledgeNote {
+                        title: arg.clone(),
+                        body: String::new(),
+                        source: "automation".to_string(),
+                        tags: String::new(),
+                    },
+                )?;
+                Ok(("ok", format!("created note: {arg}")))
+            }
+            other => Ok(("failed", format!("unknown action verb '{other}' (supported: notify, task, note)"))),
         }
     }
 

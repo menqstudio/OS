@@ -12,9 +12,9 @@ export const STR = {
     ru: 'every: 5m · every: 1h · every: 1d · manual',
   },
   actionHint: {
-    en: 'notify: <text> · task: <title>',
-    hy: 'notify: <տեքստ> · task: <վերնագիր>',
-    ru: 'notify: <текст> · task: <заголовок>',
+    en: 'notify: <text> · task: <title> · note: <title>',
+    hy: 'notify: <տեքստ> · task: <վերնագիր> · note: <վերնագիր>',
+    ru: 'notify: <текст> · task: <заголовок> · note: <заголовок>',
   },
   noRuns: {
     en: 'No runs yet — use “Run now”, or wait for an interval trigger to fire.',

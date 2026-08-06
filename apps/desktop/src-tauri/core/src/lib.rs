@@ -450,6 +450,14 @@ mod tests {
         assert_eq!(run2.outcome, "ok");
         assert!(run2.detail.contains("created task"));
 
+        // note: creates a real knowledge note
+        let a2b = repo::automations::create(&c, NewAutomation { name: "noter".into(), trigger: "manual".into(), action: "note: remember this".into() }).unwrap();
+        let before_notes = repo::knowledge::list(&c).unwrap().len();
+        let run2b = repo::automations::run(&c, &a2b.id).unwrap();
+        assert_eq!(run2b.outcome, "ok");
+        assert!(run2b.detail.contains("created note"));
+        assert_eq!(repo::knowledge::list(&c).unwrap().len(), before_notes + 1);
+
         // unknown verb: a recorded FAILED run — never a silent no-op and never a hard error
         let a3 = repo::automations::create(&c, NewAutomation { name: "bad".into(), trigger: "manual".into(), action: "frobnicate: x".into() }).unwrap();
         assert_eq!(repo::automations::run(&c, &a3.id).unwrap().outcome, "failed");
