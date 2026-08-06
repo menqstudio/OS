@@ -195,6 +195,11 @@ REASON_NOT_COMPLETED = "not_completed"
 REASON_RUN_BINDING_INVALID = "run_binding_invalid"
 REASON_NONCE_MISMATCH = "nonce_mismatch"
 REASON_HANDLE_MISSING = "handle_missing"
+#: A published chain document disagrees with the attested evidence about a field they
+#: BOTH carry (audit round 3, R3-01). Typed separately from "absent" because the two mean
+#: different things: one is a broken deployment, this one is two accounts of the same run
+#: that cannot both be true.
+REASON_CHAIN_DISAGREEMENT = "chain_document_disagrees_with_attested_evidence"
 REASON_HASH_MISMATCH = "hash_mismatch"
 REASON_POLICY_MISMATCH = "policy_mismatch"
 REASON_CONTAINMENT_MISSING = "containment_missing"
@@ -531,9 +536,13 @@ class IsolatedSigner:
             # (4) recompute every store-derived hash from the STORE bytes named
             #     by the handle, and deep-verify the protected-chain handles.
             derived = self._derive_hashes(evidence)
-            self._verify_chain_handles(evidence)
             output_bytes = self._derive_output_bytes(evidence)
             request_sha256 = self._recompute_request_sha256(evidence, derived)
+            # The chain documents are checked AFTER the recompute so the record's own
+            # `request_sha256` can be held against the digest the SIGNER derived from store
+            # bytes, rather than against a transported value nobody carries (the signer never
+            # trusts one). That makes this the stronger check, not a weaker one.
+            self._verify_chain_handles(evidence, {"request_sha256": request_sha256})
             attestation_evidence_sha256 = _sha256_hex(evidence_jcs)
             # (5) construct the canonical §4.9 payload from trusted inputs.
             payload = self._build_envelope_payload(
@@ -644,16 +653,82 @@ class IsolatedSigner:
             derived[hash_field] = digest
         return derived
 
-    def _verify_chain_handles(self, evidence: Mapping[str, Any]) -> None:
-        """Deep-verify the protected-chain handles (§7): the record, lease, and
-        execution-receipt each MUST resolve in the signer's protected store. The
-        signer will not mint an envelope naming a chain artifact it cannot see.
-        The handle *value* (content address) is carried verbatim into the
-        payload; the broker never dereferences it (§4.6)."""
+    #: What each published chain document must AGREE with the attested evidence about
+    #: (audit round 3, R3-01). Only fields the document and the evidence both carry; a
+    #: document is not required to repeat everything, but where it speaks it must not differ.
+    _CHAIN_AGREEMENT = {
+        "record_handle": (
+            "brops.governed-turn-record.v1",
+            ("run_id", "task_id", "execution_attempt_id", "workspace_id", "install_id",
+             "request_nonce", "receipt_id", "supervisor_id", "request_sha256",
+             "system_handle", "history_handle", "generation_config_handle",
+             "output_handle", "containment_evidence_handle", "decision"),
+        ),
+        "execution_receipt_handle": (
+            "brops.execution-receipt.v1",
+            ("run_id", "execution_attempt_id", "output_handle"),
+        ),
+        "lease_handle": (
+            None,  # the lease payload has no protocol tag of its own
+            ("execution_attempt_id",),
+        ),
+    }
+
+    def _verify_chain_handles(
+        self, evidence: Mapping[str, Any], recomputed: Mapping[str, Any] | None = None
+    ) -> None:
+        """Independently re-verify the protected-chain documents (§7).
+
+        **audit round 3, R3-01 (P1).** This used to be three existence checks. That is worth
+        restating plainly, because the signer runs as a SEPARATE OS principal for exactly one
+        reason — to re-verify the chain independently of the supervisor — and a presence check
+        re-verifies nothing. With it, the authenticity of the whole chain rested on a single
+        supervisor signature, and the signer's isolation bought custody of a key and no second
+        opinion at all.
+
+        So the signer now READS each document and requires it to AGREE with the attested
+        evidence on every field they share. The supervisor builds these documents from its own
+        rows and signs the evidence separately; if the two ever disagree — a record about a
+        different run, a receipt naming another attempt, an output handle that does not match
+        the one being signed — the signer refuses, and it does so without trusting the
+        supervisor's summary of its own work.
+
+        What this does NOT do, stated so nobody reads more into it than is there: it cannot
+        detect a supervisor that lies CONSISTENTLY in both the evidence and the documents. A
+        second opinion catches disagreement, not a coherent forgery. Catching that needs the
+        signer to hold an independent source for the facts, which the §5 protocol does not give
+        it today.
+        """
         for handle_field in EVIDENCE_CHAIN_HANDLE_FIELDS:
             handle = evidence[handle_field]
-            if self._store.read_verified(handle) is None:
+            raw = self._store.read_verified(handle)
+            if raw is None:
                 raise _Refuse(REASON_HANDLE_MISSING)
+
+            protocol, shared = self._CHAIN_AGREEMENT[handle_field]
+            try:
+                document = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                # A chain document the signer cannot read is one it cannot check. Refusing is
+                # the only honest outcome; accepting it would restore the presence check.
+                raise _Refuse(REASON_HANDLE_MISSING)
+            if not isinstance(document, Mapping):
+                raise _Refuse(REASON_HANDLE_MISSING)
+            if protocol is not None and document.get("protocol") != protocol:
+                raise _Refuse(REASON_HANDLE_MISSING)
+
+            for field in shared:
+                if field not in document:
+                    # REQUIRED, not merely "checked where present". Skipping absent fields would
+                    # let a document carrying nothing but its protocol tag agree vacuously — a
+                    # hole exactly the shape of the presence check this replaces.
+                    raise _Refuse(
+                        "%s:%s.%s_missing" % (REASON_CHAIN_DISAGREEMENT, handle_field, field))
+                expected = (recomputed or {}).get(field, evidence.get(field))
+                if document[field] != expected:
+                    # The field name is part of the reason: a refusal that does not say WHICH
+                    # account differs sends the operator to read two documents by hand.
+                    raise _Refuse("%s:%s.%s" % (REASON_CHAIN_DISAGREEMENT, handle_field, field))
 
     def _derive_output_bytes(self, evidence: Mapping[str, Any]) -> int:
         """The exact reply byte-length, DERIVED from the store bytes named by

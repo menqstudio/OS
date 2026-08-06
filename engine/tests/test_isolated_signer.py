@@ -17,6 +17,7 @@ exercise the normative signer behaviours:
 """
 
 import hashlib
+import json
 import pathlib
 import sys
 import unittest
@@ -64,24 +65,63 @@ def _h(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _build_store():
-    """Content-addressed store holding each artifact; return (store, handles)."""
-    artifacts = {
+def _canon(document):
+    return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _build_store(record_overrides=None, receipt_overrides=None):
+    """Content-addressed store holding each artifact; return (store, handles).
+
+    The three protected-chain artifacts are REAL documents now, not stubs (audit round 3,
+    R3-01). The signer re-reads them and requires them to agree with the attested evidence, so
+    a stub would simply refuse — which is the point: the check used to be presence only, and a
+    stub passed it. `record_overrides`/`receipt_overrides` let a test make the two accounts of
+    the same run disagree.
+    """
+    inputs = {
         "policy_bundle_handle": b"policy-bundle-bytes",
         "generation_config_handle": b'{"temperature":0}',
         "system_handle": b"you are a governed agent",
         "history_handle": b'[{"content":"hi","role":"user"}]',
         "output_handle": OUTPUT_MARKER,  # the sensitive reply bytes
         "containment_evidence_handle": b'{"containment":"ok"}',
-        # Protected-chain artifacts the signer deep-verifies (must resolve).
-        "record_handle": b'{"terminal_record":"COMPLETED"}',
-        "lease_handle": b'{"lease":"signed-lease-payload"}',
-        "execution_receipt_handle": b'{"execution_receipt":"ok"}',
     }
     store = ArtifactStore()
     handles = {}
-    for field, data in artifacts.items():
+    for field, data in inputs.items():
         handles[field] = store.put(data)
+
+    # Built after the inputs, because they name the input handles — exactly as the supervisor
+    # builds them from its own acceptance row plus the completion.
+    record = {
+        "protocol": "brops.governed-turn-record.v1",
+        "run_id": "run-abc",
+        "task_id": "task-1",
+        "execution_attempt_id": "attempt-1",
+        "workspace_id": "ws-1",
+        "install_id": "install-xyz",
+        "request_nonce": "550e8400-e29b-41d4-a716-446655440000",
+        "receipt_id": "receipt-777",
+        "supervisor_id": "sup-1",
+        "request_sha256": _expected_request_sha256(handles),
+        "system_handle": handles["system_handle"],
+        "history_handle": handles["history_handle"],
+        "generation_config_handle": handles["generation_config_handle"],
+        "output_handle": handles["output_handle"],
+        "containment_evidence_handle": handles["containment_evidence_handle"],
+        "decision": "completed",
+    }
+    record.update(record_overrides or {})
+    receipt = {
+        "protocol": "brops.execution-receipt.v1",
+        "run_id": "run-abc",
+        "execution_attempt_id": "attempt-1",
+        "output_handle": handles["output_handle"],
+    }
+    receipt.update(receipt_overrides or {})
+    handles["record_handle"] = store.put(_canon(record))
+    handles["execution_receipt_handle"] = store.put(_canon(receipt))
+    handles["lease_handle"] = store.put(_canon({"execution_attempt_id": "attempt-1"}))
     return store, handles
 
 
@@ -163,8 +203,8 @@ def _accepting_verifier(key_handle, message_bytes, sig_b64):
     return sig_b64 == "GOOD-SIG"
 
 
-def _make_signer(sign_fn=None, verify=_accepting_verifier, clock=None):
-    store, handles = _build_store()
+def _make_signer(sign_fn=None, verify=_accepting_verifier, clock=None, prepared=None):
+    store, handles = prepared if prepared else _build_store()
     config = SignerConfig(
         receipt_key_id=RECEIPT_KEY_ID,
         receipt_private_key_handle=RECEIPT_PRIV_HANDLE,
@@ -273,6 +313,49 @@ class NeverSignsCallerBytesTest(unittest.TestCase):
 
 
 class RefusalTest(unittest.TestCase):
+
+    # ---- audit round 3, R3-01: the signer's §7 gate must be able to FAIL ------------------
+
+    def _sign_with(self, **kw):
+        signer, _store, handles, _ = _make_signer(prepared=_build_store(**kw))
+        return signer.sign_result(_request(_evidence(handles)))
+
+    def test_a_record_about_a_different_run_is_refused(self):
+        # The supervisor signs the evidence and separately publishes the documents. If the two
+        # disagree, the signer is the only party positioned to notice — which is the entire
+        # reason it runs as a separate OS principal. Before this it checked only that the
+        # handle resolved, so a record about ANY run passed.
+        out = self._sign_with(record_overrides={"run_id": "run-somebody-elses"})
+        self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
+        self.assertIn("record_handle.run_id", out["reason"])
+
+    def test_a_record_naming_other_output_is_refused(self):
+        # The most valuable field to lie in: the digest of the reply the desktop commits.
+        out = self._sign_with(record_overrides={"output_handle": "9" * 64})
+        self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
+        self.assertIn("output_handle", out["reason"])
+
+    def test_a_record_disagreeing_with_the_signers_own_request_digest_is_refused(self):
+        # `request_sha256` is RECOMPUTED by the signer from store bytes and never transported,
+        # so the record is held against the signer's own arithmetic rather than against a
+        # value someone handed it. That makes this the strongest of the three checks.
+        out = self._sign_with(record_overrides={"request_sha256": "b" * 64})
+        self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
+        self.assertIn("request_sha256", out["reason"])
+
+    def test_an_execution_receipt_for_another_attempt_is_refused(self):
+        out = self._sign_with(receipt_overrides={"execution_attempt_id": "attempt-99"})
+        self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
+        self.assertIn("execution_receipt_handle", out["reason"])
+
+    def test_a_chain_document_that_is_not_a_document_is_refused(self):
+        # A stub blob used to PASS the old presence check. It must not now.
+        prepared = _build_store()
+        store, handles = prepared
+        handles["record_handle"] = store.put(b'{"terminal_record":"COMPLETED"}')
+        signer, _s, _h, _r = _make_signer(prepared=prepared)
+        out = signer.sign_result(_request(_evidence(handles)))
+        self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
     def test_bad_attestation_is_refused(self):
         signer, store, handles, recorder = _make_signer()
         result = signer.sign_result(_request(_evidence(handles), sig="FORGED"))

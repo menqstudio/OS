@@ -35,6 +35,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tests"))  # _chain_docs
 
 import governed_supervisor_ledger as gsl  # noqa: E402
 from governed_supervisor import (  # noqa: E402
@@ -136,12 +137,41 @@ def _build_store():
         "history_handle": b'[{"content":"hi","role":"user"}]',
         "output_handle": b"the exact governed reply bytes",
         "containment_evidence_handle": b'{"containment":"ok"}',
-        "record_handle": b'{"terminal_record":"COMPLETED"}',
-        "lease_handle": b'{"lease":"signed-lease-payload"}',
-        "execution_receipt_handle": b'{"execution_receipt":"ok"}',
     }
     store = ArtifactStore()
     handles = {field: store.put(data) for field, data in artifacts.items()}
+    # (audit R3-01) The signer re-reads these documents and requires them to agree with the
+    # attested evidence, so they are REAL here — matching `_state`'s literals. They were stub
+    # blobs while the gate was a presence check, which is precisely what the gate now catches.
+    import _chain_docs
+    import isolated_signer as _iso
+
+    like = {
+        "run_id": "run-abc", "task_id": "task-1", "execution_attempt_id": "attempt-1",
+        "workspace_id": "ws-1", "install_id": "install-xyz",
+        "request_nonce": "550e8400-e29b-41d4-a716-446655440000",
+        "receipt_id": "receipt-777", "supervisor_id": "sup-1",
+        "system_handle": handles["system_handle"],
+        "history_handle": handles["history_handle"],
+        "generation_config_handle": handles["generation_config_handle"],
+        "output_handle": handles["output_handle"],
+        "containment_evidence_handle": handles["containment_evidence_handle"],
+    }
+    request_sha256 = _iso._sha256_hex(_iso._jcs_bytes({
+        "protocol": _iso.REQUEST_PROTOCOL,
+        "workspace_id": like["workspace_id"], "install_id": like["install_id"],
+        "request_nonce": like["request_nonce"],
+        "system_sha256": _iso._sha256_hex(store.read_verified(handles["system_handle"])),
+        "history_sha256": _iso._sha256_hex(store.read_verified(handles["history_handle"])),
+        "generation_config_sha256": _iso._sha256_hex(
+            store.read_verified(handles["generation_config_handle"])),
+        "requested_at": str(NOW_MS - 5_000),
+    }))
+    handles["record_handle"] = store.put(_chain_docs.canonical(
+        _chain_docs.terminal_record(like, request_sha256=request_sha256)))
+    handles["execution_receipt_handle"] = store.put(
+        _chain_docs.canonical(_chain_docs.execution_receipt(like)))
+    handles["lease_handle"] = store.put(_chain_docs.canonical(_chain_docs.lease_payload(like)))
     return store, handles
 
 
@@ -413,8 +443,41 @@ def _noop_verify(_message, _sig):
     return True
 
 
-def _fixed_request_sha256(_payload):
-    return "0" * 64
+def _fixed_request_sha256(payload):
+    """The digest the supervisor recomputes at accept-open.
+
+    It used to return a constant `"0" * 64`, which was invisible until the signer started
+    re-verifying the published record against its OWN recompute (audit R3-01): the record then
+    carried the placeholder and the signer's arithmetic did not, and the refusal was correct.
+    A fixture that cannot survive a real check is a fixture that was hiding one.
+    """
+    import isolated_signer as _iso
+
+    return _iso._sha256_hex(_iso._jcs_bytes({
+        "protocol": _iso.REQUEST_PROTOCOL,
+        "workspace_id": payload["workspace_id"],
+        "install_id": payload["install_id"],
+        "request_nonce": payload["request_nonce"],
+        "system_sha256": payload["system_sha256"],
+        "history_sha256": payload["history_sha256"],
+        "generation_config_sha256": payload["generation_config_sha256"],
+        "requested_at": str(payload["requested_at_ms"]),
+    }))
+
+
+def _sha256_of_request(handles, nonce):
+    import isolated_signer as _iso
+
+    return _iso._sha256_hex(_iso._jcs_bytes({
+        "protocol": _iso.REQUEST_PROTOCOL,
+        "workspace_id": "ws-1",
+        "install_id": "install-xyz",
+        "request_nonce": nonce,
+        "system_sha256": handles["system_handle"],
+        "history_sha256": handles["history_handle"],
+        "generation_config_sha256": handles["generation_config_handle"],
+        "requested_at": str(NOW_MS - 5_000),
+    }))
 
 
 def _challenge_doc(handles, nonce="550e8400-e29b-41d4-a716-446655440000"):
@@ -433,7 +496,9 @@ def _challenge_doc(handles, nonce="550e8400-e29b-41d4-a716-446655440000"):
             "system_sha256": handles["system_handle"],
             "history_sha256": handles["history_handle"],
             "generation_config_sha256": handles["generation_config_handle"],
-            "request_sha256": "0" * 64,
+            # Must equal what `_fixed_request_sha256` recomputes, or accept-open refuses — the
+            # supervisor checks the challenge's digest against its own arithmetic (F-01).
+            "request_sha256": _sha256_of_request(handles, nonce),
             "requested_at_ms": NOW_MS - 5_000,
             "challenge_issued_at_ms": NOW_MS - 4_000,
             "challenge_expires_at_ms": NOW_MS + 10_000,

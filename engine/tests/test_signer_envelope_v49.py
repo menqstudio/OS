@@ -29,6 +29,7 @@ from cryptography.exceptions import InvalidSignature
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tests"))  # _chain_docs
 
 from isolated_signer import (  # noqa: E402
     ATTESTATION_PROTOCOL,
@@ -95,12 +96,11 @@ def _build_store():
         "history_handle": b'[{"role":"user","content":"hello"}]',
         "output_handle": OUTPUT,
         "containment_evidence_handle": b'{"containment":"verified"}',
-        "record_handle": b'{"terminal_record":"COMPLETED"}',
-        "lease_handle": b'{"lease":"signed-lease"}',
-        "execution_receipt_handle": b'{"execution_receipt":"ok"}',
     }
     store = ArtifactStore()
     handles = {f: store.put(d) for f, d in artifacts.items()}
+    # (R3-01) real chain documents, not stubs — the signer reads them now.
+    _publish_chain(store, handles)
     return store, handles
 
 
@@ -276,3 +276,35 @@ class EnvelopeV49ConformanceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _publish_chain(store, handles):
+    """Publish the three protected-chain documents the signer re-verifies (audit R3-01).
+
+    They were stub blobs while the signer's §7 gate was three existence checks. It reads them
+    now and requires agreement with the attested evidence, so the fixture publishes what the
+    supervisor publishes — self-consistent by construction rather than asserted.
+    """
+    import _chain_docs
+    import isolated_signer as _iso
+
+    for field in ("record_handle", "lease_handle", "execution_receipt_handle"):
+        handles.setdefault(field, "0" * 64)  # `_evidence` names them; real values follow
+    evidence_like = dict(_evidence(handles))
+    request_sha256 = _iso._sha256_hex(_iso._jcs_bytes({
+        "protocol": _iso.REQUEST_PROTOCOL,
+        "workspace_id": evidence_like["workspace_id"],
+        "install_id": evidence_like["install_id"],
+        "request_nonce": evidence_like["request_nonce"],
+        "system_sha256": _iso._sha256_hex(store.read_verified(handles["system_handle"])),
+        "history_sha256": _iso._sha256_hex(store.read_verified(handles["history_handle"])),
+        "generation_config_sha256": _iso._sha256_hex(
+            store.read_verified(handles["generation_config_handle"])),
+        "requested_at": str(evidence_like["requested_at"]),
+    }))
+    handles["record_handle"] = store.put(_chain_docs.canonical(
+        _chain_docs.terminal_record(evidence_like, request_sha256=request_sha256)))
+    handles["execution_receipt_handle"] = store.put(_chain_docs.canonical(
+        _chain_docs.execution_receipt(evidence_like)))
+    handles["lease_handle"] = store.put(_chain_docs.canonical(
+        _chain_docs.lease_payload(evidence_like)))

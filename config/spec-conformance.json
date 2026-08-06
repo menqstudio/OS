@@ -190,7 +190,7 @@
     },
     "§7": {
       "status": "partial",
-      "missing": "The isolated signer's INDEPENDENT deep verification. `_verify_chain_handles` performs three EXISTENCE checks against a content-addressed store and re-verifies nothing. The signer is a separate OS principal for exactly one reason, and that reason is currently unfulfilled: the chain's authenticity rests on the supervisor's single signature (audit round 3, R3-01, P1).",
+      "missing": "The signer now re-reads each protected-chain document and requires it to AGREE with the attested evidence on every field they share, with the record's request_sha256 held against the signer's OWN recompute (audit R3-01). What is still missing: this catches DISAGREEMENT between the supervisor's two accounts, not a supervisor that lies coherently in both. A second opinion needs an independent source for the facts, which §5 does not give the signer.",
       "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
     },
     "§7.1": {
