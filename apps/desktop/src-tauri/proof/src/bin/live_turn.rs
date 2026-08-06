@@ -67,6 +67,30 @@ mod linux {
         1
     }
 
+    /// The §2.5 owner/mode floor for the root trust anchor file (audit **F-17**): a regular, root-owned
+    /// file with no group/other write bit. The anchor is the one input whose forgery makes every
+    /// downstream signature meaningless, so it gets the same treatment as the executor image and the
+    /// lease — and it is checked on the OPENED fd, never by a `metadata(path)` re-lookup.
+    fn anchor_file_is_tcb_owned(path: &str) -> Result<(), &'static str> {
+        use std::os::unix::io::AsRawFd;
+        let f = std::fs::File::open(path).map_err(|_| "unopenable")?;
+        // SAFETY: `f` owns a live descriptor for the whole call; fstat gets a valid out-pointer.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(f.as_raw_fd(), &mut st) } != 0 {
+            return Err("unstatable");
+        }
+        if st.st_mode & libc::S_IFMT != libc::S_IFREG {
+            return Err("not_regular");
+        }
+        if st.st_uid != 0 {
+            return Err("not_root_owned");
+        }
+        if st.st_mode & 0o022 != 0 {
+            return Err("writable");
+        }
+        Ok(())
+    }
+
     fn hex32(s: &str) -> Option<[u8; 32]> {
         if s.len() != 64 {
             return None;
@@ -167,9 +191,43 @@ mod linux {
             Ok(sig) => sig.trim().to_string(),
             Err(_) => return blocked("manifest_sig_unreadable"),
         };
-        let root_key_id = s(&cfg, &["trust", "root_key_id"]).unwrap_or_default();
-        let root_pub_hex = s(&cfg, &["trust", "root_pub_hex"]).unwrap_or_default();
-        let pinned_root = PinnedRoot { root_key_id, public_key_hex: root_pub_hex };
+        // ---- the root trust anchor (audit F-17) ----
+        // `PinnedRoot` is documented as "provisioned in the TCB (root-owned), never taken from the
+        // manifest itself" — but it used to be two strings in the same world-readable config the
+        // provisioner wrote right after minting the root keypair and signing the manifest with it. The
+        // verifier then checked a signature it had supplied both sides of, and reported that as
+        // production. Two changes: the anchor is a separate TCB file under the §2.5 owner/mode floor,
+        // and it STATES its provenance — a kit-generated anchor can exercise the whole chain but may
+        // never render `production_verified=true`.
+        if cfg.pointer("/trust/root_pub_hex").is_some() || cfg.pointer("/trust/root_key_id").is_some() {
+            // Refused rather than ignored: silently preferring the file would leave the self-certifying
+            // arrangement one config edit away from coming back.
+            return blocked("config_carries_inline_root_anchor");
+        }
+        let anchor_path = match s(&cfg, &["trust", "root_anchor_path"]) {
+            Some(p) => p,
+            None => return blocked("config_missing_root_anchor_path"),
+        };
+        if let Err(why) = anchor_file_is_tcb_owned(&anchor_path) {
+            return blocked(&format!("root_anchor_{why}"));
+        }
+        let anchor: Value = match std::fs::read_to_string(&anchor_path)
+            .ok()
+            .and_then(|b| serde_json::from_str(&b).ok())
+        {
+            Some(v) => v,
+            None => return blocked("root_anchor_unreadable"),
+        };
+        let anchor_provenance =
+            anchor.get("provenance").and_then(Value::as_str).unwrap_or_default().to_string();
+        let pinned_root = PinnedRoot {
+            root_key_id: anchor.get("root_key_id").and_then(Value::as_str).unwrap_or_default().to_string(),
+            public_key_hex: anchor
+                .get("public_key_hex")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        };
         if verify_manifest(&manifest, &root_sig_b64, &pinned_root).is_err() {
             return blocked("manifest_root_signature_invalid");
         }
@@ -321,15 +379,26 @@ mod linux {
             now,
             &verifying_key_hex(&resolved.isolated_signer_public_key),
         );
-        let production_verified = ts.is_production_verified();
+        // F-17: production is a claim about CUSTODY, not just about signature arithmetic. A manifest
+        // signed by a root this very kit generated verifies perfectly and proves nothing about who
+        // controls the anchor, so the anchor's provenance gates the claim. The chain result itself is
+        // reported unchanged — `trusted_verified` and `bound` are still exactly what the chain decided.
+        let anchor_is_external = anchor_provenance == "external";
+        let production_verified = ts.is_production_verified() && anchor_is_external;
         let ts_str = match &ts {
             TrustState::Production { key_id, key_epoch } => {
                 format!("trusted_verified(production key={key_id} epoch={key_epoch})")
             }
             TrustState::NoTrustedManifest(r) => format!("no_trusted_manifest({r})"),
         };
-        println!("RESULT: {ts_str} production_verified={production_verified} bound={bound}");
-        if production_verified && bound {
+        println!(
+            "RESULT: {ts_str} production_verified={production_verified} bound={bound} root_anchor={anchor_provenance}"
+        );
+        // The RUN succeeded if the chain bound a trusted_verified turn under a manifest-resolved
+        // production key. Whether that amounts to a PRODUCTION claim is the separate custody question
+        // reported above — a kit-anchored run is a real, complete, honestly-labelled chain run, not a
+        // failure, and conflating the two would either fail every CI run or relabel it as production.
+        if bound && ts.is_production_verified() {
             0
         } else {
             1
