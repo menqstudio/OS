@@ -207,20 +207,83 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
     resolved_keys = keys if keys is not None else load_trusted_keys(root)
     resolved_store = store if store is not None else _external_dir("BRO_EVIDENCE_STORE")
     try:
-        if min_head_sequence is None:
-            # TODO(L-4): no run-recorded high-water mark exists yet and the
-            # completion-manifest schema carries no head sequence, so the floor
-            # is anchored on the store's own current head. That never leaves the
-            # parameter unset and rejects a head swapped for an older one during
-            # this validation, but it cannot see a rollback that happened before
-            # the call — once a durable high-water source (run state or a
-            # manifest-bound head sequence) lands, thread it through here.
-            min_head_sequence = load_head(resolved_store, task_id, resolved_keys).head_sequence
-        return validate_chain(task_id, event_ids, resolved_keys,
-                              store=resolved_store,
-                              min_head_sequence=min_head_sequence)
+        # (audit F-13/F-14) The floor used to be read from the very head it polices —
+        # `load_head(...).head_sequence` fed straight back in as `min_head_sequence`, so
+        # `validate_chain` re-loaded that same head and compared `x >= x`. Since every
+        # production entry point passes None, the anti-rollback check could not fail on
+        # any call path in the repository. The high-water mark now comes from a DURABLE
+        # record that survives between calls, which is the only way a rollback that
+        # happened BEFORE this call can be seen at all.
+        durable_floor = _load_head_floor(resolved_store, task_id)
+        floor = durable_floor if min_head_sequence is None else max(
+            min_head_sequence, durable_floor)
+        digest = validate_chain(task_id, event_ids, resolved_keys,
+                                store=resolved_store,
+                                min_head_sequence=floor or None)
+        # Advance the mark only after the chain verified, and only upward. A later run
+        # presenting a genuinely signed but OLDER head — the retained anchor of a
+        # self-consistent truncated chain — is then refused against this record.
+        _advance_head_floor(resolved_store, task_id,
+                            load_head(resolved_store, task_id, resolved_keys).head_sequence)
+        return digest
     except (EvidenceError, SignatureError) as exc:
         raise CompletionError(str(exc)) from exc
+
+
+def _head_floor_dir(store: pathlib.Path) -> pathlib.Path:
+    """Where the durable evidence high-water marks live (audit F-13/F-14).
+
+    ``BRO_EVIDENCE_HEAD_FLOOR`` when set — a deployment that can put the marks under a
+    principal the builder cannot write should do exactly that. Otherwise a subdirectory
+    of the external evidence store, which needs no new configuration and still supplies
+    the property the tautology lacked: durability ACROSS calls. The residual is stated
+    rather than implied — whoever can write the store can also clear the mark — and
+    pointing the env elsewhere closes it.
+    """
+    if os.getenv("BRO_EVIDENCE_HEAD_FLOOR"):
+        return _external_dir("BRO_EVIDENCE_HEAD_FLOOR")
+    return store / "head-floor"
+
+
+def _load_head_floor(store: pathlib.Path, task_id: str) -> int:
+    """The recorded high-water mark for ``task_id``; 0 when none has been recorded.
+
+    A corrupt or non-integer record is NOT treated as absent: that would let a rollback
+    be laundered into a fresh start by truncating one small file. It refuses instead.
+    """
+    path = _head_floor_dir(store) / f"{task_id}.floor.json"
+    if not path.exists():
+        return 0
+    try:
+        recorded = json.loads(path.read_text(encoding="utf-8"))["head_sequence"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise CompletionError(
+            f"evidence head floor for {task_id} is unreadable; refusing rather than "
+            f"treating a damaged anti-rollback record as absent: {exc}") from exc
+    if isinstance(recorded, bool) or not isinstance(recorded, int) or recorded < 0:
+        raise CompletionError(
+            f"evidence head floor for {task_id} is not a non-negative integer: {recorded!r}")
+    return recorded
+
+
+def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int) -> None:
+    """Raise the recorded mark to ``head_sequence``. Never lowers it."""
+    if head_sequence <= _load_head_floor(store, task_id):
+        return
+    directory = _head_floor_dir(store)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        final = directory / f"{task_id}.floor.json"
+        temporary = directory / f"{task_id}.floor.json.tmp"
+        temporary.write_text(
+            json.dumps({"task_id": task_id, "head_sequence": head_sequence}),
+            encoding="utf-8")
+        # Rename over the old mark so a crash mid-write cannot leave a truncated file
+        # that the loader above would (correctly) refuse forever.
+        temporary.replace(final)
+    except OSError as exc:
+        raise CompletionError(
+            f"cannot record the evidence head floor for {task_id}: {exc}") from exc
 
 
 def _no_pending_execution() -> None:

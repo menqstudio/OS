@@ -298,6 +298,56 @@ class CompletionIntegrationTests(EvidenceFixture):
         with self.assertRaises((CompletionError, SignatureError)):
             self.chain_check(self.chain)
 
+    # ---- audit F-13/F-14: the anti-rollback floor must be able to FAIL ---------------
+
+    def reseal_head(self, head_sequence, task_id="task-1"):
+        """Re-sign the existing signed head with a different ``head_sequence``.
+
+        Every signature stays genuine — that is the whole point. A rollback here is not
+        forgery, it is re-presenting an older authentic head, which is why only a mark
+        that outlives the call can catch it.
+        """
+        payload = json.loads(
+            (self.store / f"{task_id}.head.json").read_text(encoding="utf-8"))["payload"]
+        payload["head_sequence"] = head_sequence
+        (self.store / f"{task_id}.head.json").write_text(
+            json.dumps(sign_payload(self.keys["evidence-recorder"]["private_key"], payload)),
+            encoding="utf-8")
+
+    def test_a_retained_older_head_is_refused_on_a_later_call(self):
+        # The attack the floor exists for: a builder reaches head_sequence 5, keeps the
+        # older but genuinely-signed head 1 with its matching event prefix, and
+        # re-presents that self-consistent pair later. Everything verifies. Before this,
+        # the floor was read from the very head being checked (`x >= x`), so it passed.
+        from bro_completion import CompletionError
+        self.reseal_head(5)
+        self.assertEqual(len(self.chain_check(self.chain)), 64)
+
+        self.reseal_head(1)
+        with self.assertRaises(CompletionError) as caught:
+            self.chain_check(self.chain)
+        self.assertIn("stale", str(caught.exception))
+
+    def test_the_recorded_mark_never_moves_backwards(self):
+        # Re-presenting the SAME head is not a rollback and must stay accepted — and it
+        # must not lower the mark either.
+        self.reseal_head(7)
+        self.chain_check(self.chain)
+        self.chain_check(self.chain)
+        floor = json.loads(
+            (self.store / "head-floor" / "task-1.floor.json").read_text(encoding="utf-8"))
+        self.assertEqual(floor["head_sequence"], 7)
+
+    def test_a_damaged_mark_is_refused_rather_than_treated_as_absent(self):
+        # Truncating one small file must not launder a rollback into a fresh start.
+        from bro_completion import CompletionError
+        self.reseal_head(5)
+        self.chain_check(self.chain)
+        (self.store / "head-floor" / "task-1.floor.json").write_text("{", encoding="utf-8")
+        with self.assertRaises(CompletionError) as caught:
+            self.chain_check(self.chain)
+        self.assertIn("unreadable", str(caught.exception))
+
     def test_evidence_store_inside_the_repository_denied(self):
         from bro_completion import CompletionError
         inside = self.repo / "store"
