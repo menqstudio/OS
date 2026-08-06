@@ -5,11 +5,10 @@
   display: flex; flex-direction: column; overflow-y: auto; padding: var(--menq-space-4) var(--menq-space-3);
 }
 .nav { display: flex; flex-direction: column; }
+/* Brand block: the responsive <Mark> primitive supplies the glyph + wordmark and
+   collapses its own text at ≤900px (`.mark--responsive`), so only the padding
+   wrapper lives here now. */
 .brand { display: flex; align-items: center; gap: var(--menq-space-3); padding: var(--menq-space-2) var(--menq-space-2) var(--menq-space-4); }
-.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--brops-accent); color: var(--brops-accent-text);
-  display: grid; place-items: center; font-weight: 800; }
-.brand-name { font-weight: 700; }
-.brand-sub { font-size: 11px; color: var(--brops-muted); }
 
 .nav-group-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brops-muted);
   padding: var(--menq-space-4) var(--menq-space-2) var(--menq-space-2); }
@@ -66,6 +65,7 @@
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: 64px 1fr; }
-  .brand-name, .brand-sub, .nav-group-label, .nav-item span:not(.nav-ico) { display: none; }
+  /* The brand wordmark collapses via `.mark--responsive .mark-text` in ui.css. */
+  .nav-group-label, .nav-item span:not(.nav-ico) { display: none; }
   .nav-item { justify-content: center; }
 }

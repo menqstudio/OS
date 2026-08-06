@@ -79,6 +79,11 @@ export const en = {
   'chat.saveToChat': 'Save to chat',
   'chat.receiptVerified': 'Verified',
   'chat.receiptDev': 'Dev / untrusted',
+  'chat.receiptDemo': 'Verified · demo',
+  'chat.demoVerify': 'Demo-verify',
+  'chat.demoVerifying': 'Verifying…',
+  'chat.demoVerifyTitle': 'Produce one reply inside the governed chain and verify it (demonstration custody — not production).',
+  'chat.demoVerifyFailed': 'Demo-verify failed',
   'chat.governedBlocked': 'Governed reply blocked (unverified)',
 
   'projects.subtitle': 'Objective-centered work',
@@ -86,6 +91,8 @@ export const en = {
   'agents.subtitle': 'Scoped specialist workers',
   'knowledge.subtitle': 'Searchable, attributable knowledge',
   'memory.subtitle': 'Inspectable persistent memory',
+  'research.subtitle': 'Sources and open questions',
+  'library.subtitle': 'Reusable building blocks',
   'knowledge.search': 'Search knowledge…',
   'knowledge.newNote': 'New note',
   'knowledge.source': 'Source',
@@ -157,6 +164,8 @@ export const en = {
   'notifications.subtitle': 'Actionable alerts only',
   'settings.subtitle': 'Language, theme, and preferences',
   'generic.subtitle': 'Prototype workspace',
+  'generic.title': 'Not yet connected to the backend',
+  'generic.hint': 'This workspace has no backend surface yet — it will show real data once its backend is implemented.',
 
   'settings.appearance': 'Appearance',
   'settings.theme': 'Theme',
@@ -191,6 +200,8 @@ export const en = {
 
   'action.create': 'Create',
   'action.cancel': 'Cancel',
+  'action.close': 'Close',
+  'action.openNewWindow': 'Open in new window',
   'action.edit': 'Edit',
   'action.retry': 'Retry',
   'form.newProject': 'New project',

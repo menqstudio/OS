@@ -20,12 +20,13 @@ pub mod ipc_framing;
 pub mod real_ids;
 pub mod broker_client;
 pub mod key_manifest;
+pub mod manifest_authority;
 pub mod production_trust;
 pub mod supervisor_ledger;
 pub mod repo;
 
 pub use domain::{
-    ActivityEvent, Agent, Approval, Automation, Conversation, CoreError, CoreResult, Decision,
+    ActivityEvent, Agent, Approval, Automation, AutomationRun, Conversation, CoreError, CoreResult, Decision,
     Event, Integration, KnowledgeNote, LibraryItem, Message, MemoryEntry, Metric, NewAutomation,
     NewEvent, NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject,
     NewResearchItem, NewTask, Notification, Project, ResearchItem, Run, RunStep, SearchResult,
@@ -283,8 +284,11 @@ mod tests {
         assert_eq!(n.title, "step one");
         assert_eq!(n.result, "");
 
-        // recording a result marks the step done and stores the text
-        let done = repo::runs::set_step_result(&c, &n.id, "produced output").unwrap();
+        // recording a result goes through the T-011 claim->complete path (the only production
+        // completion route): claim the runnable step, then complete its single execution
+        // attempt, which marks it done and stores the text.
+        let attempt = repo::runs::claim_step_for_execution(&c, &n.id, "sess-test").unwrap();
+        let done = repo::runs::complete_step_execution(&c, &n.id, &attempt, "produced output").unwrap();
         assert_eq!(done.status, "done");
         assert_eq!(done.result, "produced output");
 
@@ -292,7 +296,8 @@ mod tests {
         let n2 = repo::runs::next_runnable_step(&c, &r.id).unwrap().unwrap();
         assert_eq!(n2.title, "step two");
 
-        repo::runs::set_step_result(&c, &n2.id, "second output").unwrap();
+        let attempt2 = repo::runs::claim_step_for_execution(&c, &n2.id, "sess-test").unwrap();
+        repo::runs::complete_step_execution(&c, &n2.id, &attempt2, "second output").unwrap();
         // all steps done -> nothing runnable remains
         assert!(repo::runs::next_runnable_step(&c, &r.id).unwrap().is_none());
     }
@@ -359,6 +364,29 @@ mod tests {
     }
 
     #[test]
+    fn escalate_routes_to_a3_notifies_and_decides_nothing() {
+        let c = conn();
+        let ap = repo::approvals::create(&c, "Send external email", "vendor@example.com", "A2", "medium", "gev", None, None, "webview:test", "sess-test", &crate::id()).unwrap();
+        assert_eq!(ap.status, "pending");
+
+        let before = repo::notifications::list(&c, None, None).unwrap().len();
+        let esc = repo::approvals::escalate(&c, &ap.id).unwrap();
+
+        // Real state transition: routed to the highest review tier, still un-decided (no verdict).
+        assert_eq!(esc.status, "escalated");
+        assert_eq!(esc.level, "A3");
+        assert!(esc.decided_at.is_none(), "escalation is not a verdict — it must not set decided_at");
+
+        // Owner is notified so the escalation is visible.
+        let after = repo::notifications::list(&c, None, None).unwrap();
+        assert_eq!(after.len(), before + 1);
+        assert!(after.iter().any(|n| n.title == "Escalated for higher review"));
+
+        // Pending-only: re-escalating an already-escalated (non-pending) row errors, so it cannot move again.
+        assert!(matches!(repo::approvals::escalate(&c, &ap.id), Err(CoreError::NotFound(_))));
+    }
+
+    #[test]
     fn set_step_status_cannot_bypass_the_approval_gate() {
         let c = conn();
         let r = repo::runs::create(&c, "gated", "").unwrap();
@@ -375,6 +403,109 @@ mod tests {
         let ap = repo::approvals::create(&c, "Execute run step", "risky", "A2", "medium", "gev", Some("run_step"), Some(&step.id), "webview:test", "sess-test", &crate::id()).unwrap();
         repo::approvals::approve_confirmed(&c, &ap.id, "native", "native:main", None, ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap()).unwrap();
         assert!(repo::runs::set_step_status(&c, &step.id, "done").is_ok());
+    }
+
+    #[test]
+    fn set_step_status_refuses_a_step_with_a_live_execution_claim() {
+        let c = conn();
+        let r = repo::runs::create(&c, "run", "").unwrap();
+        let s = repo::runs::add_step(&c, &r.id, "step", "").unwrap();
+        // Claim the step for execution — this writes execution_attempt_id (the claim token).
+        let attempt = repo::runs::claim_step_for_execution(&c, &s.id, "sess-1").unwrap();
+        // A bare renderer status change must now be refused: the in-flight attempt owns the row,
+        // so it cannot be side-stepped to 'skipped'/'failed' while a turn is running (T-011).
+        assert!(matches!(
+            repo::runs::set_step_status(&c, &s.id, "skipped"),
+            Err(CoreError::Invalid { field: "status", .. })
+        ));
+        // The only legitimate mover of a claimed step is the attempt-guarded completion.
+        let done = repo::runs::complete_step_execution(&c, &s.id, &attempt, "result").unwrap();
+        assert_eq!(done.status, "done");
+    }
+
+    #[test]
+    fn fail_step_and_run_marks_both_failed_in_one_transaction() {
+        let c = conn();
+        let r = repo::runs::create(&c, "run", "").unwrap();
+        let s = repo::runs::add_step(&c, &r.id, "step", "").unwrap();
+        repo::runs::fail_step_and_run(&c, &s.id, &r.id).unwrap();
+        assert_eq!(repo::runs::get_step(&c, &s.id).unwrap().status, "failed");
+        assert_eq!(repo::runs::get(&c, &r.id).unwrap().status, "failed");
+    }
+
+    #[test]
+    fn automation_run_executes_local_actions_and_logs_the_outcome() {
+        let c = conn();
+        // notify: raises a real notification
+        let a = repo::automations::create(&c, NewAutomation { name: "greeter".into(), trigger: "manual".into(), action: "notify: hello".into() }).unwrap();
+        let before = repo::notifications::list(&c, None, None).unwrap().len();
+        let run = repo::automations::run(&c, &a.id).unwrap();
+        assert_eq!(run.outcome, "ok");
+        assert!(run.detail.contains("notified"), "detail was {:?}", run.detail);
+        assert_eq!(repo::notifications::list(&c, None, None).unwrap().len(), before + 1);
+
+        // task: creates a real task
+        let a2 = repo::automations::create(&c, NewAutomation { name: "maker".into(), trigger: "manual".into(), action: "task: do the thing".into() }).unwrap();
+        let run2 = repo::automations::run(&c, &a2.id).unwrap();
+        assert_eq!(run2.outcome, "ok");
+        assert!(run2.detail.contains("created task"));
+
+        // note: creates a real knowledge note
+        let a2b = repo::automations::create(&c, NewAutomation { name: "noter".into(), trigger: "manual".into(), action: "note: remember this".into() }).unwrap();
+        let before_notes = repo::knowledge::list(&c).unwrap().len();
+        let run2b = repo::automations::run(&c, &a2b.id).unwrap();
+        assert_eq!(run2b.outcome, "ok");
+        assert!(run2b.detail.contains("created note"));
+        assert_eq!(repo::knowledge::list(&c).unwrap().len(), before_notes + 1);
+
+        // unknown verb: a recorded FAILED run — never a silent no-op and never a hard error
+        let a3 = repo::automations::create(&c, NewAutomation { name: "bad".into(), trigger: "manual".into(), action: "frobnicate: x".into() }).unwrap();
+        assert_eq!(repo::automations::run(&c, &a3.id).unwrap().outcome, "failed");
+
+        // disabled: refuses to run at all
+        repo::automations::set_enabled(&c, &a.id, false).unwrap();
+        assert!(repo::automations::run(&c, &a.id).is_err());
+
+        // the run log records each run, newest first
+        let log = repo::automations::list_runs(&c, &a.id).unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].outcome, "ok");
+    }
+
+    #[test]
+    fn scheduler_fires_due_interval_automations_only() {
+        let c = conn();
+        let t0 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // interval trigger => scheduled
+        let sched = repo::automations::create(&c, NewAutomation { name: "hourly".into(), trigger: "every: 1m".into(), action: "notify: tick".into() }).unwrap();
+        // manual trigger => never fired by the scheduler
+        let manual = repo::automations::create(&c, NewAutomation { name: "manual".into(), trigger: "manual".into(), action: "notify: never".into() }).unwrap();
+        // disabled interval => skipped
+        let off = repo::automations::create(&c, NewAutomation { name: "off".into(), trigger: "every: 1m".into(), action: "notify: off".into() }).unwrap();
+        repo::automations::set_enabled(&c, &off.id, false).unwrap();
+
+        // never-run + due => the scheduled one fires; manual + disabled do not.
+        let fired = repo::automations::run_due(&c, t0).unwrap();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].automation_id, sched.id);
+        assert_eq!(repo::automations::list_runs(&c, &manual.id).unwrap().len(), 0);
+        assert_eq!(repo::automations::list_runs(&c, &off.id).unwrap().len(), 0);
+
+        // within the interval => not due
+        assert_eq!(repo::automations::run_due(&c, t0 + 1_000).unwrap().len(), 0);
+        // a full interval later => due again
+        assert_eq!(repo::automations::run_due(&c, t0 + 120_000).unwrap().len(), 1);
+        assert_eq!(repo::automations::list_runs(&c, &sched.id).unwrap().len(), 2);
+
+        // parse_interval_ms vocabulary
+        assert_eq!(repo::automations::parse_interval_ms("every: 5m"), Some(300_000));
+        assert_eq!(repo::automations::parse_interval_ms("every: 2h"), Some(7_200_000));
+        assert_eq!(repo::automations::parse_interval_ms("manual"), None);
+        assert_eq!(repo::automations::parse_interval_ms("every: 0m"), None);
     }
 
     // T-011: a pending approval carries its durable origin_principal, a one-time

@@ -244,10 +244,19 @@ pub struct Lease {
     /// The pinned SHA-256 (lowercase hex) of the executor image bytes — the launcher re-hashes the OPENED
     /// image fd and refuses on any mismatch (§2.5 content pin / §2.7 image identity).
     pub executor_executable_sha256: String,
+    /// The pinned SHA-256 (lowercase hex) of the three governed REQUEST inputs the executor is handed on
+    /// fds 3/4/5 (audit **F-08**). The attested `request_sha256` is built from exactly these three digests;
+    /// until they were pinned here, nothing anywhere compared them to the bytes the executor actually read
+    /// — the recorder opened `<recorder_store_dir>/system|history|generation_config` BY NAME, so the model
+    /// could run on prompt A while the signed receipt attested prompt B. The launcher re-hashes the HELD
+    /// fds against these pins and refuses on any mismatch (§2.7 store-input identity).
+    pub system_sha256: String,
+    pub history_sha256: String,
+    pub generation_config_sha256: String,
 }
 
-/// Parse a strict `key=value` lease body. Fail-closed: EXACTLY the five required keys, each present once,
-/// uids/gids base-10 `u32`, the digest 64 lowercase-hex chars; any missing / duplicate / unknown key or
+/// Parse a strict `key=value` lease body. Fail-closed: EXACTLY the eight required keys, each present once,
+/// uids/gids base-10 `u32`, every digest 64 lowercase-hex chars; any missing / duplicate / unknown key or
 /// malformed value ⇒ `None`. Blank/whitespace-only lines are ignored.
 pub fn parse_lease(content: &str) -> Option<Lease> {
     let mut recorder_uid: Option<u32> = None;
@@ -255,12 +264,26 @@ pub fn parse_lease(content: &str) -> Option<Lease> {
     let mut executor_uid: Option<u32> = None;
     let mut executor_gid: Option<u32> = None;
     let mut sha: Option<String> = None;
+    let mut system_sha: Option<String> = None;
+    let mut history_sha: Option<String> = None;
+    let mut generation_config_sha: Option<String> = None;
 
     fn set_u32(slot: &mut Option<u32>, v: &str) -> Option<()> {
         if slot.is_some() {
             return None; // duplicate key ⇒ fail closed
         }
         *slot = Some(v.parse::<u32>().ok()?);
+        Some(())
+    }
+
+    fn set_hex(slot: &mut Option<String>, v: &str) -> Option<()> {
+        if slot.is_some()
+            || v.len() != 64
+            || !v.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return None; // duplicate or non-canonical digest ⇒ fail closed
+        }
+        *slot = Some(v.to_string());
         Some(())
     }
 
@@ -276,15 +299,10 @@ pub fn parse_lease(content: &str) -> Option<Lease> {
             "recorder_gid" => set_u32(&mut recorder_gid, v)?,
             "executor_uid" => set_u32(&mut executor_uid, v)?,
             "executor_gid" => set_u32(&mut executor_gid, v)?,
-            "executor_executable_sha256" => {
-                if sha.is_some()
-                    || v.len() != 64
-                    || !v.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-                {
-                    return None;
-                }
-                sha = Some(v.to_string());
-            }
+            "executor_executable_sha256" => set_hex(&mut sha, v)?,
+            "system_sha256" => set_hex(&mut system_sha, v)?,
+            "history_sha256" => set_hex(&mut history_sha, v)?,
+            "generation_config_sha256" => set_hex(&mut generation_config_sha, v)?,
             _ => return None, // unknown key ⇒ fail closed
         }
     }
@@ -313,7 +331,21 @@ pub fn parse_lease(content: &str) -> Option<Lease> {
         executor_uid,
         executor_gid,
         executor_executable_sha256: sha?,
+        system_sha256: system_sha?,
+        history_sha256: history_sha?,
+        generation_config_sha256: generation_config_sha?,
     })
+}
+
+/// The fd→pin map the §2.7 store-input binding checks (audit **F-08**): fd 3 is `system`, fd 4 `history`,
+/// fd 5 `generation_config` — the same fixed assignment the recorder opens them in and the same order the
+/// attested `request_sha256` is built from. Pure so the mapping itself is testable off Linux.
+pub fn store_input_pins(lease: &Lease) -> [(i32, &str); 3] {
+    [
+        (3, lease.system_sha256.as_str()),
+        (4, lease.history_sha256.as_str()),
+        (5, lease.generation_config_sha256.as_str()),
+    ]
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -402,6 +434,15 @@ mod linux {
         let observed = collect_fd_facts()?;
         verify_launcher_fd_set(&observed)?;
 
+        // (4b) §2.7 store-input identity (audit F-08). The three read-only inputs on fds 3/4/5 ARE the
+        //      governed request; the attested `request_sha256` is built from exactly their three digests.
+        //      Nothing compared the two: the recorder opens `<recorder_store_dir>/system|history|
+        //      generation_config` BY NAME while the attestation carries digests from a separate config key,
+        //      so the executor could run on prompt A while the signed receipt attested prompt B. Re-hash the
+        //      HELD descriptors against the root-owned lease pins here — before the drop, before the exec,
+        //      and without a path re-lookup — so the bytes hashed are the bytes the executor reads.
+        verify_store_input_bindings(&lease)?;
+
         // (3) Verify the planned drop order is the load-bearing canonical order (§2.7 step ordering).
         verify_order(brops_core::privilege_drop::CANONICAL_SEQUENCE)?;
 
@@ -465,6 +506,56 @@ mod linux {
             return Err(Refusal::TcbIntegrity("lease-read"));
         }
         parse_lease(&body).ok_or(Refusal::TcbIntegrity("lease-parse"))
+    }
+
+    /// §2.7 store-input identity binding (audit **F-08**): re-hash the bytes behind the HELD fds 3/4/5 and
+    /// require each to equal the root-owned lease's pin for that slot.
+    ///
+    /// Read with `pread` from absolute offset 0 so the file offset the §2.7 verifier already certified as
+    /// zero is NOT disturbed — the executor still starts each input at byte 0. Never re-opens by path: the
+    /// bytes hashed are the bytes the executor will read from the same open file description. The §4.7
+    /// per-artifact ceiling already bounds how much can be read (`collect_fd_facts` refuses a larger inode).
+    fn verify_store_input_bindings(lease: &Lease) -> Result<(), Refusal> {
+        for (fd, pin) in store_input_pins(lease) {
+            let digest = digest_fd_at_zero(fd).ok_or(Refusal::TcbIntegrity("store-input-read"))?;
+            if digest != pin {
+                return Err(Refusal::TcbIntegrity("store-input-digest"));
+            }
+        }
+        Ok(())
+    }
+
+    /// SHA-256 (lowercase hex) of a held descriptor's contents, read positionally from offset 0. `None` on
+    /// any read error or if the content exceeds the §4.7 ceiling (⇒ the caller fails closed).
+    fn digest_fd_at_zero(fd: i32) -> Option<String> {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 64 * 1024];
+        let mut off: i64 = 0;
+        loop {
+            // SAFETY: `fd` is a live inherited descriptor; the buffer/len pair is valid for the call and
+            // `pread` does not move the descriptor's file offset.
+            let n = unsafe {
+                libc::pread(
+                    fd,
+                    chunk.as_mut_ptr() as *mut libc::c_void,
+                    chunk.len(),
+                    off as libc::off_t,
+                )
+            };
+            if n < 0 {
+                return None;
+            }
+            if n == 0 {
+                break;
+            }
+            let n = n as usize;
+            if buf.len() + n > MAX_STORE_INPUT_BYTES as usize {
+                return None; // over the §4.7 ceiling ⇒ fail closed rather than hash a partial input
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            off += n as i64;
+        }
+        Some(brops_core::governed_message_store::sha256_hex(&buf))
     }
 
     /// §2.7 step-1 invoker gate: the launcher is setuid-root but must ONLY ever be invoked BY the recorder
@@ -1009,8 +1100,12 @@ mod tests {
     fn good_lease_body() -> String {
         format!(
             "recorder_uid=5005\nrecorder_gid=5005\nexecutor_uid=5007\nexecutor_gid=5007\n\
-             executor_executable_sha256={}\n",
-            "ab".repeat(32) // 64 lowercase-hex chars
+             executor_executable_sha256={}\nsystem_sha256={}\nhistory_sha256={}\n\
+             generation_config_sha256={}\n",
+            "ab".repeat(32), // 64 lowercase-hex chars
+            "11".repeat(32),
+            "22".repeat(32),
+            "33".repeat(32),
         )
     }
 
@@ -1022,10 +1117,16 @@ mod tests {
         assert_eq!(l.executor_uid, 5007);
         assert_eq!(l.executor_gid, 5007);
         assert_eq!(l.executor_executable_sha256, "ab".repeat(32));
+        assert_eq!(l.system_sha256, "11".repeat(32));
+        assert_eq!(l.history_sha256, "22".repeat(32));
+        assert_eq!(l.generation_config_sha256, "33".repeat(32));
         // blank lines + surrounding whitespace around key/value are tolerated
         let padded = format!(
-            "\n  recorder_uid = 5005 \nrecorder_gid=5005\n\nexecutor_uid=5007\nexecutor_gid=5007\n  executor_executable_sha256 = {}  \n",
-            "ab".repeat(32)
+            "\n  recorder_uid = 5005 \nrecorder_gid=5005\n\nexecutor_uid=5007\nexecutor_gid=5007\n  executor_executable_sha256 = {}  \nsystem_sha256={}\nhistory_sha256={}\ngeneration_config_sha256={}\n",
+            "ab".repeat(32),
+            "11".repeat(32),
+            "22".repeat(32),
+            "33".repeat(32),
         );
         assert_eq!(parse_lease(&padded), parse_lease(&good_lease_body()));
     }
@@ -1062,5 +1163,50 @@ mod tests {
         // executor == recorder (would run the executor as the invoking recorder principal)
         assert_eq!(parse_lease(&good_lease_body().replace("executor_uid=5007", "executor_uid=5005")), None);
         assert_eq!(parse_lease(&good_lease_body().replace("executor_gid=5007", "executor_gid=5005")), None);
+    }
+
+    // ---- F-08: the governed request must be PINNED, not merely named ------------------------------
+
+    #[test]
+    fn a_lease_without_the_request_pins_is_refused() {
+        // The whole point of F-08 is that the executed bytes are checked. A lease that omits any of the
+        // three pins would leave that slot unchecked, so it must not parse at all — "unpinned" has to be
+        // impossible to express, not merely discouraged.
+        for key in ["system_sha256", "history_sha256", "generation_config_sha256"] {
+            let without: String = good_lease_body()
+                .lines()
+                .filter(|l| !l.trim_start().starts_with(key))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            assert_eq!(parse_lease(&without), None, "{key} must be required");
+        }
+    }
+
+    #[test]
+    fn the_request_pins_are_digest_shaped_and_single_valued() {
+        // Same canonical-digest floor as the image pin: 64 lowercase hex, exactly once.
+        assert_eq!(parse_lease(&good_lease_body().replace(&"11".repeat(32), "beef")), None);
+        assert_eq!(
+            parse_lease(&good_lease_body().replace(&"22".repeat(32), &"AB".repeat(32))),
+            None
+        );
+        let dup = format!("{}history_sha256={}\n", good_lease_body(), "44".repeat(32));
+        assert_eq!(parse_lease(&dup), None);
+    }
+
+    #[test]
+    fn the_pins_are_mapped_to_the_fds_the_recorder_opens() {
+        // fd 3 = system, 4 = history, 5 = generation_config — the same fixed order the recorder opens them
+        // in AND the order the attested request_sha256 is built from. A transposition here would bind the
+        // right bytes to the wrong slot and silently accept a swapped system/history pair.
+        let l = parse_lease(&good_lease_body()).expect("parses");
+        assert_eq!(
+            store_input_pins(&l),
+            [
+                (3, "11".repeat(32).as_str()),
+                (4, "22".repeat(32).as_str()),
+                (5, "33".repeat(32).as_str()),
+            ]
+        );
     }
 }

@@ -3,6 +3,7 @@ import { Shell } from './components/Shell';
 import { CommandPalette } from './components/CommandPalette';
 import { ToastProvider, Toaster } from './components/toast';
 import { Screen } from './features/registry';
+import { Onboarding } from './features/Onboarding';
 import { hasBackend } from './services/desktop';
 
 function AppInner() {
@@ -19,6 +20,8 @@ function AppInner() {
       </Shell>
       <CommandPalette />
       <Toaster />
+      {/* First-run onboarding overlay (localStorage-gated; shows once). */}
+      <Onboarding />
     </>
   );
 }

@@ -1,16 +1,23 @@
 import json
+import os
 import pathlib
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 from bro_deploy_preflight import preflight
-from bro_signature import ENV_PIN, ENV_PIN_FILE
+from bro_signature import (
+    ENV_PIN,
+    ENV_PIN_FILE,
+    ENV_PIN_SELF_OWNED_ACK,
+    PIN_SELF_OWNED_ACK_VALUE,
+)
 from broctl import build_registry, generate_key
 
 NOW = 1_700_000_000
@@ -36,6 +43,14 @@ class PreflightFixture(unittest.TestCase):
         self.pin_file = self.tmp / "operator-root.pub"
         self.pin_file.write_text(self.keys["operator-root"]["public_key"], encoding="utf-8")
         self.pin_file.chmod(0o600)              # owner-only, as _pin_from_file requires
+        # (audit F-06) This process wrote the pin, so it owns it, and a self-owned anchor
+        # is refused by default — correctly, since the reader can rewrite it. A test
+        # harness has no second principal, which is the case the acknowledgement exists
+        # for; state it rather than weaken the check for everyone.
+        ack = mock.patch.dict(
+            os.environ, {ENV_PIN_SELF_OWNED_ACK: PIN_SELF_OWNED_ACK_VALUE})
+        ack.start()
+        self.addCleanup(ack.stop)
         self.env = {ENV_PIN_FILE: str(self.pin_file)}
 
     def _write_registry(self, keys):

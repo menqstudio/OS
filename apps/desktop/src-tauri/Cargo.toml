@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "launcher", "executor", "broker", "proof", "win-broker"]
+members = ["core", "launcher", "executor", "broker", "proof", "win-broker", "win-live"]
 
 [package]
 name = "brops"
@@ -38,6 +38,14 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # Async subprocess for the local `claude` CLI provider (uses the user's own
 # Claude Code login — no separate API key).
 tokio = { version = "1", features = ["process", "rt", "io-util", "time"] }
+
+# Windows-only: the LIVE governed-turn kit. Used solely to run the in-process
+# trust-chain self-test (`proof::in_process_turn`) — a REAL challenge→lease→attest→
+# sign→verify→trusted_verified run with real ed25519 crypto. It never touches live
+# AI turns (those stay fail-closed under NoTrustedManifest); it only proves the
+# machinery end-to-end and reports the honest outcome + custody posture.
+[target.'cfg(windows)'.dependencies]
+brops-win-live = { path = "win-live" }
 
 [dev-dependencies]
 tempfile = "3"

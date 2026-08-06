@@ -9,9 +9,12 @@ fn main() {
     // no `allow-*` grant is uninvokable from the window (deny-by-default).
     //
     // INVARIANT (enforced by tools/check_capabilities.py in CI): this list must be
-    // exactly the set of commands registered in `src/lib.rs` generate_handler!, and
-    // exactly the set classified in `command-policy.json`. Adding a
-    // command in one place without the others fails CI — no manual-count drift.
+    // exactly the set of commands registered in `src/lib.rs` generate_handler! MINUS the
+    // handful named in that checker's INTENTIONALLY_UNGATED allowlist (the governed-turn /
+    // governance-mirror / trust-selftest commands deliberately kept outside the window
+    // capability policy), and exactly the set classified in `command-policy.json`. Adding a
+    // command in one place without the others — or a NEW module-scoped command not added to
+    // the allowlist — fails CI, so nothing is ever silently ungated.
     const COMMANDS: &[&str] = &[
         // projects
         "list_projects",
@@ -34,6 +37,7 @@ fn main() {
         "list_approvals",
         "decide_approval",
         "reject_approval",
+        "escalate_approval",
         "confirm_approval",
         // notifications
         "list_notifications",
@@ -46,6 +50,8 @@ fn main() {
         // chat
         "list_conversations",
         "create_conversation",
+        "set_conversation_participants",
+        "list_conversation_participants",
         "list_messages",
         "post_message",
         "post_user_message",
@@ -87,6 +93,8 @@ fn main() {
         "create_automation",
         "set_automation_enabled",
         "delete_automation",
+        "run_automation",
+        "list_automation_runs",
         // integrations
         "list_integrations",
         "set_integration_status",
@@ -98,8 +106,12 @@ fn main() {
         // AI (live agent replies)
         "reply_in_conversation",
         "stream_reply",
+        "demonstration_verified_reply",
+        "cancel_reply",
         "stream_ask",
         "stream_run_step",
+        // windowing
+        "open_window",
         // filesystem surface (M-8)
         "list_dir",
         "read_file",

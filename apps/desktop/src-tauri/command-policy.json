@@ -30,6 +30,14 @@
       "tier": "L1",
       "grant": "allow"
     },
+    "set_conversation_participants": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "list_conversation_participants": {
+      "tier": "R",
+      "grant": "allow"
+    },
     "create_decision": {
       "tier": "L1",
       "grant": "allow"
@@ -64,6 +72,14 @@
     },
     "delete_automation": {
       "tier": "X",
+      "grant": "allow"
+    },
+    "run_automation": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "list_automation_runs": {
+      "tier": "R",
       "grant": "allow"
     },
     "delete_conversation": {
@@ -220,6 +236,10 @@
       "tier": "A",
       "grant": "allow"
     },
+    "escalate_approval": {
+      "tier": "A",
+      "grant": "allow"
+    },
     "remove_task_dependency": {
       "tier": "L1",
       "grant": "allow"
@@ -229,6 +249,10 @@
       "grant": "allow"
     },
     "reply_in_conversation": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "demonstration_verified_reply": {
       "tier": "X",
       "grant": "allow"
     },
@@ -280,7 +304,15 @@
       "tier": "X",
       "grant": "allow"
     },
+    "cancel_reply": {
+      "tier": "X",
+      "grant": "allow"
+    },
     "stream_run_step": {
+      "tier": "X",
+      "grant": "allow"
+    },
+    "open_window": {
       "tier": "X",
       "grant": "allow"
     },

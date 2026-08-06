@@ -1,36 +1,37 @@
 ---
 id: economics-market-design
-version: 1.0.0
+version: 1.1.0
 status: active
 ---
 
 # Economics Market Design
 
 ## Trigger
-Use this skill when a task materially requires economics market design expertise.
+Use this skill when the task requires designing or auditing the rules of a market or mechanism: matching, auctions, two-sided platform incentives, referral/rewards programs, credit/token systems, reputation or ranking rules, congestion pricing, or any allocation rule where participants respond strategically and incentive compatibility, efficiency, or gaming risk is in question.
 
 ## Inputs
-A bounded task contract, repository evidence, constraints, risk level, and required output format.
+The allocation objective and the goods/agents involved; participant preferences, budgets, and outside options; current rules, fees, and matching/ranking logic; observed behavior and any gaming or thin-market symptoms; fairness, liquidity, and stability constraints; and the required output format.
 
 ## Workflow
-1. Confirm identity, mode grant, task scope, and required evidence.
-2. Read the canonical SST and relevant source files to EOF.
-3. Reproduce defects or establish a baseline before mutation.
-4. Make the smallest scoped change and preserve append-only identifiers.
-5. Run registered validation and negative tests.
-6. Produce evidence, rollback instructions, and an explicit residual-risk verdict.
+1. Confirm identity, mode grant, the objective (efficiency, fairness, revenue, liquidity), and the constraints that trade off against it.
+2. Read the current mechanism spec and behavioral data to EOF; model each side's strategy set and best response.
+3. Diagnose failure modes explicitly: misaligned incentives, thin/congested markets, unraveling, adverse selection, and profitable manipulation strategies.
+4. Design or adjust the rule against known-good properties — incentive compatibility (truthful reporting), individual rationality, stability/no-blocking-pairs, and budget balance — naming which properties you keep and which you knowingly trade.
+5. Stress-test the rule against strategic play: find the most profitable deviation and confirm it is unprofitable or bounded; check thick- and thin-market regimes.
+6. Specify safeguards — reserve prices, rate limits, eligibility, tie-breaks, anti-collusion — and a monitoring metric per failure mode.
+7. Produce the mechanism spec, the property/tradeoff ledger, and a residual-risk verdict.
 
 ## Outputs
-A scoped implementation or analysis, reproducible commands, evidence paths, verification results, and residual risks.
+A precise mechanism specification (rules, fees, matching/ranking logic, tie-breaks); a property ledger stating which incentive properties hold and which are traded; a manipulation analysis with the best deviation and its bound; monitoring metrics per failure mode; and a residual-risk statement.
 
 ## Safety limits
-No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. Ambiguous mutation targets fail closed.
+Design and analysis only; does not launch, price, or change any live market. No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. Do not alter live incentive parameters or payouts. Ambiguous mutation targets fail closed.
 
 ## Handoffs
-Escalate cross-domain decisions to the owning SST role. Medium, high, and critical work requires an independent verifier. Release actions hand off only to the Push Executor.
+Escalate money-in/money-out pricing to pricing-packaging-strategy and unit-economics impact to finance-unit-economics. Medium, high, and critical work requires an independent verifier. Release actions hand off only to the Push Executor.
 
 ## Verification
-Success requires schema-valid artifacts, registered tests, exploit regression coverage, clean rollback, and exact-head evidence. Claims without reproducible evidence remain RED.
+The objective and traded-off constraints are explicit; each claimed property (IC, IR, stability, budget balance) is demonstrated, not asserted; the most profitable deviation is identified and shown bounded; safeguards map one-to-one to named failure modes. Claims without reproducible evidence remain RED.
 
 ## Failure and rollback
-Stop on missing authority, stale receipts, inconsistent SSTs, failed tests, or unverifiable state. Restore the original tree before reporting recovery and never call partial recovery GREEN.
+Stop on missing authority, stale receipts, an unstated objective, or a property claimed without proof and with an unbounded profitable deviation. Revert to the documented current mechanism and never call a manipulable or unproven design GREEN.

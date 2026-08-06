@@ -52,7 +52,7 @@ phase. That is the whole onboarding for *building*.
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Foundation | ✅ **Locked (done)** |
-| 1 | Bridge | 🔨 **In progress** — slice 1 (contract + adapter + tests + bridge CI leg) **merged** (PR #3, `41cf4ff`, 10/10); slice 2 **transport** (desktop `Provider::GovernedEngine` in `ai.rs` opt-in + sidecar wiring + chat receipt badge + Settings toggle) **merged** (PR #8); verify-seam · receipt-plumbing · streaming · real e2e still open |
+| 1 | Bridge | 🔨 **In progress** — slice 1 (contract + adapter + tests + bridge CI leg) **merged** (PR #3, `41cf4ff`, 10/10); slice 2 **transport** (desktop `Provider::GovernedEngine` in `ai.rs` opt-in + sidecar wiring + chat receipt badge + Settings toggle) **merged** (PR #8); verify-seam · receipt-plumbing · fail-closed governed round-trip **WIRED** (Wave 3a / T-016, PR #28 — matches `PROJECT_STATE` `CURRENT_VERIFY_SEAM: complete` / `CURRENT_RECEIPT_PLUMBING: complete` / `CURRENT_GOVERNED_ROUNDTRIP: complete`); streaming intentionally **not** implemented (governed turns are buffered by design); production **"Verified"** (`trusted_verified`) still awaits Wave 3b |
 | 2 | Governance Sidecar | ⏳ Ready (P1 contract exists) |
 | 3 | Desktop Integration | ⏳ Blocked on P1 round-trip + P2 gate |
 | 4 | UI/UX System | ⏳ Blocked on P3 |
@@ -519,7 +519,7 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
 - [x] `task-request` + `bridge-result` contracts defined and tested.
 - [x] Adapter (`engine_adapter.py`) built; slice-1 tests **10/10** (PR #3, commit `5be8d95`).
 - [x] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **transport shipped** (PR #8, slice 2).
-- [ ] One governed round-trip proven end-to-end (or documented manual smoke) — **still open** (verify-seam + receipt-plumbing).
+- [x] One governed round-trip proven end-to-end — **done**: the fail-closed governed round-trip (`issue_challenge → verify_and_record_receipt(&NoTrustedManifest) → Blocked`) landed in Wave 3a / T-016 (PR #28); verify-seam + receipt-plumbing are wired. Production **"Verified"** (`trusted_verified`) still pending Wave 3b (isolated signer + signed manifest).
 - [ ] Governed streaming path — **slice 3**.
 - [x] Bridge CI leg added and green (PR #3, merged to `main`).
 - [x] Chat receipt badge + settings toggle shipped in the cockpit UI — **transport** (PR #8).
@@ -1313,6 +1313,17 @@ When they touch the same fact (phase list, current state), update **both in the 
 for *scope & sequencing* this roadmap wins; for *rules & environment* `CLAUDE.md` wins; for *look & feel*
 `brops-aios.html` wins. `PROJECT_STATE.md` reflects the live "who's on what / where we are"; `TASKS.md`
 is the claim board. A phase task here should have a matching `TASKS.md` row when someone claims it.
+
+**Scope of "same commit" (precise, so the law is followed, not silently skipped):** this roadmap is the
+stable **PLAN** — the phase list, objectives, and sequencing. It changes only when the *plan* changes, NOT
+on every cycle. The live per-cycle **STATUS** ("who's on what / where we are / active PR / wave") lives in
+`PROJECT_STATE.md` + `NEXT_CHAT.md` and is what moves each commit. The **same fact** that must stay synced
+same-commit is any *status cell inside this roadmap* — the Phase status-board table (§ near the top) and
+the Phase-checklist boxes — which must agree with the `PROJECT_STATE` `CURRENT_*` tokens and
+`config/current_state.json`. A code/status change that does NOT alter this roadmap's plan or its status
+cells does not require a roadmap edit; one that contradicts a status cell here MUST update that cell in the
+same commit. (This resolves the prior drift where the Phase-1 board cell said "verify-seam still open"
+while `CURRENT_VERIFY_SEAM: complete`.)
 
 ## K. Glossary · Բառարան
 - **The wall / 🧱** — the engine's fail-closed enforcement hook (`bro_hook.py`) governing every tool call.

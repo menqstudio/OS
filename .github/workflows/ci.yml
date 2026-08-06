@@ -48,6 +48,55 @@ jobs:
       - name: Test the SQLite data core
         run: cargo test -p brops-core --manifest-path apps/desktop/src-tauri/Cargo.toml
 
+  live-governed-turn:
+    name: Linux · LIVE 7-service governed turn (real uids, setuid launcher)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      # `engine/ci/live/run_live_turn.sh` is the ONLY thing that exercises the real OS trust
+      # boundary: six dedicated uids, AF_UNIX + SO_PEERCRED peer auth, per-service key custody
+      # modes, and the privileged recorder → setuid launcher → contained executor spawn. Until now
+      # nothing re-ran it — `CURRENT_LINUX_E2E: proven` rested on a single manual run that no gate
+      # reproduced (independent audit, ci-tests section). A hosted ubuntu runner has everything the
+      # script asks for: passwordless sudo, useradd, setuid on ext4, /opt, and sudoers.d.
+      - name: Install engine crypto dependency
+        run: pip install --require-hashes -r engine/requirements-ci.txt
+      - name: Build the live-turn binaries (launcher + recorder/executor/driver)
+        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml -p brops-launcher -p brops-governed-live
+      # The script documents these accounts as "already provisioned on the box"; on an ephemeral
+      # runner we provision them here. Fixed uids so a failure is legible against the design's
+      # §0 principal table. `--no-create-home` keeps them without a traversable home, which is the
+      # posture the design assumes.
+      - name: Provision the six service accounts
+        run: |
+          set -eu
+          for spec in \
+            "brops-verifier_broker:5001" \
+            "brops-challenge:5002" \
+            "brops-supervisor:5004" \
+            "brops-recorder:5005" \
+            "brops-signer:5006" \
+            "brops-executor:5007" ; do
+            user="${spec%%:*}"; uid="${spec##*:}"
+            sudo groupadd -g "$uid" "$user"
+            sudo useradd -u "$uid" -g "$uid" -M --no-create-home -s /usr/sbin/nologin "$user"
+          done
+          id brops-verifier_broker; id brops-executor
+      # Fail-closed by construction: the script exits non-zero unless the driver prints
+      # `production_verified=true bound=true`, and it never fabricates an acceptance. A RED here
+      # means the live chain is broken — which is exactly what this job exists to surface.
+      # Invoked through `bash` rather than as an executable: the script is tracked 100644 (it was
+      # only ever run by hand on a provisioned box), and relying on the mode bit would make this
+      # gate depend on a checkout detail rather than on the chain it is meant to prove.
+      - name: Run ONE live governed turn end to end
+        run: sudo -E env "PATH=$PATH" bash engine/ci/live/run_live_turn.sh
+
   cockpit-host:
     name: Cockpit · Tauri host (cargo check + ai tests)
     runs-on: ubuntu-latest
@@ -90,6 +139,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BRO_ENV: ci
+      # The operator-root trust anchor, pinned from OUTSIDE the registry (this is the committed registry's
+      # operator PUBLIC key — safe to commit; if it is rotated without updating this pin, foundation
+      # validation fails closed, which is the point). The foundation + live-wiring validators previously
+      # lived ONLY in engine/.github/workflows/verify.yml, which GitHub never executes (it dispatches only
+      # the ROOT .github/workflows/), so bro_validate.py + bro_live_validate.py ran NOWHERE in CI (audit
+      # F-22). They now run here, on the workflow GitHub actually executes.
+      BRO_OPERATOR_ROOT_PUBKEY: 7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c
     defaults:
       run:
         working-directory: engine
@@ -100,8 +156,14 @@ jobs:
           python-version: "3.12"
       - name: Install engine CI dependencies
         run: pip install --require-hashes -r requirements-ci.txt
+      - name: Validate foundation (operator-root pin, fail-closed)
+        run: python tools/bro_validate.py
       - name: Run the engine test suite
         run: python -m unittest discover -s tests
+      - name: Compile Python
+        run: python -m compileall -q runtime tools tests
+      - name: Assure live wiring (laws enforced by the WIRED hook, not merely present)
+        run: python tools/bro_live_validate.py
 
   bridge:
     name: Bridge · engine adapter (python)
@@ -182,6 +244,25 @@ jobs:
       - name: Gate self-tests
         working-directory: tools
         run: python -m unittest test_check_capabilities
+
+  ledger-ddl:
+    name: Supervisor · durable-ledger DDL single-source gate (F-01)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # Stdlib only. Fail-closed: the Python supervisor (the production writer of the
+      # durable acceptance state) and the Rust `brops-core` ledger must compile the
+      # BYTE-IDENTICAL DDL, because that SQL *is* the enforcement — the one-attempt-per-
+      # challenge CAS, the closed state machine, the write-once completion PK, and the
+      # evidence-head floor. A divergence, a missing copy, or a deleted constraint is RED.
+      - name: Ledger DDL single-source gate
+        run: python tools/check_ledger_ddl_parity.py
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_ledger_ddl_parity
 
   signer-isolation:
     name: Engine · signer isolation proof (linux, dedicated principals)

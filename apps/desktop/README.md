@@ -13,7 +13,7 @@ Bro is the primary interface and coordinator. Specialist agents work inside expl
 ## Status — working desktop app (Phases 0–20)
 
 - Foundation v1: **Locked** (2026-07-19) — see decision D-010.
-- **Real backend, no mock layer.** React 19 + TypeScript + Vite frontend over a typed IPC boundary to a Tauri 2 + Rust host with SQLite (`rusqlite`, bundled). `cargo test -p brops-core` is GREEN (**69 tests**), schema **v13**, CI green. *(Counts track the OS-monorepo security-remediation waves — current state in the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).)*
+- **Real backend, no mock layer.** React 19 + TypeScript + Vite frontend over a typed IPC boundary to a Tauri 2 + Rust host with SQLite (`rusqlite`, bundled). `cargo test -p brops-core` is GREEN, schema **v17** (migrations through `0017`), CI green. *(Counts track the OS-monorepo security-remediation waves — current state in the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).)*
 - **Live AI** through the local `claude` CLI — Gev's own Claude Code subscription, free, no API key — with token-by-token streaming; Anthropic API key and Ollama are optional fallbacks.
 - **Shipped surfaces (all backed by real commands + SQLite):**
   - Streaming **Chat / Group Chat** — agent picker, `@mention`, delete/rename, live Markdown.

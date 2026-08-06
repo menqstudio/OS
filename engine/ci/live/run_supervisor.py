@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Run the LIVE governed-supervisor server (Wave 3b, rev-30 §5 / §4.6).
+"""Run the LIVE governed-supervisor server (Wave 3b, rev-30 §5 v2 / §4.6).
 
-Binds the supervisor's AF_UNIX socket and serves ``accept-open`` / ``launch-gate`` / ``attest-run`` forever,
+Binds the supervisor's AF_UNIX socket and serves the five §5 lifecycle ops forever —
+``accept-open`` / ``launch-gate`` / ``execution-started`` / ``complete-run`` / ``attest-run`` —
 allowlisting ONLY the broker uid via SO_PEERCRED. It:
 
   * pins the challenge PUBLIC key for ``verify_sig`` (it verifies the challenge document the authority
     signed, over the canonical payload bytes it reassembles itself),
   * pins the launcher/executor executable digests into every lease (from its OWN trusted config),
+  * opens its DURABLE ledger — the acceptance/lease/completion state that makes one signed challenge
+    worth exactly one execution attempt,
   * holds the supervisor-attestation PRIVATE key behind ``sign_attestation`` — it builds ``JCS(evidence)``
-    itself from the broker's trusted run facts and signs THOSE bytes (never caller bytes).
+    from its OWN terminal run state and signs THOSE bytes (never caller bytes).
+
+**F-01.** This service used to run stateless: it signed whatever ``facts`` arrived with ``attest-run``,
+so the broker uid could obtain a signed receipt for a run that never happened. The ledger is now a
+hard prerequisite — if it cannot be opened, the supervisor refuses to start rather than serve without
+the authority its attestations claim to carry.
 
 ``now_ms`` is always the supervisor's OWN clock, never from the wire. Fail-closed, Linux-only (SO_PEERCRED).
 
@@ -18,6 +26,7 @@ Run AS the supervisor account:  sudo -u brops-supervisor python3 run_supervisor.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -29,6 +38,7 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..", "..", "runtime")))
 
 import live_crypto as lc  # noqa: E402
+import governed_supervisor_ledger as gsl  # noqa: E402
 import governed_supervisor_server as gss  # noqa: E402
 from governed_supervisor import SupervisorConfig, recompute_request_sha256  # noqa: E402
 
@@ -43,8 +53,9 @@ def main() -> int:
     allowed_broker_uid = int(cfg["allowed_broker_uid"])
     sock_path = cfg["sockets"]["supervisor"]
     sup_attest_key_id = cfg["trust"]["supervisor_attestation_key_id"]
-    launcher_sha = cfg["supervisor"]["launcher_executable_sha256"]
-    executor_sha = cfg["supervisor"]["executor_executable_sha256"]
+    sup = cfg["supervisor"]
+    launcher_sha = sup["launcher_executable_sha256"]
+    executor_sha = sup["executor_executable_sha256"]
 
     with open(cfg["keys"]["challenge_pub_hex"], "r", encoding="ascii") as f:
         challenge_pub = lc.load_public_hex(f.read().strip())
@@ -65,11 +76,52 @@ def main() -> int:
     def clock_ms() -> int:
         return int(time.time() * 1000)
 
+    # publish_artifact(bytes) -> 64-hex handle. The supervisor BUILDS its terminal artifacts
+    # (the lease payload, the governed-turn record, the execution receipt) from its own rows and
+    # publishes them to the content-addressed protected store, then names those addresses in the
+    # signed evidence (audit F-02 — they used to be deployment-static constants the broker copied
+    # out of this world-readable config). Writing is atomic-by-rename and idempotent: the content
+    # address IS the filename, so republishing identical bytes is a no-op.
+    store_dir = cfg["store_dir"]
+
+    def publish_artifact(data: bytes) -> str:
+        handle = hashlib.sha256(data).hexdigest()
+        final = os.path.join(store_dir, handle)
+        if not os.path.exists(final):
+            tmp = final + ".tmp-%d" % os.getpid()
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, final)
+            try:
+                os.chmod(final, 0o644)  # a different uid (the signer) reads it by handle
+            except OSError:
+                pass
+        return handle
+
     config = SupervisorConfig(
         launcher_executable_sha256=launcher_sha,
         executor_executable_sha256=executor_sha,
         id_fn=lambda: uuid.uuid4().hex,
+        # The identity + registry block the attestation is built from. It is the
+        # supervisor's own provisioning, never anything a caller sends (F-01).
+        supervisor_id=sup["supervisor_id"],
+        executor_id=sup["executor_id"],
+        builder_id=sup["builder_id"],
+        policy_id=sup["policy_id"],
+        policy_version=sup["policy_version"],
+        policy_bundle_handle=sup["policy_bundle_handle"],
+        challenge_registry_handle=sup["challenge_registry_handle"],
+        challenge_registry_hash=sup["challenge_registry_hash"],
+        challenge_registry_epoch=int(sup["challenge_registry_epoch"]),
+        challenge_registry_root_key_id=sup["challenge_registry_root_key_id"],
     )
+
+    # The durable ledger is a HARD prerequisite: a supervisor that cannot record what it
+    # authorized has no authority to attest, so failing to open it aborts startup rather
+    # than degrading to the stateless behaviour F-01 exploited.
+    ledger_conn = gsl.open_ledger(sup["ledger_db"])
 
     if os.path.exists(sock_path):
         os.unlink(sock_path)
@@ -88,10 +140,16 @@ def main() -> int:
             verify_sig,
             recompute_request_sha256,
             clock_ms,
+            ledger_conn=ledger_conn,
+            publish_artifact=publish_artifact,
             sign_attestation=sign_attestation,
             supervisor_attestation_key_id=sup_attest_key_id,
         )
     finally:
+        try:
+            ledger_conn.close()
+        except Exception:
+            pass
         try:
             os.unlink(sock_path)
         except OSError:

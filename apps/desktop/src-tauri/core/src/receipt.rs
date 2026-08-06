@@ -202,6 +202,18 @@ pub struct ResolvedManifestKey<'a> {
     trust_class: TrustClass,
 }
 
+impl<'a> ResolvedManifestKey<'a> {
+    /// The **validated Wave 3b manifest resolver** mint (design §5): the ONLY non-test way to build a
+    /// `ResolvedManifestKey`. It is `pub(crate)` — visible only inside `brops-core` — so the slice-1
+    /// guarantee holds (no external code can pair an arbitrary `public_key`/`trust_class` with a chosen
+    /// `key_id`). It is called ONLY by [`crate::manifest_authority::ManifestReceiptKeyAuthority`], which has
+    /// already verified the manifest against the pinned root + anti-rollback + resolved the key as a
+    /// production-class, in-window, non-revoked key before minting.
+    pub(crate) fn manifest_resolved(key_id: &'a str, public_key: &'a [u8], trust_class: TrustClass) -> Self {
+        Self { key_id, public_key, trust_class }
+    }
+}
+
 #[cfg(test)]
 impl<'a> ResolvedManifestKey<'a> {
     /// Test-only fixture builder for in-crate callers OUTSIDE this module (e.g. the

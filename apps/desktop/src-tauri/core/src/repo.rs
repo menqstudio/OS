@@ -799,6 +799,34 @@ pub mod approvals {
         })?;
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
     }
+
+    /// Escalate a pending approval to higher review (tier A3). This is deliberately NOT a
+    /// verdict: the approval is neither granted nor denied and authorizes no execution — it is
+    /// routed to the highest review tier and the owner is notified. Because it decides nothing,
+    /// it needs no engine adjudication, but it is still pending-only + atomic + audited, and the
+    /// owner-facing notification makes the escalation visible. Re-escalating a non-pending row is
+    /// a no-op error (NotFound), so an already-decided or already-escalated approval cannot move.
+    pub fn escalate(conn: &Connection, id: &str) -> CoreResult<Approval> {
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE approvals SET status = 'escalated', level = 'A3' WHERE id = ?1 AND status = 'pending'",
+                rusqlite::params![id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(format!("pending approval {id}")));
+            }
+            let target: String =
+                tx.query_row("SELECT target FROM approvals WHERE id = ?1", [id], |r| r.get(0))?;
+            tx.execute(
+                "INSERT INTO notifications(id, type, severity, title, body, read_at, created_at)
+                 VALUES (?1, 'approval_required', 'warning', 'Escalated for higher review', ?2, NULL, ?3)",
+                rusqlite::params![crate::id(), format!("{target} was escalated to A3 review."), now()],
+            )?;
+            super::audit::record(tx, "approval.escalated", "user", "gev", "approval", id)?;
+            Ok(())
+        })?;
+        conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
+    }
 }
 
 pub mod notifications {
@@ -913,16 +941,21 @@ pub mod chat {
         })
     }
 
-    /// SQL projection (Wave 3a slice 3): a message's trust-badge receipt = the outcome
-    /// of its accepted verification attempt (`development_untrusted` | `trusted_verified`),
-    /// else NULL. A `blocked` verdict has no message, so it never appears here. Every
-    /// message SELECT that feeds `map_message` must include this `AS receipt` column and
-    /// alias the `messages` table `m`.
-    const MESSAGE_RECEIPT_PROJECTION: &str = "(SELECT a.outcome \
-         FROM receipt_verification_attempts a \
-         WHERE a.message_id = m.id \
-           AND a.outcome IN ('development_untrusted', 'trusted_verified') \
-         LIMIT 1)";
+    /// SQL projection (Wave 3a slice 3 + demonstration): a message's trust-badge receipt = the outcome of its
+    /// accepted verification attempt (`development_untrusted` | `trusted_verified`); else, as a FALLBACK, the
+    /// honest `demonstration_verified` when the reply was produced + verified in-process under the DEMONSTRATION
+    /// anchor (a separate additive table — never the production trust records). A real production receipt always
+    /// wins (it is the first COALESCE arm). A `blocked` verdict has no message, so it never appears here. Every
+    /// message SELECT that feeds `map_message` must include this `AS receipt` column and alias `messages` as `m`.
+    const MESSAGE_RECEIPT_PROJECTION: &str = "COALESCE(\
+         (SELECT a.outcome \
+            FROM receipt_verification_attempts a \
+            WHERE a.message_id = m.id \
+              AND a.outcome IN ('development_untrusted', 'trusted_verified') \
+            LIMIT 1), \
+         (SELECT 'demonstration_verified' \
+            FROM demonstration_verified_messages d \
+            WHERE d.message_id = m.id))";
 
     fn map_message(r: &Row) -> rusqlite::Result<Message> {
         Ok(Message {
@@ -1039,6 +1072,57 @@ pub mod chat {
             .map_err(not_found(&id))
     }
 
+    /// Record that a message's reply was produced + verified IN-PROCESS under the DEMONSTRATION anchor, so
+    /// [`MESSAGE_RECEIPT_PROJECTION`] derives its badge to `demonstration_verified`. Idempotent
+    /// (`INSERT OR IGNORE`). This is NEVER production trust — the caller writes it ONLY after the in-process
+    /// governed chain returns trusted_verified for THIS exact message, and this demonstration table is separate
+    /// from the CHECK-constrained production trust records (`receipt_verification_attempts`).
+    pub fn record_demonstration_verified(conn: &Connection, message_id: &str) -> CoreResult<()> {
+        let now = now();
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at) VALUES (?1, ?2)",
+                rusqlite::params![message_id, now],
+            )?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// Post an agent message AND record its DEMONSTRATION anchor in ONE transaction, returning the
+    /// message with its derived `demonstration_verified` badge. Doing both atomically means the reply
+    /// and its badge land together or not at all — a mid-way failure can never leave a verified reply
+    /// persisted as an ordinary un-badged message. Same honesty contract as
+    /// [`record_demonstration_verified`]: the caller invokes this ONLY after the in-process governed
+    /// chain returned trusted_verified for THESE exact body bytes.
+    pub fn post_message_demonstration_verified(conn: &Connection, input: NewMessage) -> CoreResult<Message> {
+        if !is_valid(&input.role, MESSAGE_ROLES) {
+            return Err(CoreError::Invalid { field: "role", value: input.role });
+        }
+        let now = now();
+        let id = id();
+        super::atomic(conn, |tx| {
+            get_conversation(tx, &input.conversation_id)?;
+            tx.execute(
+                "INSERT INTO messages(id, conversation_id, role, author, body, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![id, input.conversation_id, input.role, input.author, input.body, now],
+            )?;
+            tx.execute(
+                "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![now, input.conversation_id],
+            )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at) VALUES (?1, ?2)",
+                rusqlite::params![id, now],
+            )?;
+            super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
+            Ok(())
+        })?;
+        let sql = format!("SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m WHERE m.id = ?1");
+        conn.query_row(&sql, [id.clone()], map_message).map_err(not_found(&id))
+    }
+
     /// Delete a conversation and (via the FK cascade) all of its messages.
     /// Rejects an unknown conversation.
     pub fn delete_conversation(conn: &Connection, id: &str) -> CoreResult<()> {
@@ -1050,6 +1134,43 @@ pub mod chat {
             super::audit::record(tx, "conversation.deleted", "user", "gev", "conversation", id)?;
             Ok(())
         })
+    }
+
+    /// Replace a conversation's participant roster (the explicit set of members in a group
+    /// room). Idempotent: clears the existing rows and inserts the given names deduped and
+    /// order-insensitive. The FK rejects an unknown conversation id, so callers pass a real one.
+    pub fn set_participants(conn: &Connection, conversation_id: &str, names: &[String]) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "DELETE FROM conversation_participants WHERE conversation_id = ?1",
+                [conversation_id],
+            )?;
+            let mut seen = std::collections::HashSet::new();
+            for name in names {
+                let n = name.trim();
+                if n.is_empty() || !seen.insert(n.to_string()) {
+                    continue;
+                }
+                tx.execute(
+                    "INSERT INTO conversation_participants (conversation_id, name, added_at) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![conversation_id, n, now()],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// The participant roster for a conversation, alphabetical. Empty when none were set.
+    pub fn list_participants(conn: &Connection, conversation_id: &str) -> CoreResult<Vec<String>> {
+        let mut stmt = conn.prepare(
+            "SELECT name FROM conversation_participants WHERE conversation_id = ?1 ORDER BY name",
+        )?;
+        let rows = stmt.query_map([conversation_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 
     /// Rename a conversation and bump its activity timestamp. Rejects an unknown
@@ -1448,39 +1569,6 @@ pub mod runs {
     /// done without a matching approval, whichever function sets it (M-3). The
     /// gate read, the UPDATE, and the approval consumption run in one
     /// transaction so the guarantee lives with the write.
-    pub fn set_step_result(conn: &Connection, id: &str, result: &str) -> CoreResult<RunStep> {
-        super::atomic(conn, |tx| {
-            let step = get_step(tx, id)?;
-            if step.requires_approval {
-                if !super::approvals::approved_for(
-                    tx,
-                    id,
-                    super::approvals::RUN_STEP_ENTITY_TYPE,
-                    super::approvals::RUN_STEP_ACTION_TYPE,
-                )? {
-                    return Err(CoreError::Invalid {
-                        field: "status",
-                        value: "step requires approval before it can be completed".to_string(),
-                    });
-                }
-                // one grant unlocks one completion (M-2)
-                super::approvals::consume_for(
-                    tx,
-                    id,
-                    super::approvals::RUN_STEP_ENTITY_TYPE,
-                    super::approvals::RUN_STEP_ACTION_TYPE,
-                )?;
-            }
-            tx.execute(
-                "UPDATE run_steps SET result = ?1, status = 'done', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![result, now(), id],
-            )?;
-            super::audit::record(tx, "run_step.executed", "user", "gev", "run_step", id)?;
-            Ok(())
-        })?;
-        get_step(conn, id)
-    }
-
     /// T-011: atomically CLAIM a runnable step for execution BEFORE the provider is
     /// called, so one approval starts exactly one execution. In one transaction it
     /// refuses if the run already has a step mid-execution, then claims this step by
@@ -1642,31 +1730,41 @@ pub mod runs {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
         super::atomic(conn, |tx| {
+            let step = get_step(tx, id)?;
+            // A step with a live execution claim (execution_attempt_id set) is owned by an in-flight
+            // attempt — only complete_step_execution / fail_step_execution (both attempt-guarded) may
+            // move it. Reject a bare status change here so a renderer cannot side-step the T-011
+            // in-flight mutual-exclusion guards (which key off status IN ('active','pending')) by
+            // flipping a claimed step to 'skipped'/'failed' mid-execution — which would let a SECOND
+            // step in the run be claimed concurrently and could drop the real verified result.
+            if step.execution_attempt_id.is_some() {
+                return Err(CoreError::Invalid {
+                    field: "status",
+                    value: "step is executing (claimed) — its status is owned by the execution attempt".to_string(),
+                });
+            }
             // Enforce the approval gate here too, not just in advance()/stream_run_step:
             // a gated step can never be marked `done` without a matching approval,
             // whichever command sets it. Gate read and UPDATE share one transaction.
-            if status == "done" {
-                let step = get_step(tx, id)?;
-                if step.requires_approval {
-                    if !super::approvals::approved_for(
-                        tx,
-                        id,
-                        super::approvals::RUN_STEP_ENTITY_TYPE,
-                        super::approvals::RUN_STEP_ACTION_TYPE,
-                    )? {
-                        return Err(CoreError::Invalid {
-                            field: "status",
-                            value: "step requires approval before it can be completed".to_string(),
-                        });
-                    }
-                    // one grant unlocks one completion (M-2)
-                    super::approvals::consume_for(
-                        tx,
-                        id,
-                        super::approvals::RUN_STEP_ENTITY_TYPE,
-                        super::approvals::RUN_STEP_ACTION_TYPE,
-                    )?;
+            if status == "done" && step.requires_approval {
+                if !super::approvals::approved_for(
+                    tx,
+                    id,
+                    super::approvals::RUN_STEP_ENTITY_TYPE,
+                    super::approvals::RUN_STEP_ACTION_TYPE,
+                )? {
+                    return Err(CoreError::Invalid {
+                        field: "status",
+                        value: "step requires approval before it can be completed".to_string(),
+                    });
                 }
+                // one grant unlocks one completion (M-2)
+                super::approvals::consume_for(
+                    tx,
+                    id,
+                    super::approvals::RUN_STEP_ENTITY_TYPE,
+                    super::approvals::RUN_STEP_ACTION_TYPE,
+                )?;
             }
             let changed = tx.execute(
                 "UPDATE run_steps SET status = ?1, updated_at = ?2 WHERE id = ?3",
@@ -1678,6 +1776,26 @@ pub mod runs {
             Ok(())
         })?;
         get_step(conn, id)
+    }
+
+    /// Fail a step AND its run together in ONE transaction. Used when a step's approval was
+    /// rejected: previously the step and run were failed by two separate committed writes with both
+    /// Results discarded, so a crash (or an error on the second) could leave the step 'failed' while
+    /// the run stayed non-terminal. Direct terminal writes — this is an internal outcome, not a
+    /// renderer-driven transition, so it does not go through set_status/set_step_status.
+    pub fn fail_step_and_run(conn: &Connection, step_id: &str, run_id: &str) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "UPDATE run_steps SET status = 'failed', updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![now(), step_id],
+            )?;
+            tx.execute(
+                "UPDATE runs SET status = 'failed', updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![now(), run_id],
+            )?;
+            super::audit::record(tx, "run_step.rejected", "system", "system", "run_step", step_id)?;
+            Ok(())
+        })
     }
 
     /// Advance a run's execution by one step: mark the active step done and
@@ -1737,13 +1855,20 @@ pub mod runs {
             }
 
             let now = now();
-            tx.execute(
-                "UPDATE run_steps SET status = 'done', updated_at = ?1 WHERE run_id = ?2 AND status = 'active'",
-                rusqlite::params![now, run_id],
-            )?;
-            // The grant that unlocked the just-completed gated step is spent
-            // in the same transaction (M-2).
+            // Complete ONLY the single active step we approval-checked above (`active`),
+            // not every row in status='active'. A run can transiently hold more than one
+            // 'active' step (set_step_status can activate a step directly), and a blanket
+            // `WHERE status='active'` UPDATE would silently mark those extra steps `done`
+            // WITHOUT their own requires_approval gate — completing an unapproved gated
+            // step (M-6 / audit F-12). Bind the completion to the exact step we gated; any
+            // other active step stays active and gets its own gate on the next advance().
             if let Some(active) = &active {
+                tx.execute(
+                    "UPDATE run_steps SET status = 'done', updated_at = ?1 WHERE id = ?2 AND status = 'active'",
+                    rusqlite::params![now, active.id],
+                )?;
+                // The grant that unlocked the just-completed gated step is spent
+                // in the same transaction (M-2).
                 if active.requires_approval {
                     super::approvals::consume_for(
                         tx,
@@ -1899,6 +2024,160 @@ pub mod automations {
         get(conn, id)
     }
 
+    fn map_run(r: &Row) -> rusqlite::Result<AutomationRun> {
+        Ok(AutomationRun {
+            id: r.get("id")?,
+            automation_id: r.get("automation_id")?,
+            ran_at: r.get("ran_at")?,
+            outcome: r.get("outcome")?,
+            detail: r.get("detail")?,
+        })
+    }
+
+    /// Perform an automation's ACTION locally and return (outcome, human detail). The action is a
+    /// small honest `verb: argument` vocabulary that maps to LOCAL effects only — no AI provider is
+    /// reached (an AI-touching action would have to route through the governed, fail-closed chain, not
+    /// fire unattended). An unrecognized verb is a recorded 'failed' outcome, never a silent no-op.
+    ///   notify: <text>  -> raise a notification
+    ///   task:   <title> -> create a task
+    ///   note:   <title> -> create a knowledge note
+    fn execute_action(conn: &Connection, action: &str) -> CoreResult<(&'static str, String)> {
+        let trimmed = action.trim();
+        let (verb, arg) = match trimmed.split_once(':') {
+            Some((v, a)) => (v.trim().to_lowercase(), a.trim().to_string()),
+            None => {
+                return Ok(("failed", format!("unrecognized action (expected `verb: argument`): {trimmed}")))
+            }
+        };
+        if arg.is_empty() {
+            return Ok(("failed", format!("action '{verb}' has no argument")));
+        }
+        match verb.as_str() {
+            "notify" => {
+                super::atomic(conn, |tx| {
+                    tx.execute(
+                        "INSERT INTO notifications(id, type, severity, title, body, read_at, created_at)
+                         VALUES (?1, 'automation', 'info', 'Automation', ?2, NULL, ?3)",
+                        rusqlite::params![crate::id(), arg, now()],
+                    )?;
+                    Ok(())
+                })?;
+                Ok(("ok", format!("notified: {arg}")))
+            }
+            "task" => {
+                tasks::create(
+                    conn,
+                    NewTask {
+                        project_id: None,
+                        title: arg.clone(),
+                        description: String::new(),
+                        priority: "normal".to_string(),
+                        assigned_agent_id: None,
+                    },
+                )?;
+                Ok(("ok", format!("created task: {arg}")))
+            }
+            "note" => {
+                knowledge::create(
+                    conn,
+                    NewKnowledgeNote {
+                        title: arg.clone(),
+                        body: String::new(),
+                        source: "automation".to_string(),
+                        tags: String::new(),
+                    },
+                )?;
+                Ok(("ok", format!("created note: {arg}")))
+            }
+            other => Ok(("failed", format!("unknown action verb '{other}' (supported: notify, task, note)"))),
+        }
+    }
+
+    /// Run an automation NOW: perform its action (locally, fail-closed for anything AI) and append a
+    /// row to the run log, returning it. A disabled automation refuses to run.
+    pub fn run(conn: &Connection, id: &str) -> CoreResult<AutomationRun> {
+        let automation = get(conn, id)?;
+        if !automation.enabled {
+            return Err(CoreError::Invalid {
+                field: "enabled",
+                value: "automation is disabled".to_string(),
+            });
+        }
+        let (outcome, detail) = execute_action(conn, &automation.action)?;
+        let run_id = crate::id();
+        let now = now();
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT INTO automation_runs(id, automation_id, ran_at, outcome, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![run_id, id, now, outcome, detail],
+            )?;
+            super::audit::record(tx, "automation.ran", "user", "gev", "automation", id)?;
+            Ok(())
+        })?;
+        conn.query_row("SELECT * FROM automation_runs WHERE id = ?1", [&run_id], map_run)
+            .map_err(not_found(&run_id))
+    }
+
+    /// The run history for one automation, newest first.
+    pub fn list_runs(conn: &Connection, automation_id: &str) -> CoreResult<Vec<AutomationRun>> {
+        let mut s = conn.prepare(
+            "SELECT * FROM automation_runs WHERE automation_id = ?1 ORDER BY ran_at DESC LIMIT ?2",
+        )?;
+        let rows = s.query_map(rusqlite::params![automation_id, super::MAX_PAGE], map_run)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Parse a time trigger `every: <N>{m|h|d}` into an interval in milliseconds. Anything else
+    /// (empty, `manual`, an unrecognized shape) is None — those automations are NOT scheduled and
+    /// only run via an explicit "Run now". Keeping the vocabulary tiny + explicit keeps scheduling
+    /// honest and predictable.
+    pub fn parse_interval_ms(trigger: &str) -> Option<i64> {
+        let rest = trigger.trim().to_lowercase();
+        let rest = rest.strip_prefix("every:")?.trim().to_string();
+        if rest.len() < 2 {
+            return None;
+        }
+        let (num, unit) = rest.split_at(rest.len() - 1);
+        let n: i64 = num.trim().parse().ok()?;
+        if n <= 0 {
+            return None;
+        }
+        match unit {
+            "m" => Some(n * 60_000),
+            "h" => Some(n * 3_600_000),
+            "d" => Some(n * 86_400_000),
+            _ => None,
+        }
+    }
+
+    /// The local scheduler tick: fire every ENABLED automation whose interval trigger is DUE (never
+    /// run, or last run at least one interval ago), running its LOCAL action and logging the run.
+    /// Returns the runs fired this tick. Only local, non-AI actions ever fire unattended here — an
+    /// AI-reaching action would route through the governed, fail-closed chain, not this loop.
+    pub fn run_due(conn: &Connection, now_ms: i64) -> CoreResult<Vec<AutomationRun>> {
+        let mut fired = Vec::new();
+        for a in list(conn)? {
+            if !a.enabled {
+                continue;
+            }
+            let interval = match parse_interval_ms(&a.trigger) {
+                Some(i) => i,
+                None => continue, // manual / unrecognized → not scheduled
+            };
+            let last_ms = list_runs(conn, &a.id)?
+                .first()
+                .and_then(|r| r.ran_at.parse::<i64>().ok());
+            let due = match last_ms {
+                Some(t) => now_ms.saturating_sub(t) >= interval,
+                None => true,
+            };
+            if due {
+                fired.push(run(conn, &a.id)?);
+            }
+        }
+        Ok(fired)
+    }
+
     pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             let changed = tx.execute("DELETE FROM automations WHERE id = ?1", [id])?;
@@ -1987,6 +2266,12 @@ pub mod analytics {
             ("automations_on", "Automations enabled", "SELECT COUNT(*) FROM automations WHERE enabled = 1"),
             ("knowledge", "Knowledge notes", "SELECT COUNT(*) FROM knowledge_notes"),
             ("memory", "Memory entries", "SELECT COUNT(*) FROM memory_entries"),
+            ("conversations", "Conversations", "SELECT COUNT(*) FROM conversations"),
+            ("messages", "Messages", "SELECT COUNT(*) FROM messages"),
+            ("decisions", "Decisions", "SELECT COUNT(*) FROM decisions"),
+            ("integrations", "Integrations", "SELECT COUNT(*) FROM integrations"),
+            ("library_items", "Library items", "SELECT COUNT(*) FROM library_items"),
+            ("research_items", "Research items", "SELECT COUNT(*) FROM research_items"),
             ("audit", "Audit events", "SELECT COUNT(*) FROM audit_events"),
         ];
         let mut out = Vec::with_capacity(defs.len());
@@ -2302,6 +2587,207 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
         let i1 = integrations::create(conn, "GitHub", "github")?;
         integrations::set_status(conn, &i1.id, "connected")?;
         integrations::create(conn, "Slack", "slack")?;
+        let i3 = integrations::create(conn, "Linear", "linear")?;
+        integrations::set_status(conn, &i3.id, "connected")?;
+        integrations::create(conn, "PagerDuty", "pagerduty")?;
+
+        // ── Richer starter content ────────────────────────────────────────────
+        // Everything below is honest starter data in the real store — real rows
+        // read back through the same repositories the UI uses. It never touches
+        // the trust chain: no receipt is minted, so message/security trust stays
+        // fail-closed (development_untrusted / NoTrustedManifest), exactly as when
+        // the store is empty. It only makes the cockpit read as a live network
+        // instead of a blank one.
+        let now_ms: i64 = now().parse().unwrap_or(0);
+
+        // A fuller agent network for the lattice, with varied live phases (the
+        // `status` column is honest free text the UI maps to a node state).
+        for (slug, name, role, model) in [
+            ("scout", "Scout", "Research", "claude-sonnet"),
+            ("relay", "Relay", "Comms", "claude-sonnet"),
+            ("ledger", "Ledger", "Finance", "claude-opus"),
+            ("sentry", "Sentry", "Monitoring", "claude-sonnet"),
+        ] {
+            agents::create(conn, slug, name, role, model)?;
+        }
+        for (slug, status) in [
+            ("forge", "working"),
+            ("pixel", "working"),
+            ("probe", "review"),
+            ("shield", "blocked"),
+            ("mason", "completed"),
+            ("relay", "working"),
+            ("sentry", "working"),
+        ] {
+            conn.execute(
+                "UPDATE agents SET status = ?2 WHERE slug = ?1",
+                rusqlite::params![slug, status],
+            )?;
+        }
+
+        // More projects + tasks across statuses so the boards read as active work.
+        let p3 = projects::create(conn, NewProject { name: "AI-OS Cockpit Redesign".into(), description: "Adopt the brops-aios HUD across every view.".into(), priority: "high".into(), workspace_id: None })?;
+        projects::set_status(conn, &p3.id, "active")?;
+        let p4 = projects::create(conn, NewProject { name: "ISP Dispatch Automations".into(), description: "Outage, ONT provisioning and subscriber flows.".into(), priority: "normal".into(), workspace_id: None })?;
+        projects::set_status(conn, &p4.id, "active")?;
+        for (proj, title, prio, done) in [
+            (&p3, "Port the ambient shell", "high", true),
+            (&p3, "Reskin the twelve hero views", "high", true),
+            (&p3, "Seed a live starter workspace", "normal", false),
+            (&p3, "Split per-view instrument CSS", "low", false),
+            (&p4, "Outage auto-dispatch pipeline", "high", false),
+            (&p4, "ONT auto-provision flow", "normal", false),
+            (&p4, "Subscriber welcome sequence", "low", true),
+        ] {
+            let tk = tasks::create(conn, NewTask { project_id: Some(proj.id.clone()), title: title.into(), description: "".into(), priority: prio.into(), assigned_agent_id: None })?;
+            tasks::set_status(conn, &tk.id, if done { "done" } else { "active" })?;
+        }
+
+        // A spread of audit events so the activity ECG has a real heartbeat
+        // (varied types + actors, jittered across the last ~44 hours).
+        let ev_kinds: [(&str, &str, &str, &str); 11] = [
+            ("task.created", "agent", "forge", "task"),
+            ("task.completed", "agent", "probe", "task"),
+            ("run.advanced", "system", "scheduler", "run"),
+            ("message.posted", "user", "gev", "message"),
+            ("approval.requested", "agent", "lezu", "approval"),
+            ("decision.recorded", "user", "gev", "decision"),
+            ("agent.dispatched", "system", "conductor", "agent"),
+            ("automation.fired", "system", "scheduler", "automation"),
+            ("knowledge.added", "agent", "mason", "note"),
+            ("verification.blocked", "system", "broker", "receipt"),
+            ("event.scheduled", "user", "gev", "event"),
+        ];
+        {
+            let mut stmt = conn.prepare(
+                "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            for i in 0..56i64 {
+                let k = ev_kinds[(i as usize) % ev_kinds.len()];
+                let offset = i * 46 * 60 * 1000 + (i % 5) * 7000;
+                let ts = (now_ms - offset).to_string();
+                stmt.execute(rusqlite::params![id(), k.0, k.1, k.2, k.3, id(), ts])?;
+            }
+        }
+
+        // More approvals for the gate (mix of pending and already-decided history).
+        conn.execute(
+            "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, requested_at, decided_at)
+             VALUES (?1,'Deploy runtime config','production broker','A2','medium','pending','mason',?2,NULL),
+                    (?3,'Rotate signing key','key manifest','A3','high','pending','shield',?4,NULL),
+                    (?5,'Restart provisioning worker','ont-provisioner','A1','low','pending','sentry',?6,NULL),
+                    (?7,'Publish release notes','changelog','A1','low','approved','pixel',?8,?9)",
+            rusqlite::params![
+                id(), (now_ms - 3_600_000).to_string(),
+                id(), (now_ms - 7_200_000).to_string(),
+                id(), (now_ms - 1_800_000).to_string(),
+                id(), (now_ms - 90_000_000).to_string(), (now_ms - 86_400_000).to_string()
+            ],
+        )?;
+
+        // More notifications.
+        conn.execute(
+            "INSERT INTO notifications(id, type, severity, title, body, read_at, created_at)
+             VALUES (?1,'run_completed','success','Provisioning run closed','ONT auto-provision finished with evidence.',NULL,?2),
+                    (?3,'approval_required','warning','Key rotation awaits sign-off','A signing-key rotation is queued for your decision.',NULL,?4),
+                    (?5,'run_completed','success','Welcome sequence sent','Subscriber welcome messages delivered.',?6,?6)",
+            rusqlite::params![
+                id(), (now_ms - 600_000).to_string(),
+                id(), (now_ms - 5_400_000).to_string(),
+                id(), (now_ms - 43_200_000).to_string()
+            ],
+        )?;
+
+        // More decisions for the chamber + ledger.
+        decisions::create(conn, "Adopt the brops-aios HUD design", "gev", "The mockup is the target look; port it view by view onto real IPC.")?;
+        decisions::create(conn, "Seed a live starter workspace", "gev", "Ship honest starter rows so the cockpit reads as a live network, trust stays fail-closed.")?;
+        decisions::create(conn, "Per-view CSS is route-lazy", "mason", "Each view's instrument CSS ships in its own chunk to keep first paint lean.")?;
+        decisions::create(conn, "Fonts are separate assets", "pixel", "Variable fonts moved out of the CSS payload into /fonts.")?;
+        decisions::create(conn, "Windows broker runs non-SYSTEM", "shield", "A dedicated low-privilege principal completes the governed turn.")?;
+        decisions::create(conn, "Approvals stay human-in-the-loop", "gev", "No step auto-runs; A2+ actions gate on a deliberate confirm.")?;
+
+        // Richer conversations so the chat canvas reads as active.
+        let c3 = chat::create_conversation(conn, "direct", "Redesign")?;
+        for (role, author, body) in [
+            ("user", "gev", "Bro, the cockpit should look like the aios mockup."),
+            ("agent", "Bro", "Porting the ambient shell and every view onto real IPC now — trust badges stay fail-closed."),
+            ("user", "gev", "And it must feel full, not empty."),
+            ("agent", "Bro", "Seeding a live starter workspace: real rows, honest states, no faked verification."),
+            ("agent", "Pixel", "HUD surfaces, brackets and the power mark are in; light and dark both tuned."),
+        ] {
+            chat::post_message(conn, NewMessage { conversation_id: c3.id.clone(), role: role.into(), author: author.into(), body: body.into() })?;
+        }
+        let c4 = chat::create_conversation(conn, "group", "Dispatch room")?;
+        for (author, body) in [
+            ("Sentry", "NOC alarm cleared on the Kentron node."),
+            ("Relay", "Subscriber notifications delivered for the affected block."),
+            ("Ledger", "SLA credit draft prepared, waiting on finance approval."),
+            ("Scout", "Root cause narrowed to an upstream OLT reset."),
+        ] {
+            chat::post_message(conn, NewMessage { conversation_id: c4.id.clone(), role: "agent".into(), author: author.into(), body: body.into() })?;
+        }
+
+        // More runs + steps for the command reactor.
+        let r3 = runs::create(conn, "Outage auto-dispatch: Kentron", "correlate → locate → dispatch → notify")?;
+        runs::add_step(conn, &r3.id, "Correlate NOC alarms", "3 signals crossed")?;
+        runs::add_step(conn, &r3.id, "Locate fault node", "OLT-Kentron-04")?;
+        let g3 = runs::add_step(conn, &r3.id, "Dispatch nearest crew", "")?;
+        runs::set_step_requires_approval(conn, &g3.id, true)?;
+        runs::add_step(conn, &r3.id, "Notify subscribers", "")?;
+        runs::advance(conn, &r3.id)?;
+        let r4 = runs::create(conn, "ONT auto-provision batch", "detect → bind profile → remote reset")?;
+        runs::add_step(conn, &r4.id, "Detect new ONTs", "12 serials")?;
+        runs::add_step(conn, &r4.id, "Bind service profile", "")?;
+        runs::add_step(conn, &r4.id, "Remote reset", "")?;
+        runs::add_step(conn, &r4.id, "Confirm online", "")?;
+        runs::advance(conn, &r4.id)?;
+        runs::create(conn, "Draft the redesign verification report", "")?;
+
+        // A spread of calendar events (past, today and upcoming) with durations.
+        let day = 86_400_000i64;
+        let hour = 3_600_000i64;
+        let cal: [(&str, &str, &str, i64, i64, i64); 10] = [
+            ("Redesign review", "review", "Cockpit", 0, 10 * hour, 60),
+            ("Dispatch standup", "meeting", "Dispatch room", 0, 14 * hour, 30),
+            ("Key rotation window", "maintenance", "Broker", 1, 2 * hour, 90),
+            ("Foundation sync", "meeting", "Group Chat", 1, 11 * hour, 45),
+            ("ONT rollout", "ops", "Field", 2, 9 * hour, 120),
+            ("Security audit", "review", "Manifest", 3, 15 * hour, 60),
+            ("Subscriber webinar", "event", "Online", 5, 18 * hour, 60),
+            ("SLA finance review", "meeting", "Finance", -1, 16 * hour, 30),
+            ("Post-outage retro", "review", "Dispatch room", -2, 13 * hour, 45),
+            ("Release cut", "ops", "CI", 7, 12 * hour, 30),
+        ];
+        for (title, kind, loc, d, h, dur) in cal {
+            let start = now_ms + d * day + h;
+            events::create(conn, NewEvent {
+                title: title.into(),
+                kind: kind.into(),
+                location: loc.into(),
+                starts_at: start.to_string(),
+                ends_at: Some((start + dur * 60_000).to_string()),
+            })?;
+        }
+
+        // More automations for the manifold (mixed enabled/disabled).
+        let extra_autos = [
+            ("Outage auto-dispatch", "noc.alarm = critical", "dispatch nearest crew", true),
+            ("ONT auto-provision", "olt.new_ont detected", "bind profile + remote reset", true),
+            ("Subscriber welcome", "subscriber.activated", "send welcome sequence", true),
+            ("SLA breach alert", "downtime > sla_threshold", "draft credit + notify finance", false),
+        ];
+        for (name, trigger, action, enabled) in extra_autos {
+            let au = automations::create(conn, NewAutomation { name: name.into(), trigger: trigger.into(), action: action.into() })?;
+            if !enabled {
+                automations::set_enabled(conn, &au.id, false)?;
+            }
+        }
+
+        // A little more knowledge + memory depth.
+        knowledge::create(conn, NewKnowledgeNote { title: "Fail-closed trust".into(), body: "With no production manifest the store resolves NoTrustedManifest; the UI never shows a verified badge it cannot prove.".into(), source: "core/production_trust.rs".into(), tags: "governance,trust".into() })?;
+        knowledge::create(conn, NewKnowledgeNote { title: "Ambient layer".into(), body: "Aurora, mesh field, grid, scanline and cursor light render behind every view at negative z-index.".into(), source: "components/Ambient.tsx".into(), tags: "design,ui".into() })?;
+        memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "The cockpit must look full and alive, like the aios mockup.".into() })?;
 
         Ok(())
     })

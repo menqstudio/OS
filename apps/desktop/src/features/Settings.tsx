@@ -1,89 +1,19 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, Badge, Skeleton, ErrorState, EmptyState } from '../components/ui';
+import { Skeleton, ErrorState, EmptyState } from '../components/ui';
+import { Mark } from '../components/Ambient';
 import { languageNames } from '../i18n';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { Lang, Theme } from '../domain/enums';
+import { STR } from './Settings.strings';
 
-// -------------------------------------------------------------------------------------------------
-// Local, page-scoped bilingual copy (EN + HY). Per the thin-page convention this page inlines its
-// own strings for the §D surfaces that are not yet in the shared i18n dictionaries — it never edits
-// the shared i18n files. Keys already present in i18n/en.ts + hy.ts are used through `t()`.
-// -------------------------------------------------------------------------------------------------
-interface Str { en: string; hy: string }
-const copy = {
-  appearanceDesc: {
-    en: 'Visual theme and interface language. Preferences are saved to this device.',
-    hy: 'Տեսքի ոճ և ինտերֆեյսի լեզու։ Նախապատվությունները պահվում են այս սարքում։',
-  },
-  themeDesc: {
-    en: 'Choose a light or dark interface. Motion is reduced automatically when your system asks for it.',
-    hy: 'Ընտրեք բաց կամ մուգ ինտերֆեյս։ Շարժումը նվազում է ինքնաշխատ, երբ համակարգը դա պահանջում է։',
-  },
-  languageDesc: {
-    en: 'Interface language for BroPS.',
-    hy: 'BroPS-ի ինտերֆեյսի լեզուն։',
-  },
-  governedToggleLabel: { en: 'Governed provider', hy: 'Կառավարվող մատակարար' },
-  governedToggleDesc: {
-    en: 'Set by the backend environment under the fail-closed policy. This control is read-only — the desktop app never holds keys or leases and cannot route turns through the wall from here.',
-    hy: 'Սահմանվում է backend-ի միջավայրի կողմից՝ fail-closed քաղաքականությամբ։ Այս կարգավորումը միայն կարդալու համար է. desktop ծրագիրը երբեք չի պահում բանալիներ կամ վարձակալություններ և չի կարող այստեղից ուղղորդել շրջադարձերը պատի միջով։',
-  },
-  sidecar: { en: 'Governance sidecar', hy: 'Կառավարման կողմնակի ծառայություն' },
-  sidecarDesc: {
-    en: 'The trusted engine that verifies governed turns and issues signed receipts.',
-    hy: 'Վստահված շարժիչը, որը ստուգում է կառավարվող շրջադարձերը և թողարկում ստորագրված անդորրագրեր։',
-  },
-  sidecarHealthy: { en: 'Sidecar reachable', hy: 'Կողմնակի ծառայությունը հասանելի է' },
-  sidecarHealthyDesc: {
-    en: 'The governance engine responded and the governed path is available.',
-    hy: 'Կառավարման շարժիչը պատասխանեց, և կառավարվող ուղին հասանելի է։',
-  },
-  sidecarInactive: { en: 'Sidecar inactive', hy: 'Կողմնակի ծառայությունն անգործուն է' },
-  sidecarInactiveDesc: {
-    en: 'The resolved provider is ungoverned, so no governance sidecar is engaged. Turns are not verified.',
-    hy: 'Ընտրված մատակարարը չկառավարվող է, ուստի կառավարման կողմնակի ծառայությունը ներգրավված չէ։ Շրջադարձերը չեն ստուգվում։',
-  },
-  blockedTitle: { en: 'Sidecar misconfigured — governed path is fail-closed', hy: 'Կողմնակի ծառայությունը սխալ է կարգավորված — կառավարվող ուղին fail-closed է' },
-  blockedGuideIntro: {
-    en: 'The governed provider is enabled but the sidecar did not become ready, so every governed turn is blocked (no result is produced). To restore the governed path:',
-    hy: 'Կառավարվող մատակարարը միացված է, բայց կողմնակի ծառայությունը պատրաստ չդարձավ, ուստի յուրաքանչյուր կառավարվող շրջադարձ արգելափակված է (արդյունք չի ստեղծվում)։ Կառավարվող ուղին վերականգնելու համար՝',
-  },
-  blockedStep1: {
-    en: 'Confirm the governance engine / broker service is running in the backend environment.',
-    hy: 'Հաստատեք, որ կառավարման շարժիչը / broker ծառայությունը աշխատում է backend միջավայրում։',
-  },
-  blockedStep2: {
-    en: 'Provision the trust root so signed receipts can be verified (do not fall back to ungoverned).',
-    hy: 'Ապահովեք վստահության արմատը, որպեսզի ստորագրված անդորրագրերը ստուգվեն (մի անցեք չկառավարվողի)։',
-  },
-  blockedStep3: {
-    en: 'Re-check status once the sidecar is configured.',
-    hy: 'Կրկին ստուգեք վիճակը, երբ կողմնակի ծառայությունը կարգավորված է։',
-  },
-  recheck: { en: 'Re-check', hy: 'Կրկին ստուգել' },
-  about: { en: 'About', hy: 'Ծրագրի մասին' },
-  aboutProductLabel: { en: 'Product', hy: 'Արտադրանք' },
-  aboutVersionLabel: { en: 'Version', hy: 'Տարբերակ' },
-  aboutGovernanceLabel: { en: 'Governance', hy: 'Կառավարում' },
-  aboutGovernanceValue: {
-    en: 'Fail-closed, verified-receipt-mandatory',
-    hy: 'Fail-closed, պարտադիր ստուգված անդորրագրով',
-  },
-  providerNotConfiguredHint: {
-    en: 'No AI provider is resolved by the backend environment. Configure one to enable turns.',
-    hy: 'Backend միջավայրը AI մատակարար չի ընտրել։ Կարգավորեք մեկը՝ շրջադարձերը միացնելու համար։',
-  },
-  themeChanged: { en: 'Theme set to', hy: 'Տեսքի ոճը սահմանված է՝' },
-  languageChanged: { en: 'Language set to', hy: 'Լեզուն սահմանված է՝' },
-} satisfies Record<string, Str>;
-
-// Local switch — an accessible on/off control. A native <button role="switch"> responds to both
-// Space and Enter (satisfying the §D "toggles Space" requirement) and exposes aria-checked.
+// A read-only, accessible on/off indicator. Rendered as a disabled <button role="switch"> so the
+// state is exposed non-visually through aria-checked (the governed provider is backend-owned and
+// cannot be flipped from the desktop app — hence never operable, only reported).
 function Switch(
-  { checked, disabled, label, describedBy, onChange }:
-  { checked: boolean; disabled?: boolean; label: string; describedBy?: string; onChange?: (v: boolean) => void },
+  { checked, label, describedBy }:
+  { checked: boolean; label: string; describedBy?: string },
 ) {
   return (
     <button
@@ -92,285 +22,347 @@ function Switch(
       aria-checked={checked}
       aria-label={label}
       aria-describedby={describedBy}
-      aria-disabled={disabled || undefined}
-      disabled={disabled}
-      className={`settings-switch${checked ? ' settings-switch--on' : ''}`}
-      onClick={() => { if (!disabled && onChange) onChange(!checked); }}
+      aria-disabled
+      disabled
+      className="set-sw"
     >
-      <span className="settings-switch-knob" />
+      <span className="set-sw-knob" aria-hidden="true" />
     </button>
   );
 }
 
 export function Settings() {
   const { t, theme, toggleTheme, lang, setLang } = useApp();
-  const pick = (m: Str) => (lang === 'hy' ? m.hy : m.en);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   // Polite, screen-reader-only announcement of a just-applied preference change.
   const [announce, setAnnounce] = useState('');
 
   const selectTheme = (value: Theme) => {
     if (value !== theme) toggleTheme();
-    setAnnounce(`${pick(copy.themeChanged)} ${value === 'dark' ? t('settings.theme.dark') : t('settings.theme.light')}`);
+    setAnnounce(`${L('themeChanged')} ${value === 'dark' ? t('settings.theme.dark') : t('settings.theme.light')}`);
   };
 
   const selectLang = (value: Lang) => {
     setLang(value);
-    setAnnounce(`${pick(copy.languageChanged)} ${languageNames[value]}`);
+    setAnnounce(`${L('languageChanged')} ${languageNames[value]}`);
   };
 
-  // Read-only, HONEST view of the provider the backend actually resolved. The provider is chosen by
-  // the backend environment (fail-closed policy in ai.rs) — there is no client-side toggle that could
-  // route turns through the wall. `desktop.settings store` for user prefs (theme/language) is the
-  // localStorage-backed store owned by app/store.tsx; there is no `set_setting` command for the
-  // provider, so the governed toggle below is rendered read-only rather than fabricated as writable.
+  // Read-only, HONEST view of the runtime the backend actually resolved. The provider/model/governed
+  // state is chosen by the backend environment (fail-closed policy in ai.rs) — there is no client-side
+  // toggle that could re-seat the engine or route turns through the wall. Theme/language are the only
+  // writable settings (localStorage-backed store owned by app/store.tsx via useApp).
   const ai = useAsync(() => desktop.aiStatus(), []);
 
   const data = ai.data;
   const isNone = data?.provider === 'none';
   const isGoverned = !!data?.governed;
-  // §D `blocked`: governed provider enabled but the sidecar never became ready → fail-closed guidance.
-  const sidecarBlocked = !!data && isGoverned && !data.ready;
+  const ready = !!data?.ready;
+  // governed provider enabled but the sidecar never became ready → fail-closed guidance, no result.
+  const sidecarBlocked = !!data && isGoverned && !ready;
+  // engine-down dims the model dock + runtime name exactly like the mockup's offline state.
+  const engineDown = !!data && !isNone && !ready;
+
+  // Runtime power mark, mapped from REAL aiStatus — live only when the backend reports ready,
+  // otherwise idle. Never forced to a green/live state.
+  const markState = ready ? 'live' : 'idle';
+  // Provider socket state class (honest): live when ready, locked when governed-but-not-ready
+  // (fail-closed), idle otherwise.
+  const provSt = ready ? 'live' : isGoverned ? 'locked' : 'idle';
+
+  // Honest bay-state pill computed from the real request lifecycle + status.
+  const bayPill: { tone: string; label: string } = !hasBackend()
+    ? { tone: 'off', label: L('bayUnavailable') }
+    : ai.loading && data === null
+      ? { tone: 'info', label: L('bayChecking') }
+      : ai.error
+        ? { tone: 'warn', label: L('bayError') }
+        : isNone
+          ? { tone: 'warn', label: L('bayUnset') }
+          : ready
+            ? { tone: 'info', label: L('bayRunning') }
+            : { tone: 'warn', label: L('bayOffline') };
 
   return (
-    <>
+    <div className={`v-settings${engineDown ? ' engine-down' : ''}`}>
       <style>{`
-        .settings-section { animation: settings-reveal var(--menq-motion-med) ease-out both; }
-        @keyframes settings-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-        .settings-desc { color: var(--brops-muted); font-size: 12px; max-width: 560px; }
-        .settings-seg { display: inline-flex; gap: var(--menq-space-2); }
-        .settings-switch {
-          position: relative; width: 42px; height: 24px; flex: none; padding: 0; cursor: pointer;
-          border-radius: var(--menq-radius-pill); border: 1px solid var(--brops-border);
-          background: var(--menq-color-hover);
-          transition: background var(--menq-motion-fast), border-color var(--menq-motion-fast);
+        .v-settings .set-sr-only {
+          position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+          overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0;
         }
-        .settings-switch--on { background: var(--brops-accent); border-color: transparent; }
-        .settings-switch:disabled { cursor: not-allowed; opacity: 0.7; }
-        .settings-switch-knob {
-          position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
-          background: var(--brops-surface); box-shadow: var(--menq-shadow-1);
-          transition: transform var(--menq-motion-fast);
+        .v-settings .set-toggle { display:flex; align-items:center; justify-content:space-between; gap:var(--s4); margin-top:var(--s4); }
+        .v-settings .set-toggle > span:first-child { font-size:13px; color:var(--ink); }
+        .v-settings .set-note { color:var(--ink-muted); font-size:12px; line-height:1.55; max-width:64ch; }
+        .v-settings .set-sw {
+          position:relative; width:42px; height:24px; flex:0 0 auto; padding:0; cursor:not-allowed;
+          border-radius:var(--r-pill); border:1px solid rgb(var(--cyan-rgb)/.25); background:rgb(var(--raised-rgb)/.6);
+          transition:background .18s, border-color .18s; opacity:.85;
         }
-        .settings-switch--on .settings-switch-knob { transform: translateX(18px); }
-        .settings-switch:focus-visible { outline: 2px solid var(--menq-color-focus); outline-offset: 2px; }
-        .settings-blocked {
-          border: 1px solid color-mix(in srgb, var(--menq-color-danger) 45%, transparent);
-          background: color-mix(in srgb, var(--menq-color-danger) 10%, transparent);
-          border-radius: var(--menq-radius-md); padding: var(--menq-space-4);
+        .v-settings .set-sw[aria-checked="true"] { background:rgb(var(--success-rgb)/.5); border-color:rgb(var(--success-rgb)/.5); }
+        .v-settings .set-sw-knob {
+          position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
+          background:var(--ink); box-shadow:0 1px 3px rgb(0 0 0/.45); transition:transform .18s;
         }
-        .settings-blocked-title { font-weight: 700; color: var(--menq-color-danger); display: flex; gap: 8px; align-items: center; }
-        .settings-blocked ol { margin: 10px 0 0; padding-left: 20px; color: var(--brops-text); font-size: 13px; }
-        .settings-blocked li { margin: 4px 0; }
-        .settings-sr-only {
-          position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-          overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+        .v-settings .set-sw[aria-checked="true"] .set-sw-knob { transform:translateX(18px); }
+        .v-settings .set-sw:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+        .v-settings .set-lang { display:flex; align-items:center; justify-content:space-between; gap:var(--s4); }
+        .v-settings .set-lang select {
+          height:32px; padding:0 10px; border-radius:var(--r-sm); color:var(--ink);
+          background:rgb(var(--raised-rgb)/.6); border:1px solid rgb(var(--cyan-rgb)/.25); font-size:13px;
         }
-        .settings-about-key { color: var(--brops-muted); }
-        @media (prefers-reduced-motion: reduce) {
-          .settings-section { animation: none; }
-          .settings-switch, .settings-switch-knob { transition: none; }
+        .v-settings .set-lang select:focus-visible { outline:none; border-color:rgb(var(--cyan-rgb)/.5); box-shadow:0 0 0 3px rgb(var(--cyan-rgb)/.15); }
+        .v-settings .set-blocked {
+          margin-top:var(--s4); padding:var(--s4); border-radius:var(--r);
+          border:1px solid rgb(var(--danger-rgb)/.45); background:rgb(var(--danger-rgb)/.10);
         }
+        .v-settings .set-blocked-title { display:flex; gap:8px; align-items:center; font-weight:700; color:var(--danger); }
+        .v-settings .set-blocked ol { margin:10px 0 0; padding-left:20px; color:var(--ink); font-size:13px; }
+        .v-settings .set-blocked li { margin:4px 0; }
+        .v-settings .rt-state-row { display:flex; align-items:center; gap:8px; margin-top:var(--s3); }
+        @media (prefers-reduced-motion: reduce) { .v-settings .set-sw, .v-settings .set-sw-knob { transition:none; } }
       `}</style>
 
-      <PageHeader title={t('nav.settings')} subtitle={t('settings.subtitle')} />
+      <header className="pageHead">
+        <div>
+          <span className="eyebrow">{L('eyebrowControlRoom')}</span>
+          <h1>{t('nav.settings')}</h1>
+          <p className="sub">{t('settings.subtitle')}</p>
+        </div>
+        <div className="right">
+          {data && !isNone && (
+            <span className={`pill ${isGoverned && ready ? 'live' : 'warn'}`}>
+              {isGoverned ? t('settings.governed') : t('settings.ungoverned')}
+            </span>
+          )}
+        </div>
+      </header>
 
       {/* Polite live region: announces an applied preference change without stealing focus. */}
-      <div className="settings-sr-only" role="status" aria-live="polite">{announce}</div>
+      <div className="set-sr-only" role="status" aria-live="polite">{announce}</div>
 
-      {/* -- Appearance / theme + language (real desktop settings store: localStorage via app store) -- */}
-      <section className="settings-section" aria-label={t('settings.appearance')} style={{ animationDelay: '0ms' }}>
-        <Panel title={t('settings.appearance')}>
-          <div className="stack">
-            <span className="settings-desc">{pick(copy.appearanceDesc)}</span>
+      {/* ═══ HERO · ENGINE BAY — the real AI runtime the backend resolved (read-only) ═══ */}
+      <section className="set-bay surface soft lg hud reveal" aria-label={t('settings.aiProvider')}>
+        <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
+        <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
 
-            <div className="list-row">
-              <span id="settings-theme-label">{t('settings.theme')}</span>
-              <div
-                className="settings-seg"
-                id="settings-theme"
-                role="group"
-                aria-labelledby="settings-theme-label"
-                aria-describedby="settings-theme-desc"
-              >
-                <Button variant={theme === 'dark' ? 'primary' : 'default'} onClick={() => selectTheme('dark')}>
-                  {t('settings.theme.dark')}
-                </Button>
-                <Button variant={theme === 'light' ? 'primary' : 'default'} onClick={() => selectTheme('light')}>
-                  {t('settings.theme.light')}
-                </Button>
-              </div>
-            </div>
-            <span id="settings-theme-desc" className="settings-desc">{pick(copy.themeDesc)}</span>
+        <div className="bay-top">
+          <span className="eyebrow">{L('eyebrowRuntimeConsole')}</span>
+          <span className={`pill ${bayPill.tone}`}>{bayPill.label}</span>
+        </div>
 
-            <div className="list-row">
-              <label htmlFor="settings-language">{t('settings.language')}</label>
-              <select
-                id="settings-language"
-                className="select"
-                style={{ width: 'auto' }}
-                value={lang}
-                aria-describedby="settings-language-desc"
-                onChange={(e) => selectLang(e.target.value as Lang)}
-              >
-                {(Object.keys(languageNames) as Lang[]).map((code) => (
-                  <option key={code} value={code}>
-                    {languageNames[code]}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <span id="settings-language-desc" className="settings-desc">{pick(copy.languageDesc)}</span>
-          </div>
-        </Panel>
-      </section>
+        <p className="set-note" style={{ marginBottom: 'var(--s5)' }}>{t('settings.aiProviderHint')}</p>
 
-      {/* -- AI provider (read-only, resolved by backend env) incl. the Phase-1 governed toggle -- */}
-      <section className="settings-section" aria-label={t('settings.aiProvider')} style={{ animationDelay: '60ms' }}>
-        <Panel title={t('settings.aiProvider')}>
-          <div className="stack">
-            <span id="settings-provider-desc" className="settings-desc">{t('settings.aiProviderHint')}</span>
+        {!hasBackend() && <span className="set-note">{t('settings.aiProviderUnavailable')}</span>}
 
-            {/* Phase-1 governed-provider toggle — honestly read-only (backend-owned, fail-closed). */}
-            <div className="list-row">
-              <label id="settings-governed-label">{pick(copy.governedToggleLabel)}</label>
-              <Switch
-                checked={isGoverned}
-                disabled
-                label={pick(copy.governedToggleLabel)}
-                describedBy="settings-governed-desc"
+        {hasBackend() && (
+          <>
+            {ai.loading && data === null && <Skeleton rows={2} />}
+            {ai.error && <ErrorState message={ai.error} onRetry={ai.reload} />}
+            {data && isNone && (
+              <EmptyState
+                glyph="◍"
+                title={t('settings.aiProviderNotConfigured')}
+                hint={L('providerNotConfiguredHint')}
               />
-            </div>
-            <span id="settings-governed-desc" className="settings-desc">{pick(copy.governedToggleDesc)}</span>
+            )}
 
-            {!hasBackend() && <span className="muted">{t('settings.aiProviderUnavailable')}</span>}
-            {hasBackend() && (
-              <>
-                {ai.loading && data === null && <Skeleton rows={2} />}
-                {ai.error && <ErrorState message={ai.error} onRetry={ai.reload} />}
-                {data && isNone && (
-                  <EmptyState
-                    glyph="◍"
-                    title={t('settings.aiProviderNotConfigured')}
-                    hint={pick(copy.providerNotConfiguredHint)}
-                  />
-                )}
-                {data && !isNone && (
-                  <>
-                    <div className="list-row">
-                      <span>
-                        {data.provider}
-                        {data.model && (
-                          <span className="muted" style={{ display: 'block', fontSize: 12, marginTop: 2 }}>
-                            {data.model}
-                          </span>
-                        )}
+            {data && !isNone && (
+              <div className="bay-rig">
+                {/* — dock 1 · PROVIDER (the resolved provider, read-only) — */}
+                <div className="dock-bay db-prov">
+                  <span className="db-cap"><i className="db-i">01</i>{L('capProvider')}</span>
+                  <div className="psock-list">
+                    <div
+                      className={`psock seated pst-${provSt}`}
+                      role="group"
+                      aria-label={`${data.provider} — ${ready ? t('settings.aiProviderReady') : t('settings.aiProviderNotReady')}`}
+                    >
+                      <span className="ps-jack" aria-hidden="true"><i /></span>
+                      <span className="ps-body">
+                        <span className="ps-top">
+                          <b>{data.provider}</b>
+                          <span className="tag">{isGoverned ? t('settings.governed') : t('settings.ungoverned')}</span>
+                        </span>
                       </span>
-                      <span className="row">
-                        <Badge tone={isGoverned ? 'success' : 'danger'}>
+                      <span className="ps-st micro">
+                        {ready ? t('settings.aiProviderReady') : t('settings.aiProviderNotReady')}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Governed-provider toggle — honestly read-only (backend-owned, fail-closed). */}
+                  <div className="set-toggle">
+                    <span id="settings-governed-label">{L('governedToggleLabel')}</span>
+                    <Switch
+                      checked={isGoverned}
+                      label={L('governedToggleLabel')}
+                      describedBy="settings-governed-desc"
+                    />
+                  </div>
+                  <p id="settings-governed-desc" className="set-note db-hint">{L('governedToggleDesc')}</p>
+                </div>
+
+                {/* bus link prov → model (flows only when the engine is live) */}
+                <span className={`bay-link${ready ? ' flowing' : ''}`} data-seg="1" aria-hidden="true"><i className="bl-dot" /></span>
+
+                {/* — dock 2 · MODEL (real resolved model, or honest empty) — */}
+                <div className="dock-bay db-model">
+                  <span className="db-cap"><i className="db-i">02</i>{L('capModel')}</span>
+                  <div className="mchip">
+                    {data.model ? (
+                      <>
+                        <div className="mc-top">
+                          <span className="mc-name mono">{data.model}</span>
+                        </div>
+                        {data.detail && <p className="mc-note micro">{data.detail}</p>}
+                      </>
+                    ) : (
+                      <p className="mc-note micro">{L('noModel')}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* bus link model → runtime */}
+                <span className={`bay-link${ready ? ' flowing' : ''}`} data-seg="2" aria-hidden="true"><i className="bl-dot" /></span>
+
+                {/* — dock 3 · RUNTIME (Bro) — power mark mapped from REAL aiStatus — */}
+                <div className="dock-bay db-run">
+                  <span className="db-cap"><i className="db-i">03</i>{L('capRuntime')}</span>
+                  <div className="rt-core">
+                    <span className="rt-halo" aria-hidden="true" />
+                    <span className="rt-mark"><Mark state={markState} size={30} /></span>
+                    <span className="rt-name micro">
+                      {ready ? data.model || data.provider : L('noModel')}
+                    </span>
+                  </div>
+
+                  {/* Governance readout derived from the real ai_status (honest, badge-free reasons). */}
+                  {sidecarBlocked ? (
+                    <div className="set-blocked" role="group" aria-label={L('blockedTitle')}>
+                      <div className="set-blocked-title"><span aria-hidden="true">⛔</span> {L('blockedTitle')}</div>
+                      {data.detail && <p className="set-note" style={{ marginTop: 6 }}>{data.detail}</p>}
+                      <p className="set-note" style={{ marginTop: 6 }}>{L('blockedGuideIntro')}</p>
+                      <ol>
+                        <li>{L('blockedStep1')}</li>
+                        <li>{L('blockedStep2')}</li>
+                        <li>{L('blockedStep3')}</li>
+                      </ol>
+                      <div style={{ marginTop: 12 }}>
+                        <button type="button" className="chip" onClick={ai.reload}>{L('recheck')}</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="rt-state-row">
+                        <span className={`pill ${isGoverned && ready ? 'live' : 'warn'}`}>
                           {isGoverned ? t('settings.governed') : t('settings.ungoverned')}
-                        </Badge>
-                        <Badge tone={data.ready ? 'success' : 'warning'}>
-                          {data.ready ? t('settings.aiProviderReady') : t('settings.aiProviderNotReady')}
-                        </Badge>
-                      </span>
-                    </div>
-                    {data.detail && (
-                      <span className="settings-desc">{data.detail}</span>
-                    )}
-                  </>
-                )}
-              </>
+                        </span>
+                      </div>
+                      <p className="set-note" style={{ marginTop: 8 }}>
+                        {isGoverned && ready ? L('sidecarHealthyDesc') : L('sidecarInactiveDesc')}
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
             )}
-          </div>
-        </Panel>
+          </>
+        )}
+
+        <div className="bay-foot">
+          <span className="micro bay-note">{L('runtimeDesc')}</span>
+        </div>
       </section>
 
-      {/* -- Governance sidecar config — derives its state from the real ai_status; renders §D blocked -- */}
-      <section className="settings-section" aria-label={pick(copy.sidecar)} style={{ animationDelay: '120ms' }}>
-        <Panel title={pick(copy.sidecar)}>
-          <div className="stack">
-            <span className="settings-desc">{pick(copy.sidecarDesc)}</span>
+      {/* ═══ QUIET TIER · control panels ═══ */}
+      <div className="set-grid">
 
-            {!hasBackend() && <span className="muted">{t('settings.aiProviderUnavailable')}</span>}
-            {hasBackend() && (
-              <>
-                {ai.loading && data === null && <Skeleton rows={2} />}
-                {ai.error && <ErrorState message={ai.error} onRetry={ai.reload} />}
-
-                {data && isNone && (
-                  <EmptyState
-                    glyph="◍"
-                    title={t('settings.aiProviderNotConfigured')}
-                    hint={pick(copy.providerNotConfiguredHint)}
-                  />
-                )}
-
-                {/* blocked: governed but sidecar not ready → fail-closed guidance, no result. */}
-                {sidecarBlocked && (
-                  <div className="settings-blocked" role="group" aria-label={pick(copy.blockedTitle)}>
-                    <div className="settings-blocked-title">⛔ {pick(copy.blockedTitle)}</div>
-                    {data?.detail && (
-                      <div className="settings-desc" style={{ marginTop: 6 }}>{data.detail}</div>
-                    )}
-                    <div className="settings-desc" style={{ marginTop: 6 }}>{pick(copy.blockedGuideIntro)}</div>
-                    <ol>
-                      <li>{pick(copy.blockedStep1)}</li>
-                      <li>{pick(copy.blockedStep2)}</li>
-                      <li>{pick(copy.blockedStep3)}</li>
-                    </ol>
-                    <div style={{ marginTop: 12 }}>
-                      <Button small onClick={ai.reload}>{pick(copy.recheck)}</Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* governed + ready → sidecar reachable */}
-                {data && isGoverned && data.ready && (
-                  <div className="list-row">
-                    <span>{pick(copy.sidecarHealthy)}</span>
-                    <Badge tone="success">{t('settings.aiProviderReady')}</Badge>
-                  </div>
-                )}
-                {data && isGoverned && data.ready && (
-                  <span className="settings-desc">{pick(copy.sidecarHealthyDesc)}</span>
-                )}
-
-                {/* ungoverned provider → no sidecar engaged (honest, not an error) */}
-                {data && !isNone && !isGoverned && (
-                  <>
-                    <div className="list-row">
-                      <span>{pick(copy.sidecarInactive)}</span>
-                      <Badge tone="warning">{t('settings.ungoverned')}</Badge>
-                    </div>
-                    <span className="settings-desc">{pick(copy.sidecarInactiveDesc)}</span>
-                  </>
-                )}
-              </>
-            )}
+        {/* — APPEARANCE · theme (real toggle) + language (real setLang) — */}
+        <section className="surface soft set-panel set-theme reveal" aria-label={t('settings.appearance')}>
+          <div className="sec-head">
+            <h2>{t('settings.appearance')}</h2>
+            <span className="note">{L('appearanceDesc')}</span>
           </div>
-        </Panel>
-      </section>
 
-      {/* -- About -- */}
-      <section className="settings-section" aria-label={pick(copy.about)} style={{ animationDelay: '180ms' }}>
-        <Panel title={pick(copy.about)}>
-          <div className="stack">
-            <div className="list-row">
-              <span className="settings-about-key">{pick(copy.aboutProductLabel)}</span>
-              <span>MENQ OS</span>
-            </div>
-            <div className="list-row">
-              <span className="settings-about-key">{pick(copy.aboutVersionLabel)}</span>
-              <span>v0.9</span>
-            </div>
-            <div className="list-row">
-              <span className="settings-about-key">{pick(copy.aboutGovernanceLabel)}</span>
-              <span>{pick(copy.aboutGovernanceValue)}</span>
-            </div>
+          <div
+            className="theme-tiles"
+            role="group"
+            aria-labelledby="settings-theme-label"
+            aria-describedby="settings-theme-desc"
+          >
+            <span id="settings-theme-label" className="set-sr-only">{t('settings.theme')}</span>
+            <button
+              type="button"
+              className={`ttile tt-dark${theme === 'dark' ? ' on' : ''}`}
+              aria-pressed={theme === 'dark'}
+              aria-label={t('settings.theme.dark')}
+              onClick={() => selectTheme('dark')}
+            >
+              <span className="tt-prev" aria-hidden="true">
+                <span className="tt-bar" /><span className="tt-line" /><span className="tt-line s" /><span className="tt-glow" />
+              </span>
+              <span className="tt-meta"><b>{t('settings.theme.dark')}</b><i className="micro">DARK</i></span>
+              <span className="tt-check" aria-hidden="true">✓</span>
+            </button>
+            <button
+              type="button"
+              className={`ttile tt-light${theme === 'light' ? ' on' : ''}`}
+              aria-pressed={theme === 'light'}
+              aria-label={t('settings.theme.light')}
+              onClick={() => selectTheme('light')}
+            >
+              <span className="tt-prev" aria-hidden="true">
+                <span className="tt-bar" /><span className="tt-line" /><span className="tt-line s" /><span className="tt-glow" />
+              </span>
+              <span className="tt-meta"><b>{t('settings.theme.light')}</b><i className="micro">LIGHT</i></span>
+              <span className="tt-check" aria-hidden="true">✓</span>
+            </button>
           </div>
-        </Panel>
-      </section>
-    </>
+          <span id="settings-theme-desc" className="set-note">{L('themeDesc')}</span>
+
+          <div className="set-lang">
+            <label htmlFor="settings-language">{t('settings.language')}</label>
+            <select
+              id="settings-language"
+              value={lang}
+              aria-describedby="settings-language-desc"
+              onChange={(e) => selectLang(e.target.value as Lang)}
+            >
+              {(Object.keys(languageNames) as Lang[]).map((code) => (
+                <option key={code} value={code}>{languageNames[code]}</option>
+              ))}
+            </select>
+          </div>
+          <span id="settings-language-desc" className="set-note">{L('languageDesc')}</span>
+
+          {/* Fixed brand accent — decorative, not a user control. */}
+          <div className="accent-rail" aria-hidden="true">
+            <span className="micro">{L('accentLabel')}</span>
+            <span className="acc-dot ad-cyan" /><span className="acc-dot ad-azure" /><span className="acc-dot ad-mint" />
+            <span className="micro acc-note">{L('accentNote')}</span>
+          </div>
+        </section>
+
+        {/* — SYSTEM IDENTITY · real About values only — */}
+        <section className="surface soft set-panel set-sys reveal" aria-label={t('nav.settings')}>
+          <div className="sec-head">
+            <h2>{L('systemHeading')}</h2>
+            <span className={`pill ${data?.ready ? 'live' : 'off'}`}>
+              {data?.ready ? t('settings.aiProviderReady') : t('settings.aiProviderNotReady')}
+            </span>
+          </div>
+          <div className="sys-id">
+            <span className="seal" aria-hidden="true">◈</span>
+            <div className="sys-idt"><b>MENQ OS</b><span className="micro mono">v0.9 · MenQ Studio</span></div>
+          </div>
+          <div className="sys-rows">
+            <div className="sys-row"><span className="sys-k">{L('aboutProductLabel')}</span><b>MENQ OS</b></div>
+            <div className="sys-row"><span className="sys-k">{L('aboutVersionLabel')}</span><b className="mono">v0.9</b></div>
+            <div className="sys-row"><span className="sys-k">{L('aboutGovernanceLabel')}</span><b>{L('aboutGovernanceValue')}</b></div>
+          </div>
+        </section>
+
+      </div>
+    </div>
   );
 }

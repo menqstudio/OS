@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { useApp } from '../app/store';
+import type { RouteId } from '../app/nav';
 import {
-  PageHeader, Panel, Button, Async, EmptyState, Avatar, Modal, FormRow, Input, Select, Skeleton,
+  PageHeader, Rail, Button, Async, EmptyState, Modal, FormRow, Input, Select, Skeleton,
   ErrorState, ConfirmDialog, Badge,
 } from '../components/ui';
-import { desktop } from '../services/desktop';
+import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Markdown } from '../components/markdown';
-import type { Conversation, Message } from '../domain/entities';
+import { Mark } from '../components/Ambient';
+import type { Conversation, Message, SearchResult } from '../domain/entities';
 import type { Tone } from '../domain/enums';
+import { STR } from './Conversations.strings';
 
 /** Map a message's server-derived receipt outcome to its trust badge, or `null` for
  *  no badge. `development_untrusted` → amber dev badge; `trusted_verified` → green
@@ -16,8 +19,10 @@ import type { Tone } from '../domain/enums';
  *  produces no message, so it never reaches here. Pure — unit-tested. */
 export function receiptBadge(
   receipt: Message['receipt'],
-): { tone: Tone; key: 'chat.receiptVerified' | 'chat.receiptDev' } | null {
+): { tone: Tone; key: 'chat.receiptVerified' | 'chat.receiptDev' | 'chat.receiptDemo' } | null {
   if (receipt === 'trusted_verified') return { tone: 'success', key: 'chat.receiptVerified' };
+  // Real crypto verification, but DEMONSTRATION custody — a distinct badge, never the production green.
+  if (receipt === 'demonstration_verified') return { tone: 'info', key: 'chat.receiptDemo' };
   if (receipt === 'development_untrusted') return { tone: 'warning', key: 'chat.receiptDev' };
   return null;
 }
@@ -36,27 +41,148 @@ function activeMention(text: string, caret: number): { start: number; query: str
   return { start: i, query: text.slice(i + 1, caret) };
 }
 
+/** Per-view CSS. The chat canvas + context rail are dressed by the global aios
+ *  theme (`.v-chat …`); only the app-plumbing bits the mockup has no design for
+ *  (the conversation-list column, reply-as control, honest error strips and the
+ *  honest rate readout) get their tweaks here, all scoped under `.v-chat`. */
+const VIEW_CSS = `
+.v-chat .handoff-chain{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:8px 0 0;padding:0;list-style:none}
+.v-chat .handoff-chain .ho-node{display:inline-flex;align-items:center;min-width:0}
+.v-chat .handoff-chain .ho-node:not(:first-child)::before{content:'\\2192';color:var(--ink-muted);margin-right:8px;font-family:var(--f-mono)}
+.v-chat .handoff-chain .ho-who{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px}
+.v-chat .recall-link{display:flex;align-items:baseline;gap:0;width:100%;text-align:left;background:none;border:0;padding:0;margin:0;
+  color:inherit;font:inherit;cursor:pointer;min-width:0}
+.v-chat .recall-link:hover .rc-t{color:var(--ink);text-decoration:underline}
+.v-chat .recall-link:focus-visible{outline:2px solid rgb(var(--cyan-rgb)/.6);outline-offset:2px;border-radius:6px}
+.v-chat .recall-link .rc-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.v-chat .recall-link .rc-sub{color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.v-chat .chat-workspace{display:grid;grid-template-columns:minmax(198px,238px) minmax(0,1fr);gap:18px;align-items:start}
+.v-chat .chat-main{min-width:0}
+.v-chat .th-actions{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+.v-chat .th-actions .select{width:auto;padding:4px 8px}
+.v-chat .t-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.v-chat .turn.me .t-meta{flex-direction:row-reverse}
+.v-chat .t-who{font-family:var(--f-mono);font-size:11px;letter-spacing:.05em;color:var(--ink-muted)}
+.v-chat .chat-alert{margin:0 18px 8px;font-size:12px;line-height:1.5;color:var(--warning);display:flex;gap:6px;align-items:flex-start}
+.v-chat .attn-mark{display:flex;justify-content:center;margin:4px 0 14px}
+.v-chat .rate-stat{display:flex;align-items:baseline;gap:9px;margin-top:6px}
+.v-chat .rate-stat b{font-size:27px;font-family:var(--f-mono);color:var(--ink)}
+.v-chat .rate-note{margin:9px 0 0;font-size:11.5px;color:var(--ink-muted);line-height:1.5}
+@media (max-width:1100px){.v-chat .chat-workspace{grid-template-columns:1fr}}
+`;
+
+/** Monogram avatar in the aios `.sigil` idiom, with a live-state dot. Purely
+ *  decorative (identity is carried by the adjacent author text), so aria-hidden. */
+function Sigil({ name, state = 'idle' }: { name: string; state?: string }) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const mono = parts.length === 0 ? '·'
+    : parts.length === 1 ? parts[0].slice(0, 2).toUpperCase()
+    : (parts[0][0] + parts[1][0]).toUpperCase();
+  return (
+    <span className={`sigil st-${state}`} aria-hidden="true">
+      <span className="st-dot" />{mono}
+    </span>
+  );
+}
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// One-click copy of a message body, with a brief ✓ confirmation. Self-contained
+// (no toast dependency) — reads the clipboard label from the caller.
+function CopyButton({ text, label, doneLabel }: { text: string; label: string; doneLabel: string }) {
+  const [done, setDone] = useState(false);
+  const timer = useRef<number | null>(null);
+  // Clear the pending reset timer on unmount (switching conversation remounts the thread) so
+  // it never fires setState on an unmounted component.
+  useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
+  const copy = () => {
+    void navigator.clipboard?.writeText(text).then(
+      () => {
+        setDone(true);
+        if (timer.current !== null) window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => setDone(false), 1200);
+      },
+      () => {},
+    );
+  };
+  return (
+    <button
+      type="button"
+      className={`t-copy${done ? ' done' : ''}`}
+      aria-label={done ? doneLabel : label}
+      title={done ? doneLabel : label}
+      onClick={copy}
+    >
+      <span aria-hidden="true">{done ? '✓' : '⧉'}</span>
+    </button>
+  );
+}
+
 function MessageThread({ conversation, onActivity }: { conversation: Conversation; onActivity: () => void }) {
-  const { t } = useApp();
+  const { t, lang, openEntity } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
   const ai = useAsync(() => desktop.aiStatus(), []);
   const agents = useAsync(() => desktop.listAgents(), []);
+  // The explicit room roster (0017). When set, it drives who answers a group message.
+  const participants = useAsync(() => desktop.listConversationParticipants(conversation.id), [conversation.id]);
+
+  // Messages posted during this mounted session, appended optimistically on top
+  // of the loaded history so the reply appears with no reload flash. Reset when
+  // the component remounts per conversation (keyed on conversation.id). Declared
+  // before the recall query below so recall reflects turns sent this session.
+  const [extra, setExtra] = useState<Message[]>([]);
+
+  // Recall (Phase 5 · chat context): retrieve memory/knowledge/etc. relevant to the latest
+  // user turn and surface it in the context rail — a REAL search_all retrieval, not a message
+  // counter. Governance-free (reads local stores), so it works regardless of the fail-closed
+  // trust gate. Scans the persisted history PLUS the session-appended messages (`extra`), so a
+  // question asked in the current session updates recall immediately — not only after a remount.
+  const recallQuery = useMemo(() => {
+    const msgs = [...(s.data ?? []), ...extra];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role !== 'agent') return (msgs[i].body ?? '').trim().slice(0, 120);
+    }
+    return '';
+  }, [s.data, extra]);
+  const recall = useAsync(
+    () => (recallQuery.length >= 3 ? desktop.searchAll(recallQuery) : Promise.resolve([] as SearchResult[])),
+    [recallQuery],
+  );
+  // Surface only cross-store recall — never the chat itself — top few.
+  const recalled = (recall.data ?? [])
+    .filter((r) => r.route !== 'chat' && r.route !== 'groupChat' && r.kind !== 'conversation' && r.kind !== 'message')
+    .slice(0, 4);
   const isGroup = conversation.kind === 'group';
-  const agentNames = (agents.data ?? []).map((a) => a.displayName);
+  const agentList = agents.data ?? [];
+  const agentNames = agentList.map((a) => a.displayName);
+  const roster = (participants.data ?? []).filter((n) => agentNames.includes(n));
   const [selectedAgent, setSelectedAgent] = useState('Bro');
   const [streamingAuthor, setStreamingAuthor] = useState('Bro');
   const [draft, setDraft] = useState('');
-  // Messages posted during this mounted session, appended optimistically on top
-  // of the loaded history so the reply appears with no reload flash. Reset when
-  // the component remounts per conversation (keyed on conversation.id).
-  const [extra, setExtra] = useState<Message[]>([]);
+  // Demonstration-verified reply (opt-in): runs the reply through the in-process governed chain and
+  // surfaces it with a demonstration-custody badge. Fail-closed (honest error) when not configured.
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoErr, setDemoErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [replyError, setReplyError] = useState<string | null>(null);
+  // Stop button: a ref the responder loop checks so it can break out immediately.
+  const cancelledRef = useRef(false);
+  // Messages sent while a turn is running are queued and fire automatically when it
+  // finishes — the user never waits to keep talking. A ref (not state) so the drain in
+  // send's `finally` reads the latest queue without a stale closure.
+  const queueRef = useRef<string[]>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
   // @mention autocomplete over agent display names.
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const threadRef = useRef<HTMLDivElement | null>(null);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const mentionMatches = mention
@@ -94,6 +220,19 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     });
   };
 
+  // The composer "@" affordance: drop an `@` at the caret and open the picker,
+  // reusing the exact same mention pipeline typing `@` triggers.
+  const onAtClick = () => {
+    const base = draft && !/\s$/.test(draft) ? `${draft} ` : draft;
+    const next = `${base}@`;
+    setDraft(next);
+    syncMention(next, next.length);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) { el.focus(); el.setSelectionRange(next.length, next.length); }
+    });
+  };
+
   const onDraftKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (!showMentions) return;
     if (e.key === 'ArrowDown') {
@@ -114,45 +253,76 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
     }
   };
 
-  const send = async () => {
-    const body = draft.trim();
-    if (!body || busy || thinking) return;
+  const send = async (override?: string) => {
+    const body = (override ?? draft).trim();
+    if (!body) return;
+    // A turn is already running: don't block the user — queue this message and it
+    // fires automatically when the current turn finishes (see the drain in `finally`).
+    if (!override && (busy || thinking)) {
+      queueRef.current.push(body);
+      setQueuedCount(queueRef.current.length);
+      setDraft('');
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
+    cancelledRef.current = false;
     setBusy(true);
     setError(null);
     setReplyError(null);
     try {
-      const userMsg = await desktop.postMessage({ conversationId: conversation.id, role: 'user', author: t('chat.you'), body });
+      const userMsg = await desktop.postMessage({ conversationId: conversation.id, author: t('chat.you'), body });
       setExtra((prev) => [...prev, userMsg]);
-      setDraft('');
+      if (!override) setDraft('');
+      // Focus management on send: return the caret to the composer for the next turn.
+      requestAnimationFrame(() => inputRef.current?.focus());
       onActivity();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
+      // A failed post must not strand queued follow-ups — drain the next one so the queue
+      // keeps moving (each drained send surfaces its own error if it also fails).
+      if (!cancelledRef.current && queueRef.current.length > 0) {
+        const next = queueRef.current.shift()!;
+        setQueuedCount(queueRef.current.length);
+        void send(next);
+      }
       return;
     }
     setBusy(false);
     // Stream real agent replies. In a direct chat the selected agent answers;
     // in a group room the first couple of specialists answer in turn. A provider
-    // failure is shown honestly and never loses the user's message.
+    // failure is shown honestly and never loses the user's message. The Stop button
+    // sets cancelledRef so this loop breaks and the backend turn is cancelled.
     setThinking(true);
     setStreamingText('');
     try {
-      const responders = isGroup
-        ? (agentNames.slice(0, 2).length ? agentNames.slice(0, 2) : ['Bro'])
-        : [selectedAgent];
+      // #3 mention routing: if the message @mentions specific agents, THEY answer (in the
+      // order named); otherwise a group room falls back to the first couple of specialists
+      // and a direct chat to the selected agent.
+      const mentioned = agentNames.filter((n) =>
+        new RegExp(`@${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\b|\\s|$)`, 'i').test(body),
+      );
+      const responders = mentioned.length
+        ? mentioned
+        : isGroup
+          ? (roster.length ? roster : agentNames.slice(0, 2).length ? agentNames.slice(0, 2) : ['Bro'])
+          : [selectedAgent];
       for (const who of responders) {
+        if (cancelledRef.current) break;
         setStreamingAuthor(who);
         setStreamingText('');
-        let failed = false;
         await desktop.streamReply(conversation.id, (ev) => {
           if (ev.type === 'delta') setStreamingText((prev) => prev + ev.text);
           else if (ev.type === 'done') setExtra((prev) => [...prev, ev.message]);
-          else if (ev.type === 'error') { setReplyError(ev.message); failed = true; }
+          else if (ev.type === 'error') setReplyError(ev.message);
           // Governed turn Blocked by desktop receipt verification: a transient
           // turn-level notice, NO persisted agent message (Wave 3a Blocks every turn).
-          else if (ev.type === 'blocked') { setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`); failed = true; }
+          else if (ev.type === 'blocked') setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`);
         }, who);
-        if (failed) break; // don't replay the same provider error for every agent
+        // #4 per-agent isolation: one agent's error/block no longer aborts the whole room —
+        // its error is surfaced inline and the remaining agents still get their turn. Only a
+        // user Stop breaks the chain.
+        if (cancelledRef.current) break;
       }
     } catch (e: unknown) {
       setReplyError(e instanceof Error ? e.message : String(e));
@@ -160,83 +330,196 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
       setThinking(false);
       setStreamingText('');
       onActivity();
+      // Fire the next queued message, if any and the user didn't Stop.
+      if (!cancelledRef.current && queueRef.current.length > 0) {
+        const next = queueRef.current.shift()!;
+        setQueuedCount(queueRef.current.length);
+        void send(next);
+      }
+    }
+  };
+
+  // Stop the in-flight turn: break the responder loop, cancel the backend stream
+  // (keeping whatever streamed so far), and drop any queued follow-ups.
+  const stopTurn = () => {
+    cancelledRef.current = true;
+    queueRef.current = [];
+    setQueuedCount(0);
+    // Unstick the UI immediately — even if the backend is mid-stall and takes a beat to
+    // actually kill the child, the composer must return to the user at once. A late done/
+    // return still runs the streaming finally harmlessly (thinking is already false).
+    setThinking(false);
+    setStreamingText('');
+    void desktop.cancelReply(conversation.id).catch(() => {});
+  };
+
+  // Switching or closing this thread mid-reply must not leave the backend generating a response the
+  // user will never see (wasted model tokens/compute): on unmount, run the same teardown as the Stop
+  // button — break the responder loop and cancel the in-flight turn. MessageThread is keyed by
+  // conversation id, so selecting another conversation unmounts this instance and fires this cleanup.
+  useEffect(() => () => {
+    cancelledRef.current = true;
+    void desktop.cancelReply(conversation.id).catch(() => {});
+  }, [conversation.id]);
+
+  // Run one DEMONSTRATION-verified reply: the reply is produced inside the in-process governed chain and
+  // verified; on success it appears with the demonstration-custody badge. Honest fail-closed error otherwise.
+  const runDemoVerify = async () => {
+    setDemoErr(null);
+    setDemoBusy(true);
+    try {
+      await desktop.demonstrationVerifiedReply(conversation.id, isGroup ? undefined : selectedAgent);
+      s.reload();
+    } catch (e) {
+      setDemoErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDemoBusy(false);
     }
   };
 
   const history = s.data ?? [];
   const allMessages = [...history, ...extra];
 
+  // Handoff chain (Phase 7 · group rooms): the ordered sequence of DISTINCT consecutive
+  // speakers across the room's turns — a real, transcript-derived readout of who handed off
+  // to whom, with handoffs = speaker changes. Governance-free (derived from the persisted
+  // authors), so it works while the trust gate is fail-closed. Never fabricated.
+  const handoffChain: string[] = [];
+  if (isGroup) {
+    for (const m of allMessages) {
+      const who = (m.author ?? '').trim();
+      if (who && handoffChain[handoffChain.length - 1] !== who) handoffChain.push(who);
+    }
+  }
+  const handoffCount = Math.max(0, handoffChain.length - 1);
+
+  // Keep the newest turn in view as history loads and the reply streams in.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [allMessages.length, streamingText, thinking]);
+
+  // Assistant power-mark state: thinking while a reply streams, live when a
+  // backend is present, idle when there is none.
+  const markState = thinking ? 'thinking' : (hasBackend() ? 'live' : 'idle');
+  const liveWord = thinking ? L('typing') : L('ready');
+  const attnPill = thinking ? 'live' : (ai.data && !ai.data.ready ? 'warn' : 'info');
+  const attnWord = thinking ? L('thinkingCap') : (ai.data && !ai.data.ready ? L('unavailable') : L('readyCap'));
+  // The actual room: for a group with a set roster, only its members; otherwise all agents.
+  const roomAgents = isGroup && roster.length ? agentList.filter((a) => roster.includes(a.displayName)) : agentList;
+  const participantCount = roomAgents.length + (roster.includes('Bro') ? 0 : 1); // members (+ Bro)
+
   return (
-    <Panel
-      title={conversation.title}
-      actions={!isGroup && agentNames.length > 0 ? (
-        <Select
-          value={selectedAgent}
-          onChange={(e) => setSelectedAgent(e.target.value)}
-          style={{ width: 'auto', padding: '4px 8px' }}
-          title={t('chat.replyAs')}
+    <div className="chat-shell">
+
+      {/* ── MAIN · the conversation stream ─────────────────────────────────── */}
+      <section className="chat-canvas surface soft lg" aria-label={conversation.title}>
+
+        <header className="thread-head">
+          <div className="th-topic">
+            <span className="eyebrow">{isGroup ? L('groupChatEyebrow') : L('liveChatEyebrow')}</span>
+            <h2>{conversation.title}</h2>
+          </div>
+          <div className="th-actions">
+            {!isGroup && agentNames.length > 0 && (
+              <Select
+                value={selectedAgent}
+                onChange={(e) => setSelectedAgent(e.target.value)}
+                title={t('chat.replyAs')}
+                aria-label={t('chat.replyAs')}
+              >
+                <option value="Bro">Bro</option>
+                {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              </Select>
+            )}
+            <Button
+              variant="ghost"
+              small
+              onClick={runDemoVerify}
+              disabled={demoBusy || thinking}
+              title={t('chat.demoVerifyTitle')}
+            >
+              {demoBusy ? t('chat.demoVerifying') : t('chat.demoVerify')}
+            </Button>
+            <span className={`th-live${thinking ? '' : ' idle'}`}>
+              <span className="th-live-dot" aria-hidden="true" />
+              <span className="micro">{liveWord}</span>
+            </span>
+          </div>
+        </header>
+
+        {/* the message log — a labelled polite live region */}
+        <div
+          className={`thread${thinking ? ' streaming' : ''}`}
+          id="thread"
+          ref={threadRef}
+          role="log"
+          aria-label={t('chat.conversations')}
+          aria-live="polite"
+          aria-busy={thinking}
         >
-          <option value="Bro">Bro</option>
-          {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
-        </Select>
-      ) : undefined}
-    >
-      <div className="chat-thread">
-        {s.loading && s.data === null && <Skeleton rows={4} />}
-        {s.error && <ErrorState message={s.error} onRetry={s.reload} />}
-        {s.data !== null && !s.error && allMessages.length === 0 && !thinking && (
-          <EmptyState title={t('chat.noMessages')} hint={t('chat.noMessagesHint')} />
-        )}
-        {allMessages.length > 0 && (
-          <div className="stack">
-            {allMessages.map((m) => {
-              const badge = m.role === 'agent' ? receiptBadge(m.receipt) : null;
-              return (
-                <div key={m.id} className={`chat-msg chat-msg--${m.role === 'user' ? 'mine' : 'other'}`}>
-                  <Avatar name={m.author} />
-                  <div className="chat-bubble">
-                    <div className="chat-author">
-                      {m.author}
-                      {badge && <Badge tone={badge.tone}>{t(badge.key)}</Badge>}
+          {s.loading && s.data === null && <Skeleton rows={4} />}
+          {s.error && <ErrorState message={s.error} onRetry={s.reload} />}
+          {s.data !== null && !s.error && allMessages.length === 0 && !thinking && (
+            <EmptyState title={t('chat.noMessages')} hint={t('chat.noMessagesHint')} />
+          )}
+
+          {allMessages.map((m) => {
+            const mine = m.role === 'user';
+            const badge = m.role === 'agent' ? receiptBadge(m.receipt) : null;
+            const time = fmtTime(m.createdAt);
+            return (
+              <article key={m.id} className={`turn ${mine ? 'me' : 'bro'}`}>
+                <span className="t-av"><Sigil name={m.author} /></span>
+                <div className="t-body">
+                  <div className={`bubble ${mine ? 'me' : 'bro'}`}>
+                    <div className="btext">
+                      {mine ? m.body : <Markdown text={m.body} />}
                     </div>
-                    {m.role === 'user'
-                      ? <div className="md-plain">{m.body}</div>
-                      : <Markdown text={m.body} />}
+                  </div>
+                  <div className="t-meta">
+                    <span className="t-who">{m.author}</span>
+                    {badge && <Badge tone={badge.tone}>{t(badge.key)}</Badge>}
+                    {time && <span className="t-time mono">{time}</span>}
+                    <CopyButton text={m.body} label={L('copy')} doneLabel={L('copied')} />
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-        {thinking && (
-          <div className="chat-msg chat-msg--other">
-            <Avatar name={streamingAuthor} />
-            <div className="chat-bubble">
-              <div className="chat-author">{streamingAuthor}</div>
-              {streamingText
-                ? <span className="chat-stream"><Markdown text={streamingText} /><span className="chat-cursor" /></span>
-                : <span className="chat-typing"><span></span><span></span><span></span></span>}
-            </div>
-          </div>
-        )}
-      </div>
-      {error && <div className="form-error">{error}</div>}
-      {replyError && (
-        <div className="chat-hint" style={{ marginBottom: 8 }}>⚠ {t('chat.replyFailed')}: {replyError}</div>
-      )}
-      {ai.data && !ai.data.ready && !replyError && (
-        <div className="chat-hint" style={{ marginBottom: 8 }}>⚠ {ai.data.detail}</div>
-      )}
-      <form
-        className="chat-composer"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        <div className="chat-composer-field">
+              </article>
+            );
+          })}
+
+          {thinking && (
+            <article className="turn bro now">
+              <span className="tbeam" aria-hidden="true"><span className="tbeam-run" /></span>
+              <span className="t-av"><Sigil name={streamingAuthor} state="thinking" /></span>
+              <div className="t-body">
+                <div className="bubble bro">
+                  <div className="btext">
+                    {streamingText
+                      ? <><Markdown text={streamingText} /><span className="caret" aria-hidden="true" /></>
+                      : <span className="typing" aria-hidden="true"><i /><i /><i /></span>}
+                  </div>
+                </div>
+                <div className="t-meta"><span className="t-who">{streamingAuthor}</span></div>
+              </div>
+            </article>
+          )}
+        </div>
+
+        {/* honest error / status strips — never lose the user's posted message */}
+        {error && <p className="chat-alert" role="alert">⚠ {error}</p>}
+        {replyError && <p className="chat-alert" role="status">⚠ {t('chat.replyFailed')}: {replyError}</p>}
+        {demoErr && <p className="chat-alert" role="status">⚠ {t('chat.demoVerifyFailed')}: {demoErr}</p>}
+        {ai.data && !ai.data.ready && !replyError && <p className="chat-alert" role="status">⚠ {ai.data.detail}</p>}
+
+        {/* composer — @mention picker over REAL agents + keyboard submit */}
+        <form
+          className="composer"
+          autoComplete="off"
+          onSubmit={(e) => { e.preventDefault(); send(); }}
+        >
           {showMentions && (
-            <ul className="mention-popup" role="listbox" aria-label={t('chat.composer')}>
+            <ul className="mention-popup mention-pop open" role="listbox" aria-label={t('chat.composer')}>
               {mentionMatches.map((n, idx) => (
                 <li key={n} role="option" aria-selected={idx === mentionActive}>
                   <button
@@ -245,34 +528,178 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
                     // onMouseDown (not onClick) so the input keeps focus for caret restore.
                     onMouseDown={(e) => { e.preventDefault(); insertMention(n); }}
                   >
-                    <Avatar name={n} />
+                    <Sigil name={n} />
                     <span>{n}</span>
                   </button>
                 </li>
               ))}
             </ul>
           )}
-          <Input
-            ref={inputRef}
-            value={draft}
-            onChange={onDraftChange}
-            onKeyDown={onDraftKeyDown}
-            onBlur={() => setMention(null)}
-            placeholder={t('chat.composer')}
-            autoFocus
-          />
-        </div>
-        <Button type="submit" variant="primary" disabled={busy || thinking}>{t('action.send')}</Button>
-      </form>
-    </Panel>
+          {queuedCount > 0 && (
+            <div className="comp-queued" aria-live="polite">
+              {queuedCount === 1 ? L('queuedOne') : `${queuedCount} ${L('queuedMany')}`}
+            </div>
+          )}
+          <div className="comp-bar">
+            <button
+              type="button"
+              className={`comp-at${showMentions ? ' on' : ''}`}
+              aria-label={t('chat.replyAs')}
+              aria-expanded={showMentions}
+              onClick={onAtClick}
+            >@</button>
+            <Input
+              ref={inputRef}
+              className="comp-input"
+              value={draft}
+              onChange={onDraftChange}
+              onKeyDown={onDraftKeyDown}
+              onBlur={() => setMention(null)}
+              placeholder={t('chat.composer')}
+              aria-label={t('chat.composer')}
+              autoFocus
+            />
+            {thinking ? (
+              // While a turn streams, the primary action is Stop; Enter still queues a
+              // follow-up so the user can keep talking without waiting.
+              <button
+                type="button"
+                className="comp-send comp-stop"
+                aria-label={L('stop')}
+                title={L('stop')}
+                onClick={stopTurn}
+              >
+                <span className="cs-glyph" aria-hidden="true">■</span>
+              </button>
+            ) : (
+              <button type="submit" className="comp-send" aria-label={t('action.send')} disabled={busy}>
+                <span className="cs-glyph" aria-hidden="true">➤</span>
+              </button>
+            )}
+          </div>
+        </form>
+
+      </section>
+
+      {/* ── RAIL · live context, all derived from real data ────────────────── */}
+      <aside className="ctx-rail">
+
+        {/* Attention field — the assistant's live state, honestly sourced from
+            aiStatus + the streaming flag (no fabricated confidence telemetry). */}
+        <section className="surface cut hud ctx-attn" aria-label={L('attnFieldAria')}>
+          <i className="bracket tl" /><i className="bracket tr" />
+          <i className="bracket bl" /><i className="bracket br" />
+          <div className="ctx-head">
+            <span className="eyebrow">{L('attnFieldEyebrow')}</span>
+            <span className={`pill ${attnPill}`}>{attnWord}</span>
+          </div>
+          <p className="ctx-note">{L('liveState')}</p>
+          <div className="attn-mark"><Mark state={markState} size={72} /></div>
+          <div className="ctx-recalls">
+            <span className="micro rc-lbl">{L('contextLabel')}</span>
+            <ul className="recall-list">
+              <li className="recall"><span className="rk" /><b className="mono">{allMessages.length}</b>&nbsp;{L('messagesUnit')}</li>
+              <li className="recall"><span className="rk" /><b className="mono">{agentList.length}</b>&nbsp;{L('agentsUnit')}</li>
+              {ai.data && !ai.data.ready && <li className="recall"><span className="rk" />{ai.data.detail}</li>}
+            </ul>
+            {recalled.length > 0 && (
+              <>
+                <span className="micro rc-lbl">{L('recalledLabel')}</span>
+                <ul className="recall-list" aria-label={L('recalledLabel')}>
+                  {recalled.map((r) => (
+                    <li className="recall" key={`${r.kind}-${r.id}`}>
+                      <button
+                        type="button"
+                        className="recall-link"
+                        title={r.subtitle ? `${r.title} — ${r.subtitle}` : r.title}
+                        onClick={() => openEntity(r.route as RouteId, r.kind, r.id)}
+                      >
+                        <span className="rk" />
+                        <b className="rc-t">{r.title}</b>
+                        {r.subtitle && <span className="rc-sub">&nbsp;·&nbsp;{r.subtitle}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* In the room — the REAL roster: Bro + the room's participants (all agents if unset). */}
+        <section className="surface soft ctx-room">
+          <div className="cr-head">
+            <span className="eyebrow">{L('inRoomEyebrow')}</span>
+            <span className="micro">{participantCount}&nbsp;·&nbsp;{L('participantsUnit')}</span>
+          </div>
+          <div className="room-list">
+            <div className="rm">
+              <span className="rm-av"><Sigil name="Bro" state={thinking ? 'working' : 'idle'} /></span>
+              <span className="rm-who"><b>Bro</b><span>{L('broRole')}</span></span>
+              <i className={`rm-st st-${thinking ? 'working' : 'idle'}`}>{thinking ? L('statusWorking') : L('statusIdle')}</i>
+            </div>
+            <Async state={agents} emptyTitle={t('state.empty')}>
+              {() => (
+                <>
+                  {roomAgents.filter((a) => a.displayName !== 'Bro').map((a) => {
+                    const active = thinking && streamingAuthor === a.displayName;
+                    return (
+                      <div key={a.id} className="rm">
+                        <span className="rm-av"><Sigil name={a.displayName} state={active ? 'working' : 'idle'} /></span>
+                        <span className="rm-who"><b>{a.displayName}</b><span>{a.role}</span></span>
+                        <i className={`rm-st st-${active ? 'working' : 'idle'}`}>{active ? L('statusWorking') : L('statusIdle')}</i>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </Async>
+          </div>
+        </section>
+
+        {/* Handoffs (group) — the real transcript-derived chain of who handed off to whom. */}
+        {isGroup && handoffChain.length > 1 && (
+          <section className="surface soft ctx-handoff">
+            <div className="cr-head">
+              <span className="eyebrow">{L('handoffEyebrow')}</span>
+              <span className="micro"><b className="mono">{handoffCount}</b>&nbsp;{L('handoffsUnit')}</span>
+            </div>
+            <ol className="handoff-chain" aria-label={L('handoffEyebrow')}>
+              {handoffChain.map((who, i) => (
+                <li className="ho-node" key={`${who}-${i}`}><b className="ho-who">{who}</b></li>
+              ))}
+            </ol>
+          </section>
+        )}
+
+        {/* Response — the mockup's writing-tempo sparkline has no real source, so
+            we show an honest real readout (this conversation's message count)
+            instead of fabricated telemetry. */}
+        <section className="surface soft ctx-rate">
+          <div className="cr-head"><span className="eyebrow">{L('responseEyebrow')}</span></div>
+          <div className="rate-stat">
+            <b>{conversation.messageCount}</b>
+            <span className="micro">{L('messagesUnit')}</span>
+          </div>
+          <p className="rate-note">{L('tempoNote')}</p>
+        </section>
+
+      </aside>
+    </div>
   );
 }
 
 function NewRoomForm({ onClose, onCreated }: { onClose: () => void; onCreated: (c: Conversation) => void }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const agents = useAsync(() => desktop.listAgents(), []);
+  const agentNames = (agents.data ?? []).map((a) => a.displayName);
+  // #6 multi-select: choose which specialists are in the room.
+  const [picked, setPicked] = useState<string[]>([]);
+  const toggle = (n: string) => setPicked((p) => (p.includes(n) ? p.filter((x) => x !== n) : [...p, n]));
 
   const submit = () => {
     if (!name.trim() || busy) return;
@@ -280,7 +707,18 @@ function NewRoomForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
     setError(null);
     desktop
       .createConversation('group', name.trim())
-      .then((c) => {
+      .then(async (c) => {
+        // Persist the chosen roster (default to the first two agents when none picked).
+        const roster = picked.length ? picked : agentNames.slice(0, 2);
+        if (roster.length) {
+          // Non-fatal: the room is created either way; if the roster write fails the reply
+          // fan-out falls back to the first two agents — but surface it so it isn't invisible.
+          try {
+            await desktop.setConversationParticipants(c.id, roster);
+          } catch (e) {
+            console.error('setConversationParticipants failed (room created without a roster):', e);
+          }
+        }
         onCreated(c);
         onClose();
       })
@@ -296,6 +734,23 @@ function NewRoomForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
       <FormRow label={t('chat.roomName')}>
         <Input value={name} autoFocus onChange={(e) => setName(e.target.value)} />
       </FormRow>
+      {agentNames.length > 0 && (
+        <FormRow label={L('participants')}>
+          <div className="participant-pick">
+            {agentNames.map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`pp-chip${picked.includes(n) ? ' on' : ''}`}
+                onClick={() => toggle(n)}
+                aria-pressed={picked.includes(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </FormRow>
+      )}
       <div className="form-actions">
         <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant="primary" onClick={submit}>{t('action.create')}</Button>
@@ -392,7 +847,9 @@ export function Conversations({ kind }: { kind: Kind }) {
   };
 
   return (
-    <>
+    <div className="v-chat">
+      <style>{VIEW_CSS}</style>
+
       <PageHeader
         title={t(titleKey)}
         subtitle={t(subtitleKey)}
@@ -428,8 +885,11 @@ export function Conversations({ kind }: { kind: Kind }) {
         />
       )}
 
-      <div className="chat-layout">
-        <Panel title={t('chat.conversations')}>
+      <div className="chat-workspace">
+        {/* Conversation rail — the Rail primitive's plain-panel variant, so it
+            adopts the rail model without adding a second complementary landmark
+            or changing the panel padding. */}
+        <Rail variant="panel" label={t('chat.conversations')}>
           <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
             {(conversations) => {
               const active = selectedId ?? conversations[0]?.id ?? null;
@@ -468,17 +928,17 @@ export function Conversations({ kind }: { kind: Kind }) {
               );
             }}
           </Async>
-        </Panel>
+        </Rail>
 
-        <div>
+        <div className="chat-main">
           {(() => {
             const conversations = s.data ?? [];
             const active = conversations.find((c) => c.id === (selectedId ?? conversations[0]?.id)) ?? null;
             if (!active) {
               return (
-                <Panel>
+                <section className="chat-canvas surface soft lg" aria-label={t('chat.pickHint')}>
                   <EmptyState glyph={kind === 'group' ? '👥' : '💬'} title={t('chat.pickHint')} />
-                </Panel>
+                </section>
               );
             }
             // key on the conversation id so switching remounts the thread —
@@ -487,6 +947,6 @@ export function Conversations({ kind }: { kind: Kind }) {
           })()}
         </div>
       </div>
-    </>
+    </div>
   );
 }

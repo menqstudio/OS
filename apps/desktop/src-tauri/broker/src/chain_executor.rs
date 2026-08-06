@@ -306,8 +306,16 @@ where
         let reply = self.hop(Principal::Supervisor, &accept_open)?;
         let lease = parse_lease(reply.get("lease").ok_or(TurnReason::UpstreamBlocked)?)?;
 
-        // (4) supervisor: launch-gate ⇒ proceed (budget re-check). The lease is forwarded byte-faithfully.
-        let launch_gate = json!({ "op": "launch-gate", "lease": lease.raw });
+        // (4) supervisor: launch-gate ⇒ proceed (budget re-check) — BY ATTEMPT ID ONLY.
+        //     The broker no longer hands the lease back for the supervisor to judge itself
+        //     against: the supervisor reads the window it persisted at acceptance and CASes
+        //     the attempt LEASE_READY → EXECUTION_STARTING in the same transaction (§5 v2,
+        //     independent audit F-01/F-23). We could not choose a favourable expiry if we
+        //     wanted to, and a refused gate durably EXPIREs the attempt — no launch follows.
+        let launch_gate = json!({
+            "op": "launch-gate",
+            "execution_attempt_id": lease.execution_attempt_id,
+        });
         let reply = self.hop(Principal::Supervisor, &launch_gate)?;
         if !reply.get("proceed").and_then(Value::as_bool).unwrap_or(false) {
             return Err(TurnReason::UpstreamBlocked);
@@ -366,6 +374,13 @@ where
             message_id: &message_id,
             conversation_id: &req.conversation_id,
             author: &resolved.author,
+            // F-26: the run identity the broker itself authorized — its own resolution for
+            // run/task, and the attempt id from the lease the supervisor granted IT. The final
+            // acceptance compares the signed envelope against these; a receipt from another
+            // attempt no longer passes on a matching nonce + output alone.
+            expected_run_id: &resolved.run_id,
+            expected_task_id: &resolved.task_id,
+            expected_execution_attempt_id: &lease.execution_attempt_id,
         };
         let mut ledger = self.ledger.lock().map_err(|_| TurnReason::UpstreamBlocked)?;
         verify_and_accept(
@@ -509,6 +524,41 @@ impl OwnedEnvelope {
 /// The real Linux sub-chain: drives the AF_UNIX challenge-authority / supervisor / isolated-signer hops via
 /// a real socket [`HopConnector`], and (once provisioned) the privileged execution spawn. The pure
 /// orchestration above is host-independent; only the socket transport + the setuid spawn live here.
+/// The four evidence-head values, READ from the recorder's per-run chain (audit **F-02**).
+struct RunEvidence {
+    final_event_hash: String,
+    event_count: i64,
+    last_sequence: i64,
+    head_sequence: i64,
+}
+
+impl RunEvidence {
+    /// Parse the recorder's `brops.run-evidence-chain.v1` document. Every field is required and
+    /// must be well-formed — a chain the broker cannot read is a run it cannot evidence, and a
+    /// default here would silently restore the constants this replaced.
+    fn parse(bytes: &[u8]) -> Result<Self, TurnReason> {
+        let v: Value = serde_json::from_slice(bytes).map_err(|_| TurnReason::UpstreamBlocked)?;
+        if v.get("protocol").and_then(Value::as_str) != Some("brops.run-evidence-chain.v1") {
+            return Err(TurnReason::UpstreamBlocked);
+        }
+        let i = |k: &str| -> Result<i64, TurnReason> {
+            v.get(k).and_then(Value::as_i64).filter(|n| *n > 0).ok_or(TurnReason::UpstreamBlocked)
+        };
+        let final_event_hash = v
+            .get("final_event_hash")
+            .and_then(Value::as_str)
+            .filter(|h| h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+            .ok_or(TurnReason::UpstreamBlocked)?
+            .to_string();
+        Ok(RunEvidence {
+            final_event_hash,
+            event_count: i("event_count")?,
+            last_sequence: i("last_sequence")?,
+            head_sequence: i("head_sequence")?,
+        })
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub mod linux {
     use super::*;
@@ -616,25 +666,23 @@ pub mod linux {
         /// A world-writable staging dir for the recorder's `--out` report (owned by the recorder uid, read by
         /// the broker uid). Trust for the bytes is the isolated-signer envelope, not this path.
         pub report_dir: String,
-        /// The supervisor `attest-run` socket (the broker's own uid is SO_PEERCRED-allowlisted).
+        /// The supervisor lifecycle socket (the broker's own uid is SO_PEERCRED-allowlisted).
         pub supervisor_sock: String,
-        // ---- fixed §4.9 evidence facts (deployment-static) ----
-        pub receipt_id: String,
-        pub supervisor_id: String,
-        pub executor_id: String,
-        pub builder_id: String,
-        pub policy_id: String,
-        pub policy_version: String,
-        pub supervisor_attestation_key_id: String,
-        pub policy_bundle_handle: String,
-        pub containment_evidence_handle: String,
-        pub record_handle: String,
-        pub lease_handle: String,
-        pub execution_receipt_handle: String,
-        pub evidence_final_event_hash: String,
-        pub evidence_event_count: i64,
-        pub evidence_last_sequence: i64,
-        pub evidence_head_sequence: i64,
+        // ---- the §4.9 evidence facts the RUN produces, reported once via `complete-run` ----
+        //
+        // F-01: this list used to also carry `receipt_id`, `supervisor_id`, `executor_id`,
+        // `builder_id`, `policy_id`, `policy_version` and `policy_bundle_handle`. Those are the
+        // identities the isolated signer ALLOWLISTS, so the broker naming them meant the party
+        // being constrained chose the values it would be checked against — it simply copied
+        // them out of the world-readable deployment config. They now live in the SUPERVISOR's
+        // own provisioning and never cross this boundary. What remains here is what only the
+        // executing chain can know.
+        //
+        // The four evidence-head counters used to live here as config constants — every receipt of
+        // the deployment named the same head, so the supervisor's anti-rollback floor compared a
+        // constant against itself. They now come from the recorder's per-run chain (F-02); the
+        // recorder writes it to `--evidence-out` and the broker reads it below.
+        pub evidence_state_dir: String,
     }
 
     /// The REAL privileged execution (§6/§2.7): it delegates the recorder → setuid launcher → executor spawn
@@ -659,11 +707,11 @@ pub mod linux {
                 .unwrap_or(0)
         }
 
-        /// One framed `attest-run {facts}` → `{attestation, evidence_jcs_b64, attestation_evidence_sha256}`
-        /// roundtrip to the supervisor over a fresh AF_UNIX connection. A lost/refusing hop is a closed reason.
-        fn supervisor_attest_run(&self, facts: &Value) -> Result<Value, TurnReason> {
-            let req = json!({ "op": "attest-run", "facts": facts });
-            let bytes = serde_json::to_vec(&req).map_err(|_| TurnReason::UpstreamBlocked)?;
+        /// One framed request→reply roundtrip to the supervisor over a fresh AF_UNIX connection,
+        /// for any of the §5 lifecycle ops. A lost/refusing hop is a closed reason — the broker
+        /// never proceeds on an op the supervisor did not accept.
+        fn supervisor_op(&self, req: &Value) -> Result<Value, TurnReason> {
+            let bytes = serde_json::to_vec(req).map_err(|_| TurnReason::UpstreamBlocked)?;
             let frame = encode_frame(&bytes).map_err(|_| TurnReason::UpstreamBlocked)?;
             let mut stream =
                 UnixStream::connect(&self.config.supervisor_sock).map_err(|_| TurnReason::UpstreamBlocked)?;
@@ -694,8 +742,17 @@ pub mod linux {
                 "{}/live-{}-{}.out",
                 cfg.report_dir, plan.broker_turn_id, plan.lease.execution_attempt_id
             );
+            let containment_path = format!("{report_path}.containment.json");
+            let evidence_path = format!("{report_path}.evidence.json");
             let _ = std::fs::remove_file(&report_path);
+            let _ = std::fs::remove_file(&containment_path);
+            let _ = std::fs::remove_file(&evidence_path);
             let mut command = Command::new(&cfg.recorder_command[0]);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash on spawn
+            }
             command.args(&cfg.recorder_command[1..]);
             command.args([
                 "--store",
@@ -710,8 +767,39 @@ pub mod linux {
                 cfg.cgroup_arg.as_str(),
                 "--out",
                 report_path.as_str(),
+                // F-02: the recorder writes the containment evidence for THIS run here; the broker
+                // content-addresses it below. It used to be a provisioner stub whose handle every
+                // receipt of the deployment named.
+                "--containment-out",
+                containment_path.as_str(),
+                // F-02: the recorder builds the per-run evidence chain here, and advances its own
+                // durable head-sequence counter in `--evidence-state`. The four evidence values the
+                // supervisor's terminal record carries come from THIS file, not from config.
+                "--evidence-out",
+                evidence_path.as_str(),
+                "--evidence-state",
+                cfg.evidence_state_dir.as_str(),
             ]);
-            let status = command.status().map_err(|_| TurnReason::UpstreamBlocked)?;
+            // Spawn (not `status()`) so the child's real pid can be reported to the supervisor
+            // BEFORE we block on it: the §5 state machine flips EXECUTION_STARTING → EXECUTING
+            // only on confirmed-running process metadata, and the supervisor durably records it.
+            let mut child = command.spawn().map_err(|_| TurnReason::UpstreamBlocked)?;
+            let pid = child.id();
+            let started = self.supervisor_op(&json!({
+                "op": "execution-started",
+                "execution_attempt_id": plan.lease.execution_attempt_id,
+                "process_group_id": pid.to_string(),
+                "cgroup_id": cfg.cgroup_arg,
+                "execution_started_marker": Value::Null,
+            }));
+            if started.is_err() {
+                // The supervisor refused to record this start (wrong state, unknown attempt).
+                // Do not let an unrecorded execution run to completion behind its back.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(TurnReason::UpstreamBlocked);
+            }
+            let status = child.wait().map_err(|_| TurnReason::UpstreamBlocked)?;
             if !status.success() {
                 return Err(TurnReason::UpstreamBlocked);
             }
@@ -733,46 +821,72 @@ pub mod linux {
                 let _ = std::fs::set_permissions(&output_blob, std::fs::Permissions::from_mode(0o644));
             }
 
-            // (3) The §4.9 run facts (ATTEST_INPUT_FIELDS = EVIDENCE_FIELDS minus `decision`). The per-turn
-            //     ids are the broker's OWN resolution + the granted lease's execution_attempt_id; the
-            //     system/history/generation-config handles ARE those resolved component digests (a content
-            //     address == its sha256); the remaining handles/identities/counters are deployment-static.
+            // (2b) F-02: content-address the recorder's CONTAINMENT REPORT for this run. Its absence
+            //      is a refusal, not a fallback — a turn whose containment cannot be evidenced must
+            //      not be attested, and the isolated signer's §1.5 containment gate would otherwise
+            //      be satisfied by a constant the provisioner wrote once.
+            let containment =
+                std::fs::read(&containment_path).map_err(|_| TurnReason::UpstreamBlocked)?;
+            if containment.is_empty() {
+                return Err(TurnReason::UpstreamBlocked);
+            }
+            let containment_handle = sha256_hex(&containment);
+            let containment_blob = format!("{}/{}", cfg.store_dir, containment_handle);
+            std::fs::write(&containment_blob, &containment)
+                .map_err(|_| TurnReason::UpstreamBlocked)?;
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    &containment_blob,
+                    std::fs::Permissions::from_mode(0o644),
+                );
+            }
+
+            // (2c) F-02: read the recorder's per-run evidence chain. Its absence is a refusal, not a
+            //      fallback to a constant — the four evidence values decide the supervisor's
+            //      anti-rollback floor, and a constant made that floor compare a value against itself.
+            let evidence_bytes =
+                std::fs::read(&evidence_path).map_err(|_| TurnReason::UpstreamBlocked)?;
+            let evidence = super::RunEvidence::parse(&evidence_bytes)?;
+
+            // (3) `complete-run` — report ONLY what this run actually produced, once. Every id,
+            //     nonce, identity and acceptance timestamp is deliberately absent: the supervisor
+            //     already holds those from the signed challenge it accepted, and taking them here
+            //     would re-open the F-01 oracle through a different door. The supervisor's
+            //     write-once completion row + evidence-head floor decide whether this is
+            //     recordable at all; a refusal means no attestation exists to ask for.
             let now = Self::now_ms();
-            let facts = json!({
+            let complete = json!({
+                "op": "complete-run",
+                "execution_attempt_id": plan.lease.execution_attempt_id,
+                "produced": {
+                    "output_handle": output_handle,
+                    "containment_evidence_handle": containment_handle,
+                    // F-02: `record_handle`, `lease_handle` and `execution_receipt_handle` are
+                    // gone from here. The supervisor BUILDS those documents from its own
+                    // acceptance + completion rows and publishes them to the protected store, so
+                    // the handles the receipt names address artifacts of THIS run instead of
+                    // deployment constants the broker copied out of a world-readable config.
+                    "completed_at_ms": now,
+                    // F-02: measured, not configured. A missing or malformed chain is a refusal —
+                    // a run whose evidence cannot be read must not be completed, let alone attested.
+                    "evidence_final_event_hash": evidence.final_event_hash,
+                    "evidence_event_count": evidence.event_count,
+                    "evidence_last_sequence": evidence.last_sequence,
+                    "evidence_head_sequence": evidence.head_sequence,
+                },
+            });
+            self.supervisor_op(&complete)?;
+
+            // (4) `attest-run` — NAMES the run, never describes it. The supervisor builds the §4.9
+            //     evidence from its OWN durable terminal state, stamps `decision=completed`, and
+            //     Ed25519-signs those bytes. We carry the EXACT signed bytes + detached signature
+            //     through so the final acceptance can re-hash and re-verify them.
+            let attn = self.supervisor_op(&json!({
+                "op": "attest-run",
                 "run_id": r.run_id,
                 "execution_attempt_id": plan.lease.execution_attempt_id,
-                "task_id": r.task_id,
-                "request_nonce": plan.request_nonce,
-                "receipt_id": cfg.receipt_id,
-                "workspace_id": r.workspace_id,
-                "install_id": r.install_id,
-                "supervisor_id": cfg.supervisor_id,
-                "executor_id": cfg.executor_id,
-                "builder_id": cfg.builder_id,
-                "policy_id": cfg.policy_id,
-                "policy_version": cfg.policy_version,
-                "policy_bundle_handle": cfg.policy_bundle_handle,
-                "generation_config_handle": r.generation_config_sha256,
-                "system_handle": r.system_sha256,
-                "history_handle": r.history_sha256,
-                "output_handle": output_handle,
-                "containment_evidence_handle": cfg.containment_evidence_handle,
-                "record_handle": cfg.record_handle,
-                "lease_handle": cfg.lease_handle,
-                "execution_receipt_handle": cfg.execution_receipt_handle,
-                "evidence_final_event_hash": cfg.evidence_final_event_hash,
-                "requested_at": r.requested_at_ms,
-                "completed_at": now,
-                "challenge_accepted_at_ms": now,
-                "evidence_event_count": cfg.evidence_event_count,
-                "evidence_last_sequence": cfg.evidence_last_sequence,
-                "evidence_head_sequence": cfg.evidence_head_sequence,
-            });
-
-            // (4) Supervisor attest-run: it stamps `decision=completed`, builds JCS(evidence) itself, and
-            //     Ed25519-signs THOSE bytes with the supervisor-attestation key. We carry the EXACT signed
-            //     bytes + detached signature through so the final acceptance can re-hash + re-verify them.
-            let attn = self.supervisor_attest_run(&facts)?;
+            }))?;
             let attestation = attn.get("attestation").cloned().ok_or(TurnReason::UpstreamBlocked)?;
             let evidence_jcs_b64 = attn
                 .get("evidence_jcs_b64")
@@ -787,15 +901,17 @@ pub mod linux {
                 .ok_or(TurnReason::UpstreamBlocked)?
                 .to_string();
 
-            // (5) The isolated signer's evidence is the SAME run facts + the supervisor-stamped decision, so
-            //     the signer's own JCS(evidence) is byte-identical to what the supervisor attested (its
-            //     re-hash + attestation-signature check both hold). The signer then re-derives every
-            //     store digest and signs its OWN recomputed 23-key envelope.
-            let mut evidence = facts;
-            evidence
-                .as_object_mut()
-                .ok_or(TurnReason::UpstreamBlocked)?
-                .insert("decision".to_string(), Value::String("completed".to_string()));
+            // (5) The signer's `evidence` is PARSED FROM the exact bytes the supervisor attested,
+            //     not rebuilt by us. The broker therefore cannot present the signer a different
+            //     object than the one that was signed — the signer's re-hash and the final
+            //     acceptance's `attestation_evidence_sha256` check are over identical bytes by
+            //     construction. The signer then re-derives every store digest and signs its OWN
+            //     recomputed 23-key envelope.
+            let evidence: Value = serde_json::from_slice(&attestation_evidence_jcs)
+                .map_err(|_| TurnReason::UpstreamBlocked)?;
+            if !evidence.is_object() {
+                return Err(TurnReason::UpstreamBlocked);
+            }
             let sign_request = json!({
                 "protocol": "brops.sign-request.v1",
                 "attestation": attestation,
@@ -1227,12 +1343,19 @@ mod tests {
             ]
         );
         // Data threads between hops: issue carries the create-pending id; accept-open carries the issued
-        // challenge doc; launch-gate carries the accept-open lease.
+        // challenge doc; launch-gate names ONLY the granted attempt.
         assert_eq!(sent[1].1.get("pending_challenge_id").and_then(Value::as_str), Some("pc-1"));
         assert!(sent[2].1.get("challenge_doc").is_some());
         assert_eq!(
-            sent[3].1.get("lease").and_then(|l| l.get("lease_id")).and_then(Value::as_str),
-            Some("L1")
+            sent[3].1.get("execution_attempt_id").and_then(Value::as_str),
+            Some("att-1")
+        );
+        // F-01/F-23: the broker no longer hands the lease back for the supervisor to judge
+        // itself against. If this assertion ever fails, the party being gated has regained
+        // the ability to choose the expiry it is checked against.
+        assert!(
+            sent[3].1.get("lease").is_none(),
+            "launch-gate must not carry a caller-supplied lease"
         );
     }
 
@@ -1302,5 +1425,62 @@ mod tests {
         assert_eq!(r.status, "blocked");
         assert_eq!(r.reason, Some(TurnReason::CommitReadbackMismatch));
         assert!(r.message.is_none());
+    }
+
+    // ---- F-02: the evidence head must be MEASURED, and unreadable evidence must refuse -------------
+
+    fn evidence_doc() -> Value {
+        json!({
+            "protocol": "brops.run-evidence-chain.v1",
+            "final_event_hash": "ab".repeat(32),
+            "event_count": 3,
+            "last_sequence": 3,
+            "head_sequence": 9,
+        })
+    }
+
+    #[test]
+    fn a_well_formed_run_evidence_chain_supplies_the_four_head_values() {
+        let e = RunEvidence::parse(&serde_json::to_vec(&evidence_doc()).unwrap()).expect("parses");
+        assert_eq!(e.final_event_hash, "ab".repeat(32));
+        assert_eq!((e.event_count, e.last_sequence, e.head_sequence), (3, 3, 9));
+    }
+
+    #[test]
+    fn evidence_that_cannot_be_read_is_refused_rather_than_defaulted() {
+        // Every one of these used to be impossible to reach, because the values came from config and
+        // were therefore always present and always the same. A default here would put that back.
+        assert!(RunEvidence::parse(b"not json").is_err());
+        let mut wrong = evidence_doc();
+        wrong["protocol"] = json!("brops.something-else.v1");
+        assert!(RunEvidence::parse(&serde_json::to_vec(&wrong).unwrap()).is_err());
+        for field in ["final_event_hash", "event_count", "last_sequence", "head_sequence"] {
+            let mut missing = evidence_doc();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(
+                RunEvidence::parse(&serde_json::to_vec(&missing).unwrap()).is_err(),
+                "{field} must be required"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_positive_or_non_digest_head_is_refused() {
+        // A zero/negative sequence is not a head the anti-rollback floor can order, and a
+        // non-canonical digest is not a chain terminus.
+        for (field, bad) in [
+            ("event_count", json!(0)),
+            ("last_sequence", json!(-1)),
+            ("head_sequence", json!(0)),
+            ("final_event_hash", json!("AB".repeat(32))),
+            ("final_event_hash", json!("beef")),
+        ] {
+            let mut doc = evidence_doc();
+            doc[field] = bad.clone();
+            assert!(
+                RunEvidence::parse(&serde_json::to_vec(&doc).unwrap()).is_err(),
+                "{field}={bad} must be refused"
+            );
+        }
     }
 }

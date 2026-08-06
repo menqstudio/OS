@@ -35,6 +35,11 @@ READ_SAFE_CONFIG = frozenset({
     "core.quotepath", "core.abbrev", "log.date", "i18n.logoutputencoding", "diff.noprefix",
 })
 GLOBAL_WITH_ARG = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
+# The subset of GLOBAL_WITH_ARG whose value is a FILESYSTEM path git operates in. Their values
+# become containment targets so a read-only git subcommand cannot read outside the workspace with
+# empty targets (audit F-04). `--namespace` (a ref namespace) and `-c`/`--config-env` (config) are
+# intentionally excluded — they are not filesystem locations.
+GLOBAL_PATH_WITH_ARG = {"-C", "--git-dir", "--work-tree"}
 READ_ONLY_SHELL = {
     "cat", "echo", "get-childitem", "get-content", "ls", "pwd", "select-string",
     "test-path", "type", "where", "where-object", "whoami",
@@ -182,6 +187,7 @@ def _exe(token: str) -> str:
 
 def analyze_git(tokens: list[str]) -> CommandInfo:
     i, dangerous = 1, False
+    path_targets: list[str] = []
     while i < len(tokens):
         t = tokens[i].strip("\"'")
         if not t.startswith("-"):
@@ -199,6 +205,14 @@ def analyze_git(tokens: list[str]) -> CommandInfo:
                 # Allowlist, not denylist: anything not provably display-only is dangerous.
                 if key not in READ_SAFE_CONFIG:
                     dangerous = True
+            elif name in GLOBAL_PATH_WITH_ARG:
+                # -C / --git-dir / --work-tree point git at a FILESYSTEM location. Surface that
+                # location as a target so the workspace + scope gates contain the read too —
+                # else `git -C /elsewhere show` (any zero-positional read-only subcommand) sails
+                # through with empty targets and exfiltrates an out-of-workspace repo (audit F-04).
+                # (--namespace is a ref namespace, not a path, so it is not a containment target.)
+                if value:
+                    path_targets.append(value)
             i += 1
             continue
         if t in {"--no-pager", "--bare", "--version", "--help"}:
@@ -206,7 +220,7 @@ def analyze_git(tokens: list[str]) -> CommandInfo:
             continue
         raise SecurityError(f"ambiguous git global option: {t}")
     sub = tokens[i].strip("\"'").lower() if i < len(tokens) else None
-    args = tuple(x.strip("\"'") for x in tokens[i + 1 :])
+    args = tuple(path_targets) + tuple(x.strip("\"'") for x in tokens[i + 1 :])
     read_only = bool(sub in READ_ONLY_GIT and not dangerous)
     mutating = bool(not read_only)
     return CommandInfo("git", sub, mutating, sub == "push", args, dangerous, read_only)

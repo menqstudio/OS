@@ -18,6 +18,8 @@ from bro_signature import (
     ARTIFACT_AUTHORITY,
     ENV_PIN,
     ENV_PIN_FILE,
+    ENV_PIN_SELF_OWNED_ACK,
+    PIN_SELF_OWNED_ACK_VALUE,
     SignatureError,
     canonical_bytes,
     load_trusted_keys,
@@ -336,6 +338,20 @@ class OperatorRootPinTests(SignatureFixture):
                  "BRO_ENV": "ci"}, root=ROOT)
         self.assertIn("mismatch", str(caught.exception))
 
+    def test_a_self_owned_pin_is_refused_without_the_acknowledgement(self):
+        # (audit F-06) Owner-only writability is not a protection when the owner IS the
+        # reader: mode 0600 passes the old check while the file stays one write away from
+        # being any anchor this process wants. The default must refuse, so that a
+        # deployment with no principal separation says so instead of being told its trust
+        # root cannot be swapped by environment variables alone.
+        pin_file = _write_pin_file(
+            self, self.operator_pub, mode=0o600, acknowledge_self_owned=False)
+        with _patch.dict(_os.environ, {}, clear=False):
+            _os.environ.pop(ENV_PIN_SELF_OWNED_ACK, None)
+            with self.assertRaises(SignatureError) as caught:
+                resolve_operator_root_pin({ENV_PIN_FILE: str(pin_file)}, root=ROOT)
+        self.assertIn("owned by the very account reading it", str(caught.exception))
+
     def test_neither_present_is_hard_denied(self):
         with self.assertRaises(SignatureError):
             resolve_operator_root_pin({})
@@ -422,7 +438,7 @@ def patch_environ_without_pins():
         yield
 
 
-def _write_pin_file(test_case, public_key, *, mode):
+def _write_pin_file(test_case, public_key, *, mode, acknowledge_self_owned=True):
     # write the pin OUTSIDE the repository (a fresh temp dir); resolve() so no
     # incidental symlink parent (e.g. /tmp on some platforms) trips the
     # every-component symlink rejection in the positive cases
@@ -431,6 +447,17 @@ def _write_pin_file(test_case, public_key, *, mode):
     pin_file = outside / "operator-root.pub"
     pin_file.write_text(public_key + "\n", encoding="utf-8")
     _os.chmod(pin_file, mode)
+    if acknowledge_self_owned:
+        # This process WRITES the pin, so it owns it, so the F-06 refusal applies — and is
+        # exactly right: an anchor the reader can rewrite is not an anchor. A test harness
+        # has no second principal to offer, which is precisely the case the acknowledgement
+        # exists for. Setting it here states that plainly instead of leaving these cases
+        # silently exempt; `test_a_self_owned_pin_is_refused_without_the_acknowledgement`
+        # pins the default.
+        patcher = _patch.dict(
+            _os.environ, {ENV_PIN_SELF_OWNED_ACK: PIN_SELF_OWNED_ACK_VALUE})
+        patcher.start()
+        test_case.addCleanup(patcher.stop)
     return pin_file
 
 

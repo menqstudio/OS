@@ -1,36 +1,37 @@
 ---
 id: telecom-isp-network-ops
-version: 1.0.0
+version: 1.1.0
 status: active
 ---
 
 # Telecom Isp Network Ops
 
 ## Trigger
-Use this skill when a task materially requires telecom isp network ops expertise.
+Use for carrier/ISP network operations tasks — diagnosing an outage or degradation across IP/optical/access layers, planning routing or peering changes (BGP/OSPF/IS-IS), IP address/subnet and DNS management, capacity and QoS engineering, a change/maintenance window plan, or an NOC incident bridge. Not for enterprise LAN-only issues without carrier context.
 
 ## Inputs
-A bounded task contract, repository evidence, constraints, risk level, and required output format.
+Task contract with the incident or change objective; topology and inventory (devices, links, circuits, ASNs, peers); current routing/config state and baselines; telemetry (SNMP, streaming, flow, syslog, optical power, latency/loss); SLA and customer-impact scope; the change-management/maintenance policy (SST); and required output format (incident report, change plan/MOP, or design).
 
 ## Workflow
-1. Confirm identity, mode grant, task scope, and required evidence.
-2. Read the canonical SST and relevant source files to EOF.
-3. Reproduce defects or establish a baseline before mutation.
-4. Make the smallest scoped change and preserve append-only identifiers.
-5. Run registered validation and negative tests.
-6. Produce evidence, rollback instructions, and an explicit residual-risk verdict.
+1. Confirm identity, mode grant, and scope; read the topology, config baselines, and change policy to EOF.
+2. For an incident: localize the fault by layer (physical/optical → link → IP → routing → service) using telemetry, and quantify blast radius (customers, circuits, SLA breach) before touching anything.
+3. Correlate symptoms to root cause with evidence (flap counts, BGP updates, optical dB, error counters); distinguish cause from downstream effect.
+4. For a change: write a Method of Procedure with pre-checks, exact device steps, expected state, verification commands, blast radius, and a tested rollback; require a maintenance window and peer/customer notification where policy demands.
+5. Treat all config changes as least-blast-radius and reversible; never push routing/ACL/BGP changes to production devices without the exact grant and window — propose the config, do not apply it.
+6. Validate against SLA/QoS targets and confirm no collateral impact to other services or peers.
+7. Emit the incident report (timeline, root cause, impact, fix, prevention) or the change plan/MOP with rollback and verification steps.
 
 ## Outputs
-A scoped implementation or analysis, reproducible commands, evidence paths, verification results, and residual risks.
+An incident report with layered root cause, impact, and prevention; or a reviewed MOP/change plan with pre-checks, device steps, verification, blast radius, notification, and rollback; plus proposed (not applied) config diffs.
 
 ## Safety limits
-No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. Ambiguous mutation targets fail closed.
+No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. No changes to live routing, BGP/peering, ACLs, DNS, or device config without the exact grant, an approved maintenance window, and a tested rollback; nothing that risks a routing loop, blackhole, or route leak. Ambiguous change targets or blast radius fail closed.
 
 ## Handoffs
-Escalate cross-domain decisions to the owning SST role. Medium, high, and critical work requires an independent verifier. Release actions hand off only to the Push Executor.
+Escalate cross-operator/peering coordination and customer SLA-breach notification to the NOC lead and the sanctioned external channel; escalate regulatory/licensing implications to Regulatory Telecom Licensing. Medium, high, and critical changes require an independent verifier. Applying config to production hands off only to the Push Executor within the window.
 
 ## Verification
-Success requires schema-valid artifacts, registered tests, exploit regression coverage, clean rollback, and exact-head evidence. Claims without reproducible evidence remain RED.
+Success requires root cause evidenced by telemetry, a change proven in lab/staging or against the baseline with a rehearsed rollback, blast radius bounded, no route leak/loop, and SLA/QoS targets met post-change. A change without a tested rollback or a fault without corroborating telemetry stays RED.
 
 ## Failure and rollback
-Stop on missing authority, stale receipts, inconsistent SSTs, failed tests, or unverifiable state. Restore the original tree before reporting recovery and never call partial recovery GREEN.
+Stop on missing authority, no maintenance window, unbounded blast radius, or unexpected collateral impact. Execute the pre-defined rollback to the last-known-good config, confirm service restoration via telemetry, restore the original record, and never declare a network change or restoration GREEN without verified post-state.

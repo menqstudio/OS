@@ -1,2 +1,7 @@
 @import "./theme/tokens.css";
 @import "./theme/global.css";
+/* BroPS AI-OS design foundation (ported from the brops-aios mockup): fonts,
+   dark+light token sets, ambient layer, surface/HUD system, and every view's
+   instrument CSS. Loaded last so it is the authoritative visual layer. */
+@import "./theme/aios.css";
+@import "./components/aios-shell.css";

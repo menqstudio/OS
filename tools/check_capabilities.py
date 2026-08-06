@@ -7,14 +7,17 @@ webview with **no permission entry at all**. T-010 closes that by declaring ever
 command in the manifest and granting `allow-*` explicitly (deny-by-default). This
 check keeps the three inventories from drifting apart as commands are added:
 
-    registered commands  (src/lib.rs  generate_handler!)
+    registered commands  (src/lib.rs  generate_handler!)  MINUS the explicit
+      INTENTIONALLY_UNGATED allowlist
       == AppManifest commands  (src-tauri/build.rs)
       == capability-policy inventory  (capabilities/command-policy.json)
 
 and additionally asserts each policy `grant` matches the actual capability grants in
 `capabilities/default.json` (allow-<cmd> / deny-<cmd>). A command added in one place
 but not the others — or granted against its declared tier — **fails CI**. No manual
-recount, no silently-ungated command.
+recount, no silently-ungated command: registered_commands() now captures EVERY module
+prefix (not just commands::/files::), so a module-scoped command that is neither declared
+under the wall nor named in INTENTIONALLY_UNGATED (with a reason) fails this check.
 
 Usage:  python tools/check_capabilities.py [--root DIR]
 Exit 0 + "GREEN: ..." when consistent; exit 1 + the problems otherwise.
@@ -33,9 +36,35 @@ BUILD_RS = DESKTOP / "build.rs"
 POLICY = DESKTOP / "command-policy.json"
 DEFAULT_CAP = DESKTOP / "capabilities" / "default.json"
 
+# Commands deliberately registered OUTSIDE the window capability manifest. Tauri makes an
+# app command that is registered in generate_handler! but absent from the manifest
+# webview-invokable with NO permission entry, so every such command MUST be named here with
+# a reason — this turns what used to be a silent regex blind spot (only commands::/files::
+# were scanned) into an explicit, reviewed, CI-enforced decision. A NEW module-scoped
+# command that is neither declared under the wall nor added here now FAILS this check.
+#   - governed_turn_execute: the trusted-broker governed-turn proxy; gated by the broker
+#       lease/challenge system and fails closed ("broker_unavailable") off the supported
+#       path. Whether it should additionally sit under the window policy is an owner gate call.
+#   - read_decision_ledger / read_evidence_chain / read_verifier_verdicts /
+#       read_engine_approval_queue: READ-ONLY Phase-2 governance mirrors — hold no key/lease,
+#       touch no DB, author no decision, and fail closed to Blocked/Unreachable.
+#   - governed_trust_selftest: owner-visible in-process trust-chain self-test; never flips a
+#       live AI turn.
+INTENTIONALLY_UNGATED = {
+    "governed_turn_execute",
+    "read_decision_ledger",
+    "read_evidence_chain",
+    "read_verifier_verdicts",
+    "read_engine_approval_queue",
+    "governed_trust_selftest",
+}
+
 
 def registered_commands(root: pathlib.Path) -> set[str]:
-    """Command fn names inside `generate_handler![ ... ]` in lib.rs."""
+    """Every command fn name inside `generate_handler![ ... ]` in lib.rs, regardless of the
+    module path it is registered under (commands::, files::, governance::, governed_turn::,
+    …). Capturing ALL module prefixes — not just commands::/files:: — is what lets the check
+    see module-scoped commands that would otherwise be silently outside the capability wall."""
     text = (root / LIB_RS).read_text(encoding="utf-8")
     m = re.search(r"generate_handler!\s*\[(.*?)\]", text, re.DOTALL)
     if not m:
@@ -43,7 +72,8 @@ def registered_commands(root: pathlib.Path) -> set[str]:
     body = m.group(1)
     # Strip line comments so commented-out entries don't count.
     body = re.sub(r"//[^\n]*", "", body)
-    return set(re.findall(r"(?:commands|files)::([a-z0-9_]+)", body))
+    # `mod::fn` (one or more module segments) -> capture the final fn identifier.
+    return set(re.findall(r"(?:[a-zA-Z_][a-zA-Z0-9_]*::)+([a-z0-9_]+)", body))
 
 
 def manifest_commands(root: pathlib.Path) -> set[str]:
@@ -91,27 +121,48 @@ def check(root: pathlib.Path) -> list[str]:
     policy = policy_commands(root)
     policy_set = set(policy)
 
-    # 1) The three inventories must be the identical set.
-    if registered != manifest:
+    # 0) The intentionally-ungated allowlist must stay honest: every name in it must still be
+    #    a registered command (no rot), and none of them may ALSO be declared under the wall
+    #    (that would be a contradiction — they are outside the manifest by definition).
+    stale = INTENTIONALLY_UNGATED - registered
+    if stale:
         problems.append(
-            f"registered != manifest: only-in-lib.rs={sorted(registered - manifest)}; "
-            f"only-in-build.rs={sorted(manifest - registered)}"
+            f"INTENTIONALLY_UNGATED names command(s) not registered in lib.rs "
+            f"(stale allowlist): {sorted(stale)}"
         )
-    if registered != policy_set:
+    contradictory = INTENTIONALLY_UNGATED & (manifest | policy_set)
+    if contradictory:
         problems.append(
-            f"registered != policy: only-in-lib.rs={sorted(registered - policy_set)}; "
-            f"only-in-policy={sorted(policy_set - registered)}"
+            f"command(s) both allowlisted-ungated and declared under the wall "
+            f"(pick one): {sorted(contradictory)}"
+        )
+
+    # The set that MUST live under the wall = everything registered except the explicit
+    # ungated allowlist. A new module-scoped command not added to either side lands here and
+    # fails the equality below, so it can never be silently ungated.
+    gated = registered - INTENTIONALLY_UNGATED
+
+    # 1) The three inventories must be the identical set.
+    if gated != manifest:
+        problems.append(
+            f"gated-registered != manifest: only-in-lib.rs={sorted(gated - manifest)}; "
+            f"only-in-build.rs={sorted(manifest - gated)}"
+        )
+    if gated != policy_set:
+        problems.append(
+            f"gated-registered != policy: only-in-lib.rs={sorted(gated - policy_set)}; "
+            f"only-in-policy={sorted(policy_set - gated)}"
         )
 
     # 2) Every policy grant must match the actual capability grant.
     grants = capability_grants(root)
     grant_set = set(grants)
-    # core:* permissions are excluded; the command grants must equal the command set.
-    if grant_set != registered:
+    # core:* permissions are excluded; the command grants must equal the gated command set.
+    if grant_set != gated:
         problems.append(
-            f"capability grants != registered: "
-            f"only-in-caps={sorted(grant_set - registered)}; "
-            f"missing-from-caps={sorted(registered - grant_set)}"
+            f"capability grants != gated-registered: "
+            f"only-in-caps={sorted(grant_set - gated)}; "
+            f"missing-from-caps={sorted(gated - grant_set)}"
         )
     valid_tiers = {"R", "L1", "L2", "A", "X"}
     # An L2 (hard-delete) command may be granted to the window ONLY if it declares a
@@ -174,8 +225,9 @@ def main() -> int:
         return 1
     n = len(policy_commands(root))
     print(
-        f"GREEN: capability inventory consistent ({n} commands; registered == manifest "
-        f"== policy == capability grants; decide_approval denied, reject_approval granted)."
+        f"GREEN: capability inventory consistent ({n} gated commands; gated-registered == "
+        f"manifest == policy == capability grants; {len(INTENTIONALLY_UNGATED)} explicitly "
+        f"allowlisted-ungated; decide_approval denied, reject_approval granted)."
     )
     return 0
 

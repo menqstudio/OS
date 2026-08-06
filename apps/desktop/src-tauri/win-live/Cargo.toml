@@ -1,0 +1,35 @@
+[package]
+name = "brops-win-live"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Windows (§0.W) LIVE governed-turn kit — the Rust twin of the Linux engine/ci/live Python servers: challenge-authority / governed-supervisor / isolated-signer over named pipes with peer-SID auth, reusing the SAME brops-core crypto + brops-broker chain that verify_and_accept trusts. The whole crypto chain is proven cross-platform by an in-process integration test; the Windows bins swap only the transport (named pipes + session-0 isolation)."
+
+[lib]
+name = "brops_win_live"
+
+[dependencies]
+brops-core = { path = "../core" }
+brops-broker = { path = "../broker" }
+brops-win-broker = { path = "../win-broker" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+getrandom = "0.2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# The named-pipe transport + session-0 launcher are Windows-only; on every other host the crate is the
+# pure server cores + the in-process chain proof, so the workspace still builds/tests on the Linux CI runner.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+    "Win32_System_SystemServices",
+    "Win32_Security_Cryptography",
+] }

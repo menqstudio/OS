@@ -4,11 +4,14 @@
 // its error state — that is the honest "backend unavailable" behaviour.
 
 import { invoke, Channel } from '@tauri-apps/api/core';
+import {
+  parseGovernanceRead, type GovernanceRead, type GovernanceSurface,
+} from './governance';
 import type {
-  ActivityEvent, Agent, AiStatus, Approval, Automation, CalendarEvent, Conversation, Decision,
+  ActivityEvent, Agent, AiStatus, Approval, Automation, AutomationRun, CalendarEvent, Conversation, Decision,
   DirListing, FileContent, Integration, KnowledgeNote, LibraryItem, MemoryEntry, Message, MessageRole, Metric,
   NewAutomation, NewEvent,
-  NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject, NewResearchItem, NewTask,
+  NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewProject, NewResearchItem, NewTask,
   Notification, Project, ResearchItem, Run,
   RunStep, SearchResult, SecuritySummary, Task,
 } from '../domain/entities';
@@ -30,6 +33,50 @@ function allowedRole(role: string): MessageRole {
 
 function normalizeMessage(m: Message): Message {
   return { ...m, role: allowedRole(m.role) };
+}
+
+// Phase-2 governance mirror: invoke a READ-ONLY governance command and parse its typed
+// reply fail-closed. A rejected invoke (no backend, IPC error, engine down) becomes
+// `unreachable` rather than a thrown rejection — a governance read is a mirror, so an
+// honest state is always returned and never an exception a page must special-case.
+async function governanceRead(
+  surface: GovernanceSurface,
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<GovernanceRead> {
+  try {
+    const raw = await invoke<unknown>(command, args);
+    return parseGovernanceRead(surface, raw);
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    return { state: 'unreachable', surface, reason };
+  }
+}
+
+/**
+ * Result of the governed trust-chain self-test. `bound && production_verified` means a
+ * Production-CLASS `trusted_verified` receipt was produced by the in-process chain (real
+ * ed25519 crypto) — but `demonstration_custody` is ALWAYS true here (the root is the
+ * compiled-in demonstration anchor, not an offline-root-verified production manifest), so
+ * this must NEVER be shown as real production trust. `custody_note` states the honest
+ * posture; `available` is false off Windows.
+ */
+export interface TrustSelftest {
+  available: boolean;
+  trust_state: string;
+  production_verified: boolean;
+  /** True when the trust root is the demonstration anchor, not a real production root.
+   *  Always true for this self-test — pair it with `production_verified` so the boolean
+   *  can never be read as production trust on its own. */
+  demonstration_custody: boolean;
+  bound: boolean;
+  detail: string;
+  /** The reply the chain's executor produced INSIDE the governed turn and which the receipt
+   *  bound + verified. A real model answer when BROPS_SELFTEST_MODEL_CMD is set, else a fixed
+   *  demonstration string. Always demonstration custody. */
+  answer: string;
+  custody_note: string;
+  platform_note: string;
 }
 
 export const desktop = {
@@ -72,6 +119,10 @@ export const desktop = {
   // "confirmed" flag. Generic decide_approval remains capability-denied.
   confirmApproval: (id: string) =>
     invoke<Approval>('confirm_approval', { id }),
+  // A non-verdict sibling of reject: routes a pending approval to higher review (A3) and
+  // notifies the owner. It authorizes nothing, so it needs no native confirmation.
+  escalateApproval: (id: string) =>
+    invoke<Approval>('escalate_approval', { id }),
 
   // notifications
   listNotifications: () => invoke<Notification[]>('list_notifications'),
@@ -79,8 +130,6 @@ export const desktop = {
 
   // decisions
   listDecisions: () => invoke<Decision[]>('list_decisions'),
-  createDecision: (title: string, rationale: string) =>
-    invoke<Decision>('create_decision', { title, rationale }),
 
   // activity
   listActivity: () => invoke<ActivityEvent[]>('list_activity'),
@@ -92,9 +141,14 @@ export const desktop = {
     invoke<Conversation>('create_conversation', { kind, title }),
   listMessages: (conversationId: string) =>
     invoke<Message[]>('list_messages', { conversationId }).then((ms) => ms.map(normalizeMessage)),
-  postMessage: (input: NewMessage) =>
-    invoke<Message>('post_message', {
-      input: { ...input, role: allowedRole(input.role) },
+  // Human chat input goes through post_user_message: the renderer sends only the
+  // conversation, body and author — the server FIXES the role to `user`, so a
+  // compromised renderer can't flip a message into the agent/markdown path (L-4b/P1-6).
+  postMessage: (input: { conversationId: string; body: string; author?: string }) =>
+    invoke<Message>('post_user_message', {
+      conversationId: input.conversationId,
+      body: input.body,
+      author: input.author ?? null,
     }).then(normalizeMessage),
   // Agent messages are minted server-side only (P1-6). The webview passes ONLY the
   // opaque one-time resultId from a finished stream_ask (never the answer body); the
@@ -104,6 +158,12 @@ export const desktop = {
   deleteConversation: (id: string) => invoke<void>('delete_conversation', { id }),
   renameConversation: (id: string, title: string) =>
     invoke<Conversation>('rename_conversation', { id, title }),
+  // Group-room roster: the create-modal multi-select sets it; the reply fan-out + each
+  // agent's prompt use it. Returns the stored roster.
+  setConversationParticipants: (conversationId: string, names: string[]) =>
+    invoke<string[]>('set_conversation_participants', { conversationId, names }),
+  listConversationParticipants: (conversationId: string) =>
+    invoke<string[]>('list_conversation_participants', { conversationId }),
 
   // knowledge
   listKnowledge: () => invoke<KnowledgeNote[]>('list_knowledge'),
@@ -140,8 +200,6 @@ export const desktop = {
   listRunSteps: (runId: string) => invoke<RunStep[]>('list_run_steps', { runId }),
   addRunStep: (runId: string, title: string, detail: string, requiresApproval = false) =>
     invoke<RunStep>('add_run_step', { runId, title, detail, requiresApproval }),
-  setRunStepStatus: (id: string, status: string) =>
-    invoke<RunStep>('set_run_step_status', { id, status }),
   advanceRun: (runId: string) => invoke<Run>('advance_run', { runId }),
   // execute the next runnable step via the AI provider, streaming its result.
   streamRunStep: (runId: string, onEvent: (e: RunStepEvent) => void) => {
@@ -161,6 +219,9 @@ export const desktop = {
   setAutomationEnabled: (id: string, enabled: boolean) =>
     invoke<Automation>('set_automation_enabled', { id, enabled }),
   deleteAutomation: (id: string) => invoke<void>('delete_automation', { id }),
+  // Run an automation NOW: performs its local (no-AI) action and returns the recorded run.
+  runAutomation: (id: string) => invoke<AutomationRun>('run_automation', { id }),
+  listAutomationRuns: (id: string) => invoke<AutomationRun[]>('list_automation_runs', { id }),
 
   // integrations
   listIntegrations: () => invoke<Integration[]>('list_integrations'),
@@ -174,10 +235,30 @@ export const desktop = {
   getAnalytics: () => invoke<Metric[]>('get_analytics'),
   getSecuritySummary: () => invoke<SecuritySummary>('get_security_summary'),
 
+  // Phase-2 governance mirror (READ-ONLY; mirror, never decide). Each wrapper invokes
+  // a read-only Tauri command that asks the engine sidecar and parses the typed reply
+  // FAIL-CLOSED: a thrown transport error is mapped to `unreachable`, a refused/malformed
+  // reply to `blocked`, and only a well-formed schema-valid reply to `ok`. The renderer
+  // supplies no key/lease and never decides — it can only surface engine truth or an
+  // honest blocked/unreachable state.
+  readEvidenceChain: (taskId?: string) =>
+    governanceRead('evidenceChain', 'read_evidence_chain', { taskId: taskId ?? null }),
+  readEngineApprovalQueue: () => governanceRead('approvalQueue', 'read_engine_approval_queue'),
+
+  // Governed trust-chain self-test: runs the REAL in-process challenge→sign→verify→
+  // trusted_verified chain (Windows) and returns the honest outcome + custody posture.
+  // It never flips live AI turns — those stay fail-closed.
+  governedTrustSelftest: () => invoke<TrustSelftest>('governed_trust_selftest'),
+
   // ai (live agent replies)
   aiStatus: () => invoke<AiStatus>('ai_status'),
-  replyInConversation: (conversationId: string, agent?: string) =>
-    invoke<Message>('reply_in_conversation', { conversationId, agent: agent ?? null })
+
+  // A live DEMONSTRATION-verified reply (Windows): the reply is produced INSIDE the in-process
+  // governed chain and verified under the demonstration anchor, so the returned message carries
+  // receipt='demonstration_verified' (real crypto, demonstration custody — never production).
+  // Requires BROPS_SELFTEST_MODEL_CMD; rejects (fail-closed) otherwise or off Windows.
+  demonstrationVerifiedReply: (conversationId: string, agent?: string) =>
+    invoke<Message>('demonstration_verified_reply', { conversationId, agent: agent ?? null })
       .then(normalizeMessage),
 
   // ai streaming: emits {type:'delta'|'done'|'error'} over a channel while the
@@ -188,6 +269,13 @@ export const desktop = {
       onEvent(e.type === 'done' ? { ...e, message: normalizeMessage(e.message) } : e);
     return invoke<void>('stream_reply', { conversationId, agent: agent ?? null, onEvent: channel });
   },
+
+  // Stop an in-flight streaming turn for a conversation (the Stop button). The
+  // backend breaks the stream at the next delta and keeps whatever streamed so far.
+  cancelReply: (conversationId: string) => invoke<void>('cancel_reply', { conversationId }),
+
+  // Open a second app window (right-click → "Open in new window"), optionally at a route.
+  openWindow: (route?: string) => invoke<void>('open_window', { route: route ?? null }),
 
   // one-shot Ask Bro: streams an answer to a single prompt (no persistence).
   streamAsk: (prompt: string, onEvent: (e: StreamEvent) => void) => {

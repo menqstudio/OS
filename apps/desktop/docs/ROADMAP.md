@@ -1,5 +1,10 @@
 # BroPS Roadmap
 
+> **Canonical source:** the authoritative, actively-maintained plan is the repo-root
+> [MASTER_EXECUTION_ROADMAP.md](../../../MASTER_EXECUTION_ROADMAP.md) (11 phases × 16 sections,
+> change-controlled). This desktop-scoped file is an early phase overview kept for history;
+> when the two disagree, the root master roadmap wins.
+
 - **Purpose:** Track phased future work from foundation to deployment.
 - **Scope:** Future work only. Shipped changes are in [CHANGELOG.md](../CHANGELOG.md); acceptance is in [SUCCESS_CRITERIA.md](SUCCESS_CRITERIA.md).
 - **Owner:** Gev.

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-escalate-approval"
+description = "Enables the escalate_approval command without any pre-configured scope."
+commands.allow = ["escalate_approval"]
+
+[[permission]]
+identifier = "deny-escalate-approval"
+description = "Denies the escalate_approval command without any pre-configured scope."
+commands.deny = ["escalate_approval"]

@@ -438,6 +438,14 @@ fn record(
                                 NewMessage {
                                     conversation_id,
                                     role: "agent".to_string(),
+                                    // LATENT (dev-governed accept only; fail-closed today): this flattens a
+                                    // group room's verified replies to "agent". The Wave 3b acceptance
+                                    // (governed_verification.rs) already carries the real author via
+                                    // BrokerContext.author; when the governed path goes live (see
+                                    // win-live/WIRING_LIVE_TRUST.md) this Wave-3a accept must likewise take
+                                    // the author from the turn's broker/desktop state (§4.6), NOT the
+                                    // renderer. Threading it is blocked only by the 4 copy-pasted governed
+                                    // blocks in commands.rs — do it as part of the wiring, with a test.
                                     author: "agent".to_string(),
                                     body,
                                 },

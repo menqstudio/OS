@@ -44,6 +44,13 @@ const EXIT_DB: i32 = 3;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const EXIT_SOCKET: i32 = 4;
 
+/// Per-read/write deadline armed on every accepted renderer connection (audit F-31). The accept loop
+/// is serial by design — one governed turn per connection — so a peer that connects and then stays
+/// silent must not be able to hold the only thread. A governed turn is buffered and can take a while
+/// upstream, so this is generous; it exists to bound the SILENT case, not to rush a real turn.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const CONN_IO_TIMEOUT_MS: u64 = 120_000;
+
 // ---------------------------------------------------------------------------------------------------
 // Broker DB schema init — pure, host-independent, testable on any platform. Creates the four governed-turn
 // schemas through brops-core so the broker shares exactly one schema authority with the recorder side.
@@ -167,14 +174,30 @@ mod linux {
         })?;
 
         let ids = UuidBrokerIds;
-        let executor = UpstreamBlockedExecutor;
+        // Config-driven, FAIL-CLOSED executor: if `BROPS_BROKER_CONFIG` points at a valid deployment config
+        // with a TCB-root-signed manifest, serve real governed turns through the live chain; otherwise (no
+        // config / malformed / no trusted manifest) fall back to the fail-closed default that Blocks every
+        // turn — the shipped posture is unchanged until a trusted manifest is provisioned.
+        let executor: Box<dyn GovernedExecutor> = build_governed_executor(allowed_uid);
 
         // One governed turn per connection (single-request/single-response). A bad peer or malformed frame
         // fails that ONE connection closed; the listener keeps serving.
         for stream in listener.incoming() {
             match stream {
                 Ok(mut s) => {
-                    if let Err(e) = handle_conn(&conn, &mut s, allowed_uid, &ids, &executor) {
+                    // Audit F-31: this loop is strictly serial, so ONE peer that connects and then
+                    // sends nothing used to hold `read_one_frame`'s blocking read open forever and
+                    // no further connection was ever accepted — a permanent, self-sustaining denial
+                    // of the governed path from any process sharing the renderer's uid, which the
+                    // design treats as untrusted. A deadline turns that into a refused connection.
+                    let deadline = std::time::Duration::from_millis(CONN_IO_TIMEOUT_MS);
+                    if s.set_read_timeout(Some(deadline)).is_err()
+                        || s.set_write_timeout(Some(deadline)).is_err()
+                    {
+                        eprintln!("brops-broker: could not arm connection deadline; refusing");
+                        continue;
+                    }
+                    if let Err(e) = handle_conn(&conn, &mut s, allowed_uid, &ids, executor.as_ref()) {
                         eprintln!("brops-broker: connection refused: {e}");
                     }
                 }
@@ -182,6 +205,185 @@ mod linux {
             }
         }
         Ok(())
+    }
+
+    /// Build the broker's [`GovernedExecutor`], FAIL-CLOSED by default. Reads the optional deployment config
+    /// at `$BROPS_BROKER_CONFIG` (same shape the live-turn driver uses): if it parses and carries a
+    /// `[trust].manifest_path` + signature + floor + the `[sockets]`/`[execution]`/`[facts]`/`[resolved]`
+    /// blocks, the real `LinuxGovernedTurnChain` (with the production `ProductionResolver`) is served.
+    /// ANY problem — no env var, unreadable/malformed config, missing manifest — returns the fail-closed
+    /// `UpstreamBlockedExecutor`, so the broker keeps rendering `blocked` (never a fabricated acceptance).
+    fn build_governed_executor(login_uid: u32) -> Box<dyn GovernedExecutor> {
+        use brops_broker::chain_executor::linux::{
+            ChainSockets, ExecutionConfig, LinuxGovernedExecution, LinuxGovernedTurnChain,
+        };
+        use brops_broker::chain_executor::ChainExecutor;
+        use brops_broker::manifest_resolver::{ProductionResolver, ResolvedFacts};
+        use brops_core::governed_verification::InMemoryLedger;
+        use brops_core::key_manifest::{AntiRollbackFloor, KeyManifest};
+        use serde_json::Value;
+
+        let fail_closed = || -> Box<dyn GovernedExecutor> { Box::new(UpstreamBlockedExecutor) };
+
+        let path = match std::env::var("BROPS_BROKER_CONFIG") {
+            Ok(p) if !p.is_empty() => p,
+            _ => return fail_closed(),
+        };
+        let cfg: Value = match std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok())
+        {
+            Some(v) => v,
+            None => {
+                eprintln!("brops-broker: config unreadable/malformed at {path} — serving fail-closed");
+                return fail_closed();
+            }
+        };
+
+        let s = |p: &[&str]| -> Option<String> {
+            let mut cur = &cfg;
+            for k in p {
+                cur = cur.get(*k)?;
+            }
+            cur.as_str().map(|x| x.to_string())
+        };
+        let i = |p: &[&str]| -> Option<i64> {
+            let mut cur = &cfg;
+            for k in p {
+                cur = cur.get(*k)?;
+            }
+            cur.as_i64()
+        };
+
+        // ---- §2.5 TCB INTEGRITY FLOOR (audit F-10) ----
+        //
+        // Before ANY governed mode is entered, the pinned TCB set — the seven trusted executables,
+        // their configs and IPC policies, the pinned-manifest configuration, the allowlist source,
+        // the key-manifest root anchor, and both unit files — must be TCB-owned, non-writable by any
+        // login/runtime principal, and hash-match its start-time pin. `verify_tcb_integrity` had
+        // implemented exactly that decision and had NO caller and no non-test `FsProbe`, so every
+        // downstream signature check ran on binaries whose integrity was never measured.
+        //
+        // Fail-closed in every direction: no manifest configured, unreadable, malformed, or ANY
+        // violation ⇒ keep the blocking executor rather than serve real governed turns.
+        let runtime_uids: Vec<u32> = cfg
+            .get("uids")
+            .and_then(|v| v.as_object())
+            .map(|m| m.values().filter_map(|v| v.as_u64().map(|u| u as u32)).collect())
+            .unwrap_or_default();
+        let mut principals = runtime_uids.clone();
+        if !principals.contains(&login_uid) {
+            principals.push(login_uid);
+        }
+        let pin_manifest_path = s(&["trust", "tcb_pin_manifest_path"]).or_else(|| {
+            std::env::var(brops_broker::tcb_probe::TCB_PIN_MANIFEST_ENV)
+                .ok()
+                .filter(|p| !p.is_empty())
+        });
+        if let Err(why) = brops_broker::tcb_probe::verify_deployment_tcb(
+            pin_manifest_path.as_deref(),
+            &principals,
+            login_uid,
+        ) {
+            eprintln!("brops-broker: TCB integrity floor REFUSED ({why}) — serving fail-closed");
+            return fail_closed();
+        }
+
+        // The presence of a manifest path is the switch: absent ⇒ no trusted manifest ⇒ fail-closed.
+        let manifest_path = match s(&["trust", "manifest_path"]) {
+            Some(p) => p,
+            None => return fail_closed(),
+        };
+        let manifest: KeyManifest = match std::fs::read_to_string(&manifest_path)
+            .ok()
+            .and_then(|b| serde_json::from_str(&b).ok())
+        {
+            Some(m) => m,
+            None => return fail_closed(),
+        };
+        let root_sig = match s(&["trust", "manifest_sig_path"]).and_then(|p| std::fs::read_to_string(p).ok())
+        {
+            Some(sig) => sig.trim().to_string(),
+            None => return fail_closed(),
+        };
+        // Anti-rollback floor (audit P0, honest note): this Linux broker path reads only {highest_epoch,
+        // highest_hash} and does NOT verify a signature — and a signature would not help anyway, since any
+        // floor-integrity key here would also be a public source constant (see win-live tcb::FLOOR_SEED_HEX).
+        // The real anti-rollback boundary is the OS write-protection on the deployment dir: floor_path MUST be
+        // owned by / writable only by the broker service principal (file mode 0600, dedicated UID; the
+        // in-scope sidecar runs as a DIFFERENT UID and cannot write it). See WINDOWS_ANTIROLLBACK_HARDENING.md
+        // (the Windows twin) + the TPM/monotonic-counter roadmap item for a same-principal-compromise defense.
+        let floor = match s(&["trust", "floor_path"])
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|b| serde_json::from_str::<Value>(&b).ok())
+            .and_then(|v| {
+                Some(AntiRollbackFloor {
+                    highest_epoch: v.get("highest_epoch")?.as_u64()?,
+                    highest_hash: v.get("highest_hash")?.as_str()?.to_string(),
+                })
+            }) {
+            Some(f) => f,
+            None => return fail_closed(),
+        };
+        let facts = ResolvedFacts {
+            workspace_id: s(&["resolved", "workspace_id"]).unwrap_or_default(),
+            install_id: s(&["resolved", "install_id"]).unwrap_or_default(),
+            system_sha256: s(&["resolved", "system_sha256"]).unwrap_or_default(),
+            history_sha256: s(&["resolved", "history_sha256"]).unwrap_or_default(),
+            generation_config_sha256: s(&["resolved", "generation_config_sha256"]).unwrap_or_default(),
+            requested_at: s(&["resolved", "requested_at"]).unwrap_or_default(),
+            run_id: s(&["resolved", "run_id"]).unwrap_or_default(),
+            task_id: s(&["resolved", "task_id"]).unwrap_or_default(),
+            requested_at_ms: i(&["resolved", "requested_at_ms"]).unwrap_or(0),
+            author: s(&["resolved", "author"]).unwrap_or_else(|| "Bro".to_string()),
+        };
+        let resolver = ProductionResolver::provisioned(
+            manifest,
+            root_sig,
+            floor,
+            s(&["trust", "signer_key_id"]).unwrap_or_default(),
+            s(&["trust", "supervisor_attestation_key_id"]).unwrap_or_default(),
+            facts,
+        );
+
+        let sockets = match (s(&["sockets", "authority"]), s(&["sockets", "supervisor"]), s(&["sockets", "signer"]))
+        {
+            (Some(authority), Some(supervisor), Some(signer)) => {
+                ChainSockets { authority, supervisor, signer }
+            }
+            _ => return fail_closed(),
+        };
+        let exec_cfg = ExecutionConfig {
+            recorder_command: cfg
+                .get("execution")
+                .and_then(|e| e.get("recorder_command"))
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
+            recorder_store_dir: s(&["execution", "recorder_store_dir"]).unwrap_or_default(),
+            launcher_path: s(&["execution", "launcher_path"]).unwrap_or_default(),
+            executor_path: s(&["execution", "executor_path"]).unwrap_or_default(),
+            lease_file: s(&["execution", "lease_file"]).unwrap_or_default(),
+            cgroup_arg: s(&["execution", "cgroup_arg"]).unwrap_or_else(|| "cgroup-live".to_string()),
+            store_dir: s(&["execution", "store_dir"]).unwrap_or_default(),
+            report_dir: s(&["execution", "report_dir"]).unwrap_or_default(),
+            supervisor_sock: sockets.supervisor.clone(),
+            // F-01: `receipt_id` and the supervisor/executor/builder/policy identities are no
+            // longer read here. They are the values the isolated signer allowlists, so a broker
+            // that named them was choosing what it would be checked against; they now come from
+            // the SUPERVISOR's own provisioning (`config.supervisor.*`) and never travel the wire.
+            // F-02: the four evidence-head values are no longer read from config — the recorder
+            // measures them per run and writes them to `--evidence-out`. What config supplies is
+            // only WHERE the recorder keeps its durable head-sequence counter.
+            evidence_state_dir: s(&["execution", "evidence_state_dir"]).unwrap_or_default(),
+        };
+
+        eprintln!("brops-broker: trusted manifest provisioned — serving the live governed chain");
+        let chain = LinuxGovernedTurnChain::new(
+            sockets,
+            resolver,
+            LinuxGovernedExecution::new(exec_cfg),
+            InMemoryLedger::new(),
+        );
+        Box::new(ChainExecutor::new(chain))
     }
 
     /// Read the peer's OS credentials via `SO_PEERCRED` (kernel-attested at connect time — unforgeable by the

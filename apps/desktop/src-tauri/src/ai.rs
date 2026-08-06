@@ -241,6 +241,76 @@ impl Drop for GenerationPermit {
     }
 }
 
+/// Per-conversation cancellation flags for in-flight streaming turns. `stream_reply` arms a
+/// flag (returned inside a [`CancelGuard`] that removes exactly its own entry on drop — so a
+/// turn whose future is dropped/panics never leaks a stale entry); `cancel_reply` sets EVERY
+/// flag registered for the conversation, so Stop halts all of that conversation's turns even
+/// when two windows drive it concurrently; the stream's read loop observes the flag and kills
+/// the `claude` child. A `Vec` per key (not a single flag) is what makes the two-window case
+/// correct — a second turn no longer clobbers the first's flag.
+#[allow(clippy::type_complexity)]
+fn cancel_flags(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<std::sync::Arc<std::sync::atomic::AtomicBool>>>>
+{
+    static F: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Vec<std::sync::Arc<std::sync::atomic::AtomicBool>>>>,
+    > = std::sync::OnceLock::new();
+    F.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// RAII registration of one turn's cancel flag under a conversation key. Dropping it removes
+/// exactly this turn's flag (by pointer identity), covering every return path including a
+/// future dropped mid-`await` when its window closes.
+pub struct CancelGuard {
+    key: String,
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CancelGuard {
+    /// The flag the streaming read loop polls.
+    pub fn flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.flag.clone()
+    }
+}
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        if let Ok(mut m) = cancel_flags().lock() {
+            if let Some(v) = m.get_mut(&self.key) {
+                v.retain(|f| !std::sync::Arc::ptr_eq(f, &self.flag));
+                if v.is_empty() {
+                    m.remove(&self.key);
+                }
+            }
+        }
+    }
+}
+
+/// Arm a fresh (not-cancelled) flag for `key`, registered until the returned guard drops.
+pub fn arm_cancel(key: &str) -> CancelGuard {
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Ok(mut m) = cancel_flags().lock() {
+        m.entry(key.to_string()).or_default().push(flag.clone());
+    }
+    CancelGuard { key: key.to_string(), flag }
+}
+
+/// Request cancellation of EVERY in-flight turn armed under `key`. Returns true if any were.
+pub fn request_cancel(key: &str) -> bool {
+    match cancel_flags().lock() {
+        Ok(m) => match m.get(key) {
+            Some(v) if !v.is_empty() => {
+                for f in v {
+                    f.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                true
+            }
+            _ => false,
+        },
+        Err(_) => false,
+    }
+}
+
 /// One turn of a conversation. `role` is "user" or "assistant".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMsg {
@@ -406,6 +476,22 @@ fn resolve() -> Result<Provider, String> {
     resolve_provider(&env)
 }
 
+/// Windows: mark console subprocesses with CREATE_NO_WINDOW so the GUI app never
+/// flashes a console/`cmd` window per turn (the `claude` CLI and the sidecar are
+/// console binaries). No-op on other platforms.
+fn hide_console(cmd: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    {
+        // tokio::process::Command exposes `creation_flags` inherently on Windows.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
 /// Readiness probe for the local `claude` CLI. Spawns `claude --version` with
 /// kill_on_drop so a hung/hostile binary is reaped on timeout (no orphan piling
 /// up across repeated status polls), and drains its output bounded so it can't
@@ -417,6 +503,7 @@ async fn claude_version_ok(bin: &str) -> bool {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    hide_console(&mut cmd);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(_) => return false,
@@ -585,13 +672,14 @@ pub async fn generate_stream<F: FnMut(&str)>(
     system: &str,
     messages: &[ChatMsg],
     mut on_delta: F,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, String> {
     validate_input(system, messages)?;
     let _permit = GenerationPermit::acquire()?;
     let messages = trim_history(messages);
     let provider = resolve()?;
     match provider {
-        Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta).await,
+        Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta, cancel).await,
         Provider::Anthropic { key, model } => {
             let full = anthropic(&key, &model, system, messages).await?;
             on_delta(&full);
@@ -728,10 +816,15 @@ fn pid_liveness(pid: u32) -> Option<bool> {
         // don't include our PID, a failed spawn, or a non-zero exit all yield
         // `None` so cleanup falls back to the (conservative) age rule instead of
         // deleting a possibly-live sibling's sandbox.
-        let out = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
-            .stdin(std::process::Stdio::null())
-            .output();
+        let mut tl = std::process::Command::new("tasklist");
+        tl.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .stdin(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            tl.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash on cleanup
+        }
+        let out = tl.output();
         match out {
             Ok(o) if o.status.success() => {
                 let text = String::from_utf8_lossy(&o.stdout);
@@ -864,7 +957,48 @@ impl Drop for TempFileGuard {
 /// `--append-system-prompt-file` (not `--append-system-prompt <text>`), so the
 /// persona/system text never appears in argv / `/proc/<pid>/cmdline` — the same
 /// protection the transcript gets via stdin.
+/// The repo Bro operates on as a coding agent, from `BROPS_PROJECT_DIR`. When it
+/// points at a real directory, AI turns run rooted there with ONLY the file tools
+/// (Read/Edit/Write/Grep/Glob) in `acceptEdits` mode — never Bash or any executor,
+/// so Bro can read + edit the codebase but cannot run commands, push, delete files,
+/// or install dependencies. Unset ⇒ the classic fail-closed sandboxed chat (no tools).
+fn bro_agent_dir() -> Option<String> {
+    env_nonempty("BROPS_PROJECT_DIR").filter(|p| std::path::Path::new(p).is_dir())
+}
+
+/// Working directory for a claude turn: the project repo in agent mode, else the
+/// locked-down AI sandbox.
+fn ai_cwd() -> Result<std::path::PathBuf, String> {
+    match bro_agent_dir() {
+        Some(d) => Ok(std::path::PathBuf::from(d)),
+        None => ai_sandbox_dir(),
+    }
+}
+
+/// Project-context + boundaries appended to Bro's system prompt in agent mode.
+fn bro_agent_system_suffix() -> String {
+    match bro_agent_dir() {
+        None => String::new(),
+        Some(dir) => format!(
+            "\n\n--- PROJECT CONTEXT (you are a coding agent on this repo) ---\n\
+You operate inside the real repository rooted at {dir}, with file tools only (Read/Edit/Write/Grep/Glob). \
+You have NO shell/Bash and cannot run commands, git push, delete files, or install dependencies. If a command \
+(build, test, git, dependency) is needed, PROPOSE the exact command for the owner to run — never claim you ran it.\n\
+- App: apps/desktop (Tauri + React/TS). Frontend apps/desktop/src (views in features/, shell components/Shell.tsx, IPC wrapper services/desktop.ts). Rust backend apps/desktop/src-tauri/src (commands.rs, ai.rs, governance.rs, files.rs; commands registered in lib.rs). Data core src-tauri/core/src/repo.rs + schema core/schema/*.sql.\n\
+- Design system: apps/desktop/src/theme/aios.css (ported from the brops-aios mockup). Match it.\n\
+- IPC: Tauri #[tauri::command]s invoked from services/desktop.ts; channel names are the snake_case command names.\n\
+- TRUST IS FAIL-CLOSED — never break it: src-tauri/core/src (receipt_store.rs, governed_verification.rs, production_trust.rs, key_manifest.rs). Never render trusted_verified without the real chain.\n\
+- DO NOT edit: .env, secrets/keys, .github/supply-chain/gitleaks.toml, core/schema past migrations, or anything weakening fail-closed trust.\n\
+- Package manager npm. Reply in Armenian unless it's code/identifiers/commands."
+        ),
+    }
+}
+
 fn write_system_prompt_file(system: &str) -> Result<std::path::PathBuf, String> {
+    // In agent mode, append the project context + boundaries to whatever per-turn
+    // system prompt the caller built, so Bro always knows the repo it works on.
+    let system = format!("{system}{}", bro_agent_system_suffix());
+    let system = system.as_str();
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -900,6 +1034,54 @@ fn write_system_prompt_file(system: &str) -> Result<std::path::PathBuf, String> 
     Err("could not create a unique system prompt file".to_string())
 }
 
+/// Commands the in-app Bro coding agent may NEVER run, even with Bash enabled — the owner's standing boundary:
+/// never push, delete, or install dependencies without asking. Passed to `claude` as `--disallowedTools`,
+/// which OVERRIDES the allow-list, so these stay blocked while ordinary build/test/inspect commands run.
+// Honest note: `--disallowedTools` is prefix-matching, NOT a hard sandbox — a determined
+// command can still be smuggled through `sh -c`, `env`, chaining, or subshells. The owner
+// deliberately keeps Bro powerful (deny-list, not a restrictive allow-list), so this list
+// closes every CONCRETE bypass an audit surfaced while leaving normal build/test/inspect
+// commands free. It is defense-in-depth, not a boundary of last resort.
+const BRO_BASH_DENY: &[&str] = &[
+    // delete
+    "Bash(rm:*)", "Bash(rmdir:*)", "Bash(del:*)", "Bash(Remove-Item:*)", "Bash(unlink:*)",
+    "Bash(truncate:*)", "Bash(find:* -delete)", "Bash(git clean:*)", "Bash(git rm:*)",
+    // push (incl. the `git -C <dir> push` form and force variants)
+    "Bash(git push:*)", "Bash(git -C:*)", "Bash(git -c:*)",
+    // dependency / global install — every ecosystem the audit flagged
+    "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npm ci:*)", "Bash(npm add:*)", "Bash(npx:*)",
+    "Bash(pnpm add:*)", "Bash(pnpm install:*)", "Bash(pnpm dlx:*)",
+    "Bash(yarn add:*)", "Bash(yarn install:*)", "Bash(yarn dlx:*)",
+    "Bash(cargo add:*)", "Bash(cargo install:*)",
+    "Bash(pip install:*)", "Bash(pip3 install:*)", "Bash(python -m pip:*)", "Bash(python3 -m pip:*)",
+    "Bash(uv pip:*)", "Bash(uv add:*)", "Bash(uvx:*)", "Bash(pipx:*)", "Bash(poetry add:*)",
+    "Bash(bun add:*)", "Bash(bun install:*)", "Bash(bunx:*)",
+    "Bash(deno install:*)", "Bash(go install:*)", "Bash(gem install:*)",
+    "Bash(brew install:*)", "Bash(apt install:*)", "Bash(apt-get install:*)", "Bash(winget install:*)",
+    "Bash(choco install:*)", "Bash(scoop install:*)",
+    // shells that would defeat prefix matching by re-parsing an inner command
+    "Bash(sh:*)", "Bash(bash:*)", "Bash(zsh:*)", "Bash(pwsh:*)", "Bash(powershell:*)", "Bash(cmd:*)", "Bash(env:*)",
+];
+
+/// The `--tools` (+ permission-mode / disallow) argv fragment. As a coding agent (BROPS_PROJECT_DIR set) Bro
+/// gets the file tools PLUS Bash in acceptEdits mode, bounded by [`BRO_BASH_DENY`] so it can build/test/inspect
+/// and edit the repo but can't push/delete/install. Unset ⇒ NO tools at all (the fail-closed sandboxed chat).
+fn tool_args(agent: bool) -> Vec<String> {
+    let mut a: Vec<String> = vec!["--tools".into()];
+    if agent {
+        a.push("Read Edit Write Grep Glob Bash".into());
+        a.push("--permission-mode".into());
+        a.push("acceptEdits".into());
+        a.push("--disallowedTools".into());
+        for pat in BRO_BASH_DENY {
+            a.push((*pat).into());
+        }
+    } else {
+        a.push(String::new()); // "" → disable ALL built-in tools
+    }
+    a
+}
+
 /// Build the argv (after the binary) for a `claude -p` chat call. Centralized so
 /// the security lockdown is guaranteed present on every path and unit-testable.
 /// The chat is a pure text completion: no built-in tools, no MCP servers, and no
@@ -920,11 +1102,14 @@ fn claude_args(system_file: &std::path::Path, streaming: bool, model: Option<&st
     }
     a.push("--append-system-prompt-file".into());
     a.push(system_file.to_string_lossy().into_owned());
-    a.push("--tools".into());
-    a.push(String::new()); // "" → disable ALL built-in tools
+    a.extend(tool_args(bro_agent_dir().is_some()));
     a.push("--strict-mcp-config".into()); // ignore every MCP config (we pass none)
     a.push("--setting-sources".into());
-    a.push("project".into()); // only project settings (empty sandbox) — excludes user hooks/plugins/MCP
+    // "" → load NO setting sources: excludes user AND project hooks/plugins/MCP. Critical for the coding
+    // agent (cwd = a real repo): otherwise claude runs the repo's `.claude` Stop hook (e.g. a coordination
+    // doc-sync guard), which can `decision:block` a headless turn and wedge it until the CLI times out. Tools
+    // and permission mode come from CLI flags, never settings, so nothing we rely on is lost.
+    a.push(String::new());
     a.push("--no-session-persistence".into());
     if let Some(m) = model {
         a.push("--model".into());
@@ -938,21 +1123,27 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     system: &str,
     messages: &[ChatMsg],
     on_delta: &mut F,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, String> {
     let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
     let sys_file = TempFileGuard(write_system_prompt_file(system)?);
-    // Absolute deadline for the WHOLE streaming lifecycle (stdout loop + child
-    // wait + stderr drain) — a child that keeps dribbling lines can't run forever.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+    // Absolute deadline for the WHOLE streaming lifecycle (stdout loop + child wait +
+    // stderr drain). A conversational chat gets 180s; the coding agent (BROPS_PROJECT_DIR
+    // set) does real multi-step work — reading files, running build/test — so it gets a
+    // far larger budget, otherwise a legitimate agent task surfaces as "claude CLI timed out".
+    let agent = bro_agent_dir().is_some();
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_secs(if agent { 900 } else { 180 });
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(claude_args(&sys_file.0, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
-        .current_dir(ai_sandbox_dir()?)
+        .current_dir(ai_cwd()?)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         // Ensure the child is killed if this future is dropped or returns early
         // (timeout, read error) — never leak a running `claude` process.
         .kill_on_drop(true);
+    hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN, or pick another provider via BROPS_AI_PROVIDER (ungoverned providers need BROPS_ALLOW_UNGOVERNED=1).")
     })?;
@@ -996,14 +1187,32 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     // (hung `claude`, auth prompt, network stall) is bounded by a per-read
     // timeout so the UI never spins forever; kill_on_drop reaps the child.
     loop {
-        // Bound each read by the earlier of the absolute request deadline and a
-        // 120s per-read stall cap.
-        let read_deadline = deadline.min(tokio::time::Instant::now() + Duration::from_secs(120));
-        let line = match tokio::time::timeout_at(read_deadline, lines.next_line()).await {
-            Err(_) => return Err("claude CLI timed out".to_string()),
-            Ok(Ok(Some(l))) => l,
-            Ok(Ok(None)) => break,
-            Ok(Err(e)) => return Err(e.to_string()),
+        // Bound each read by the earlier of the absolute request deadline and a per-read
+        // stall cap (the agent can pause longer between output lines). Poll for a Stop every
+        // 200ms even mid-stall, so cancel is observed promptly — not only when the next line
+        // arrives — then kill the child and keep whatever streamed so far.
+        let read_deadline =
+            deadline.min(tokio::time::Instant::now() + Duration::from_secs(if agent { 300 } else { 120 }));
+        let maybe_line: Option<String> = loop {
+            if cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst)) {
+                let _ = child.start_kill();
+                return Ok(acc.trim().to_string());
+            }
+            let poll = (tokio::time::Instant::now() + Duration::from_millis(200)).min(read_deadline);
+            match tokio::time::timeout_at(poll, lines.next_line()).await {
+                Ok(Ok(Some(l))) => break Some(l),
+                Ok(Ok(None)) => break None,
+                Ok(Err(e)) => return Err(e.to_string()),
+                Err(_) => {
+                    if tokio::time::Instant::now() >= read_deadline {
+                        return Err("claude CLI timed out".to_string());
+                    }
+                }
+            }
+        };
+        let line = match maybe_line {
+            Some(l) => l,
+            None => break,
         };
         let line = line.trim();
         if line.is_empty() {
@@ -1092,11 +1301,12 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
     let sys_file = TempFileGuard(write_system_prompt_file(system)?);
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(claude_args(&sys_file.0, false, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
-        .current_dir(ai_sandbox_dir()?)
+        .current_dir(ai_cwd()?)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not run `{bin}` ({e}). Install Claude Code and log in, set BROPS_CLAUDE_BIN to its path, or pick another provider via BROPS_AI_PROVIDER (ungoverned providers need BROPS_ALLOW_UNGOVERNED=1).")
     })?;
@@ -1349,8 +1559,55 @@ async fn governed_engine(
     prepared: &PreparedGovernedTurn,
 ) -> Result<GovernedReply, String> {
     let request = governed_request(prepared);
+    let doc = governed_sidecar_call(python, sidecar, &request).await?;
+    interpret_bridge_result(&doc)
+}
+
+/// Phase-2 governance mirror (read-only): run a READ-ONLY query against the governed
+/// engine sidecar and return its raw JSON reply for the caller to validate against the
+/// engine schemas. Mirrors [`governed_engine`]'s subprocess discipline exactly (same
+/// sidecar, stdin payload, bounded reads, one deadline, kill-on-drop) but makes NO trust
+/// decision and holds NO key/lease — it only forwards the read. Any failure to reach or
+/// parse the sidecar is an `Err` the caller maps to a typed `Unreachable`/`Blocked`; the
+/// governed engine not being configured is likewise a fail-closed `Err` (never a silent
+/// ungoverned fallback). This never runs a turn and never mutates state.
+pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_json::Value, String> {
+    let _permit = GenerationPermit::acquire()?;
+    match resolve()? {
+        Provider::GovernedEngine { python, sidecar } => {
+            governed_sidecar_call(&python, &sidecar, request_json).await
+        }
+        _ => Err(
+            "governed engine is not configured; the governance mirror is fail-closed".to_string(),
+        ),
+    }
+}
+
+/// Shell out to the bridge sidecar with `request` on stdin and return its parsed JSON
+/// reply. Shared by the governed AI turn ([`governed_engine`]) and the read-only
+/// governance mirror ([`governed_sidecar_read`]) so both use the IDENTICAL subprocess
+/// discipline. Makes no trust decision — it returns the raw `bridge.result` document.
+async fn governed_sidecar_call(
+    python: &str,
+    sidecar: &str,
+    request: &str,
+) -> Result<serde_json::Value, String> {
     let mut cmd = tokio::process::Command::new(python);
-    cmd.arg(sidecar)
+    // The child runs with cwd = the empty AI sandbox (below), so a RELATIVE sidecar path (the default
+    // `bridge/engine_sidecar.py`) would not resolve from there and every governed turn would die on a
+    // spawn/path error instead of a governance decision (audit F-39). Absolutize a relative path against
+    // the process's real working directory FIRST — exactly where it resolved before the sandbox-cwd
+    // override existed — so the script is found while the child is still contained in the sandbox. An
+    // absolute `BROPS_GOVERNED_SIDECAR` is used verbatim.
+    let sidecar_path = {
+        let p = std::path::Path::new(sidecar);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            std::env::current_dir().map(|c| c.join(p)).unwrap_or_else(|_| p.to_path_buf())
+        }
+    };
+    cmd.arg(&sidecar_path)
         // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
         // reach the production sidecar via inherited env. The sidecar honors self-test
         // via the --self-test CLI flag ONLY (which we never pass), and we also strip the
@@ -1361,13 +1618,14 @@ async fn governed_engine(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
         format!("Could not run the governed engine sidecar (`{python} {sidecar}`): {e}. Set BROPS_GOVERNED_PYTHON / BROPS_GOVERNED_SIDECAR, or unset BROPS_ALLOW_GOVERNED_ENGINE.")
     })?;
     // Feed the task-request via stdin (never argv → not in /proc/<pid>/cmdline) on a
     // concurrent task, so a stalled write can't hang the deadline-bounded wait.
     if let Some(mut stdin) = child.stdin.take() {
-        let bytes = request.into_bytes();
+        let bytes = request.as_bytes().to_vec();
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             let _ = stdin.write_all(&bytes).await;
@@ -1408,7 +1666,7 @@ async fn governed_engine(
     let stdout = String::from_utf8_lossy(&obuf);
     let doc: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("could not parse bridge-result ({e})"))?;
-    interpret_bridge_result(&doc)
+    Ok(doc)
 }
 
 async fn ollama(url: &str, model: &str, system: &str, messages: &[ChatMsg]) -> Result<String, String> {
@@ -1512,7 +1770,7 @@ mod tests {
             assert!(args.iter().any(|a| a == "--strict-mcp-config"), "must pass --strict-mcp-config");
             // only project settings load (from the empty sandbox) → no user hooks/plugins/MCP.
             let sp = args.iter().position(|a| a == "--setting-sources").expect("--setting-sources present");
-            assert_eq!(args.get(sp + 1), Some(&"project".to_string()));
+            assert_eq!(args.get(sp + 1), Some(&String::new()), "no setting sources → no user/project hooks");
             assert!(args.iter().any(|a| a == "--no-session-persistence"));
             // never bypass permissions / re-enable tools.
             assert!(!args.iter().any(|a| a == "--dangerously-skip-permissions"
@@ -1520,6 +1778,29 @@ mod tests {
                 || a == "--allowedTools" || a == "--allowed-tools"));
             assert!(!args.iter().any(|a| a == "default"), "must not pass --tools default");
         }
+    }
+
+    #[test]
+    fn tool_args_agent_enables_bounded_bash_chat_disables_all() {
+        // Sandboxed chat (no project dir): ALL built-in tools off, no Bash, no deny-list needed.
+        let chat = tool_args(false);
+        let pos = chat.iter().position(|a| a == "--tools").expect("--tools present");
+        assert_eq!(chat.get(pos + 1), Some(&String::new()), "chat disables all tools");
+        assert!(!chat.iter().any(|a| a.contains("Bash")), "chat has no Bash");
+        assert!(!chat.iter().any(|a| a == "--disallowedTools"), "chat needs no deny-list");
+
+        // Coding agent: file tools + Bash in acceptEdits, bounded by the deny-list.
+        let agent = tool_args(true);
+        let tpos = agent.iter().position(|a| a == "--tools").expect("--tools present");
+        assert_eq!(agent.get(tpos + 1), Some(&"Read Edit Write Grep Glob Bash".to_string()));
+        assert!(agent.iter().any(|a| a == "acceptEdits"), "agent runs acceptEdits");
+        assert!(agent.iter().any(|a| a == "--disallowedTools"), "agent carries the deny-list");
+        // push / delete / install are hard-blocked regardless of the allow-list.
+        for needle in ["Bash(git push:*)", "Bash(rm:*)", "Bash(npm install:*)", "Bash(pip install:*)"] {
+            assert!(agent.iter().any(|a| a == needle), "deny-list must block {needle}");
+        }
+        // never bypass permissions or pass an allow-list flag.
+        assert!(!agent.iter().any(|a| a == "--dangerously-skip-permissions" || a == "--allowedTools"));
     }
 
     #[test]

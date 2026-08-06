@@ -11,8 +11,17 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import check_capabilities as cc  # noqa: E402
 
 
-def _lib_rs(cmds: list[str]) -> str:
-    inner = "\n".join(f"            commands::{c}," for c in cmds)
+def _lib_rs(cmds: list[str], ungated: list[str] | None = None) -> str:
+    """A synthetic generate_handler!. `cmds` are gated `commands::` entries; `ungated`
+    are module-scoped commands deliberately outside the wall. By default the fixture
+    registers exactly the checker's INTENTIONALLY_UNGATED set (module-scoped) so the
+    allowlist is satisfied — mirroring the real lib.rs, where those commands ARE
+    registered but not declared in the manifest/policy."""
+    if ungated is None:
+        ungated = sorted(cc.INTENTIONALLY_UNGATED)
+    lines = [f"            commands::{c}," for c in cmds]
+    lines += [f"            governance::{c}," for c in ungated]
+    inner = "\n".join(lines)
     return (
         "pub fn run() {\n"
         "    tauri::Builder::default()\n"
@@ -157,6 +166,34 @@ class CheckCapabilitiesTests(unittest.TestCase):
         # A real protection mode makes the grant admissible.
         self._write(root, cmds, grants, protection={"delete_memory": "soft-delete"})
         self.assertEqual(cc.check(root), [])
+
+    def test_new_module_scoped_command_not_allowlisted_fails(self):
+        # The blind-spot regression guard: a command registered under a module prefix
+        # (not commands::/files::) that is neither declared under the wall nor named in
+        # INTENTIONALLY_UNGATED must FAIL — it would otherwise be silently ungated.
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        self._write(root, cmds, grants)
+        base = root / cc.DESKTOP
+        lib = _lib_rs(cmds).replace(
+            "        ])", "            secret_mod::sneaky_cmd,\n        ])"
+        )
+        (base / "src" / "lib.rs").write_text(lib, encoding="utf-8")
+        problems = cc.check(root)
+        self.assertTrue(any("sneaky_cmd" in p for p in problems), problems)
+
+    def test_stale_allowlist_entry_is_caught(self):
+        # If an allowlisted command is NOT registered anywhere in lib.rs, the allowlist
+        # has rotted and must be flagged.
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        self._write(root, cmds, grants)
+        base = root / cc.DESKTOP
+        # Register only SOME of the allowlist, dropping the rest -> stale entries remain.
+        partial = sorted(cc.INTENTIONALLY_UNGATED)[:-1]
+        (base / "src" / "lib.rs").write_text(_lib_rs(cmds, ungated=partial), encoding="utf-8")
+        problems = cc.check(root)
+        self.assertTrue(any("stale allowlist" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

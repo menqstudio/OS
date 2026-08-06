@@ -37,7 +37,10 @@ def main() -> int:
     allowed_broker_uid = int(cfg["allowed_broker_uid"])
     sock_path = cfg["sockets"]["authority"]
     challenge_key_id = cfg["supervisor"]["challenge_key_id"]
-    supervisor_id = cfg["facts"]["supervisor_id"]
+    # SINGLE source: the supervisor block. The challenge names which supervisor may lease and
+    # attest the turn, and that supervisor refuses a challenge addressed to anyone else
+    # (governed_supervisor `supervisor_mismatch`), so the two must not be able to drift.
+    supervisor_id = cfg["supervisor"]["supervisor_id"]
 
     with open(cfg["keys"]["challenge_priv"], "rb") as f:
         challenge_priv = lc.load_private(f.read())

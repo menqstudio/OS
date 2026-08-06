@@ -53,7 +53,7 @@ mod linux {
         check_and_advance, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest,
         PinnedRoot,
     };
-    use brops_core::production_trust::{resolve_trust_state, TrustState};
+    use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
 
     // ------------------------------------------------------------------------------------------------
     // small helpers
@@ -65,6 +65,30 @@ mod linux {
     fn blocked(reason: &str) -> i32 {
         println!("RESULT: blocked reason={reason} production_verified=false bound=false");
         1
+    }
+
+    /// The §2.5 owner/mode floor for the root trust anchor file (audit **F-17**): a regular, root-owned
+    /// file with no group/other write bit. The anchor is the one input whose forgery makes every
+    /// downstream signature meaningless, so it gets the same treatment as the executor image and the
+    /// lease — and it is checked on the OPENED fd, never by a `metadata(path)` re-lookup.
+    fn anchor_file_is_tcb_owned(path: &str) -> Result<(), &'static str> {
+        use std::os::unix::io::AsRawFd;
+        let f = std::fs::File::open(path).map_err(|_| "unopenable")?;
+        // SAFETY: `f` owns a live descriptor for the whole call; fstat gets a valid out-pointer.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(f.as_raw_fd(), &mut st) } != 0 {
+            return Err("unstatable");
+        }
+        if st.st_mode & libc::S_IFMT != libc::S_IFREG {
+            return Err("not_regular");
+        }
+        if st.st_uid != 0 {
+            return Err("not_root_owned");
+        }
+        if st.st_mode & 0o022 != 0 {
+            return Err("writable");
+        }
+        Ok(())
     }
 
     fn hex32(s: &str) -> Option<[u8; 32]> {
@@ -167,9 +191,43 @@ mod linux {
             Ok(sig) => sig.trim().to_string(),
             Err(_) => return blocked("manifest_sig_unreadable"),
         };
-        let root_key_id = s(&cfg, &["trust", "root_key_id"]).unwrap_or_default();
-        let root_pub_hex = s(&cfg, &["trust", "root_pub_hex"]).unwrap_or_default();
-        let pinned_root = PinnedRoot { root_key_id, public_key_hex: root_pub_hex };
+        // ---- the root trust anchor (audit F-17) ----
+        // `PinnedRoot` is documented as "provisioned in the TCB (root-owned), never taken from the
+        // manifest itself" — but it used to be two strings in the same world-readable config the
+        // provisioner wrote right after minting the root keypair and signing the manifest with it. The
+        // verifier then checked a signature it had supplied both sides of, and reported that as
+        // production. Two changes: the anchor is a separate TCB file under the §2.5 owner/mode floor,
+        // and it STATES its provenance — a kit-generated anchor can exercise the whole chain but may
+        // never render `production_verified=true`.
+        if cfg.pointer("/trust/root_pub_hex").is_some() || cfg.pointer("/trust/root_key_id").is_some() {
+            // Refused rather than ignored: silently preferring the file would leave the self-certifying
+            // arrangement one config edit away from coming back.
+            return blocked("config_carries_inline_root_anchor");
+        }
+        let anchor_path = match s(&cfg, &["trust", "root_anchor_path"]) {
+            Some(p) => p,
+            None => return blocked("config_missing_root_anchor_path"),
+        };
+        if let Err(why) = anchor_file_is_tcb_owned(&anchor_path) {
+            return blocked(&format!("root_anchor_{why}"));
+        }
+        let anchor: Value = match std::fs::read_to_string(&anchor_path)
+            .ok()
+            .and_then(|b| serde_json::from_str(&b).ok())
+        {
+            Some(v) => v,
+            None => return blocked("root_anchor_unreadable"),
+        };
+        let anchor_provenance =
+            anchor.get("provenance").and_then(Value::as_str).unwrap_or_default().to_string();
+        let pinned_root = PinnedRoot {
+            root_key_id: anchor.get("root_key_id").and_then(Value::as_str).unwrap_or_default().to_string(),
+            public_key_hex: anchor
+                .get("public_key_hex")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        };
         if verify_manifest(&manifest, &root_sig_b64, &pinned_root).is_err() {
             return blocked("manifest_root_signature_invalid");
         }
@@ -258,22 +316,13 @@ mod linux {
             store_dir: s(&cfg, &["execution", "store_dir"]).unwrap_or_default(),
             report_dir: s(&cfg, &["execution", "report_dir"]).unwrap_or_default(),
             supervisor_sock: sockets.supervisor.clone(),
-            receipt_id: s(&cfg, &["facts", "receipt_id"]).unwrap_or_default(),
-            supervisor_id: s(&cfg, &["facts", "supervisor_id"]).unwrap_or_default(),
-            executor_id: s(&cfg, &["facts", "executor_id"]).unwrap_or_default(),
-            builder_id: s(&cfg, &["facts", "builder_id"]).unwrap_or_default(),
-            policy_id: s(&cfg, &["facts", "policy_id"]).unwrap_or_default(),
-            policy_version: s(&cfg, &["facts", "policy_version"]).unwrap_or_default(),
-            supervisor_attestation_key_id: sup_attest_key_id.clone(),
-            policy_bundle_handle: s(&cfg, &["facts", "policy_bundle_handle"]).unwrap_or_default(),
-            containment_evidence_handle: s(&cfg, &["facts", "containment_evidence_handle"]).unwrap_or_default(),
-            record_handle: s(&cfg, &["facts", "record_handle"]).unwrap_or_default(),
-            lease_handle: s(&cfg, &["facts", "lease_handle"]).unwrap_or_default(),
-            execution_receipt_handle: s(&cfg, &["facts", "execution_receipt_handle"]).unwrap_or_default(),
-            evidence_final_event_hash: s(&cfg, &["facts", "evidence_final_event_hash"]).unwrap_or_default(),
-            evidence_event_count: i(&cfg, &["facts", "evidence_event_count"]).unwrap_or(0),
-            evidence_last_sequence: i(&cfg, &["facts", "evidence_last_sequence"]).unwrap_or(0),
-            evidence_head_sequence: i(&cfg, &["facts", "evidence_head_sequence"]).unwrap_or(0),
+            // F-01: `receipt_id` and the supervisor/executor/builder/policy identities are no
+            // longer read here. They are the values the isolated signer allowlists, so a broker
+            // that named them was choosing what it would be checked against; they now come from
+            // the SUPERVISOR's own provisioning (`config.supervisor.*`) and never travel the wire.
+            // F-02: measured by the recorder per run, not configured. Config supplies only the
+            // recorder-owned directory holding its durable head-sequence counter.
+            evidence_state_dir: s(&cfg, &["execution", "evidence_state_dir"]).unwrap_or_default(),
         };
 
         // ---- (D) run ONE governed turn through the real chain ----
@@ -319,24 +368,36 @@ mod linux {
         // isolated-signer envelope over this exact output — that IS the binding.
         let bound = message.trust_state == TRUSTED_VERIFIED;
 
-        // Bind the production verdict to the EXACT isolated-signer key the manifest resolved AND that the
-        // envelope was Ed25519-verified under (iso.public_key_hex).
+        // F-29: pass the key the CHAIN actually verified under — the exact bytes handed to
+        // `verify_and_accept` as `PinnedKeys::isolated_signer_public_key` — not a second lookup of the
+        // manifest, which made this guard compare a value against itself and never fail.
         let ts = resolve_trust_state(
             Some(&manifest),
             &signer_key_id,
             RECEIPT_ENVELOPE_ARTIFACT_TYPE,
             now,
-            &iso.public_key_hex,
+            &verifying_key_hex(&resolved.isolated_signer_public_key),
         );
-        let production_verified = ts.is_production_verified();
+        // F-17: production is a claim about CUSTODY, not just about signature arithmetic. A manifest
+        // signed by a root this very kit generated verifies perfectly and proves nothing about who
+        // controls the anchor, so the anchor's provenance gates the claim. The chain result itself is
+        // reported unchanged — `trusted_verified` and `bound` are still exactly what the chain decided.
+        let anchor_is_external = anchor_provenance == "external";
+        let production_verified = ts.is_production_verified() && anchor_is_external;
         let ts_str = match &ts {
             TrustState::Production { key_id, key_epoch } => {
                 format!("trusted_verified(production key={key_id} epoch={key_epoch})")
             }
             TrustState::NoTrustedManifest(r) => format!("no_trusted_manifest({r})"),
         };
-        println!("RESULT: {ts_str} production_verified={production_verified} bound={bound}");
-        if production_verified && bound {
+        println!(
+            "RESULT: {ts_str} production_verified={production_verified} bound={bound} root_anchor={anchor_provenance}"
+        );
+        // The RUN succeeded if the chain bound a trusted_verified turn under a manifest-resolved
+        // production key. Whether that amounts to a PRODUCTION claim is the separate custody question
+        // reported above — a kit-anchored run is a real, complete, honestly-labelled chain run, not a
+        // failure, and conflating the two would either fail every CI run or relabel it as production.
+        if bound && ts.is_production_verified() {
             0
         } else {
             1

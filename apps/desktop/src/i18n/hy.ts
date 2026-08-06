@@ -81,6 +81,11 @@ export const hy: Record<DictKey, string> = {
   'chat.saveToChat': 'Պահել զրույցում',
   'chat.receiptVerified': 'Ստուգված',
   'chat.receiptDev': 'Dev / չվստահված',
+  'chat.receiptDemo': 'Ստուգված · դեմո',
+  'chat.demoVerify': 'Դեմո-ստուգում',
+  'chat.demoVerifying': 'Ստուգվում է…',
+  'chat.demoVerifyTitle': 'Ստեղծել մեկ պատասխան կառավարվող շղթայի ներսում և ստուգել այն (դեմո custody — ոչ production)։',
+  'chat.demoVerifyFailed': 'Դեմո-ստուգումը ձախողվեց',
   'chat.governedBlocked': 'Governed պատասխանը արգելափակված է (չստուգված)',
 
   'projects.subtitle': 'Նպատակակենտրոն աշխատանք',
@@ -88,6 +93,8 @@ export const hy: Record<DictKey, string> = {
   'agents.subtitle': 'Սահմանափակ լիազորություններով մասնագետներ',
   'knowledge.subtitle': 'Որոնելի, աղբյուրավորված գիտելիք',
   'memory.subtitle': 'Ստուգելի մշտական հիշողություն',
+  'research.subtitle': 'Աղբյուրներ և բաց հարցեր',
+  'library.subtitle': 'Կրկնակի օգտագործելի բաղադրիչներ',
   'knowledge.search': 'Փնտրիր գիտելիք…',
   'knowledge.newNote': 'Նոր նշում',
   'knowledge.source': 'Աղբյուր',
@@ -159,6 +166,8 @@ export const hy: Record<DictKey, string> = {
   'notifications.subtitle': 'Միայն գործնական ազդանշաններ',
   'settings.subtitle': 'Լեզու, տեսք և նախապատվություններ',
   'generic.subtitle': 'Նախատիպային աշխատատարածք',
+  'generic.title': 'Դեռ միացված չէ backend-ին',
+  'generic.hint': 'Այս աշխատատարածքը դեռ backend չունի — իրական տվյալ կցուցադրվի, երբ backend-ը իրականացվի։',
 
   'settings.appearance': 'Արտաքին տեսք',
   'settings.theme': 'Թեմա',
@@ -193,6 +202,8 @@ export const hy: Record<DictKey, string> = {
 
   'action.create': 'Ստեղծել',
   'action.cancel': 'Չեղարկել',
+  'action.close': 'Փակել',
+  'action.openNewWindow': 'Բացել նոր պատուհանում',
   'action.edit': 'Խմբագրել',
   'action.retry': 'Կրկնել',
   'form.newProject': 'Նոր նախագիծ',

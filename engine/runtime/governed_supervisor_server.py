@@ -1,13 +1,22 @@
 """AF_UNIX front door for the governed-supervisor (Wave 3b-1B, rev-30 §5).
 
-The PURE acceptance/lease logic lives in ``governed_supervisor`` (``accept_open``
-two-phase verify -> lease, and the ``launch_gate`` step-8a budget gate). This
-module is the socket wiring ONLY: it binds a unix-domain socket, authenticates
-each connecting peer by ``SO_PEERCRED`` uid, allowlists ONLY the broker uid
-(the renderer and sidecar are DENIED, matching the challenge-authority front
-door), then reads exactly one length-prefixed JSON frame, dispatches
-``accept-open`` / ``launch-gate`` into the pure core, and writes the framed
-reply.
+The PURE decision logic lives in ``governed_supervisor`` (the ``accept_open`` two-phase
+verify and the state-driven ``build_run_attestation``); the DURABLE state lives in
+``governed_supervisor_ledger``. This module is the wiring ONLY: it binds a unix-domain
+socket, authenticates each connecting peer by ``SO_PEERCRED`` uid, allowlists ONLY the
+broker uid (the renderer and sidecar are DENIED, matching the challenge-authority front
+door), then reads exactly one length-prefixed JSON frame, dispatches it, and writes the
+framed reply.
+
+**§5 v2 op set (F-01).** The five ops walk ONE durable attempt through its lifecycle:
+``accept-open`` (verify → CAS an acceptance row → lease), ``launch-gate`` (the step-8a
+budget gate against the supervisor's OWN persisted lease window, by attempt id),
+``execution-started``, ``complete-run`` (the write-once record of what the run produced +
+the evidence-head floor), and ``attest-run`` — which now names only
+``{run_id, execution_attempt_id}``. It carries no ``facts``: before the fix this endpoint
+signed whatever field values arrived on the wire, so the broker uid could mint a signed
+receipt for a run that never happened. Every op's request shape is EXHAUSTIVE, so an
+old-protocol ``attest-run {facts}`` is a hard error, never a silently-ignored field.
 
 Trust-boundary properties enforced here (all fail-closed):
 
@@ -44,17 +53,19 @@ import struct
 import sys
 from typing import Any, Callable, Dict, Mapping, Optional
 
+import governed_supervisor_ledger as ledger
 from challenge_authority import peer_is_broker
 from governed_supervisor import (
+    Accepted,
     Lease,
-    LaunchProceed,
     Refusal,
     RunAttestation,
     SupervisorConfig,
     SupervisorError,
     accept_open,
+    build_execution_receipt,
     build_run_attestation,
-    launch_gate,
+    build_terminal_record,
     recompute_request_sha256 as default_recompute_request_sha256,
 )
 
@@ -71,9 +82,13 @@ MAX_FRAME_BYTES = 8192
 
 OP_ACCEPT_OPEN = "accept-open"
 OP_LAUNCH_GATE = "launch-gate"
+OP_EXECUTION_STARTED = "execution-started"
+OP_COMPLETE_RUN = "complete-run"
 OP_ATTEST_RUN = "attest-run"
 
-# The exhaustive field set of a wire lease (mirrors governed_supervisor.Lease).
+# The exhaustive field set of a wire lease (mirrors governed_supervisor.Lease). The
+# supervisor only ever WRITES this shape now — it is never parsed back off the wire
+# (see the §5 v2 note in the module docstring).
 LEASE_FIELDS = (
     "lease_id",
     "execution_attempt_id",
@@ -81,6 +96,29 @@ LEASE_FIELDS = (
     "launcher_executable_sha256",
     "executor_executable_sha256",
 )
+
+# ---------------------------------------------------------------------------
+# Typed refusal reasons this layer adds on top of the pure core's REFUSE_* set.
+# Each is a durable-state verdict, so it belongs to the front door, not the core.
+# ---------------------------------------------------------------------------
+
+#: The durable CAS refused: a challenge/nonce/attempt/receipt rebound to a different turn.
+REFUSE_ACCEPTANCE_CONFLICT = "acceptance_conflict"
+#: The named attempt has no acceptance row — a fabricated or already-purged attempt.
+REFUSE_UNKNOWN_ATTEMPT = "unknown_attempt"
+#: The requested lifecycle move is not legal from the attempt's current durable state.
+REFUSE_ILLEGAL_STATE = "illegal_state"
+#: A second completion tried to rewrite facts already recorded for this attempt.
+REFUSE_COMPLETION_CONFLICT = "completion_conflict"
+#: The evidence head is older than, or forks, the durable anti-rollback floor.
+REFUSE_STALE_EVIDENCE = "stale_evidence"
+REFUSE_EVIDENCE_FORK = "evidence_fork"
+#: `attest-run` names a run the supervisor has no COMPLETED terminal state for. This is
+#: the F-01 wall: with no durable state there is no evidence and no signature.
+REFUSE_NO_TERMINAL_RUN = "no_terminal_run_state"
+#: A ledger fault with no more specific typed reason (malformed completion facts, a
+#: corrupt stored row). Still a refusal — the supervisor records nothing and signs nothing.
+REFUSE_MALFORMED_STATE = "malformed_state"
 
 
 class ServerError(Exception):
@@ -247,44 +285,57 @@ def _refusal_reply(op: str, refusal: Refusal) -> Dict[str, Any]:
     }
 
 
-def _parse_lease(obj: Any) -> Lease:
-    """Rebuild a :class:`Lease` from the wire ``lease`` object for a launch-gate
-    re-check. Enforces the exhaustive fixed shape (extra/missing/mistyped ->
-    ``ServerError``) BEFORE constructing, so a malformed lease can never reach
-    the gate as a partially-typed object. The gate itself (in the pure core)
-    still owns the budget decision — this only marshals bytes into the type it
-    expects.
+def _refusal(op: str, reason: str, detail: str) -> Dict[str, Any]:
+    """A fail-closed durable-state verdict in the same wire shape as a core refusal."""
+    return {"ok": False, "op": op, "reason": reason, "detail": detail, "error": detail}
+
+
+def _require_exact_fields(request: Mapping[str, Any], op: str, fields: tuple) -> None:
+    """Enforce the EXHAUSTIVE request shape for an op.
+
+    Unknown fields are rejected rather than ignored. That is not pedantry: a caller still
+    speaking the pre-F-01 protocol sends ``attest-run {facts: {...}}``, and silently
+    dropping ``facts`` would let it believe its chosen evidence had been attested. It gets
+    a hard ``ServerError`` instead.
     """
-    if not isinstance(obj, Mapping):
-        raise ServerError("launch-gate requires a lease object")
-    keys = set(obj.keys())
-    allowed = set(LEASE_FIELDS)
+    allowed = {"op"} | set(fields)
+    keys = set(request.keys())
     extra = keys - allowed
     if extra:
-        raise ServerError("lease has unexpected field(s) %s" % sorted(extra))
+        raise ServerError("%s has unexpected field(s) %s" % (op, sorted(extra)))
     missing = allowed - keys
     if missing:
-        raise ServerError("lease is missing field(s) %s" % sorted(missing))
+        raise ServerError("%s is missing field(s) %s" % (op, sorted(missing)))
 
-    expires = obj["lease_expires_at_ms"]
-    if not isinstance(expires, int) or isinstance(expires, bool):
-        raise ServerError("lease_expires_at_ms must be an int (epoch ms)")
-    for name in (
-        "lease_id",
-        "execution_attempt_id",
-        "launcher_executable_sha256",
-        "executor_executable_sha256",
-    ):
-        if not isinstance(obj[name], str) or not obj[name]:
-            raise ServerError("%s must be a non-empty string" % name)
 
-    return Lease(
-        lease_id=obj["lease_id"],
-        execution_attempt_id=obj["execution_attempt_id"],
-        lease_expires_at_ms=expires,
-        launcher_executable_sha256=obj["launcher_executable_sha256"],
-        executor_executable_sha256=obj["executor_executable_sha256"],
-    )
+def _require_str(request: Mapping[str, Any], name: str) -> str:
+    value = request.get(name)
+    if not isinstance(value, str) or not value:
+        raise ServerError("%s must be a non-empty string" % name)
+    return value
+
+
+def _ledger_refusal(op: str, exc: ledger.LedgerError) -> Dict[str, Any]:
+    """Map a durable-ledger fault onto its typed wire refusal. Every branch is a REFUSAL,
+    never a success — an operation the ledger would not record is an operation that did
+    not happen."""
+    if isinstance(exc, ledger.NotFound):
+        return _refusal(op, REFUSE_UNKNOWN_ATTEMPT, str(exc))
+    if isinstance(exc, ledger.IllegalTransition):
+        return _refusal(op, REFUSE_ILLEGAL_STATE, str(exc))
+    if isinstance(exc, ledger.StaleEvidence):
+        return _refusal(op, REFUSE_STALE_EVIDENCE, str(exc))
+    if isinstance(exc, ledger.EvidenceFork):
+        return _refusal(op, REFUSE_EVIDENCE_FORK, str(exc))
+    if isinstance(exc, ledger.Conflict):
+        reason = (
+            REFUSE_COMPLETION_CONFLICT
+            if op == OP_COMPLETE_RUN
+            else REFUSE_ACCEPTANCE_CONFLICT
+        )
+        return _refusal(op, reason, str(exc))
+    # InvalidHead / Corrupt / a shape error from validate_completion_facts / anything else.
+    return _refusal(op, REFUSE_MALFORMED_STATE, str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -299,84 +350,230 @@ def dispatch(
     recompute_request_sha256: Callable[[Mapping[str, Any]], str],
     clock_ms: Callable[[], int],
     *,
+    conn: Any,
+    publish_artifact: Optional[Callable[[bytes], str]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Route one decoded request into the pure supervisor core.
+    """Route one decoded request into the pure supervisor core + the durable ledger.
 
-    ``accept-open`` runs the two-phase challenge verify and, on success, mints a
-    lease; ``launch-gate`` re-checks a lease's remaining budget; ``attest-run``
-    builds the §4.9 evidence from the supervisor's OWN trusted run facts and
-    produces the ``brops.run-attestation.v1`` over it. The supervisor's own clock
-    (``clock_ms``) supplies ``now_ms`` for the lease ops — it is never read from
-    the wire, so a caller cannot pick a favourable time. The signed challenge
-    document, the lease, and the run facts enter ONLY through the typed ops, never
-    as free bytes used for a trust decision.
+    The §5 v2 op set, in lifecycle order — each one moves the SAME durable attempt forward:
 
-    ``attest-run`` is available only when the deployment injects the
-    ``sign_attestation`` seam + the pinned ``supervisor_attestation_key_id``; a
-    request for it without them is a supervisor-side config fault (fail-closed
-    error reply), never a fabricated attestation.
+      * ``accept-open {challenge_doc}`` — two-phase verify, then CAS a durable acceptance
+        row into existence and return its lease. A replayed challenge returns the ORIGINAL
+        lease; it never mints a second attempt.
+      * ``launch-gate {execution_attempt_id}`` — the §5 step-8a budget gate against the
+        lease window the SUPERVISOR persisted, then ``LEASE_READY → EXECUTION_STARTING``
+        (or ``EXPIRED``). The caller no longer presents a lease, so it can no longer choose
+        the expiry it is judged against.
+      * ``execution-started {execution_attempt_id, …}`` — ``EXECUTION_STARTING → EXECUTING``.
+      * ``complete-run {execution_attempt_id, produced}`` — the WRITE-ONCE record of what the
+        run produced, plus the evidence-head anti-rollback floor, then ``→ COMPLETED``.
+      * ``attest-run {run_id, execution_attempt_id}`` — build the §4.9 evidence from that
+        durable terminal state and sign it.
+
+    **F-01.** ``attest-run`` carries no ``facts``. Its request shape is exhaustive, so the
+    old protocol's ``facts`` object is a hard error rather than a silently-ignored field,
+    and the evidence is assembled from ledger state the caller never touched. A run that was
+    not accepted, leased, gated, started and completed here has no state — and therefore
+    gets ``no_terminal_run_state``, not a signature.
+
+    The supervisor's own clock (``clock_ms``) supplies ``now_ms`` everywhere; it is never
+    read from the wire, so a caller cannot pick a favourable time.
+
+    ``conn`` is the durable ledger connection and is REQUIRED — a supervisor with no durable
+    state must refuse to serve rather than run stateless. ``attest-run`` additionally needs
+    the injected ``sign_attestation`` seam + the pinned ``supervisor_attestation_key_id``; a
+    request for it without them is a supervisor-side config fault (fail-closed error reply),
+    never a fabricated attestation.
     """
     if not isinstance(request, Mapping):
         raise ServerError("request body must be a JSON object")
+    if conn is None:
+        raise SupervisorError("supervisor requires a durable ledger connection")
     op = request.get("op")
 
     if op == OP_ATTEST_RUN:
-        if sign_attestation is None or supervisor_attestation_key_id is None:
-            raise SupervisorError(
-                "attest-run requires an injected sign_attestation seam and "
-                "supervisor_attestation_key_id"
-            )
-        facts = request.get("facts")
-        if not isinstance(facts, Mapping):
-            raise ServerError("attest-run requires a facts object")
-        result = build_run_attestation(
-            facts,
-            supervisor_key_id=supervisor_attestation_key_id,
-            sign_attestation=sign_attestation,
-        )
-        if isinstance(result, RunAttestation):
-            return _attestation_reply(result)
-        if isinstance(result, Refusal):
-            return _refusal_reply(OP_ATTEST_RUN, result)
-        raise SupervisorError("build_run_attestation returned an unexpected result type")
-
+        return _op_attest_run(request, config, conn, sign_attestation,
+                              supervisor_attestation_key_id)
     if op == OP_ACCEPT_OPEN:
-        challenge_doc = request.get("challenge_doc")
-        if not isinstance(challenge_doc, Mapping):
-            raise ServerError("accept-open requires a challenge_doc object")
-        # now_ms is the SUPERVISOR's clock, not the caller's (fail-closed).
-        result = accept_open(
-            challenge_doc,
-            clock_ms(),
-            config=config,
-            verify_sig=verify_sig,
-            recompute_request_sha256=recompute_request_sha256,
-        )
-        if isinstance(result, Lease):
-            return {"ok": True, "op": OP_ACCEPT_OPEN, "lease": _lease_to_dict(result)}
-        if isinstance(result, Refusal):
-            return _refusal_reply(OP_ACCEPT_OPEN, result)
-        # The pure core only ever returns Lease | Refusal; anything else is a
-        # contract breach -> fail closed rather than relay an unknown object.
-        raise SupervisorError("accept_open returned an unexpected result type")
-
+        return _op_accept_open(request, config, conn, verify_sig,
+                               recompute_request_sha256, clock_ms)
     if op == OP_LAUNCH_GATE:
-        lease = _parse_lease(request.get("lease"))
-        result = launch_gate(lease, clock_ms())
-        if isinstance(result, LaunchProceed):
-            return {
-                "ok": True,
-                "op": OP_LAUNCH_GATE,
-                "proceed": True,
-                "lease": _lease_to_dict(result.lease),
-            }
-        if isinstance(result, Refusal):
-            return _refusal_reply(OP_LAUNCH_GATE, result)
-        raise SupervisorError("launch_gate returned an unexpected result type")
+        return _op_launch_gate(request, conn, clock_ms)
+    if op == OP_EXECUTION_STARTED:
+        return _op_execution_started(request, conn, clock_ms)
+    if op == OP_COMPLETE_RUN:
+        return _op_complete_run(request, conn, clock_ms, publish_artifact)
 
     raise ServerError("unknown op %r" % (op,))
+
+
+def _op_accept_open(request, config, conn, verify_sig, recompute_request_sha256, clock_ms):
+    _require_exact_fields(request, OP_ACCEPT_OPEN, ("challenge_doc",))
+    challenge_doc = request["challenge_doc"]
+    if not isinstance(challenge_doc, Mapping):
+        raise ServerError("accept-open requires a challenge_doc object")
+
+    # now_ms is the SUPERVISOR's clock, not the caller's (fail-closed).
+    now = clock_ms()
+    result = accept_open(
+        challenge_doc,
+        now,
+        config=config,
+        verify_sig=verify_sig,
+        recompute_request_sha256=recompute_request_sha256,
+    )
+    if isinstance(result, Refusal):
+        return _refusal_reply(OP_ACCEPT_OPEN, result)
+    if not isinstance(result, Accepted):
+        # The pure core only ever returns Accepted | Refusal; anything else is a contract
+        # breach -> fail closed rather than relay an unknown object.
+        raise SupervisorError("accept_open returned an unexpected result type")
+
+    try:
+        outcome, row = ledger.reuse_or_prepare(conn, result.acceptance, now)
+    except ledger.LedgerError as exc:
+        return _ledger_refusal(OP_ACCEPT_OPEN, exc)
+
+    if outcome == ledger.CREATED:
+        lease = result.lease
+    else:
+        # This exact signed challenge was already accepted: hand back the ORIGINAL lease,
+        # rebuilt from durable state. The freshly-minted ids from this call are discarded,
+        # so a replay buys the caller nothing — the same one attempt, the same one receipt.
+        lease = Lease(
+            lease_id=row["lease_id"],
+            execution_attempt_id=row["execution_attempt_id"],
+            lease_expires_at_ms=row["lease_expires_at_ms"],
+            launcher_executable_sha256=config.launcher_executable_sha256,
+            executor_executable_sha256=config.executor_executable_sha256,
+        )
+
+    # Publish the lease: ACCEPTED_PREPARED -> LEASE_READY, keyed on the content address of
+    # the exact lease bytes persisted at acceptance. Idempotent across a crash-retry that
+    # committed the row but not the advance.
+    if row["state"] == ledger.ACCEPTED_PREPARED:
+        try:
+            ledger.mark_lease_ready(conn, lease.execution_attempt_id,
+                                    row["lease_payload_sha256"], now)
+        except ledger.LedgerError as exc:
+            return _ledger_refusal(OP_ACCEPT_OPEN, exc)
+
+    return {"ok": True, "op": OP_ACCEPT_OPEN, "lease": _lease_to_dict(lease)}
+
+
+def _op_launch_gate(request, conn, clock_ms):
+    _require_exact_fields(request, OP_LAUNCH_GATE, ("execution_attempt_id",))
+    attempt = _require_str(request, "execution_attempt_id")
+    try:
+        state = ledger.gate_and_start(conn, attempt, clock_ms())
+    except ledger.LedgerError as exc:
+        return _ledger_refusal(OP_LAUNCH_GATE, exc)
+    if state == ledger.EXECUTION_STARTING:
+        return {"ok": True, "op": OP_LAUNCH_GATE, "proceed": True,
+                "execution_attempt_id": attempt}
+    # The gate failed against the supervisor's OWN lease window: the attempt is durably
+    # EXPIRED and no launch may follow.
+    return _refusal(OP_LAUNCH_GATE, "lease_expired",
+                    "remaining lease budget below %d ms" % ledger.MIN_LAUNCH_REMAINING_MS)
+
+
+def _op_execution_started(request, conn, clock_ms):
+    _require_exact_fields(
+        request, OP_EXECUTION_STARTED,
+        ("execution_attempt_id", "process_group_id", "cgroup_id", "execution_started_marker"),
+    )
+    attempt = _require_str(request, "execution_attempt_id")
+    marker = request["execution_started_marker"]
+    if marker is not None and (not isinstance(marker, str) or not marker):
+        raise ServerError("execution_started_marker must be a non-empty string or null")
+    try:
+        ledger.mark_executing(
+            conn, attempt,
+            process_group_id=_require_str(request, "process_group_id"),
+            cgroup_id=_require_str(request, "cgroup_id"),
+            execution_started_marker=marker,
+            now_ms=clock_ms(),
+        )
+    except ledger.LedgerError as exc:
+        return _ledger_refusal(OP_EXECUTION_STARTED, exc)
+    return {"ok": True, "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt}
+
+
+def _op_complete_run(request, conn, clock_ms, publish_artifact):
+    _require_exact_fields(request, OP_COMPLETE_RUN, ("execution_attempt_id", "produced"))
+    attempt = _require_str(request, "execution_attempt_id")
+    if publish_artifact is None:
+        raise SupervisorError(
+            "complete-run requires an injected publish_artifact seam (the supervisor must be "
+            "able to publish the terminal artifacts it addresses)"
+        )
+    row = ledger.load_acceptance(conn, attempt)
+    if row is None:
+        return _refusal(OP_COMPLETE_RUN, REFUSE_UNKNOWN_ATTEMPT,
+                        "no acceptance row for attempt %r" % (attempt,))
+    try:
+        produced = ledger.validate_completion_facts(request["produced"])
+    except ledger.LedgerError as exc:
+        return _ledger_refusal(OP_COMPLETE_RUN, exc)
+
+    # F-02: the supervisor BUILDS its terminal artifacts from its own rows and publishes them
+    # to the protected store, then names their content addresses in the evidence. These were
+    # deployment-static constants the broker copied out of a world-readable config, which made
+    # the isolated signer's protected-chain check a tautology over bytes anyone had written once.
+    try:
+        derived = {
+            "lease_handle": publish_artifact(bytes(row["lease_payload_bytes"])),
+            "record_handle": publish_artifact(build_terminal_record(row, produced)),
+            "execution_receipt_handle": publish_artifact(build_execution_receipt(row, produced)),
+        }
+    except Exception as exc:  # a store failure must refuse the completion, never fake a handle
+        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
+                        "could not publish terminal artifacts: %s" % exc)
+
+    try:
+        outcome = ledger.record_completion(conn, attempt, request["produced"], clock_ms(),
+                                           derived=derived)
+    except ledger.LedgerError as exc:
+        return _ledger_refusal(OP_COMPLETE_RUN, exc)
+    return {"ok": True, "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+            "recorded": outcome}
+
+
+def _op_attest_run(request, config, conn, sign_attestation, supervisor_attestation_key_id):
+    if sign_attestation is None or supervisor_attestation_key_id is None:
+        raise SupervisorError(
+            "attest-run requires an injected sign_attestation seam and "
+            "supervisor_attestation_key_id"
+        )
+    # Exhaustive: `facts` is no longer part of this protocol, so an old-protocol caller
+    # gets a hard error instead of an attestation over evidence it chose (F-01).
+    _require_exact_fields(request, OP_ATTEST_RUN, ("run_id", "execution_attempt_id"))
+    run_id = _require_str(request, "run_id")
+    attempt = _require_str(request, "execution_attempt_id")
+
+    state = ledger.load_attestation_state(conn, run_id, attempt)
+    if state is None:
+        # No acceptance, no completion, a mismatched run_id, or a non-terminal/failed run.
+        # THE F-01 WALL: the supervisor has nothing to attest, and no argument through which
+        # the caller could supply the missing facts.
+        return _refusal(
+            OP_ATTEST_RUN, REFUSE_NO_TERMINAL_RUN,
+            "no COMPLETED terminal run state for run_id/execution_attempt_id",
+        )
+
+    result = build_run_attestation(
+        state,
+        config=config,
+        supervisor_key_id=supervisor_attestation_key_id,
+        sign_attestation=sign_attestation,
+    )
+    if isinstance(result, RunAttestation):
+        return _attestation_reply(result)
+    if isinstance(result, Refusal):
+        return _refusal_reply(OP_ATTEST_RUN, result)
+    raise SupervisorError("build_run_attestation returned an unexpected result type")
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +589,8 @@ def handle_connection(
     recompute_request_sha256: Callable[[Mapping[str, Any]], str],
     clock_ms: Callable[[], int],
     *,
+    ledger_conn: Any,
+    publish_artifact: Optional[Callable[[bytes], str]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -399,8 +598,9 @@ def handle_connection(
     framed reply. Returns the reply object (also useful for tests). Never raises
     on hostile input — every failure becomes a fail-closed error reply.
 
-    ``sign_attestation`` + ``supervisor_attestation_key_id`` enable the
-    ``attest-run`` op; omit them and only the lease ops are served.
+    ``ledger_conn`` is the supervisor's durable ledger; every lifecycle op needs it.
+    ``sign_attestation`` + ``supervisor_attestation_key_id`` enable the ``attest-run`` op;
+    omit them and only the lifecycle ops are served.
     """
     peer_uid = getattr(conn, "peer_uid", None)
     # Allowlist ONLY the broker uid; refuse BEFORE reading any frame.
@@ -418,11 +618,13 @@ def handle_connection(
             verify_sig,
             recompute_request_sha256,
             clock_ms,
+            conn=ledger_conn,
+            publish_artifact=publish_artifact,
             sign_attestation=sign_attestation,
             supervisor_attestation_key_id=supervisor_attestation_key_id,
         )
     except (FrameError, ServerError, SupervisorError, ValueError, UnicodeDecodeError) as exc:
-        reply = {"ok": False, "error": str(exc)}
+        reply = {"ok": False, "error": _bounded_error(str(exc))}
         # Surface a typed refusal reason if the exception carried one (a Refusal
         # verdict is relayed via dispatch, not raised — this is for completeness).
         reason = getattr(exc, "reason", None)
@@ -433,11 +635,39 @@ def handle_connection(
     return reply
 
 
+#: Hard cap on the error text echoed back to the peer. The exhaustive per-op shape checks
+#: quote the offending field names, and `repr()` of a hostile op expands non-printables
+#: ~4x, so an unbounded message is an amplifier: one legal 8 KiB request could produce a
+#: reply too large to frame. Bounding it here keeps every reply framable by construction.
+MAX_ERROR_CHARS = 512
+
+
+def _bounded_error(text: str) -> str:
+    if len(text) <= MAX_ERROR_CHARS:
+        return text
+    return text[:MAX_ERROR_CHARS] + "… (truncated)"
+
+
 def _try_write(conn: Any, reply: Mapping[str, Any]) -> None:
+    """Write the framed reply, never letting a reply problem escape.
+
+    A `FrameError` here would otherwise propagate out of `handle_connection` — past the
+    try/except above, which has already closed — and out of `serve_forever`, killing the
+    process that issues every lease and produces every attestation (independent audit
+    F-11). Replies are bounded by construction now; this is the belt for that braces: an
+    over-bound reply degrades to a minimal typed refusal, and a dead peer is ignored.
+    """
     try:
         write_frame(conn, _encode_reply(reply))
+        return
     except OSError:
-        pass  # peer already gone; nothing to do, connection is closed by loop
+        return  # peer already gone; nothing to do, connection is closed by loop
+    except FrameError:
+        pass  # fall through to the minimal reply below
+    try:
+        write_frame(conn, _encode_reply({"ok": False, "error": "reply exceeded frame bound"}))
+    except (OSError, FrameError):
+        pass  # nothing further is possible; the loop closes the connection
 
 
 # ---------------------------------------------------------------------------
@@ -453,6 +683,8 @@ def serve_forever(
     recompute_request_sha256: Callable[[Mapping[str, Any]], str],
     clock_ms: Callable[[], int],
     *,
+    ledger_conn: Any,
+    publish_artifact: Optional[Callable[[bytes], str]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
 ) -> None:
@@ -476,6 +708,8 @@ def serve_forever(
                 verify_sig,
                 recompute_request_sha256,
                 clock_ms,
+                ledger_conn=ledger_conn,
+                publish_artifact=publish_artifact,
                 sign_attestation=sign_attestation,
                 supervisor_attestation_key_id=supervisor_attestation_key_id,
             )
@@ -515,7 +749,17 @@ __all__ = [
     "MAX_FRAME_BYTES",
     "OP_ACCEPT_OPEN",
     "OP_LAUNCH_GATE",
+    "OP_EXECUTION_STARTED",
+    "OP_COMPLETE_RUN",
     "OP_ATTEST_RUN",
+    "REFUSE_ACCEPTANCE_CONFLICT",
+    "REFUSE_COMPLETION_CONFLICT",
+    "REFUSE_EVIDENCE_FORK",
+    "REFUSE_ILLEGAL_STATE",
+    "REFUSE_MALFORMED_STATE",
+    "REFUSE_NO_TERMINAL_RUN",
+    "REFUSE_STALE_EVIDENCE",
+    "REFUSE_UNKNOWN_ATTEMPT",
     "FrameError",
     "ServerError",
     "SocketPeerConn",

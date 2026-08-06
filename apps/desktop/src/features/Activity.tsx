@@ -1,49 +1,71 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useApp } from '../app/store';
-import { PageHeader, Panel, Button, Badge, Avatar, EmptyState, Skeleton, ErrorState } from '../components/ui';
+import { Button, Avatar, EmptyState, Skeleton, ErrorState, usePrefersReducedMotion } from '../components/ui';
+import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { desktop, hasBackend } from '../services/desktop';
+import { StripChart, type StripPoint } from '../components/charts/Chart';
 import type { ActivityEvent } from '../domain/entities';
+import {
+  STR,
+  blipLabelStr,
+  rateSummaryStr,
+  liveTextStr,
+  telemetryLostStr,
+  peakInlineStr,
+  hiddenTailStr,
+} from './Activity.strings';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// activity ♥ Զարկերակ — the "pulse" page.
+// activity ♥ Զարկերակ — the "System Pulse Monitor".
 //
-// Data source per §D: engine runtime telemetry (live). The desktop backend
-// exposes `list_activity` (the chronological event record) but NO runtime
-// telemetry IPC yet (system pulse / avg response / network load / error rate).
-// So the honest split is:
-//   • Blip markers  → REAL `desktop.listActivity()` data (one blip per event).
-//   • Vitals numbers → the telemetry command is absent, so they render the
-//     honest "not connected" state — never fabricated numbers.
-//   • The ECG waveform itself is deterministic geometry (presentation, like the
-//     calendar grid), not data.
+// Every beat is a REAL system event from `desktop.listActivity()`. The ECG strip
+// stays the interactive `StripChart` primitive — one keyboard-scrubbable blip per
+// real event, deterministic geometry, reduced-motion aware. The surrounding HUD
+// (hero brackets, pulse-rail core, beat timeline, vitals panel) is re-dressed to
+// the aios "vitals monitor" mockup, but every number shown is DERIVED from the
+// real events array (total beats, event types, plotted count, rate/min, last-beat
+// time). The richer instruments are honest too, computed straight from the events:
+// the rate histogram bins events by createdAt (count per time bin); per-beat
+// intensity is that beat's bin density (busy burst → tall, isolated → short);
+// the distribution meters are real per-eventType and per-actor tallies; peak /
+// busiest-hour come from the same bins. The mockup's live runtime telemetry that
+// has NO backing signal — avg response, network load, error rate, rhythm % — is
+// still omitted rather than fabricated; the honest "telemetry not connected" note stays.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Longest run of blips we plot before collapsing the tail into a "+N" note. */
 const MAX_BLIPS = 48;
-/** Number of ECG complexes drawn across the strip (visual cadence only). */
+/** ECG complexes drawn across the strip (visual cadence only — StripChart owns it). */
 const ECG_BEATS = 8;
-const STRIP_W = 1000;
-const STRIP_H = 150;
 
-/** Respect `prefers-reduced-motion` for JS-driven motion (CSS handles the rest). */
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(
-    () => typeof window !== 'undefined' && !!window.matchMedia
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-  );
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const on = () => setReduced(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, []);
-  return reduced;
+/** Parse an event timestamp (ISO or epoch string) to ms, or null if unparseable. */
+function parseTime(raw: string): number | null {
+  const n = Number(raw);
+  const d = new Date(Number.isNaN(n) ? raw : n);
+  const ms = d.getTime();
+  return Number.isNaN(ms) ? null : ms;
 }
 
-/** Integer count-up (§D motion "integer count-up on vitals"). Snaps instantly
- *  when `animate` is false so reduced-motion users get the final value at once. */
+/** Inline `--i` reveal-stagger custom property. */
+const cv = (i: number): CSSProperties => ({ ['--i']: i } as CSSProperties);
+
+/** HUD corner brackets + edge ticks — purely decorative chrome. */
+function HudChrome() {
+  return (
+    <>
+      <span className="bracket tl" aria-hidden="true" />
+      <span className="bracket tr" aria-hidden="true" />
+      <span className="bracket bl" aria-hidden="true" />
+      <span className="bracket br" aria-hidden="true" />
+      <span className="ticks" aria-hidden="true">
+        {Array.from({ length: 9 }).map((_, k) => <i key={k} />)}
+      </span>
+    </>
+  );
+}
+
+/** Integer count-up on the pulse core. Snaps instantly under reduced motion. */
 function useCountUp(target: number, animate: boolean): number {
   const [value, setValue] = useState(animate ? 0 : target);
   useEffect(() => {
@@ -62,152 +84,22 @@ function useCountUp(target: number, animate: boolean): number {
   return value;
 }
 
-/** buildECG — synthesize an ECG (P-QRS-T) SVG path across `beats` complexes.
- *  Deterministic geometry; carries no telemetry meaning. */
-function buildECG(width: number, height: number, beats: number): string {
-  const mid = height / 2;
-  const seg = width / beats;
-  let d = `M 0 ${mid}`;
-  for (let i = 0; i < beats; i++) {
-    const x = i * seg;
-    const p = x + seg * 0.14;
-    const q = x + seg * 0.42;
-    const r = x + seg * 0.48;
-    const s = x + seg * 0.54;
-    const tw = x + seg * 0.74;
-    d += ` L ${p.toFixed(1)} ${mid.toFixed(1)}`;
-    d += ` L ${(p + seg * 0.05).toFixed(1)} ${(mid - height * 0.09).toFixed(1)}`;  // P
-    d += ` L ${(p + seg * 0.1).toFixed(1)} ${mid.toFixed(1)}`;
-    d += ` L ${q.toFixed(1)} ${(mid + height * 0.07).toFixed(1)}`;                 // Q
-    d += ` L ${r.toFixed(1)} ${(mid - height * 0.42).toFixed(1)}`;                 // R
-    d += ` L ${s.toFixed(1)} ${(mid + height * 0.18).toFixed(1)}`;                 // S
-    d += ` L ${(s + seg * 0.04).toFixed(1)} ${mid.toFixed(1)}`;
-    d += ` L ${tw.toFixed(1)} ${(mid - height * 0.15).toFixed(1)}`;                // T
-    d += ` L ${(tw + seg * 0.08).toFixed(1)} ${mid.toFixed(1)}`;
-    d += ` L ${(x + seg).toFixed(1)} ${mid.toFixed(1)}`;
-  }
-  return d;
-}
-
-interface Bi { (en: string, hy: string): string }
-
-// The four §D vitals. Values come from live engine runtime telemetry — a command
-// the desktop backend does not expose yet — so each renders honestly unavailable.
-interface Vital { key: string; label: string; unit: string }
-
-function PaBeatline({
-  events, sel, opened, plot, sweep, frozen, reduced, bi, onSelect, onOpen, onKeyDown, blipLabel, gridId,
-}: {
-  events: ActivityEvent[];
-  sel: number;
-  opened: number | null;
-  plot: boolean;
-  sweep: boolean;
-  frozen: boolean;
-  reduced: boolean;
-  bi: Bi;
-  onSelect: (i: number) => void;
-  onOpen: (i: number) => void;
-  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
-  blipLabel: (e: ActivityEvent, i: number) => string;
-  gridId: string;
-}) {
-  const blipRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  blipRefs.current = [];
-
-  // Keep the roving-tabindex focus in sync with the selected blip after the
-  // wrapper handles an arrow key.
-  useEffect(() => {
-    const el = blipRefs.current[sel];
-    if (el && document.activeElement && el.closest('.pa-strip')?.contains(document.activeElement)) {
-      el.focus();
-    }
-  }, [sel]);
-
-  const path = useMemo(() => buildECG(STRIP_W, STRIP_H, ECG_BEATS), []);
-  const stripClass = [
-    'pa-strip',
-    plot ? 'pa-strip--plot' : '',
-    sweep && !frozen && !reduced ? 'pa-strip--sweeping' : '',
-    frozen ? 'pa-strip--frozen' : '',
-  ].filter(Boolean).join(' ');
-
-  return (
-    <div
-      className={stripClass}
-      role="group"
-      tabIndex={0}
-      aria-label={bi('Activity beatline — arrow keys scrub beats, Enter opens a beat, Space freezes',
-        'Ակտիվության զարկագիծ — սլաքներով անցեք զարկերով, Enter՝ բացել, Space՝ սառեցնել')}
-      onKeyDown={onKeyDown}
-    >
-      <svg
-        className="pa-beatline"
-        viewBox={`0 0 ${STRIP_W} ${STRIP_H}`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <defs>
-          <pattern id={gridId} width="40" height="30" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 30" fill="none" className="pa-grid-line" />
-          </pattern>
-        </defs>
-        {plot && <rect x="0" y="0" width={STRIP_W} height={STRIP_H} fill={`url(#${gridId})`} />}
-        <line x1="0" y1={STRIP_H / 2} x2={STRIP_W} y2={STRIP_H / 2} className="pa-baseline" />
-        <path d={path} className="pa-trace" fill="none" />
-        {sweep && !reduced && <rect className="pa-sweep" x="0" y="0" width="3" height={STRIP_H} />}
-      </svg>
-
-      <div className="pa-blips">
-        {events.map((e, i) => {
-          const pct = ((i + 0.5) / events.length) * 100;
-          const isSel = i === sel;
-          const isOpen = i === opened;
-          const cls = ['pa-blip', isSel ? 'pa-blip--sel' : '', isOpen ? 'pa-blip--open' : ''].filter(Boolean).join(' ');
-          return (
-            <button
-              key={e.id}
-              type="button"
-              ref={(el) => { blipRefs.current[i] = el; }}
-              className={cls}
-              style={{ left: `${pct}%`, animationDelay: reduced ? undefined : `${Math.min(i, 20) * 24}ms` }}
-              tabIndex={isSel ? 0 : -1}
-              aria-label={blipLabel(e, i)}
-              aria-pressed={isOpen}
-              title={blipLabel(e, i)}
-              onClick={() => { onSelect(i); onOpen(i); }}
-              onFocus={() => onSelect(i)}
-            >
-              <span className="pa-blip-dot" aria-hidden="true" />
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 export function Activity() {
   const { t, lang } = useApp();
   const reduced = usePrefersReducedMotion();
   const state = useAsync<ActivityEvent[]>(() => desktop.listActivity());
 
-  const bi = useCallback<Bi>((en, hy) => (lang === 'hy' ? hy : en), [lang]);
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   const [frozen, setFrozen] = useState(false);
-  const [sweep, setSweep] = useState(true);
-  const [plot, setPlot] = useState(false);
   const [sel, setSel] = useState(0);
   const [opened, setOpened] = useState<number | null>(null);
-  const gridId = useRef(`pa-grid-${Math.random().toString(36).slice(2)}`).current;
 
   const events = state.data ?? [];
   const displayed = useMemo(() => events.slice(0, MAX_BLIPS), [events]);
   const hiddenCount = events.length - displayed.length;
 
-  // Keep selection in range as data changes.
+  // Keep selection/open in range as data changes.
   useEffect(() => {
     setSel((s) => (displayed.length === 0 ? 0 : Math.min(s, displayed.length - 1)));
     setOpened((o) => (o !== null && o >= displayed.length ? null : o));
@@ -217,245 +109,410 @@ export function Activity() {
     () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
     [lang],
   );
+  const timeFmt = useMemo(() => new Intl.DateTimeFormat(lang, { timeStyle: 'short' }), [lang]);
   const fmtWhen = useCallback((raw: string) => {
-    const d = new Date(isNaN(Number(raw)) ? raw : Number(raw));
-    return isNaN(d.getTime()) ? raw : dateFmt.format(d);
+    const ms = parseTime(raw);
+    return ms == null ? raw : dateFmt.format(new Date(ms));
   }, [dateFmt]);
+  const fmtTime = useCallback((raw: string) => {
+    const ms = parseTime(raw);
+    return ms == null ? raw : timeFmt.format(new Date(ms));
+  }, [timeFmt]);
 
   const blipLabel = useCallback((e: ActivityEvent, i: number) => {
     const target = e.entityId ?? e.entityType ?? '';
-    return bi(
-      `Beat ${i + 1}: ${e.eventType}${target ? ` on ${target}` : ''}`,
-      `Զարկ ${i + 1}․ ${e.eventType}${target ? ` · ${target}` : ''}`,
-    );
-  }, [bi]);
+    return blipLabelStr(lang, i + 1, e.eventType, target);
+  }, [lang]);
 
-  const move = useCallback((delta: number) => {
-    setSel((s) => Math.max(0, Math.min(displayed.length - 1, s + delta)));
-  }, [displayed.length]);
+  // One strip point per real event — StripChart owns geometry + roving keyboard.
+  const points = useMemo<StripPoint[]>(
+    () => displayed.map((e, i) => ({ id: e.id, label: blipLabel(e, i) })),
+    [displayed, blipLabel],
+  );
 
-  const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
-    if (displayed.length === 0) return;
-    switch (e.key) {
-      case ' ':
-      case 'Spacebar':
-        e.preventDefault();                       // Space → freeze (not scroll / not blip click)
-        setFrozen((f) => !f);
-        break;
-      case 'ArrowRight':
-      case 'ArrowDown':
-        e.preventDefault();
-        move(1);
-        break;
-      case 'ArrowLeft':
-      case 'ArrowUp':
-        e.preventDefault();
-        move(-1);
-        break;
-      case 'Home':
-        e.preventDefault();
-        setSel(0);
-        break;
-      case 'End':
-        e.preventDefault();
-        setSel(displayed.length - 1);
-        break;
-      case 'Enter':
-        e.preventDefault();                       // Enter → open the focused beat's detail
-        setOpened(sel);
-        break;
-      case 'Escape':
-        if (opened !== null) { e.preventDefault(); setOpened(null); }
-        break;
-      default:
-        break;
+  // Real derived vitals — everything here comes straight from the events array.
+  const metrics = useMemo(() => {
+    const count = events.length;
+    const ts = events.map((e) => parseTime(e.createdAt)).filter((n): n is number => n != null);
+    const latest = ts.length ? Math.max(...ts) : null;
+    const earliest = ts.length ? Math.min(...ts) : null;
+    const spanMin = latest != null && earliest != null && latest > earliest ? (latest - earliest) / 60000 : 0;
+    const rate = spanMin > 0 ? Math.max(1, Math.round(count / spanMin)) : null; // events / min
+    const types = new Set(events.map((e) => e.eventType)).size;
+    return { count, latest, earliest, spanMin, rate, types };
+  }, [events]);
+
+  // Richer instruments — all derived from the same real events array. Nothing here
+  // is generated: histogram = counts per time bin; intensity = a beat's bin density;
+  // distributions = real tallies; peak / busiest-hour read straight off the bins.
+  const analytics = useMemo(() => {
+    const ts = events
+      .map((e) => parseTime(e.createdAt))
+      .filter((n): n is number => n != null)
+      .sort((a, b) => a - b);
+    const n = ts.length;
+    const min = n ? ts[0] : 0;
+    const max = n ? ts[n - 1] : 0;
+    const span = max - min;
+
+    // Rate histogram: bucket every event into 12–24 equal time bins (never more
+    // bins than events), bar height = real count in that bin.
+    const binCount = Math.max(1, Math.min(24, n));
+    const bins = new Array<number>(binCount).fill(0);
+    const binOf = (t: number): number => {
+      if (span <= 0) return 0;
+      const idx = Math.floor(((t - min) / span) * binCount);
+      return idx >= binCount ? binCount - 1 : idx < 0 ? 0 : idx;
+    };
+    for (const t of ts) bins[binOf(t)] += 1;
+    const maxBin = Math.max(1, ...bins);
+    const peakIdx = bins.indexOf(Math.max(...bins));
+    const binMs = span > 0 ? span / binCount : 0;
+    const peakStart = min + peakIdx * binMs;
+    const peakCount = bins[peakIdx] ?? 0;
+
+    // Per-beat intensity 0..100 = density of the bin the beat falls in (real signal).
+    const intensityOf = (t: number | null): number =>
+      t == null ? 0 : Math.round((100 * bins[binOf(t)]) / maxBin);
+
+    // Real distribution tallies (sorted desc), per eventType and per actor.
+    const tally = (key: (e: ActivityEvent) => string) => {
+      const m = new Map<string, number>();
+      for (const e of events) m.set(key(e), (m.get(key(e)) ?? 0) + 1);
+      const rows = [...m.entries()].sort((a, b) => b[1] - a[1]);
+      return { rows, max: rows.length ? rows[0][1] : 1 };
+    };
+    const SYS = ' system';
+    const byType = tally((e) => e.eventType);
+    const byActor = tally((e) => e.actorId ?? SYS);
+
+    // Busiest local clock hour (real count of events in that hour-of-day).
+    const hours = new Map<number, number>();
+    for (const t of ts) {
+      const h = new Date(t).getHours();
+      hours.set(h, (hours.get(h) ?? 0) + 1);
     }
-  }, [displayed.length, move, sel, opened]);
+    let busiestHour: number | null = null;
+    let busiestHourCount = 0;
+    for (const [h, c] of hours) if (c > busiestHourCount) { busiestHour = h; busiestHourCount = c; }
 
-  const beatCount = useCountUp(events.length, !reduced && !state.loading && !state.error);
+    return { bins, maxBin, binCount, span, peakStart, peakCount, intensityOf, byType, byActor, SYS, busiestHour, busiestHourCount };
+  }, [events]);
 
-  const vitals: Vital[] = [
-    { key: 'pulse', label: bi('System pulse', 'Համակարգի զարկ'), unit: bi('/min', '/րոպե') },
-    { key: 'response', label: bi('Avg response', 'Միջին արձագանք'), unit: 'ms' },
-    { key: 'network', label: bi('Network load', 'Ցանցի բեռ'), unit: '%' },
-    { key: 'error', label: bi('Error rate', 'Սխալի հաճախ.'), unit: '%' },
-  ];
+  // Timeline: real events, newest first, carrying their strip index for cross-link.
+  const timeline = useMemo(
+    () => displayed
+      .map((e, i) => ({ e, i }))
+      .sort((a, b) => (parseTime(b.e.createdAt) ?? 0) - (parseTime(a.e.createdAt) ?? 0)),
+    [displayed],
+  );
+
+  const animate = !reduced && !state.loading && !state.error;
+  const beatCount = useCountUp(metrics.count, animate);
+  const clock = metrics.latest != null ? fmtTime(String(metrics.latest)) : '—';
+  const peakTime = analytics.span > 0 ? fmtTime(String(analytics.peakStart)) : clock;
+  const busiestHourLabel = analytics.busiestHour != null
+    ? `${String(analytics.busiestHour).padStart(2, '0')}:00`
+    : '—';
+  // Accessible one-line summary for the (decorative) rate histogram.
+  const rateSummary = rateSummaryStr(lang, metrics.count, analytics.binCount, analytics.peakCount, peakTime);
 
   const selEvent = displayed[sel];
   const openEvent = opened !== null ? displayed[opened] : null;
 
-  // Text-equivalent live region (§D a11y). Describes the strip in words: pulse is
-  // honestly reported unavailable; the focused beat and beat count are real.
+  // Text-equivalent live region (§D a11y). Only real facts: beat count, derived
+  // rate when a real time-span exists, and the focused beat.
   const liveText = state.loading
-    ? bi('Loading activity beatline…', 'Բեռնվում է ակտիվության զարկագիծը…')
-    : bi(
-      `System pulse unavailable (telemetry not connected). ${events.length} activity beats.${selEvent ? ` Focused beat ${sel + 1} of ${displayed.length}: ${selEvent.eventType}.` : ''}`,
-      `Համակարգի զարկն անհասանելի է (հեռաչափումը միացված չէ)։ ${events.length} ակտիվության զարկ։${selEvent ? ` Կիզակետում՝ զարկ ${sel + 1}/${displayed.length}՝ ${selEvent.eventType}։` : ''}`,
+    ? L('loadingBeatline')
+    : liveTextStr(
+      lang,
+      metrics.count,
+      metrics.rate,
+      selEvent ? { pos: sel + 1, total: displayed.length, eventType: selEvent.eventType } : null,
     );
 
-  const controls = (
-    <div className="pa-controls" role="group" aria-label={bi('Beatline controls', 'Զարկագծի կառավարում')}>
-      <Button small onClick={() => setFrozen((f) => !f)} title={bi('Freeze (Space)', 'Սառեցնել (Space)')}>
-        <span aria-hidden="true">{frozen ? '▷' : '⏸'}</span>
-        <span>{frozen ? bi('Frozen', 'Սառեցված') : bi('Freeze', 'Սառեցնել')}</span>
-      </Button>
-      <Button small variant={plot ? 'primary' : 'default'} onClick={() => setPlot((p) => !p)} title={bi('Toggle plot grid', 'Ցանց')}>
-        <span aria-hidden="true">▦</span>{bi('Plot', 'Գծապատկեր')}
-      </Button>
-      <Button small variant={sweep ? 'primary' : 'default'} onClick={() => setSweep((s) => !s)} title={bi('Toggle sweep', 'Մաքրում')}>
-        <span aria-hidden="true">↻</span>{bi('Sweep', 'Անցում')}
-      </Button>
-    </div>
-  );
+  // Header status pill + power mark, driven by the real load state.
+  const markState = state.loading ? 'boot' : state.error ? 'alert' : 'live';
+  const pillTone = state.loading ? 'info' : state.error ? 'warn' : 'live';
+  const pillText = state.loading
+    ? L('connecting')
+    : state.error ? L('offline') : L('rhythmStable');
 
-  const liveMark = (
-    <span className={`pa-now ${state.loading || state.error ? 'pa-now--off' : ''} ${reduced ? 'pa-now--still' : ''}`}>
-      <span className="pa-now-dot" aria-hidden="true" />
-      {state.loading
-        ? bi('Connecting', 'Միանում է')
-        : state.error ? bi('Offline', 'Անջատված') : bi('Live', 'Կենդանի')}
-    </span>
-  );
-
-  // ── Body: resolve the §D state (loading / blocked / error / empty / default) ──
-  let body: ReactNode;
+  // ── Resolve the §D state → the main region ──────────────────────────────────
+  let main: ReactNode;
   if (state.loading && state.data === null) {
-    // loading → strip skeleton
-    body = (
-      <div className="stack" style={{ gap: 'var(--menq-space-5)' }}>
-        <div className="pa-strip pa-strip--skeleton" aria-busy="true" aria-label={bi('Loading beatline', 'Բեռնվում է զարկագիծը')}>
-          <div className="pa-skeleton-line" />
+    main = (
+      <StateFrame>
+        <div className="pa-skel" aria-busy="true" aria-label={L('loadingBeatlineShort')}>
+          <Skeleton rows={4} />
         </div>
-        <div className="pa-vitals">
-          {vitals.map((v) => (
-            <div key={v.key} className="pa-vital"><Skeleton rows={1} /></div>
-          ))}
-        </div>
-      </div>
+      </StateFrame>
     );
   } else if (state.error && !hasBackend()) {
-    // no desktop backend (e.g. browser preview) → calm offline, not alarming red
-    body = <EmptyState glyph="♥" title={t('state.offline')} hint={t('state.offlineHint')} />;
+    main = <StateFrame><EmptyState glyph="♥" title={t('state.offline')} hint={t('state.offlineHint')} /></StateFrame>;
   } else if (state.error && /denied|not permitted|permission|blocked/i.test(state.error)) {
-    // blocked → the telemetry stream is refused by the governance wall
-    body = (
-      <div className="pa-blocked" role="status">
-        <div className="pa-blocked-glyph" aria-hidden="true">⧉</div>
-        <div className="pa-blocked-title">{bi('Telemetry stream blocked', 'Հեռաչափման հոսքն արգելափակված է')}</div>
-        <div className="muted" style={{ maxWidth: 460, marginInline: 'auto' }}>
-          {bi('The runtime telemetry stream did not clear the governance wall. No live data crosses until it is approved.',
-            'Հեռաչափման հոսքը չանցավ կառավարման պատը։ Կենդանի տվյալ չի փոխանցվում մինչ հաստատում։')}
+    main = (
+      <StateFrame>
+        <div className="pa-blocked" role="status">
+          <div className="pa-blocked-glyph" aria-hidden="true">⧉</div>
+          <div className="pa-blocked-title">{L('telemetryBlocked')}</div>
+          <p className="note" style={{ maxWidth: 460, marginInline: 'auto' }}>
+            {L('telemetryBlockedBody')}
+          </p>
+          <p className="micro pa-blocked-reason">{state.error}</p>
+          <div style={{ marginTop: 12 }}><Button small onClick={state.reload}>{t('action.retry')}</Button></div>
         </div>
-        <div className="muted pa-blocked-reason">{state.error}</div>
-        <div style={{ marginTop: 12 }}><Button small onClick={state.reload}>{t('action.retry')}</Button></div>
-      </div>
+      </StateFrame>
     );
   } else if (state.error) {
-    // error → stream lost
-    body = (
-      <ErrorState
-        message={bi(`Telemetry stream lost — ${state.error}`, `Հեռաչափման հոսքը կորավ — ${state.error}`)}
-        onRetry={state.reload}
-        retryLabel={t('action.retry')}
-      />
+    main = (
+      <StateFrame>
+        <ErrorState
+          message={telemetryLostStr(lang, state.error)}
+          onRetry={state.reload}
+          retryLabel={t('action.retry')}
+        />
+      </StateFrame>
     );
   } else if (displayed.length === 0) {
-    // empty → no activity yet
-    body = (
-      <EmptyState
-        glyph="♥"
-        title={bi('No activity yet', 'Դեռ ակտիվություն չկա')}
-        hint={bi('Beats will appear here as the engine records events.', 'Զարկերը կհայտնվեն այստեղ, երբ շարժիչը գրանցի իրադարձություններ։')}
-      />
+    main = (
+      <StateFrame>
+        <EmptyState
+          glyph="♥"
+          title={L('noActivity')}
+          hint={L('noActivityHint')}
+        />
+      </StateFrame>
     );
   } else {
-    // default (live)
-    body = (
-      <div className="stack" style={{ gap: 'var(--menq-space-5)' }}>
-        <PaBeatline
-          events={displayed}
-          sel={sel}
-          opened={opened}
-          plot={plot}
-          sweep={sweep}
-          frozen={frozen}
-          reduced={reduced}
-          bi={bi}
-          onSelect={setSel}
-          onOpen={setOpened}
-          onKeyDown={onKeyDown}
-          blipLabel={blipLabel}
-          gridId={gridId}
-        />
+    // default (live) — the full vitals monitor
+    main = (
+      <>
+        {/* ── HERO · The Vitals Monitor ─────────────────────────────────── */}
+        <section className={`pulse-hero surface soft lg hud reveal${frozen ? ' frozen' : ''}`} style={cv(1)}>
+          <HudChrome />
 
-        {hiddenCount > 0 && (
-          <div className="muted pa-tail">{bi(`+${hiddenCount} earlier beats not plotted`, `+${hiddenCount} ավելի վաղ զարկ չեն գծագրված`)}</div>
-        )}
-
-        <div className="pa-vitals">
-          {/* Real, live vital derived from the activity feed (backend data). */}
-          <div className="pa-vital pa-vital--live">
-            <span className="pa-vital-label">{bi('Live beats', 'Կենդանի զարկեր')}</span>
-            <span className="pa-vital-value">{beatCount}</span>
-            <span className="pa-vital-unit">{bi('events', 'իրադ.')}</span>
-          </div>
-          {/* Runtime-telemetry vitals: no backing command → honest "unavailable". */}
-          {vitals.map((v) => (
-            <div key={v.key} className="pa-vital pa-vital--na" aria-label={bi(`${v.label}: unavailable`, `${v.label}՝ անհասանելի`)}>
-              <span className="pa-vital-label">{v.label}</span>
-              <span className="pa-vital-value pa-vital-value--na" aria-hidden="true">—</span>
-              <span className="pa-vital-unit">{v.unit}</span>
+          {/* left: the ECG strip (real events → StripChart) */}
+          <div className="mon-wrap">
+            <div className="mon-top">
+              <span className="eyebrow">{L('leadSystem')}</span>
+              <span className="mon-clock mono">{clock}</span>
+              <button
+                type="button"
+                className={`chip mon-freeze${frozen ? ' on' : ''}`}
+                aria-pressed={frozen}
+                onClick={() => setFrozen((f) => !f)}
+                title={L('freeze')}
+              >
+                <span className="fz-ico" aria-hidden="true" />
+                {frozen ? L('frozen') : L('freeze')}
+              </button>
             </div>
-          ))}
-        </div>
-        <div className="muted pa-vitals-note" role="note">
-          {bi('Live telemetry not connected — the engine runtime telemetry stream is not wired to this build. Beats above are the real event record.',
-            'Կենդանի հեռաչափումը միացված չէ — շարժիչի հեռաչափման հոսքը միացված չէ։ Վերևի զարկերը իրական գրառումն են։')}
-        </div>
 
-        {/* Enter opens a beat's detail (§D keyboard). */}
-        {openEvent && (
-          <div className="pa-detail" role="region" aria-label={bi('Beat detail', 'Զարկի մանրամասն')}>
-            <div className="pa-detail-head">
-              <div className="row" style={{ gap: 8 }}>
-                <Badge tone="info">{openEvent.eventType}</Badge>
-                <span className="pa-detail-title">{blipLabel(openEvent, opened ?? 0)}</span>
+            <StripChart
+              points={points}
+              selected={sel}
+              opened={opened}
+              plot
+              sweep={!reduced}
+              frozen={frozen}
+              beats={ECG_BEATS}
+              ariaLabel={L('beatlineAria')}
+              onSelect={setSel}
+              onOpen={setOpened}
+              onToggleFreeze={() => setFrozen((f) => !f)}
+              onCloseOpened={() => setOpened(null)}
+            />
+
+            {/* vitals readout — real derived numbers only */}
+            <div className="vitals">
+              <Vread i={4} label={L('systemPulse')} value={metrics.rate ?? '—'} unit={L('perMin')} />
+              <Vread i={5} label={L('eventTypes')} value={metrics.types} unit={L('typesUnit')} />
+              <Vread i={6} label={L('plotted')} value={displayed.length} unit={`/${metrics.count}`} />
+              <Vread i={7} label={L('lastBeat')} value={clock} />
+              <Vread i={8} label={L('peakBeats')} value={analytics.peakCount} unit={peakTime} />
+              <Vread i={9} label={L('busiestHour')} value={busiestHourLabel} unit={analytics.busiestHourCount ? String(analytics.busiestHourCount) : undefined} />
+            </div>
+
+            {/* rate histogram — real event counts per time bin (decorative bars + text summary) */}
+            <div className="pa-rate">
+              <div className="mon-top">
+                <span className="eyebrow">{L('eventsFlow')}</span>
+                <span className="mon-clock mono">{peakInlineStr(lang, analytics.peakCount, peakTime)}</span>
               </div>
-              <Button small variant="ghost" onClick={() => setOpened(null)} title={bi('Close (Esc)', 'Փակել (Esc)')} aria-label={bi('Close beat detail', 'Փակել')}>✕</Button>
-            </div>
-            <div className="pa-detail-grid">
-              <PaField label={bi('Actor', 'Դերակատար')}>
-                <span className="row" style={{ gap: 6 }}><Avatar name={openEvent.actorId ?? 'system'} />{openEvent.actorId ?? bi('system', 'համակարգ')}</span>
-              </PaField>
-              <PaField label={bi('Entity', 'Օբյեկտ')}>{openEvent.entityType ?? '—'}</PaField>
-              <PaField label={bi('Entity ID', 'Օբյեկտի ID')}><code className="pa-mono">{openEvent.entityId ?? '—'}</code></PaField>
-              <PaField label={bi('When', 'Ե՞րբ')}>{fmtWhen(openEvent.createdAt)}</PaField>
+              <div className="bars" role="img" aria-label={rateSummary}>
+                {analytics.bins.map((c, i) => (
+                  <i
+                    key={i}
+                    style={{ height: `${c === 0 ? 0 : Math.round((100 * c) / analytics.maxBin)}%`, animationDelay: `${i * 0.03}s` } as CSSProperties}
+                  />
+                ))}
+              </div>
+              <p className="note rate-cap">{rateSummary}</p>
             </div>
           </div>
-        )}
-      </div>
+
+          {/* right: the beating pulse core (real total beats) */}
+          <aside className="pulse-rail">
+            <div className="vcore">
+              <span className="vc-ring" aria-hidden="true" />
+              <span className="vc-ring r2" aria-hidden="true" />
+              <span className="vc-disc">
+                <b className="num">{beatCount}</b>
+                <span className="micro">{L('beats')}</span>
+              </span>
+            </div>
+            <div className="vc-cap">
+              <b>{clock}</b>
+              <span className="micro">{L('lastEvent')}</span>
+            </div>
+          </aside>
+        </section>
+
+        {/* ── BOARD · beat timeline + honest vitals panel ──────────────────── */}
+        <div className="pboard">
+          <section className="surface soft ptimeline rise" style={cv(2)}>
+            <div className="sec-head">
+              <h2>{L('beatTimeline')}</h2>
+              <span className="note">{L('beatTimelineHint')}</span>
+            </div>
+            <div className="beatline">
+              {timeline.map(({ e, i }) => {
+                const isNow = metrics.latest != null && parseTime(e.createdAt) === metrics.latest;
+                const target = e.entityId ?? e.entityType ?? '';
+                const intensity = analytics.intensityOf(parseTime(e.createdAt));
+                return (
+                  <button
+                    type="button"
+                    key={e.id}
+                    className={`node${i === sel ? ' sel' : ''}${isNow ? ' now' : ''}`}
+                    aria-pressed={i === sel}
+                    aria-label={`${blipLabel(e, i)} · ${L('intensity')} ${intensity}`}
+                    title={blipLabel(e, i)}
+                    onClick={() => { setSel(i); setOpened(i); }}
+                  >
+                    <div className="nd-top">
+                      <span className={`pill ${isNow ? 'live' : 'info'}`}>{e.eventType}</span>
+                      <span className="mono nd-time">{fmtTime(e.createdAt)}</span>
+                    </div>
+                    <p className="nd-lbl">{target || e.eventType}</p>
+                    <div className="nd-amp">
+                      <span className="micro">{L('intensity')}</span>
+                      <span className="meter" aria-hidden="true" style={{ ['--p']: `${intensity}%` } as CSSProperties}><span /></span>
+                      <span className="mono nd-av">{intensity}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {hiddenCount > 0 && (
+              <p className="note pa-tail">{hiddenTailStr(lang, hiddenCount)}</p>
+            )}
+          </section>
+
+          <section className="surface soft pmetrics rise" style={cv(3)}>
+            <div className="sec-head">
+              <h2>{L('vitals')}</h2>
+              <span className="pill info">{L('recordOnly')}</span>
+            </div>
+
+            {/* real distribution meters — honest tallies straight off the events */}
+            <div className="pa-grp">
+              <span className="eyebrow">{L('byEventType')}</span>
+              <div className="signs" role="list">
+                {analytics.byType.rows.slice(0, 6).map(([type, count]) => (
+                  <div className="sign" role="listitem" key={type}>
+                    <span className="micro">{type}</span>
+                    <span className="meter" aria-hidden="true" style={{ ['--p']: `${Math.round((100 * count) / analytics.byType.max)}%` } as CSSProperties}><span /></span>
+                    <b className="mono">{count}</b>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pa-grp">
+              <span className="eyebrow">{L('topActors')}</span>
+              <div className="signs" role="list">
+                {analytics.byActor.rows.slice(0, 6).map(([actor, count]) => (
+                  <div className="sign" role="listitem" key={actor}>
+                    <span className="micro">{actor === analytics.SYS ? L('system') : actor}</span>
+                    <span className="meter" aria-hidden="true" style={{ ['--p']: `${Math.round((100 * count) / analytics.byActor.max)}%` } as CSSProperties}><span /></span>
+                    <b className="mono">{count}</b>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <p className="note pa-grp" role="note">
+              {L('telemetryOmitted')}
+            </p>
+            <div className="wire" aria-hidden="true" />
+
+            {openEvent && (
+              <div className="surface soft pa-detail" role="region" aria-label={L('beatDetail')}>
+                <div className="pa-detail-head">
+                  <div className="row" style={{ gap: 8 }}>
+                    <span className="pill info">{openEvent.eventType}</span>
+                    <span className="pa-detail-title">{blipLabel(openEvent, opened ?? 0)}</span>
+                  </div>
+                  <button type="button" className="iconbtn" onClick={() => setOpened(null)} title={L('closeEsc')} aria-label={L('closeBeatDetail')}>✕</button>
+                </div>
+                <div className="pa-detail-grid">
+                  <PaField label={L('actor')}>
+                    <span className="row" style={{ gap: 6 }}><Avatar name={openEvent.actorId ?? 'system'} />{openEvent.actorId ?? L('system')}</span>
+                  </PaField>
+                  <PaField label={L('entity')}>{openEvent.entityType ?? '—'}</PaField>
+                  <PaField label={L('entityId')}><code className="pa-mono">{openEvent.entityId ?? '—'}</code></PaField>
+                  <PaField label={L('when')}>{fmtWhen(openEvent.createdAt)}</PaField>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      </>
     );
   }
 
   return (
     <>
       <style>{PA_STYLE}</style>
-      <PageHeader
-        title={`${t('nav.activity')} ♥ Զարկերակ`}
-        subtitle={t('activity.subtitle')}
-        actions={liveMark}
-      />
+      <div className="v-activity">
+        <header className="pageHead reveal" style={cv(0)}>
+          <div>
+            <span className="eyebrow">{L('pageEyebrow')}</span>
+            <h1>{L('systemPulse')} ♥</h1>
+            <p className="sub">{t('activity.subtitle')}</p>
+          </div>
+          <div className="right">
+            <Mark state={markState} size={22} />
+            <span className={`pill ${pillTone}`}>{pillText}</span>
+          </div>
+        </header>
 
-      {/* Text-equivalent live region for the strip (§D a11y). */}
-      <span className="pa-sr" role="status" aria-live="polite" aria-atomic="true">{liveText}</span>
+        {/* Text-equivalent live region for the strip (§D a11y). */}
+        <span className="pa-sr" role="status" aria-live="polite" aria-atomic="true">{liveText}</span>
 
-      <Panel
-        title={bi('Beatline', 'Զարկագիծ')}
-        actions={!state.loading && !state.error && displayed.length > 0 ? controls : undefined}
-      >
-        {body}
-      </Panel>
+        {main}
+      </div>
     </>
+  );
+}
+
+function StateFrame({ children }: { children: ReactNode }) {
+  return (
+    <section className="surface soft lg hud reveal pa-state" style={cv(1)}>
+      <HudChrome />
+      {children}
+    </section>
+  );
+}
+
+function Vread({ i, label, value, unit }: { i: number; label: string; value: ReactNode; unit?: string }) {
+  return (
+    <div className="vread reveal" style={cv(i)}>
+      <span className="micro">{label}</span>
+      <b className="num">{value}{unit ? <i>{unit}</i> : null}</b>
+    </div>
   );
 }
 
@@ -468,94 +525,39 @@ function PaField({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+// Only page-local chrome not covered by aios.css lives here: the SR live region,
+// the state-screen frame, the loading skeleton, the blocked panel, and the beat
+// detail grid. Everything visual on the live view is aios classes.
 const PA_STYLE = `
 .pa-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
-/* live "now" heartbeat mark */
-.pa-now { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--menq-color-success); }
-.pa-now-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--menq-color-success); box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 60%, transparent); animation: pa-nowPulse 1.4s ease-out infinite; }
-.pa-now--off { color: var(--brops-muted); }
-.pa-now--off .pa-now-dot { background: var(--brops-muted); animation: none; }
-.pa-now--still .pa-now-dot { animation: none; }
-@keyframes pa-nowPulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 55%, transparent); transform: scale(1); }
-  70% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--menq-color-success) 0%, transparent); transform: scale(1.12); }
-  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 0%, transparent); transform: scale(1); }
-}
+.v-activity .pa-state { grid-column: 1 / -1; display: grid; place-items: center; min-height: 240px; padding: 40px 24px; text-align: center; }
+.v-activity .pa-skel { width: 100%; max-width: 720px; }
 
-/* the ECG strip / beatline */
-.pa-strip { position: relative; width: 100%; height: 160px; background: var(--brops-bg);
-  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-card); overflow: hidden; outline: none; }
-.pa-strip:focus-visible { border-color: var(--brops-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brops-accent) 40%, transparent); }
-.pa-beatline { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.pa-baseline { stroke: var(--brops-border); stroke-width: 1; }
-.pa-grid-line { stroke: color-mix(in srgb, var(--brops-border) 70%, transparent); stroke-width: 1; }
-.pa-trace { stroke: var(--menq-color-success); stroke-width: 2; vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--menq-color-success) 40%, transparent)); }
-.pa-sweep { fill: color-mix(in srgb, var(--menq-color-success) 70%, transparent); opacity: 0; }
-.pa-strip--sweeping .pa-sweep { opacity: 0.8; animation: pa-sweepMove 3.2s linear infinite; }
-.pa-strip--frozen .pa-sweep { animation-play-state: paused; }
-@keyframes pa-sweepMove { from { transform: translateX(0); } to { transform: translateX(1000px); } }
+.v-activity .pa-blocked { text-align: center; padding: 12px; }
+.v-activity .pa-blocked-glyph { font-size: 30px; }
+.v-activity .pa-blocked-title { font-weight: 700; margin: 12px 0 6px; }
+.v-activity .pa-blocked-reason { margin-top: 8px; font-family: var(--f-mono, monospace); opacity: .8; }
 
-/* blip markers (buttons overlaid on the trace) */
-.pa-blips { position: absolute; inset: 0; }
-.pa-blip { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 22px; height: 22px;
-  display: grid; place-items: center; padding: 0; background: transparent; border: none; cursor: pointer;
-  border-radius: 50%; animation: pa-blipReveal var(--menq-motion-med) ease-out both; }
-.pa-blip-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--brops-accent);
-  border: 2px solid var(--brops-bg); box-shadow: 0 0 0 1px var(--brops-accent);
-  transition: transform var(--menq-motion-fast); }
-.pa-blip:hover .pa-blip-dot { transform: scale(1.25); }
-.pa-blip--sel .pa-blip-dot { background: var(--menq-color-warning); box-shadow: 0 0 0 1px var(--menq-color-warning), 0 0 8px color-mix(in srgb, var(--menq-color-warning) 60%, transparent); }
-.pa-blip--open .pa-blip-dot { background: var(--menq-color-success); box-shadow: 0 0 0 1px var(--menq-color-success); }
-.pa-blip:focus-visible { outline: none; }
-.pa-blip:focus-visible .pa-blip-dot { transform: scale(1.3); box-shadow: 0 0 0 2px var(--brops-accent), 0 0 0 4px var(--brops-bg); }
-@keyframes pa-blipReveal { from { opacity: 0; transform: translate(-50%, -50%) scale(0.4); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+.v-activity .pa-tail { margin-top: 12px; }
 
-.pa-controls { display: inline-flex; gap: var(--menq-space-2); }
-.pa-tail { font-size: 12px; }
+.v-activity .pa-detail { padding: 14px; margin-top: 4px; }
+.v-activity .pa-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.v-activity .pa-detail-title { font-weight: 600; }
+.v-activity .pa-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.v-activity .pa-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.v-activity .pa-field-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; }
+.v-activity .pa-field-value { min-width: 0; overflow-wrap: anywhere; }
+.v-activity .pa-mono { font-family: var(--f-mono, monospace); font-size: .9em; }
+.v-activity .row { display: inline-flex; align-items: center; }
+@media (max-width: 640px) { .v-activity .pa-detail-grid { grid-template-columns: 1fr; } }
 
-/* skeleton strip (loading) */
-.pa-strip--skeleton { height: 160px; display: grid; place-items: center; }
-.pa-skeleton-line { width: 92%; height: 3px; border-radius: 2px;
-  background: linear-gradient(90deg, transparent, var(--menq-color-hover) 20%, var(--brops-border) 50%, var(--menq-color-hover) 80%, transparent);
-  background-size: 200% 100%; animation: pa-shimmer 1.4s linear infinite; }
-@keyframes pa-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-
-/* vitals readout */
-.pa-vitals { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--menq-space-3); }
-.pa-vital { display: flex; flex-direction: column; gap: 3px; padding: var(--menq-space-4);
-  background: var(--brops-surface); border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md); }
-.pa-vital--live { border-color: color-mix(in srgb, var(--menq-color-success) 45%, var(--brops-border)); }
-.pa-vital-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--brops-muted); }
-.pa-vital-value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.pa-vital--live .pa-vital-value { color: var(--menq-color-success); }
-.pa-vital-value--na { color: var(--brops-muted); opacity: 0.6; }
-.pa-vital-unit { font-size: 11px; color: var(--brops-muted); }
-.pa-vitals-note { font-size: 12px; }
-@media (max-width: 1000px) { .pa-vitals { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .pa-vitals { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-
-/* blocked state */
-.pa-blocked { text-align: center; padding: var(--menq-space-7) var(--menq-space-4); }
-.pa-blocked-glyph { font-size: 30px; color: var(--menq-color-warning); }
-.pa-blocked-title { font-weight: 700; margin: var(--menq-space-3) 0 6px; }
-.pa-blocked-reason { font-size: 12px; margin-top: 8px; font-family: var(--menq-font-mono); opacity: 0.8; }
-
-/* beat detail */
-.pa-detail { background: var(--brops-surface); border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md); padding: var(--menq-space-4); }
-.pa-detail-head { display: flex; align-items: center; justify-content: space-between; gap: var(--menq-space-3); margin-bottom: var(--menq-space-4); }
-.pa-detail-title { font-weight: 600; }
-.pa-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--menq-space-4); }
-.pa-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.pa-field-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--brops-muted); }
-.pa-field-value { min-width: 0; overflow-wrap: anywhere; }
-.pa-mono { font-family: var(--menq-font-mono); font-size: 0.9em; }
-@media (max-width: 640px) { .pa-detail-grid { grid-template-columns: 1fr; } }
-
-@media (prefers-reduced-motion: reduce) {
-  .pa-now-dot, .pa-sweep, .pa-blip, .pa-skeleton-line { animation: none !important; }
-  .pa-blip { opacity: 1; }
-  .pa-blip-dot, .pa-blip:hover .pa-blip-dot { transition: none; }
-}
+/* six vitals readouts now flow instead of forcing four columns */
+.v-activity .vitals { grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); }
+/* rate histogram block + the labelled distribution groups (reuse .bars/.signs/.sign) */
+.v-activity .pa-rate { margin-top: var(--s2); }
+.v-activity .pa-rate .rate-cap { margin-top: 8px; }
+.v-activity .pa-grp { margin-top: 16px; }
+.v-activity .pa-grp .eyebrow { display: block; margin-bottom: 8px; }
+.v-activity .pa-grp .signs { margin-top: 0; }
 `;

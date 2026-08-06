@@ -1,0 +1,247 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Shell additions — the few rail controls the React shell adds on top of the
+   mockup's foundation (aios.css): a flex side rail so the control footer pins to
+   the bottom, nav count badges, the in-rail language select, and the prototype
+   banner. Everything else (.app / .side / .brand / .mark / .nav a / .stage) is
+   inherited verbatim from aios.css.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* make the rail a column so nav grows and the control footer sits at the bottom */
+.side {
+  display: flex;
+  flex-direction: column;
+}
+.side .nav {
+  flex: 1 1 auto;
+}
+
+/* nav items are the mockup's `.nav a`; carry a live count chip on the right */
+.nav a {
+  position: relative;
+}
+.nav-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  display: inline-grid;
+  place-items: center;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--bg);
+  background: var(--cyan);
+  box-shadow: 0 0 10px rgb(var(--cyan-rgb) / 0.6);
+}
+
+/* control footer at the base of the rail */
+.side-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 14px 10px 4px;
+  margin-top: 10px;
+  border-top: 1px solid rgb(var(--line-rgb) / 0.7);
+}
+.side-foot .lang-select {
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color var(--fast), color var(--fast);
+}
+.side-foot .lang-select:hover {
+  border-color: rgb(var(--cyan-rgb) / 0.4);
+  color: var(--cyan);
+}
+.side-foot .side-ver {
+  flex-basis: 100%;
+  padding: 8px 2px 0;
+}
+
+/* prototype banner shown inside the stage when no Tauri backend is present */
+.stage > .proto-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 7px 13px;
+  border-radius: var(--r-pill);
+  border: 1px solid rgb(var(--warning-rgb) / 0.28);
+  background: rgb(var(--warning-rgb) / 0.08);
+  color: var(--warning);
+  font-family: var(--f-mono);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* the power-on gate's lockup is a real <button>; strip its chrome */
+#gate .lockup {
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NAV SVG ICONS — size the `.nav a i` slot for a stroke glyph (was a text
+   glyph at font-size:12px in aios.css). Icons inherit the item colour via
+   currentColor, so hover/active tinting flows straight through.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.nav a i {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: inherit;
+  opacity: 0.9;
+  font-size: 0; /* neutralise any text-glyph fallback */
+  transition: color var(--fast), transform var(--slow) var(--spring),
+    filter var(--slow);
+}
+.nav a i svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NAV + BRAND + STAGE MOTION — subtle, GPU-friendly (transform/opacity/filter),
+   all reused from aios tokens and fully stilled under prefers-reduced-motion.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* animated active indicator: a cyan bar that springs up the item's left edge,
+   replacing aios.css's static inset box-shadow so it can grow rather than pop */
+.nav a {
+  transition: background var(--fast), color var(--fast),
+    transform var(--fast);
+}
+.nav a::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--cyan);
+  box-shadow: 0 0 8px rgb(var(--cyan-rgb) / 0.8);
+  transform: scaleY(0);
+  transform-origin: 50% 50%;
+  opacity: 0;
+  transition: transform var(--slow) var(--spring), opacity var(--fast);
+}
+.nav a.on {
+  box-shadow: none; /* the animated ::before bar stands in for the inset shadow */
+}
+.nav a.on::before {
+  transform: scaleY(1);
+  opacity: 1;
+}
+
+/* soft hover lift + icon tint */
+.nav a:hover {
+  transform: translateX(2px);
+}
+.nav a:hover i {
+  color: var(--cyan);
+  opacity: 1;
+}
+
+/* active icon micro-animation: a gentle glow + a one-shot spring pop that
+   replays whenever an item becomes the current route */
+.nav a.on i {
+  color: var(--cyan);
+  opacity: 1;
+  transform: scale(1.08);
+  filter: drop-shadow(0 0 5px rgb(var(--cyan-rgb) / 0.55));
+  animation: navPop var(--slow) var(--spring);
+}
+@keyframes navPop {
+  0% {
+    transform: scale(0.9);
+  }
+  60% {
+    transform: scale(1.14);
+  }
+  100% {
+    transform: scale(1.08);
+  }
+}
+
+/* brand lockup + power mark: a small hover lift and tap settle (the idle
+   breathing on .mark.live svg is untouched — this scales the .mark wrapper) */
+.brand {
+  transition: transform var(--fast);
+}
+.brand .mark {
+  transition: transform var(--slow) var(--spring);
+}
+.brand:hover {
+  transform: translateY(-1px);
+}
+.brand:active {
+  transform: translateY(0) scale(0.98);
+}
+.brand:hover .mark,
+#gate .lockup:hover .mark {
+  transform: scale(1.06);
+}
+#gate .lockup:active .mark {
+  transform: scale(0.96);
+}
+
+/* stage page-enter: keyed on route in Shell.tsx, so the routed view fades and
+   rises once per navigation. Per-view `.reveal` staggers run inside, untouched */
+.stage-enter {
+  animation: stageEnter var(--slow) var(--spring) both;
+}
+@keyframes stageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-enter {
+    animation: none;
+  }
+  .nav a,
+  .nav a i,
+  .nav a::before,
+  .brand,
+  .brand .mark {
+    transition: none;
+  }
+  .nav a.on i {
+    animation: none;
+    transform: none;
+    filter: none;
+  }
+  .nav a:hover,
+  .brand:hover,
+  .brand:active,
+  .brand:hover .mark,
+  #gate .lockup:hover .mark,
+  #gate .lockup:active .mark {
+    transform: none;
+  }
+  .nav a.on::before {
+    transform: scaleY(1); /* keep the active indicator visible, just unanimated */
+    opacity: 1;
+  }
+}

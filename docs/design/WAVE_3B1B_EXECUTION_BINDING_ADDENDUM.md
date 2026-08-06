@@ -282,6 +282,24 @@ A future **Windows governed-execution broker** MUST provide equivalents for each
 
 Until that broker exists and is Architect-audited, the gate stays **false** on Windows.
 
+**Machine-proof status (PR #53, crate `brops-win-live`, `apps/desktop/src-tauri/win-live`).** The Windows
+governed turn is now **machine-proven to production `trusted_verified`** end-to-end: (1) an **in-process,
+host-independent** full crypto chain (challenge → lease → attest → sign → `verify_and_accept` →
+`production_verified=true bound=true`) that runs on the Linux CI runner too (`cargo test -p
+brops-win-live`), so the one cross-implementation boundary — the signer's `JCS(payload)` vs
+`brops-core`'s `ReceiptEnvelope::payload_jcs` — is byte-exact; (2) the **same `GovernedChain` over real
+`\\.\pipe\` named pipes** across three separate Windows processes (same-account); (3) the **peer-SID gate
+fail-closed both directions** (correct broker SID → verified, wrong → blocked); (4) **cross-account** —
+challenge-authority / supervisor / isolated-signer each as a **DISTINCT dedicated Windows service account**
+(session-0, batch logon), peer-SID authed across real account boundaries → `trusted_verified`
+(`win-live/proof/CROSS_ACCOUNT_PROOF.md`). This proves the peer-authentication + distinct-principal +
+verified-exec-binding primitives above over the real syscalls. It does **NOT** flip the §0.1 gate: the
+remaining primitives (broker as its **own** dedicated service account — currently blocked by a session-0
+console-launch `STATUS_DLL_INIT_FAILED` 0xC0000142 limitation, an environment issue orthogonal to the
+chain; `CreateProcessAsUser` under a restricted token + STARTUPINFOEX handle list; **CNG key custody**;
+WDAC/AppLocker TCB integrity) and a **separate Architect audit of the Windows broker** are still required.
+`platform_governed_execution_supported()` stays **false** on Windows until then.
+
 ---
 
 ## 1. Canonical time model (P0-1) — ONE unit, explicit names
@@ -2694,6 +2712,129 @@ reply enum literal appears in exactly one routing row.
 ---
 
 ## 5. Durable supervisor acceptance — state machine + outbox (P0-2)
+
+> ### ⚠️ §5 v2 — NORMATIVE AMENDMENT (independent audit 2026-08-06, **F-01 P0**)
+>
+> **The problem this amendment exists to fix.** §5 below specified this durable state machine
+> correctly, and it was implemented in `apps/desktop/src-tauri/core/src/supervisor_ledger.rs` —
+> but **nothing ever called it.** Every function except `create_schema` had only `#[cfg(test)]`
+> callers. The live supervisor ran stateless: `accept_open` minted a lease from `uuid4()` and
+> persisted nothing, `launch_gate` judged a lease the CALLER handed back, and `attest-run`
+> accepted a `facts` object on the wire, shape-validated it, stamped `decision="completed"` and
+> signed it. The broker uid — the one principal the four-uid key split exists to constrain —
+> could therefore obtain a genuine Ed25519-signed `brops.governed-receipt-envelope.v1` for a run
+> that never happened: no challenge, no lease, no launcher, no executor, no model.
+>
+> **The amendment.** The supervisor's authority is now the durable state it owns, and the wire
+> protocol is shaped so no other source of evidence exists.
+>
+> **(a) Where the schema lives.** The DDL below is no longer inlined in either implementation.
+> The single normative source is [`engine/runtime/supervisor_ledger.sql`](../../engine/runtime/supervisor_ledger.sql),
+> loaded verbatim by the Python supervisor (`governed_supervisor_ledger.py`, the production
+> writer) and compiled into `brops-core::supervisor_ledger` from a byte-identical mirror. The
+> fail-closed CI gate `tools/check_ledger_ddl_parity.py` refuses any divergence, any missing
+> copy, or the removal of a load-bearing constraint. **The SQL is the enforcement** — the
+> `UNIQUE`s, the `state` CHECK, the transition trigger, the write-once completion PK, the floor
+> PK — so neither language can weaken it alone.
+>
+> **(b) The acceptance row carries the request binding.** In addition to the columns below it
+> persists `lease_id`, `lease_issued_at_ms`, `lease_expires_at_ms`, `receipt_id`,
+> `supervisor_id`, `requested_at_ms`, `request_sha256`, `system_handle`, `history_handle` and
+> `generation_config_handle` — all copied out of the **signature-verified** challenge payload or
+> stamped from the supervisor's own clock. `receipt_id` is **minted per turn by the supervisor**
+> and carries a `UNIQUE` index, because the §7.1(d) global-unique replay key cannot be a
+> deployment constant (audit F-02).
+>
+> **(c) A new write-once completion table.** `governed_turn_completion` (PK
+> `execution_attempt_id`, FK → acceptance) records the ONLY §4.9 values the supervisor cannot
+> derive itself: `output_handle`, `containment_evidence_handle`, `record_handle`, `lease_handle`,
+> `execution_receipt_handle`, `completed_at_ms` and the four `evidence_*` counters. The PK is the
+> write-once gate: an identical retry is idempotent, any divergence is refused. Recording a
+> completion also drives the evidence-head anti-rollback/anti-fork floor in the same
+> transaction, so a stale or forked head refuses the whole completion.
+>
+> **(d) The §5 v2 wire.** Five ops walk ONE durable attempt through its lifecycle. Every request
+> shape is EXHAUSTIVE — an unknown field is a hard error, never an ignored one:
+>
+> | op | request | effect |
+> |---|---|---|
+> | `accept-open` | `{challenge_doc}` | two-phase verify + **Phase C**: the challenge's signed `supervisor_id` must be THIS supervisor (else `supervisor_mismatch`) → CAS an acceptance row keyed on the supervisor's own `challenge_handle = sha256(JCS(payload))` → `LEASE_READY`. A replayed challenge returns the **ORIGINAL** lease; it never mints a second attempt. |
+> | `launch-gate` | `{execution_attempt_id}` | the §5 step-8a budget gate against the lease window the **supervisor persisted** → `EXECUTION_STARTING`, or durably `EXPIRED` with the gate reason. The caller presents no lease and cannot choose the expiry it is judged against (also closes audit F-23). |
+> | `execution-started` | `{execution_attempt_id, process_group_id, cgroup_id, execution_started_marker}` | `EXECUTION_STARTING → EXECUTING`. |
+> | `complete-run` | `{execution_attempt_id, produced}` | write-once completion + evidence floor → `COMPLETED`. `produced` carries ONLY run-produced values; every id, nonce, identity and acceptance timestamp is rejected as an unknown field. |
+> | `attest-run` | `{run_id, execution_attempt_id}` | build the §4.9 evidence from durable terminal state + supervisor config, stamp `decision="completed"`, sign. **No `facts` parameter exists.** |
+>
+> **(e) The identities the signer allowlists are supervisor-provisioned.** `executor_id`,
+> `builder_id`, `policy_id`, `policy_version` and `policy_bundle_handle` move out of the broker's
+> config into the supervisor's. `isolated_signer._check_identity` allowlists these values, so a
+> broker that supplied them was choosing what it would be checked against — it simply copied them
+> out of the world-readable deployment config. `supervisor_id` comes from the acceptance row, so
+> a later config edit cannot retroactively rewrite what was accepted.
+>
+> **(f) The signer sees the attested bytes.** The broker no longer rebuilds the evidence object
+> for `sign-result`; it **parses it from the exact `evidence_jcs` the supervisor signed**. The
+> signer's re-hash and the final acceptance's `attestation_evidence_sha256` check are therefore
+> over identical bytes by construction.
+>
+> **The property this establishes:** *a fabricated run has no acceptance row, so it has no
+> completion, so there is no evidence for the supervisor to build and no signature to obtain.*
+> `attest-run` on an unknown, unfinished, failed or mismatched run returns
+> `no_terminal_run_state`.
+>
+> **(g) BOTH supervisor implementations.** The protocol has two implementations, and a fix in one
+> would leave the other demonstrating the defect. The production Linux supervisor
+> (`engine/runtime/governed_supervisor*.py`) keeps its state in the durable SQLite ledger. The
+> Windows machine-proof supervisor (`apps/desktop/src-tauri/win-live/src/servers.rs`) is a Rust
+> twin behind a peer-SID-authed named pipe; it now speaks the same five ops and builds the
+> evidence from its own acceptance/completion record. Its state is IN-PROCESS — proof-kit scope,
+> matching the rest of that kit — so it inherits the F-01 property (evidence comes from supervisor
+> state, never from the caller) without the durability the production path has. That difference is
+> deliberate and is recorded here rather than papered over.
+>
+> **(h) What is PROVEN, and where.** `engine/tests/test_governed_chain_e2e.py` walks the whole
+> chain offline — real challenge-authority → supervisor (durable ledger on a real file, restarted
+> mid-turn) → isolated signer, three distinct real Ed25519 keypairs — and asserts the receipt
+> signature, the attestation digest binding, the output digest+length binding and the
+> `request_sha256` recompute, plus the F-01 negatives (a fabricated run, an unfinished run, the old
+> `facts` door, a replayed challenge, a second execution trying to rewrite an attested one, a stale
+> evidence head). It proves the PROTOCOL and the CRYPTO. It does **not** prove the ISOLATION: the
+> OS trust boundary (SO_PEERCRED, the separate uids, key custody modes) and the privileged
+> recorder → setuid launcher → contained executor spawn still require `engine/ci/live/run_live_turn.sh`
+> on a real Linux host, which has **not** been re-run against this protocol.
+>
+> **(i) F-02, partially — the terminal handles are now supervisor-derived and per-run.**
+> `record_handle`, `lease_handle` and `execution_receipt_handle` have left `produced` entirely.
+> At `complete-run` the supervisor BUILDS a `brops.governed-turn-record.v1` and a
+> `brops.execution-receipt.v1` from its own acceptance row plus the write-once completion,
+> addresses the exact canonical lease bytes it persisted at acceptance, and PUBLISHES all three
+> into the content-addressed protected store through an injected `publish_artifact` seam. The
+> handles the receipt names therefore address documents describing THIS run. The live kit's
+> placeholder `record` / `lease` / `execution_receipt` store blobs are deleted with them.
+>
+> **(j) F-02, containment — the report is now written by the run.** The recorder takes a
+> `--containment-out` path and, on a successful launch, writes a `brops.containment-evidence.v1`
+> document stating what IT observed: the pinned launcher/executor image digests, the lease file
+> and its digest, the cgroup, the §2.7 descriptor contract it established, its own real uid/gid
+> (the invoker gate the launcher binds to), the launcher exit, and the output length. The broker
+> content-addresses it into the protected store and names that handle; a missing or empty report
+> is a REFUSAL, not a fallback. The Windows kit writes its own per-run report whose
+> `containment_mode` says plainly that it is not the §2.7 setuid model.
+>
+> The launcher's own three verdicts (FD contract, drop order, post-drop capability state) are
+> attested here by their CONSEQUENCE — any failure means no `fexecve` and a non-zero exit, so
+> `launcher_exit == 0` is the observable form of "the gate passed". Reporting them directly needs
+> a 4th argv token or a 7th descriptor, and both are fixed by the §2.7 closed-argv / FD contract:
+> that is an Architect decision, so the report states what it saw and does not overclaim.
+>
+> **What is still open in F-02/F-18.** The four `evidence_*` counters remain deployment constants:
+> nothing measures a real recorder evidence chain, so the receipt's strongest-sounding claim still
+> carries no information about the run. That is now the ONLY static half left — the live kit's
+> `facts` block contains nothing else. Do not read F-02 as closed.
+>
+> **What this amendment does NOT fix at all.** The request↔output binding (**F-08**), the TCB
+> integrity floor (**F-10**) and the custody defects (**F-07/F-17/F-28**) are untouched.
+> `platform_governed_execution_supported()` stays `false`; `main()` keeps
+> `UpstreamBlockedExecutor`.
 
 A database transaction **cannot** atomically include an external private-key signature and a
 filesystem publish. Acceptance is therefore a **durable state machine with an outbox**, not a

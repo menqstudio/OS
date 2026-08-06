@@ -110,6 +110,14 @@ class SemanticGateTests(unittest.TestCase):
         root = self._tmp(); _state_repo(root, current_state="OMIT")
         self.assertTrue(any("missing config/current_state.json" in p for p in cc.check(root)))
 
+    def test_rejects_missing_next_chat_when_state_present(self):
+        # F-19: deleting NEXT_CHAT.md must NOT silently disable the semantic layer when the machine
+        # anchor config/current_state.json exists — the gate must fail closed, not print GREEN.
+        root = self._tmp(); _state_repo(root)
+        (root / "NEXT_CHAT.md").unlink()
+        self.assertTrue(any("NEXT_CHAT.md is missing while config/current_state.json exists" in p
+                            for p in cc.check(root)))
+
     def test_rejects_open_impl_pr_without_code_exists(self):
         root = self._tmp()
         cs = _default_state(); cs["waves"]["3b-1B"]["code_exists"] = False

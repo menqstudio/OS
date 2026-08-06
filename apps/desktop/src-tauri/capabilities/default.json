@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "T-010 deny-by-default capability set for the BroPS main window. Every app IPC command is declared in the app manifest (build.rs); this file grants allow-* explicitly per the Wave-2b risk tiers (docs/design/WAVE_2B_CAPABILITY_APPROVAL_DESIGN.md). Generic decide_approval is DENIED (approve requires renderer-independent native confirmation, T-011); reject_approval is the fail-safe reject path. The four L2 hard-delete commands (delete_conversation/knowledge/memory/event) are DENIED until they gain soft-delete+undo or native confirmation (T-011). A command with no allow-* here is uninvokable from this window.",
   "windows": [
-    "main"
+    "main",
+    "bro-win-*"
   ],
   "permissions": [
     "core:default",
@@ -26,6 +27,7 @@
     "allow-list-approvals",
     "deny-decide-approval",
     "allow-reject-approval",
+    "allow-escalate-approval",
     "allow-confirm-approval",
     "allow-list-notifications",
     "allow-mark-notification-read",
@@ -34,6 +36,8 @@
     "allow-list-activity",
     "allow-list-conversations",
     "allow-create-conversation",
+    "allow-set-conversation-participants",
+    "allow-list-conversation-participants",
     "allow-list-messages",
     "allow-post-message",
     "allow-post-user-message",
@@ -68,6 +72,8 @@
     "allow-create-automation",
     "allow-set-automation-enabled",
     "allow-delete-automation",
+    "allow-run-automation",
+    "allow-list-automation-runs",
     "allow-list-integrations",
     "allow-set-integration-status",
     "allow-search-all",
@@ -76,8 +82,11 @@
     "allow-ai-status",
     "allow-reply-in-conversation",
     "allow-stream-reply",
+    "allow-demonstration-verified-reply",
+    "allow-cancel-reply",
     "allow-stream-ask",
     "allow-stream-run-step",
+    "allow-open-window",
     "allow-list-dir",
     "allow-read-file",
     "allow-write-file"

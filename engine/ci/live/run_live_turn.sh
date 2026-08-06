@@ -64,8 +64,10 @@ done
 # ----- layout /opt/brops-live ---------------------------------------------------------------------
 LIVE=/opt/brops-live
 STORE="$LIVE/store"; SOCK="$LIVE/sock"; REPORT="$LIVE/report"; TCB="$LIVE/tcb"; BIN="$LIVE/bin"; KEYS="$LIVE/keys"
+SUPSTATE="$LIVE/supervisor-state"   # the supervisor's PRIVATE durable ledger (F-01), 0700
+RECSTATE="$LIVE/recorder-state"     # the recorder's PRIVATE evidence head-sequence counter (F-02), 0700
 rm -rf "$LIVE"
-mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$LIVE/engine"
+mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$SUPSTATE" "$RECSTATE" "$LIVE/engine"
 
 # Stage the Python tree so the service accounts can import the cores + front doors + live runners (the repo
 # may live under a home dir the service uids cannot traverse). Preserve the engine/ci/live + engine/runtime
@@ -73,6 +75,12 @@ mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$LIVE/engine"
 mkdir -p "$LIVE/engine/ci/live" "$LIVE/engine/runtime"
 cp "$REPO_ROOT"/engine/ci/live/*.py "$LIVE/engine/ci/live/"
 cp "$REPO_ROOT"/engine/runtime/*.py "$LIVE/engine/runtime/"
+# The supervisor's durable ledger loads its schema from the canonical `supervisor_ledger.sql`
+# beside the runtime modules, so the staged tree needs the .sql too — copying only *.py left the
+# supervisor unable to read its own schema, and it correctly refused to start (F-01: a supervisor
+# with no durable state must not serve). Stage it explicitly rather than widening the glob, so a
+# future non-code file has to be considered rather than silently swept into the TCB.
+cp "$REPO_ROOT"/engine/runtime/supervisor_ledger.sql "$LIVE/engine/runtime/"
 chmod -R a+rX "$LIVE/engine"
 PYLIVE="$LIVE/engine/ci/live"
 
@@ -90,17 +98,6 @@ install -m 0755 "$DRIVER_BIN" "$BIN/live_turn"; chown 0:0 "$BIN/live_turn"
 LAUNCHER_SHA=$(sha256sum "$TCB/privileged-launcher.bin" | cut -d' ' -f1)
 EXECUTOR_SHA=$(sha256sum "$TCB/contained-executor.bin" | cut -d' ' -f1)
 
-# ----- the launcher's §4.3 VALIDATED lease FILE (root-owned, non-writable) -------------------------
-RECORDER_GID=$(id -g "$RECORDER_USER"); EXECUTOR_UID=$(id -u "$EXECUTOR_USER"); EXECUTOR_GID=$(id -g "$EXECUTOR_USER")
-cat > "$TCB/executor.lease" <<LEASE
-recorder_uid=$(id -u "$RECORDER_USER")
-recorder_gid=$RECORDER_GID
-executor_uid=$EXECUTOR_UID
-executor_gid=$EXECUTOR_GID
-executor_executable_sha256=$EXECUTOR_SHA
-LEASE
-chown 0:0 "$TCB/executor.lease"; chmod 0644 "$TCB/executor.lease"
-
 # ----- keys + manifest + store + shared config -----------------------------------------------------
 echo "== provisioning keys + root-signed manifest + store + config =="
 python3 "$PYLIVE/provision_keys.py" --root-dir "$LIVE" \
@@ -110,6 +107,39 @@ python3 "$PYLIVE/provision_keys.py" --root-dir "$LIVE" \
 
 CONFIG="$LIVE/config.json"
 
+# ----- the launcher's §4.3 VALIDATED lease FILE (root-owned, non-writable) -------------------------
+# Written AFTER provisioning because it now also pins the three governed REQUEST inputs (audit F-08):
+# the digests below are taken from the very files the recorder opens as fds 3/4/5, and the launcher
+# re-hashes those held descriptors before it will exec. Overwrite `$STORE/system` after this point and
+# the launcher refuses — which is exactly the divergence (executed prompt != attested prompt) that had
+# no enforcement anywhere in the chain.
+RECORDER_GID=$(id -g "$RECORDER_USER"); EXECUTOR_UID=$(id -u "$EXECUTOR_USER"); EXECUTOR_GID=$(id -g "$EXECUTOR_USER")
+SYSTEM_SHA=$(sha256sum "$STORE/system" | cut -d' ' -f1)
+HISTORY_SHA=$(sha256sum "$STORE/history" | cut -d' ' -f1)
+GENCFG_SHA=$(sha256sum "$STORE/generation_config" | cut -d' ' -f1)
+# The config the supervisor attests from MUST carry the same three digests, or the launcher would be
+# pinning bytes nobody attests. Assert it here rather than discovering the divergence in a signature.
+python3 - "$CONFIG" "$SYSTEM_SHA" "$HISTORY_SHA" "$GENCFG_SHA" <<'PYCHECK' || { echo "FAIL: request digests diverge from the provisioned store bytes"; exit 1; }
+import json, sys
+cfg = json.load(open(sys.argv[1]))["resolved"]
+want = dict(zip(("system_sha256", "history_sha256", "generation_config_sha256"), sys.argv[2:5]))
+bad = {k: (cfg.get(k), v) for k, v in want.items() if cfg.get(k) != v}
+if bad:
+    print("attested-vs-store digest mismatch:", bad, file=sys.stderr)
+    sys.exit(1)
+PYCHECK
+cat > "$TCB/executor.lease" <<LEASE
+recorder_uid=$(id -u "$RECORDER_USER")
+recorder_gid=$RECORDER_GID
+executor_uid=$EXECUTOR_UID
+executor_gid=$EXECUTOR_GID
+executor_executable_sha256=$EXECUTOR_SHA
+system_sha256=$SYSTEM_SHA
+history_sha256=$HISTORY_SHA
+generation_config_sha256=$GENCFG_SHA
+LEASE
+chown 0:0 "$TCB/executor.lease"; chmod 0644 "$TCB/executor.lease"
+
 # Each private key readable ONLY by the owning service; public hex + manifest + config world-readable.
 chown "$CHALLENGE_USER":  "$KEYS/challenge.priv";          chmod 0400 "$KEYS/challenge.priv"
 chown "$SUPERVISOR_USER": "$KEYS/supervisor_attest.priv";  chmod 0400 "$KEYS/supervisor_attest.priv"
@@ -117,10 +147,52 @@ chown "$SIGNER_USER":     "$KEYS/signer.priv";             chmod 0400 "$KEYS/sig
 chown 0:0 "$KEYS/root.priv";                               chmod 0400 "$KEYS/root.priv"
 chmod 0644 "$KEYS"/*.pub.hex "$CONFIG" "$LIVE/manifest.json" "$LIVE/manifest.sig" "$LIVE/floor.json"
 
-# Cross-uid working dirs: the trust boundary is SO_PEERCRED (sockets) + content-addressing (store), NOT the
-# filesystem mode — so these are broadly traversable/writable while integrity stays cryptographic.
-chmod 1777 "$SOCK" "$REPORT" "$STORE"
+# F-17: the root trust anchor is TCB material, not config. Root-owned and non-writable, beside the
+# executor image — the driver refuses to use it otherwise, because an anchor a service account could
+# rewrite would make every signature below it meaningless.
+chown 0:0 "$TCB/root-anchor.json"; chmod 0644 "$TCB/root-anchor.json"
+
+# ----- cross-uid working dirs: least privilege, not 1777 (audit F-07 / F-28) -----------------------
+# These were mode 1777 with the argument that integrity is cryptographic (content addressing + JCS
+# signatures + SO_PEERCRED), not filesystem. That argument is true and it is not a licence to ship a
+# world-writable "protected store": any local account could then drop blobs into the directory the
+# isolated signer treats as authoritative and satisfy its presence checks, and could create files in
+# the socket and report directories the services race to create. Integrity still does not DEPEND on
+# these modes — that is exactly why they cost nothing to get right.
+#
+# Each directory is now group-owned by the set of principals that legitimately writes it:
+#   store  — supervisor (publishes the record/lease/execution-receipt of each run) + broker (the
+#            content-addressed output and containment blobs). World-READABLE so the signer, on its
+#            own uid, can still read blobs by handle.
+#   report — recorder (writes the captured reply + containment report) + broker (reads and clears
+#            them). No world access at all: these bytes are the governed reply itself.
+#   sock   — every service that binds a socket, plus the broker that connects.
+# setgid (2) so files created inside inherit the group instead of the creator's primary group.
+add_group() {  # <group> <members...>
+  local g="$1"; shift
+  getent group "$g" >/dev/null || groupadd --system "$g" || return 1
+  for m in "$@"; do usermod -aG "$g" "$m" || return 1; done
+}
+add_group brops-store  "$SUPERVISOR_USER" "$BROKER_USER"   || { echo "FAIL: brops-store group";  exit 1; }
+add_group brops-report "$RECORDER_USER"   "$BROKER_USER"   || { echo "FAIL: brops-report group"; exit 1; }
+add_group brops-ipc    "$CHALLENGE_USER" "$SUPERVISOR_USER" "$SIGNER_USER" "$BROKER_USER" \
+  || { echo "FAIL: brops-ipc group"; exit 1; }
+chgrp brops-store  "$STORE";  chmod 2775 "$STORE"
+chgrp brops-report "$REPORT"; chmod 2770 "$REPORT"
+chgrp brops-ipc    "$SOCK";   chmod 2770 "$SOCK"
 chmod 0644 "$STORE"/* 2>/dev/null || true
+chgrp brops-store "$STORE"/* 2>/dev/null || true
+
+# The supervisor's DURABLE ledger is the opposite case (F-01): it IS the authority a run
+# attestation is rebuilt from, so it is supervisor-private — 0700, owned by the supervisor
+# account. If any other uid could write here, the attestation would again describe state the
+# attacker chose. This directory must never be added to the shared-group lines above.
+chown -R "$SUPERVISOR_USER": "$SUPSTATE"; chmod 0700 "$SUPSTATE"
+
+# The recorder's evidence head-sequence counter is the same kind of thing (F-02): it is what makes
+# the evidence head MONOTONIC across runs, so if another uid could rewind it, the supervisor's
+# anti-rollback floor would again be comparing a number the attacker chose. Recorder-private.
+chown -R "$RECORDER_USER": "$RECSTATE"; chmod 0700 "$RECSTATE"
 
 # ----- sudoers: the broker may spawn ONLY the recorder helper as the recorder account (invoker gate) ----
 SUDOERS=/etc/sudoers.d/brops-live-recorder
@@ -159,8 +231,18 @@ RESULT_LINE=$(echo "$OUT" | grep -E '^RESULT:' | tail -1)
 echo
 echo "================================ live governed turn ================================"
 echo "$RESULT_LINE"
-if echo "$RESULT_LINE" | grep -qE 'production_verified=true bound=true'; then
-  echo "LIVE GOVERNED TURN: GREEN — genuine production trusted_verified"
+# F-17: what this kit can prove is that the CHAIN bound a trusted_verified turn under a
+# manifest-resolved production key. Whether that is a PRODUCTION claim depends on who controls the
+# root anchor, and this kit generates its own — so the driver reports production_verified=false with
+# root_anchor=kit_generated, and the green condition below asserts exactly the property that was
+# actually demonstrated. Re-provision with --root-anchor-key-id/--root-anchor-pub-hex plus the
+# externally-signed manifest and the same run reports root_anchor=external production_verified=true.
+if echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*production_verified=true bound=true root_anchor=external'; then
+  echo "LIVE GOVERNED TURN: GREEN — genuine production trusted_verified (externally-anchored root)"
+  exit 0
+elif echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*bound=true root_anchor=kit_generated'; then
+  echo "LIVE GOVERNED TURN: GREEN — chain bound a trusted_verified turn"
+  echo "  NOT a production claim: the root anchor is kit-generated, so custody is unproven (F-17)."
   exit 0
 else
   echo "LIVE GOVERNED TURN: RED / BLOCKED (fail-closed — no fabricated acceptance)"

@@ -3,7 +3,7 @@
 
 use crate::AppState;
 use brops_core::{
-    repo, ActivityEvent, Agent, Approval, Automation, Conversation, Decision, Event, Integration,
+    repo, ActivityEvent, Agent, Approval, Automation, AutomationRun, Conversation, Decision, Event, Integration,
     KnowledgeNote, LibraryItem, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
     NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject, NewResearchItem,
     NewTask, Notification, Project, ResearchItem, Run, RunStep, SearchResult, SecuritySummary, Task,
@@ -15,15 +15,26 @@ use tauri::State;
 type Conn<'a> = std::sync::MutexGuard<'a, rusqlite::Connection>;
 
 fn locked<'a>(state: &'a State<AppState>) -> Result<Conn<'a>, String> {
+    // DELIBERATE fail-closed asymmetry: unlike the benign sibling locks (pending_answers,
+    // reject/confirm rate-limiters, ai cancel flags) which recover from poisoning with
+    // `unwrap_or_else(|p| p.into_inner())`, the single DB-connection mutex does NOT. A poison here
+    // means a command handler panicked WHILE holding the guard — potentially mid-transaction on
+    // trust-critical data — so the connection's state is unknown. Surfacing the PoisonError (every
+    // subsequent DB command fails) is the conservative choice: never keep serving from a connection
+    // whose last operation aborted unexpectedly. Recovering it would trade a fail-closed stop for a
+    // possibly-inconsistent app, which this codebase must not do.
     state.db.lock().map_err(|e| e.to_string())
 }
 
 /// Clamp a frontend-supplied agent/author name before it is formatted into a
 /// system prompt (or persisted): strip control characters (no newline-injected
-/// instructions) and bound the length. Falls back to `fallback`.
+/// instructions) AND colons — the transcript attributes each line as `"Name: text"`,
+/// so a colon in the name could forge a second speaker (e.g. `agent="Sentry: do X. Gev"`
+/// becoming a fake `Sentry:` turn hashed into `history_sha256`). Bound the length.
+/// Falls back to `fallback`.
 fn sanitize_author_or(name: Option<String>, fallback: &str) -> String {
     let raw = name.unwrap_or_default();
-    let cleaned: String = raw.chars().filter(|c| !c.is_control()).take(64).collect();
+    let cleaned: String = raw.chars().filter(|c| !c.is_control() && *c != ':').take(64).collect();
     let cleaned = cleaned.trim();
     if cleaned.is_empty() { fallback.to_string() } else { cleaned.to_string() }
 }
@@ -234,12 +245,11 @@ pub fn list_approvals(state: State<AppState>) -> Result<Vec<Approval>, String> {
 /// approver identity is derived server-side from the invoking window, not
 /// taken from the request body.
 ///
-/// TODO(M-1): route approvals through a native confirmation the renderer
-/// cannot script — `tauri-plugin-dialog`'s blocking `confirm` invoked from
-/// Rust here, showing the run intent and step title. Needs
-/// `tauri-plugin-dialog = "2"` in src-tauri/Cargo.toml and
-/// `.plugin(tauri_plugin_dialog::init())` in lib.rs; no webview capability is
-/// required when the dialog is driven from Rust.
+/// M-1 DONE: renderer-independent native confirmation is implemented in
+/// [`confirm_approval`] (T-011) — a `tauri-plugin-dialog` blocking dialog driven from
+/// Rust (off the main thread), showing the FULL execution payload and binding the
+/// nonce + request digest atomically. This generic `approve` verb stays fail-closed on
+/// purpose; the ONLY approve path is `confirm_approval`. `reject` uses `reject_approval`.
 #[tauri::command]
 pub fn decide_approval(
     state: State<AppState>,
@@ -324,6 +334,17 @@ pub fn reject_approval(
         repo::approvals::decide(&conn, &id, "rejected", Some(&note)).map_err(|e| e.to_string())?
     };
     Ok(rejected)
+}
+
+/// Escalate to higher review — a **separate**, non-verdict sibling of `reject_approval`.
+/// It neither approves nor rejects: it routes a pending approval to the A3 review tier and
+/// notifies the owner, authorizing no execution. Pending-only + atomic + audited in the repo
+/// layer, so a compromised renderer cannot turn it into an approve, and it grants no privilege
+/// (so, like reject, it needs no native confirmation). Re-escalating a non-pending row errors.
+#[tauri::command]
+pub fn escalate_approval(state: State<AppState>, id: String) -> Result<Approval, String> {
+    let conn = locked(&state)?;
+    repo::approvals::escalate(&conn, &id).map_err(|e| e.to_string())
 }
 
 /// At most ONE native confirmation dialog may be open at a time (design §9.1): a
@@ -629,6 +650,29 @@ pub fn rename_conversation(state: State<AppState>, id: String, title: String) ->
     repo::chat::rename_conversation(&conn, &id, &title).map_err(|e| e.to_string())
 }
 
+/// Replace a group room's participant roster (the create-modal multi-select). Names are the
+/// agent/human display names in the room; the reply fan-out and each agent's prompt use them.
+#[tauri::command]
+pub fn set_conversation_participants(
+    state: State<AppState>,
+    conversation_id: String,
+    names: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let conn = locked(&state)?;
+    repo::chat::set_participants(&conn, &conversation_id, &names).map_err(|e| e.to_string())?;
+    repo::chat::list_participants(&conn, &conversation_id).map_err(|e| e.to_string())
+}
+
+/// The participant roster for a conversation (empty when none were set).
+#[tauri::command]
+pub fn list_conversation_participants(
+    state: State<AppState>,
+    conversation_id: String,
+) -> Result<Vec<String>, String> {
+    let conn = locked(&state)?;
+    repo::chat::list_participants(&conn, &conversation_id).map_err(|e| e.to_string())
+}
+
 // --- knowledge ---
 
 #[tauri::command]
@@ -742,6 +786,20 @@ pub fn create_run(state: State<AppState>, intent: String, plan: String) -> Resul
 #[tauri::command]
 pub fn set_run_status(state: State<AppState>, id: String, status: String) -> Result<Run, String> {
     let conn = locked(&state)?;
+    // Honesty guard (M-6): 'succeeded'/'failed' are TERMINAL states advance() DERIVES from the actual
+    // step outcomes (a run with any failed step reports 'failed', never 'succeeded'). The renderer
+    // must never assert them directly, or it could paint a run 'succeeded' over failed/incomplete
+    // work. advance() and the Gate::Rejected path call repo::runs::set_status directly (not this
+    // command), so this guard constrains only the untrusted webview.
+    if matches!(status.as_str(), "succeeded" | "failed") {
+        return Err("run success/failure is derived from step outcomes, not set directly".to_string());
+    }
+    // A run that already reached a terminal state must not be un-terminated back into execution
+    // (which would let advance() re-process a finished run).
+    let run = repo::runs::get(&conn, &id).map_err(|e| e.to_string())?;
+    if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
+        return Err(format!("run is {} (terminal) and cannot change status", run.status));
+    }
     repo::runs::set_status(&conn, &id, &status).map_err(|e| e.to_string())
 }
 
@@ -826,6 +884,150 @@ const GOVERNED_GENERATION_CONFIG: &str = "brops.governed-engine.sidecar.v1";
 const GOVERNED_PLACEHOLDER_HASH: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
+/// Run ONE governed conversation turn end-to-end and return its verified receipt outcome (or a
+/// fail-closed error string). This is the single source of the challenge→turn→verify wiring shared
+/// by the two conversation reply commands (`stream_reply` and `reply_in_conversation`) — it prepares
+/// the turn ONCE (one trim, one hash), issues the one-time nonce challenge, runs the turn behind the
+/// wall, and verifies+records the signed receipt (desktop authority; `verify_and_record_receipt`
+/// posts the accepted message itself, so the caller never double-posts). The caller delivers the
+/// returned `ReceiptOutcome` its own way — a stream event or a returned `Message`. Keeping this in one
+/// place means the verify wiring can only be changed for both callers at once (was copy-pasted; audit).
+///
+/// `pub` (crate-internal) so the AI-surface inventory gate (tools/check_ai_surfaces.py) resolves the
+/// governed_turn call through this ONE helper-hop and correctly attributes it to the two calling
+/// commands, rather than mis-binding it to a neighbouring fn.
+pub async fn run_governed_conversation_turn(
+    state: &State<'_, AppState>,
+    conversation_id: &str,
+    system: &str,
+    history: &[crate::ai::ChatMsg],
+) -> Result<brops_core::receipt_store::ReceiptOutcome, String> {
+    let started_ms: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    // Prepare ONCE: the challenge, the bridge request, and the desktop Expected all derive from this
+    // same trimmed+hashed context — nothing re-trims or re-hashes a different input downstream.
+    let prepared = crate::ai::prepare_governed_turn(
+        system,
+        history,
+        started_ms,
+        GOVERNED_WORKSPACE_ID,
+        GOVERNED_INSTALL_ID,
+        GOVERNED_GENERATION_CONFIG,
+    )?;
+    let ctx = &prepared.context;
+    let issued = brops_core::receipt::IssuedRequest {
+        workspace_id: &ctx.workspace_id,
+        install_id: &ctx.install_id,
+        request_nonce: &ctx.request_nonce,
+        system_sha256: &ctx.system_sha256,
+        history_sha256: &ctx.history_sha256,
+        generation_config_sha256: &ctx.generation_config_sha256,
+        requested_at: &ctx.requested_at,
+    };
+    // Issue the one-time challenge (at request-start time) BEFORE the turn.
+    {
+        let conn = locked(state)?;
+        brops_core::receipt_store::issue_challenge(&conn, conversation_id, &issued, started_ms)
+            .map_err(|e| e.to_string())?;
+    }
+    // Run buffered (no DB lock held across the async sidecar call).
+    let governed = crate::ai::governed_turn(&prepared).await;
+    // Freshness / verified_at use a FRESH clock taken AFTER the turn.
+    let verify_ms: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(started_ms);
+    let outcome = match &governed {
+        // Transport failure: a terminal block with the REAL bounded reason, consuming the nonce.
+        Err(transport) => {
+            let reason = brops_core::receipt_store::bounded_reason(transport);
+            let conn = locked(state)?;
+            brops_core::receipt_store::record_pre_verification_block(
+                &conn, &ctx.request_nonce, &reason, verify_ms,
+            )
+        }
+        // A receipt (possibly unsigned/malformed): verify it — desktop authority.
+        Ok(reply) => {
+            let output = reply.reply.clone().into_bytes();
+            let expected = brops_core::receipt::Expected {
+                request: issued,
+                supervisor_id: GOVERNED_SUPERVISOR_ID,
+                policy_id: GOVERNED_POLICY_ID,
+                policy_version: GOVERNED_POLICY_VERSION,
+                policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
+                containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
+                allowed_executors: &[],
+                allowed_builders: &[],
+            };
+            let turn = brops_core::receipt_store::GovernedTurn {
+                wire: brops_core::receipt_store::ReceiptWire {
+                    envelope_jcs_b64: &reply.envelope_jcs_b64,
+                    signature_b64: &reply.signature_b64,
+                },
+                expected,
+                output: &output,
+                now_ms: verify_ms,
+                freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
+            };
+            let conn = locked(state)?;
+            brops_core::receipt_store::verify_and_record_receipt(
+                &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
+            )
+        }
+    };
+    outcome.map_err(|e| e.to_string())
+}
+
+/// Stop an in-flight streaming turn for `conversation_id` (the Stop button). Sets the
+/// armed cancellation flag; the stream's read loop breaks at the next delta and kills
+/// the `claude` child, keeping whatever streamed so far. A no-op (still Ok) if no turn
+/// is currently streaming for that conversation.
+#[tauri::command]
+pub fn cancel_reply(conversation_id: String) -> Result<(), String> {
+    crate::ai::request_cancel(&conversation_id);
+    Ok(())
+}
+
+/// Open a second app window (right-click → "Open in new window") so the user can view two
+/// parts of the cockpit side by side. It always loads the app's own `index.html`
+/// (same-origin — no off-origin navigation); the new window restores the last view from the
+/// app's shared `localStorage`, so the `route` argument is intentionally NOT used in the URL
+/// (a `#fragment` in a `WebviewUrl::App` path does not resolve). A small live-window cap
+/// bounds accidental/injected spawn loops.
+#[tauri::command]
+pub fn open_window(app: tauri::AppHandle, route: Option<String>) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tauri::Manager;
+    let _ = route; // documented above: route is restored from shared localStorage, not the URL
+    // Cap concurrent secondary windows so a runaway renderer can't exhaust resources.
+    const MAX_SECONDARY_WINDOWS: usize = 8;
+    // Serialize the count → check → build critical section: Tauri dispatches commands concurrently,
+    // so without this several open_window calls could each observe the same stale count, all pass the
+    // cap, and all build (exceeding it). Window creation is rare and user-initiated, so a short mutex
+    // is cheaper and clearer than an atomic slot reservation with rollback.
+    static OPEN_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _gate = OPEN_GATE.lock().unwrap_or_else(|p| p.into_inner());
+    let open = app
+        .webview_windows()
+        .keys()
+        .filter(|l| l.starts_with("bro-win-"))
+        .count();
+    if open >= MAX_SECONDARY_WINDOWS {
+        return Err(format!("open_window: too many windows open (max {MAX_SECONDARY_WINDOWS})"));
+    }
+    static N: AtomicU64 = AtomicU64::new(1);
+    let label = format!("bro-win-{}", N.fetch_add(1, Ordering::Relaxed));
+    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App("index.html".into()))
+        .title("BroPS")
+        .inner_size(1200.0, 800.0)
+        .min_inner_size(760.0, 560.0)
+        .build()
+        .map_err(|e| format!("open_window: {e}"))?;
+    Ok(())
+}
+
 /// Streaming counterpart of `reply_in_conversation`: emits incremental `delta`
 /// events as the agent produces text, then a `done` event carrying the
 /// persisted message (or an `error` event). Returns Ok even on provider failure
@@ -837,21 +1039,42 @@ pub async fn stream_reply(
     agent: Option<String>,
     on_event: tauri::ipc::Channel<StreamEvent>,
 ) -> Result<(), String> {
-    let author = sanitize_author(agent);
-    let (system, history) = {
+    let requested_author = sanitize_author(agent);
+    let (author, system, history) = {
         let conn = locked(&state)?;
+        // Authority guard: the reply's attributed author MUST be a real agent — a compromised
+        // renderer cannot mint a reply "from" an arbitrary identity (which would then be hashed
+        // into history). An unknown name falls back to Bro rather than being trusted verbatim.
+        let author = if repo::agents::list(&conn)
+            .map(|v| v.iter().any(|a| a.display_name == requested_author))
+            .unwrap_or(false)
+        {
+            requested_author.clone()
+        } else {
+            "Bro".to_string()
+        };
         let msgs = repo::chat::list_messages(&conn, &conversation_id, None, None).map_err(|e| e.to_string())?;
         let history: Vec<crate::ai::ChatMsg> = msgs
             .iter()
             .map(|m| crate::ai::ChatMsg {
                 role: if m.role == "user" { "user".to_string() } else { "assistant".to_string() },
-                content: m.body.clone(),
+                // Keep speaker attribution: a group room must not flatten to anonymous
+                // "assistant" turns — prefix each line with its author so the model sees
+                // who said what.
+                content: format!("{}: {}", m.author, m.body),
             })
             .collect();
+        // Roster-aware prompt (#5): name who else is present so the agent can address the room.
+        let roster = repo::chat::list_participants(&conn, &conversation_id).unwrap_or_default();
+        let room = if roster.is_empty() {
+            String::new()
+        } else {
+            format!(" The people and agents present in this room are: {}.", roster.join(", "))
+        };
         let system = format!(
-            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. Reply concisely, directly, and helpfully to the latest message. Do not claim to have taken actions you cannot actually take."
+            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what.{room} Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
         );
-        (system, history)
+        (author, system, history)
     };
     if history.is_empty() {
         let _ = on_event.send(StreamEvent::Error { message: "nothing to reply to".into() });
@@ -872,109 +1095,9 @@ pub async fn stream_reply(
         }
         Ok(false) => { /* fall through to the ungoverned streaming path below */ }
         Ok(true) => {
-            let started_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            // Prepare the turn ONCE (audit R2 P0): trim the history a single time and
-            // hash the EXACT system + trimmed history into the canonical context. The
-            // challenge, the bridge request (structured system + history), and the
-            // desktop Expected ALL derive from this same prepared data — nothing
-            // re-trims or re-hashes a different input downstream.
-            let prepared = match crate::ai::prepare_governed_turn(
-                &system,
-                &history,
-                started_ms,
-                GOVERNED_WORKSPACE_ID,
-                GOVERNED_INSTALL_ID,
-                GOVERNED_GENERATION_CONFIG,
-            ) {
-                Ok(p) => p,
-                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-            };
-            let ctx = &prepared.context;
-            let issued = brops_core::receipt::IssuedRequest {
-                workspace_id: &ctx.workspace_id,
-                install_id: &ctx.install_id,
-                request_nonce: &ctx.request_nonce,
-                system_sha256: &ctx.system_sha256,
-                history_sha256: &ctx.history_sha256,
-                generation_config_sha256: &ctx.generation_config_sha256,
-                requested_at: &ctx.requested_at,
-            };
-
-            // Issue the one-time challenge (at request-start time) BEFORE the turn.
-            {
-                let conn = match locked(&state) {
-                    Ok(c) => c,
-                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                };
-                if let Err(e) =
-                    brops_core::receipt_store::issue_challenge(&conn, &conversation_id, &issued, started_ms)
-                {
-                    let _ = on_event.send(StreamEvent::Error { message: e.to_string() });
-                    return Ok(());
-                }
-            }
-
-            // Run the turn buffered (no DB lock held across the async sidecar call). The
-            // exact prepared data (structured system + trimmed history + the same
-            // context) rides in the bridge request so the signer sees the nonce.
-            let governed = crate::ai::governed_turn(&prepared).await;
-            // Freshness / verified_at use a FRESH clock taken AFTER the turn — never the
-            // stale request-start time.
-            let verify_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(started_ms);
-
-            let outcome = match &governed {
-                // Transport failure: a terminal block with the REAL reason (not a
-                // fabricated empty receipt), consuming the nonce in one tx.
-                Err(transport) => {
-                    // Bound the (possibly hostile/huge) transport error to the SAME
-                    // value stored durably and shown to the UI, so they can't diverge.
-                    let reason = brops_core::receipt_store::bounded_reason(transport);
-                    let conn = match locked(&state) {
-                        Ok(c) => c,
-                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                    };
-                    brops_core::receipt_store::record_pre_verification_block(
-                        &conn, &ctx.request_nonce, &reason, verify_ms,
-                    )
-                }
-                // A receipt (possibly unsigned/malformed): verify it — desktop authority.
-                Ok(reply) => {
-                    let output = reply.reply.clone().into_bytes();
-                    let expected = brops_core::receipt::Expected {
-                        request: issued,
-                        supervisor_id: GOVERNED_SUPERVISOR_ID,
-                        policy_id: GOVERNED_POLICY_ID,
-                        policy_version: GOVERNED_POLICY_VERSION,
-                        policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        allowed_executors: &[],
-                        allowed_builders: &[],
-                    };
-                    let turn = brops_core::receipt_store::GovernedTurn {
-                        wire: brops_core::receipt_store::ReceiptWire {
-                            envelope_jcs_b64: &reply.envelope_jcs_b64,
-                            signature_b64: &reply.signature_b64,
-                        },
-                        expected,
-                        output: &output,
-                        now_ms: verify_ms,
-                        freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
-                    };
-                    let conn = match locked(&state) {
-                        Ok(c) => c,
-                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                    };
-                    brops_core::receipt_store::verify_and_record_receipt(
-                        &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
-                    )
-                }
-            };
+            // The whole challenge -> turn -> verify pipeline lives in one shared helper (the
+            // conversation reply commands must change it in lockstep); we only deliver the outcome.
+            let outcome = run_governed_conversation_turn(&state, &conversation_id, &system, &history).await;
 
             match outcome {
                 // Accepted (Wave 3b only): receipt_store ALREADY posted the message —
@@ -1017,14 +1140,28 @@ pub async fn stream_reply(
         }
     }
 
-    // --- Ungoverned turn: streamed as before (UNCHANGED) ---
+    // --- Ungoverned turn: streamed, cancellable via `cancel_reply` (the Stop button) ---
+    // The guard registers this turn's cancel flag and removes exactly it on drop — covering
+    // every return path AND a future dropped mid-await (its window closed), so no stale entry
+    // leaks and a second window on the same conversation can't clobber this turn's flag.
+    let cancel_guard = crate::ai::arm_cancel(&conversation_id);
     let ch = on_event.clone();
-    let result = crate::ai::generate_stream(&system, &history, move |delta| {
-        let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
-    })
+    let result = crate::ai::generate_stream(
+        &system,
+        &history,
+        move |delta| {
+            let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
+        },
+        Some(cancel_guard.flag()),
+    )
     .await;
     match result {
         Ok(full) => {
+            // A Stop before any token streamed → empty partial: unstick the UI with no
+            // persisted message (the command returning resolves the awaited stream_reply).
+            if full.trim().is_empty() {
+                return Ok(());
+            }
             // Persist the reply. Any failure here must still deliver a terminal
             // event so the streaming UI never stays stuck "thinking".
             let persisted = {
@@ -1118,8 +1255,12 @@ pub async fn stream_run_step(
                 )
                 .map_err(|e| e.to_string())?
                 {
-                    let _ = repo::runs::set_step_status(&conn, &s.id, "failed");
-                    let _ = repo::runs::set_status(&conn, &run_id, "failed");
+                    // Fail the step and its run atomically; surface a real error rather than
+                    // swallowing it and reporting a rejection that did not persist.
+                    if let Err(e) = repo::runs::fail_step_and_run(&conn, &s.id, &run_id) {
+                        let _ = on_event.send(RunStepEvent::Error { message: e.to_string() });
+                        return Ok(());
+                    }
                     Gate::Rejected
                 } else if let Some(pending) =
                     repo::approvals::pending_for(&conn, &s.id).map_err(|e| e.to_string())?
@@ -1337,7 +1478,7 @@ pub async fn stream_run_step(
             let ch = on_event.clone();
             match crate::ai::generate_stream(&system, &history, move |delta| {
                 let _ = ch.send(RunStepEvent::Delta { text: delta.to_string() });
-            })
+            }, None)
             .await
             {
                 Ok(full) => full,
@@ -1540,7 +1681,7 @@ pub async fn stream_ask(
     let ch = on_event.clone();
     match crate::ai::generate_stream(&system, &history, move |delta| {
         let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
-    })
+    }, None)
     .await
     {
         Ok(answer) => {
@@ -1566,21 +1707,42 @@ pub async fn reply_in_conversation(
     conversation_id: String,
     agent: Option<String>,
 ) -> Result<Message, String> {
-    let author = sanitize_author(agent);
-    let (system, history) = {
+    let requested_author = sanitize_author(agent);
+    let (author, system, history) = {
         let conn = locked(&state)?;
+        // Authority guard: the reply's attributed author MUST be a real agent — a compromised
+        // renderer cannot mint a reply "from" an arbitrary identity (which would then be hashed
+        // into history). An unknown name falls back to Bro rather than being trusted verbatim.
+        let author = if repo::agents::list(&conn)
+            .map(|v| v.iter().any(|a| a.display_name == requested_author))
+            .unwrap_or(false)
+        {
+            requested_author.clone()
+        } else {
+            "Bro".to_string()
+        };
         let msgs = repo::chat::list_messages(&conn, &conversation_id, None, None).map_err(|e| e.to_string())?;
         let history: Vec<crate::ai::ChatMsg> = msgs
             .iter()
             .map(|m| crate::ai::ChatMsg {
                 role: if m.role == "user" { "user".to_string() } else { "assistant".to_string() },
-                content: m.body.clone(),
+                // Keep speaker attribution: a group room must not flatten to anonymous
+                // "assistant" turns — prefix each line with its author so the model sees
+                // who said what.
+                content: format!("{}: {}", m.author, m.body),
             })
             .collect();
+        // Roster-aware prompt (#5): name who else is present so the agent can address the room.
+        let roster = repo::chat::list_participants(&conn, &conversation_id).unwrap_or_default();
+        let room = if roster.is_empty() {
+            String::new()
+        } else {
+            format!(" The people and agents present in this room are: {}.", roster.join(", "))
+        };
         let system = format!(
-            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. Reply concisely, directly, and helpfully to the latest message. Do not claim to have taken actions you cannot actually take."
+            "You are {author}, a specialist agent inside the BroPS workspace — a personal AI operations desktop app for its owner, Gev. This can be a group room with several people and agents; each transcript line is prefixed with its speaker's name (\"Name: text\") so you can tell who said what.{room} Reply as {author} to the latest message, and do NOT prefix your own reply with your name. Reply concisely, directly, and helpfully. Do not claim to have taken actions you cannot actually take."
         );
-        (system, history)
+        (author, system, history)
     };
     if history.is_empty() {
         return Err("nothing to reply to".to_string());
@@ -1597,74 +1759,8 @@ pub async fn reply_in_conversation(
         Err(e) => return Err(e),
         Ok(false) => { /* fall through to the ungoverned path below */ }
         Ok(true) => {
-            let started_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let prepared = crate::ai::prepare_governed_turn(
-                &system,
-                &history,
-                started_ms,
-                GOVERNED_WORKSPACE_ID,
-                GOVERNED_INSTALL_ID,
-                GOVERNED_GENERATION_CONFIG,
-            )?;
-            let ctx = &prepared.context;
-            let issued = brops_core::receipt::IssuedRequest {
-                workspace_id: &ctx.workspace_id,
-                install_id: &ctx.install_id,
-                request_nonce: &ctx.request_nonce,
-                system_sha256: &ctx.system_sha256,
-                history_sha256: &ctx.history_sha256,
-                generation_config_sha256: &ctx.generation_config_sha256,
-                requested_at: &ctx.requested_at,
-            };
-            {
-                let conn = locked(&state)?;
-                brops_core::receipt_store::issue_challenge(&conn, &conversation_id, &issued, started_ms)
-                    .map_err(|e| e.to_string())?;
-            }
-            let governed = crate::ai::governed_turn(&prepared).await;
-            let verify_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(started_ms);
-            let outcome = match &governed {
-                Err(transport) => {
-                    let reason = brops_core::receipt_store::bounded_reason(transport);
-                    let conn = locked(&state)?;
-                    brops_core::receipt_store::record_pre_verification_block(
-                        &conn, &ctx.request_nonce, &reason, verify_ms,
-                    )
-                }
-                Ok(reply) => {
-                    let output = reply.reply.clone().into_bytes();
-                    let expected = brops_core::receipt::Expected {
-                        request: issued,
-                        supervisor_id: GOVERNED_SUPERVISOR_ID,
-                        policy_id: GOVERNED_POLICY_ID,
-                        policy_version: GOVERNED_POLICY_VERSION,
-                        policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        allowed_executors: &[],
-                        allowed_builders: &[],
-                    };
-                    let turn = brops_core::receipt_store::GovernedTurn {
-                        wire: brops_core::receipt_store::ReceiptWire {
-                            envelope_jcs_b64: &reply.envelope_jcs_b64,
-                            signature_b64: &reply.signature_b64,
-                        },
-                        expected,
-                        output: &output,
-                        now_ms: verify_ms,
-                        freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
-                    };
-                    let conn = locked(&state)?;
-                    brops_core::receipt_store::verify_and_record_receipt(
-                        &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
-                    )
-                }
-            };
+            // Same shared challenge -> turn -> verify pipeline as stream_reply; only the delivery differs.
+            let outcome = run_governed_conversation_turn(&state, &conversation_id, &system, &history).await;
             return match outcome {
                 // Accepted: receipt_store ALREADY posted the message — read it back, do not double-post.
                 Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrusted { message_id, .. }) => {
@@ -1744,6 +1840,21 @@ pub fn delete_automation(state: State<AppState>, id: String) -> Result<(), Strin
     repo::automations::delete(&conn, &id).map_err(|e| e.to_string())
 }
 
+/// Run an automation NOW: perform its (local, no-AI) action and append a row to its run log,
+/// returning that row so the UI can show the outcome. A disabled automation refuses to run.
+#[tauri::command]
+pub fn run_automation(state: State<AppState>, id: String) -> Result<AutomationRun, String> {
+    let conn = locked(&state)?;
+    repo::automations::run(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// The run history for one automation (newest first).
+#[tauri::command]
+pub fn list_automation_runs(state: State<AppState>, id: String) -> Result<Vec<AutomationRun>, String> {
+    let conn = locked(&state)?;
+    repo::automations::list_runs(&conn, &id).map_err(|e| e.to_string())
+}
+
 // --- integrations ---
 
 #[tauri::command]
@@ -1778,6 +1889,181 @@ pub fn get_analytics(state: State<AppState>) -> Result<Vec<Metric>, String> {
 pub fn get_security_summary(state: State<AppState>) -> Result<SecuritySummary, String> {
     let conn = locked(&state)?;
     repo::security::summary(&conn).map_err(|e| e.to_string())
+}
+
+/// Windows: invoke the configured model (`cmd /C <cmd>`, the prompt on stdin) and return its stdout as the
+/// bytes the chain's executor produced. Err on spawn/exit/empty — the governed turn then fails closed and no
+/// message is posted.
+#[cfg(windows)]
+fn run_demonstration_model(prompt: &str, cmd: &str) -> Result<Vec<u8>, ()> {
+    use std::io::{Read, Write};
+    // Hard bounds mirroring the streaming chat path (ai.rs), so a demonstration turn can never hang
+    // or exhaust memory on the command thread:
+    //  - background the stdin write on a detached thread, so a full stdin pipe cannot deadlock
+    //    against an unread stdout pipe (the classic write_all-then-read deadlock),
+    //  - read stdout through a cap so a runaway reply cannot grow unbounded,
+    //  - bound the whole thing with an absolute deadline, so a hung model (auth prompt, network
+    //    stall) is killed and the turn fails closed instead of blocking the command forever.
+    const MAX_STDOUT_BYTES: u64 = 9 * 1024 * 1024;
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(180);
+
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", cmd])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|_| ())?;
+
+    // Feed the prompt on a detached thread; dropping the stdin handle closes it so the child sees EOF.
+    if let Some(mut si) = child.stdin.take() {
+        let bytes = prompt.as_bytes().to_vec();
+        std::thread::spawn(move || {
+            let _ = si.write_all(&bytes);
+        });
+    }
+
+    // Drain (capped) stdout on a thread and hand it back over a channel, so the wait can be bounded.
+    let (tx, rx) = std::sync::mpsc::channel();
+    if let Some(so) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = so.take(MAX_STDOUT_BYTES).read_to_end(&mut buf);
+            let _ = tx.send(buf);
+        });
+    }
+
+    let out = match rx.recv_timeout(DEADLINE) {
+        Ok(b) => b,
+        // Timed out (or the reader vanished): kill the child and fail closed.
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(());
+        }
+    };
+
+    // Reap without blocking: the reader returned on EOF (clean exit) or on the cap (child may still
+    // be writing). Poll briefly for a clean exit; if it will not exit, kill it rather than block.
+    let reap_by = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if std::time::Instant::now() < reap_by => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(());
+            }
+        }
+    };
+    if status.success() && !out.is_empty() {
+        Ok(out)
+    } else {
+        Err(())
+    }
+}
+
+/// A live DEMONSTRATION-verified chat reply (Windows). Runs a NON-streamed governed turn where the chain's
+/// executor invokes the configured model (`BROPS_SELFTEST_MODEL_CMD`) with the conversation transcript, so the
+/// reply is produced INSIDE the chain and then bound + `verify_and_accept`'d under the compiled-in
+/// DEMONSTRATION anchor. On success the reply is posted and recorded so its badge derives to
+/// `demonstration_verified` — a REAL, honest green, but demonstration custody (demo anchor + a non-session-0
+/// executor), NEVER production `trusted_verified`. Fail-closed: non-Windows, no configured model, an empty
+/// conversation/reply, or a chain that does not verify → Err, and no message is posted.
+#[tauri::command]
+pub fn demonstration_verified_reply(
+    state: State<AppState>,
+    conversation_id: String,
+    agent: Option<String>,
+) -> Result<Message, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = (&state, &conversation_id, &agent);
+        Err("demonstration-verified turns are available only on the Windows build".to_string())
+    }
+    #[cfg(windows)]
+    {
+        // Authority guard (mirrors stream_reply / reply_in_conversation): sanitize the requested
+        // author now so no control/colon characters can reach the transcript the chain hashes, and
+        // validate it against the live roster below — a compromised renderer must not be able to mint
+        // a green-badged reply attributed to an arbitrary identity.
+        let requested_author = sanitize_author(agent);
+
+        // A real demonstration reply needs a model; without one, fail closed (never post a placeholder as a
+        // chat reply).
+        let cmd = std::env::var("BROPS_SELFTEST_MODEL_CMD")
+            .ok()
+            .filter(|c| !c.trim().is_empty())
+            .ok_or_else(|| {
+                "set BROPS_SELFTEST_MODEL_CMD to a model CLI (e.g. `claude -p`) to run a demonstration-verified turn".to_string()
+            })?;
+
+        // Prompt = the author-prefixed transcript + a system line.
+        let prompt = {
+            let conn = locked(&state)?;
+            let msgs = repo::chat::list_messages(&conn, &conversation_id, None, None).map_err(|e| e.to_string())?;
+            if msgs.is_empty() {
+                return Err("nothing to reply to in this conversation".to_string());
+            }
+            let transcript = msgs.iter().map(|m| format!("{}: {}", m.author, m.body)).collect::<Vec<_>>().join("\n");
+            format!(
+                "You are Bro, the assistant in the BroPS desktop app for its owner, Gev. Reply concisely to the \
+                 latest message, in the conversation's language. Do not claim actions you cannot take.\n\n{transcript}\n\nBro:"
+            )
+        };
+
+        // The chain's executor closure produces the reply by invoking the model with `prompt`.
+        let captured = std::cell::RefCell::new(Vec::<u8>::new());
+        let produce = || -> Result<Vec<u8>, ()> {
+            let out = run_demonstration_model(&prompt, &cmd)?;
+            if out.is_empty() {
+                return Err(());
+            }
+            *captured.borrow_mut() = out.clone();
+            Ok(out)
+        };
+        let dir = std::env::temp_dir().join(format!("brops-demo-turn-{}", brops_core::id()));
+        let now_ms: i64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let outcome = brops_win_live::proof::in_process_turn_produce(&dir, now_ms, produce)
+            .map_err(|e| format!("demonstration chain error: {e}"))?;
+        let _ = std::fs::remove_dir_all(&dir);
+        if !(outcome.bound && outcome.production_verified) {
+            return Err(format!("demonstration chain did not verify: {}", outcome.trust_str));
+        }
+        // Post the EXACT bytes the chain bound + verified as the message body — no trim, no lossy
+        // substitution — so the demonstration_verified badge covers text that is byte-identical to
+        // what the receipt cryptographically bound. The chain strict-UTF8-blocks non-UTF8 output, so a
+        // verified (bound) turn is always valid UTF-8; still fail closed rather than mangle.
+        let reply = String::from_utf8(captured.into_inner())
+            .map_err(|_| "demonstration output was not valid UTF-8".to_string())?;
+        if reply.is_empty() {
+            return Err("the model produced an empty reply".to_string());
+        }
+
+        let conn = locked(&state)?;
+        // Roster authority guard: attribute the reply only to a real agent, else fall back to Bro.
+        let author = if repo::agents::list(&conn)
+            .map(|v| v.iter().any(|a| a.display_name == requested_author))
+            .unwrap_or(false)
+        {
+            requested_author
+        } else {
+            "Bro".to_string()
+        };
+        // Post + record the demonstration anchor atomically; the returned message already carries
+        // receipt = "demonstration_verified" via the projection.
+        repo::chat::post_message_demonstration_verified(
+            &conn,
+            NewMessage { conversation_id, role: "agent".to_string(), author, body: reply },
+        )
+        .map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]

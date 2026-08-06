@@ -371,6 +371,15 @@ def main(argv: list[str] | None = None) -> int:
     # carrier_transition (the repository-truth carrier that merges to repair main). A design-audit
     # carrier (e.g. PR #31) has no transition block and needs only the exact-head anchor.
     models_transition = isinstance(snap.get("carrier_transition"), dict)
+    # Fail closed on a CI pull_request whose snapshot omits current_workflow_pr: the self-carrier
+    # exact-head anchor below is gated on `carrier_no is not None`, so an omitted current_workflow_pr
+    # silently skips the ONLY live-head check on the PR and still prints GREEN (audit F-16). A PR CI
+    # run MUST declare its self-carrier so its exact head can be anchored against live GitHub.
+    if in_ci and carrier_no is None and event is not None and event.get("pull_request") is not None:
+        failures.append(
+            "snapshot omits current_workflow_pr on a pull_request CI run — the self-carrier "
+            "exact-head anchor cannot be verified (fail-closed); declare current_workflow_pr.number"
+        )
     if event is not None and carrier_no is not None:
         cl = fetch_carrier(carrier_no)
         event_head = ((event.get("pull_request") or {}).get("head") or {}).get("sha")

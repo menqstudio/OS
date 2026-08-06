@@ -1,36 +1,43 @@
 ---
 id: marketing-brand
-version: 1.0.0
+version: 1.1.0
 status: active
 ---
 
 # Marketing Brand
 
 ## Trigger
-Use this skill when a task materially requires marketing brand expertise.
+Use when the task is positioning, messaging architecture, brand voice/identity guidelines, campaign concepting, landing/ad/email copy, content strategy, or naming with brand fit. Also for auditing existing assets against brand and ICP. Do NOT use for paid-media bidding execution or CRM plumbing (route to sales-revenue-growth ops), nor for legal claims review (route to legal-compliance-contracts).
 
 ## Inputs
-A bounded task contract, repository evidence, constraints, risk level, and required output format.
+- ICP / target segment, the job-to-be-done, and the primary competitor/alternative.
+- Product truth: what it does, the differentiated value, and proof points (metrics, customers, mechanism).
+- Brand guardrails: voice attributes, tone, do/don't lexicon, visual constraints.
+- Channel, funnel stage, and the single conversion action for this asset.
 
 ## Workflow
-1. Confirm identity, mode grant, task scope, and required evidence.
-2. Read the canonical SST and relevant source files to EOF.
-3. Reproduce defects or establish a baseline before mutation.
-4. Make the smallest scoped change and preserve append-only identifiers.
-5. Run registered validation and negative tests.
-6. Produce evidence, rollback instructions, and an explicit residual-risk verdict.
+1. Nail positioning first: for [ICP] who [need], [product] is the [category] that [differentiated benefit], unlike [alternative], because [proof]. Everything downstream inherits this.
+2. Build the messaging hierarchy: one core value prop, 3 supporting pillars, each backed by a concrete proof point — no unsubstantiated superlatives.
+3. Match message to funnel stage: awareness = problem/POV, consideration = differentiation/proof, decision = risk-reversal/CTA.
+4. Draft copy in brand voice: lead with customer outcome not features, use their language from research, keep one clear CTA per asset, cut jargon.
+5. Ensure every claim is substantiated; flag any comparative or regulated claim ("#1", "guaranteed", health/financial) for legal review before use.
+6. Design the test: define the metric that matters per stage (CTR, conversion, activation), the hypothesis, and a variant worth testing — not cosmetic A/B noise.
+7. Check consistency: voice, visual, and message align across the touchpoints in the journey.
 
 ## Outputs
-A scoped implementation or analysis, reproducible commands, evidence paths, verification results, and residual risks.
+- Positioning statement and messaging hierarchy (value prop + pillars + proof).
+- Channel-ready copy variants with one CTA each, in brand voice.
+- Claims list with substantiation status and legal-review flags.
+- Test plan: hypothesis, metric, variant, and success threshold.
 
 ## Safety limits
-No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. Ambiguous mutation targets fail closed.
+No scope expansion, secret access, credential handling, push, merge, deployment, deletion, external communication, or production mutation without the exact governing grant and approval boundary. Never publish, launch, or spend budget without grant. Do not fabricate metrics, customer names, testimonials, or comparative claims. Regulated/comparative claims fail closed pending legal review. Ambiguous mutation targets fail closed.
 
 ## Handoffs
-Escalate cross-domain decisions to the owning SST role. Medium, high, and critical work requires an independent verifier. Release actions hand off only to the Push Executor.
+Comparative, health, financial, or guarantee claims to legal-compliance-contracts. Sales enablement and pipeline handoff to sales-revenue-growth. Co-marketing with partners to partnership-channel-bd. Localization to language-mastery. Escalate cross-domain decisions to the owning SST role; medium, high, and critical work requires an independent verifier; publish/spend hands off only to the authorized executor.
 
 ## Verification
-Success requires schema-valid artifacts, registered tests, exploit regression coverage, clean rollback, and exact-head evidence. Claims without reproducible evidence remain RED.
+Confirm positioning names ICP, differentiation, and proof; every claim has a substantiation source; regulated/comparative claims are flagged; each asset has one CTA and a defined success metric; voice matches guardrails. Any metric or testimonial without a verifiable source remains RED.
 
 ## Failure and rollback
-Stop on missing authority, stale receipts, inconsistent SSTs, failed tests, or unverifiable state. Restore the original tree before reporting recovery and never call partial recovery GREEN.
+Stop on undefined ICP, missing product proof, unverifiable claims, or a request to publish/spend without grant. Discard the draft, restore prior assets, and report the missing input. Never call unsubstantiated or unlaunched copy final or GREEN.

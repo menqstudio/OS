@@ -180,6 +180,16 @@ pub struct BrokerContext<'a> {
     pub message_id: &'a str,
     pub conversation_id: &'a str,
     pub author: &'a str,
+    // ---- the run identity the broker itself authorized (audit F-26) ----
+    //
+    // The envelope's `run_id` / `task_id` / `execution_attempt_id` are SIGNED but were compared to
+    // nothing: the broker held both sides — its own resolution, and the attempt id from the lease it
+    // obtained — and carried the signed values straight through. A receipt produced under a DIFFERENT
+    // attempt could therefore be accepted for this turn as long as the nonce and output bytes lined
+    // up. These three make the receipt's own account of which execution it describes load-bearing.
+    pub expected_run_id: &'a str,
+    pub expected_task_id: &'a str,
+    pub expected_execution_attempt_id: &'a str,
 }
 
 /// The injected acceptance-ledger ports: `receipt_id` global-uniqueness and one-time `request_nonce`
@@ -308,6 +318,19 @@ pub fn verify_and_accept(
         return Err(TurnReason::UpstreamBlocked);
     }
     if envelope.request_sha256 != expected.request_sha256() {
+        return Err(TurnReason::UpstreamBlocked);
+    }
+
+    // 4b. Run-identity binding (audit F-26). The signed envelope names the run, task and execution
+    //     attempt it describes; the broker knows all three — `run_id`/`task_id` from its own trusted
+    //     resolution, and `execution_attempt_id` from the lease the supervisor granted IT. Comparing
+    //     them is what stops a genuinely-signed receipt for a different attempt from being committed
+    //     as this turn's. Before this, the three were carried through the signature check and never
+    //     looked at again.
+    if envelope.run_id != ctx.expected_run_id
+        || envelope.task_id != ctx.expected_task_id
+        || envelope.execution_attempt_id != ctx.expected_execution_attempt_id
+    {
         return Err(TurnReason::UpstreamBlocked);
     }
 
@@ -481,7 +504,51 @@ mod tests {
         message_id: "m-1",
         conversation_id: "conv-1",
         author: "Bro",
+        expected_run_id: "run-1",
+        expected_task_id: "task-1",
+        expected_execution_attempt_id: "att-1",
     };
+
+    // ---- F-26: the signed run identity must match the run the broker authorized ----
+    //
+    // These three fields were signed and then compared to nothing, so a genuinely-signed receipt for
+    // a DIFFERENT execution attempt was acceptable for this turn as long as the nonce and output
+    // matched. Each case below is a real receipt whose only defect is naming another run.
+    #[test]
+    fn a_receipt_naming_another_run_is_refused() {
+        for (field, ctx) in [
+            (
+                "run_id",
+                BrokerContext { expected_run_id: "run-OTHER", ..CTX },
+            ),
+            (
+                "task_id",
+                BrokerContext { expected_task_id: "task-OTHER", ..CTX },
+            ),
+            (
+                "execution_attempt_id",
+                BrokerContext { expected_execution_attempt_id: "att-OTHER", ..CTX },
+            ),
+        ] {
+            let f = fx();
+            let env = envelope(&f);
+            let k = keys(&f);
+            let a = attest(&f);
+            let mut ledger = InMemoryLedger::new();
+            // The envelope + signature are untouched and valid — only the broker's own expectation
+            // differs, which is exactly the "receipt from another attempt" shape.
+            let r = verify_and_accept(
+                &expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &ctx, &mut ledger,
+            );
+            match r {
+                Err(TurnReason::UpstreamBlocked) => {}
+                Err(other) => panic!("{field}: expected UpstreamBlocked, got {other:?}"),
+                Ok(_) => panic!(
+                    "a receipt whose {field} is not the one the broker authorized must Block"
+                ),
+            }
+        }
+    }
 
     // ---- REQUIRED: matching bindings => Ok(AcceptedOutput with exact body) ----
     #[test]

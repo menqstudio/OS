@@ -67,8 +67,10 @@
   --brops-text: var(--menq-color-text);
   --brops-muted: var(--menq-color-muted);
   --brops-border: var(--menq-color-border);
-  --brops-accent: var(--menq-color-accent);
-  --brops-accent-text: var(--menq-color-accent-text);
+  /* Accent aligned to the brops-aios cyan HUD (was an indigo/violet that clashed
+     with the redesign). Falls back to the mockup cyan if --cyan is ever absent. */
+  --brops-accent: var(--cyan, #38bdf8);
+  --brops-accent-text: #04121b;
   --brops-command-surface: var(--menq-color-elevated);
   --brops-agent-card-radius: var(--menq-radius-card);
 }

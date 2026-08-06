@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import type { Lang, Theme } from '../domain/enums';
-import type { RouteId } from './nav';
+import { ALL_ITEMS, type RouteId } from './nav';
 import { translate, type DictKey } from '../i18n';
 
 /** A deep-link target: which entity a screen should auto-open on arrival.
@@ -48,8 +48,23 @@ const LS = {
   },
 };
 
+// The route a window opens on: the URL hash (`#tasks`) when present — so a reload or a
+// right-click "Open in new window" lands on the same view — else home. An unknown slug
+// is harmless (the router falls back to a generic view).
+const isRoute = (id: string): id is RouteId => ALL_ITEMS.some((i) => i.id === id);
+
+function routeFromHash(): RouteId {
+  if (typeof window === 'undefined') return 'home';
+  const h = window.location.hash.replace(/^#/, '').trim();
+  // Only a KNOWN route id is honored — an unknown hash never becomes the route (which
+  // would fall through to the Generic placeholder), it falls back to the last view.
+  if (isRoute(h)) return h;
+  const last = LS.get<RouteId>('brops.route', 'home');
+  return isRoute(last) ? last : 'home';
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [route, setRouteState] = useState<RouteId>('home');
+  const [route, setRouteState] = useState<RouteId>(routeFromHash);
   const [focus, setFocus] = useState<FocusTarget | null>(null);
   const [theme, setTheme] = useState<Theme>(() => LS.get<Theme>('brops.theme', 'dark'));
   const [lang, setLangState] = useState<Lang>(() => LS.get<Lang>('brops.lang', 'en'));
@@ -74,6 +89,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     LS.set('brops.lang', lang);
   }, [lang]);
 
+  // Keep the URL hash in sync with the active route so a reload or a new window opens
+  // on the same view. replaceState (not push) keeps the back stack clean.
+  useEffect(() => {
+    const h = `#${route}`;
+    if (typeof window !== 'undefined' && window.location.hash !== h) {
+      window.history.replaceState(null, '', h);
+    }
+    LS.set('brops.route', route);
+  }, [route]);
+
   const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), []);
   const setLang = useCallback((l: Lang) => setLangState(l), []);
   const t = useCallback((key: DictKey) => translate(lang, key), [lang]);
@@ -90,4 +115,11 @@ export function useApp(): AppState {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error('useApp must be used within AppProvider');
   return ctx;
+}
+
+/** Provider-safe variant: returns null instead of throwing when no AppProvider is
+ *  present (e.g. a shared primitive rendered standalone in a unit test). Lets a
+ *  low-level component localize when there's a provider and fall back otherwise. */
+export function useAppOptional(): AppState | null {
+  return useContext(AppContext);
 }

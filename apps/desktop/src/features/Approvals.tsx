@@ -1,21 +1,57 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useApp } from '../app/store';
-import {
-  PageHeader, Card, Button, Badge, StatusPill, Field, Skeleton, ErrorState, EmptyState, ConfirmDialog,
-} from '../components/ui';
+import { Card, Button, Skeleton, ErrorState, EmptyState, ConfirmDialog } from '../components/ui';
+import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { useToast } from '../components/toast';
 import { desktop, hasBackend } from '../services/desktop';
+import { riskLabel } from '../domain/statusLabels';
+import { STR } from './Approvals.strings';
 
 // ── §D `approvals` — Հաստատումներ (Approval gate) ────────────────────────────
 // Mirror, never decide: the desktop READS the engine approval queue and can only
 // *request* a verdict — grant (native-confirmed) / deny (fail-safe) — which the
-// engine's Ed25519 system adjudicates. Escalate has no engine command in this
-// build, so its request path renders honestly as unavailable rather than faking a
-// result. Owner-not-authenticated → `blocked`; engine-unreachable → `error`.
+// engine's Ed25519 system adjudicates. Escalate is a third, non-verdict action: it
+// decides nothing and authorizes nothing, it routes the pending request to higher
+// review (A3) via a real backend command and notifies the owner. Owner-not-authenticated
+// → `blocked`; engine-unreachable → `error`.
+//
+// This view is re-skinned onto the design mockup's APPROVAL GATE (`.gate .surface`
+// with `st-*` status tones), a real-derived approval-stats strip (`.astats-wrap`),
+// and a press-and-hold grant key. Every count, tone and verdict is derived from the
+// REAL `listApprovals()` / `readEngineApprovalQueue()` data — nothing is fabricated,
+// and pending stays pending (amber, `idle` mark) until the backend confirms.
+//
+// Every visible/aria string lives in the co-located trilingual catalog
+// `Approvals.strings.ts` (en/hy/ru); shared-i18n strings stay as `t('…')`.
 
 type ActionKind = 'grant' | 'deny' | 'escalate';
 interface Staged { id: string; kind: ActionKind; }
+
+/** Trilingual lookup over the co-located catalog. */
+type L = (k: keyof typeof STR) => string;
+
+const CIRC = 2 * Math.PI * 92; // SLA ring circumference (r=92, matches the mockup)
+const HOLD_MS = 1100;          // deliberate press-and-hold duration to grant
+
+/** Presentation for a REAL approval status — gate tone, pill, power-mark state and
+ *  label. Green/`live` is reachable ONLY from a real `approved` status; pending is
+ *  always amber + `idle`, never forced green. */
+function statusMeta(status: string, L: L) {
+  const s = (status || '').toLowerCase();
+  if (s === 'approved' || s === 'granted' || s === 'confirmed')
+    return { gate: 'st-approved', pill: 'live', mark: 'live', face: 'completed', lbl: L('approved') };
+  if (s === 'rejected' || s === 'denied')
+    return { gate: 'st-denied', pill: 'off', mark: 'alert', face: 'blocked', lbl: L('denied') };
+  if (s === 'escalated')
+    return { gate: 'st-escalated', pill: 'info', mark: 'thinking', face: 'collaborating', lbl: L('escalatedA3') };
+  if (s === 'expired')
+    return { gate: 'st-expired', pill: 'off', mark: 'idle', face: 'blocked', lbl: L('expiredHeld') };
+  if (s === 'reviewing')
+    return { gate: 'st-reviewing', pill: 'info', mark: 'thinking', face: 'thinking', lbl: L('broReviewing') };
+  // pending / unknown → awaiting a human decision. Amber, idle — never green.
+  return { gate: 'st-waiting', pill: 'warn', mark: 'idle', face: 'waiting', lbl: L('awaitingDecision') };
+}
 
 /** Parse a `requestedAt` that may be an epoch-millis string or an ISO instant. */
 function parseWhen(raw: string): Date | null {
@@ -25,7 +61,7 @@ function parseWhen(raw: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
-/** Human elapsed span for the live countdown/age clock (`apClock`). */
+/** Human elapsed span for the live waiting clock. */
 function fmtElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const s = total % 60;
@@ -37,16 +73,9 @@ function fmtElapsed(ms: number): string {
 }
 
 /** A real backend error that names an auth/permission failure is the honest
- *  signal for `blocked` (owner not authenticated); anything else is `error`
- *  (engine unreachable). */
+ *  signal for `blocked` (owner not authenticated); anything else is `error`. */
 function isAuthError(msg: string): boolean {
   return /denied|not permitted|permission|unauthor|authenticat|not signed|sign in|login|forbidden|owner/i.test(msg);
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export function Approvals() {
@@ -54,29 +83,49 @@ export function Approvals() {
   const toast = useToast();
   const state = useAsync(() => desktop.listApprovals());
   const { data, error, reload } = state;
+  // Real, READ-ONLY engine approval-QUEUE read (mirror, never decide; queue read only —
+  // NO approval-request POST, which is a separate gated engine task). Steady state in
+  // Phase-2 is blocked/unreachable — surfaced honestly below the gate, never fabricated.
+  const engineQueue = useAsync(() => desktop.readEngineApprovalQueue());
 
-  /** Inline HY/EN the way the thin pages do (shared i18n stays untouched). */
-  const bi = useCallback((en: string, hy: string) => (lang === 'hy' ? hy : en), [lang]);
+  /** Trilingual lookup from the co-located catalog, keyed off the shared `lang`. */
+  const L = useCallback<L>((k) => STR[k][lang] ?? STR[k].en, [lang]);
 
   const [selected, setSelected] = useState(0);
   const [staged, setStaged] = useState<Staged | null>(null);
-  const [flash, setFlash] = useState<{ id: string; kind: 'stamp' | 'strike' } | null>(null);
+  const [holding, setHolding] = useState(false);
   const [verdict, setVerdict] = useState('');
   const [now, setNow] = useState(() => Date.now());
+  const [reduced, setReduced] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+  const holdTimer = useRef<number | null>(null);
 
   const items = useMemo(() => data ?? [], [data]);
   const sel = items.length ? Math.min(selected, items.length - 1) : 0;
+  const seated = items.length ? items[sel] : null;
 
   const dateFmt = useMemo(
     () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
     [lang],
   );
 
-  // Live clock for `apClock` — re-render every second so each pending item's
-  // waiting time stays current.
+  // Live clock — re-render every second so the seated pending item's waiting time
+  // stays current. Only the (aria-hidden) clock text changes, so the aria-live gate
+  // does not re-announce every tick.
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
+  }, []);
+
+  // Honor the OS reduced-motion setting: the hold ring fill (and the shared
+  // grant-bar fill) become instant rather than sweeping across HOLD_MS — the
+  // deliberate press is still required, only the continuous animation is dropped.
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const on = () => setReduced(mq.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
   }, []);
 
   const onError = (e: unknown) => {
@@ -84,41 +133,63 @@ export function Approvals() {
     toast(`${t('approvals.decideFailed')}: ${msg}`, 'error');
   };
 
-  const flashThenReload = useCallback((id: string, kind: 'stamp' | 'strike') => {
-    if (prefersReducedMotion()) { reload(); return; }
-    setFlash({ id, kind });
-    window.setTimeout(() => { setFlash(null); reload(); }, 540);
-  }, [reload]);
-
-  // Commit the staged action. grant/deny go through the real engine-request
-  // commands; escalate has no command, so it reports honestly and sends nothing.
-  const commit = useCallback(() => {
-    if (!staged) return;
-    const { id, kind } = staged;
+  // The single real action path. grant/deny/escalate each go through a real backend
+  // command the desktop cannot forge — there is no local-only, made-up outcome.
+  const runAction = useCallback((id: string, kind: ActionKind) => {
     const item = (data ?? []).find((a) => a.id === id);
-    const label = item ? item.target : id;
-    setStaged(null);
+    if (!item || item.status !== 'pending') return; // only pending items are actionable
+    const label = item.target;
     if (kind === 'grant') {
       // T-011: real commit is adjudicated behind a Rust-driven native dialog the
-      // webview cannot forge; confirm here is only the in-app pre-commit gate.
+      // webview cannot forge; the press-and-hold here is only the in-app pre-commit gate.
       desktop.confirmApproval(id)
-        .then(() => { setVerdict(bi(`Granted: ${label}`, `Հաստատվեց՝ ${label}`)); flashThenReload(id, 'stamp'); })
+        .then(() => { setVerdict(`${L('grantedPrefix')}${label}`); reload(); })
         .catch(onError);
     } else if (kind === 'deny') {
       // T-010: dedicated fail-safe reject path.
       desktop.rejectApproval(id)
-        .then(() => { setVerdict(bi(`Denied: ${label}`, `Մերժվեց՝ ${label}`)); flashThenReload(id, 'strike'); })
+        .then(() => { setVerdict(`${L('deniedPrefix')}${label}`); reload(); })
         .catch(onError);
     } else {
-      // Honest empty request path: no engine escalate command exists in this build.
-      setVerdict(bi(`Escalation unavailable for ${label}`, `Բարձրացումն անհասանելի է՝ ${label}`));
-      toast(bi('Escalation isn’t wired to the engine yet — no request was sent.',
-        'Բարձրացումը դեռ միացված չէ շարժիչին — հարցում չուղարկվեց։'), 'info');
+      // Non-verdict routing: escalate to higher review (A3). Decides nothing, authorizes
+      // nothing — the backend re-tiers the pending approval and notifies the owner.
+      desktop.escalateApproval(id)
+        .then(() => { setVerdict(`${L('escalatedPrefix')}${label}`); reload(); })
+        .catch(onError);
     }
-  }, [staged, data, bi, flashThenReload]);
+  }, [data, L, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keyboard: ↑/↓ select, g/d/e stage an action (queue is live only when there
-  // is no open confirm — the confirm owns Enter/Esc).
+  // Commit the staged (dialog-confirmed) deny/escalate.
+  const commit = useCallback(() => {
+    if (!staged) return;
+    const { id, kind } = staged;
+    setStaged(null);
+    runAction(id, kind);
+  }, [staged, runAction]);
+
+  // ── press-and-hold to grant ────────────────────────────────────────────────
+  // A deliberate ~1.1s hold on the seated pending item. Release early cancels. This
+  // is a re-dressing of the confirm gesture — it still calls the real confirmApproval.
+  const cancelHold = useCallback(() => {
+    if (holdTimer.current) { window.clearTimeout(holdTimer.current); holdTimer.current = null; }
+    setHolding(false);
+  }, []);
+
+  const startHold = useCallback(() => {
+    if (!seated || seated.status !== 'pending' || holdTimer.current) return;
+    const id = seated.id;
+    setHolding(true);
+    holdTimer.current = window.setTimeout(() => {
+      holdTimer.current = null;
+      setHolding(false);
+      runAction(id, 'grant');
+    }, HOLD_MS);
+  }, [seated, runAction]);
+
+  useEffect(() => cancelHold, [sel, cancelHold]); // seating a new row cancels any in-flight hold
+
+  // Keyboard: ↑/↓ select; d stages a deny, e stages an escalate (both open the
+  // confirm dialog). Grant is the deliberate press-and-hold on its button.
   useEffect(() => {
     if (staged) return;
     const onKey = (e: KeyboardEvent) => {
@@ -131,15 +202,14 @@ export function Approvals() {
       const cur = list[Math.min(selected, list.length - 1)];
       if (!cur || cur.status !== 'pending') return;
       const k = e.key.toLowerCase();
-      if (k === 'g') { e.preventDefault(); setStaged({ id: cur.id, kind: 'grant' }); }
-      else if (k === 'd') { e.preventDefault(); setStaged({ id: cur.id, kind: 'deny' }); }
+      if (k === 'd') { e.preventDefault(); setStaged({ id: cur.id, kind: 'deny' }); }
       else if (k === 'e') { e.preventDefault(); setStaged({ id: cur.id, kind: 'escalate' }); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [staged, data, selected]);
 
-  // While a confirm is open: Enter commits, Esc cancels.
+  // While a confirm dialog is open: Enter commits, Esc cancels.
   useEffect(() => {
     if (!staged) return;
     const onKey = (e: KeyboardEvent) => {
@@ -150,294 +220,361 @@ export function Approvals() {
     return () => window.removeEventListener('keydown', onKey);
   }, [staged, commit]);
 
+  // ── real-derived counts (no fabricated numbers) ────────────────────────────
   const pendingCount = items.filter((a) => a.status === 'pending').length;
+  const approvedCount = items.filter((a) => /^(approved|granted|confirmed)$/i.test(a.status)).length;
+  const deniedCount = items.filter((a) => /^(rejected|denied|expired)$/i.test(a.status)).length;
 
-  const header = <PageHeader title={t('nav.approvals')} subtitle={t('approvals.subtitle')} />;
+  const style = <ApprovalsStyle />;
+
+  // The mockup page header (eyebrow + h1 + sub + live pending pill), heading order
+  // preserved (h1 here, h2 on the gate and the queue section head).
+  const header = (
+    <header className="pageHead reveal" style={{ '--i': 0 } as CSSProperties}>
+      <div>
+        <span className="eyebrow">{L('eyebrowHitl')}</span>
+        <h1>{t('nav.approvals')}</h1>
+        <p className="sub">{t('approvals.subtitle')}</p>
+      </div>
+      <div className="right">
+        <span className={`pill ${pendingCount > 0 ? 'warn' : 'live'}`}>
+          <b className="mono">{pendingCount}</b>&nbsp;{L('pending')}
+        </span>
+      </div>
+    </header>
+  );
 
   // Verdict announcer — always mounted so grant/deny/escalate results are read out.
   const liveRegion = (
     <div className="ap-sr" role="status" aria-live="assertive" aria-atomic="true">{verdict}</div>
   );
 
-  const style = <ApprovalsStyle />;
+  const frame = (children: ReactNode) => (
+    <div className="v-approvals">{style}{header}{liveRegion}{children}</div>
+  );
 
-  // ── loading: skeleton rows ────────────────────────────────────────────────
+  // ── loading: skeleton ──────────────────────────────────────────────────────
   if (state.loading && data === null) {
-    return (
-      <>
-        {style}{header}{liveRegion}
-        <Card><Skeleton rows={5} /></Card>
-      </>
-    );
+    return frame(<Card><Skeleton rows={5} /></Card>);
   }
 
-  // ── error / blocked ───────────────────────────────────────────────────────
+  // ── error / blocked ────────────────────────────────────────────────────────
   if (error) {
-    // No backend at all (browser preview) → honest engine-unreachable, calm.
     if (!hasBackend()) {
-      return (
-        <>
-          {style}{header}{liveRegion}
-          <Card><ErrorState message={bi('Engine unreachable.', 'Շարժիչն անհասանելի է։')} /></Card>
-        </>
-      );
+      return frame(<Card><ErrorState message={L('engineUnreachable')} /></Card>);
     }
     if (isAuthError(error)) {
       // `blocked` — owner not authenticated: gate locked, all actions disabled.
-      return (
-        <>
-          {style}{header}{liveRegion}
-          <Card>
-            <div className="ap-blocked" role="alert">
-              <div className="ap-blocked-glyph">🔒</div>
-              <div className="empty-title">{bi('Owner not authenticated', 'Տերը նույնականացված չէ')}</div>
-              <div className="muted ap-blocked-body">
-                {bi('The approval gate is locked until the owner authenticates with the engine. Grant, deny and escalate stay disabled — the desktop never decides on its own.',
-                  'Հաստատման դարպասը կողպված է, մինչև տերը նույնականացվի շարժիչի հետ։ Հաստատել, մերժել և բարձրացնել գործողություններն անջատված են — desktop-ը երբեք ինքնուրույն որոշում չի կայացնում։')}
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <Button small onClick={reload}>{t('action.retry')}</Button>
-              </div>
+      return frame(
+        <Card>
+          <div className="ap-blocked" role="alert">
+            <div className="ap-blocked-glyph" aria-hidden="true">🔒</div>
+            <div className="empty-title">{L('ownerNotAuthenticated')}</div>
+            <div className="muted ap-blocked-body">
+              {L('gateLockedBody')}
             </div>
-          </Card>
-        </>
+            <div style={{ marginTop: 12 }}>
+              <Button small onClick={reload}>{t('action.retry')}</Button>
+            </div>
+          </div>
+        </Card>,
       );
     }
     // `error` — engine unreachable.
     const denied = /denied|not permitted|permission/i.test(error);
-    const msg = denied ? `${t('state.permissionDenied')}: ${error}` : `${bi('Engine unreachable.', 'Շարժիչն անհասանելի է։')} ${error}`;
-    return (
-      <>
-        {style}{header}{liveRegion}
-        <Card><ErrorState message={msg} onRetry={reload} retryLabel={t('action.retry')} /></Card>
-      </>
-    );
+    const msg = denied ? `${t('state.permissionDenied')}: ${error}` : `${L('engineUnreachable')} ${error}`;
+    return frame(<Card><ErrorState message={msg} onRetry={reload} retryLabel={t('action.retry')} /></Card>);
   }
 
-  // ── empty ─────────────────────────────────────────────────────────────────
+  // ── empty — gate clear, nothing awaiting authority ─────────────────────────
   if (items.length === 0) {
-    return (
-      <>
-        {style}{header}{liveRegion}
-        <Card>
-          <div className="ap-gate ap-gate--clear" role="status">
-            <span className="ap-gate-dot" aria-hidden="true" />
-            {bi('Gate clear — nothing awaiting your authority', 'Դարպասը մաքուր է — ոչինչ չի սպասում ձեր հաստատմանը')}
-          </div>
-          <EmptyState
-            glyph="✅"
-            title={bi('No pending approvals', 'Չկան սպասող հաստատումներ')}
-            hint={bi('New engine requests will appear here as they arrive.',
-              'Շարժիչի նոր հարցումները կհայտնվեն այստեղ, երբ ստացվեն։')}
-          />
-        </Card>
-      </>
+    return frame(
+      <section className="gate surface soft lg hud reveal st-approved" style={{ '--i': 1 } as CSSProperties} role="status" aria-live="polite">
+        <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
+        <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
+        <EmptyState
+          glyph="✅"
+          title={L('gateClear')}
+          hint={L('newRequestsHint')}
+        />
+      </section>,
     );
   }
 
-  // ── default: queue ────────────────────────────────────────────────────────
+  // ── default: the seated gate + queue + real-derived stats strip ────────────
   const stagedItem = staged ? items.find((a) => a.id === staged.id) ?? null : null;
+  const meta = seated ? statusMeta(seated.status, L) : statusMeta('pending', L);
+  const when = seated ? parseWhen(seated.requestedAt) : null;
+  const isPending = !!seated && seated.status === 'pending';
+  const opened = !!seated && /^(approved|granted|confirmed)$/i.test(seated.status);
+  const pushed = !!seated && /^(rejected|denied|expired)$/i.test(seated.status);
 
-  return (
+  // Hold-fill ring (decorative, aria-hidden with the whole seal): a pending gate
+  // shows an empty track that a deliberate press-and-hold sweeps full over HOLD_MS,
+  // reinforcing the grant bar; approved/active gates show the tone ring resolved,
+  // denied/expired empty it. Never anticipates the verdict — the ring only fills
+  // while a real hold is in progress, and the seal/stamp still wait on real data.
+  const ringOffset = opened ? 0 : pushed ? CIRC : isPending ? (holding ? 0 : CIRC) : 0;
+
+  const tiles: Array<[number, string, string]> = [
+    [items.length, L('inQueue'), 'as-info'],
+    [pendingCount, L('pendingNow'), 'as-warn'],
+    [approvedCount, L('approvedLower'), 'as-mint'],
+    [deniedCount, L('deniedHeld'), ''],
+  ];
+
+  return frame(
     <>
-      {style}{header}{liveRegion}
+      {/* ── HERO · the authorization gate (seats the selected real approval) ── */}
+      <section
+        className={`gate surface soft lg hud reveal ${meta.gate}`}
+        style={{ '--i': 1 } as CSSProperties}
+        aria-live="polite"
+        aria-label={seated ? `${L('approvalGatePrefix')}${seated.actionType}, ${meta.lbl}` : undefined}
+      >
+        <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
+        <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
+        <span className="ticks" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></span>
 
-      {/* live gate state (apGate) */}
-      <div className={`ap-gate ${pendingCount > 0 ? 'ap-gate--active' : 'ap-gate--clear'}`} role="status" aria-live="polite">
-        <span className="ap-gate-dot" aria-hidden="true" />
-        {pendingCount > 0
-          ? bi(`Gate active — ${pendingCount} awaiting your authority`, `Դարպասը ակտիվ է — ${pendingCount} սպասում է ձեր հաստատմանը`)
-          : bi('Gate clear — nothing pending', 'Դարպասը մաքուր է — ոչինչ չի սպասում')}
-      </div>
+        <div className="g-head">
+          <div className="gh-title">
+            <span className="eyebrow">{L('controlGate')}</span>
+            <h2>{seated?.actionType}</h2>
+          </div>
+          <div className="gh-tags">
+            <span className={`tier tier-${seated?.level}`}>{seated?.level}</span>
+            <span className={`pill ${meta.pill}`}>{meta.lbl}</span>
+          </div>
+        </div>
+
+        {/* ── THE THRESHOLD — requester · seal · impact (all from real fields) ── */}
+        <div className={`g-stage${opened ? ' opened' : ''}${pushed ? ' pushed' : ''}`}>
+
+          <div className="g-req">
+            <span className="micro">{L('requestingAgent')}</span>
+            <div className="gr-id">
+              <span aria-hidden="true"><Mark state={meta.mark} size={40} /></span>
+              <div className="gr-who">
+                <b>{seated?.requestedBy || '—'}</b>
+                <span>{L('requester')}</span>
+              </div>
+            </div>
+            <p className="gr-reason">{seated?.target}</p>
+          </div>
+
+          <div className="g-seal">
+            <span className="s-cap micro">{L('actionHeld')}</span>
+            <div className="seal-lock" aria-hidden="true">
+              <svg className="sla-ring" viewBox="0 0 200 200">
+                <circle className="sr-track" cx="100" cy="100" r="92" />
+                <circle className="sr-val" cx="100" cy="100" r="92"
+                  style={{
+                    strokeDasharray: CIRC,
+                    strokeDashoffset: ringOffset,
+                    // Reduced motion → instant; a live hold sweeps over HOLD_MS; otherwise a quick settle.
+                    transition: reduced ? 'none' : `stroke-dashoffset ${holding ? HOLD_MS : 380}ms linear, stroke .5s ease`,
+                  } as CSSProperties} />
+              </svg>
+              <div className="seal-body">
+                <span className="through" />
+                <span className="half l" /><span className="half r" />
+                <span className="seam" />
+                <span className="keyhole" />
+              </div>
+              <span className="held" />
+              <span className="tier-ring">{seated?.level}</span>
+              {opened && <span className="stamp">{L('approvedStamp')}</span>}
+            </div>
+            <div className="sla-read">
+              <b className="mono sla-time" aria-hidden="true">
+                {isPending && when ? fmtElapsed(now - when.getTime()) : (opened ? '✓' : pushed ? '—' : '·')}
+              </b>
+              <span className="micro">
+                {isPending ? L('waiting') : meta.lbl}
+              </span>
+            </div>
+          </div>
+
+          <div className="g-impact">
+            <span className="micro">{L('impactScope')}</span>
+            <div className="im-scope"><span className="dot" aria-hidden="true" />{seated?.target}</div>
+            <div className="im-grid">
+              <div className="im-row">
+                <span className="micro">{t('field.level')}</span>
+                <span className="im-v"><b className="mono">{seated?.level}</b></span>
+              </div>
+              <div className="im-row">
+                <span className="micro">{t('field.risk')}</span>
+                <span className="im-v"><b className="mono">{riskLabel((seated?.riskLevel ?? '').toLowerCase(), lang)}</b></span>
+              </div>
+              <div className="im-row">
+                <span className="micro">{L('requestedByLabel')}</span>
+                <span className="im-v"><b className="mono">{seated?.requestedBy}</b></span>
+              </div>
+              <div className="im-row">
+                <span className="micro">{L('requestedAtLabel')}</span>
+                <span className="im-v"><b className="mono">{when ? dateFmt.format(when) : (seated?.requestedAt || '—')}</b></span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* ── AUTHORIZATION BAR — the owner is the key ── */}
+        <div className="g-authbar">
+          <span className="ab-meta micro">
+            {`${L('requestedWord')} ${when ? dateFmt.format(when) : (seated?.requestedAt || '—')} · `}
+            <b>{seated?.level}</b>{L('levelSuffix')}
+          </span>
+          <div className="ab-actions">
+            <button
+              type="button" className="ab-btn deny" disabled={!isPending}
+              onClick={() => seated && setStaged({ id: seated.id, kind: 'deny' })}
+              aria-label={L('denyAria')}
+            >✕ {L('deny')}</button>
+            <button
+              type="button" className="ab-btn escalate" disabled={!isPending}
+              onClick={() => seated && setStaged({ id: seated.id, kind: 'escalate' })}
+              aria-label={L('escalateForReview')}
+            >↑ {L('escalateA3')}</button>
+            <button
+              type="button" className={`ab-btn grant${holding ? ' holding' : ''}`} disabled={!isPending}
+              onPointerDown={(e) => { e.preventDefault(); startHold(); }}
+              onPointerUp={cancelHold}
+              onPointerLeave={cancelHold}
+              onPointerCancel={cancelHold}
+              onKeyDown={(e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); startHold(); } }}
+              onKeyUp={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); cancelHold(); } }}
+              onBlur={cancelHold}
+              aria-label={opened ? L('approved') : L('pressHoldAria')}
+            >
+              <span className="grant-fill" aria-hidden="true" />
+              <span className="grant-lbl">
+                {opened ? `✓ ${L('approved')}` : L('pressHoldGrant')}
+              </span>
+            </button>
+          </div>
+        </div>
+      </section>
 
       <div className="ap-hint muted" aria-hidden="true">
-        {`↑/↓ ${bi('select', 'ընտրել')} · g ${bi('grant', 'հաստատել')} · d ${bi('deny', 'մերժել')} · e ${bi('escalate', 'բարձրացնել')} · Enter ${bi('confirm', 'հաստատել')} · Esc ${bi('cancel', 'չեղարկել')}`}
+        {`↑/↓ ${L('select')} · ${L('holdGrantConfirm')} · d ${L('denyLower')} · e ${L('escalateLower')}`}
       </div>
 
-      {/* approval queue (apQueue) */}
-      <ul className="ap-queue stack" role="list" aria-label={bi('Approval queue', 'Հաստատումների հերթ')}>
+      {/* Engine approval-QUEUE mirror (read-only). Until the engine queue read answers,
+          this reads honestly as blocked/unreachable — the list is the local mirror;
+          the desktop never fabricates an engine queue and never decides on its own. */}
+      {engineQueue.data && engineQueue.data.state !== 'ok' && (
+        <div className="ap-blocked" role="note" style={{ padding: 'var(--s3) var(--s4)', textAlign: 'left' }}>
+          <span className="muted">
+            {engineQueue.data.state === 'unreachable'
+              ? L('queueUnreachable')
+              : L('queueSealed')}
+            {engineQueue.data.reason ? ` (${engineQueue.data.reason})` : ''}
+          </span>
+        </div>
+      )}
+
+      {/* ── PENDING QUEUE ── */}
+      <div className="sec-head" style={{ marginTop: 26 }}>
+        <h2>{L('approvalQueue')}</h2>
+        <span className="note">
+          {L('selectRowHint')}
+          <b className="mono">{items.length}</b>{L('inQueueSuffix')}
+        </span>
+      </div>
+      <div className="queue" role="list" aria-label={L('approvalQueueAria')}>
         {items.map((a, i) => {
-          const when = parseWhen(a.requestedAt);
-          const isSelected = i === sel;
-          const isPending = a.status === 'pending';
-          const flashCls = flash?.id === a.id ? ` ap-item--${flash.kind}` : '';
+          const m = statusMeta(a.status, L);
+          const rw = parseWhen(a.requestedAt);
+          const isSel = i === sel;
+          const rowPending = a.status === 'pending';
           return (
-            <li
+            <button
+              type="button" role="listitem"
               key={a.id}
-              role="listitem"
-              className={`card ap-item${isSelected ? ' ap-item--selected' : ''}${flashCls}`}
-              style={{ '--i': i } as CSSProperties}
-              aria-current={isSelected ? 'true' : undefined}
+              className={`q-row surface soft rise state-${m.face}${isSel ? ' on' : ''}`}
+              style={{ '--i': i + 2 } as CSSProperties}
+              aria-pressed={isSel}
+              aria-label={`${a.actionType}, ${a.target}, ${m.lbl}`}
               onClick={() => setSelected(i)}
             >
-              <div className="stack">
-                <div className="between row">
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 15 }}>{a.actionType}</div>
-                    <div className="muted">{a.target}</div>
-                  </div>
-                  {/* decision pill (apPill) */}
-                  <StatusPill status={a.status} />
-                </div>
-
-                <div className="grid grid-2">
-                  <Field label={t('field.level')}>
-                    <Badge tone="accent">{a.level}</Badge>
-                  </Field>
-                  <Field label={t('field.risk')}>
-                    <StatusPill status={a.riskLevel} />
-                  </Field>
-                  <Field label={bi('Requested by', 'Հայցող')}>{a.requestedBy}</Field>
-                  <Field label={bi('Requested at', 'Հայցվել է')}>
-                    {when ? dateFmt.format(when) : (a.requestedAt || '—')}
-                  </Field>
-                  <Field label={t('field.status')}>
-                    <StatusPill status={a.status} />
-                  </Field>
-                  {/* countdown clock (apClock) — live waiting time for pending items */}
-                  {isPending && when && (
-                    <Field label={bi('Waiting', 'Սպասում է')}>
-                      <span className="ap-clock" aria-label={bi(`Waiting ${fmtElapsed(now - when.getTime())}`, `Սպասում է ${fmtElapsed(now - when.getTime())}`)}>
-                        ⏱ {fmtElapsed(now - when.getTime())}
-                      </span>
-                    </Field>
-                  )}
-                </div>
-
-                {isPending && (
-                  <div className="stack">
-                    <div className="row">
-                      {/* grant / deny / escalate (apGrant / apDeny / apEsc) */}
-                      <Button
-                        variant="primary"
-                        onClick={() => { setSelected(i); setStaged({ id: a.id, kind: 'grant' }); }}
-                        title={bi('Grant — request the engine approve this action', 'Հաստատել — խնդրել շարժիչին հաստատել')}
-                      >
-                        {bi('Grant', 'Հաստատել')}
-                      </Button>
-                      <Button
-                        variant="danger"
-                        onClick={() => { setSelected(i); setStaged({ id: a.id, kind: 'deny' }); }}
-                        title={bi('Deny — reject this action', 'Մերժել — մերժել գործողությունը')}
-                      >
-                        {bi('Deny', 'Մերժել')}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        onClick={() => { setSelected(i); setStaged({ id: a.id, kind: 'escalate' }); }}
-                        title={bi('Escalate for higher review', 'Բարձրացնել՝ ավելի բարձր վերանայման')}
-                      >
-                        {bi('Escalate', 'Բարձրացնել')}
-                      </Button>
-                    </div>
-                    <div className="muted" style={{ fontSize: 12 }}>
-                      🔒 {t('approvals.approveNativeHint')}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </li>
+              <span className={`q-tier tier-${a.level}`}>{a.level}</span>
+              <span className="q-main">
+                <b className="q-ti">{a.actionType}</b>
+                <span className="q-agent">
+                  <span aria-hidden="true"><Mark state={m.mark} size={26} /></span>
+                  <span className="q-who">{a.requestedBy}</span>
+                </span>
+              </span>
+              <span className="q-impact">
+                <span className="micro">{L('target')}</span>
+                <b className="mono">{a.target}</b>
+                <span className="q-rev ok">{riskLabel((a.riskLevel ?? '').toLowerCase(), lang)}</span>
+              </span>
+              <span className="q-sla">
+                <span className="micro">{L('waitingLabel')}</span>
+                <b className="mono">{rowPending && rw ? fmtElapsed(now - rw.getTime()) : '—'}</b>
+              </span>
+              <span className={`pill ${m.pill}`}>{m.lbl}</span>
+            </button>
           );
         })}
-      </ul>
+      </div>
 
-      {staged && stagedItem && (
+      {/* ── approval-stats strip (real-derived counts) ── */}
+      <section className="surface soft astats-wrap rise" style={{ '--i': 2 } as CSSProperties} aria-label={L('approvalStats')}>
+        <div className="astats">
+          {tiles.map(([n, label, cls], i) => (
+            <div className={`astat rise${cls ? ' ' + cls : ''}`} style={{ '--i': i + 2 } as CSSProperties} key={label}>
+              <b className="mono">{n}</b>
+              <span className="micro">{label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="wire live" aria-hidden="true" />
+      </section>
+
+      {/* deny / escalate go through a confirm dialog (grant uses press-and-hold). */}
+      {staged && stagedItem && staged.kind !== 'grant' && (
         <ConfirmDialog
-          title={
-            staged.kind === 'grant'
-              ? (stagedItem.level === 'A3' ? t('approvals.a3ConfirmTitle') : bi('Confirm grant', 'Հաստատե՞լ'))
-              : staged.kind === 'deny'
-                ? bi('Confirm denial', 'Մերժե՞լ')
-                : bi('Escalate for higher review', 'Բարձրացնե՞լ')
-          }
+          title={staged.kind === 'deny' ? L('confirmDenial') : L('escalateForReview')}
           message={
-            staged.kind === 'grant'
-              ? (stagedItem.level === 'A3'
-                ? t('approvals.a3ConfirmBody')
-                : bi(`Request the engine to grant “${stagedItem.actionType}” on ${stagedItem.target}? A native confirmation follows; the engine adjudicates the final verdict.`,
-                  `Խնդրե՞լ շարժիչին հաստատել «${stagedItem.actionType}»՝ ${stagedItem.target}-ի վրա։ Կհետևի native հաստատում. վերջնական վճիռը կայացնում է շարժիչը։`))
-              : staged.kind === 'deny'
-                ? bi(`Deny “${stagedItem.actionType}” on ${stagedItem.target}? This is the fail-safe reject path.`,
-                  `Մերժե՞լ «${stagedItem.actionType}»՝ ${stagedItem.target}-ի վրա։ Սա fail-safe մերժման ուղին է։`)
-                : bi('Escalation is not wired to the engine in this build — confirming sends no request.',
-                  'Բարձրացումը այս տարբերակում միացված չէ շարժիչին — հաստատումը հարցում չի ուղարկում։')
+            staged.kind === 'deny'
+              ? `${L('denyDialogA')}${stagedItem.actionType}${L('denyDialogB')}${stagedItem.target}${L('denyDialogC')}`
+              : `${L('escalateDialogA')}${stagedItem.actionType}${L('escalateDialogB')}${stagedItem.target}${L('escalateDialogC')}`
           }
-          confirmLabel={
-            staged.kind === 'grant' ? t('action.approve')
-              : staged.kind === 'deny' ? t('action.reject')
-                : bi('Escalate', 'Բարձրացնել')
-          }
+          confirmLabel={staged.kind === 'deny' ? t('action.reject') : L('escalate')}
           cancelLabel={t('action.cancel')}
           onConfirm={commit}
           onCancel={() => setStaged(null)}
         />
       )}
-    </>
+    </>,
   );
 }
 
-/** Page-local styles — all colors/spacing/motion resolve through design tokens.
- *  Reduced motion is honored (global rule already neutralizes animations; the
- *  explicit blocks keep intent clear). */
+/** Page-local styles for the few classes the design CSS doesn't already provide
+ *  (the sr-only verdict region, the keyboard hint, and the blocked/empty panel). */
 function ApprovalsStyle() {
   return (
     <style>{`
-      .ap-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      .v-approvals .ap-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
         overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
-      .ap-gate { display: flex; align-items: center; gap: var(--menq-space-3);
-        padding: 10px var(--menq-space-4); border-radius: var(--menq-radius-md);
-        font-weight: 600; font-size: 13px; margin-bottom: var(--menq-space-3);
-        border: 1px solid var(--brops-border); }
-      .ap-gate-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
-      .ap-gate--active { color: var(--menq-color-warning);
-        background: color-mix(in srgb, var(--menq-color-warning) 12%, transparent);
-        border-color: color-mix(in srgb, var(--menq-color-warning) 30%, transparent); }
-      .ap-gate--active .ap-gate-dot { animation: ap-pulse 1.8s ease-in-out infinite; }
-      .ap-gate--clear { color: var(--menq-color-success);
-        background: color-mix(in srgb, var(--menq-color-success) 12%, transparent);
-        border-color: color-mix(in srgb, var(--menq-color-success) 30%, transparent); }
-      @keyframes ap-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+      .v-approvals .ap-hint { font-size: 12px; margin: 10px 0 4px; color: var(--ink-muted);
+        font-variant-numeric: tabular-nums; }
 
-      .ap-hint { font-size: 12px; margin-bottom: var(--menq-space-3); font-variant-numeric: tabular-nums; }
+      .v-approvals .ap-blocked { text-align: center; padding: var(--s6) var(--s4); color: var(--ink-muted); }
+      .v-approvals .ap-blocked-glyph { font-size: 30px; }
+      .v-approvals .ap-blocked .empty-title { margin-top: var(--s3); }
+      .v-approvals .ap-blocked-body { max-width: 480px; margin: 6px auto 0; }
 
-      .ap-queue { list-style: none; margin: 0; padding: 0; }
-      .ap-item { cursor: pointer;
-        transition: border-color var(--menq-motion-fast), background var(--menq-motion-fast);
-        animation: ap-reveal var(--menq-motion-med) ease-out backwards;
-        animation-delay: calc(var(--i, 0) * 45ms); }
-      .ap-item:hover { border-color: var(--brops-accent); }
-      .ap-item--selected { border-color: var(--brops-accent);
-        box-shadow: 0 0 0 1px var(--brops-accent) inset; }
-      @keyframes ap-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-
-      /* grant → mint stamp */
-      .ap-item--stamp { border-color: var(--menq-color-success) !important;
-        animation: ap-stamp var(--menq-motion-med) ease-out; }
-      @keyframes ap-stamp {
-        0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--menq-color-success) 55%, transparent); }
-        30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--menq-color-success) 55%, transparent); transform: scale(1.01); }
-        100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); } }
-
-      /* deny → danger strike */
-      .ap-item--strike { border-color: var(--menq-color-danger) !important;
-        animation: ap-strike var(--menq-motion-fast) ease-in-out; }
-      @keyframes ap-strike {
-        0%, 100% { transform: translateX(0); }
-        25% { transform: translateX(-5px); }
-        75% { transform: translateX(5px); } }
-
-      .ap-clock { font-variant-numeric: tabular-nums; color: var(--brops-text); }
-
-      .ap-blocked { text-align: center; padding: var(--menq-space-6) var(--menq-space-4); color: var(--brops-muted); }
-      .ap-blocked-glyph { font-size: 30px; }
-      .ap-blocked .empty-title { margin-top: var(--menq-space-3); }
-      .ap-blocked-body { max-width: 480px; margin: 6px auto 0; }
-
-      @media (prefers-reduced-motion: reduce) {
-        .ap-item, .ap-item--stamp, .ap-item--strike, .ap-gate--active .ap-gate-dot { animation: none !important; }
-        .ap-item { opacity: 1; transform: none; }
-      }
+      /* The grant key is a real hold gesture. Under reduced motion the shared
+         aios.css already collapses the grant-fill and SLA-ring transitions to ~0ms,
+         so the fill is instant with no continuous sweep — the deliberate ~${HOLD_MS}ms
+         press is still required; only the animation is removed. Nothing here re-adds it. */
+      .v-approvals .ab-btn.grant .grant-fill { will-change: transform; }
     `}</style>
   );
 }

@@ -1,17 +1,46 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../app/store';
 import {
   PageHeader, Button, Badge, Async, Modal, FormRow, Input, Textarea, Select,
 } from '../components/ui';
+import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { useToast } from '../components/toast';
-import { statusTone, PRIORITIES } from '../domain/enums';
+import { statusTone, PRIORITIES, TASK_STATUSES } from '../domain/enums';
+import type { Lang } from '../domain/enums';
+import { statusLabel, priorityLabel } from '../domain/statusLabels';
 import type { Task } from '../domain/entities';
+import type { DictKey } from '../i18n';
+import { STR } from './Tasks.strings';
 
-// Board columns, left to right — the full task status vocabulary so no task is
-// ever invisible. Moving a card between columns sets its status.
-const COLUMNS = ['inbox', 'planned', 'active', 'blocked', 'review', 'done', 'cancelled'];
+type StrKey = keyof typeof STR;
+type Lstr = (k: StrKey) => string;
+
+// Mission board — the brops-aios "Առաքելություն" reskin. Lanes group tasks by
+// their REAL status (the full status vocabulary maps onto the four mockup lanes
+// so no task is ever invisible). Card visuals, the mission hero metrics, the
+// risk pill and the "free the blocker" flow are all driven by real data
+// (listTasks / listProjects / listTaskDependencies / setTaskStatus). Nothing —
+// no crew avatars, no critical-path rail, no fabricated counts — is invented.
+const LANES: { id: string; nmKey: StrKey; tone: '' | 'info' | 'warn' | 'mint'; statuses: string[] }[] = [
+  { id: 'queue', nmKey: 'lane_queue', tone: '',     statuses: ['inbox', 'planned'] },
+  { id: 'prog',  nmKey: 'lane_prog',  tone: 'info', statuses: ['active', 'review'] },
+  { id: 'block', nmKey: 'lane_block', tone: 'warn', statuses: ['blocked'] },
+  { id: 'done',  nmKey: 'lane_done',  tone: 'mint', statuses: ['done', 'cancelled'] },
+];
+
+// Real task status → the mockup's card left-rail state class (purely visual).
+const STATE_CLASS: Record<string, string> = {
+  active: 'state-working', review: 'state-thinking', blocked: 'state-blocked', done: 'state-completed',
+};
+// Real priority → the mockup's prio chip class (purely visual). low/normal
+// collapse to "mid". The chip TEXT is the localized priorityLabel.
+const PRIO_CLS: Record<string, string> = {
+  critical: 'crit', high: 'high', normal: 'mid', low: 'mid',
+};
+
+const laneOf = (status: string) => LANES.find((l) => l.statuses.includes(status));
 
 function NewTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { t } = useApp();
@@ -58,7 +87,7 @@ function NewTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
 }
 
 function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => void; onSaved: () => void }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
   const toast = useToast();
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -108,7 +137,7 @@ function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => voi
     <Modal title={t('form.editTask')} onClose={onClose}>
       {error && <div className="form-error">{error}</div>}
       <div className="row" style={{ gap: 8, marginBottom: 12 }}>
-        <Badge tone={statusTone[task.status] ?? 'neutral'}>{task.status.replace(/_/g, ' ')}</Badge>
+        <Badge tone={statusTone[task.status] ?? 'neutral'}>{statusLabel(task.status, lang)}</Badge>
       </div>
       <FormRow label={t('field.title')}>
         <Input value={title} autoFocus onChange={(e) => setTitle(e.target.value)} />
@@ -149,15 +178,127 @@ function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => voi
   );
 }
 
+// The live mission clock — the one honestly-live HUD readout (no fabricated ETA,
+// no auto-recalc). Ticks the wall clock and cleans up on unmount.
+function MissionClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const p = (n: number) => (n < 10 ? '0' : '') + n;
+  return (
+    <span className="m-clock mono" aria-hidden="true">
+      {p(now.getHours())}:{p(now.getMinutes())}:{p(now.getSeconds())}
+    </span>
+  );
+}
+
+// One board card. For blocked tasks it loads the task's REAL dependencies and
+// surfaces them as the blocker note; the "Ազատել" button is a real status
+// mutation (blocked → active), the honest equivalent of "freeing" the card.
+function TaskCard({
+  task, projectName, onOpen, onMove, t, lang, L,
+}: {
+  task: Task;
+  projectName?: string;
+  onOpen: (task: Task) => void;
+  onMove: (task: Task, status: string) => void;
+  t: (k: DictKey) => string;
+  lang: Lang;
+  L: Lstr;
+}) {
+  const isBlocked = task.status === 'blocked';
+  const deps = useAsync(
+    () => (isBlocked ? desktop.listTaskDependencies(task.id) : Promise.resolve([] as Task[])),
+    [task.id, isBlocked],
+  );
+  const stateCls = STATE_CLASS[task.status] ?? '';
+  const prioCls = PRIO_CLS[task.priority] ?? 'mid';
+  const blockers = deps.data ?? [];
+
+  return (
+    <article
+      className={`mtask surface soft ${stateCls}`.trim()}
+      tabIndex={0}
+      aria-label={task.title}
+      onClick={() => onOpen(task)}
+      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onOpen(task); } }}
+    >
+      <span className="stream" aria-hidden="true" />
+      <div className="mt-head">
+        <span className={`prio prio-${prioCls}`}>{priorityLabel(task.priority, lang)}</span>
+        {task.dueAt && (
+          <span className="mt-eta micro">{new Date(task.dueAt).toLocaleDateString()}</span>
+        )}
+      </div>
+      <div className="mt-body">
+        <div className="mt-title">{task.title}</div>
+        {projectName && <div className="mt-zone micro">{projectName}</div>}
+      </div>
+
+      {isBlocked && (
+        <>
+          {blockers.length > 0 && (
+            <div className="mt-deps">
+              {blockers.map((d) => <span key={d.id} className="dep">{d.title}</span>)}
+            </div>
+          )}
+          <div className="mt-block">
+            <span className="mt-block-txt">
+              <b>{L('blocking')}</b>
+              {deps.loading
+                ? '…'
+                : blockers.length > 0
+                  ? blockers.map((d) => d.title).join(', ')
+                  : t('tasks.noDependencies')}
+            </span>
+            <button
+              className="chip mt-unblock"
+              type="button"
+              aria-label={`${t('action.open')}: ${task.title}`}
+              onClick={(e) => { e.stopPropagation(); onMove(task, 'active'); }}
+            >
+              {L('release')}
+            </button>
+          </div>
+        </>
+      )}
+
+      <div className="mt-foot">
+        <select
+          className="mt-status"
+          value={task.status}
+          aria-label={`${t('field.status')}: ${task.title}`}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          onChange={(e) => onMove(task, e.target.value)}
+        >
+          {TASK_STATUSES.map((sv) => (
+            <option key={sv} value={sv}>{statusLabel(sv, lang)}</option>
+          ))}
+        </select>
+        {task.assignedAgentId && <span className="mt-own micro">{task.assignedAgentId}</span>}
+      </div>
+    </article>
+  );
+}
+
 export function Tasks() {
-  const { t, focus, clearFocus } = useApp();
+  const { t, lang, focus, clearFocus } = useApp();
+  const L: Lstr = (k) => STR[k][lang] ?? STR[k].en;
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState<Task | null>(null);
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dragStatus, setDragStatus] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState('');
   const s = useAsync(() => desktop.listTasks(), []);
+  const projects = useAsync(() => desktop.listProjects(), []);
+
+  const projectName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of projects.data ?? []) m.set(p.id, p.name);
+    return m;
+  }, [projects.data]);
 
   // Deep-link consumer: when a `task` focus is pending, open its detail once the
   // list has loaded. Clear focus only after we actually open the task, so a
@@ -174,26 +315,23 @@ export function Tasks() {
     }
   }, [focus, s.data, s.loading, clearFocus]);
 
-  const moveTo = (id: string, status: string) => {
-    desktop.setTaskStatus(id, status).then(() => s.reload()).catch(() => s.reload());
-  };
-  const onDrop = (status: string) => {
-    setDragOver(null);
-    // Skip a drop onto the card's own column — no status change, no spurious write.
-    if (dragId && dragStatus !== status) {
-      moveTo(dragId, status);
-    }
-    setDragId(null);
-    setDragStatus(null);
+  const moveTo = (task: Task, status: string) => {
+    if (status === task.status) return;
+    const lane = laneOf(status);
+    setAnnounce(`${task.title} → ${lane ? L(lane.nmKey) : status}`);
+    desktop.setTaskStatus(task.id, status).then(() => s.reload()).catch(() => s.reload());
   };
 
   return (
-    <>
+    <div className="v-tasks">
+      <style>{TASKS_CSS}</style>
       <PageHeader
         title={t('nav.tasks')}
         subtitle={t('tasks.subtitle')}
         actions={<Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>}
       />
+
+      <div className="t-sr-only" role="status" aria-live="polite">{announce}</div>
 
       {creating && (
         <NewTaskForm
@@ -204,47 +342,126 @@ export function Tasks() {
       {detail && <TaskDetail task={detail} onClose={() => setDetail(null)} onSaved={() => s.reload()} />}
 
       <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
-        {(tasks) => (
-          <div className="board">
-            {COLUMNS.map((col) => {
-              const items = tasks.filter((x) => x.status === col);
-              return (
-                <div
-                  key={col}
-                  className={`board-col ${dragOver === col ? 'board-col--over' : ''}`}
-                  onDragOver={(e) => { e.preventDefault(); setDragOver(col); }}
-                  onDragLeave={() => setDragOver((c) => (c === col ? null : c))}
-                  onDrop={() => onDrop(col)}
-                >
-                  <div className="board-col-head">
-                    <span className="board-col-title">{col.replace(/_/g, ' ')}</span>
-                    <span className="muted">{items.length}</span>
-                  </div>
-                  <div className="board-col-body">
-                    {items.map((x) => (
-                      <div
-                        key={x.id}
-                        className="board-card"
-                        draggable
-                        onDragStart={() => { setDragId(x.id); setDragStatus(x.status); }}
-                        onDragEnd={() => { setDragId(null); setDragStatus(null); setDragOver(null); }}
-                        onClick={() => setDetail(x)}
-                      >
-                        <div className="board-card-title">{x.title}</div>
-                        <div className="row" style={{ gap: 6, marginTop: 6 }}>
-                          <Badge tone={statusTone[x.priority] ?? 'neutral'}>{x.priority}</Badge>
-                          {x.assignedAgentId && <span className="muted">{x.assignedAgentId}</span>}
-                        </div>
-                      </div>
-                    ))}
-                    {items.length === 0 && <div className="board-empty muted">—</div>}
+        {(tasks) => {
+          const blocked = tasks.filter((x) => x.status === 'blocked').length;
+          const active = tasks.filter((x) => x.status === 'active').length;
+          const doneCount = tasks.filter((x) => x.status === 'done').length;
+          const total = tasks.length;
+          const pct = total ? Math.round((doneCount / total) * 100) : 0;
+          const ledger: { id: string; n: number; lab: string; cls: string }[] = [
+            { id: 'total', n: total, lab: L('kpi_total'), cls: '' },
+            { id: 'active', n: active, lab: L('kpi_active'), cls: 'lg-info' },
+            { id: 'blocked', n: blocked, lab: L('kpi_blocked'), cls: 'lg-warn' },
+            { id: 'done', n: doneCount, lab: L('kpi_done'), cls: 'lg-mint' },
+          ];
+
+          return (
+            <>
+              {/* HERO · honest mission readout — metrics derived from real status counts */}
+              <section className="mission surface soft lg hud">
+                <span className="bracket tl" aria-hidden="true" />
+                <span className="bracket tr" aria-hidden="true" />
+                <span className="bracket bl" aria-hidden="true" />
+                <span className="bracket br" aria-hidden="true" />
+                <div className="m-top">
+                  <span className="eyebrow">{L('eyebrow')}</span>
+                  <MissionClock />
+                  <div className="m-top-r">
+                    {blocked > 0
+                      ? <span className="pill warn">{blocked} {L('blockersWord')}</span>
+                      : <span className="pill live">{L('pathClear')}</span>}
+                    <span aria-hidden="true"><Mark state={blocked > 0 ? 'alert' : 'idle'} size={30} /></span>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+                <div className="m-hd">
+                  <div className="m-title">
+                    <h1>{t('nav.tasks')}</h1>
+                    <p className="sub">{t('tasks.subtitle')}</p>
+                  </div>
+                  <div className="m-prog">
+                    <b className="bignum">{pct}<small>%</small></b>
+                    <span className="micro">{doneCount}/{total} · {L('doneCap')}</span>
+                  </div>
+                </div>
+                <div className="m-foot">
+                  <div className="ledger">
+                    {ledger.map((l) => (
+                      <div key={l.id} className={`lg-item ${l.cls}`.trim()}>
+                        <b className="count num">{l.n}</b>
+                        <span className="micro">{l.lab}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              {/* BOARD BAR · quiet toolbar + legend */}
+              <div className="board-bar">
+                <div className="sec-head"><h2>{L('boardTitle')}</h2>
+                  <span className="note">{L('boardNote')}</span></div>
+                <div className="legend">
+                  <span className="chip lg-c"><i className="d-block" aria-hidden="true" />{L('legendBlocked')}</span>
+                  <span className="chip lg-c"><i className="d-dep" aria-hidden="true" />{L('legendDep')}</span>
+                </div>
+              </div>
+
+              {/* BOARD · four ops lanes, grouped by real status */}
+              <div className="board">
+                {LANES.map((lane) => {
+                  const items = tasks.filter((x) => lane.statuses.includes(x.status));
+                  return (
+                    <section
+                      key={lane.id}
+                      className={`lane lane-${lane.id}`}
+                      aria-label={`${L(lane.nmKey)} · ${items.length}`}
+                    >
+                      <header className="lane-hd">
+                        <span className={`lane-dot ${lane.tone ? `t-${lane.tone}` : ''}`.trim()} aria-hidden="true" />
+                        <h3 className="lane-nm">{L(lane.nmKey)}</h3>
+                        <span className="lane-ct mono">{items.length}</span>
+                      </header>
+                      <div className="lane-body">
+                        {items.map((x) => (
+                          <TaskCard
+                            key={x.id}
+                            task={x}
+                            projectName={x.projectId ? projectName.get(x.projectId) : undefined}
+                            onOpen={setDetail}
+                            onMove={moveTo}
+                            t={t}
+                            lang={lang}
+                            L={L}
+                          />
+                        ))}
+                        {items.length === 0 && <p className="lane-empty micro">—</p>}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </>
+          );
+        }}
       </Async>
-    </>
+    </div>
   );
 }
+
+// Local styles — scoped under `.v-tasks`; the board/lane/mtask/mission classes
+// themselves live in the global aios theme. These only fill the small gaps the
+// reskin needs: the sr-only live region, the per-card status control, the
+// keyboard focus ring and the empty-lane hint. No shared file is touched.
+const TASKS_CSS = `
+.v-tasks .t-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.v-tasks .mtask { cursor: pointer; }
+.v-tasks .mtask:focus-visible { outline: none; border-color: var(--cyan);
+  box-shadow: 0 0 0 2px rgb(var(--cyan-rgb)/.4); }
+.v-tasks .mt-foot { justify-content: space-between; }
+.v-tasks .mt-status { height: 28px; max-width: 60%; padding: 0 8px; font: inherit; font-size: 11px;
+  color: var(--ink); background: rgb(var(--raised-rgb)/.5); border: 1px solid rgb(var(--line-rgb)/.7);
+  border-radius: 8px; text-transform: capitalize; cursor: pointer; }
+.v-tasks .mt-status:focus-visible { outline: none; border-color: var(--cyan);
+  box-shadow: 0 0 0 2px rgb(var(--cyan-rgb)/.35); }
+.v-tasks .lane-empty { color: var(--ink-muted); padding: 6px 4px; }
+`;

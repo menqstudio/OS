@@ -26,8 +26,14 @@ legitimate.
 
 Three further bindings harden the anchor itself. The raw-env pins are honoured
 only when the CI system marks the environment as CI (BRO_ENV=ci, set by workflow
-configuration, never by an agent), so outside CI the trust root cannot be swapped
-by environment variables alone. A registry that is not marked production may not
+configuration, never by an agent), so outside CI the trust root cannot be swapped by
+environment variables alone — PROVIDED the pin file belongs to a principal this
+process cannot impersonate. A file the reading account owns is one write away from
+being any anchor that account likes, so it is refused unless the deployment
+acknowledges having no principal separation
+(BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged, audit F-06); an acknowledged
+self-owned anchor is exactly as strong as the account that holds it, and callers are
+told so rather than left with the unqualified claim. A registry that is not marked production may not
 anchor a deployment whose pin comes from the production _FILE path. And the
 registry is bound to an operator-pinned anti-rollback floor
 (BRO_OPERATOR_REGISTRY_MIN[_FILE]): a superseded — but still operator-signed —
@@ -67,6 +73,14 @@ ENV_PIN_FILE = "BRO_OPERATOR_ROOT_PUBKEY_FILE"
 # environment as CI (BRO_ENV=ci, set by workflow configuration, never by an
 # agent). Outside CI the file pin is the only trust anchor, so the root cannot
 # be swapped by environment variables alone.
+# (audit F-06) An anchor the reading account OWNS is an anchor that account can
+# rewrite, so a self-owned pin is refused by default. Some deployments genuinely have
+# no principal separation to offer — a single-user laptop, a CI container that runs
+# everything as one uid. Those may set this to `acknowledged`, which does not make the
+# anchor stronger; it makes the weakness explicit and reportable instead of silent.
+ENV_PIN_SELF_OWNED_ACK = "BRO_OPERATOR_ROOT_PIN_SELF_OWNED"
+PIN_SELF_OWNED_ACK_VALUE = "acknowledged"
+
 ENV_CI_FLAG = "BRO_ENV"
 CI_FLAG_VALUE = "ci"
 
@@ -240,6 +254,70 @@ _WINDOWS_WRITE_MASK = (
 )
 
 
+def _self_owned_pin_acknowledged() -> bool:
+    """True when the deployment has explicitly accepted a self-owned trust anchor (F-06).
+
+    Read from the live environment rather than a passed-in mapping so the same answer
+    holds for every pin-file read on this process, including the registry floor.
+    """
+    return os.environ.get(ENV_PIN_SELF_OWNED_ACK, "").strip() == PIN_SELF_OWNED_ACK_VALUE
+
+
+def _windows_process_user_sid(env_name: str, path: pathlib.Path):
+    """The SID of the account this process runs as, for the F-06 self-ownership refusal.
+
+    The SID bytes are COPIED into a buffer the caller owns; returning a pointer into
+    the token-information block would dangle the moment that block is collected, and a
+    dangling comparison is one that silently never matches. Any failure raises rather
+    than returning a value that would quietly disable the check.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32.OpenProcessToken.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD)]
+    advapi32.GetTokenInformation.restype = wintypes.BOOL
+    advapi32.GetLengthSid.argtypes = [ctypes.c_void_p]
+    advapi32.GetLengthSid.restype = wintypes.DWORD
+
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(
+            kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
+        raise SignatureError(
+            f"cannot open this process's token to check {env_name} ownership: {path}")
+    try:
+        size = wintypes.DWORD(0)
+        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))  # TokenUser
+        if size.value == 0:
+            raise SignatureError(
+                f"cannot size this process's token user for the {env_name} check: {path}")
+        buf = ctypes.create_string_buffer(size.value)
+        if not advapi32.GetTokenInformation(token, 1, buf, size, ctypes.byref(size)):
+            raise SignatureError(
+                f"cannot read this process's token user for the {env_name} check: {path}")
+        # TOKEN_USER is { SID_AND_ATTRIBUTES { PSID Sid; DWORD Attributes; } } — the
+        # first pointer-sized field is the SID pointer, into this same buffer.
+        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p)).contents
+        if not sid_ptr.value:
+            raise SignatureError(
+                f"this process's token carries no user SID for the {env_name} check: {path}")
+        length = advapi32.GetLengthSid(sid_ptr)
+        if length == 0:
+            raise SignatureError(
+                f"cannot size this process's user SID for the {env_name} check: {path}")
+        copy = ctypes.create_string_buffer(length)
+        ctypes.memmove(copy, sid_ptr, length)
+        return copy
+    finally:
+        kernel32.CloseHandle(token)
+
+
 def _refuse_non_owner_writable_windows(path: pathlib.Path, env_name: str) -> None:
     """Windows analogue of the POSIX group/other-writable refusal.
 
@@ -311,6 +389,18 @@ def _refuse_non_owner_writable_windows(path: pathlib.Path, env_name: str) -> Non
     try:
         if not owner.value:
             raise SignatureError(f"{env_name} has no owner: {path}")
+        # (audit F-06) The owner is the one principal every branch below treats as
+        # harmless — owner ACEs and OWNER RIGHTS are skipped, and an owner can rewrite
+        # the DACL anyway. So if the process reading the pin IS the owner, this whole
+        # check proves nothing about the attacker it defends against: the anchor is one
+        # write away from being whatever that process wants. Refuse.
+        if (advapi32.EqualSid(owner, _windows_process_user_sid(env_name, path))
+                and not _self_owned_pin_acknowledged()):
+            raise SignatureError(
+                f"{env_name} is owned by the very account reading it, which can rewrite "
+                f"it at will; the anchor must belong to another principal, or the "
+                f"deployment must set {ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} "
+                f"to acknowledge that it has no principal separation: {path}")
         if not dacl.value:
             raise SignatureError(
                 f"{env_name} has a NULL DACL, so it is writable by everyone: {path}")
@@ -399,6 +489,20 @@ def _pin_from_file(raw_path: str, root: pathlib.Path,
     if os.name == "posix":
         if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             raise SignatureError(f"{env_name} must not be group/other-writable: {path}")
+        # (audit F-06) Owner-only writability says nothing when the OWNER is us. The pin
+        # exists to survive an attacker who can write the repository tree — that attacker
+        # is this very process, and a file it owns at mode 0644 passes the check above
+        # trivially while remaining one `open(..., "w")` away from any anchor it likes
+        # (an owner can also chmod the mode bits back afterwards). The anchor must belong
+        # to a principal this process cannot impersonate. Running as root fails this too,
+        # and correctly so: root can rewrite any file, so no file pin is an anchor for it.
+        if info.st_uid == os.geteuid() and not _self_owned_pin_acknowledged():
+            raise SignatureError(
+                f"{env_name} is owned by the very account reading it (uid {info.st_uid}), "
+                f"which can rewrite it at will; the anchor must belong to another "
+                f"principal (e.g. root, or a dedicated operator account), or the "
+                f"deployment must set {ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} "
+                f"to acknowledge that it has no principal separation: {path}")
     elif os.name == "nt":
         _refuse_non_owner_writable_windows(path, env_name)
     else:

@@ -53,6 +53,13 @@ export interface Approval {
   entityId: string | null;
   requestedAt: string;
   decidedAt: string | null;
+  // T-011 provenance the backend serializes as "safe to display" (domain.rs); optional because
+  // older rows / non-native decisions may not carry them. The enforcement tokens (nonce,
+  // request/confirmation digests, origin session) are #[serde(skip_serializing)] and never reach here.
+  originPrincipal?: string | null;
+  confirmedAt?: string | null;
+  confirmedBy?: string | null;
+  confirmationMethod?: string | null;
 }
 
 export interface Notification {
@@ -110,9 +117,11 @@ export interface Message {
   createdAt: string;
   /** Server-derived receipt trust badge for a governed turn (read-only; never
    *  webview-set). 'development_untrusted' → amber dev/untrusted badge; 'trusted_verified'
-   *  → green "Verified" badge (Wave 3b only); absent/null → no badge (ungoverned, or a
+   *  → green production "Verified" badge (Wave 3b only); 'demonstration_verified' → the reply
+   *  was produced INSIDE the in-process chain + verified under the DEMONSTRATION anchor (real
+   *  crypto, demonstration custody — NEVER production); absent/null → no badge (ungoverned, or a
    *  blocked governed turn — which produces no message, so it never shows here). */
-  receipt?: 'development_untrusted' | 'trusted_verified' | null;
+  receipt?: 'development_untrusted' | 'trusted_verified' | 'demonstration_verified' | null;
 }
 
 export interface NewMessage {
@@ -250,6 +259,15 @@ export interface Automation {
   updatedAt: string;
 }
 
+/** One recorded execution of an automation's action (run log). `outcome` is 'ok' | 'failed'. */
+export interface AutomationRun {
+  id: string;
+  automationId: string;
+  ranAt: string;
+  outcome: string;
+  detail: string;
+}
+
 export interface NewAutomation {
   name: string;
   trigger: string;
@@ -300,6 +318,9 @@ export interface DirListing {
   path: string;
   parent: string | null;
   entries: DirEntry[];
+  // True when the backend capped the listing (directory exceeded MAX_DIR_ENTRIES); the UI must
+  // surface this so a capped directory is not misread as "these are all the files".
+  truncated: boolean;
 }
 
 export interface FileContent {

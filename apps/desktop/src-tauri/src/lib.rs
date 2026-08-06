@@ -6,6 +6,8 @@ use tauri::Manager;
 
 mod ai;
 mod commands;
+mod governance;
+mod governed_selftest;
 mod governed_turn;
 mod files;
 
@@ -91,10 +93,41 @@ pub fn run() {
             // Sweep AI sandbox directories left by crashed/killed prior runs.
             ai::cleanup_stale_sandboxes();
             app.manage(AppState { db: Mutex::new(conn), _instance_lock: instance_lock });
+
+            // Phase 8: the local automation scheduler. Once a minute it fires every ENABLED
+            // automation whose interval trigger (`every: <N>{m|h|d}`) is due, running its LOCAL
+            // action and logging the run. Only local, non-AI actions ever fire unattended — an
+            // AI-reaching action routes through the governed, fail-closed chain, never this loop.
+            // A poisoned DB mutex is skipped (fail-closed, consistent with `locked`).
+            let scheduler_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    ticker.tick().await;
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    if let Some(state) = scheduler_handle.try_state::<AppState>() {
+                        if let Ok(conn) = state.db.lock() {
+                            let _ = brops_core::repo::automations::run_due(&conn, now_ms);
+                        }
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             governed_turn::governed_turn_execute,
+            // Phase-2 governance mirror (READ-ONLY; mirror, never decide). These
+            // commands only READ engine governance surfaces via the sidecar and fail
+            // closed to a typed Blocked/Unreachable — they hold no key/lease, touch no
+            // DB, and can author no decision.
+            governance::read_decision_ledger,
+            governance::read_evidence_chain,
+            governance::read_verifier_verdicts,
+            governance::read_engine_approval_queue,
             commands::list_projects,
             commands::create_project,
             commands::set_project_status,
@@ -112,6 +145,7 @@ pub fn run() {
             commands::list_approvals,
             commands::decide_approval,
             commands::reject_approval,
+            commands::escalate_approval,
             commands::confirm_approval,
             commands::list_notifications,
             commands::mark_notification_read,
@@ -120,6 +154,8 @@ pub fn run() {
             commands::list_activity,
             commands::list_conversations,
             commands::create_conversation,
+            commands::set_conversation_participants,
+            commands::list_conversation_participants,
             commands::list_messages,
             commands::post_message,
             commands::post_user_message,
@@ -154,6 +190,8 @@ pub fn run() {
             commands::create_automation,
             commands::set_automation_enabled,
             commands::delete_automation,
+            commands::run_automation,
+            commands::list_automation_runs,
             commands::list_integrations,
             commands::set_integration_status,
             commands::search_all,
@@ -162,6 +200,9 @@ pub fn run() {
             commands::ai_status,
             commands::reply_in_conversation,
             commands::stream_reply,
+            commands::demonstration_verified_reply,
+            commands::cancel_reply,
+            commands::open_window,
             commands::stream_ask,
             commands::stream_run_step,
             // Filesystem surface (M-8): unlike the commands above, these are
@@ -171,6 +212,10 @@ pub fn run() {
             files::list_dir,
             files::read_file,
             files::write_file,
+            // Owner-visible governed trust-chain self-test: runs the REAL in-process
+            // challenge→sign→verify→trusted_verified chain (Windows) and reports the
+            // honest outcome + custody posture. Never flips live AI turns.
+            governed_selftest::governed_trust_selftest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running BroPS");

@@ -6,16 +6,14 @@ import { ALL_ITEMS, type RouteId } from '../app/nav';
 // surface. No mock data: it states plainly that the workspace is not wired.
 export function Generic({ route }: { route: RouteId }) {
   const { t } = useApp();
-  const item = ALL_ITEMS.find((i) => i.id === route)!;
+  // Guard: an unknown route (e.g. a stale URL hash) must not crash — fall back to the
+  // raw id rather than dereferencing a missing nav item.
+  const item = ALL_ITEMS.find((i) => i.id === route);
   return (
     <>
-      <PageHeader title={t(item.labelKey)} subtitle={t(item.subtitleKey)} />
+      <PageHeader title={item ? t(item.labelKey) : String(route)} subtitle={item ? t(item.subtitleKey) : ''} />
       <Panel>
-        <EmptyState
-          glyph={item.icon}
-          title="Not yet connected to the backend"
-          hint="This workspace has no Tauri command surface yet. It will show real data once its backend is implemented (see ROADMAP Phase 4)."
-        />
+        <EmptyState glyph={item?.icon ?? '◍'} title={t('generic.title')} hint={t('generic.hint')} />
       </Panel>
     </>
   );

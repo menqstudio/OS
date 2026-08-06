@@ -43,6 +43,32 @@ mod linux {
         1
     }
 
+    /// Read-increment-write the recorder's durable head-sequence counter (audit F-02).
+    ///
+    /// The supervisor's evidence floor refuses a head at or below the one it already recorded, so this
+    /// number has to grow across RUNS — an in-run constant would make every turn of a deployment claim
+    /// the same head, which is exactly the defect being removed. A missing counter starts at 1; a
+    /// damaged one is `None` (⇒ the caller refuses) rather than silently restarting, because restarting
+    /// is indistinguishable from a rollback. Written through a temp file and renamed so a crash cannot
+    /// leave a truncated counter behind.
+    fn next_head_sequence(dir: &str) -> Option<u64> {
+        let path = std::path::Path::new(dir).join("evidence-head-sequence.json");
+        let current: u64 = match std::fs::read_to_string(&path) {
+            Ok(raw) => serde_json::from_str::<serde_json::Value>(&raw)
+                .ok()?
+                .get("head_sequence")?
+                .as_u64()?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(_) => return None,
+        };
+        let next = current.checked_add(1)?;
+        std::fs::create_dir_all(dir).ok()?;
+        let temporary = path.with_extension("json.tmp");
+        std::fs::write(&temporary, serde_json::json!({"head_sequence": next}).to_string()).ok()?;
+        std::fs::rename(&temporary, &path).ok()?;
+        Some(next)
+    }
+
     pub fn recorder(args: &[String]) -> i32 {
         let store = match flag(args, "--store") {
             Some(s) => s,
@@ -65,6 +91,28 @@ mod linux {
         };
         let cgroup = flag(args, "--cgroup").unwrap_or_else(|| "cgroup-live".to_string());
         let out_path = flag(args, "--out");
+        // Where to write the CONTAINMENT REPORT for this run (audit F-02). Optional so the flag can
+        // be added without breaking an older caller, but the broker always passes it and refuses the
+        // turn if the file does not appear — so its absence is never silently tolerated.
+        let containment_out = flag(args, "--containment-out");
+        // Where to write the per-run EVIDENCE CHAIN + its head (audit F-02, second half). The four
+        // `evidence_*` values the supervisor's terminal record carries — final_event_hash, event_count,
+        // last_sequence, head_sequence — were deployment constants the provisioner wrote once, so every
+        // receipt of the deployment claimed the same evidence head and the anti-rollback floor compared
+        // a constant against itself. They now come from a chain THIS process builds out of what it
+        // actually observed.
+        let evidence_out = flag(args, "--evidence-out");
+        // A recorder-owned directory holding the monotonic head-sequence counter. The head sequence has
+        // to increase across RUNS for the supervisor's evidence floor to mean anything, and only durable
+        // state can do that — an in-run value would be the same number every time, which is precisely
+        // the constant being replaced.
+        let evidence_state = flag(args, "--evidence-state");
+
+        // Keep plain copies for the containment report: the originals are moved into CStrings below.
+        let launcher_for_report = launcher.clone();
+        let executor_for_report = executor.clone();
+        let lease_for_report = lease.clone();
+        let cgroup_for_report = cgroup.clone();
 
         // Pre-build every C string + open the store inputs BEFORE fork (only async-signal-safe libc runs
         // between fork and execve).
@@ -189,6 +237,150 @@ mod linux {
                 let _ = std::fs::remove_file(&p);
             }
         }
+        // ---- containment evidence for THIS run (audit F-02) ----
+        //
+        // `containment_evidence_handle` used to address a provisioner stub — literal placeholder JSON
+        // written once, whose content address every receipt of the deployment then named. The isolated
+        // signer refuses to mint an envelope when the containment handle does not resolve (§1.5), so
+        // that gate proved only that the stub existed.
+        //
+        // These are facts THIS process observed. The launcher's own verdicts (the §2.7 FD contract, the
+        // privilege-drop order, the post-drop capability state, and the executor image integrity vs the
+        // lease pin) are attested here by their CONSEQUENCE: any one of them failing means no `fexecve`
+        // and a non-zero exit, so `launcher_exit == 0` is the observable form of "the gate passed". The
+        // launcher cannot report them directly without a 4th argv token or a 7th descriptor, and both
+        // are fixed by the rev-30 §2.7 closed-argv / FD contract — changing that is an Architect
+        // decision, so this report states what it saw and does not overclaim.
+        if let Some(cp) = containment_out.as_deref() {
+            if exit_code == 0 && !is_execve_fail && !report.is_empty() {
+                let sha = |p: &str| -> String {
+                    std::fs::read(p)
+                        .map(|b| brops_core::governed_message_store::sha256_hex(&b))
+                        .unwrap_or_default()
+                };
+                let (ruid, rgid) = unsafe { (libc::getuid(), libc::getgid()) };
+                // Sorted keys + compact separators: the bytes are content-addressed, so the encoding
+                // must be deterministic for the same facts.
+                let doc = serde_json::json!({
+                    "protocol": "brops.containment-evidence.v1",
+                    "cgroup": cgroup_for_report,
+                    "executor_path": executor_for_report,
+                    "executor_sha256": sha(&executor_for_report),
+                    "fd_contract": "0=/dev/null:ro,1=/dev/null:wo,2=/dev/null:wo,3=system:ro,4=history:ro,5=generation_config:ro,6=output:wo",
+                    "invoker_gid": rgid,
+                    "invoker_uid": ruid,
+                    "launcher_exit": exit_code,
+                    "launcher_gate": "passed",
+                    "launcher_path": launcher_for_report,
+                    "launcher_sha256": sha(&launcher_for_report),
+                    "lease_path": lease_for_report,
+                    "lease_sha256": sha(&lease_for_report),
+                    "output_bytes": report.len(),
+                });
+                // serde_json's Map is a BTreeMap by default: `to_vec` emits sorted keys with compact
+                // separators, so identical facts always content-address identically.
+                let bytes = match serde_json::to_vec(&doc) {
+                    Ok(b) => b,
+                    Err(_) => return err("recorder: cannot encode containment report"),
+                };
+                if std::fs::write(cp, &bytes).is_err() {
+                    return err("recorder: cannot write --containment-out");
+                }
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(cp, std::fs::Permissions::from_mode(0o644));
+            } else {
+                // A refused/empty run has no containment to evidence. Remove any stale file so the
+                // broker cannot address a previous run's report for this one.
+                let _ = std::fs::remove_file(cp);
+            }
+        }
+
+        // ---- the per-run EVIDENCE CHAIN (audit F-02, second half) ----
+        //
+        // Three hash-linked events describing what this recorder actually did, then a head over them.
+        // The link is `previous_event_hash`, so dropping or reordering an event changes every hash from
+        // that point on and the head no longer matches — which is the property the four constants could
+        // not have, since they described nothing.
+        if let Some(ep) = evidence_out.as_deref() {
+            if exit_code == 0 && !is_execve_fail && !report.is_empty() {
+                let sha = |p: &str| -> String {
+                    std::fs::read(p)
+                        .map(|b| brops_core::governed_message_store::sha256_hex(&b))
+                        .unwrap_or_default()
+                };
+                let head_sequence = match evidence_state.as_deref() {
+                    Some(dir) => match next_head_sequence(dir) {
+                        Some(n) => n,
+                        None => return err("recorder: cannot advance the evidence head sequence"),
+                    },
+                    // No durable counter ⇒ no honest head sequence. Refusing beats emitting a constant,
+                    // which is the defect this whole block exists to remove.
+                    None => return err("recorder needs --evidence-state with --evidence-out"),
+                };
+                let mut previous: Option<String> = None;
+                let mut events = Vec::new();
+                for (sequence, event_type, payload) in [
+                    (1u64, "lease-validated", serde_json::json!({
+                        "lease_path": lease_for_report, "lease_sha256": sha(&lease_for_report),
+                    })),
+                    (2, "execution-launched", serde_json::json!({
+                        "cgroup": cgroup_for_report,
+                        "executor_path": executor_for_report,
+                        "executor_sha256": sha(&executor_for_report),
+                        "launcher_path": launcher_for_report,
+                        "launcher_sha256": sha(&launcher_for_report),
+                    })),
+                    (3, "output-captured", serde_json::json!({
+                        "launcher_exit": exit_code,
+                        "output_bytes": report.len(),
+                        "output_sha256": brops_core::governed_message_store::sha256_hex(&report),
+                    })),
+                ] {
+                    let payload_bytes = match serde_json::to_vec(&payload) {
+                        Ok(b) => b,
+                        Err(_) => return err("recorder: cannot encode an evidence event"),
+                    };
+                    let event = serde_json::json!({
+                        "event_type": event_type,
+                        "payload_sha256": brops_core::governed_message_store::sha256_hex(&payload_bytes),
+                        "previous_event_hash": previous,
+                        "sequence": sequence,
+                    });
+                    let event_bytes = match serde_json::to_vec(&event) {
+                        Ok(b) => b,
+                        Err(_) => return err("recorder: cannot encode an evidence event"),
+                    };
+                    previous = Some(brops_core::governed_message_store::sha256_hex(&event_bytes));
+                    events.push(event);
+                }
+                let final_event_hash = match previous {
+                    Some(h) => h,
+                    None => return err("recorder: empty evidence chain"),
+                };
+                let doc = serde_json::json!({
+                    "event_count": events.len(),
+                    "events": events,
+                    "final_event_hash": final_event_hash,
+                    "head_sequence": head_sequence,
+                    "last_sequence": events.len(),
+                    "protocol": "brops.run-evidence-chain.v1",
+                });
+                let bytes = match serde_json::to_vec(&doc) {
+                    Ok(b) => b,
+                    Err(_) => return err("recorder: cannot encode the evidence chain"),
+                };
+                if std::fs::write(ep, &bytes).is_err() {
+                    return err("recorder: cannot write --evidence-out");
+                }
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(ep, std::fs::Permissions::from_mode(0o644));
+            } else {
+                // A refused run evidences nothing. Remove any stale chain so the broker cannot address a
+                // previous run's evidence as this one's.
+                let _ = std::fs::remove_file(ep);
+            }
+        }
+
         let report_str = String::from_utf8_lossy(&report);
         println!("EXECUTOR_REPORT: {report_str}");
         println!("RESULT: recorder launcher_exit={exit_code} report_bytes={}", report.len());

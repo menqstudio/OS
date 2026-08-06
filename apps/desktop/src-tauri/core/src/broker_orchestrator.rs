@@ -17,6 +17,12 @@ use crate::governed_turn_ipc::{
     IdempotencyDecision, RendererGovernedTurnResult, TurnReason, ValidatedRequest,
 };
 
+/// A `live` broker turn older than this is treated as stranded (a broker crash / lost settle) and
+/// reconciled to the terminal `blocked` state before a new turn is decided, so it cannot permanently
+/// wedge the conversation via the one-live-per-conversation index (audit F-34). A real governed turn
+/// settles well within this bound; a slow-but-live turn younger than this is never reclaimed.
+const BROKER_TURN_STALE_TTL_MS: i64 = 300_000; // 5 minutes
+
 /// The governed execution + verification chain (challenge → authority → supervisor → signer →
 /// isolated-signer envelope verification), abstracted. A real impl drives the AF_UNIX chain; a test
 /// injects a fake. Returns the verified accepted output (whose body length+SHA-256 matched the signed
@@ -63,6 +69,12 @@ pub fn run_governed_turn(
     };
     let crid = req.client_request_id.clone();
     let conv = req.conversation_id.clone();
+
+    // 1b. Reconcile a stranded `live` turn (a prior crash / lost settle) BEFORE the idempotency decision:
+    //     an unsettled live row would otherwise both fail the `decide` below as turn_in_progress AND block
+    //     every future turn for this conversation via the one-live index — permanently wedging it (audit
+    //     F-34). Best-effort: a failure here just leaves the prior behaviour unchanged.
+    let _ = broker_turns::expire_stale_live(conn, now_ms, BROKER_TURN_STALE_TTL_MS);
 
     // 2. Payload-aware idempotency (rev-30 P1-1).
     match broker_turns::decide(conn, &req) {
