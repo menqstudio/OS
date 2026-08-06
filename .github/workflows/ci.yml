@@ -48,6 +48,52 @@ jobs:
       - name: Test the SQLite data core
         run: cargo test -p brops-core --manifest-path apps/desktop/src-tauri/Cargo.toml
 
+  live-governed-turn:
+    name: Linux · LIVE 7-service governed turn (real uids, setuid launcher)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      # `engine/ci/live/run_live_turn.sh` is the ONLY thing that exercises the real OS trust
+      # boundary: six dedicated uids, AF_UNIX + SO_PEERCRED peer auth, per-service key custody
+      # modes, and the privileged recorder → setuid launcher → contained executor spawn. Until now
+      # nothing re-ran it — `CURRENT_LINUX_E2E: proven` rested on a single manual run that no gate
+      # reproduced (independent audit, ci-tests section). A hosted ubuntu runner has everything the
+      # script asks for: passwordless sudo, useradd, setuid on ext4, /opt, and sudoers.d.
+      - name: Install engine crypto dependency
+        run: pip install --require-hashes -r engine/requirements-ci.txt
+      - name: Build the live-turn binaries (launcher + recorder/executor/driver)
+        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml -p brops-launcher -p brops-governed-live
+      # The script documents these accounts as "already provisioned on the box"; on an ephemeral
+      # runner we provision them here. Fixed uids so a failure is legible against the design's
+      # §0 principal table. `--no-create-home` keeps them without a traversable home, which is the
+      # posture the design assumes.
+      - name: Provision the six service accounts
+        run: |
+          set -eu
+          for spec in \
+            "brops-verifier_broker:5001" \
+            "brops-challenge:5002" \
+            "brops-supervisor:5004" \
+            "brops-recorder:5005" \
+            "brops-signer:5006" \
+            "brops-executor:5007" ; do
+            user="${spec%%:*}"; uid="${spec##*:}"
+            sudo groupadd -g "$uid" "$user"
+            sudo useradd -u "$uid" -g "$uid" -M --no-create-home -s /usr/sbin/nologin "$user"
+          done
+          id brops-verifier_broker; id brops-executor
+      # Fail-closed by construction: the script exits non-zero unless the driver prints
+      # `production_verified=true bound=true`, and it never fabricates an acceptance. A RED here
+      # means the live chain is broken — which is exactly what this job exists to surface.
+      - name: Run ONE live governed turn end to end
+        run: sudo -E env "PATH=$PATH" engine/ci/live/run_live_turn.sh
+
   cockpit-host:
     name: Cockpit · Tauri host (cargo check + ai tests)
     runs-on: ubuntu-latest
