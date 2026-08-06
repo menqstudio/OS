@@ -65,8 +65,9 @@ done
 LIVE=/opt/brops-live
 STORE="$LIVE/store"; SOCK="$LIVE/sock"; REPORT="$LIVE/report"; TCB="$LIVE/tcb"; BIN="$LIVE/bin"; KEYS="$LIVE/keys"
 SUPSTATE="$LIVE/supervisor-state"   # the supervisor's PRIVATE durable ledger (F-01), 0700
+RECSTATE="$LIVE/recorder-state"     # the recorder's PRIVATE evidence head-sequence counter (F-02), 0700
 rm -rf "$LIVE"
-mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$SUPSTATE" "$LIVE/engine"
+mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$SUPSTATE" "$RECSTATE" "$LIVE/engine"
 
 # Stage the Python tree so the service accounts can import the cores + front doors + live runners (the repo
 # may live under a home dir the service uids cannot traverse). Preserve the engine/ci/live + engine/runtime
@@ -187,6 +188,11 @@ chgrp brops-store "$STORE"/* 2>/dev/null || true
 # account. If any other uid could write here, the attestation would again describe state the
 # attacker chose. This directory must never be added to the shared-group lines above.
 chown -R "$SUPERVISOR_USER": "$SUPSTATE"; chmod 0700 "$SUPSTATE"
+
+# The recorder's evidence head-sequence counter is the same kind of thing (F-02): it is what makes
+# the evidence head MONOTONIC across runs, so if another uid could rewind it, the supervisor's
+# anti-rollback floor would again be comparing a number the attacker chose. Recorder-private.
+chown -R "$RECORDER_USER": "$RECSTATE"; chmod 0700 "$RECSTATE"
 
 # ----- sudoers: the broker may spawn ONLY the recorder helper as the recorder account (invoker gate) ----
 SUDOERS=/etc/sudoers.d/brops-live-recorder

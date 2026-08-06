@@ -320,10 +320,9 @@ mod linux {
             // longer read here. They are the values the isolated signer allowlists, so a broker
             // that named them was choosing what it would be checked against; they now come from
             // the SUPERVISOR's own provisioning (`config.supervisor.*`) and never travel the wire.
-            evidence_final_event_hash: s(&cfg, &["facts", "evidence_final_event_hash"]).unwrap_or_default(),
-            evidence_event_count: i(&cfg, &["facts", "evidence_event_count"]).unwrap_or(0),
-            evidence_last_sequence: i(&cfg, &["facts", "evidence_last_sequence"]).unwrap_or(0),
-            evidence_head_sequence: i(&cfg, &["facts", "evidence_head_sequence"]).unwrap_or(0),
+            // F-02: measured by the recorder per run, not configured. Config supplies only the
+            // recorder-owned directory holding its durable head-sequence counter.
+            evidence_state_dir: s(&cfg, &["execution", "evidence_state_dir"]).unwrap_or_default(),
         };
 
         // ---- (D) run ONE governed turn through the real chain ----

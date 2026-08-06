@@ -370,10 +370,10 @@ mod linux {
             // longer read here. They are the values the isolated signer allowlists, so a broker
             // that named them was choosing what it would be checked against; they now come from
             // the SUPERVISOR's own provisioning (`config.supervisor.*`) and never travel the wire.
-            evidence_final_event_hash: s(&["facts", "evidence_final_event_hash"]).unwrap_or_default(),
-            evidence_event_count: i(&["facts", "evidence_event_count"]).unwrap_or(0),
-            evidence_last_sequence: i(&["facts", "evidence_last_sequence"]).unwrap_or(0),
-            evidence_head_sequence: i(&["facts", "evidence_head_sequence"]).unwrap_or(0),
+            // F-02: the four evidence-head values are no longer read from config — the recorder
+            // measures them per run and writes them to `--evidence-out`. What config supplies is
+            // only WHERE the recorder keeps its durable head-sequence counter.
+            evidence_state_dir: s(&["execution", "evidence_state_dir"]).unwrap_or_default(),
         };
 
         eprintln!("brops-broker: trusted manifest provisioned — serving the live governed chain");

@@ -92,14 +92,12 @@ STORE_INPUTS = {
     # content-addresses into this store, so the containment handle names what this run actually did.
 }
 
-# STILL a deployment constant — the open half of audit F-02/F-18. The evidence chain these
-# describe is not measured anywhere; wiring the recorder's real chain head is a separate blocker.
-# `last_sequence` now equals `event_count` because the durable floor validates that relationship
-# (a head claiming 3 events but a last sequence of 12 is malformed, and used to pass unchecked).
-EVIDENCE_FINAL_EVENT_HASH = "77" * 32
-EVIDENCE_EVENT_COUNT = 3
-EVIDENCE_LAST_SEQUENCE = 3
-EVIDENCE_HEAD_SEQUENCE = 12
+# (audit F-02/F-18, CLOSED) The four evidence-head values used to live here as deployment
+# constants, so every receipt of the deployment named the same evidence head and the
+# supervisor's anti-rollback floor compared a constant against itself. The RECORDER now builds
+# a hash-linked chain of what it observed for each run and writes its head to `--evidence-out`;
+# the broker reads that file and reports those values to `complete-run`. Nothing about the
+# evidence head is configurable any more, which is why there is nothing left here.
 
 # Service account uids (already provisioned on the box; overridable for a test harness).
 DEFAULT_UIDS = {
@@ -205,7 +203,12 @@ def main() -> int:
     # from. It is the supervisor's authority, so run_live_turn.sh chowns it to the supervisor
     # account at mode 0700 and no other uid may read or write it.
     supervisor_state_dir = os.path.join(root, "supervisor-state")
-    for d in (keys_dir, store_dir, sock_dir, report_dir, tcb_dir, bin_dir, supervisor_state_dir):
+    # The recorder's PRIVATE state (F-02): its monotonic evidence head-sequence counter. Like the
+    # supervisor ledger this is an authority, not a shared work area — run_live_turn.sh chowns it
+    # to the recorder account at 0700.
+    evidence_state_dir = os.path.join(root, "recorder-state")
+    for d in (keys_dir, store_dir, sock_dir, report_dir, tcb_dir, bin_dir, supervisor_state_dir,
+              evidence_state_dir):
         os.makedirs(d, exist_ok=True)
 
     # ---- (1) generate the four keypairs; write private (owner-loaded) + public hex ----
@@ -358,6 +361,11 @@ def main() -> int:
             "cgroup_arg": "cgroup-live",
             "store_dir": store_dir,
             "report_dir": report_dir,
+            # F-02: the recorder's OWN durable head-sequence counter. The evidence head has to
+            # grow across runs for the supervisor's anti-rollback floor to mean anything, and
+            # only durable state can do that — the constant it replaces made every turn of the
+            # deployment claim the same head. Recorder-owned, 0700 (run_live_turn.sh).
+            "evidence_state_dir": evidence_state_dir,
         },
         # The facts the EXECUTING CHAIN reports (via `complete-run`), and nothing else.
         #
@@ -367,12 +375,6 @@ def main() -> int:
         # to the `supervisor` block above, which only the supervisor reads. They are deleted
         # rather than left behind, so nobody reading this config can conclude the broker still
         # supplies the identities the signer allowlists.
-        "facts": {
-            "evidence_final_event_hash": EVIDENCE_FINAL_EVENT_HASH,
-            "evidence_event_count": EVIDENCE_EVENT_COUNT,
-            "evidence_last_sequence": EVIDENCE_LAST_SEQUENCE,
-            "evidence_head_sequence": EVIDENCE_HEAD_SEQUENCE,
-        },
         "resolved": {
             "workspace_id": WORKSPACE_ID,
             "install_id": INSTALL_ID,
