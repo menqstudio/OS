@@ -10,7 +10,7 @@
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "feat/govern-stream-run-step"
+    "branch": "fix/release-setup-node-pin"
   },
   "prs": [],
   "status_tokens": {
@@ -135,11 +135,11 @@
     "CI-green is NOT design/audit-green; the Linux production proof is NOT a Windows production proof (Windows broker is a release blocker)."
   ],
   "current_workflow_pr": {
-    "number": 52,
-    "branch": "feat/govern-stream-run-step",
+    "number": 54,
+    "branch": "fix/release-setup-node-pin",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #52 body, kept in lockstep with every push. check_repo_state requires event head == live headRefOid == marker. Base is main directly (branch is a child of main tip 1e8597c), so the base-sha baseline check applies: baseline_main_head_at_sync == the PR base sha.",
-    "note": "PR #52 = Phase-2 slice 3 (final) — stream_run_step routed through the governed wall. It produces a run step result (persisted under a claiming attempt), so it reuses the slice-2 conversation-less held accept: the governed turn's VERIFIED body becomes the step result via complete_step_execution; a governed Block fails the attempt (no ungoverned result persisted). ai::generate_stream demoted to the dev-only fallthrough. ALL THREE ungoverned provider back doors (reply_in_conversation #50, stream_ask #51, stream_run_step) are now closed — no production command reaches the model provider except through the governance wall. No gate-logic change; no production trusted_verified; fail-closed preserved."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #54 body, kept in lockstep with every push. check_repo_state requires event head == live headRefOid == marker. Base is main directly, so the base-sha baseline check applies: baseline_main_head_at_sync == the PR base sha.",
+    "note": "PR #54 = the release-workflow supply-chain hotfix against main: the setup-node pin in .github/workflows/release.yml named a SHA that does not exist in actions/setup-node, so the release workflow could not resolve its own action; it is re-pinned to the real v4.1.0 commit and tools/check_action_pins.py (11 self-tests, wired as the supply-chain `action-pins` job) now fails the build on any unresolvable or unpinned action reference instead of leaving it to be discovered at release time. Also carries the two supply-chain remediations main still lacks — the undici ^7.29.0 override that clears the un-waived high npm advisory, and the three triaged cryptography X.509/PKCS#7 waivers for surfaces the engine's Ed25519-only usage never reaches — so this PR is green on its own base rather than depending on PR #53 merging first."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",

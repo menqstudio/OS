@@ -1,6 +1,16 @@
 # PyPI advisory IDs consciously waived. One per line, each with a triage note.
-# cryptography 46.0.3 advisories — engine CI dependency; tracked for a version bump in a follow-up.
+# cryptography 46.0.3 advisories — the engine uses ONLY the Ed25519 signing API
+# (Ed25519PrivateKey/PublicKey + raw serialization); it never touches X.509 verification
+# or PKCS#7, which is the affected surface of EVERY advisory below. A 50.0.0 bump was
+# attempted (commit reverted) and broke the engine's governance runtime, so we waive
+# these rather than force a breaking major for vulnerabilities the used surface can't reach.
 GHSA-537c-gmf6-5ccf
 PYSEC-2026-2141
 PYSEC-2026-35
 PYSEC-2026-36
+# X.509 verifier wildcard permittedSubtrees escape (X.509 path validation — unused):
+GHSA-m2h6-j472-rp4c
+# PKCS#7 EnvelopedData decryption Bleichenbacher oracle (PKCS#7 — unused):
+GHSA-g6cj-pr64-35w5
+# X.509 exponential path-building via duplicate self-signed intermediates (X.509 — unused):
+GHSA-jwv3-5hgf-82ww
