@@ -33,6 +33,13 @@ mod win {
             attest_signing_seed: seed,
             launcher_executable_sha256: cfg.supervisor_cfg.launcher_executable_sha256.clone(),
             executor_executable_sha256: cfg.supervisor_cfg.executor_executable_sha256.clone(),
+            // F-01: the identities the isolated signer allowlists are the supervisor's own
+            // provisioning; the execution no longer carries them alongside the run facts.
+            executor_id: cfg.facts.executor_id.clone(),
+            builder_id: cfg.facts.builder_id.clone(),
+            policy_id: cfg.facts.policy_id.clone(),
+            policy_version: cfg.facts.policy_version.clone(),
+            policy_bundle_handle: cfg.facts.policy_bundle_handle.clone(),
         });
         println!("RESULT: supervisor listening pipe={} broker_sid={}", cfg.pipes.supervisor, cfg.allowed_broker_sid);
         pipe::run_server(&cfg.pipes.supervisor, &cfg.allowed_broker_sid, &core);

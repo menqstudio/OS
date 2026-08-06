@@ -8,7 +8,7 @@
 use crate::crypto;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde_json::{json, Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -312,35 +312,31 @@ const ATTEST_INPUT_FIELDS: [&str; 28] = [
     "evidence_head_sequence",
 ];
 
-const ATTEST_STR_FIELDS: [&str; 12] = [
-    "run_id",
-    "execution_attempt_id",
-    "task_id",
-    "request_nonce",
-    "receipt_id",
-    "workspace_id",
-    "install_id",
-    "supervisor_id",
-    "executor_id",
-    "builder_id",
-    "policy_id",
-    "policy_version",
-];
-const ATTEST_HANDLE_FIELDS: [&str; 9] = [
-    "policy_bundle_handle",
-    "generation_config_handle",
-    "system_handle",
-    "history_handle",
+/// The EXACT shape of `complete-run`'s `produced` object — the only §4.9 values the supervisor
+/// cannot derive itself. Deliberately absent: every id, nonce, identity and acceptance timestamp
+/// (F-01: the supervisor already owns those, and taking them here would re-open the oracle).
+const COMPLETION_HANDLE_FIELDS: [&str; 6] = [
     "output_handle",
     "containment_evidence_handle",
     "record_handle",
     "lease_handle",
     "execution_receipt_handle",
+    "evidence_final_event_hash",
 ];
-const ATTEST_INT_FIELDS: [&str; 6] = [
-    "requested_at",
-    "completed_at",
-    "challenge_accepted_at_ms",
+const COMPLETION_INT_FIELDS: [&str; 4] = [
+    "completed_at_ms",
+    "evidence_event_count",
+    "evidence_last_sequence",
+    "evidence_head_sequence",
+];
+const COMPLETION_FIELDS: [&str; 10] = [
+    "output_handle",
+    "containment_evidence_handle",
+    "record_handle",
+    "lease_handle",
+    "execution_receipt_handle",
+    "evidence_final_event_hash",
+    "completed_at_ms",
     "evidence_event_count",
     "evidence_last_sequence",
     "evidence_head_sequence",
@@ -353,20 +349,88 @@ pub struct SupervisorConfig {
     pub attest_signing_seed: [u8; 32],
     pub launcher_executable_sha256: String,
     pub executor_executable_sha256: String,
+    // ---- the identity block the isolated signer ALLOWLISTS (independent audit F-01) ----
+    // These used to reach the signed evidence through `attest-run {facts}` — i.e. the caller chose
+    // the values its own allowlist check would be performed against. They are supervisor
+    // provisioning now and cross no boundary.
+    pub executor_id: String,
+    pub builder_id: String,
+    pub policy_id: String,
+    pub policy_version: String,
+    pub policy_bundle_handle: String,
 }
+
+/// The run-produced half of the §4.9 evidence, reported ONCE via `complete-run`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Completion {
+    output_handle: String,
+    containment_evidence_handle: String,
+    record_handle: String,
+    lease_handle: String,
+    execution_receipt_handle: String,
+    completed_at_ms: i64,
+    evidence_final_event_hash: String,
+    evidence_event_count: i64,
+    evidence_last_sequence: i64,
+    evidence_head_sequence: i64,
+}
+
+/// The supervisor's OWN record of one accepted governed turn — the state a run attestation is
+/// rebuilt from. Every field is copied out of the signature-verified challenge payload or stamped
+/// by the supervisor itself; none is taken from a later caller message.
+struct Acceptance {
+    run_id: String,
+    task_id: String,
+    workspace_id: String,
+    install_id: String,
+    request_nonce: String,
+    requested_at_ms: i64,
+    challenge_accepted_at_ms: i64,
+    system_handle: String,
+    history_handle: String,
+    generation_config_handle: String,
+    receipt_id: String,
+    lease_id: String,
+    lease_expires_at_ms: i64,
+    state: &'static str,
+    completion: Option<Completion>,
+}
+
+const ST_LEASE_READY: &str = "LEASE_READY";
+const ST_EXECUTION_STARTING: &str = "EXECUTION_STARTING";
+const ST_EXECUTING: &str = "EXECUTING";
+const ST_COMPLETED: &str = "COMPLETED";
+const ST_EXPIRED: &str = "EXPIRED";
 
 pub struct Supervisor {
     cfg: SupervisorConfig,
     counter: Mutex<u64>,
-    /// execution_attempt_ids of leases this supervisor minted via accept-open, not yet attested. attest-run
-    /// requires the facts' execution_attempt_id to be one of these (one-time consume) — so the supervisor
-    /// only attests a run it actually leased, not arbitrary caller-supplied evidence (audit R3).
-    issued_leases: Mutex<BTreeSet<String>>,
+    /// The supervisor's acceptance state, keyed by `execution_attempt_id`.
+    ///
+    /// **F-01.** This replaces a bare set of issued attempt ids. Holding only the ids let
+    /// `attest-run` bind to a real lease while still SIGNING the evidence the caller supplied with
+    /// it — so a party able to obtain any lease could still describe the run however it liked. The
+    /// supervisor now holds the run's identity, request binding, lease window and terminal
+    /// completion, and builds the evidence itself. A run it never accepted has no record, and no
+    /// request field exists through which the missing facts could be supplied.
+    ///
+    /// (Proof-kit scope: this state is in-process, matching the rest of the Windows machine-proof.
+    /// The production Linux supervisor keeps the equivalent state in a durable SQLite ledger over
+    /// the shared DDL — `engine/runtime/supervisor_ledger.sql`.)
+    accepted: Mutex<BTreeMap<String, Acceptance>>,
+    /// challenge content-address → the attempt it already minted, so a replayed signed challenge
+    /// returns the ORIGINAL lease instead of a second execution attempt.
+    by_challenge: Mutex<BTreeMap<String, String>>,
 }
 
 impl Supervisor {
     pub fn new(cfg: SupervisorConfig) -> Self {
-        Supervisor { cfg, counter: Mutex::new(0), issued_leases: Mutex::new(BTreeSet::new()) }
+        Supervisor {
+            cfg,
+            counter: Mutex::new(0),
+            accepted: Mutex::new(BTreeMap::new()),
+            by_challenge: Mutex::new(BTreeMap::new()),
+        }
     }
 
     pub fn dispatch(&self, req: &Value, now_ms: i64) -> Value {
@@ -377,9 +441,22 @@ impl Supervisor {
         match o.get("op").and_then(Value::as_str) {
             Some("accept-open") => self.accept_open(o, now_ms),
             Some("launch-gate") => self.launch_gate(o, now_ms),
-            Some("attest-run") => self.attest_run(o, now_ms),
+            Some("execution-started") => self.execution_started(o),
+            Some("complete-run") => self.complete_run(o),
+            Some("attest-run") => self.attest_run(o),
             _ => refuse("?", "malformed"),
         }
+    }
+
+    /// The lease object for an attempt, rebuilt from the supervisor's own record.
+    fn lease_json(&self, attempt: &str, a: &Acceptance) -> Value {
+        json!({
+            "lease_id": a.lease_id,
+            "execution_attempt_id": attempt,
+            "lease_expires_at_ms": a.lease_expires_at_ms,
+            "launcher_executable_sha256": self.cfg.launcher_executable_sha256,
+            "executor_executable_sha256": self.cfg.executor_executable_sha256,
+        })
     }
 
     fn accept_open(&self, o: &Map<String, Value>, now_ms: i64) -> Value {
@@ -454,75 +531,260 @@ impl Supervisor {
         if recomputed != get_str(payload, "request_sha256").unwrap() {
             return refuse("accept-open", "request_sha256_mismatch");
         }
+        // Phase C — the challenge must be addressed to THIS supervisor. Authentic for another
+        // supervisor is not authorization for this one to lease and attest it (F-01).
+        if get_str(payload, "supervisor_id").as_deref() != Some(self.cfg.supervisor_id.as_str()) {
+            return refuse("accept-open", "supervisor_mismatch");
+        }
+
+        // A replay of the SAME signed challenge returns the ORIGINAL lease. The supervisor's own
+        // content address of the payload it just verified is the key, so a caller cannot obtain a
+        // second execution attempt by resubmitting.
+        let challenge_handle = crypto::sha256_hex(&crypto::jcs(payload));
+        if let Some(existing) = self.by_challenge.lock().unwrap().get(&challenge_handle).cloned() {
+            let accepted = self.accepted.lock().unwrap();
+            if let Some(a) = accepted.get(&existing) {
+                return json!({
+                    "ok": true, "op": "accept-open", "lease": self.lease_json(&existing, a)
+                });
+            }
+        }
+
         // Mint the lease — launcher/executor digests are the supervisor's OWN config, never the wire.
         let mut c = self.counter.lock().unwrap();
         *c += 1;
         let execution_attempt_id = format!("EA-{}-{}", now_ms, *c);
-        // Record the leased execution_attempt_id so attest-run can only attest a run we actually leased (R3).
-        self.issued_leases.lock().unwrap().insert(execution_attempt_id.clone());
-        let lease = json!({
-            "lease_id": format!("L-{}-{}", now_ms, *c),
-            "execution_attempt_id": execution_attempt_id,
-            "lease_expires_at_ms": now_ms + LEASE_DURATION_MS,
-            "launcher_executable_sha256": self.cfg.launcher_executable_sha256,
-            "executor_executable_sha256": self.cfg.executor_executable_sha256,
-        });
+        let acceptance = Acceptance {
+            run_id: get_str(payload, "run_id").unwrap_or_default(),
+            task_id: get_str(payload, "task_id").unwrap_or_default(),
+            workspace_id: get_str(payload, "workspace_id").unwrap(),
+            install_id: get_str(payload, "install_id").unwrap(),
+            request_nonce: get_str(payload, "request_nonce").unwrap(),
+            requested_at_ms,
+            challenge_accepted_at_ms: now_ms,
+            system_handle: get_str(payload, "system_sha256").unwrap(),
+            history_handle: get_str(payload, "history_sha256").unwrap(),
+            generation_config_handle: get_str(payload, "generation_config_sha256").unwrap(),
+            // Minted per turn by the supervisor: the §7.1(d) replay key must not be a deployment
+            // constant (audit F-02).
+            receipt_id: format!("R-{}-{}", now_ms, *c),
+            lease_id: format!("L-{}-{}", now_ms, *c),
+            lease_expires_at_ms: now_ms + LEASE_DURATION_MS,
+            state: ST_LEASE_READY,
+            completion: None,
+        };
+        let lease = self.lease_json(&execution_attempt_id, &acceptance);
+        self.by_challenge
+            .lock()
+            .unwrap()
+            .insert(challenge_handle, execution_attempt_id.clone());
+        self.accepted.lock().unwrap().insert(execution_attempt_id, acceptance);
         json!({ "ok": true, "op": "accept-open", "lease": lease })
     }
 
+    /// The §5 step-8a gate, BY ATTEMPT ID. The caller no longer hands back the lease it is judged
+    /// against (audit F-23) — the supervisor reads the window it stamped at acceptance and moves the
+    /// attempt forward, or durably EXPIREs it.
     fn launch_gate(&self, o: &Map<String, Value>, now_ms: i64) -> Value {
-        let lease = match o.get("lease").and_then(Value::as_object) {
-            Some(l) => l,
+        if !exact_keys(o, &["op", "execution_attempt_id"]) {
+            return refuse("launch-gate", "malformed");
+        }
+        let attempt = match get_str(o, "execution_attempt_id") {
+            Some(s) => s,
             None => return refuse("launch-gate", "malformed"),
         };
-        let expires = match get_i64(lease, "lease_expires_at_ms") {
-            Some(n) => n,
-            None => return refuse("launch-gate", "malformed"),
+        let mut accepted = self.accepted.lock().unwrap();
+        let a = match accepted.get_mut(&attempt) {
+            Some(a) => a,
+            None => return refuse("launch-gate", "unknown_attempt"),
         };
-        if now_ms + MIN_LAUNCH_REMAINING_MS > expires {
+        if a.state != ST_LEASE_READY {
+            return refuse("launch-gate", "illegal_state");
+        }
+        if now_ms + MIN_LAUNCH_REMAINING_MS > a.lease_expires_at_ms {
+            a.state = ST_EXPIRED;
             return refuse("launch-gate", "lease_expired");
         }
-        json!({ "ok": true, "op": "launch-gate", "proceed": true, "lease": Value::Object(lease.clone()) })
+        a.state = ST_EXECUTION_STARTING;
+        json!({ "ok": true, "op": "launch-gate", "proceed": true, "execution_attempt_id": attempt })
     }
 
-    fn attest_run(&self, o: &Map<String, Value>, _now_ms: i64) -> Value {
-        let facts = match o.get("facts").and_then(Value::as_object) {
-            Some(f) => f,
-            None => return refuse("attest-run", "malformed"),
+    /// `EXECUTION_STARTING → EXECUTING` on confirmed-running process metadata.
+    fn execution_started(&self, o: &Map<String, Value>) -> Value {
+        if !exact_keys(
+            o,
+            &["op", "execution_attempt_id", "process_group_id", "cgroup_id",
+              "execution_started_marker"],
+        ) {
+            return refuse("execution-started", "malformed");
+        }
+        let attempt = match get_str(o, "execution_attempt_id") {
+            Some(s) => s,
+            None => return refuse("execution-started", "malformed"),
         };
-        if !exact_keys(facts, &ATTEST_INPUT_FIELDS) {
+        let mut accepted = self.accepted.lock().unwrap();
+        let a = match accepted.get_mut(&attempt) {
+            Some(a) => a,
+            None => return refuse("execution-started", "unknown_attempt"),
+        };
+        if a.state != ST_EXECUTION_STARTING {
+            return refuse("execution-started", "illegal_state");
+        }
+        a.state = ST_EXECUTING;
+        json!({ "ok": true, "op": "execution-started", "execution_attempt_id": attempt })
+    }
+
+    /// The WRITE-ONCE record of what the run produced. `produced` carries ONLY run-produced values —
+    /// every id, nonce, identity and acceptance timestamp is an unknown field, because the supervisor
+    /// already holds those and accepting them here would re-open F-01 through a second door.
+    fn complete_run(&self, o: &Map<String, Value>) -> Value {
+        if !exact_keys(o, &["op", "execution_attempt_id", "produced"]) {
+            return refuse("complete-run", "malformed");
+        }
+        let attempt = match get_str(o, "execution_attempt_id") {
+            Some(s) => s,
+            None => return refuse("complete-run", "malformed"),
+        };
+        let p = match o.get("produced").and_then(Value::as_object) {
+            Some(p) => p,
+            None => return refuse("complete-run", "malformed"),
+        };
+        if !exact_keys(p, &COMPLETION_FIELDS) {
+            return refuse("complete-run", "malformed");
+        }
+        for k in COMPLETION_HANDLE_FIELDS {
+            match get_str(p, k) {
+                Some(s) if is_hex64(&s) => {}
+                _ => return refuse("complete-run", "malformed"),
+            }
+        }
+        let mut ints = [0i64; 4];
+        for (i, k) in COMPLETION_INT_FIELDS.iter().enumerate() {
+            match get_i64(p, k) {
+                Some(n) if n >= 0 => ints[i] = n,
+                _ => return refuse("complete-run", "malformed"),
+            }
+        }
+        let completion = Completion {
+            output_handle: get_str(p, "output_handle").unwrap(),
+            containment_evidence_handle: get_str(p, "containment_evidence_handle").unwrap(),
+            record_handle: get_str(p, "record_handle").unwrap(),
+            lease_handle: get_str(p, "lease_handle").unwrap(),
+            execution_receipt_handle: get_str(p, "execution_receipt_handle").unwrap(),
+            completed_at_ms: ints[0],
+            evidence_final_event_hash: get_str(p, "evidence_final_event_hash").unwrap(),
+            evidence_event_count: ints[1],
+            evidence_last_sequence: ints[2],
+            evidence_head_sequence: ints[3],
+        };
+
+        let mut accepted = self.accepted.lock().unwrap();
+        let a = match accepted.get_mut(&attempt) {
+            Some(a) => a,
+            None => return refuse("complete-run", "unknown_attempt"),
+        };
+        match &a.completion {
+            // Write-once: an identical retry is idempotent, any divergence is refused. A second
+            // execution cannot rewrite what was already attested.
+            Some(existing) => {
+                if *existing != completion {
+                    return refuse("complete-run", "completion_conflict");
+                }
+                return json!({
+                    "ok": true, "op": "complete-run", "execution_attempt_id": attempt,
+                    "recorded": "idempotent"
+                });
+            }
+            None => {
+                if a.state != ST_EXECUTING {
+                    return refuse("complete-run", "illegal_state");
+                }
+                a.completion = Some(completion);
+                a.state = ST_COMPLETED;
+            }
+        }
+        json!({
+            "ok": true, "op": "complete-run", "execution_attempt_id": attempt, "recorded": "created"
+        })
+    }
+
+    /// **F-01.** `attest-run` NAMES the run; it never describes it. The request carries only
+    /// `{run_id, execution_attempt_id}` — the old `facts` object does not exist, and because the
+    /// shape check is exhaustive an old-protocol caller gets a hard refusal rather than an
+    /// attestation over evidence it chose. The evidence is assembled from the supervisor's own
+    /// terminal record plus its own provisioning, so a run it did not accept, gate, watch start and
+    /// record as completed has nothing to attest.
+    fn attest_run(&self, o: &Map<String, Value>) -> Value {
+        if !exact_keys(o, &["op", "run_id", "execution_attempt_id"]) {
             return refuse("attest-run", "malformed");
         }
-        for k in ATTEST_STR_FIELDS {
-            match get_str(facts, k) {
-                Some(s) if id_ok(&s) => {}
-                _ => return refuse("attest-run", "malformed"),
-            }
-        }
-        for k in ATTEST_HANDLE_FIELDS {
-            match get_str(facts, k) {
-                Some(s) if is_hex64(&s) => {}
-                _ => return refuse("attest-run", "malformed"),
-            }
-        }
-        match get_str(facts, "evidence_final_event_hash") {
-            Some(s) if is_hex64(&s) => {}
+        let run_id = match get_str(o, "run_id") {
+            Some(s) if id_ok(&s) => s,
             _ => return refuse("attest-run", "malformed"),
+        };
+        let attempt = match get_str(o, "execution_attempt_id") {
+            Some(s) if id_ok(&s) => s,
+            _ => return refuse("attest-run", "malformed"),
+        };
+
+        let accepted = self.accepted.lock().unwrap();
+        let a = match accepted.get(&attempt) {
+            Some(a) => a,
+            None => return refuse("attest-run", "no_terminal_run_state"),
+        };
+        if a.run_id != run_id || a.state != ST_COMPLETED {
+            return refuse("attest-run", "no_terminal_run_state");
         }
-        for k in ATTEST_INT_FIELDS {
-            if get_i64(facts, k).is_none() {
-                return refuse("attest-run", "malformed");
-            }
+        let c = match &a.completion {
+            Some(c) => c,
+            None => return refuse("attest-run", "no_terminal_run_state"),
+        };
+
+        // Assemble the §4.9 evidence: the acceptance row (written from the SIGNED challenge), the
+        // write-once completion, and the supervisor's OWN provisioned identities.
+        let mut evidence = Map::new();
+        for (k, v) in [
+            ("run_id", a.run_id.clone()),
+            ("execution_attempt_id", attempt.clone()),
+            ("task_id", a.task_id.clone()),
+            ("request_nonce", a.request_nonce.clone()),
+            ("receipt_id", a.receipt_id.clone()),
+            ("workspace_id", a.workspace_id.clone()),
+            ("install_id", a.install_id.clone()),
+            ("supervisor_id", self.cfg.supervisor_id.clone()),
+            ("executor_id", self.cfg.executor_id.clone()),
+            ("builder_id", self.cfg.builder_id.clone()),
+            ("policy_id", self.cfg.policy_id.clone()),
+            ("policy_version", self.cfg.policy_version.clone()),
+            ("policy_bundle_handle", self.cfg.policy_bundle_handle.clone()),
+            ("generation_config_handle", a.generation_config_handle.clone()),
+            ("system_handle", a.system_handle.clone()),
+            ("history_handle", a.history_handle.clone()),
+            ("output_handle", c.output_handle.clone()),
+            ("containment_evidence_handle", c.containment_evidence_handle.clone()),
+            ("record_handle", c.record_handle.clone()),
+            ("lease_handle", c.lease_handle.clone()),
+            ("execution_receipt_handle", c.execution_receipt_handle.clone()),
+            ("evidence_final_event_hash", c.evidence_final_event_hash.clone()),
+        ] {
+            evidence.insert(k.into(), json!(v));
         }
-        // Bind attest-run to a lease THIS supervisor actually minted via accept-open (audit R3): one-time
-        // consume of the issued execution_attempt_id. A run we never leased is refused — so even a broker-SID
-        // caller cannot get the supervisor to attest arbitrary caller-supplied evidence out of thin air.
-        let ea_id = get_str(facts, "execution_attempt_id").unwrap_or_default();
-        if !self.issued_leases.lock().unwrap().remove(&ea_id) {
-            return refuse("attest-run", "no_lease");
+        for (k, v) in [
+            ("requested_at", a.requested_at_ms),
+            ("completed_at", c.completed_at_ms),
+            ("challenge_accepted_at_ms", a.challenge_accepted_at_ms),
+            ("evidence_event_count", c.evidence_event_count),
+            ("evidence_last_sequence", c.evidence_last_sequence),
+            ("evidence_head_sequence", c.evidence_head_sequence),
+        ] {
+            evidence.insert(k.into(), json!(v));
         }
-        // Stamp decision=completed, build evidence, JCS it, sign THOSE bytes.
-        let mut evidence = facts.clone();
+        // Defence in depth: the assembled object must still be exactly the signer's input shape, so
+        // a supervisor-side assembly bug fails closed instead of signing malformed bytes.
+        if !exact_keys(&evidence, &ATTEST_INPUT_FIELDS) {
+            return refuse("attest-run", "malformed");
+        }
+        // Stamp decision=completed, JCS it, sign THOSE bytes.
         evidence.insert("decision".into(), json!("completed"));
         let evidence_jcs = crypto::jcs(&evidence);
         let sig = crypto::sign_b64url(&crypto::signing_key(&self.cfg.attest_signing_seed), &evidence_jcs);

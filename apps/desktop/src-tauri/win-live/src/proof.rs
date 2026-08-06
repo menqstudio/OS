@@ -196,6 +196,13 @@ where
         attest_signing_seed: attest_seed,
         launcher_executable_sha256: launcher_sha,
         executor_executable_sha256: executor_sha,
+        // F-01: the identities the signer allowlists are the SUPERVISOR's provisioning now, not
+        // values the execution hands it alongside the run facts.
+        executor_id: executor_id.clone(),
+        builder_id: builder_id.clone(),
+        policy_id: "brops-policy-1".to_string(),
+        policy_version: "1".to_string(),
+        policy_bundle_handle: policy_bundle_handle.clone(),
     }));
     let signer: Arc<dyn DispatchCore> = Arc::new(Signer::new(SignerConfig {
         receipt_key_id: signer_key_id.clone(),
@@ -221,11 +228,10 @@ where
         Ok(Box::new(InProcConn { core, now: now_ms, reply: None }))
     };
 
-    // ---- execution: produce output + drive attest-run against the supervisor core ----
+    // ---- execution: produce output + drive the §5 lifecycle ops against the supervisor core ----
     let sup_a = supervisor.clone();
-    let attest = move |facts: &Value| -> Result<Value, ()> {
-        let req = json!({ "op": "attest-run", "facts": facts });
-        let reply = sup_a.handle(&req, now_ms);
+    let supervisor_op = move |req: &Value| -> Result<Value, ()> {
+        let reply = sup_a.handle(req, now_ms);
         if reply.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(reply)
         } else {
@@ -241,13 +247,6 @@ where
     let exec_produce = |_plan: &ExecutionPlan| -> Result<Vec<u8>, ()> { produce() };
     let params = ExecutionParams {
         store_dir: store_dir.to_path_buf(),
-        receipt_id: "brops-live-receipt-1".to_string(),
-        supervisor_id: supervisor_id.clone(),
-        executor_id,
-        builder_id,
-        policy_id: "brops-policy-1".to_string(),
-        policy_version: "1".to_string(),
-        policy_bundle_handle,
         containment_evidence_handle,
         record_handle,
         lease_handle,
@@ -257,7 +256,7 @@ where
         evidence_last_sequence: 3,
         evidence_head_sequence: 3,
     };
-    let exec = GovernedExecutionCore::new(params, exec_produce, attest, now_ms);
+    let exec = GovernedExecutionCore::new(params, exec_produce, supervisor_op, now_ms);
 
     // ---- production manifest resolver (audit P1-b + P2): verify-manifest-vs-TCB + anti-rollback + PERSIST
     //      floor + resolve keys INSIDE the chain resolution, feeding the pinned keys verify_and_accept uses. ----

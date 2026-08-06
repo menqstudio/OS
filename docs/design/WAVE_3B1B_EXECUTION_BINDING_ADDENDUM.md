@@ -2781,6 +2781,27 @@ reply enum literal appears in exactly one routing row.
 > `attest-run` on an unknown, unfinished, failed or mismatched run returns
 > `no_terminal_run_state`.
 >
+> **(g) BOTH supervisor implementations.** The protocol has two implementations, and a fix in one
+> would leave the other demonstrating the defect. The production Linux supervisor
+> (`engine/runtime/governed_supervisor*.py`) keeps its state in the durable SQLite ledger. The
+> Windows machine-proof supervisor (`apps/desktop/src-tauri/win-live/src/servers.rs`) is a Rust
+> twin behind a peer-SID-authed named pipe; it now speaks the same five ops and builds the
+> evidence from its own acceptance/completion record. Its state is IN-PROCESS — proof-kit scope,
+> matching the rest of that kit — so it inherits the F-01 property (evidence comes from supervisor
+> state, never from the caller) without the durability the production path has. That difference is
+> deliberate and is recorded here rather than papered over.
+>
+> **(h) What is PROVEN, and where.** `engine/tests/test_governed_chain_e2e.py` walks the whole
+> chain offline — real challenge-authority → supervisor (durable ledger on a real file, restarted
+> mid-turn) → isolated signer, three distinct real Ed25519 keypairs — and asserts the receipt
+> signature, the attestation digest binding, the output digest+length binding and the
+> `request_sha256` recompute, plus the F-01 negatives (a fabricated run, an unfinished run, the old
+> `facts` door, a replayed challenge, a second execution trying to rewrite an attested one, a stale
+> evidence head). It proves the PROTOCOL and the CRYPTO. It does **not** prove the ISOLATION: the
+> OS trust boundary (SO_PEERCRED, the separate uids, key custody modes) and the privileged
+> recorder → setuid launcher → contained executor spawn still require `engine/ci/live/run_live_turn.sh`
+> on a real Linux host, which has **not** been re-run against this protocol.
+>
 > **What this amendment does NOT fix.** The containment/record/execution-receipt handles and the
 > four `evidence_*` counters are still deployment-static config constants rather than
 > measurements of the run (audit **F-02**); F-01 makes them supervisor-recorded and write-once,

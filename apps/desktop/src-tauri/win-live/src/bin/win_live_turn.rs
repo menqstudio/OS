@@ -171,9 +171,9 @@ mod win {
             Ok(out.stdout)
         };
         let sup_pipe = cfg.pipes.supervisor.clone();
-        let attest = move |facts: &Value| -> Result<Value, ()> {
-            let req = json!({ "op": "attest-run", "facts": facts });
-            let reply = pipe::hop_once(&sup_pipe, &req)?;
+        // One named-pipe hop per §5 lifecycle op (execution-started / complete-run / attest-run).
+        let supervisor_op = move |req: &Value| -> Result<Value, ()> {
+            let reply = pipe::hop_once(&sup_pipe, req)?;
             if reply.get("ok").and_then(Value::as_bool) == Some(true) {
                 Ok(reply)
             } else {
@@ -183,13 +183,6 @@ mod win {
         let f = &cfg.facts;
         let params = ExecutionParams {
             store_dir: std::path::PathBuf::from(&cfg.store_dir),
-            receipt_id: f.receipt_id.clone(),
-            supervisor_id: f.supervisor_id.clone(),
-            executor_id: f.executor_id.clone(),
-            builder_id: f.builder_id.clone(),
-            policy_id: f.policy_id.clone(),
-            policy_version: f.policy_version.clone(),
-            policy_bundle_handle: f.policy_bundle_handle.clone(),
             containment_evidence_handle: f.containment_evidence_handle.clone(),
             record_handle: f.record_handle.clone(),
             lease_handle: f.lease_handle.clone(),
@@ -199,7 +192,7 @@ mod win {
             evidence_last_sequence: f.evidence_last_sequence,
             evidence_head_sequence: f.evidence_head_sequence,
         };
-        let exec = GovernedExecutionCore::new(params, produce, attest, now);
+        let exec = GovernedExecutionCore::new(params, produce, supervisor_op, now);
 
         // ---- (D) run ONE governed turn ----
         let chain = GovernedChain::new(connector, resolver, exec, InMemoryLedger::new());
