@@ -209,6 +209,10 @@ install -m 0644 "$SCRIPT_DIR/run_live_turn.sh" "$TCB/brops-live.unit"; chown 0:0
 chown 0:0 "$TCB"/*.ipc-policy.json; chmod 0644 "$TCB"/*.ipc-policy.json
 python3 "$PYLIVE/build_tcb_pin_manifest.py" --root-dir "$LIVE"   --sudoers "$SUDOERS" --unit "$TCB/brops-live.unit" --out "$TCB/tcb-pin-manifest.json"   || { echo "FAIL: build_tcb_pin_manifest.py"; exit 1; }
 chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
+# The floor refuses on an ancestor a non-TCB principal could write, and "which bit, on which
+# directory" is exactly what a refusal needs to be actionable. Print the pinned set's ancestors.
+echo "== TCB ancestor modes (the §2.5 floor checks these) =="
+ls -ld / /opt "$LIVE" "$TCB" "$BIN" "$LIVE/engine" "$LIVE/engine/ci" "$LIVE/engine/ci/live" /etc /etc/sudoers.d
 
 # ----- start the three service servers as their accounts ------------------------------------------
 PIDS=()
