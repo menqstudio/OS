@@ -315,26 +315,17 @@ const ATTEST_INPUT_FIELDS: [&str; 28] = [
 /// The EXACT shape of `complete-run`'s `produced` object — the only §4.9 values the supervisor
 /// cannot derive itself. Deliberately absent: every id, nonce, identity and acceptance timestamp
 /// (F-01: the supervisor already owns those, and taking them here would re-open the oracle).
-const COMPLETION_HANDLE_FIELDS: [&str; 3] = [
-    "output_handle",
-    "containment_evidence_handle",
-    "evidence_final_event_hash",
-];
-const COMPLETION_INT_FIELDS: [&str; 4] = [
-    "completed_at_ms",
-    "evidence_event_count",
-    "evidence_last_sequence",
-    "evidence_head_sequence",
-];
-const COMPLETION_FIELDS: [&str; 7] = [
-    "output_handle",
-    "containment_evidence_handle",
-    "evidence_final_event_hash",
-    "completed_at_ms",
-    "evidence_event_count",
-    "evidence_last_sequence",
-    "evidence_head_sequence",
-];
+//
+// (audit **F-01**/**F-02**, remediation audit) The four `evidence_*` values are GONE from the
+// wire. They were deployment constants here — the original F-02 defect, alive on this platform
+// after it had been marked CLOSED on the strength of the Linux fix. They decide the anti-rollback
+// floor, so a caller that could name them could also choose the floor it was measured against.
+// The supervisor now DERIVES them from the execution's own evidence chain, and refuses a
+// completion whose `output_handle` is not the digest that chain recorded.
+const COMPLETION_HANDLE_FIELDS: [&str; 2] = ["output_handle", "containment_evidence_handle"];
+const COMPLETION_INT_FIELDS: [&str; 1] = ["completed_at_ms"];
+const COMPLETION_FIELDS: [&str; 3] =
+    ["output_handle", "containment_evidence_handle", "completed_at_ms"];
 
 pub struct SupervisorConfig {
     pub supervisor_id: String,
@@ -355,6 +346,70 @@ pub struct SupervisorConfig {
     /// The content-addressed protected store this supervisor PUBLISHES its own terminal
     /// artifacts into (audit F-02) — the same store the isolated signer reads by handle.
     pub store_dir: PathBuf,
+    /// Where the EXECUTION writes its per-run evidence chain (audit **F-01**). The supervisor
+    /// reads it here rather than accepting the evidence head on the wire: in the cross-account
+    /// deployment this directory belongs to the executor principal, so the broker cannot write
+    /// what the supervisor is about to attest. In the in-process proof both sides are one
+    /// process, which makes it a shape check there — said plainly rather than assumed.
+    pub evidence_dir: PathBuf,
+}
+
+/// The evidence head DERIVED from the execution's chain, plus the reply digest it recorded
+/// (audit **F-01**). `None` when the chain is absent or malformed — the caller fails closed.
+struct DerivedEvidence {
+    final_event_hash: String,
+    event_count: i64,
+    last_sequence: i64,
+    head_sequence: i64,
+    output_sha256: String,
+}
+
+/// Read + parse `brops.run-evidence-chain.v1` for one attempt. Byte-compatible with the Linux
+/// recorder's chain, so both platforms derive the head the same way from the same document.
+fn derive_evidence(dir: &std::path::Path, attempt: &str) -> Option<DerivedEvidence> {
+    // The attempt id reaches the filesystem. It is supervisor-minted, but the supervisor does not
+    // get to assume its own inputs — a traversal here would let a caller point at any file.
+    if attempt.is_empty()
+        || !attempt.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    let raw = std::fs::read(dir.join(format!("{attempt}.evidence.json"))).ok()?;
+    if raw.len() > 1 << 20 {
+        return None; // bounded: a hostile chain must not exhaust the supervisor
+    }
+    let chain: Value = serde_json::from_slice(&raw).ok()?;
+    if chain.get("protocol").and_then(Value::as_str) != Some("brops.run-evidence-chain.v1") {
+        return None;
+    }
+    let events = chain.get("events")?.as_array()?;
+    let captured: Vec<&Value> = events
+        .iter()
+        .filter(|e| e.get("event_type").and_then(Value::as_str) == Some("output-captured"))
+        .collect();
+    if captured.len() != 1 {
+        return None;
+    }
+    let payload = captured[0].get("payload")?;
+    // The event commits to its payload by digest; check that before believing the payload.
+    if crypto::sha256_hex(&serde_json::to_vec(payload).ok()?)
+        != captured[0].get("payload_sha256").and_then(Value::as_str)?
+    {
+        return None;
+    }
+    let i = |k: &str| -> Option<i64> { chain.get(k)?.as_i64().filter(|n| *n > 0) };
+    let derived = DerivedEvidence {
+        final_event_hash: chain.get("final_event_hash")?.as_str()?.to_string(),
+        event_count: i("event_count")?,
+        last_sequence: i("last_sequence")?,
+        head_sequence: i("head_sequence")?,
+        output_sha256: payload.get("output_sha256")?.as_str()?.to_string(),
+    };
+    if derived.event_count != derived.last_sequence || derived.event_count as usize != events.len()
+    {
+        return None;
+    }
+    Some(derived)
 }
 
 /// The run-produced half of the §4.9 evidence, reported ONCE via `complete-run`.
@@ -697,7 +752,19 @@ impl Supervisor {
         // protected-chain check a tautology over bytes the provisioner had written once.
         let output_handle = get_str(p, "output_handle").unwrap();
         let containment_evidence_handle = get_str(p, "containment_evidence_handle").unwrap();
-        let evidence_final_event_hash = get_str(p, "evidence_final_event_hash").unwrap();
+
+        // (audit F-01) Read the EXECUTION's evidence chain and derive the head from it. Refuse
+        // outright when the reply digest the completion reports is not the one the chain
+        // recorded: that is the reply the desktop is about to commit, and attesting a digest the
+        // supervisor never observed is the oracle in its most valuable form.
+        let evidence = match derive_evidence(&self.cfg.evidence_dir, &attempt) {
+            Some(e) => e,
+            None => return refuse("complete-run", "malformed_state"),
+        };
+        if evidence.output_sha256 != output_handle {
+            return refuse("complete-run", "evidence_mismatch");
+        }
+        let evidence_final_event_hash = evidence.final_event_hash.clone();
         let record_bytes = crypto::jcs(
             json!({
                 "protocol": "brops.governed-turn-record.v1",
@@ -758,10 +825,11 @@ impl Supervisor {
             lease_handle,
             execution_receipt_handle,
             completed_at_ms: ints[0],
+            // F-01: the evidence head comes from the chain the supervisor read, never the wire.
             evidence_final_event_hash,
-            evidence_event_count: ints[1],
-            evidence_last_sequence: ints[2],
-            evidence_head_sequence: ints[3],
+            evidence_event_count: evidence.event_count,
+            evidence_last_sequence: evidence.last_sequence,
+            evidence_head_sequence: evidence.head_sequence,
         };
         match &a.completion {
             // Write-once: an identical retry is idempotent, any divergence is refused. A second
@@ -1132,5 +1200,68 @@ fn verify_ed25519_hex(public_key_hex: &str, msg: &[u8], sig_b64url: &str) -> boo
     match sig {
         Some(s) => vk.verify_strict(msg, &s).is_ok(),
         None => false,
+    }
+}
+
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+
+    // (audit F-01/F-02, remediation audit) The Windows twin carried the ORIGINAL F-02 defect —
+    // four `evidence_*` deployment constants on the wire — after the ledger had marked F-02
+    // CLOSED on the strength of the Linux fix alone. And this kit had no CI coverage of the
+    // property at all. These run on the Linux CI runner: `derive_evidence` is pure file + JSON
+    // work with no Windows API in it, so "Windows-only" was never a reason not to test it.
+
+    fn chain(dir: &std::path::Path, attempt: &str, output_sha256: &str, head: i64) {
+        std::fs::create_dir_all(dir).unwrap();
+        let bytes = crate::execution::build_run_evidence(attempt, output_sha256, 42, head);
+        std::fs::write(dir.join(format!("{attempt}.evidence.json")), bytes).unwrap();
+    }
+
+    fn tmp() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("brops-winlive-ev-{}", brops_core::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn the_head_is_derived_from_the_chain_not_from_a_constant() {
+        let dir = tmp();
+        chain(&dir, "att-1", &"ab".repeat(32), 9);
+        let e = derive_evidence(&dir, "att-1").expect("derives");
+        assert_eq!(e.output_sha256, "ab".repeat(32));
+        assert_eq!((e.event_count, e.last_sequence, e.head_sequence), (3, 3, 9));
+        assert_eq!(e.final_event_hash.len(), 64);
+        // Two runs with different output produce different heads — the property a constant cannot
+        // have, and the reason the anti-rollback floor was comparing a value against itself.
+        chain(&dir, "att-2", &"cd".repeat(32), 10);
+        let other = derive_evidence(&dir, "att-2").expect("derives");
+        assert_ne!(e.final_event_hash, other.final_event_hash);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_absent_or_tampered_chain_yields_nothing() {
+        let dir = tmp();
+        assert!(derive_evidence(&dir, "att-missing").is_none());
+        chain(&dir, "att-3", &"ab".repeat(32), 1);
+        // Flip the recorded digest without re-deriving the payload digest: the event commits to
+        // its own payload, so this must not parse.
+        let path = dir.join("att-3.evidence.json");
+        let raw = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, raw.replace(&"ab".repeat(32), &"ff".repeat(32))).unwrap();
+        assert!(derive_evidence(&dir, "att-3").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_attempt_id_cannot_walk_out_of_the_evidence_directory() {
+        let dir = tmp();
+        for hostile in ["../secret", "a/b", "..", "att 1"] {
+            assert!(derive_evidence(&dir, hostile).is_none(), "{hostile}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

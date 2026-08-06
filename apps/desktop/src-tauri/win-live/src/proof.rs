@@ -144,7 +144,6 @@ where
     // F-02: no pre-seeded record/lease/execution-receipt blobs. The supervisor BUILDS those
     // documents from its own acceptance + completion rows and publishes them to this store, so the
     // handles the receipt names address artifacts of THIS run rather than provisioner stubs.
-    let evidence_final_event_hash = crypto::sha256_hex(b"brops-final-event-v1");
     let launcher_sha = crypto::sha256_hex(b"brops-launcher.bin");
     let executor_sha = crypto::sha256_hex(b"brops-executor.bin");
 
@@ -207,6 +206,8 @@ where
         policy_version: "1".to_string(),
         policy_bundle_handle: policy_bundle_handle.clone(),
         store_dir: store_dir.to_path_buf(),
+            // F-01: where the execution writes its per-run evidence chain.
+            evidence_dir: store_dir.to_path_buf().join("run-evidence"),
     }));
     let signer: Arc<dyn DispatchCore> = Arc::new(Signer::new(SignerConfig {
         receipt_key_id: signer_key_id.clone(),
@@ -252,10 +253,11 @@ where
     let params = ExecutionParams {
         store_dir: store_dir.to_path_buf(),
         containment_mode: "windows-proof-kit:in-process, no setuid launcher".to_string(),
-        evidence_final_event_hash,
-        evidence_event_count: 3,
-        evidence_last_sequence: 3,
-        evidence_head_sequence: 3,
+        // F-02/F-01: the evidence head is MEASURED by the execution now, not configured. The
+        // proof writes its chain beside the store; in the in-process proof that is a shape check,
+        // and in the cross-account deployment the directory belongs to the executor principal.
+        evidence_dir: store_dir.join("run-evidence"),
+        head_sequence: 3,
     };
     let exec = GovernedExecutionCore::new(params, exec_produce, supervisor_op, now_ms);
 
