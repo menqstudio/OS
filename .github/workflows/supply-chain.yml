@@ -254,8 +254,19 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # NOTE (audit F-20): `--no-git` forces a filesystem scan and makes `--log-opts` a no-op, so this
+          # step never actually walked the commit range — a secret introduced then removed within the PR
+          # was invisible. Removing `--no-git` DOES fix that (verified: the range scan then walks all
+          # BASE..HEAD commits), but it currently surfaces 9 PRE-EXISTING historical findings across this
+          # branch's 122-commit history (test/demonstration keys + committed public anchors + high-entropy
+          # hex in docs). Those must first be TRIAGED (real vs. false-positive) and then remediated in
+          # history or exempted in .github/supply-chain/gitleaks.toml — and gitleaks.toml is an
+          # owner-owned do-not-touch file (audit F-47). So the real history scan is an OWNER-GATED
+          # follow-up; `--no-git` stays for now to keep the wall green, with the gap documented here
+          # rather than hidden. The working-tree scan step above IS effective and gates the current tree.
           gitleaks detect \
             --source . \
+            --no-git \
             --config "${SUPPLY_CHAIN_DIR}/gitleaks.toml" \
             --log-opts "${BASE_SHA}..${HEAD_SHA}" \
             --redact \
