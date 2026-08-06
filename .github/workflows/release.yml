@@ -48,7 +48,10 @@ jobs:
         run: npm ci
 
       - name: Build + bundle (signed if secrets present, unsigned otherwise)
-        uses: tauri-apps/tauri-action@v0
+        # Pinned to a full commit SHA, not the mutable @v0 tag: this step holds the Tauri updater signing
+        # key + a contents:write token, so a compromised/retargeted tag would run attacker code with them
+        # (audit F-15). 84b9d35 is the current v0 line (v0.6.2) — same behaviour as @v0, now immutable.
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Updater signing — set these two secrets (see docs/RELEASE_SETUP.md §3) to sign updates.

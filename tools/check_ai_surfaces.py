@@ -40,6 +40,11 @@ import re
 import sys
 
 COMMANDS_RS = "apps/desktop/src-tauri/src/commands.rs"
+# The gate scans EVERY Rust source under src/ (not only commands.rs): a `#[tauri::command]` that reaches a
+# provider entry lives in files.rs / governance.rs / governed_turn.rs / ai.rs too, and scanning one file
+# left those permanently invisible while the gate still printed GREEN (audit F-21/F-37). All files are read
+# and concatenated so cross-file `#[tauri::command]`s are inventoried and helper hops resolve tree-wide.
+SRC_DIR = "apps/desktop/src-tauri/src"
 POLICY = "apps/desktop/src-tauri/ai-surface-policy.json"
 
 GOVERNANCE_STATES = ("governed", "ungoverned_tracked", "excluded")
@@ -47,9 +52,12 @@ GOVERNANCE_STATES = ("governed", "ungoverned_tracked", "excluded")
 GENERIC_PROVIDER_CALLS = ("generate", "generate_stream")
 # the full set of provider entry points a command may reach (governed + generic).
 _PROVIDER_RE = re.compile(r"(?:crate::)?ai::(generate_stream|generate|governed_turn)\b")
-# a top-level `pub fn` / `pub async fn` head. Commands and pub helpers both match; the
-# `#[tauri::command]` attribute above the head is what distinguishes a command from a helper.
-_FN_RE = re.compile(r"^\s*pub (?:async )?fn (\w+)\s*\(")
+# a top-level fn head — `pub`, `pub(crate)`, or NON-pub, sync or async. Commands and helpers both match;
+# the `#[tauri::command]` attribute above the head is what distinguishes a command from a helper. Matching
+# `pub(crate)` and non-pub heads too (audit F-38) closes the "hide the provider call behind a pub(crate) /
+# non-pub helper" evasion — such a helper is now a resolvable one-hop, not an invisible sink whose provider
+# call is silently attributed to the preceding fn's slice.
+_FN_RE = re.compile(r"^\s*(?:pub(?:\(crate\))? )?(?:async )?fn (\w+)\s*\(")
 # any identifier used in call position `name(` — intersected with known fn names to find
 # same-file helper calls (crate-local helpers appear as `helper(`, `self::helper(`,
 # `crate::...::helper(`; the bare-name match before `(` catches all of these forms).
@@ -224,9 +232,16 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     root = pathlib.Path(args.root)
     try:
-        commands_src = (root / COMMANDS_RS).read_text(encoding="utf-8")
+        rs_files = sorted((root / SRC_DIR).rglob("*.rs"))
+        if not rs_files:
+            print(f"RED: no Rust sources under {SRC_DIR}", file=sys.stderr)
+            return 1
+        # Concatenate every src/**/*.rs so a #[tauri::command] in ANY module is inventoried (audit F-21).
+        # Files end with `}`, which terminates _has_command_attr's upward scan, so no attribute leaks across
+        # a file boundary; a blank-line join keeps every fn head line-anchored.
+        commands_src = "\n".join(f.read_text(encoding="utf-8") for f in rs_files)
     except OSError as exc:
-        print(f"RED: cannot read {COMMANDS_RS}: {exc}", file=sys.stderr)
+        print(f"RED: cannot read Rust sources under {SRC_DIR}: {exc}", file=sys.stderr)
         return 1
     try:
         policy = json.loads((root / POLICY).read_text(encoding="utf-8"))

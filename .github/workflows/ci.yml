@@ -90,6 +90,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BRO_ENV: ci
+      # The operator-root trust anchor, pinned from OUTSIDE the registry (this is the committed registry's
+      # operator PUBLIC key — safe to commit; if it is rotated without updating this pin, foundation
+      # validation fails closed, which is the point). The foundation + live-wiring validators previously
+      # lived ONLY in engine/.github/workflows/verify.yml, which GitHub never executes (it dispatches only
+      # the ROOT .github/workflows/), so bro_validate.py + bro_live_validate.py ran NOWHERE in CI (audit
+      # F-22). They now run here, on the workflow GitHub actually executes.
+      BRO_OPERATOR_ROOT_PUBKEY: 7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c
     defaults:
       run:
         working-directory: engine
@@ -100,8 +107,14 @@ jobs:
           python-version: "3.12"
       - name: Install engine CI dependencies
         run: pip install --require-hashes -r requirements-ci.txt
+      - name: Validate foundation (operator-root pin, fail-closed)
+        run: python tools/bro_validate.py
       - name: Run the engine test suite
         run: python -m unittest discover -s tests
+      - name: Compile Python
+        run: python -m compileall -q runtime tools tests
+      - name: Assure live wiring (laws enforced by the WIRED hook, not merely present)
+        run: python tools/bro_live_validate.py
 
   bridge:
     name: Bridge · engine adapter (python)

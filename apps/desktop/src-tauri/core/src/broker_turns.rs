@@ -256,6 +256,27 @@ pub fn settle(
     Ok(())
 }
 
+/// Reconcile stranded `live` turns whose [`settle`] never ran (broker crash, lost reply, killed process).
+///
+/// Without this a `live` row lives forever, and because the partial UNIQUE `idx_broker_turns_one_live`
+/// index allows only one live turn per conversation, that stranded row **permanently wedges** the
+/// conversation — every subsequent [`record_new`] fails `TurnInProgress` and the reattach path can never
+/// settle it (audit F-34: `created_at_ms` was written but never read, and there was no expiry/DELETE).
+///
+/// A `live` turn older than `ttl_ms` (i.e. `created_at_ms <= now_ms - ttl_ms`) is moved to the terminal
+/// `blocked` state — fail-closed: an unsettled turn is treated as failed, NEVER committed — which frees
+/// the conversation while leaving an auditable terminal row (no silent DELETE). Returns the number of
+/// turns reconciled. Idempotent; safe to call at broker boot and before each new turn. A fresh, still
+/// in-flight turn (younger than `ttl_ms`) is untouched, so a legitimately slow turn is never stolen.
+pub fn expire_stale_live(conn: &Connection, now_ms: i64, ttl_ms: i64) -> Result<usize, StoreError> {
+    let cutoff = now_ms.saturating_sub(ttl_ms);
+    let affected = conn.execute(
+        "UPDATE broker_turns SET state = 'blocked' WHERE state = 'live' AND created_at_ms <= ?1",
+        params![cutoff],
+    )?;
+    Ok(affected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,6 +466,37 @@ mod tests {
             settle(&conn, "bt-1", TurnState::Committed),
             Err(StoreError::NotLive)
         ));
+    }
+
+    #[test]
+    fn expire_stale_live_frees_a_wedged_conversation_but_spares_fresh_turns() {
+        let conn = store();
+        // A turn that was recorded live and then never settled (crash before settle).
+        let r = req("conv-1", Some("agent-x"), CRID);
+        record_new(&conn, &r.idempotency_key(), "bt-stale", "nonce-1", 1_000).unwrap();
+
+        // A NEW request for the same conversation is wedged: the one-live index blocks it.
+        let other = req("conv-1", Some("agent-x"), CRID2);
+        assert!(matches!(
+            record_new(&conn, &other.idempotency_key(), "bt-new", "nonce-2", 1_500),
+            Err(StoreError::TurnInProgress)
+        ));
+
+        // Reconcile with a TTL such that the stale turn (created at 1_000) is now expired at 1_000_000,
+        // but NOT so aggressive that it would touch a fresh turn.
+        let reconciled = expire_stale_live(&conn, 1_000_000, 300_000).unwrap();
+        assert_eq!(reconciled, 1);
+        // The stranded row is now terminal `blocked`, so the conversation has no live turn.
+        assert!(live_turns(&conn).unwrap().is_empty());
+        // ...and a fresh turn for that conversation now records cleanly.
+        record_new(&conn, &other.idempotency_key(), "bt-new", "nonce-2", 1_000_001).unwrap();
+        assert_eq!(live_turns(&conn).unwrap().len(), 1);
+
+        // A still-fresh live turn (younger than the TTL) is NOT reconciled.
+        let fresh = req("conv-2", None, CRID);
+        record_new(&conn, &fresh.idempotency_key(), "bt-fresh", "nonce-3", 1_000_100).unwrap();
+        assert_eq!(expire_stale_live(&conn, 1_000_200, 300_000).unwrap(), 0);
+        assert!(live_turns(&conn).unwrap().iter().any(|t| t.broker_turn_id == "bt-fresh"));
     }
 
     #[test]

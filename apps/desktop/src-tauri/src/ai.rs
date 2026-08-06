@@ -1593,7 +1593,21 @@ async fn governed_sidecar_call(
     request: &str,
 ) -> Result<serde_json::Value, String> {
     let mut cmd = tokio::process::Command::new(python);
-    cmd.arg(sidecar)
+    // The child runs with cwd = the empty AI sandbox (below), so a RELATIVE sidecar path (the default
+    // `bridge/engine_sidecar.py`) would not resolve from there and every governed turn would die on a
+    // spawn/path error instead of a governance decision (audit F-39). Absolutize a relative path against
+    // the process's real working directory FIRST — exactly where it resolved before the sandbox-cwd
+    // override existed — so the script is found while the child is still contained in the sandbox. An
+    // absolute `BROPS_GOVERNED_SIDECAR` is used verbatim.
+    let sidecar_path = {
+        let p = std::path::Path::new(sidecar);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            std::env::current_dir().map(|c| c.join(p)).unwrap_or_else(|_| p.to_path_buf())
+        }
+    };
+    cmd.arg(&sidecar_path)
         // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
         // reach the production sidecar via inherited env. The sidecar honors self-test
         // via the --self-test CLI flag ONLY (which we never pass), and we also strip the

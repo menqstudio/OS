@@ -56,8 +56,16 @@ function formatSize(bytes: number | undefined | null): string {
 // A guard denial reads like a permission / scope refusal from the backend or the
 // engine wall. Distinguishing it from a plain transport failure lets us render the
 // honest `blocked` (sealed) state only when the open was actually refused.
+// The specific phrases are the EXACT strings the Rust backend (`src-tauri/src/files.rs`)
+// returns on a wall/scope refusal — "...root is not allowed", "path is outside the
+// allowed workspace", "access to this path is blocked". The prior generic-token regex
+// matched NONE of them, so a refused file was mislabelled `open` (audit F-44). Availability
+// / not-found strings ("workspace is unavailable", "not found or not accessible", "cannot
+// read file") are deliberately NOT matched — those are transport failures, not guard denials.
 function isGuardDenied(message: string): boolean {
-  return /denied|not permitted|permission|sealed|forbidden|scope|guard/i.test(message);
+  return /denied|not permitted|not allowed|permission|sealed|forbidden|scope|guard|outside the allowed workspace|access to this path is blocked|is blocked/i.test(
+    message,
+  );
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
