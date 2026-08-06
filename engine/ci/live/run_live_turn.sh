@@ -102,7 +102,7 @@ EXECUTOR_SHA=$(sha256sum "$TCB/contained-executor.bin" | cut -d' ' -f1)
 echo "== provisioning keys + root-signed manifest + store + config =="
 python3 "$PYLIVE/provision_keys.py" --root-dir "$LIVE" \
   --launcher-sha "$LAUNCHER_SHA" --executor-sha "$EXECUTOR_SHA" \
-  --recorder-bin "$BIN/governed_recorder" --sudo-recorder-user "$RECORDER_USER" \
+  --recorder-bin "$BIN/governed_recorder" --sudo-recorder-user "$RECORDER_USER" --login-uid "$(id -u "${SUDO_USER:-root}")" \
   || { echo "FAIL: provision_keys.py"; exit 1; }
 
 CONFIG="$LIVE/config.json"
@@ -233,6 +233,15 @@ fi
 # directory" is exactly what a refusal needs to be actionable. Print the pinned set's ancestors.
 echo "== TCB ancestor modes (the §2.5 floor checks these) =="
 ls -ld / /opt "$LIVE" "$TCB" "$BIN" "$LIVE/engine" "$LIVE/engine/ci" "$LIVE/engine/ci/live" /etc /etc/sudoers.d
+
+# ----- the §2.5 TCB integrity floor, evaluated by ROOT (audit F-10) -------------------------------
+# Root, and before anything starts. The pinned set deliberately includes artifacts the serving
+# principals must NOT be able to read — the launcher is 4750 so only the recorder group may execute
+# it, and the allowlist lives in a root-only directory — so a broker that could measure them could
+# also read them, and asking it to would loosen the containment the floor exists to confirm. Root is
+# the only principal that can honestly evaluate the whole set, and a floor that has not passed means
+# no service starts at all.
+"$BIN/live_turn" --config "$CONFIG" --verify-tcb || { echo "FAIL: the §2.5 TCB integrity floor"; exit 1; }
 
 # ----- start the three service servers as their accounts ------------------------------------------
 PIDS=()

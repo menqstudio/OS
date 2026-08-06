@@ -169,6 +169,8 @@ def main() -> int:
     # anchor is written to a TCB file that STATES which of the two it is, and the driver refuses to
     # print production_verified=true for a kit-generated one. Supplying an external anchor (with the
     # matching pre-signed manifest) is what makes the claim real.
+    ap.add_argument("--login-uid", type=int, default=1000,
+                    help="the interactive login account the §2.5 floor treats as untrusted (F-10)")
     ap.add_argument("--root-anchor-key-id", default=None,
                     help="EXTERNAL root key id (custody outside this kit); requires the three below")
     ap.add_argument("--root-anchor-pub-hex", default=None,
@@ -319,6 +321,12 @@ def main() -> int:
         # rule from here (F-10 — see `ipc_policies` below).
         "allowed_broker_uid": DEFAULT_UIDS["broker"],
         "uids": DEFAULT_UIDS,
+        # F-10: the interactive login account. The §2.5 floor is evaluated by ROOT (only root can
+        # read the whole pinned set — the setuid launcher is 4750 and the sudo allowlist lives in a
+        # root-only directory), so `getuid()` there is 0 and says nothing about who is untrusted.
+        # The floor's question is whether any LOGIN or RUNTIME principal can write a TCB artifact,
+        # so the login uid has to be stated rather than observed.
+        "login_uid": args.login_uid,
         "ipc_policies": ipc_policies,
         "sockets": {
             "authority": os.path.join(sock_dir, "authority.sock"),

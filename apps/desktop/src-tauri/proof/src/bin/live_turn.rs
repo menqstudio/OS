@@ -32,6 +32,9 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.iter().any(|a| a == "--verify-tcb") {
+        std::process::exit(linux::verify_tcb(&config_path));
+    }
     std::process::exit(linux::run(&config_path));
 }
 
@@ -157,6 +160,61 @@ mod linux {
         Ok(())
     }
 
+    /// Run the §2.5 TCB integrity floor over the deployment and nothing else (audit **F-10**).
+    ///
+    /// Deliberately a SEPARATE entry point run by root before any service starts, rather than a step
+    /// inside the turn. The pinned set includes artifacts the serving principals must not be able to
+    /// read — the setuid launcher is mode 4750 so only the recorder group may execute it, and the
+    /// sudo allowlist lives in a root-only directory. A broker that could measure those could also
+    /// read them, so asking it to would mean loosening the very containment the floor exists to
+    /// confirm. Root can see the whole TCB; it is the only principal that can honestly evaluate it,
+    /// and it does so once, at deployment time, before anything is started.
+    pub fn verify_tcb(config_path: &str) -> i32 {
+        let cfg: Value = match std::fs::read_to_string(config_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+        {
+            Some(v) => v,
+            None => {
+                eprintln!("live_turn --verify-tcb: config unreadable or malformed");
+                return 1;
+            }
+        };
+        // The floor's question is whether any LOGIN or RUNTIME principal can write a TCB artifact.
+        // Root evaluates it, so `getuid()` here is 0 and would be a meaningless "login uid" — the
+        // deployment's real login user is passed in config, and the runtime uids are the service
+        // accounts. Root itself is a TCB owner, not an untrusted principal.
+        let runtime_uids: Vec<u32> = cfg
+            .get("uids")
+            .and_then(|v| v.as_object())
+            .map(|m| m.values().filter_map(|v| v.as_u64().map(|u| u as u32)).collect())
+            .unwrap_or_default();
+        let login_uid = cfg
+            .get("login_uid")
+            .and_then(Value::as_u64)
+            .map(|u| u as u32)
+            .unwrap_or(u32::MAX);
+        let mut principals = runtime_uids;
+        if login_uid != u32::MAX && !principals.contains(&login_uid) {
+            principals.push(login_uid);
+        }
+        match brops_broker::tcb_probe::verify_deployment_tcb(
+            s(&cfg, &["trust", "tcb_pin_manifest_path"]).as_deref(),
+            &principals,
+            login_uid,
+        ) {
+            Ok(()) => {
+                println!("RESULT: tcb_integrity_floor verified artifacts=pinned");
+                0
+            }
+            Err(why) => {
+                eprintln!("live_turn --verify-tcb: TCB integrity floor REFUSED: {why}");
+                println!("RESULT: tcb_integrity_floor REFUSED {why}");
+                1
+            }
+        }
+    }
+
     pub fn run(config_path: &str) -> i32 {
         let now = now_ms();
 
@@ -248,33 +306,6 @@ mod linux {
         };
         if check_and_advance(&floor, &manifest).is_err() {
             return blocked("anti_rollback");
-        }
-
-        // ---- the §2.5 TCB integrity floor (audit F-10) ----
-        // Every signature below is computed by a binary this process is about to trust. Measuring
-        // those binaries, their configs, their IPC policies, the launch allowlist and the root anchor
-        // BEFORE entering governed mode is what makes the rest of the chain mean anything — an
-        // unmeasured supervisor signing a perfect attestation proves only that something signed it.
-        // Fail-closed on every path: no manifest configured, unreadable, or any violation.
-        let pin_manifest_path = s(&cfg, &["trust", "tcb_pin_manifest_path"]);
-        let runtime_uids: Vec<u32> = cfg
-            .get("uids")
-            .and_then(|v| v.as_object())
-            .map(|m| m.values().filter_map(|v| v.as_u64().map(|u| u as u32)).collect())
-            .unwrap_or_default();
-        // SAFETY: getuid cannot fail and takes no arguments.
-        let login_uid = unsafe { libc::getuid() };
-        let mut principals = runtime_uids.clone();
-        if !principals.contains(&login_uid) {
-            principals.push(login_uid);
-        }
-        if let Err(why) = brops_broker::tcb_probe::verify_deployment_tcb(
-            pin_manifest_path.as_deref(),
-            &principals,
-            login_uid,
-        ) {
-            eprintln!("live_turn: TCB integrity floor REFUSED: {why}");
-            return blocked("tcb_integrity_floor");
         }
 
         let signer_key_id = s(&cfg, &["trust", "signer_key_id"]).unwrap_or_default();
