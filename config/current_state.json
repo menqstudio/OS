@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "2debb7151930a4a18cddb82256b25bdea7b60cdb",
-    "snapshot_branch": "remediation/audit-red-round2",
-    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 2debb71. The active branch remediation/audit-red-round2 is a DIRECT child of it, so the base-sha baseline check applies and passes. PR #56 (the round-1 response, which closes the P0) is also open against this same tip and is the one to merge FIRST.",
+    "baseline_main_head_at_sync": "e81f50c0b4b07dd73a7e15f07b9d3ec90007fb8d",
+    "snapshot_branch": "docs/ledger-accuracy-after-round2",
+    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD e81f50c — PRs #56 and #57 merged. The active branch docs/ledger-accuracy-after-round2 is a direct child of it.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #53). PR #53's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "remediation/audit-red-round2"
+    "branch": "docs/ledger-accuracy-after-round2"
   },
   "prs": [],
   "status_tokens": {
@@ -141,6 +141,14 @@
     {
       "number": 55,
       "reason": "Audit F-10 second half: the §2.5 TCB pin manifest and real per-service IPC policies. Merged 2026-08-06."
+    },
+    {
+      "number": 56,
+      "reason": "Round-1 response to the RED remediation audit: P0 closed on both platforms, ledger corrected. Merged 2026-08-06."
+    },
+    {
+      "number": 57,
+      "reason": "Round-2 response: seed-custody P1, F-08 enforcement tests + negative live case, governed-crates CI job, answer-provenance honesty. Merged 2026-08-06."
     }
   ],
   "product_roadmap": {
@@ -184,11 +192,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 57,
-    "branch": "remediation/audit-red-round2",
+    "number": 58,
+    "branch": "docs/ledger-accuracy-after-round2",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #57 body, kept in lockstep with every push. Base is main directly, so baseline_main_head_at_sync == the PR base sha.",
-    "note": "PR #57 = the response to the SECOND round of the remediation audit (also RED). Closes: the P1 where the Windows signing seeds were plaintext until first read (the shortest path in the repo to a forged production_verified); F-08's enforcement having zero tests (now a pure predicate with 4 tests plus a NEGATIVE live-turn case in CI that tampers with a pinned input and requires a refusal); 52 tests in the production crates that no CI job ran; and a built-in placeholder being presented as a model answer. PR #56 is the round-1 response and should merge first. platform_governed_execution_supported() stays false."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #58 body.",
+    "note": "PR #58 = docs only. After #56 and #57 merged, the AUDIT_LEDGER status cells were stale in the CONSERVATIVE direction (F-01 still read 'REOPENED — P0' although #56 closed it). They now say what is true: addressed, by which commit, and NOT re-audited. A legend is added because three rounds have found a row's ✅ overclaimed, so ✅ is reserved for what an INDEPENDENT audit confirmed and ◑ means 'the Builder's unverified claim'. No code change; no gate change."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",
