@@ -23,8 +23,69 @@ fn seed_blob(store: &Path, content: &[u8]) -> String {
     h
 }
 
-fn write_seed(path: &Path, seed: &[u8; 32]) {
+/// Write a principal seed and IMMEDIATELY restrict it to the account that will own it
+/// (remediation audit, P1).
+///
+/// The DPAPI seal is applied lazily, by whichever account reads the seed first. That was sold as
+/// "the boundary is cryptographic, not just an ACL" — true AFTER the first read, and false for the
+/// whole window between provisioning and that read, during which `attest.seed` and `signer.seed`
+/// sit on disk as plaintext hex with default inheritance. Those are the two keys
+/// `verify_and_accept` checks, both `trust_class: "production"`. A login user who reads them in
+/// that window does not have to defeat the governed chain at all: they can sign whatever they
+/// like and every downstream check agrees. It was the shortest path in the repository from an
+/// in-scope adversary to a forged `production_verified=true`.
+///
+/// So the file is locked down before anything else can read it, and the lazy seal then binds to
+/// the owning service account by construction, because it is the only account that CAN read it.
+/// A failure to apply the ACL DELETES the seed and aborts: a seed on disk without custody is
+/// worse than no deployment, because provisioning would otherwise report success.
+fn write_seed(path: &Path, seed: &[u8; 32], owner_account: Option<&str>) {
     std::fs::write(path, crypto::hex(seed)).expect("write seed");
+    if let Err(why) = restrict_to_owner(path, owner_account) {
+        let _ = std::fs::remove_file(path);
+        eprintln!("win_provision: cannot restrict {}: {why}", path.display());
+        eprintln!("win_provision: refusing to leave a production signing seed readable");
+        std::process::exit(4);
+    }
+}
+
+/// Replace the file's inherited ACL with an explicit one: the owning service account (read),
+/// SYSTEM and Administrators (full). Uses `icacls` — the same command an operator would run, and
+/// auditable in the provisioning log, rather than several hundred lines of unsafe SDDL building
+/// in a tool that runs once.
+///
+/// On non-Windows this is a no-op: the Linux kit's seeds are governed by uid/mode in
+/// `run_live_turn.sh`, and this binary is the Windows provisioner.
+#[cfg(windows)]
+fn restrict_to_owner(path: &Path, owner_account: Option<&str>) -> Result<(), String> {
+    let owner = owner_account.ok_or_else(|| {
+        "no owning account given for this seed (pass --<role>-account); without one the seed \
+         would keep the directory's inherited ACL, which is what this check exists to remove"
+            .to_string()
+    })?;
+    let mut cmd = std::process::Command::new("icacls");
+    cmd.arg(path)
+        .arg("/inheritance:r")
+        .arg("/grant:r")
+        .arg(format!("{owner}:R"))
+        .arg("/grant:r")
+        .arg("*S-1-5-18:F") // SYSTEM, by SID so it is locale-independent
+        .arg("/grant:r")
+        .arg("*S-1-5-32-544:F"); // BUILTIN\Administrators, likewise
+    let out = cmd.output().map_err(|e| format!("icacls: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "icacls exited {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn restrict_to_owner(_path: &Path, _owner_account: Option<&str>) -> Result<(), String> {
+    Ok(())
 }
 
 fn now_ms() -> i64 {
@@ -85,9 +146,24 @@ fn main() {
     // Root anchor is the TCB-pinned key (audit fix P1-a) — the manifest is signed with the TCB root, and the
     // driver pins the root PUBLIC key from crate::tcb, NEVER from config.json.
     let root_pub = tcb::root_public_key_hex();
-    write_seed(&keys.join("challenge.seed"), &challenge_seed);
-    write_seed(&keys.join("attest.seed"), &attest_seed);
-    write_seed(&keys.join("signer.seed"), &signer_seed);
+    // Each seed is restricted to the account that will hold it. The three accounts are named on
+    // the command line because only the deployment knows them; a missing name aborts provisioning
+    // rather than leaving the seed on the directory's inherited ACL.
+    write_seed(
+        &keys.join("challenge.seed"),
+        &challenge_seed,
+        arg(&args, "--challenge-account").as_deref(),
+    );
+    write_seed(
+        &keys.join("attest.seed"),
+        &attest_seed,
+        arg(&args, "--supervisor-account").as_deref(),
+    );
+    write_seed(
+        &keys.join("signer.seed"),
+        &signer_seed,
+        arg(&args, "--signer-account").as_deref(),
+    );
     // Audit A: the root PRIVATE key is NOT written to the live deployment. The manifest is signed here with
     // the TCB root (crate::tcb); the driver pins only the root PUBLIC key. In production the root private is
     // held offline entirely — nothing about the root private lands on the serving box.

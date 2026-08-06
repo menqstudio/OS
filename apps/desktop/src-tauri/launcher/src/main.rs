@@ -337,6 +337,29 @@ pub fn parse_lease(content: &str) -> Option<Lease> {
     })
 }
 
+/// The §2.7 store-input identity DECISION (audit **F-08**), pure and host-independent.
+///
+/// `digest_of` supplies the SHA-256 of the bytes behind a held descriptor; the Linux path passes
+/// a `pread`-from-zero reader, tests pass a map. Every input must digest to the lease's pin for
+/// its slot: an unreadable descriptor refuses (`store-input-read`), a mismatch refuses
+/// (`store-input-digest`), and there is no partial acceptance.
+///
+/// It is a separate function precisely so it can be tested. The remediation audit found this
+/// check — the whole substance of F-08 — covered by no test at all, while four tests exercised
+/// the lease parser around it, so removing the check kept the suite green.
+pub fn verify_store_inputs(
+    lease: &Lease,
+    digest_of: impl Fn(i32) -> Option<String>,
+) -> Result<(), Refusal> {
+    for (fd, pin) in store_input_pins(lease) {
+        let digest = digest_of(fd).ok_or(Refusal::TcbIntegrity("store-input-read"))?;
+        if digest != pin {
+            return Err(Refusal::TcbIntegrity("store-input-digest"));
+        }
+    }
+    Ok(())
+}
+
 /// The fd→pin map the §2.7 store-input binding checks (audit **F-08**): fd 3 is `system`, fd 4 `history`,
 /// fd 5 `generation_config` — the same fixed assignment the recorder opens them in and the same order the
 /// attested `request_sha256` is built from. Pure so the mapping itself is testable off Linux.
@@ -516,13 +539,12 @@ mod linux {
     /// bytes hashed are the bytes the executor will read from the same open file description. The §4.7
     /// per-artifact ceiling already bounds how much can be read (`collect_fd_facts` refuses a larger inode).
     fn verify_store_input_bindings(lease: &Lease) -> Result<(), Refusal> {
-        for (fd, pin) in store_input_pins(lease) {
-            let digest = digest_fd_at_zero(fd).ok_or(Refusal::TcbIntegrity("store-input-read"))?;
-            if digest != pin {
-                return Err(Refusal::TcbIntegrity("store-input-digest"));
-            }
-        }
-        Ok(())
+        // The DECISION lives in the pure `verify_store_inputs` (host-independent, unit-tested);
+        // this only supplies the real `pread`. The remediation audit found the previous shape had
+        // zero tests over the digest-and-compare — the four "F-08 tests" covered the lease parser
+        // and the fd→pin map, so deleting this whole check left the suite green. A parser test is
+        // not a test of the thing the parser feeds.
+        verify_store_inputs(lease, digest_fd_at_zero)
     }
 
     /// SHA-256 (lowercase hex) of a held descriptor's contents, read positionally from offset 0. `None` on
@@ -1192,6 +1214,69 @@ mod tests {
         );
         let dup = format!("{}history_sha256={}\n", good_lease_body(), "44".repeat(32));
         assert_eq!(parse_lease(&dup), None);
+    }
+
+    // ---- the F-08 DECISION itself, not the parser around it -------------------------------
+
+    fn good_lease() -> Lease {
+        parse_lease(&good_lease_body()).expect("parses")
+    }
+
+    #[test]
+    fn matching_inputs_are_accepted() {
+        let l = good_lease();
+        let ok = verify_store_inputs(&l, |fd| {
+            Some(match fd {
+                3 => "11".repeat(32),
+                4 => "22".repeat(32),
+                _ => "33".repeat(32),
+            })
+        });
+        assert_eq!(ok, Ok(()));
+    }
+
+    #[test]
+    fn any_single_input_that_differs_from_its_pin_refuses() {
+        // The attack F-08 exists for: the executor runs on bytes the receipt does not attest.
+        // One slot at a time, because a check that only looks at the first would pass two of these.
+        let l = good_lease();
+        for bad in [3, 4, 5] {
+            let r = verify_store_inputs(&l, |fd| {
+                Some(if fd == bad {
+                    "ff".repeat(32) // whatever the attacker substituted
+                } else {
+                    match fd {
+                        3 => "11".repeat(32),
+                        4 => "22".repeat(32),
+                        _ => "33".repeat(32),
+                    }
+                })
+            });
+            assert_eq!(r, Err(Refusal::TcbIntegrity("store-input-digest")), "fd {bad}");
+        }
+    }
+
+    #[test]
+    fn transposed_inputs_are_refused() {
+        // system's bytes presented on the history descriptor. Every digest is a REAL digest of a
+        // real store input, so a check that merely asked "is this one of the pinned digests?"
+        // would accept it.
+        let l = good_lease();
+        let r = verify_store_inputs(&l, |fd| {
+            Some(match fd {
+                3 => "22".repeat(32),
+                4 => "11".repeat(32),
+                _ => "33".repeat(32),
+            })
+        });
+        assert_eq!(r, Err(Refusal::TcbIntegrity("store-input-digest")));
+    }
+
+    #[test]
+    fn an_unreadable_input_refuses_rather_than_being_skipped() {
+        let l = good_lease();
+        let r = verify_store_inputs(&l, |fd| if fd == 4 { None } else { Some("11".repeat(32)) });
+        assert_eq!(r, Err(Refusal::TcbIntegrity("store-input-read")));
     }
 
     #[test]

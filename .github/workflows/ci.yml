@@ -48,6 +48,27 @@ jobs:
       - name: Test the SQLite data core
         run: cargo test -p brops-core --manifest-path apps/desktop/src-tauri/Cargo.toml
 
+  governed-crates:
+    name: Governed chain · production crates (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      # (remediation audit) 52 `#[test]` functions in the crates that ACTUALLY produce a
+      # trusted_verified — the setuid launcher, the contained executor, the broker chain and the
+      # live driver — were run by no CI job at all, and `brops-executor` was never even compiled.
+      # `brops-core` alone was tested, which is the crate least able to forge anything. A test
+      # that no job runs is not a test; it is a file that resembles one.
+      #
+      # The Tauri host crate (`brops`) is deliberately NOT here: it needs webkit2gtk. Its absence
+      # is a real coverage gap on Windows and is tracked separately — it is stated rather than
+      # papered over by testing something adjacent and calling it covered.
+      - name: Test the launcher, executor, broker and live driver
+        run: |
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml             -p brops-launcher -p brops-executor -p brops-broker -p brops-governed-live             -p brops-win-live -p brops-win-broker
+
   live-governed-turn:
     name: Linux · LIVE 7-service governed turn (real uids, setuid launcher)
     runs-on: ubuntu-latest

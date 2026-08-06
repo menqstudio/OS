@@ -4,7 +4,16 @@
 //! DPAPI blob bound to the OWNING service account's master key. `config::read_seed` detects which by content,
 //! so config paths and the server bins are unchanged. A seed sealed by `CryptProtectData` (per-user scope, no
 //! `CRYPTPROTECT_LOCAL_MACHINE`) can be recovered ONLY by the account that sealed it — so a login user (or a
-//! sibling principal) who copies the blob cannot decrypt it: the boundary is cryptographic, not just an ACL.
+//! sibling principal) who copies the SEALED BLOB cannot decrypt it.
+//!
+//! Read that claim precisely, because it was previously written as though it covered the whole life of the
+//! seed (remediation audit, P1). The seal is applied on FIRST READ. Between provisioning and that read the
+//! seed is plaintext hex on disk, and `attest.seed` + `signer.seed` are the two production keys
+//! `verify_and_accept` checks — so in that window the boundary is not cryptographic at all, and anyone who
+//! can read the file can sign anything the chain will then accept. `win_provision::write_seed` closes the
+//! window by restricting each seed to its owning account before anything can read it, which also makes the
+//! trust-on-first-use binding correct by construction: the owning account is the only one that CAN read it.
+//! The cryptographic boundary is what remains AFTER that, not what protects the seed before it.
 //!
 //! DPAPI-NG `SID=` was rejected: its protector needs the AD DS KDS root key, which does not exist on a
 //! standalone/workgroup box (this deployment uses local accounts). Classic per-user DPAPI is the right fit.
