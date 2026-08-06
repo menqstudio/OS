@@ -34,6 +34,10 @@
 > a second lookup of itself.
 > **F-31/F-32/F-36 are CLOSED** (2026-08-06): the broker's serial accept loop arms a per-connection
 > deadline, and the renderer→broker client both times out and caps ingress before buffering.
+> **F-10 is PARTIAL** (2026-08-06): the §2.5 floor has a real `O_PATH|O_NOFOLLOW` probe and a real
+> fail-closed caller in the production broker (`build_governed_executor` refuses to serve governed turns
+> unless the pinned TCB set verifies). The live kit still does not provision the full 22-artifact pinned
+> set, so the floor enforces on the production path but the proof kit cannot yet satisfy it.
 > **REMAINING blockers** — F-02/F-18 (the open half above),
 > F-08 (request↔output binding), F-09's acceptance-CAS *lease-budget* framing is satisfied but the
 > §2.5 TCB floor **F-10** has no caller, F-07/F-17/F-28 (self-certifying + world-writable custody),

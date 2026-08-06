@@ -178,7 +178,7 @@ mod linux {
         // with a TCB-root-signed manifest, serve real governed turns through the live chain; otherwise (no
         // config / malformed / no trusted manifest) fall back to the fail-closed default that Blocks every
         // turn — the shipped posture is unchanged until a trusted manifest is provisioned.
-        let executor: Box<dyn GovernedExecutor> = build_governed_executor();
+        let executor: Box<dyn GovernedExecutor> = build_governed_executor(allowed_uid);
 
         // One governed turn per connection (single-request/single-response). A bad peer or malformed frame
         // fails that ONE connection closed; the listener keeps serving.
@@ -213,7 +213,7 @@ mod linux {
     /// blocks, the real `LinuxGovernedTurnChain` (with the production `ProductionResolver`) is served.
     /// ANY problem — no env var, unreadable/malformed config, missing manifest — returns the fail-closed
     /// `UpstreamBlockedExecutor`, so the broker keeps rendering `blocked` (never a fabricated acceptance).
-    fn build_governed_executor() -> Box<dyn GovernedExecutor> {
+    fn build_governed_executor(login_uid: u32) -> Box<dyn GovernedExecutor> {
         use brops_broker::chain_executor::linux::{
             ChainSockets, ExecutionConfig, LinuxGovernedExecution, LinuxGovernedTurnChain,
         };
@@ -252,6 +252,40 @@ mod linux {
             }
             cur.as_i64()
         };
+
+        // ---- §2.5 TCB INTEGRITY FLOOR (audit F-10) ----
+        //
+        // Before ANY governed mode is entered, the pinned TCB set — the seven trusted executables,
+        // their configs and IPC policies, the pinned-manifest configuration, the allowlist source,
+        // the key-manifest root anchor, and both unit files — must be TCB-owned, non-writable by any
+        // login/runtime principal, and hash-match its start-time pin. `verify_tcb_integrity` had
+        // implemented exactly that decision and had NO caller and no non-test `FsProbe`, so every
+        // downstream signature check ran on binaries whose integrity was never measured.
+        //
+        // Fail-closed in every direction: no manifest configured, unreadable, malformed, or ANY
+        // violation ⇒ keep the blocking executor rather than serve real governed turns.
+        let runtime_uids: Vec<u32> = cfg
+            .get("uids")
+            .and_then(|v| v.as_object())
+            .map(|m| m.values().filter_map(|v| v.as_u64().map(|u| u as u32)).collect())
+            .unwrap_or_default();
+        let mut principals = runtime_uids.clone();
+        if !principals.contains(&login_uid) {
+            principals.push(login_uid);
+        }
+        let pin_manifest_path = s(&["trust", "tcb_pin_manifest_path"]).or_else(|| {
+            std::env::var(brops_broker::tcb_probe::TCB_PIN_MANIFEST_ENV)
+                .ok()
+                .filter(|p| !p.is_empty())
+        });
+        if let Err(why) = brops_broker::tcb_probe::verify_deployment_tcb(
+            pin_manifest_path.as_deref(),
+            &principals,
+            login_uid,
+        ) {
+            eprintln!("brops-broker: TCB integrity floor REFUSED ({why}) — serving fail-closed");
+            return fail_closed();
+        }
 
         // The presence of a manifest path is the switch: absent ⇒ no trusted manifest ⇒ fail-closed.
         let manifest_path = match s(&["trust", "manifest_path"]) {

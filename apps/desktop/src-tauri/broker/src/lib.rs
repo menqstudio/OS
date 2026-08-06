@@ -18,6 +18,11 @@ pub mod chain_executor;
 /// The broker's compiled-in TCB root anchor (production-trust root public key).
 pub mod tcb;
 
+/// The REAL filesystem probe + loader behind the §2.5 TCB-integrity floor (audit F-10). The floor's
+/// decision core lives in `brops_core::tcb_integrity` and was fully implemented with no caller and no
+/// non-test `FsProbe`; this is the half that makes it run.
+pub mod tcb_probe;
+
 /// The broker's production `TurnResolver` — fail-closed by default; the real manifest resolution when a
 /// trusted manifest is provisioned.
 pub mod manifest_resolver;
