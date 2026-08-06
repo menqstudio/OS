@@ -1,0 +1,218 @@
+{
+  "_comment": [
+    "Every § reference in the source is a CLAIM. This file records whether the claim is true.",
+    "Checked by tools/check_spec_references.py; see that file for why this gate exists.",
+    "unreviewed is not a pass: it means nobody has checked. Move entries to implemented (with",
+    "a test that fails if the implementation is removed) or to not_implemented (with the words",
+    "NOT IMPLEMENTED at every citation site) as they are worked through."
+  ],
+  "sections": {
+    "§0": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§0.1": {
+      "status": "partial",
+      "missing": "The platform gate as specified. `platform_governed_execution_supported()` is a hardcoded false.",
+      "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
+    },
+    "§1": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§1.1": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§1.2": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§1.3": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§1.4": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§1.5": {
+      "status": "partial",
+      "missing": "Step 4, the signer's policy-authorization check, is removed and its refusal reason is raised nowhere.",
+      "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
+    },
+    "§1.8": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§1.9": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§10.1": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.1": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.1.1": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.1.1(a)": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.1.1(b)": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.1.1(d)": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.2": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.3": {
+      "status": "partial",
+      "missing": "Store ACLs as specified. The live kit uses group ownership and modes, which is weaker and differently shaped.",
+      "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
+    },
+    "§2.4": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.5": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.6": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§2.7": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§3": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§3(d)": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§3.1": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§3.2": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§3.8": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.0": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.1": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.10": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.10(f)": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.10(g)": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.2": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.3": {
+      "status": "partial",
+      "missing": "The lease is an unsigned 8-field key=value blob, not the signed 25-field artifact the spec describes. Its integrity comes from root ownership and file mode, not a signature.",
+      "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
+    },
+    "§4.4": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.6": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.7": {
+      "status": "partial",
+      "missing": "The execution receipt that would attest `exit_code == 0` and bind the output digest does not exist. What IS implemented under this number is the per-artifact size ceiling.",
+      "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
+    },
+    "§4.9": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§5": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§6": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§6.1": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§6.3": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§7": {
+      "status": "partial",
+      "missing": "The isolated signer's INDEPENDENT deep verification. `_verify_chain_handles` performs three EXISTENCE checks against a content-addressed store and re-verifies nothing. The signer is a separate OS principal for exactly one reason, and that reason is currently unfulfilled: the chain's authenticity rests on the supervisor's single signature (audit round 3, R3-01, P1).",
+      "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
+    },
+    "§7.1": {
+      "status": "partial",
+      "missing": "Freshness. The acceptance ledger's receipt-id and nonce checks exist; the §7.1 freshness window does not.",
+      "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
+    },
+    "§7.1(c)": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§7.1(d)": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§9.1": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§9.2": {
+      "status": "unreviewed",
+      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    }
+  }
+}

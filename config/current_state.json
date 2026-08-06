@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "e81f50c0b4b07dd73a7e15f07b9d3ec90007fb8d",
-    "snapshot_branch": "docs/ledger-accuracy-after-round2",
-    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD e81f50c — PRs #56 and #57 merged. The active branch docs/ledger-accuracy-after-round2 is a direct child of it.",
+    "baseline_main_head_at_sync": "bfd55dae62dfa63b5073f9f073f8e9c678a8776a",
+    "snapshot_branch": "gate/spec-conformance",
+    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD bfd55da (PR #58 merged). The active branch gate/spec-conformance is a direct child of it.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #53). PR #53's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "docs/ledger-accuracy-after-round2"
+    "branch": "gate/spec-conformance"
   },
   "prs": [],
   "status_tokens": {
@@ -149,6 +149,10 @@
     {
       "number": 57,
       "reason": "Round-2 response: seed-custody P1, F-08 enforcement tests + negative live case, governed-crates CI job, answer-provenance honesty. Merged 2026-08-06."
+    },
+    {
+      "number": 58,
+      "reason": "Ledger accuracy + the ✅/◑ legend after rounds 1-2. Merged 2026-08-06."
     }
   ],
   "product_roadmap": {
@@ -192,11 +196,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 58,
-    "branch": "docs/ledger-accuracy-after-round2",
+    "number": 59,
+    "branch": "gate/spec-conformance",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #58 body.",
-    "note": "PR #58 = docs only. After #56 and #57 merged, the AUDIT_LEDGER status cells were stale in the CONSERVATIVE direction (F-01 still read 'REOPENED — P0' although #56 closed it). They now say what is true: addressed, by which commit, and NOT re-audited. A legend is added because three rounds have found a row's ✅ overclaimed, so ✅ is reserved for what an INDEPENDENT audit confirmed and ◑ means 'the Builder's unverified claim'. No code change; no gate change."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #59 body.",
+    "note": "PR #59 = the spec-conformance gate. The third audit round measured code against the SPEC instead of against AUDIT_LEDGER.md (which the implementer writes) and found numbered sections cited as though satisfied while nothing implemented them — the same mechanism by which the earlier P0s passed review. Every § reference is now a claim the build checks: declared or RED, implemented needs a test that exists, not_implemented needs the words at every site, partial needs the gap named in the code. 43 existing references start `unreviewed`, which freezes the debt where the audit found it and refuses anything new. 13 self-tests. No gate-logic change."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",

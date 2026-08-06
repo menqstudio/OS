@@ -228,6 +228,12 @@ pub fn image_owner_mode_ok(st_mode: u32, st_uid: u32, brops_admin_uid: u32) -> b
 
 // ---------------------------------------------------------------------------------------------------
 // The validated lease (§4.3) — the launch parameters the launcher TAKES (never chooses): the recorder
+//
+// PARTIAL vs the spec (audit round 3): §4.3 describes a SIGNED 25-field artifact. What this is, is an
+// unsigned 8-field key=value blob. Its integrity comes from root ownership and file mode — a real
+// property, and a different one from a signature: it survives a hostile non-root principal and does
+// NOT survive anything that can write as root. Cited here because a reader who sees `§4.3` and stops
+// there will assume the signature exists.
 // principal permitted to invoke it, the unprivileged executor identity to drop to, and the executor image
 // hash pin. Parsed from the lease handle (argv[0]). A strict std-only `key=value` body — NO serde in a
 // setuid-root binary (minimal attack surface). Pure + host-independent so it is unit-tested on any OS.
