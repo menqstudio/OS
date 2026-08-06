@@ -125,6 +125,9 @@ const METRIC: Record<string, { en: string; hy: string; ru: string }> = {
   messages: { en: 'Messages', hy: 'Հաղորդագրություններ', ru: 'Сообщения' },
   notifications: { en: 'Notifications', hy: 'Ծանուցումներ', ru: 'Уведомления' },
   knowledge: { en: 'Knowledge', hy: 'Գիտելիք', ru: 'Знания' },
+  integrations: { en: 'Integrations', hy: 'Ինտեգրումներ', ru: 'Интеграции' },
+  library_items: { en: 'Library items', hy: 'Գրադարանի տարրեր', ru: 'Элементы библиотеки' },
+  research_items: { en: 'Research items', hy: 'Հետազոտության տարրեր', ru: 'Элементы исследования' },
 };
 
 /** Localized metric label from its key, falling back to a provided label or humanized key. */

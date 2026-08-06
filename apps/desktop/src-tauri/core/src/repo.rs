@@ -2259,6 +2259,12 @@ pub mod analytics {
             ("automations_on", "Automations enabled", "SELECT COUNT(*) FROM automations WHERE enabled = 1"),
             ("knowledge", "Knowledge notes", "SELECT COUNT(*) FROM knowledge_notes"),
             ("memory", "Memory entries", "SELECT COUNT(*) FROM memory_entries"),
+            ("conversations", "Conversations", "SELECT COUNT(*) FROM conversations"),
+            ("messages", "Messages", "SELECT COUNT(*) FROM messages"),
+            ("decisions", "Decisions", "SELECT COUNT(*) FROM decisions"),
+            ("integrations", "Integrations", "SELECT COUNT(*) FROM integrations"),
+            ("library_items", "Library items", "SELECT COUNT(*) FROM library_items"),
+            ("research_items", "Research items", "SELECT COUNT(*) FROM research_items"),
             ("audit", "Audit events", "SELECT COUNT(*) FROM audit_events"),
         ];
         let mut out = Vec::with_capacity(defs.len());
