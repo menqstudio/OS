@@ -773,6 +773,27 @@ pub mod linux {
                 let _ = std::fs::set_permissions(&output_blob, std::fs::Permissions::from_mode(0o644));
             }
 
+            // (2b) F-02: content-address the recorder's CONTAINMENT REPORT for this run. Its absence
+            //      is a refusal, not a fallback — a turn whose containment cannot be evidenced must
+            //      not be attested, and the isolated signer's §1.5 containment gate would otherwise
+            //      be satisfied by a constant the provisioner wrote once.
+            let containment =
+                std::fs::read(&containment_path).map_err(|_| TurnReason::UpstreamBlocked)?;
+            if containment.is_empty() {
+                return Err(TurnReason::UpstreamBlocked);
+            }
+            let containment_handle = sha256_hex(&containment);
+            let containment_blob = format!("{}/{}", cfg.store_dir, containment_handle);
+            std::fs::write(&containment_blob, &containment)
+                .map_err(|_| TurnReason::UpstreamBlocked)?;
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    &containment_blob,
+                    std::fs::Permissions::from_mode(0o644),
+                );
+            }
+
             // (3) `complete-run` — report ONLY what this run actually produced, once. Every id,
             //     nonce, identity and acceptance timestamp is deliberately absent: the supervisor
             //     already holds those from the signed challenge it accepted, and taking them here
