@@ -231,10 +231,10 @@ echo "$RESULT_LINE"
 # root_anchor=kit_generated, and the green condition below asserts exactly the property that was
 # actually demonstrated. Re-provision with --root-anchor-key-id/--root-anchor-pub-hex plus the
 # externally-signed manifest and the same run reports root_anchor=external production_verified=true.
-if echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*\) production_verified=true bound=true root_anchor=external'; then
+if echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*production_verified=true bound=true root_anchor=external'; then
   echo "LIVE GOVERNED TURN: GREEN — genuine production trusted_verified (externally-anchored root)"
   exit 0
-elif echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*\) bound=true root_anchor=kit_generated'; then
+elif echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*bound=true root_anchor=kit_generated'; then
   echo "LIVE GOVERNED TURN: GREEN — chain bound a trusted_verified turn"
   echo "  NOT a production claim: the root anchor is kit-generated, so custody is unproven (F-17)."
   exit 0
