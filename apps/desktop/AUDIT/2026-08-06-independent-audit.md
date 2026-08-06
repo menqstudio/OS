@@ -44,7 +44,7 @@
 | **Ծանրություն** | 🔴 P0 |
 | **Dimension** | `crypto-signing` |
 | **Տեղը** | `engine/runtime/governed_supervisor_server.py:331` |
-| **Վիճակ** | ⬜ *կոդ գրողի կողմից դեռ չստուգված* |
+| **Վիճակ** | ✅ **ՀԱՄԱՁԱՅՆ — ՈՒՂՂՎԱԾ (2026-08-06)**. Ստուգման դարպասը լրացված է կոդի դեմ (երեք կետն էլ հաստատված; `supervisor_ledger.rs`-ի dead-code պնդումը վերա-grep արված՝ ամբողջ ռեպոյում միայն `create_schema`-ն ունի կանչող)։ Ուղղումը՝ §5 v2 (տես [`WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md` §5 v2](../../../docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md#5-durable-supervisor-acceptance--state-machine--outbox-p0-2)). `attest-run`-ը ընդունում է **միայն** `{run_id, execution_attempt_id}`; `build_run_attestation`-ը `facts` պարամետր չունի; evidence-ը կառուցվում է supervisor-ի սեփական durable terminal վիճակից (`governed_supervisor_ledger.load_attestation_state`, որ վերադարձնում է row միայն `COMPLETED` attempt-ի համար)։ Կեղծված run ⇒ row չկա ⇒ `no_terminal_run_state`։ **F-02-ը ՄՆՈՒՄ Է ԲԱՑ** (evidence facts-երը դեռ deployment-static են)։ |
 
 **Դեֆեկտը.** The `attest-run` op signs whatever field values arrive on the wire: `build_run_attestation` (governed_supervisor.py:614-676) validates only the SHAPE of `facts` via `_validate_run_facts` (types/lengths/hex-ness), stamps `decision="completed"`, and signs `JCS(evidence)` — it holds and consults no run state, no issued lease, no accepted challenge, and no execution result, despite its docstring at governed_supervisor.py:620 claiming it builds evidence "from the supervisor's OWN trusted terminal run state" and "NEVER signs a caller-supplied evidence object".
 

@@ -179,90 +179,20 @@ impl From<rusqlite::Error> for LedgerError {
 // Schema.
 // ---------------------------------------------------------------------------
 
-/// Create the three durable tables + the transition-enforcing trigger (idempotent — `IF NOT EXISTS`).
-/// Also enables `PRAGMA foreign_keys` on this connection so the outbox→acceptance FK is live.
+/// The CANONICAL durable-ledger DDL, compiled in from the mirrored copy of
+/// `engine/runtime/supervisor_ledger.sql` (the single normative source — see that file's header).
+///
+/// The mirror is byte-compared against the canonical file by the fail-closed CI gate
+/// `tools/check_ledger_ddl_parity.py`, so the Python supervisor (the production writer of this state)
+/// and this Rust library can never drift apart on the constraints that ARE the enforcement: the three
+/// `UNIQUE`s that make one signed challenge mint exactly one attempt, the `state` CHECK + transition
+/// trigger, the completion table's write-once PK, and the evidence-head floor.
+pub const SCHEMA_SQL: &str = include_str!("../schema/supervisor_ledger.sql");
+
+/// Create the durable tables + the transition-enforcing trigger (idempotent — `IF NOT EXISTS`).
+/// Also enables `PRAGMA foreign_keys` on this connection so the outbox/completion→acceptance FKs are live.
 pub fn create_schema(conn: &Connection) -> Result<(), LedgerError> {
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = ON;
-
-        CREATE TABLE IF NOT EXISTS governed_turn_acceptance (
-            install_id                     TEXT NOT NULL,
-            request_nonce                  TEXT NOT NULL,
-            challenge_handle               TEXT NOT NULL,
-            run_id                         TEXT NOT NULL,
-            task_id                        TEXT NOT NULL,
-            workspace_id                   TEXT NOT NULL,
-            execution_attempt_id           TEXT NOT NULL,
-            challenge_accepted_at_ms       INTEGER NOT NULL,
-            challenge_registry_handle      TEXT NOT NULL,
-            challenge_registry_hash        TEXT NOT NULL,
-            challenge_registry_epoch       INTEGER NOT NULL,
-            challenge_registry_root_key_id TEXT NOT NULL,
-            lease_payload_sha256           TEXT NOT NULL,
-            lease_payload_bytes            BLOB NOT NULL,
-            lease_handle                   TEXT,
-            state                          TEXT NOT NULL CHECK (state IN (
-                'ACCEPTED_PREPARED','LEASE_READY','EXECUTION_STARTING','EXECUTING',
-                'COMPLETED','BLOCKED','FAILED','EXPIRED','RECOVERY_REQUIRED')),
-            execution_started_marker       TEXT,
-            cgroup_id                      TEXT,
-            process_group_id               TEXT,
-            terminal_record_handle         TEXT,
-            failure_reason                 TEXT,
-            created_at_ms                  INTEGER NOT NULL,
-            updated_at_ms                  INTEGER NOT NULL,
-            UNIQUE (install_id, request_nonce),
-            UNIQUE (challenge_handle),
-            UNIQUE (execution_attempt_id)
-        );
-
-        -- CHECK cannot see OLD.state, so the transition matrix is enforced by a BEFORE-UPDATE trigger.
-        -- It fires whenever `state` is in the SET list; a same-state write (updating other columns) is
-        -- allowed, every cross-state edge must be one of the §5 legal edges, and NO edge may leave a
-        -- terminal state (terminals never appear as an OLD.state with a different NEW.state below).
-        CREATE TRIGGER IF NOT EXISTS trg_governed_turn_acceptance_transition
-        BEFORE UPDATE OF state ON governed_turn_acceptance
-        FOR EACH ROW
-        WHEN NOT (
-            OLD.state = NEW.state
-            OR (OLD.state = 'ACCEPTED_PREPARED'  AND NEW.state IN ('LEASE_READY','BLOCKED'))
-            OR (OLD.state = 'LEASE_READY'         AND NEW.state IN ('EXECUTION_STARTING','EXPIRED','BLOCKED'))
-            OR (OLD.state = 'EXECUTION_STARTING'  AND NEW.state IN ('EXECUTING','RECOVERY_REQUIRED'))
-            OR (OLD.state = 'EXECUTING'           AND NEW.state IN ('COMPLETED','FAILED','RECOVERY_REQUIRED'))
-        )
-        BEGIN
-            SELECT RAISE(ABORT, 'illegal acceptance state transition');
-        END;
-
-        CREATE TABLE IF NOT EXISTS governed_turn_outbox (
-            execution_attempt_id   TEXT PRIMARY KEY NOT NULL,
-            run_id                 TEXT NOT NULL,
-            terminal_state         TEXT NOT NULL CHECK (terminal_state IN (
-                'COMPLETED','BLOCKED','FAILED','EXPIRED','RECOVERY_REQUIRED')),
-            terminal_record_handle TEXT,
-            record_filename        TEXT NOT NULL,
-            payload_sha256         TEXT NOT NULL,
-            payload_bytes          BLOB NOT NULL,
-            published              INTEGER NOT NULL DEFAULT 0 CHECK (published IN (0,1)),
-            created_at_ms          INTEGER NOT NULL,
-            published_at_ms        INTEGER,
-            FOREIGN KEY (execution_attempt_id)
-                REFERENCES governed_turn_acceptance (execution_attempt_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS governed_evidence_head_floor (
-            install_id            TEXT NOT NULL,
-            task_id               TEXT NOT NULL,
-            highest_head_sequence INTEGER NOT NULL CHECK (highest_head_sequence >= 1),
-            event_count           INTEGER NOT NULL CHECK (event_count >= 1),
-            last_sequence         INTEGER NOT NULL CHECK (last_sequence >= 1),
-            final_event_hash      TEXT NOT NULL,
-            updated_at_ms         INTEGER NOT NULL,
-            PRIMARY KEY (install_id, task_id)
-        );
-        "#,
-    )?;
+    conn.execute_batch(SCHEMA_SQL)?;
     Ok(())
 }
 
@@ -289,6 +219,23 @@ pub struct NewAcceptance {
     /// The EXACT canonical lease payload bytes to be signed (`JCS(payload)`); hashed to
     /// `lease_payload_sha256` and stored verbatim so a post-commit crash re-signs deterministically.
     pub lease_payload_bytes: Vec<u8>,
+
+    // ---- F-01: the durable request binding the run-attestation is rebuilt from ----
+    // `lease_*` are stamped from the supervisor's own clock; `receipt_id` is minted by the
+    // supervisor at acceptance (so the §7.1(d) replay key is per-turn, not deployment-static);
+    // the remaining five are copied out of the signature-verified challenge payload. Nothing here
+    // is ever accepted from a later caller message — that is what makes the attestation mean
+    // something the broker could not have chosen.
+    pub lease_id: String,
+    pub lease_issued_at_ms: i64,
+    pub lease_expires_at_ms: i64,
+    pub receipt_id: String,
+    pub supervisor_id: String,
+    pub requested_at_ms: i64,
+    pub request_sha256: String,
+    pub system_handle: String,
+    pub history_handle: String,
+    pub generation_config_handle: String,
 }
 
 /// Outcome of [`accept_prepare`].
@@ -318,8 +265,13 @@ pub fn accept_prepare(
             install_id, request_nonce, challenge_handle, run_id, task_id, workspace_id, \
             execution_attempt_id, challenge_accepted_at_ms, challenge_registry_handle, \
             challenge_registry_hash, challenge_registry_epoch, challenge_registry_root_key_id, \
-            lease_payload_sha256, lease_payload_bytes, state, created_at_ms, updated_at_ms) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'ACCEPTED_PREPARED',?15,?15)",
+            lease_payload_sha256, lease_payload_bytes, \
+            lease_id, lease_issued_at_ms, lease_expires_at_ms, receipt_id, supervisor_id, \
+            requested_at_ms, request_sha256, system_handle, history_handle, \
+            generation_config_handle, \
+            state, created_at_ms, updated_at_ms) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,\
+                 ?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,'ACCEPTED_PREPARED',?25,?25)",
         params![
             a.install_id,
             a.request_nonce,
@@ -335,6 +287,16 @@ pub fn accept_prepare(
             a.challenge_registry_root_key_id,
             lease_payload_sha256,
             a.lease_payload_bytes,
+            a.lease_id,
+            a.lease_issued_at_ms,
+            a.lease_expires_at_ms,
+            a.receipt_id,
+            a.supervisor_id,
+            a.requested_at_ms,
+            a.request_sha256,
+            a.system_handle,
+            a.history_handle,
+            a.generation_config_handle,
             now_ms,
         ],
     );
@@ -356,34 +318,60 @@ fn reconcile_conflict(
     a: &NewAcceptance,
     lease_payload_sha256: &str,
 ) -> Result<AcceptOutcome, LedgerError> {
-    let existing: Option<(String, String, String, String, String)> = conn
+    // ONE row read carrying every bound field, compared as a whole. Adding a binding column to the
+    // table without adding it here would silently widen what counts as "the same turn", so the
+    // comparison is deliberately exhaustive over the durable request binding.
+    type BoundRow = (
+        String, String, String, String, String, // challenge_handle, run_id, task_id, workspace_id, attempt
+        String,                                 // lease_payload_sha256
+        String, i64, i64,                       // lease_id, lease_issued_at_ms, lease_expires_at_ms
+        String, String,                         // receipt_id, supervisor_id
+        i64, String,                            // requested_at_ms, request_sha256
+        String, String, String,                 // system/history/generation_config handles
+    );
+    let existing: Option<BoundRow> = conn
         .query_row(
-            "SELECT challenge_handle, run_id, task_id, workspace_id, execution_attempt_id \
+            "SELECT challenge_handle, run_id, task_id, workspace_id, execution_attempt_id, \
+                    lease_payload_sha256, lease_id, lease_issued_at_ms, lease_expires_at_ms, \
+                    receipt_id, supervisor_id, requested_at_ms, request_sha256, \
+                    system_handle, history_handle, generation_config_handle \
              FROM governed_turn_acceptance WHERE install_id = ?1 AND request_nonce = ?2",
             params![a.install_id, a.request_nonce],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| {
+                Ok((
+                    r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?,
+                    r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?,
+                    r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?, r.get(14)?,
+                    r.get(15)?,
+                ))
+            },
         )
         .optional()?;
-    let Some((ch, run, task, ws, attempt)) = existing else {
+    let Some((
+        ch, run, task, ws, attempt, lease_sha, lease_id, lease_issued, lease_expires, receipt_id,
+        supervisor_id, requested_at, request_sha, system_h, history_h, gencfg_h,
+    )) = existing
+    else {
         // Nonce is unused but challenge_handle / execution_attempt_id was reused elsewhere.
         return Err(LedgerError::Conflict("challenge_or_attempt_reused"));
     };
-    let lease_matches: bool = conn
-        .query_row(
-            "SELECT lease_payload_sha256 = ?2 FROM governed_turn_acceptance \
-             WHERE install_id = ?1 AND request_nonce = ?3",
-            params![a.install_id, lease_payload_sha256, a.request_nonce],
-            |r| r.get(0),
-        )
-        .optional()?
-        .unwrap_or(false);
-    if ch == a.challenge_handle
+    let identical = ch == a.challenge_handle
         && run == a.run_id
         && task == a.task_id
         && ws == a.workspace_id
         && attempt == a.execution_attempt_id
-        && lease_matches
-    {
+        && lease_sha == lease_payload_sha256
+        && lease_id == a.lease_id
+        && lease_issued == a.lease_issued_at_ms
+        && lease_expires == a.lease_expires_at_ms
+        && receipt_id == a.receipt_id
+        && supervisor_id == a.supervisor_id
+        && requested_at == a.requested_at_ms
+        && request_sha == a.request_sha256
+        && system_h == a.system_handle
+        && history_h == a.history_handle
+        && gencfg_h == a.generation_config_handle;
+    if identical {
         Ok(AcceptOutcome::Idempotent)
     } else {
         Err(LedgerError::Conflict("nonce_rebound_to_different_turn"))
@@ -967,6 +955,16 @@ mod tests {
             challenge_registry_epoch: 7,
             challenge_registry_root_key_id: "root-1".into(),
             lease_payload_bytes: b"lease-payload-bytes".to_vec(),
+            lease_id: format!("lease-{attempt}"),
+            lease_issued_at_ms: 1_000_000,
+            lease_expires_at_ms: 1_210_000,
+            receipt_id: format!("receipt-{attempt}"),
+            supervisor_id: "supervisor-1".into(),
+            requested_at_ms: 999_000,
+            request_sha256: H64.into(),
+            system_handle: H64.into(),
+            history_handle: H64_B.into(),
+            generation_config_handle: H64.into(),
         }
     }
 
@@ -976,6 +974,70 @@ mod tests {
         create_schema(&conn).unwrap();
         create_schema(&conn).unwrap();
         assert!(pending_outbox(&conn).unwrap().is_empty());
+    }
+
+    /// F-01: the SHARED DDL must carry the durable request binding an attestation is rebuilt from,
+    /// plus the write-once completion table. The Python supervisor is the production writer of this
+    /// state, so this test pins the contract on the Rust side of the mirror: if a column the
+    /// attestation depends on is dropped from the canonical SQL, this fails here too.
+    #[test]
+    fn schema_carries_the_attestation_binding_and_write_once_completion() {
+        let conn = store();
+        for col in [
+            "lease_id",
+            "lease_issued_at_ms",
+            "lease_expires_at_ms",
+            "receipt_id",
+            "supervisor_id",
+            "requested_at_ms",
+            "request_sha256",
+            "system_handle",
+            "history_handle",
+            "generation_config_handle",
+        ] {
+            let present: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('governed_turn_acceptance') WHERE name = ?1",
+                    params![col],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(present, 1, "acceptance binding column `{col}` is missing from the shared DDL");
+        }
+
+        // The completion table exists and its PK is the write-once gate on the run-produced facts.
+        accept_prepare(&conn, &new_acceptance("att-1"), 10).unwrap();
+        let insert = "INSERT INTO governed_turn_completion (\
+            execution_attempt_id, output_handle, containment_evidence_handle, record_handle, \
+            lease_handle, execution_receipt_handle, completed_at_ms, evidence_final_event_hash, \
+            evidence_event_count, evidence_last_sequence, evidence_head_sequence, facts_sha256, \
+            created_at_ms) VALUES ('att-1',?1,?1,?1,?1,?1,50,?1,3,3,12,?1,50)";
+        conn.execute(insert, params![H64]).unwrap();
+        // A second completion for the same attempt cannot be written at all — the PK refuses it, so a
+        // caller gets exactly one shot at the facts the attestation will carry.
+        let second = conn.execute(insert, params![H64_B]);
+        assert!(second.is_err(), "a second completion for one attempt must be refused by the PK");
+
+        // The FK is live: a completion for an attempt that was never accepted is refused.
+        let orphan = conn.execute(
+            "INSERT INTO governed_turn_completion (\
+                execution_attempt_id, output_handle, containment_evidence_handle, record_handle, \
+                lease_handle, execution_receipt_handle, completed_at_ms, evidence_final_event_hash, \
+                evidence_event_count, evidence_last_sequence, evidence_head_sequence, facts_sha256, \
+                created_at_ms) VALUES ('ghost',?1,?1,?1,?1,?1,50,?1,3,3,12,?1,50)",
+            params![H64],
+        );
+        assert!(orphan.is_err(), "a completion with no accepted attempt must be refused by the FK");
+    }
+
+    /// A `receipt_id` is the §7.1(d) global-unique replay key; two attempts must never share one.
+    #[test]
+    fn receipt_id_is_unique_across_attempts() {
+        let conn = store();
+        accept_prepare(&conn, &new_acceptance("att-1"), 10).unwrap();
+        let mut clash = new_acceptance("att-2");
+        clash.receipt_id = "receipt-att-1".into();
+        assert!(matches!(accept_prepare(&conn, &clash, 20), Err(LedgerError::Conflict(_))));
     }
 
     // ---- Acceptance ledger: create + legal chain --------------------------

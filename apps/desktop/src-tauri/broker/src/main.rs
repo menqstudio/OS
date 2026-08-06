@@ -313,14 +313,10 @@ mod linux {
             store_dir: s(&["execution", "store_dir"]).unwrap_or_default(),
             report_dir: s(&["execution", "report_dir"]).unwrap_or_default(),
             supervisor_sock: sockets.supervisor.clone(),
-            receipt_id: s(&["facts", "receipt_id"]).unwrap_or_default(),
-            supervisor_id: s(&["facts", "supervisor_id"]).unwrap_or_default(),
-            executor_id: s(&["facts", "executor_id"]).unwrap_or_default(),
-            builder_id: s(&["facts", "builder_id"]).unwrap_or_default(),
-            policy_id: s(&["facts", "policy_id"]).unwrap_or_default(),
-            policy_version: s(&["facts", "policy_version"]).unwrap_or_default(),
-            supervisor_attestation_key_id: s(&["trust", "supervisor_attestation_key_id"]).unwrap_or_default(),
-            policy_bundle_handle: s(&["facts", "policy_bundle_handle"]).unwrap_or_default(),
+            // F-01: `receipt_id` and the supervisor/executor/builder/policy identities are no
+            // longer read here. They are the values the isolated signer allowlists, so a broker
+            // that named them was choosing what it would be checked against; they now come from
+            // the SUPERVISOR's own provisioning (`config.supervisor.*`) and never travel the wire.
             containment_evidence_handle: s(&["facts", "containment_evidence_handle"]).unwrap_or_default(),
             record_handle: s(&["facts", "record_handle"]).unwrap_or_default(),
             lease_handle: s(&["facts", "lease_handle"]).unwrap_or_default(),

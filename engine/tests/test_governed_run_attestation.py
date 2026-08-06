@@ -1,26 +1,33 @@
-"""Offline tests for the supervisor's §4.9 RUN-ATTESTATION (rev-30 §4.1/§4.9).
+"""Offline tests for the supervisor's §4.9 RUN-ATTESTATION (rev-30 §4.1/§4.9, §5 v2).
 
-These prove the missing production piece end-to-end WITHOUT a socket or the OS
-trust chain, using a REAL Ed25519 keypair (``cryptography``):
+These prove the production piece end-to-end WITHOUT a socket or the OS trust chain, using a
+REAL Ed25519 keypair (``cryptography``) and a REAL durable ledger (in-memory SQLite over the
+shared DDL):
 
-  * the supervisor builds the §4.9 evidence from its OWN trusted run facts and
-    signs ``JCS(evidence)``; the isolated signer VERIFIES that attestation over
-    the identical evidence bytes against the pinned attestation key and re-hashes
-    them into ``attestation_evidence_sha256`` (byte-for-byte agreement);
+  * the supervisor builds the §4.9 evidence from its OWN durable terminal run state and signs
+    ``JCS(evidence)``; the isolated signer VERIFIES that attestation over the identical
+    evidence bytes against the pinned attestation key and re-hashes them into
+    ``attestation_evidence_sha256`` (byte-for-byte agreement);
   * a wrong ``supervisor_key_id`` is refused BEFORE the signature is even checked;
   * a tampered evidence field breaks the attestation signature;
-  * the ``attest-run`` server op: happy path returns the attestation + the exact
-    evidence JCS bytes; a non-broker peer is denied; malformed facts /
-    missing-seam fail closed.
+  * the ``attest-run`` server op over a FULL governed lifecycle
+    (accept-open → launch-gate → execution-started → complete-run → attest-run).
 
-The signature is base64url(64B) — the exact ``sig`` encoding §4.1 specifies and
-the Rust broker (governed_verification.rs) decodes with ``URL_SAFE_NO_PAD``.
+**F-01.** The old version of this file fed ``build_run_attestation`` a hand-built ``facts``
+mapping, because that is what the endpoint accepted — which is precisely why the broker uid
+could mint a signed receipt for a run that never happened. There is no such path any more:
+the evidence comes from the ledger, and the tests below have to actually run a governed
+lifecycle to obtain one.
+
+The signature is base64url(64B) — the exact ``sig`` encoding §4.1 specifies and the Rust
+broker (governed_verification.rs) decodes with ``URL_SAFE_NO_PAD``.
 """
 
 import base64
 import hashlib
 import json
 import pathlib
+import sqlite3
 import sys
 import unittest
 
@@ -29,19 +36,26 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
+import governed_supervisor_ledger as gsl  # noqa: E402
 from governed_supervisor import (  # noqa: E402
     ATTESTATION_PROTOCOL,
+    CHALLENGE_PROTOCOL,
     DECISION_COMPLETED,
-    REFUSE_MALFORMED,
-    Refusal,
     RunAttestation,
+    SupervisorConfig,
     SupervisorError,
     _canonical_bytes,
     build_run_attestation,
+    evidence_from_state,
 )
 from governed_supervisor_server import (  # noqa: E402
     LENGTH_PREFIX_BYTES,
+    OP_ACCEPT_OPEN,
     OP_ATTEST_RUN,
+    OP_COMPLETE_RUN,
+    OP_EXECUTION_STARTED,
+    OP_LAUNCH_GATE,
+    REFUSE_NO_TERMINAL_RUN,
     dispatch,
     handle_connection,
 )
@@ -61,6 +75,24 @@ NOW_MS = 1_700_000_000_000
 
 BROKER_UID = 4001
 RENDERER_UID = 1000
+
+_OPEN = []
+
+
+def tearDownModule():
+    while _OPEN:
+        try:
+            _OPEN.pop().close()
+        except sqlite3.Error:
+            pass
+
+
+def _ledger():
+    conn = sqlite3.connect(":memory:", isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    gsl.apply_schema(conn)
+    _OPEN.append(conn)
+    return conn
 
 
 def _b64u(data: bytes) -> str:
@@ -113,43 +145,53 @@ def _build_store():
     return store, handles
 
 
-def _facts(handles):
-    """The supervisor's trusted run facts — the §4.9 evidence MINUS ``decision``
-    (which the supervisor stamps itself)."""
-    return {
-        "run_id": "run-abc",
-        "execution_attempt_id": "attempt-1",
-        "task_id": "task-1",
-        "request_nonce": "550e8400-e29b-41d4-a716-446655440000",
-        "receipt_id": "receipt-777",
-        "workspace_id": "ws-1",
-        "install_id": "install-xyz",
-        "supervisor_id": "sup-1",
-        "executor_id": "exec-1",
-        "builder_id": "builder-1",
-        "policy_id": "policy-1",
-        "policy_version": "1.0.0",
-        "policy_bundle_handle": handles["policy_bundle_handle"],
-        "generation_config_handle": handles["generation_config_handle"],
-        "system_handle": handles["system_handle"],
-        "history_handle": handles["history_handle"],
-        "output_handle": handles["output_handle"],
-        "containment_evidence_handle": handles["containment_evidence_handle"],
-        "record_handle": handles["record_handle"],
-        "lease_handle": handles["lease_handle"],
-        "execution_receipt_handle": handles["execution_receipt_handle"],
-        "evidence_final_event_hash": "a" * 64,
-        "requested_at": NOW_MS - 5_000,
-        "challenge_accepted_at_ms": NOW_MS - 3_000,
-        "completed_at": NOW_MS - 1_000,
-        "evidence_event_count": 3,
-        "evidence_last_sequence": 12,
-        "evidence_head_sequence": 4,
-    }
+def _config(handles, supervisor_id="sup-1"):
+    """The supervisor's OWN provisioning — including the identity block the isolated signer
+    allowlists, which after F-01 no caller can contribute."""
+    return SupervisorConfig(
+        launcher_executable_sha256="1" * 64,
+        executor_executable_sha256="2" * 64,
+        id_fn=lambda: "id-1",
+        supervisor_id=supervisor_id,
+        executor_id="exec-1",
+        builder_id="builder-1",
+        policy_id="policy-1",
+        policy_version="1.0.0",
+        policy_bundle_handle=handles["policy_bundle_handle"],
+        challenge_registry_handle="reg-handle",
+        challenge_registry_hash="reg-hash",
+        challenge_registry_epoch=2,
+        challenge_registry_root_key_id="root-1",
+    )
 
 
-def _evidence_from_facts(facts):
-    return {**facts, "decision": DECISION_COMPLETED}
+def _state(handles):
+    """The supervisor's durable terminal run state for one attempt."""
+    return gsl.AttestationState(
+        run_id="run-abc",
+        execution_attempt_id="attempt-1",
+        task_id="task-1",
+        request_nonce="550e8400-e29b-41d4-a716-446655440000",
+        receipt_id="receipt-777",
+        workspace_id="ws-1",
+        install_id="install-xyz",
+        supervisor_id="sup-1",
+        requested_at_ms=NOW_MS - 5_000,
+        challenge_accepted_at_ms=NOW_MS - 3_000,
+        completed_at_ms=NOW_MS - 1_000,
+        system_handle=handles["system_handle"],
+        history_handle=handles["history_handle"],
+        generation_config_handle=handles["generation_config_handle"],
+        output_handle=handles["output_handle"],
+        containment_evidence_handle=handles["containment_evidence_handle"],
+        record_handle=handles["record_handle"],
+        lease_handle=handles["lease_handle"],
+        execution_receipt_handle=handles["execution_receipt_handle"],
+        evidence_final_event_hash="a" * 64,
+        evidence_event_count=3,
+        evidence_last_sequence=3,
+        evidence_head_sequence=4,
+    )
 
 
 def _make_signer(ed, store):
@@ -175,9 +217,9 @@ class BuildRunAttestationTests(unittest.TestCase):
     def test_shape_and_message_bytes(self):
         ed = _Ed25519()
         _store, handles = _build_store()
-        facts = _facts(handles)
         attn = build_run_attestation(
-            facts, supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation
+            _state(handles), config=_config(handles),
+            supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation,
         )
         self.assertIsInstance(attn, RunAttestation)
         # The 3-field attestation object the signer verifies.
@@ -187,9 +229,10 @@ class BuildRunAttestationTests(unittest.TestCase):
         )
         self.assertEqual(attn.attestation["attestation_protocol"], ATTESTATION_PROTOCOL)
         self.assertEqual(attn.attestation["supervisor_key_id"], SUP_KEY_ID)
-        # The supervisor STAMPS decision=completed and builds EXACTLY the signer's
-        # evidence shape; the signed bytes are JCS(evidence).
-        evidence = _evidence_from_facts(facts)
+        # The supervisor STAMPS decision=completed and builds EXACTLY the signer's evidence
+        # shape; the signed bytes are JCS(evidence).
+        evidence = {**evidence_from_state(_state(handles), _config(handles)),
+                    "decision": DECISION_COMPLETED}
         self.assertEqual(set(evidence.keys()), set(EVIDENCE_FIELDS))
         self.assertEqual(attn.evidence_jcs, _canonical_bytes(evidence))
         self.assertEqual(attn.attestation_evidence_sha256, _h(attn.evidence_jcs))
@@ -199,18 +242,20 @@ class BuildRunAttestationTests(unittest.TestCase):
     def test_verifies_under_signer_verify_path_and_binds_the_digest(self):
         ed = _Ed25519()
         store, handles = _build_store()
-        facts = _facts(handles)
+        config = _config(handles)
         attn = build_run_attestation(
-            facts, supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation
+            _state(handles), config=config,
+            supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation,
         )
         signer = _make_signer(ed, store)
-        # Full sign_result: the supervisor's attestation must verify inside the
-        # signer's real verify path, and the envelope's attestation_evidence_sha256
-        # must equal sha256(evidence_jcs) the supervisor produced.
+        # Full sign_result: the supervisor's attestation must verify inside the signer's real
+        # verify path, and the envelope's attestation_evidence_sha256 must equal
+        # sha256(evidence_jcs) the supervisor produced. The evidence handed to the signer is
+        # PARSED FROM the attested bytes — exactly what the broker now does.
         sign_request = {
             "protocol": "brops.sign-request.v1",
             "attestation": attn.attestation,
-            "evidence": _evidence_from_facts(facts),
+            "evidence": json.loads(attn.evidence_jcs.decode("utf-8")),
         }
         result = signer.sign_result(sign_request)
         self.assertEqual(result["artifact_type"], ENVELOPE_ARTIFACT_TYPE)
@@ -224,17 +269,16 @@ class BuildRunAttestationTests(unittest.TestCase):
     def test_wrong_supervisor_key_id_is_refused(self):
         ed = _Ed25519()
         store, handles = _build_store()
-        facts = _facts(handles)
-        # Attestation minted under a DIFFERENT key id than the signer pins.
         attn = build_run_attestation(
-            facts, supervisor_key_id="attacker-key", sign_attestation=ed.sign_attestation
+            _state(handles), config=_config(handles),
+            supervisor_key_id="attacker-key", sign_attestation=ed.sign_attestation,
         )
         signer = _make_signer(ed, store)
         result = signer.sign_result(
             {
                 "protocol": "brops.sign-request.v1",
                 "attestation": attn.attestation,
-                "evidence": _evidence_from_facts(facts),
+                "evidence": json.loads(attn.evidence_jcs.decode("utf-8")),
             }
         )
         self.assertEqual(result["artifact_type"], REFUSAL_ARTIFACT_TYPE)
@@ -243,14 +287,14 @@ class BuildRunAttestationTests(unittest.TestCase):
     def test_tampered_evidence_field_breaks_verification(self):
         ed = _Ed25519()
         store, handles = _build_store()
-        facts = _facts(handles)
         attn = build_run_attestation(
-            facts, supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation
+            _state(handles), config=_config(handles),
+            supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation,
         )
         signer = _make_signer(ed, store)
-        # Feed the signer a tampered evidence (run_id flipped) with the ORIGINAL
-        # attestation sig: the signer re-hashes different bytes -> sig invalid.
-        tampered = _evidence_from_facts(facts)
+        # Feed the signer a tampered evidence (run_id flipped) with the ORIGINAL attestation
+        # sig: the signer re-hashes different bytes -> sig invalid.
+        tampered = json.loads(attn.evidence_jcs.decode("utf-8"))
         tampered["run_id"] = "run-EVIL"
         result = signer.sign_result(
             {
@@ -262,52 +306,77 @@ class BuildRunAttestationTests(unittest.TestCase):
         self.assertEqual(result["artifact_type"], REFUSAL_ARTIFACT_TYPE)
         self.assertEqual(result["reason"], REASON_ATTESTATION_INVALID)
 
-    def test_malformed_facts_fail_closed(self):
+    def test_the_identities_the_signer_allowlists_come_from_supervisor_provisioning(self):
+        # F-01: a broker that could name executor_id/builder_id was choosing the values the
+        # signer's allowlist would check. `executor_id`/`builder_id`/`policy_*` now come from
+        # supervisor CONFIG; `supervisor_id` comes from the acceptance ROW (recorded from the
+        # signed challenge at accept time, so a config edit cannot retroactively rewrite what
+        # was accepted). Either way the requester contributes nothing.
         ed = _Ed25519()
-        _store, handles = _build_store()
-        # A smuggled pre-built decision is an unknown field (no-oracle guard).
-        bad = _facts(handles)
-        bad["decision"] = "completed"
-        self.assertIsInstance(
-            build_run_attestation(
-                bad, supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation
-            ),
-            Refusal,
+        store, handles = _build_store()
+        config = _config(handles)
+        self.assertEqual(
+            evidence_from_state(_state(handles), config)["executor_id"], "exec-1"
         )
-        # A missing field also fails closed.
-        missing = _facts(handles)
-        del missing["run_id"]
-        r = build_run_attestation(
-            missing, supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation
+        # Provision an executor identity the signer does NOT allowlist: the refusal proves
+        # the value the allowlist checks is the supervisor's, not the caller's.
+        rogue = SupervisorConfig(
+            launcher_executable_sha256="1" * 64,
+            executor_executable_sha256="2" * 64,
+            id_fn=lambda: "id-1",
+            supervisor_id="sup-1",
+            executor_id="exec-ROGUE",
+            builder_id="builder-1",
+            policy_id="policy-1",
+            policy_version="1.0.0",
+            policy_bundle_handle=handles["policy_bundle_handle"],
+            challenge_registry_handle="reg-handle",
+            challenge_registry_hash="reg-hash",
+            challenge_registry_epoch=2,
+            challenge_registry_root_key_id="root-1",
         )
-        self.assertIsInstance(r, Refusal)
-        self.assertEqual(r.reason, REFUSE_MALFORMED)
-        # An uppercase (non-canonical) handle would sign different bytes -> refused.
-        upper = _facts(handles)
-        upper["system_handle"] = "A" * 64
-        self.assertIsInstance(
-            build_run_attestation(
-                upper, supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation
-            ),
-            Refusal,
+        attn = build_run_attestation(
+            _state(handles), config=rogue,
+            supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation,
         )
+        evidence = json.loads(attn.evidence_jcs.decode("utf-8"))
+        self.assertEqual(evidence["executor_id"], "exec-ROGUE")
+        result = _make_signer(ed, store).sign_result(
+            {
+                "protocol": "brops.sign-request.v1",
+                "attestation": attn.attestation,
+                "evidence": evidence,
+            }
+        )
+        self.assertEqual(result["artifact_type"], REFUSAL_ARTIFACT_TYPE)
 
     def test_config_faults_raise(self):
         ed = _Ed25519()
         _store, handles = _build_store()
-        facts = _facts(handles)
+        state, config = _state(handles), _config(handles)
         with self.assertRaises(SupervisorError):
-            build_run_attestation(facts, supervisor_key_id="", sign_attestation=ed.sign_attestation)
+            build_run_attestation(state, config=config, supervisor_key_id="",
+                                  sign_attestation=ed.sign_attestation)
         with self.assertRaises(SupervisorError):
-            build_run_attestation(facts, supervisor_key_id=SUP_KEY_ID, sign_attestation="nope")
+            build_run_attestation(state, config=config, supervisor_key_id=SUP_KEY_ID,
+                                  sign_attestation="nope")
+        with self.assertRaises(SupervisorError):
+            build_run_attestation(state, config=config, supervisor_key_id=SUP_KEY_ID,
+                                  sign_attestation=lambda m: "")
+
+    def test_a_caller_mapping_is_not_an_attestation_state(self):
+        # The old attack surface, gone: there is no `facts` door to push a mapping through.
+        ed = _Ed25519()
+        _store, handles = _build_store()
         with self.assertRaises(SupervisorError):
             build_run_attestation(
-                facts, supervisor_key_id=SUP_KEY_ID, sign_attestation=lambda m: ""
+                {"run_id": "run-abc"}, config=_config(handles),
+                supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation,
             )
 
 
 # ---------------------------------------------------------------------------
-# attest-run server op
+# attest-run server op, driven over a FULL governed lifecycle
 # ---------------------------------------------------------------------------
 
 
@@ -344,105 +413,175 @@ def _noop_verify(_message, _sig):
     return True
 
 
-def _noop_recompute(_payload):
+def _fixed_request_sha256(_payload):
     return "0" * 64
 
 
+def _challenge_doc(handles, nonce="550e8400-e29b-41d4-a716-446655440000"):
+    """A challenge whose component digests ARE the store handles, so the evidence the
+    supervisor later assembles names artifacts the isolated signer can actually resolve."""
+    return {
+        "payload": {
+            "protocol": CHALLENGE_PROTOCOL,
+            "challenge_key_id": "chal-key",
+            "run_id": "run-abc",
+            "task_id": "task-1",
+            "workspace_id": "ws-1",
+            "install_id": "install-xyz",
+            "supervisor_id": "sup-1",
+            "request_nonce": nonce,
+            "system_sha256": handles["system_handle"],
+            "history_sha256": handles["history_handle"],
+            "generation_config_sha256": handles["generation_config_handle"],
+            "request_sha256": "0" * 64,
+            "requested_at_ms": NOW_MS - 5_000,
+            "challenge_issued_at_ms": NOW_MS - 4_000,
+            "challenge_expires_at_ms": NOW_MS + 10_000,
+        },
+        "sig": "hmac-stand-in",
+    }
+
+
 class AttestRunServerTests(unittest.TestCase):
-    def _handle(self, conn, ed, key_id=SUP_KEY_ID):
-        return handle_connection(
-            conn,
-            BROKER_UID,
-            _fake_lease_config(),
+    def setUp(self):
+        self.ed = _Ed25519()
+        self.store, self.handles = _build_store()
+        self.config = _config(self.handles)
+        self.ledger_conn = _ledger()
+
+    def _op(self, request, key_id=SUP_KEY_ID, ed=True):
+        return dispatch(
+            request,
+            self.config,
             _noop_verify,
-            _noop_recompute,
+            _fixed_request_sha256,
             lambda: NOW_MS,
-            sign_attestation=(ed.sign_attestation if ed else None),
-            supervisor_attestation_key_id=key_id,
+            conn=self.ledger_conn,
+            sign_attestation=(self.ed.sign_attestation if ed else None),
+            supervisor_attestation_key_id=key_id if ed else None,
         )
 
+    def _run_lifecycle(self, nonce="550e8400-e29b-41d4-a716-446655440000"):
+        """accept-open → launch-gate → execution-started → complete-run. Returns the attempt."""
+        accepted = self._op({"op": OP_ACCEPT_OPEN,
+                             "challenge_doc": _challenge_doc(self.handles, nonce)})
+        self.assertTrue(accepted["ok"], accepted)
+        attempt = accepted["lease"]["execution_attempt_id"]
+        self.assertTrue(self._op({"op": OP_LAUNCH_GATE,
+                                  "execution_attempt_id": attempt})["ok"])
+        self.assertTrue(self._op({
+            "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt,
+            "process_group_id": "1234", "cgroup_id": "cg-1",
+            "execution_started_marker": None,
+        })["ok"])
+        self.assertTrue(self._op({
+            "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+            "produced": {
+                "output_handle": self.handles["output_handle"],
+                "containment_evidence_handle": self.handles["containment_evidence_handle"],
+                "record_handle": self.handles["record_handle"],
+                "lease_handle": self.handles["lease_handle"],
+                "execution_receipt_handle": self.handles["execution_receipt_handle"],
+                # The supervisor stamped `challenge_accepted_at_ms` from its own clock at
+                # accept-open (NOW_MS here), so a completion must not predate it — the signer's
+                # `_check_timestamps` enforces requested_at <= challenge_accepted <= completed.
+                "completed_at_ms": NOW_MS,
+                "evidence_final_event_hash": "a" * 64,
+                "evidence_event_count": 3,
+                "evidence_last_sequence": 3,
+                "evidence_head_sequence": 4,
+            },
+        })["ok"])
+        return attempt
+
     def test_happy_path_returns_attestation_and_exact_evidence_jcs(self):
-        ed = _Ed25519()
-        _store, handles = _build_store()
-        facts = _facts(handles)
-        conn = FakeConn(BROKER_UID, inbound=_frame({"op": OP_ATTEST_RUN, "facts": facts}))
-        reply = self._handle(conn, ed)
-        self.assertTrue(reply["ok"])
+        attempt = self._run_lifecycle()
+        reply = self._op({"op": OP_ATTEST_RUN, "run_id": "run-abc",
+                          "execution_attempt_id": attempt})
+        self.assertTrue(reply["ok"], reply)
         self.assertEqual(reply["op"], OP_ATTEST_RUN)
         self.assertEqual(reply["attestation"]["attestation_protocol"], ATTESTATION_PROTOCOL)
         self.assertEqual(reply["attestation"]["supervisor_key_id"], SUP_KEY_ID)
-        # evidence_jcs_b64 decodes to EXACTLY JCS(evidence) and its sig verifies.
         evidence_jcs = _unb64u(reply["evidence_jcs_b64"])
-        self.assertEqual(evidence_jcs, _canonical_bytes(_evidence_from_facts(facts)))
         self.assertEqual(reply["attestation_evidence_sha256"], _h(evidence_jcs))
         self.assertTrue(
-            ed.verify_attestation(None, evidence_jcs, reply["attestation"]["sig"])
+            self.ed.verify_attestation(None, evidence_jcs, reply["attestation"]["sig"])
         )
-        self.assertEqual(conn.decoded_reply(), reply)
+        evidence = json.loads(evidence_jcs.decode("utf-8"))
+        self.assertEqual(set(evidence.keys()), set(EVIDENCE_FIELDS))
+        self.assertEqual(evidence["decision"], DECISION_COMPLETED)
+
+    def test_the_attested_evidence_signs_a_real_receipt_envelope(self):
+        # The whole chain, offline: a governed lifecycle the supervisor authorized produces an
+        # attestation the ISOLATED SIGNER accepts and turns into a signed envelope.
+        attempt = self._run_lifecycle()
+        reply = self._op({"op": OP_ATTEST_RUN, "run_id": "run-abc",
+                          "execution_attempt_id": attempt})
+        evidence_jcs = _unb64u(reply["evidence_jcs_b64"])
+        result = _make_signer(self.ed, self.store).sign_result({
+            "protocol": "brops.sign-request.v1",
+            "attestation": reply["attestation"],
+            "evidence": json.loads(evidence_jcs.decode("utf-8")),
+        })
+        self.assertEqual(result["artifact_type"], ENVELOPE_ARTIFACT_TYPE, result)
+        self.assertEqual(result["status"], "signed")
+        self.assertEqual(
+            result["payload"]["attestation_evidence_sha256"],
+            reply["attestation_evidence_sha256"],
+        )
+        # The receipt_id in the signed envelope was MINTED BY THE SUPERVISOR at acceptance —
+        # it was never a value the requester supplied.
+        self.assertEqual(result["payload"]["receipt_id"], "id-1")
 
     def test_non_broker_peer_denied_before_any_frame(self):
-        ed = _Ed25519()
-        _store, handles = _build_store()
         conn = FakeConn(
             RENDERER_UID,
-            inbound=_frame({"op": OP_ATTEST_RUN, "facts": _facts(handles)}),
+            inbound=_frame({"op": OP_ATTEST_RUN, "run_id": "run-abc",
+                            "execution_attempt_id": "attempt-1"}),
         )
-        reply = self._handle(conn, ed)
+        reply = handle_connection(
+            conn, BROKER_UID, self.config, _noop_verify, _fixed_request_sha256,
+            lambda: NOW_MS, ledger_conn=self.ledger_conn,
+            sign_attestation=self.ed.sign_attestation,
+            supervisor_attestation_key_id=SUP_KEY_ID,
+        )
         self.assertFalse(reply["ok"])
         self.assertIn("peer", reply["error"])
         self.assertNotIn("attestation", reply)
 
-    def test_malformed_facts_relayed_as_typed_refusal(self):
-        ed = _Ed25519()
-        _store, handles = _build_store()
-        bad = _facts(handles)
-        bad["evil"] = "smuggled"  # unknown field
-        conn = FakeConn(BROKER_UID, inbound=_frame({"op": OP_ATTEST_RUN, "facts": bad}))
-        reply = self._handle(conn, ed)
-        self.assertFalse(reply["ok"])
-        self.assertEqual(reply["reason"], REFUSE_MALFORMED)
-        self.assertNotIn("attestation", reply)
-
-    def test_missing_facts_object_is_error(self):
-        ed = _Ed25519()
-        conn = FakeConn(BROKER_UID, inbound=_frame({"op": OP_ATTEST_RUN}))
-        reply = self._handle(conn, ed)
-        self.assertFalse(reply["ok"])
-        self.assertIn("facts", reply["error"])
-
-    def test_op_unavailable_without_seam_fails_closed(self):
-        _store, handles = _build_store()
-        conn = FakeConn(BROKER_UID, inbound=_frame({"op": OP_ATTEST_RUN, "facts": _facts(handles)}))
-        # No sign_attestation seam injected -> supervisor-side config fault, never
-        # a fabricated attestation.
-        reply = self._handle(conn, ed=None)
-        self.assertFalse(reply["ok"])
-        self.assertNotIn("attestation", reply)
-
-    def test_dispatch_direct_happy_path(self):
-        ed = _Ed25519()
-        _store, handles = _build_store()
-        reply = dispatch(
-            {"op": OP_ATTEST_RUN, "facts": _facts(handles)},
-            _fake_lease_config(),
-            _noop_verify,
-            _noop_recompute,
-            lambda: NOW_MS,
-            sign_attestation=ed.sign_attestation,
+    def test_the_old_facts_protocol_is_refused_outright(self):
+        attempt = self._run_lifecycle()
+        conn = FakeConn(BROKER_UID, inbound=_frame({
+            "op": OP_ATTEST_RUN, "run_id": "run-abc", "execution_attempt_id": attempt,
+            "facts": {"output_handle": "9" * 64},
+        }))
+        reply = handle_connection(
+            conn, BROKER_UID, self.config, _noop_verify, _fixed_request_sha256,
+            lambda: NOW_MS, ledger_conn=self.ledger_conn,
+            sign_attestation=self.ed.sign_attestation,
             supervisor_attestation_key_id=SUP_KEY_ID,
         )
-        self.assertTrue(reply["ok"])
-        self.assertEqual(reply["attestation"]["supervisor_key_id"], SUP_KEY_ID)
+        self.assertFalse(reply["ok"])
+        self.assertIn("facts", reply["error"])
+        self.assertNotIn("attestation", reply)
 
+    def test_a_run_that_never_happened_gets_no_attestation(self):
+        reply = self._op({"op": OP_ATTEST_RUN, "run_id": "run-ghost",
+                          "execution_attempt_id": "attempt-ghost"})
+        self.assertFalse(reply["ok"])
+        self.assertEqual(reply["reason"], REFUSE_NO_TERMINAL_RUN)
+        self.assertNotIn("attestation", reply)
 
-def _fake_lease_config():
-    from governed_supervisor import SupervisorConfig
-
-    return SupervisorConfig(
-        launcher_executable_sha256="1" * 64,
-        executor_executable_sha256="2" * 64,
-        id_fn=lambda: "id-1",
-    )
+    def test_op_unavailable_without_seam_fails_closed(self):
+        conn = FakeConn(BROKER_UID, inbound=_frame({
+            "op": OP_ATTEST_RUN, "run_id": "run-abc", "execution_attempt_id": "attempt-1",
+        }))
+        reply = handle_connection(
+            conn, BROKER_UID, self.config, _noop_verify, _fixed_request_sha256,
+            lambda: NOW_MS, ledger_conn=self.ledger_conn,
+        )
+        self.assertFalse(reply["ok"])
+        self.assertNotIn("attestation", reply)
 
 
 if __name__ == "__main__":

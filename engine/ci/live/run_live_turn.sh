@@ -64,8 +64,9 @@ done
 # ----- layout /opt/brops-live ---------------------------------------------------------------------
 LIVE=/opt/brops-live
 STORE="$LIVE/store"; SOCK="$LIVE/sock"; REPORT="$LIVE/report"; TCB="$LIVE/tcb"; BIN="$LIVE/bin"; KEYS="$LIVE/keys"
+SUPSTATE="$LIVE/supervisor-state"   # the supervisor's PRIVATE durable ledger (F-01), 0700
 rm -rf "$LIVE"
-mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$LIVE/engine"
+mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$SUPSTATE" "$LIVE/engine"
 
 # Stage the Python tree so the service accounts can import the cores + front doors + live runners (the repo
 # may live under a home dir the service uids cannot traverse). Preserve the engine/ci/live + engine/runtime
@@ -121,6 +122,12 @@ chmod 0644 "$KEYS"/*.pub.hex "$CONFIG" "$LIVE/manifest.json" "$LIVE/manifest.sig
 # filesystem mode — so these are broadly traversable/writable while integrity stays cryptographic.
 chmod 1777 "$SOCK" "$REPORT" "$STORE"
 chmod 0644 "$STORE"/* 2>/dev/null || true
+
+# The supervisor's DURABLE ledger is the opposite case (F-01): it IS the authority a run
+# attestation is rebuilt from, so it is supervisor-private — 0700, owned by the supervisor
+# account. If any other uid could write here, the attestation would again describe state the
+# attacker chose. This directory must never be added to the 1777 line above.
+chown -R "$SUPERVISOR_USER": "$SUPSTATE"; chmod 0700 "$SUPSTATE"
 
 # ----- sudoers: the broker may spawn ONLY the recorder helper as the recorder account (invoker gate) ----
 SUDOERS=/etc/sudoers.d/brops-live-recorder

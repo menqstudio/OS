@@ -13,6 +13,25 @@
 confirmed). For any ticket below, that report's F-/D- findings are the current-code truth; a ticket's
 "fixed" mark here means the Builder has code evidence, not merely that the ticket was filed.
 
+## Keystone soundness-blockers (independent audit 2026-08-06) — the gate depends on these
+
+`platform_governed_execution_supported()` cannot be flipped until every row here is ✅, a SEPARATE
+audit passes, and the Owner approves. See [`NEXT_CHAT.md`](../../../NEXT_CHAT.md) for the full text.
+
+| Finding | Status | Note |
+|---|---|---|
+| **F-01** supervisor `attest-run` sign-oracle (🔴 P0) | ✅ **closed 2026-08-06** | §5 v2 durable-supervisor amendment: `attest-run {run_id, execution_attempt_id}` only; `build_run_attestation` has no `facts` parameter; evidence built from the supervisor's own durable terminal state over a CI-gated shared DDL (`tools/check_ledger_ddl_parity.py`). A fabricated run gets `no_terminal_run_state`. |
+| **F-23** unsigned/decorative supervisor lease | ✅ closed with F-01 | `launch-gate` takes only `{execution_attempt_id}`; the caller no longer presents the lease it is judged against. |
+| **F-09** acceptance CAS + evidence floor unwired | ◑ **partly** | Both halves now run: the acceptance CAS makes one signed challenge worth one attempt, and the anti-rollback/anti-fork floor runs on every `complete-run`. |
+| **F-11** oversize error reply tears down the supervisor | ✅ supervisor leg closed | Error text bounded; `_try_write` degrades instead of letting a `FrameError` escape `serve_forever`. The other proof-kit DoS legs (F-31/F-32/F-36) are still open. |
+| **F-02 / F-18** static evidence facts | ⚠️ OPEN | `receipt_id` is now supervisor-minted per turn (and `UNIQUE`), but the containment/record/execution-receipt handles and the four `evidence_*` counters are still deployment-static config constants. |
+| **F-08** request↔output unbound | ⚠️ OPEN | — |
+| **F-10** §2.5 TCB integrity floor has no caller | ⚠️ OPEN | — |
+| **F-07 / F-17 / F-28** self-certifying + world-writable custody | ⚠️ OPEN | The supervisor's own ledger dir is now 0700/supervisor-owned; the signer store is still `1777`. |
+| **F-26 / F-27 / F-29** decorative binding checks | ⚠️ OPEN | — |
+| **F-31 / F-32 / F-36** proof-kit DoS | ⚠️ OPEN | — |
+| **F-06 / F-13 / F-14** engine anti-rollback honesty | ⚠️ OPEN | — |
+
 ## Desktop tickets — `apps/desktop/AUDIT/tickets/`
 
 | Ticket | Status | Evidence / note |

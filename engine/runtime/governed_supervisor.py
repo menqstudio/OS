@@ -1,9 +1,21 @@
 """governed-supervisor acceptance/lease service core (Wave 3b-1B, rev-30 §5).
 
 PURE, socket-free, key-free service-side decision logic for the supervisor's
-governed-turn acceptance path. The DURABLE state machine + outbox + evidence
-floor live in the Rust ``supervisor_ledger.rs`` (§5); this module is the pure
-*decision* layer that sits in front of that ledger:
+governed-turn acceptance path. The DURABLE state machine + outbox + evidence floor
+live in :mod:`governed_supervisor_ledger` over the SHARED DDL it loads from
+``supervisor_ledger.sql`` (the same SQL the Rust ``brops-core::supervisor_ledger``
+compiles in, byte-equality enforced by ``tools/check_ledger_ddl_parity.py``). This
+module is the pure *decision* layer that sits in front of that ledger:
+
+**F-01 (independent audit 2026-08-06, P0) — what changed and why.** This module used
+to expose ``build_run_attestation(facts, …)``: it shape-validated a caller-supplied
+mapping, stamped ``decision="completed"``, and signed it. Combined with a supervisor
+that persisted nothing, the broker uid could obtain a signed
+``brops.governed-receipt-envelope.v1`` for a run that never happened. The attestation
+builder no longer accepts facts at all — it is handed the supervisor's OWN durable
+terminal run state (:class:`governed_supervisor_ledger.AttestationState`) plus the
+supervisor's pinned identity config, and there is no other way to reach it. A
+fabricated run has no ledger row, so it has no evidence and no signature.
 
   1. **two-phase challenge verify** — given a signed
      ``brops.governed-turn-challenge.v1`` document (the exact shape the
@@ -12,9 +24,14 @@ floor live in the Rust ``supervisor_ledger.rs`` (§5); this module is the pure
      the challenge's own fields;
   2. **lease issuance** — mint the supervisor lease
      (``lease_expires_at_ms = now + LEASE_DURATION_MS``, the pinned launcher /
-     executor executable digests from the supervisor's OWN trusted config);
-  3. **the step-8a launch gate** — refuse a launch whose remaining lease budget is
-     below ``MIN_LAUNCH_REMAINING_MS``.
+     executor executable digests from the supervisor's OWN trusted config) TOGETHER
+     with the durable acceptance record the ledger CASes into existence, so one
+     signed challenge is worth exactly one execution attempt;
+  3. **the run attestation** — built from durable terminal run state only.
+
+The step-8a launch gate no longer lives here. It moved into
+:func:`governed_supervisor_ledger.gate_and_start`, which judges the lease window the
+supervisor itself persisted rather than one the caller hands back (audit F-23).
 
 Everything the OS trust chain would supply is reduced to an injected seam so the
 logic runs offline and without a socket, signer, or clock:
@@ -43,6 +60,8 @@ import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Tuple, Union
+
+from governed_supervisor_ledger import AttestationState, NewAcceptance
 
 # ---------------------------------------------------------------------------
 # Constants (rev-30 §5 — mirror supervisor_ledger.rs exactly).
@@ -170,6 +189,9 @@ REFUSE_SIGNATURE_INVALID = "signature_invalid"
 REFUSE_CHALLENGE_EXPIRED = "challenge_expired"
 REFUSE_REQUEST_SHA256_MISMATCH = "request_sha256_mismatch"
 REFUSE_LEASE_EXPIRED = "lease_expired"
+# The challenge names a supervisor that is not this one. Accepting it would let a turn
+# issued for another supervisor be leased and attested here (F-01 hardening).
+REFUSE_SUPERVISOR_MISMATCH = "supervisor_mismatch"
 
 
 class SupervisorError(Exception):
@@ -216,16 +238,23 @@ class Lease:
 
 
 @dataclass(frozen=True)
-class LaunchProceed:
-    """The step-8a launch gate passed: this lease may drive one launch."""
+class Accepted:
+    """A fully-verified challenge turned into (a) the lease to return to the caller and
+    (b) the DURABLE acceptance record the ledger must CAS into existence before that
+    lease is worth anything (F-01).
+
+    The two are produced together, from the same signature-verified challenge payload, so
+    the lease the caller receives and the row the supervisor will later attest from can
+    never describe different turns.
+    """
 
     lease: Lease
+    acceptance: NewAcceptance
 
 
-# accept_open returns a lease OR a typed refusal; launch_gate returns a proceed
-# token OR a typed refusal. Callers ``isinstance``-dispatch on the result.
-AcceptResult = Union[Lease, Refusal]
-GateResult = Union[LaunchProceed, Refusal]
+# accept_open returns an acceptance (lease + durable record) OR a typed refusal.
+# Callers ``isinstance``-dispatch on the result.
+AcceptResult = Union[Accepted, Refusal]
 
 
 # ---------------------------------------------------------------------------
@@ -335,12 +364,24 @@ def recompute_request_sha256(payload: Mapping[str, Any]) -> str:
 
 
 class SupervisorConfig:
-    """The supervisor's OWN trusted config for lease issuance.
+    """The supervisor's OWN trusted config: everything the supervisor — never the caller —
+    contributes to a lease and to a run attestation.
 
     ``launcher_executable_sha256`` / ``executor_executable_sha256`` are the pinned
-    executable digests the supervisor binds into every lease; they come from here,
-    never from the challenge document or any caller input. ``id_fn`` mints the
-    opaque lease / execution-attempt ids (injected so tests are deterministic).
+    executable digests bound into every lease. ``id_fn`` mints the opaque
+    ``lease_id`` / ``execution_attempt_id`` / ``receipt_id`` (injected so tests are
+    deterministic).
+
+    The identity block (``supervisor_id``, ``executor_id``, ``builder_id``, ``policy_id``,
+    ``policy_version``, ``policy_bundle_handle``) is the F-01 half that used to arrive on
+    the wire inside ``attest-run``'s ``facts``. The isolated signer ALLOWLISTS
+    ``executor_id`` / ``builder_id`` / ``supervisor_id`` (``isolated_signer._check_identity``),
+    so letting the caller choose them made that allowlist a formality — the caller simply
+    copied the values out of the world-readable deployment config. They now come from the
+    supervisor's own provisioning and nowhere else.
+
+    ``challenge_registry_*`` records WHICH pinned challenge-key registry snapshot authorized
+    an acceptance, so a later audit can tell which key material was in force for that turn.
     """
 
     def __init__(
@@ -348,6 +389,17 @@ class SupervisorConfig:
         launcher_executable_sha256: str,
         executor_executable_sha256: str,
         id_fn: Callable[[], str],
+        *,
+        supervisor_id: str,
+        executor_id: str,
+        builder_id: str,
+        policy_id: str,
+        policy_version: str,
+        policy_bundle_handle: str,
+        challenge_registry_handle: str,
+        challenge_registry_hash: str,
+        challenge_registry_epoch: int,
+        challenge_registry_root_key_id: str,
     ) -> None:
         if not _is_sha256_hex(launcher_executable_sha256):
             raise SupervisorError("launcher_executable_sha256 must be 64 hex characters")
@@ -355,9 +407,36 @@ class SupervisorConfig:
             raise SupervisorError("executor_executable_sha256 must be 64 hex characters")
         if not callable(id_fn):
             raise SupervisorError("id_fn must be callable")
+        for name, value in (
+            ("supervisor_id", supervisor_id),
+            ("executor_id", executor_id),
+            ("builder_id", builder_id),
+            ("policy_id", policy_id),
+            ("policy_version", policy_version),
+            ("challenge_registry_handle", challenge_registry_handle),
+            ("challenge_registry_hash", challenge_registry_hash),
+            ("challenge_registry_root_key_id", challenge_registry_root_key_id),
+        ):
+            if not _capped_str(value):
+                raise SupervisorError("%s must be a non-empty capped string" % name)
+        if not _is_lower_sha256_hex(policy_bundle_handle):
+            raise SupervisorError("policy_bundle_handle must be 64 lowercase hex chars")
+        if not _is_int(challenge_registry_epoch) or challenge_registry_epoch < 0:
+            raise SupervisorError("challenge_registry_epoch must be a non-negative int")
+
         self.launcher_executable_sha256 = launcher_executable_sha256.lower()
         self.executor_executable_sha256 = executor_executable_sha256.lower()
         self._id_fn = id_fn
+        self.supervisor_id = supervisor_id
+        self.executor_id = executor_id
+        self.builder_id = builder_id
+        self.policy_id = policy_id
+        self.policy_version = policy_version
+        self.policy_bundle_handle = policy_bundle_handle
+        self.challenge_registry_handle = challenge_registry_handle
+        self.challenge_registry_hash = challenge_registry_hash
+        self.challenge_registry_epoch = challenge_registry_epoch
+        self.challenge_registry_root_key_id = challenge_registry_root_key_id
 
     def mint_id(self) -> str:
         value = self._id_fn()
@@ -458,9 +537,14 @@ def accept_open(
         ``request_sha256`` must re-derive from its own fields via
         ``recompute_request_sha256`` (inequality -> ``request_sha256_mismatch``).
 
-    Only after BOTH phases pass is a :class:`Lease` minted:
-    ``lease_expires_at_ms = now_ms + LEASE_DURATION_MS`` and the two pinned
-    executable digests from ``config``. Returns the lease OR a typed
+      * **Phase C — addressing.** the challenge's signed ``supervisor_id`` must be THIS
+        supervisor (else ``supervisor_mismatch``); a turn issued for another supervisor is
+        authentic but is not authorization for this one to lease and attest it.
+
+    Only after ALL phases pass is an :class:`Accepted` produced: the :class:`Lease`
+    (``lease_expires_at_ms = now_ms + LEASE_DURATION_MS`` + the two pinned executable
+    digests from ``config``) together with the :class:`~governed_supervisor_ledger.NewAcceptance`
+    the caller must CAS into the durable ledger. Returns that OR a typed
     :class:`Refusal`; never a partially-built lease.
 
     ``now_ms`` must be an int (the supervisor's own clock) and the two seams must
@@ -502,46 +586,82 @@ def accept_open(
         if recomputed.lower() != payload["request_sha256"].lower():
             raise _Refuse(REFUSE_REQUEST_SHA256_MISMATCH, "recomputed digest != challenge request_sha256")
 
-        # ---- Both phases passed: mint the lease ----
-        return Lease(
+        # ---- Phase C: this supervisor is the one the challenge names ----
+        # The challenge payload is signed, so `supervisor_id` is authentic; but authentic
+        # for ANOTHER supervisor is still not authorization for THIS one to lease + attest.
+        if payload["supervisor_id"] != config.supervisor_id:
+            raise _Refuse(
+                REFUSE_SUPERVISOR_MISMATCH,
+                "challenge names supervisor %r, not this supervisor" % (payload["supervisor_id"],),
+            )
+
+        # ---- All phases passed: mint the lease AND its durable acceptance record ----
+        # `challenge_handle` is the supervisor's OWN content address of the exact payload it
+        # just verified — the ledger's UNIQUE on it is what makes a replayed challenge unable
+        # to mint a second attempt.
+        challenge_handle = hashlib.sha256(message).hexdigest()
+        lease = Lease(
             lease_id=config.mint_id(),
             execution_attempt_id=config.mint_id(),
             lease_expires_at_ms=now_ms + LEASE_DURATION_MS,
             launcher_executable_sha256=config.launcher_executable_sha256,
             executor_executable_sha256=config.executor_executable_sha256,
         )
+        acceptance = NewAcceptance(
+            install_id=payload["install_id"],
+            request_nonce=payload["request_nonce"],
+            challenge_handle=challenge_handle,
+            run_id=payload["run_id"],
+            task_id=payload["task_id"],
+            workspace_id=payload["workspace_id"],
+            execution_attempt_id=lease.execution_attempt_id,
+            challenge_accepted_at_ms=now_ms,
+            challenge_registry_handle=config.challenge_registry_handle,
+            challenge_registry_hash=config.challenge_registry_hash,
+            challenge_registry_epoch=config.challenge_registry_epoch,
+            challenge_registry_root_key_id=config.challenge_registry_root_key_id,
+            lease_payload_bytes=_canonical_bytes(_lease_payload(lease)),
+            lease_id=lease.lease_id,
+            lease_issued_at_ms=now_ms,
+            lease_expires_at_ms=lease.lease_expires_at_ms,
+            # Minted per turn by the supervisor: the §7.1(d) replay key must not be a
+            # deployment constant (audit F-02 notes a constant receipt_id defeats it).
+            receipt_id=config.mint_id(),
+            supervisor_id=config.supervisor_id,
+            requested_at_ms=payload["requested_at_ms"],
+            request_sha256=payload["request_sha256"].lower(),
+            system_handle=payload["system_sha256"].lower(),
+            history_handle=payload["history_sha256"].lower(),
+            generation_config_handle=payload["generation_config_sha256"].lower(),
+        )
+        return Accepted(lease=lease, acceptance=acceptance)
     except _Refuse as refusal:
         return Refusal(refusal.reason, refusal.detail)
 
 
+def _lease_payload(lease: Lease) -> Mapping[str, Any]:
+    """The canonical lease object whose JCS bytes are persisted at acceptance, so a
+    post-commit / pre-signature crash re-signs the byte-identical lease (§5 step 6)."""
+    return {
+        "lease_id": lease.lease_id,
+        "execution_attempt_id": lease.execution_attempt_id,
+        "lease_expires_at_ms": lease.lease_expires_at_ms,
+        "launcher_executable_sha256": lease.launcher_executable_sha256,
+        "executor_executable_sha256": lease.executor_executable_sha256,
+    }
+
+
 # ---------------------------------------------------------------------------
-# launch_gate — §5 step-8a lease-expiry launch gate (pure).
+# The §5 step-8a launch gate lives in governed_supervisor_ledger.gate_and_start.
+#
+# It used to live HERE as `launch_gate(lease, now_ms)` — a pure function over a lease the
+# CALLER handed back on the wire, so the party being gated chose the expiry it was judged
+# against (audit F-23, and the same stateless root cause as F-01). It now judges the lease
+# window the supervisor persisted at acceptance, keyed only by `execution_attempt_id`, and
+# it CASes the acceptance row forward in the same transaction so the gate cannot be
+# smuggled past. Nothing re-implements it here; the boundary behaviour is proven by
+# `governed_supervisor_ledger.lease_launch_gate` and its tests.
 # ---------------------------------------------------------------------------
-
-
-def launch_gate(lease: Lease, now_ms: int) -> GateResult:
-    """The §5 step-8a lease-expiry launch gate on the wall clock.
-
-    Refuses when the remaining lease budget is below ``MIN_LAUNCH_REMAINING_MS``:
-    ``now_ms + MIN_LAUNCH_REMAINING_MS > lease_expires_at_ms`` -> ``lease_expired``.
-    Boundary: remaining exactly ``180000`` PROCEEDS; ``179999`` refuses; an already
-    past-expiry lease is covered by the same inequality. Pure + host-independent.
-
-    Returns :class:`LaunchProceed` (carrying the lease) OR a typed
-    :class:`Refusal`. ``lease`` must be a :class:`Lease` and ``now_ms`` an int,
-    else :class:`SupervisorError`.
-    """
-    if not isinstance(lease, Lease):
-        raise SupervisorError("lease must be a Lease")
-    if not _is_int(now_ms):
-        raise SupervisorError("now_ms must be an int (epoch ms)")
-
-    if now_ms + MIN_LAUNCH_REMAINING_MS > lease.lease_expires_at_ms:
-        return Refusal(
-            REFUSE_LEASE_EXPIRED,
-            "remaining lease budget below %d ms" % MIN_LAUNCH_REMAINING_MS,
-        )
-    return LaunchProceed(lease=lease)
 
 
 # ---------------------------------------------------------------------------
@@ -572,14 +692,16 @@ AttestResult = Union[RunAttestation, Refusal]
 
 
 def _validate_run_facts(facts: Any) -> dict:
-    """Strict-parse the supervisor's trusted run/evidence facts against the fixed
-    ``ATTEST_INPUT_FIELDS`` shape (byte-compatible with the signer's evidence
-    validation). Raises :class:`_Refuse` (``malformed``) on ANY drift: a
-    non-mapping, an extra key (a smuggled ``decision``/``evidence_jcs``/``sig`` or
-    an inline ``*_sha256`` claim), a missing key, or a wrong-typed value. This is
-    the ONLY door the run facts enter through, and it admits NO pre-built evidence
-    bytes and NO caller-chosen digest — every value is a small authoritative fact
-    or a 64-hex content-address handle."""
+    """Re-validate the ASSEMBLED evidence against the fixed ``ATTEST_INPUT_FIELDS`` shape
+    (byte-compatible with the signer's own evidence validation) immediately before signing.
+
+    Note the changed role: this is no longer a door caller input passes through — after the
+    F-01 fix nothing reaches it except the dict :func:`build_run_attestation` assembles from
+    durable ledger state plus supervisor config. It is kept as a last defence-in-depth check
+    so a supervisor-side assembly bug (a wrong type, a dropped field, a stray key) fails
+    closed rather than producing an attestation the isolated signer would then reject — or,
+    worse, accept over malformed bytes. Raises :class:`_Refuse` (``malformed``) on ANY drift.
+    """
     if not isinstance(facts, Mapping):
         raise _Refuse(REFUSE_MALFORMED, "run facts must be a mapping")
 
@@ -611,46 +733,112 @@ def _validate_run_facts(facts: Any) -> dict:
     return {field: facts[field] for field in ATTEST_INPUT_FIELDS}
 
 
+def evidence_from_state(state: AttestationState, config: SupervisorConfig) -> dict:
+    """Assemble the §4.9 evidence facts from the supervisor's OWN durable terminal run
+    state plus its OWN pinned identity config. **This is the F-01 fix.**
+
+    Every one of the 25 fields has exactly one origin, and none of them is the caller:
+
+      * ``run_id``/``execution_attempt_id``/``task_id``/``request_nonce``/``receipt_id``/
+        ``workspace_id``/``install_id``/``supervisor_id``/``requested_at``/
+        ``challenge_accepted_at_ms`` and the three request-component handles come from the
+        acceptance row, which was written from the SIGNATURE-VERIFIED challenge payload;
+      * ``output_handle``/``containment_evidence_handle``/``record_handle``/``lease_handle``/
+        ``execution_receipt_handle``/``completed_at``/the four ``evidence_*`` counters come
+        from the WRITE-ONCE completion row of an attempt that reached ``EXECUTING`` through
+        the legal §5 edges and passed the evidence-head floor;
+      * ``executor_id``/``builder_id``/``policy_id``/``policy_version``/
+        ``policy_bundle_handle`` come from supervisor provisioning — the values the isolated
+        signer allowlists, which the caller must not be able to choose.
+
+    There is no parameter through which a caller can contribute a value, which is what makes
+    the resulting signature a statement about a run the supervisor itself authorized and
+    watched terminate.
+    """
+    return {
+        # ---- from the acceptance row (written from the signed challenge) ----
+        "run_id": state.run_id,
+        "execution_attempt_id": state.execution_attempt_id,
+        "task_id": state.task_id,
+        "request_nonce": state.request_nonce,
+        "receipt_id": state.receipt_id,
+        "workspace_id": state.workspace_id,
+        "install_id": state.install_id,
+        "supervisor_id": state.supervisor_id,
+        "requested_at": state.requested_at_ms,
+        "challenge_accepted_at_ms": state.challenge_accepted_at_ms,
+        "system_handle": state.system_handle,
+        "history_handle": state.history_handle,
+        "generation_config_handle": state.generation_config_handle,
+        # ---- from supervisor provisioning (the signer's allowlisted identities) ----
+        "executor_id": config.executor_id,
+        "builder_id": config.builder_id,
+        "policy_id": config.policy_id,
+        "policy_version": config.policy_version,
+        "policy_bundle_handle": config.policy_bundle_handle,
+        # ---- from the write-once completion row ----
+        "output_handle": state.output_handle,
+        "containment_evidence_handle": state.containment_evidence_handle,
+        "record_handle": state.record_handle,
+        "lease_handle": state.lease_handle,
+        "execution_receipt_handle": state.execution_receipt_handle,
+        "completed_at": state.completed_at_ms,
+        "evidence_final_event_hash": state.evidence_final_event_hash,
+        "evidence_event_count": state.evidence_event_count,
+        "evidence_last_sequence": state.evidence_last_sequence,
+        "evidence_head_sequence": state.evidence_head_sequence,
+    }
+
+
 def build_run_attestation(
-    facts: Any,
+    state: AttestationState,
     *,
+    config: SupervisorConfig,
     supervisor_key_id: str,
     sign_attestation: Callable[[bytes], str],
 ) -> AttestResult:
-    """Build the §4.9 evidence from the supervisor's OWN trusted terminal run state
-    and produce the ``brops.run-attestation.v1`` over it (recompute-then-attest).
+    """Build the §4.9 evidence from the supervisor's OWN terminal run state and produce the
+    ``brops.run-attestation.v1`` over it (recompute-then-attest).
 
-    The no-oracle rule (§1.3-§1.4) is enforced structurally: the supervisor takes
-    ONLY the fixed set of small facts + content-address handles
-    (``ATTEST_INPUT_FIELDS``), STAMPS ``decision="completed"`` itself, and BUILDS
-    the canonical ``JCS(evidence)`` here. It NEVER signs a caller-supplied evidence
-    object or pre-built bytes — any attempt to smuggle one (an ``evidence_jcs`` /
-    ``sig`` / ``decision`` key) is an unknown field and fails closed as
-    ``malformed``. The ``evidence`` it builds is EXACTLY the signer's
+    **F-01.** This function no longer has a ``facts`` parameter. Before the fix it accepted a
+    caller mapping, shape-validated it, stamped ``decision="completed"``, and signed — a
+    sign-arbitrary-facts oracle for the one uid that can reach the socket. Now the only way
+    to reach it is with a :class:`~governed_supervisor_ledger.AttestationState`, which
+    :func:`governed_supervisor_ledger.load_attestation_state` returns ONLY for an attempt
+    that this supervisor accepted, leased, gated, watched start, and recorded as completed.
+    The no-oracle rule (§1.3-§1.4) is therefore enforced by the type signature, not by
+    validation: there is no argument through which caller-chosen evidence can arrive.
+
+    The supervisor STAMPS ``decision="completed"`` itself and BUILDS the canonical
+    ``JCS(evidence)`` here. The ``evidence`` it builds is EXACTLY the signer's
     ``EVIDENCE_FIELDS`` shape, so ``JCS(evidence)`` is byte-identical to what
     ``isolated_signer._verify_supervisor_attestation`` re-hashes.
 
-    ``sign_attestation(message: bytes) -> str`` is the injected signing seam: the
-    supervisor holds the Ed25519 attestation private key behind it (no key literal
-    lives in this module), and it is handed ONLY the ``JCS(evidence)`` bytes the
-    supervisor assembled itself. It returns the detached signature as a string
-    (base64url of the 64-byte Ed25519 signature, per §4.1 ``sig:b64url(64B)`` — the
-    encoding the Rust broker decodes with ``URL_SAFE_NO_PAD``).
+    ``sign_attestation(message: bytes) -> str`` is the injected signing seam: the supervisor
+    holds the Ed25519 attestation private key behind it (no key literal lives in this
+    module), and it is handed ONLY the ``JCS(evidence)`` bytes the supervisor assembled
+    itself. It returns the detached signature as a string (base64url of the 64-byte Ed25519
+    signature, per §4.1 ``sig:b64url(64B)`` — the encoding the Rust broker decodes with
+    ``URL_SAFE_NO_PAD``).
 
-    Returns a :class:`RunAttestation` on success, or a typed :class:`Refusal`
-    (``malformed``) when the trusted facts are ill-shaped. ``supervisor_key_id``
-    must be a capped string and ``sign_attestation`` callable, else
-    :class:`SupervisorError` (a supervisor-side config/seam fault, not a renderer
-    verdict); a seam that returns a non-string / empty signature is likewise a
-    :class:`SupervisorError` — never a half-built attestation.
+    Returns a :class:`RunAttestation` on success, or a typed :class:`Refusal` (``malformed``)
+    if the assembled evidence somehow fails its own shape re-check (a supervisor-side
+    assembly bug — fail closed rather than sign malformed bytes). ``supervisor_key_id`` must
+    be a capped string and ``sign_attestation`` callable, else :class:`SupervisorError`; a
+    seam that returns a non-string / empty signature is likewise a :class:`SupervisorError` —
+    never a half-built attestation.
     """
+    if not isinstance(state, AttestationState):
+        raise SupervisorError("state must be an AttestationState from the durable ledger")
+    if not isinstance(config, SupervisorConfig):
+        raise SupervisorError("config must be a SupervisorConfig")
     if not _capped_str(supervisor_key_id):
         raise SupervisorError("supervisor_key_id must be a non-empty capped string")
     if not callable(sign_attestation):
         raise SupervisorError("sign_attestation must be callable")
 
     try:
-        validated = _validate_run_facts(facts)
+        validated = _validate_run_facts(evidence_from_state(state, config))
     except _Refuse as refusal:
         return Refusal(refusal.reason, refusal.detail)
 

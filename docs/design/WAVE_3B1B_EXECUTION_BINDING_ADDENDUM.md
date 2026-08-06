@@ -2713,6 +2713,81 @@ reply enum literal appears in exactly one routing row.
 
 ## 5. Durable supervisor acceptance — state machine + outbox (P0-2)
 
+> ### ⚠️ §5 v2 — NORMATIVE AMENDMENT (independent audit 2026-08-06, **F-01 P0**)
+>
+> **The problem this amendment exists to fix.** §5 below specified this durable state machine
+> correctly, and it was implemented in `apps/desktop/src-tauri/core/src/supervisor_ledger.rs` —
+> but **nothing ever called it.** Every function except `create_schema` had only `#[cfg(test)]`
+> callers. The live supervisor ran stateless: `accept_open` minted a lease from `uuid4()` and
+> persisted nothing, `launch_gate` judged a lease the CALLER handed back, and `attest-run`
+> accepted a `facts` object on the wire, shape-validated it, stamped `decision="completed"` and
+> signed it. The broker uid — the one principal the four-uid key split exists to constrain —
+> could therefore obtain a genuine Ed25519-signed `brops.governed-receipt-envelope.v1` for a run
+> that never happened: no challenge, no lease, no launcher, no executor, no model.
+>
+> **The amendment.** The supervisor's authority is now the durable state it owns, and the wire
+> protocol is shaped so no other source of evidence exists.
+>
+> **(a) Where the schema lives.** The DDL below is no longer inlined in either implementation.
+> The single normative source is [`engine/runtime/supervisor_ledger.sql`](../../engine/runtime/supervisor_ledger.sql),
+> loaded verbatim by the Python supervisor (`governed_supervisor_ledger.py`, the production
+> writer) and compiled into `brops-core::supervisor_ledger` from a byte-identical mirror. The
+> fail-closed CI gate `tools/check_ledger_ddl_parity.py` refuses any divergence, any missing
+> copy, or the removal of a load-bearing constraint. **The SQL is the enforcement** — the
+> `UNIQUE`s, the `state` CHECK, the transition trigger, the write-once completion PK, the floor
+> PK — so neither language can weaken it alone.
+>
+> **(b) The acceptance row carries the request binding.** In addition to the columns below it
+> persists `lease_id`, `lease_issued_at_ms`, `lease_expires_at_ms`, `receipt_id`,
+> `supervisor_id`, `requested_at_ms`, `request_sha256`, `system_handle`, `history_handle` and
+> `generation_config_handle` — all copied out of the **signature-verified** challenge payload or
+> stamped from the supervisor's own clock. `receipt_id` is **minted per turn by the supervisor**
+> and carries a `UNIQUE` index, because the §7.1(d) global-unique replay key cannot be a
+> deployment constant (audit F-02).
+>
+> **(c) A new write-once completion table.** `governed_turn_completion` (PK
+> `execution_attempt_id`, FK → acceptance) records the ONLY §4.9 values the supervisor cannot
+> derive itself: `output_handle`, `containment_evidence_handle`, `record_handle`, `lease_handle`,
+> `execution_receipt_handle`, `completed_at_ms` and the four `evidence_*` counters. The PK is the
+> write-once gate: an identical retry is idempotent, any divergence is refused. Recording a
+> completion also drives the evidence-head anti-rollback/anti-fork floor in the same
+> transaction, so a stale or forked head refuses the whole completion.
+>
+> **(d) The §5 v2 wire.** Five ops walk ONE durable attempt through its lifecycle. Every request
+> shape is EXHAUSTIVE — an unknown field is a hard error, never an ignored one:
+>
+> | op | request | effect |
+> |---|---|---|
+> | `accept-open` | `{challenge_doc}` | two-phase verify + **Phase C**: the challenge's signed `supervisor_id` must be THIS supervisor (else `supervisor_mismatch`) → CAS an acceptance row keyed on the supervisor's own `challenge_handle = sha256(JCS(payload))` → `LEASE_READY`. A replayed challenge returns the **ORIGINAL** lease; it never mints a second attempt. |
+> | `launch-gate` | `{execution_attempt_id}` | the §5 step-8a budget gate against the lease window the **supervisor persisted** → `EXECUTION_STARTING`, or durably `EXPIRED` with the gate reason. The caller presents no lease and cannot choose the expiry it is judged against (also closes audit F-23). |
+> | `execution-started` | `{execution_attempt_id, process_group_id, cgroup_id, execution_started_marker}` | `EXECUTION_STARTING → EXECUTING`. |
+> | `complete-run` | `{execution_attempt_id, produced}` | write-once completion + evidence floor → `COMPLETED`. `produced` carries ONLY run-produced values; every id, nonce, identity and acceptance timestamp is rejected as an unknown field. |
+> | `attest-run` | `{run_id, execution_attempt_id}` | build the §4.9 evidence from durable terminal state + supervisor config, stamp `decision="completed"`, sign. **No `facts` parameter exists.** |
+>
+> **(e) The identities the signer allowlists are supervisor-provisioned.** `executor_id`,
+> `builder_id`, `policy_id`, `policy_version` and `policy_bundle_handle` move out of the broker's
+> config into the supervisor's. `isolated_signer._check_identity` allowlists these values, so a
+> broker that supplied them was choosing what it would be checked against — it simply copied them
+> out of the world-readable deployment config. `supervisor_id` comes from the acceptance row, so
+> a later config edit cannot retroactively rewrite what was accepted.
+>
+> **(f) The signer sees the attested bytes.** The broker no longer rebuilds the evidence object
+> for `sign-result`; it **parses it from the exact `evidence_jcs` the supervisor signed**. The
+> signer's re-hash and the final acceptance's `attestation_evidence_sha256` check are therefore
+> over identical bytes by construction.
+>
+> **The property this establishes:** *a fabricated run has no acceptance row, so it has no
+> completion, so there is no evidence for the supervisor to build and no signature to obtain.*
+> `attest-run` on an unknown, unfinished, failed or mismatched run returns
+> `no_terminal_run_state`.
+>
+> **What this amendment does NOT fix.** The containment/record/execution-receipt handles and the
+> four `evidence_*` counters are still deployment-static config constants rather than
+> measurements of the run (audit **F-02**); F-01 makes them supervisor-recorded and write-once,
+> not derived. The request↔output binding (**F-08**), the TCB integrity floor (**F-10**) and the
+> custody defects (**F-07/F-17/F-28**) are untouched. `platform_governed_execution_supported()`
+> stays `false`; `main()` keeps `UpstreamBlockedExecutor`.
+
 A database transaction **cannot** atomically include an external private-key signature and a
 filesystem publish. Acceptance is therefore a **durable state machine with an outbox**, not a
 single "issue-or-prepare" step.

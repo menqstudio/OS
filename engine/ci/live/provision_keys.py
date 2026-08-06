@@ -37,7 +37,6 @@ import hashlib
 import json
 import os
 import sys
-import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import live_crypto as lc
@@ -165,7 +164,13 @@ def main() -> int:
     report_dir = os.path.join(root, "report")
     tcb_dir = os.path.join(root, "tcb")
     bin_dir = os.path.join(root, "bin")
-    for d in (keys_dir, store_dir, sock_dir, report_dir, tcb_dir, bin_dir):
+    # The supervisor's PRIVATE state directory (F-01). Unlike the deliberately-traversable
+    # sock/report/store dirs — whose integrity is cryptographic, not filesystem — this one
+    # holds the durable acceptance/lease/completion ledger the run attestation is rebuilt
+    # from. It is the supervisor's authority, so run_live_turn.sh chowns it to the supervisor
+    # account at mode 0700 and no other uid may read or write it.
+    supervisor_state_dir = os.path.join(root, "supervisor-state")
+    for d in (keys_dir, store_dir, sock_dir, report_dir, tcb_dir, bin_dir, supervisor_state_dir):
         os.makedirs(d, exist_ok=True)
 
     # ---- (1) generate the four keypairs; write private (owner-loaded) + public hex ----
@@ -253,6 +258,27 @@ def main() -> int:
             "launcher_executable_sha256": args.launcher_sha,
             "executor_executable_sha256": args.executor_sha,
             "challenge_key_id": CHALLENGE_KEY_ID,
+            # F-01: the supervisor's OWN durable acceptance/lease/completion state. It is the
+            # authority the run attestation is rebuilt from, so it lives in the supervisor
+            # principal's private key directory — no other uid writes it.
+            "ledger_db": os.path.join(supervisor_state_dir, "supervisor-ledger.db"),
+            # F-01: the identity block the isolated signer ALLOWLISTS. These used to reach the
+            # signed evidence through `attest-run {facts}` — i.e. the caller copied them out of
+            # this world-readable config and named itself an allowed executor/builder. The
+            # supervisor now takes them from its own provisioning and the caller cannot
+            # contribute them at all.
+            "supervisor_id": SUPERVISOR_ID,
+            "executor_id": EXECUTOR_ID,
+            "builder_id": BUILDER_ID,
+            "policy_id": POLICY_ID,
+            "policy_version": POLICY_VERSION,
+            "policy_bundle_handle": handles["policy_bundle"],
+            # Which pinned challenge-key registry snapshot authorized an acceptance, recorded
+            # durably so an audit can tell what key material was in force for that turn.
+            "challenge_registry_handle": sha256_hex(lc.pub_hex(challenge).encode("ascii")),
+            "challenge_registry_hash": manifest_hash,
+            "challenge_registry_epoch": KEY_EPOCH,
+            "challenge_registry_root_key_id": ROOT_KEY_ID,
         },
         "execution": {
             "recorder_command": recorder_command,
@@ -264,15 +290,15 @@ def main() -> int:
             "store_dir": store_dir,
             "report_dir": report_dir,
         },
+        # The facts the EXECUTING CHAIN reports (via `complete-run`), and nothing else.
+        #
+        # F-01: `receipt_id`, `supervisor_id`, `executor_id`, `builder_id`, `policy_id`,
+        # `policy_version`, `policy_bundle_handle` and `supervisor_attestation_key_id` used to
+        # live here too, and the broker copied them into `attest-run {facts}`. They have moved
+        # to the `supervisor` block above, which only the supervisor reads. They are deleted
+        # rather than left behind, so nobody reading this config can conclude the broker still
+        # supplies the identities the signer allowlists.
         "facts": {
-            "receipt_id": "receipt-live-" + uuid.uuid4().hex,
-            "supervisor_id": SUPERVISOR_ID,
-            "executor_id": EXECUTOR_ID,
-            "builder_id": BUILDER_ID,
-            "policy_id": POLICY_ID,
-            "policy_version": POLICY_VERSION,
-            "supervisor_attestation_key_id": SUP_ATTEST_KEY_ID,
-            "policy_bundle_handle": handles["policy_bundle"],
             "containment_evidence_handle": handles["containment_evidence"],
             "record_handle": handles["record"],
             "lease_handle": handles["lease"],
