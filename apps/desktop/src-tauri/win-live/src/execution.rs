@@ -30,9 +30,6 @@ use crate::crypto;
 pub struct ExecutionParams {
     pub store_dir: PathBuf,
     pub containment_evidence_handle: String,
-    pub record_handle: String,
-    pub lease_handle: String,
-    pub execution_receipt_handle: String,
     pub evidence_final_event_hash: String,
     pub evidence_event_count: i64,
     pub evidence_last_sequence: i64,
@@ -103,9 +100,7 @@ where
             "produced": {
                 "output_handle": output_handle,
                 "containment_evidence_handle": cfg.containment_evidence_handle,
-                "record_handle": cfg.record_handle,
-                "lease_handle": cfg.lease_handle,
-                "execution_receipt_handle": cfg.execution_receipt_handle,
+                // F-02: record/lease/execution-receipt handles are supervisor-derived now.
                 "completed_at_ms": now,
                 "evidence_final_event_hash": cfg.evidence_final_event_hash,
                 "evidence_event_count": cfg.evidence_event_count,

@@ -556,6 +556,17 @@ def gate_and_start(conn: sqlite3.Connection, execution_attempt_id: str, now_ms: 
 COMPLETION_HANDLE_FIELDS: Tuple[str, ...] = (
     "output_handle",
     "containment_evidence_handle",
+)
+
+#: Handles the SUPERVISOR derives from its own state and publishes to the protected store —
+#: they are NOT part of `produced` and cannot be supplied by a caller (audit **F-02**).
+#:
+#: `lease_handle` is the content address of the exact canonical lease bytes persisted at
+#: acceptance; `record_handle` and `execution_receipt_handle` address documents the supervisor
+#: builds from the acceptance + completion rows. Before this, all three were deployment-static
+#: constants the broker copied out of a world-readable config, so the signer's "deep protected-
+#: chain verification" only proved that someone had written those same constant bytes once.
+DERIVED_HANDLE_FIELDS: Tuple[str, ...] = (
     "record_handle",
     "lease_handle",
     "execution_receipt_handle",
@@ -584,7 +595,9 @@ def validate_completion_facts(produced: Any) -> Dict[str, Any]:
     Note what is DELIBERATELY absent: ``run_id``, ``task_id``, ``request_nonce``,
     ``receipt_id``, ``workspace_id``, ``install_id``, ``supervisor_id``, ``executor_id``,
     ``builder_id``, ``policy_*``, ``requested_at``, ``challenge_accepted_at_ms``. Those are
-    supervisor state or supervisor config; accepting them here would re-open F-01.
+    supervisor state or supervisor config; accepting them here would re-open F-01. Also absent
+    (audit **F-02**): ``record_handle``, ``lease_handle`` and ``execution_receipt_handle`` — the
+    supervisor derives those from its own rows and publishes them itself.
     """
     if not isinstance(produced, Mapping):
         raise LedgerError("completion facts must be a mapping")
@@ -664,8 +677,18 @@ def _evidence_floor_cas(conn: sqlite3.Connection, install_id: str, task_id: str,
     return "advanced"
 
 
+def load_acceptance(conn: sqlite3.Connection, execution_attempt_id: str) -> Optional[sqlite3.Row]:
+    """The full acceptance row for an attempt — the state the supervisor builds its own
+    terminal artifacts from (audit F-02). ``None`` if the attempt was never accepted."""
+    return conn.execute(
+        "SELECT * FROM governed_turn_acceptance WHERE execution_attempt_id = ?",
+        (execution_attempt_id,),
+    ).fetchone()
+
+
 def record_completion(conn: sqlite3.Connection, execution_attempt_id: str,
-                      produced: Any, now_ms: int) -> str:
+                      produced: Any, now_ms: int,
+                      *, derived: Mapping[str, str]) -> str:
     """Record the run-produced facts EXACTLY ONCE and move ``EXECUTING → COMPLETED``.
 
     In one ``BEGIN IMMEDIATE``:
@@ -682,6 +705,16 @@ def record_completion(conn: sqlite3.Connection, execution_attempt_id: str,
     advance, and the ``FOREIGN KEY`` on the completion table refuses the insert outright.
     """
     facts = validate_completion_facts(produced)
+    # The three supervisor-derived handles (F-02) join the record here, never through `produced`.
+    for field in DERIVED_HANDLE_FIELDS:
+        value = derived.get(field)
+        if not _is_lower_sha256_hex(value):
+            raise LedgerError("derived %s must be 64 lowercase hex chars" % field)
+        facts[field] = value
+    if set(derived) - set(DERIVED_HANDLE_FIELDS):
+        raise LedgerError(
+            "unexpected derived handle(s) %s" % sorted(set(derived) - set(DERIVED_HANDLE_FIELDS))
+        )
     facts_sha256 = _sha256_hex(canonical_bytes(facts))
 
     with _Tx(conn) as tx:
@@ -873,7 +906,7 @@ __all__ = [
     "BLOCKED", "FAILED", "EXPIRED", "RECOVERY_REQUIRED", "TERMINAL_STATES",
     "LEASE_DURATION_MS", "MIN_LAUNCH_REMAINING_MS",
     "CREATED", "IDEMPOTENT",
-    "COMPLETION_FIELDS",
+    "COMPLETION_FIELDS", "DERIVED_HANDLE_FIELDS", "load_acceptance",
     "AttestationState", "NewAcceptance",
     "Conflict", "Corrupt", "EvidenceFork", "IllegalTransition", "InvalidHead",
     "LedgerError", "NotFound", "StaleEvidence",

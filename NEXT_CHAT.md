@@ -23,8 +23,11 @@
 > CAS now runs on every `complete-run`). **F-11**'s supervisor leg is also closed — the new exhaustive
 > per-op shape checks quote offending field names, which would have been a fresh reply-amplification
 > vector, so error text is bounded and `_try_write` degrades instead of letting a `FrameError` escape and
-> kill the lease-issuing process. **REMAINING: 11 blockers** — F-02/F-18 (static evidence facts + the
-> `evidence_*` counters; `receipt_id` is now per-turn but the rest are still config constants),
+> kill the lease-issuing process. **F-02/F-18 is now PARTIAL**: `record_handle`/`lease_handle`/`execution_receipt_handle` left the
+> broker's `produced` and are built + published by the supervisor per run (the live kit's placeholder
+> blobs are deleted); `containment_evidence_handle` and the four `evidence_*` counters are still
+> deployment constants, so **do not read F-02 as closed**.
+> **REMAINING: 11 blockers** — F-02/F-18 (the open half above),
 > F-08 (request↔output binding), F-09's acceptance-CAS *lease-budget* framing is satisfied but the
 > §2.5 TCB floor **F-10** has no caller, F-07/F-17/F-28 (self-certifying + world-writable custody),
 > F-26/F-27/F-29 (decorative binding checks), F-31/F-32/F-36 (proof-kit DoS), F-06/F-13/F-14 (engine

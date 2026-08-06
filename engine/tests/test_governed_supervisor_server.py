@@ -163,9 +163,6 @@ def _produced(**over):
     facts = dict(
         output_handle="d" * 64,
         containment_evidence_handle="e" * 64,
-        record_handle="f" * 64,
-        lease_handle="0" * 64,
-        execution_receipt_handle="1" * 64,
         completed_at_ms=NOW + 1_000,
         evidence_final_event_hash="2" * 64,
         evidence_event_count=3,
@@ -174,6 +171,17 @@ def _produced(**over):
     )
     facts.update(over)
     return facts
+
+
+#: The supervisor publishes its own terminal artifacts (F-02); here the "store" is a dict, so
+#: the content address is still real and a republish of identical bytes is still a no-op.
+PUBLISHED = {}
+
+
+def _publish(data: bytes) -> str:
+    handle = hashlib.sha256(data).hexdigest()
+    PUBLISHED[handle] = data
+    return handle
 
 
 def _clock(now=NOW):
@@ -221,6 +229,7 @@ def _handle(conn, config=None, now=NOW, ledger_conn=None):
         _recompute,
         _clock(now),
         ledger_conn=ledger_conn if ledger_conn is not None else _ledger(),
+        publish_artifact=_publish,
         sign_attestation=_sign_attestation,
         supervisor_attestation_key_id=ATTEST_KEY_ID,
     )
@@ -235,6 +244,7 @@ def _call(request, *, config, ledger_conn, now=NOW):
         _recompute,
         _clock(now),
         conn=ledger_conn,
+        publish_artifact=_publish,
         sign_attestation=_sign_attestation,
         supervisor_attestation_key_id=ATTEST_KEY_ID,
     )
@@ -662,7 +672,7 @@ class UnknownOpTests(unittest.TestCase):
         )
         reply = handle_connection(
             conn, BROKER_UID, _config(), _verify_sig, _recompute, _clock(NOW),
-            ledger_conn=None,
+            ledger_conn=None, publish_artifact=_publish,
         )
         self.assertFalse(reply["ok"])
         self.assertNotIn("lease", reply)
@@ -674,7 +684,7 @@ class UnknownOpTests(unittest.TestCase):
         )
         reply = handle_connection(
             conn, BROKER_UID, _config(), _verify_sig, _recompute, lambda: "not-an-int",
-            ledger_conn=_ledger(),
+            ledger_conn=_ledger(), publish_artifact=_publish,
         )
         self.assertFalse(reply["ok"])
         self.assertNotIn("lease", reply)
@@ -715,7 +725,7 @@ class ServeLoopTests(unittest.TestCase):
 
         serve_forever(
             accept_one, BROKER_UID, _config(), _verify_sig, _recompute, _clock(NOW),
-            ledger_conn=_ledger(),
+            ledger_conn=_ledger(), publish_artifact=_publish,
         )
 
         self.assertTrue(served[0].closed)

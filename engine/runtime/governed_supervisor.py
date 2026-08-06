@@ -639,6 +639,74 @@ def accept_open(
         return Refusal(refusal.reason, refusal.detail)
 
 
+# ---------------------------------------------------------------------------
+# Terminal artifacts the supervisor BUILDS itself (audit F-02).
+# ---------------------------------------------------------------------------
+
+#: The two documents the supervisor assembles at completion and publishes to the protected
+#: store, so the handles named in the signed evidence address artifacts THIS run produced.
+TERMINAL_RECORD_PROTOCOL = "brops.governed-turn-record.v1"
+EXECUTION_RECEIPT_PROTOCOL = "brops.execution-receipt.v1"
+
+
+def build_terminal_record(row: Mapping[str, Any], produced: Mapping[str, Any]) -> bytes:
+    """The canonical terminal governed-turn record for one attempt.
+
+    **F-02.** `record_handle` used to be a deployment-static constant copied out of a
+    world-readable config, so every receipt this deployment ever produced named the same
+    "record" and the isolated signer's protected-chain check only proved that somebody had
+    written those constant bytes once. The record is now assembled here from the supervisor's
+    OWN acceptance row plus the write-once completion, so its content address is per-run and an
+    auditor dereferencing it gets the actual account of the turn.
+    """
+    return _canonical_bytes({
+        "protocol": TERMINAL_RECORD_PROTOCOL,
+        "run_id": row["run_id"],
+        "task_id": row["task_id"],
+        "execution_attempt_id": row["execution_attempt_id"],
+        "workspace_id": row["workspace_id"],
+        "install_id": row["install_id"],
+        "request_nonce": row["request_nonce"],
+        "receipt_id": row["receipt_id"],
+        "supervisor_id": row["supervisor_id"],
+        "request_sha256": row["request_sha256"],
+        "system_handle": row["system_handle"],
+        "history_handle": row["history_handle"],
+        "generation_config_handle": row["generation_config_handle"],
+        "output_handle": produced["output_handle"],
+        "containment_evidence_handle": produced["containment_evidence_handle"],
+        "challenge_handle": row["challenge_handle"],
+        "challenge_registry_hash": row["challenge_registry_hash"],
+        "challenge_registry_epoch": row["challenge_registry_epoch"],
+        "requested_at_ms": row["requested_at_ms"],
+        "challenge_accepted_at_ms": row["challenge_accepted_at_ms"],
+        "completed_at_ms": produced["completed_at_ms"],
+        "decision": DECISION_COMPLETED,
+    })
+
+
+def build_execution_receipt(row: Mapping[str, Any], produced: Mapping[str, Any]) -> bytes:
+    """The canonical execution receipt: what the supervisor observed of the run itself.
+
+    **F-02.** Also previously a constant. The process metadata comes from the
+    ``execution-started`` transition the supervisor durably recorded, so this addresses a
+    document about THIS execution rather than a stub blob the provisioner wrote.
+    """
+    return _canonical_bytes({
+        "protocol": EXECUTION_RECEIPT_PROTOCOL,
+        "run_id": row["run_id"],
+        "execution_attempt_id": row["execution_attempt_id"],
+        "lease_id": row["lease_id"],
+        "lease_issued_at_ms": row["lease_issued_at_ms"],
+        "lease_expires_at_ms": row["lease_expires_at_ms"],
+        "process_group_id": row["process_group_id"] or "",
+        "cgroup_id": row["cgroup_id"] or "",
+        "execution_started_marker": row["execution_started_marker"] or "",
+        "completed_at_ms": produced["completed_at_ms"],
+        "output_handle": produced["output_handle"],
+    })
+
+
 def _lease_payload(lease: Lease) -> Mapping[str, Any]:
     """The canonical lease object whose JCS bytes are persisted at acceptance, so a
     post-commit / pre-signature crash re-signs the byte-identical lease (§5 step 6)."""

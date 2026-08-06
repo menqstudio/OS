@@ -76,13 +76,14 @@ def _acceptance(attempt="att-1", **over):
     return gsl.NewAcceptance(**fields)
 
 
+#: The three handles the SUPERVISOR derives and publishes (F-02) — never part of `produced`.
+DERIVED = {"record_handle": H_C, "lease_handle": H_A, "execution_receipt_handle": H_B}
+
+
 def _produced(**over):
     facts = dict(
         output_handle=H_A,
         containment_evidence_handle=H_B,
-        record_handle=H_C,
-        lease_handle=H_A,
-        execution_receipt_handle=H_B,
         completed_at_ms=1_050_000,
         evidence_final_event_hash=H_C,
         evidence_event_count=3,
@@ -239,7 +240,7 @@ class CompletionTests(unittest.TestCase):
         conn = _conn()
         gsl.accept_prepare(conn, _acceptance(), 10)  # ACCEPTED_PREPARED, never executed
         with self.assertRaises(gsl.IllegalTransition):
-            gsl.record_completion(conn, "att-1", _produced(), 50)
+            gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED)
         # Nothing was written: no completion row, no floor row.
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 0
@@ -251,13 +252,13 @@ class CompletionTests(unittest.TestCase):
     def test_completion_for_a_fabricated_attempt_is_not_found(self):
         conn = _conn()
         with self.assertRaises(gsl.NotFound):
-            gsl.record_completion(conn, "ghost", _produced(), 50)
+            gsl.record_completion(conn, "ghost", _produced(), 50, derived=DERIVED)
 
     def test_completion_is_write_once_and_idempotent_on_identical_retry(self):
         conn = _conn()
         _drive_to_executing(conn)
-        self.assertEqual(gsl.record_completion(conn, "att-1", _produced(), 50), gsl.CREATED)
-        self.assertEqual(gsl.record_completion(conn, "att-1", _produced(), 51), gsl.IDEMPOTENT)
+        self.assertEqual(gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED), gsl.CREATED)
+        self.assertEqual(gsl.record_completion(conn, "att-1", _produced(), 51, derived=DERIVED), gsl.IDEMPOTENT)
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 1
         )
@@ -265,9 +266,9 @@ class CompletionTests(unittest.TestCase):
     def test_a_second_completion_with_different_facts_is_refused(self):
         conn = _conn()
         _drive_to_executing(conn)
-        gsl.record_completion(conn, "att-1", _produced(), 50)
+        gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED)
         with self.assertRaises(gsl.Conflict):
-            gsl.record_completion(conn, "att-1", _produced(output_handle=H_B), 51)
+            gsl.record_completion(conn, "att-1", _produced(output_handle=H_B), 51, derived=DERIVED)
         # The originally recorded output survives — a retry cannot rewrite what was attested.
         stored = conn.execute(
             "SELECT output_handle FROM governed_turn_completion WHERE execution_attempt_id='att-1'"
@@ -285,7 +286,7 @@ class CompletionTests(unittest.TestCase):
                 facts = _produced()
                 facts[smuggled] = "x"
                 with self.assertRaises(gsl.LedgerError):
-                    gsl.record_completion(conn, "att-1", facts, 50)
+                    gsl.record_completion(conn, "att-1", facts, 50, derived=DERIVED)
 
     def test_completion_rejects_malformed_handles_and_counts(self):
         conn = _conn()
@@ -299,7 +300,7 @@ class CompletionTests(unittest.TestCase):
         ):
             with self.subTest(field=field, bad=bad):
                 with self.assertRaises(gsl.LedgerError):
-                    gsl.record_completion(conn, "att-1", _produced(**{field: bad}), 50)
+                    gsl.record_completion(conn, "att-1", _produced(**{field: bad}), 50, derived=DERIVED)
 
 
 # ---------------------------------------------------------------------------
@@ -311,32 +312,32 @@ class EvidenceFloorTests(unittest.TestCase):
     def test_a_stale_head_refuses_the_whole_completion(self):
         conn = _conn()
         _drive_to_executing(conn, "att-1")
-        gsl.record_completion(conn, "att-1", _produced(evidence_head_sequence=12), 50)
+        gsl.record_completion(conn, "att-1", _produced(evidence_head_sequence=12), 50, derived=DERIVED)
 
         _drive_to_executing(conn, "att-2", _acceptance("att-2"))
         with self.assertRaises(gsl.StaleEvidence):
-            gsl.record_completion(conn, "att-2", _produced(evidence_head_sequence=11), 60)
+            gsl.record_completion(conn, "att-2", _produced(evidence_head_sequence=11), 60, derived=DERIVED)
         # Rolled back entirely: the stale attempt has no completion to attest over.
         self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-2"))
 
     def test_an_equal_head_with_divergent_content_is_a_fork(self):
         conn = _conn()
         _drive_to_executing(conn, "att-1")
-        gsl.record_completion(conn, "att-1", _produced(), 50)
+        gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED)
 
         _drive_to_executing(conn, "att-2", _acceptance("att-2"))
         with self.assertRaises(gsl.EvidenceFork):
             gsl.record_completion(
-                conn, "att-2", _produced(evidence_final_event_hash=H_A), 60
+                conn, "att-2", _produced(evidence_final_event_hash=H_A), 60, derived=DERIVED
             )
         self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-2"))
 
     def test_a_strictly_higher_head_advances_the_floor(self):
         conn = _conn()
         _drive_to_executing(conn, "att-1")
-        gsl.record_completion(conn, "att-1", _produced(evidence_head_sequence=12), 50)
+        gsl.record_completion(conn, "att-1", _produced(evidence_head_sequence=12), 50, derived=DERIVED)
         _drive_to_executing(conn, "att-2", _acceptance("att-2"))
-        gsl.record_completion(conn, "att-2", _produced(evidence_head_sequence=13), 60)
+        gsl.record_completion(conn, "att-2", _produced(evidence_head_sequence=13), 60, derived=DERIVED)
         floor = conn.execute(
             "SELECT highest_head_sequence FROM governed_evidence_head_floor"
         ).fetchone()[0]
@@ -361,7 +362,7 @@ class AttestationStateTests(unittest.TestCase):
     def test_a_completed_run_yields_state_built_entirely_from_the_ledger(self):
         conn = _conn()
         _drive_to_executing(conn)
-        gsl.record_completion(conn, "att-1", _produced(), 50)
+        gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED)
         state = gsl.load_attestation_state(conn, "run-1", "att-1")
         self.assertIsNotNone(state)
         # The identity/binding half came from the SIGNED challenge at acceptance time...
@@ -386,7 +387,7 @@ class AttestationStateTests(unittest.TestCase):
         # attest-run names {run_id, execution_attempt_id}; both must agree with the ledger.
         conn = _conn()
         _drive_to_executing(conn)
-        gsl.record_completion(conn, "att-1", _produced(), 50)
+        gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED)
         self.assertIsNone(gsl.load_attestation_state(conn, "run-OTHER", "att-1"))
 
     def test_a_failed_run_yields_no_attestation_state(self):
@@ -398,7 +399,7 @@ class AttestationStateTests(unittest.TestCase):
     def test_empty_ids_yield_no_state(self):
         conn = _conn()
         _drive_to_executing(conn)
-        gsl.record_completion(conn, "att-1", _produced(), 50)
+        gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED)
         self.assertIsNone(gsl.load_attestation_state(conn, "", "att-1"))
         self.assertIsNone(gsl.load_attestation_state(conn, "run-1", ""))
 

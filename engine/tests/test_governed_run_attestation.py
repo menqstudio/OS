@@ -457,6 +457,7 @@ class AttestRunServerTests(unittest.TestCase):
             _fixed_request_sha256,
             lambda: NOW_MS,
             conn=self.ledger_conn,
+            publish_artifact=self.store.put,
             sign_attestation=(self.ed.sign_attestation if ed else None),
             supervisor_attestation_key_id=key_id if ed else None,
         )
@@ -479,9 +480,6 @@ class AttestRunServerTests(unittest.TestCase):
             "produced": {
                 "output_handle": self.handles["output_handle"],
                 "containment_evidence_handle": self.handles["containment_evidence_handle"],
-                "record_handle": self.handles["record_handle"],
-                "lease_handle": self.handles["lease_handle"],
-                "execution_receipt_handle": self.handles["execution_receipt_handle"],
                 # The supervisor stamped `challenge_accepted_at_ms` from its own clock at
                 # accept-open (NOW_MS here), so a completion must not predate it — the signer's
                 # `_check_timestamps` enforces requested_at <= challenge_accepted <= completed.
@@ -541,7 +539,7 @@ class AttestRunServerTests(unittest.TestCase):
         )
         reply = handle_connection(
             conn, BROKER_UID, self.config, _noop_verify, _fixed_request_sha256,
-            lambda: NOW_MS, ledger_conn=self.ledger_conn,
+            lambda: NOW_MS, ledger_conn=self.ledger_conn, publish_artifact=self.store.put,
             sign_attestation=self.ed.sign_attestation,
             supervisor_attestation_key_id=SUP_KEY_ID,
         )
@@ -557,7 +555,7 @@ class AttestRunServerTests(unittest.TestCase):
         }))
         reply = handle_connection(
             conn, BROKER_UID, self.config, _noop_verify, _fixed_request_sha256,
-            lambda: NOW_MS, ledger_conn=self.ledger_conn,
+            lambda: NOW_MS, ledger_conn=self.ledger_conn, publish_artifact=self.store.put,
             sign_attestation=self.ed.sign_attestation,
             supervisor_attestation_key_id=SUP_KEY_ID,
         )
@@ -578,7 +576,7 @@ class AttestRunServerTests(unittest.TestCase):
         }))
         reply = handle_connection(
             conn, BROKER_UID, self.config, _noop_verify, _fixed_request_sha256,
-            lambda: NOW_MS, ledger_conn=self.ledger_conn,
+            lambda: NOW_MS, ledger_conn=self.ledger_conn, publish_artifact=self.store.put,
         )
         self.assertFalse(reply["ok"])
         self.assertNotIn("attestation", reply)

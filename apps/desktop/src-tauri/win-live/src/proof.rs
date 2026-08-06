@@ -140,9 +140,9 @@ where
     let generation_config_sha256 = seed(store_dir, b"brops-generation-config-v1");
     let policy_bundle_handle = seed(store_dir, b"brops-policy-bundle-v1");
     let containment_evidence_handle = seed(store_dir, b"brops-containment-evidence-v1");
-    let record_handle = seed(store_dir, b"brops-record-v1");
-    let lease_handle = seed(store_dir, b"brops-lease-v1");
-    let execution_receipt_handle = seed(store_dir, b"brops-execution-receipt-v1");
+    // F-02: no pre-seeded record/lease/execution-receipt blobs. The supervisor BUILDS those
+    // documents from its own acceptance + completion rows and publishes them to this store, so the
+    // handles the receipt names address artifacts of THIS run rather than provisioner stubs.
     let evidence_final_event_hash = crypto::sha256_hex(b"brops-final-event-v1");
     let launcher_sha = crypto::sha256_hex(b"brops-launcher.bin");
     let executor_sha = crypto::sha256_hex(b"brops-executor.bin");
@@ -203,6 +203,7 @@ where
         policy_id: "brops-policy-1".to_string(),
         policy_version: "1".to_string(),
         policy_bundle_handle: policy_bundle_handle.clone(),
+        store_dir: store_dir.to_path_buf(),
     }));
     let signer: Arc<dyn DispatchCore> = Arc::new(Signer::new(SignerConfig {
         receipt_key_id: signer_key_id.clone(),
@@ -248,9 +249,6 @@ where
     let params = ExecutionParams {
         store_dir: store_dir.to_path_buf(),
         containment_evidence_handle,
-        record_handle,
-        lease_handle,
-        execution_receipt_handle,
         evidence_final_event_hash,
         evidence_event_count: 3,
         evidence_last_sequence: 3,

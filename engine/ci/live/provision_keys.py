@@ -82,14 +82,24 @@ STORE_INPUTS = {
     "generation_config": b'{"engine":"live","temperature":0}',
     "policy_bundle": b'{"policy":"brops.live.policy.v1","rules":[]}',
     "containment_evidence": b'{"containment":"ok","namespace":"live"}',
-    "record": b'{"record":"brops.live.record.v1"}',
-    "lease": b'{"lease":"brops.live.store-lease.v1"}',
-    "execution_receipt": b'{"execution_receipt":"brops.live.exec-receipt.v1"}',
+    # F-02/F-18: the `record`, `lease` and `execution_receipt` STUBS are gone. They were literal
+    # placeholder JSON the provisioner wrote once, whose content addresses every receipt of this
+    # deployment then named — so the isolated signer's "deep protected-chain verification" only
+    # proved that those constant bytes existed. The SUPERVISOR now builds the governed-turn record
+    # and the execution receipt from its own acceptance + completion rows, and addresses the exact
+    # canonical lease bytes it persisted at acceptance, publishing all three into this store per run.
+    #
+    # `containment_evidence` is still a stub: it is the one artifact the EXECUTION must produce
+    # (the launcher/executor's containment report), and wiring that is the remaining half of F-02.
 }
 
+# STILL a deployment constant — the open half of audit F-02/F-18. The evidence chain these
+# describe is not measured anywhere; wiring the recorder's real chain head is a separate blocker.
+# `last_sequence` now equals `event_count` because the durable floor validates that relationship
+# (a head claiming 3 events but a last sequence of 12 is malformed, and used to pass unchecked).
 EVIDENCE_FINAL_EVENT_HASH = "77" * 32
 EVIDENCE_EVENT_COUNT = 3
-EVIDENCE_LAST_SEQUENCE = 12
+EVIDENCE_LAST_SEQUENCE = 3
 EVIDENCE_HEAD_SEQUENCE = 12
 
 # Service account uids (already provisioned on the box; overridable for a test harness).
@@ -300,9 +310,6 @@ def main() -> int:
         # supplies the identities the signer allowlists.
         "facts": {
             "containment_evidence_handle": handles["containment_evidence"],
-            "record_handle": handles["record"],
-            "lease_handle": handles["lease"],
-            "execution_receipt_handle": handles["execution_receipt"],
             "evidence_final_event_hash": EVIDENCE_FINAL_EVENT_HASH,
             "evidence_event_count": EVIDENCE_EVENT_COUNT,
             "evidence_last_sequence": EVIDENCE_LAST_SEQUENCE,

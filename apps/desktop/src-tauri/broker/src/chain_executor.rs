@@ -641,9 +641,6 @@ pub mod linux {
         // constants rather than measurements of this run. F-01 makes them supervisor-recorded
         // and write-once; it does not yet make them derived. Do not read this as closed.)
         pub containment_evidence_handle: String,
-        pub record_handle: String,
-        pub lease_handle: String,
-        pub execution_receipt_handle: String,
         pub evidence_final_event_hash: String,
         pub evidence_event_count: i64,
         pub evidence_last_sequence: i64,
@@ -783,9 +780,11 @@ pub mod linux {
                 "produced": {
                     "output_handle": output_handle,
                     "containment_evidence_handle": cfg.containment_evidence_handle,
-                    "record_handle": cfg.record_handle,
-                    "lease_handle": cfg.lease_handle,
-                    "execution_receipt_handle": cfg.execution_receipt_handle,
+                    // F-02: `record_handle`, `lease_handle` and `execution_receipt_handle` are
+                    // gone from here. The supervisor BUILDS those documents from its own
+                    // acceptance + completion rows and publishes them to the protected store, so
+                    // the handles the receipt names address artifacts of THIS run instead of
+                    // deployment constants the broker copied out of a world-readable config.
                     "completed_at_ms": now,
                     "evidence_final_event_hash": cfg.evidence_final_event_hash,
                     "evidence_event_count": cfg.evidence_event_count,

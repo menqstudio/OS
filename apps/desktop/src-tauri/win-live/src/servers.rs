@@ -315,12 +315,9 @@ const ATTEST_INPUT_FIELDS: [&str; 28] = [
 /// The EXACT shape of `complete-run`'s `produced` object — the only §4.9 values the supervisor
 /// cannot derive itself. Deliberately absent: every id, nonce, identity and acceptance timestamp
 /// (F-01: the supervisor already owns those, and taking them here would re-open the oracle).
-const COMPLETION_HANDLE_FIELDS: [&str; 6] = [
+const COMPLETION_HANDLE_FIELDS: [&str; 3] = [
     "output_handle",
     "containment_evidence_handle",
-    "record_handle",
-    "lease_handle",
-    "execution_receipt_handle",
     "evidence_final_event_hash",
 ];
 const COMPLETION_INT_FIELDS: [&str; 4] = [
@@ -329,12 +326,9 @@ const COMPLETION_INT_FIELDS: [&str; 4] = [
     "evidence_last_sequence",
     "evidence_head_sequence",
 ];
-const COMPLETION_FIELDS: [&str; 10] = [
+const COMPLETION_FIELDS: [&str; 7] = [
     "output_handle",
     "containment_evidence_handle",
-    "record_handle",
-    "lease_handle",
-    "execution_receipt_handle",
     "evidence_final_event_hash",
     "completed_at_ms",
     "evidence_event_count",
@@ -358,9 +352,15 @@ pub struct SupervisorConfig {
     pub policy_id: String,
     pub policy_version: String,
     pub policy_bundle_handle: String,
+    /// The content-addressed protected store this supervisor PUBLISHES its own terminal
+    /// artifacts into (audit F-02) — the same store the isolated signer reads by handle.
+    pub store_dir: PathBuf,
 }
 
 /// The run-produced half of the §4.9 evidence, reported ONCE via `complete-run`.
+///
+/// `record_handle` / `lease_handle` / `execution_receipt_handle` are NOT here: the supervisor
+/// derives and publishes those itself (F-02), so a caller cannot name them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Completion {
     output_handle: String,
@@ -391,7 +391,13 @@ struct Acceptance {
     generation_config_handle: String,
     receipt_id: String,
     lease_id: String,
+    lease_issued_at_ms: i64,
     lease_expires_at_ms: i64,
+    lease_payload_bytes: Vec<u8>,
+    challenge_handle: String,
+    request_sha256: String,
+    process_group_id: String,
+    cgroup_id: String,
     state: &'static str,
     completion: Option<Completion>,
 }
@@ -569,11 +575,21 @@ impl Supervisor {
             // constant (audit F-02).
             receipt_id: format!("R-{}-{}", now_ms, *c),
             lease_id: format!("L-{}-{}", now_ms, *c),
+            lease_issued_at_ms: now_ms,
             lease_expires_at_ms: now_ms + LEASE_DURATION_MS,
+            lease_payload_bytes: Vec::new(), // filled below from the exact lease object
+            challenge_handle: challenge_handle.clone(),
+            request_sha256: get_str(payload, "request_sha256").unwrap(),
+            process_group_id: String::new(),
+            cgroup_id: String::new(),
             state: ST_LEASE_READY,
             completion: None,
         };
         let lease = self.lease_json(&execution_attempt_id, &acceptance);
+        // Persist the EXACT canonical lease bytes: their content address is the `lease_handle`
+        // the supervisor publishes at completion (F-02), so the receipt names the real lease.
+        let mut acceptance = acceptance;
+        acceptance.lease_payload_bytes = crypto::jcs(lease.as_object().unwrap());
         self.by_challenge
             .lock()
             .unwrap()
@@ -630,6 +646,10 @@ impl Supervisor {
         if a.state != ST_EXECUTION_STARTING {
             return refuse("execution-started", "illegal_state");
         }
+        // Durably record what the supervisor observed of the child: this is what the execution
+        // receipt it publishes at completion is built from (F-02).
+        a.process_group_id = get_str(o, "process_group_id").unwrap_or_default();
+        a.cgroup_id = get_str(o, "cgroup_id").unwrap_or_default();
         a.state = ST_EXECUTING;
         json!({ "ok": true, "op": "execution-started", "execution_attempt_id": attempt })
     }
@@ -665,23 +685,83 @@ impl Supervisor {
                 _ => return refuse("complete-run", "malformed"),
             }
         }
-        let completion = Completion {
-            output_handle: get_str(p, "output_handle").unwrap(),
-            containment_evidence_handle: get_str(p, "containment_evidence_handle").unwrap(),
-            record_handle: get_str(p, "record_handle").unwrap(),
-            lease_handle: get_str(p, "lease_handle").unwrap(),
-            execution_receipt_handle: get_str(p, "execution_receipt_handle").unwrap(),
-            completed_at_ms: ints[0],
-            evidence_final_event_hash: get_str(p, "evidence_final_event_hash").unwrap(),
-            evidence_event_count: ints[1],
-            evidence_last_sequence: ints[2],
-            evidence_head_sequence: ints[3],
-        };
-
         let mut accepted = self.accepted.lock().unwrap();
         let a = match accepted.get_mut(&attempt) {
             Some(a) => a,
             None => return refuse("complete-run", "unknown_attempt"),
+        };
+
+        // F-02: the supervisor BUILDS its terminal artifacts from its own record and PUBLISHES
+        // them to the protected store, then names their content addresses. These were previously
+        // deployment-static constants the execution passed in, which made the isolated signer's
+        // protected-chain check a tautology over bytes the provisioner had written once.
+        let output_handle = get_str(p, "output_handle").unwrap();
+        let containment_evidence_handle = get_str(p, "containment_evidence_handle").unwrap();
+        let evidence_final_event_hash = get_str(p, "evidence_final_event_hash").unwrap();
+        let record_bytes = crypto::jcs(
+            json!({
+                "protocol": "brops.governed-turn-record.v1",
+                "run_id": a.run_id, "task_id": a.task_id,
+                "execution_attempt_id": attempt,
+                "workspace_id": a.workspace_id, "install_id": a.install_id,
+                "request_nonce": a.request_nonce, "receipt_id": a.receipt_id,
+                "supervisor_id": self.cfg.supervisor_id,
+                "request_sha256": a.request_sha256,
+                "system_handle": a.system_handle, "history_handle": a.history_handle,
+                "generation_config_handle": a.generation_config_handle,
+                "output_handle": output_handle,
+                "containment_evidence_handle": containment_evidence_handle,
+                "challenge_handle": a.challenge_handle,
+                "requested_at_ms": a.requested_at_ms,
+                "challenge_accepted_at_ms": a.challenge_accepted_at_ms,
+                "completed_at_ms": ints[0],
+                "decision": "completed",
+            })
+            .as_object()
+            .unwrap(),
+        );
+        let receipt_bytes = crypto::jcs(
+            json!({
+                "protocol": "brops.execution-receipt.v1",
+                "run_id": a.run_id, "execution_attempt_id": attempt,
+                "lease_id": a.lease_id,
+                "lease_issued_at_ms": a.lease_issued_at_ms,
+                "lease_expires_at_ms": a.lease_expires_at_ms,
+                "process_group_id": a.process_group_id, "cgroup_id": a.cgroup_id,
+                "completed_at_ms": ints[0], "output_handle": output_handle,
+            })
+            .as_object()
+            .unwrap(),
+        );
+        let publish = |bytes: &[u8]| -> Option<String> {
+            let handle = crypto::sha256_hex(bytes);
+            let path = self.cfg.store_dir.join(&handle);
+            if !path.exists() {
+                std::fs::write(&path, bytes).ok()?;
+            }
+            Some(handle)
+        };
+        let (record_handle, lease_handle, execution_receipt_handle) = match (
+            publish(&record_bytes),
+            publish(&a.lease_payload_bytes),
+            publish(&receipt_bytes),
+        ) {
+            (Some(r), Some(l), Some(e)) => (r, l, e),
+            // A store failure must refuse the completion, never name a handle nothing holds.
+            _ => return refuse("complete-run", "artifact_publish_failed"),
+        };
+
+        let completion = Completion {
+            output_handle,
+            containment_evidence_handle,
+            record_handle,
+            lease_handle,
+            execution_receipt_handle,
+            completed_at_ms: ints[0],
+            evidence_final_event_hash,
+            evidence_event_count: ints[1],
+            evidence_last_sequence: ints[2],
+            evidence_head_sequence: ints[3],
         };
         match &a.completion {
             // Write-once: an identical retry is idempotent, any divergence is refused. A second

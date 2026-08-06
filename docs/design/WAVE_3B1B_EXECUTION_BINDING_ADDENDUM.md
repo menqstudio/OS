@@ -2802,12 +2802,25 @@ reply enum literal appears in exactly one routing row.
 > recorder → setuid launcher → contained executor spawn still require `engine/ci/live/run_live_turn.sh`
 > on a real Linux host, which has **not** been re-run against this protocol.
 >
-> **What this amendment does NOT fix.** The containment/record/execution-receipt handles and the
-> four `evidence_*` counters are still deployment-static config constants rather than
-> measurements of the run (audit **F-02**); F-01 makes them supervisor-recorded and write-once,
-> not derived. The request↔output binding (**F-08**), the TCB integrity floor (**F-10**) and the
-> custody defects (**F-07/F-17/F-28**) are untouched. `platform_governed_execution_supported()`
-> stays `false`; `main()` keeps `UpstreamBlockedExecutor`.
+> **(i) F-02, partially — the terminal handles are now supervisor-derived and per-run.**
+> `record_handle`, `lease_handle` and `execution_receipt_handle` have left `produced` entirely.
+> At `complete-run` the supervisor BUILDS a `brops.governed-turn-record.v1` and a
+> `brops.execution-receipt.v1` from its own acceptance row plus the write-once completion,
+> addresses the exact canonical lease bytes it persisted at acceptance, and PUBLISHES all three
+> into the content-addressed protected store through an injected `publish_artifact` seam. The
+> handles the receipt names therefore address documents describing THIS run. The live kit's
+> placeholder `record` / `lease` / `execution_receipt` store blobs are deleted with them.
+>
+> **What is still open in F-02/F-18.** `containment_evidence_handle` remains a provisioner stub —
+> it is the one artifact the EXECUTION must produce (the launcher/executor's containment report),
+> and wiring it is the remaining half. The four `evidence_*` counters remain deployment constants:
+> nothing measures a real recorder evidence chain, so the receipt's strongest-sounding claim still
+> carries no information about the run. Do not read F-02 as closed.
+>
+> **What this amendment does NOT fix at all.** The request↔output binding (**F-08**), the TCB
+> integrity floor (**F-10**) and the custody defects (**F-07/F-17/F-28**) are untouched.
+> `platform_governed_execution_supported()` stays `false`; `main()` keeps
+> `UpstreamBlockedExecutor`.
 
 A database transaction **cannot** atomically include an external private-key signature and a
 filesystem publish. Acceptance is therefore a **durable state machine with an outbox**, not a

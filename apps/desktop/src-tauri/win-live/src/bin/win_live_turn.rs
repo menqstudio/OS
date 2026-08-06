@@ -184,9 +184,6 @@ mod win {
         let params = ExecutionParams {
             store_dir: std::path::PathBuf::from(&cfg.store_dir),
             containment_evidence_handle: f.containment_evidence_handle.clone(),
-            record_handle: f.record_handle.clone(),
-            lease_handle: f.lease_handle.clone(),
-            execution_receipt_handle: f.execution_receipt_handle.clone(),
             evidence_final_event_hash: f.evidence_final_event_hash.clone(),
             evidence_event_count: f.evidence_event_count,
             evidence_last_sequence: f.evidence_last_sequence,

@@ -263,9 +263,6 @@ mod linux {
             // that named them was choosing what it would be checked against; they now come from
             // the SUPERVISOR's own provisioning (`config.supervisor.*`) and never travel the wire.
             containment_evidence_handle: s(&cfg, &["facts", "containment_evidence_handle"]).unwrap_or_default(),
-            record_handle: s(&cfg, &["facts", "record_handle"]).unwrap_or_default(),
-            lease_handle: s(&cfg, &["facts", "lease_handle"]).unwrap_or_default(),
-            execution_receipt_handle: s(&cfg, &["facts", "execution_receipt_handle"]).unwrap_or_default(),
             evidence_final_event_hash: s(&cfg, &["facts", "evidence_final_event_hash"]).unwrap_or_default(),
             evidence_event_count: i(&cfg, &["facts", "evidence_event_count"]).unwrap_or(0),
             evidence_last_sequence: i(&cfg, &["facts", "evidence_last_sequence"]).unwrap_or(0),

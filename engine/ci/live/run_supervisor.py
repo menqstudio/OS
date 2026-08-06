@@ -26,6 +26,7 @@ Run AS the supervisor account:  sudo -u brops-supervisor python3 run_supervisor.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -75,6 +76,30 @@ def main() -> int:
     def clock_ms() -> int:
         return int(time.time() * 1000)
 
+    # publish_artifact(bytes) -> 64-hex handle. The supervisor BUILDS its terminal artifacts
+    # (the lease payload, the governed-turn record, the execution receipt) from its own rows and
+    # publishes them to the content-addressed protected store, then names those addresses in the
+    # signed evidence (audit F-02 — they used to be deployment-static constants the broker copied
+    # out of this world-readable config). Writing is atomic-by-rename and idempotent: the content
+    # address IS the filename, so republishing identical bytes is a no-op.
+    store_dir = cfg["store_dir"]
+
+    def publish_artifact(data: bytes) -> str:
+        handle = hashlib.sha256(data).hexdigest()
+        final = os.path.join(store_dir, handle)
+        if not os.path.exists(final):
+            tmp = final + ".tmp-%d" % os.getpid()
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, final)
+            try:
+                os.chmod(final, 0o644)  # a different uid (the signer) reads it by handle
+            except OSError:
+                pass
+        return handle
+
     config = SupervisorConfig(
         launcher_executable_sha256=launcher_sha,
         executor_executable_sha256=executor_sha,
@@ -116,6 +141,7 @@ def main() -> int:
             recompute_request_sha256,
             clock_ms,
             ledger_conn=ledger_conn,
+            publish_artifact=publish_artifact,
             sign_attestation=sign_attestation,
             supervisor_attestation_key_id=sup_attest_key_id,
         )

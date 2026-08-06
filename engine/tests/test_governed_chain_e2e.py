@@ -220,6 +220,9 @@ class GovernedChainE2E(unittest.TestCase):
             supervisor_recompute_request_sha256,
             lambda: now,
             conn=self.ledger_conn,
+            # The supervisor publishes its own terminal artifacts into the SAME protected store
+            # the isolated signer reads (F-02), so the handles it names really resolve.
+            publish_artifact=self.store.put,
             sign_attestation=self.attest_key.sign,
             supervisor_attestation_key_id=SUP_ATTEST_KEY_ID,
         )
@@ -273,9 +276,6 @@ class GovernedChainE2E(unittest.TestCase):
             "produced": {
                 "output_handle": output_handle,
                 "containment_evidence_handle": self.handles["containment"],
-                "record_handle": self.handles["record"],
-                "lease_handle": self.handles["lease"],
-                "execution_receipt_handle": self.handles["execution_receipt"],
                 "completed_at_ms": NOW,
                 "evidence_final_event_hash": _sha256_hex(b"evidence-head-1"),
                 "evidence_event_count": 3,
@@ -357,6 +357,75 @@ class GovernedChainE2E(unittest.TestCase):
         self.assertEqual(payload["supervisor_attestation_key_id"], SUP_ATTEST_KEY_ID)
         self.assertEqual(payload["key_id"], RECEIPT_KEY_ID)
         self.assertTrue(payload["receipt_id"].startswith("e2e-id-"))
+
+    # ---- F-02: the terminal handles are the supervisor's, and they are per-run ----
+
+    def test_the_terminal_handles_are_supervisor_derived_and_per_run(self):
+        """`record_handle` / `lease_handle` / `execution_receipt_handle` used to be deployment
+        constants, so every receipt this deployment ever produced named the same "record" and the
+        signer's protected-chain check only proved someone had written those bytes once."""
+        first, _ = self._run_turn()
+        a_env = self._sign(self._attest(first))[1]["payload"]
+
+        second, _ = self._run_turn(
+            nonce="6ba7b812-9dad-11d1-80b4-00c04fd430c8", output=b"a different governed reply"
+        )
+        b_env = self._sign(self._attest(second))[1]["payload"]
+
+        for field in ("record_handle", "execution_receipt_handle", "lease_handle"):
+            with self.subTest(field=field):
+                self.assertNotEqual(
+                    a_env[field], b_env[field],
+                    f"{field} must differ between two runs — a constant here is F-02",
+                )
+                self.assertIsNotNone(
+                    self.store.read_verified(a_env[field]),
+                    f"{field} must resolve in the protected store",
+                )
+
+        # The record and the receipt genuinely describe THIS attempt.
+        record = json.loads(self.store.read_verified(a_env["record_handle"]).decode("utf-8"))
+        self.assertEqual(record["execution_attempt_id"], first)
+        self.assertEqual(record["run_id"], "e2e-run-1")
+        self.assertEqual(record["output_handle"], _sha256_hex(REPLY_BYTES))
+        self.assertEqual(record["decision"], "completed")
+
+        receipt = json.loads(
+            self.store.read_verified(a_env["execution_receipt_handle"]).decode("utf-8")
+        )
+        self.assertEqual(receipt["execution_attempt_id"], first)
+        self.assertEqual(receipt["process_group_id"], "4242")  # what execution-started reported
+        self.assertEqual(receipt["cgroup_id"], "cg-e2e")
+
+        # The lease handle addresses the EXACT canonical lease bytes persisted at acceptance.
+        lease = json.loads(self.store.read_verified(a_env["lease_handle"]).decode("utf-8"))
+        self.assertEqual(lease["execution_attempt_id"], first)
+
+    def test_the_caller_cannot_name_the_terminal_handles(self):
+        challenge = self._issue_challenge(nonce="6ba7b813-9dad-11d1-80b4-00c04fd430c8")
+        accepted = self._supervisor({"op": OP_ACCEPT_OPEN, "challenge_doc": challenge})
+        attempt = accepted["lease"]["execution_attempt_id"]
+        self._supervisor({"op": OP_LAUNCH_GATE, "execution_attempt_id": attempt})
+        self._supervisor({
+            "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt,
+            "process_group_id": "1", "cgroup_id": "c", "execution_started_marker": None,
+        })
+        for smuggled in ("record_handle", "lease_handle", "execution_receipt_handle"):
+            with self.subTest(field=smuggled):
+                reply = self._supervisor({
+                    "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+                    "produced": {
+                        "output_handle": self.store.put(b"x"),
+                        "containment_evidence_handle": self.handles["containment"],
+                        "completed_at_ms": NOW,
+                        "evidence_final_event_hash": _sha256_hex(b"h"),
+                        "evidence_event_count": 1,
+                        "evidence_last_sequence": 1,
+                        "evidence_head_sequence": 9,
+                        smuggled: "9" * 64,
+                    },
+                })
+                self.assertFalse(reply["ok"])
 
     def test_the_authority_and_the_supervisor_agree_on_canonical_bytes(self):
         # A silent divergence between the two `_canonical_bytes` implementations would make
@@ -440,9 +509,6 @@ class GovernedChainE2E(unittest.TestCase):
             "produced": {
                 "output_handle": other_handle,
                 "containment_evidence_handle": self.handles["containment"],
-                "record_handle": self.handles["record"],
-                "lease_handle": self.handles["lease"],
-                "execution_receipt_handle": self.handles["execution_receipt"],
                 "completed_at_ms": NOW,
                 "evidence_final_event_hash": _sha256_hex(b"evidence-head-1"),
                 "evidence_event_count": 3,
@@ -472,9 +538,6 @@ class GovernedChainE2E(unittest.TestCase):
             "produced": {
                 "output_handle": self.store.put(b"rolled-back run"),
                 "containment_evidence_handle": self.handles["containment"],
-                "record_handle": self.handles["record"],
-                "lease_handle": self.handles["lease"],
-                "execution_receipt_handle": self.handles["execution_receipt"],
                 "completed_at_ms": NOW,
                 "evidence_final_event_hash": _sha256_hex(b"evidence-head-OLD"),
                 "evidence_event_count": 2,

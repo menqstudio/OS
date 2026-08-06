@@ -40,6 +40,8 @@ mod win {
             policy_id: cfg.facts.policy_id.clone(),
             policy_version: cfg.facts.policy_version.clone(),
             policy_bundle_handle: cfg.facts.policy_bundle_handle.clone(),
+            // F-02: the supervisor publishes its own terminal artifacts into the protected store.
+            store_dir: std::path::PathBuf::from(&cfg.store_dir),
         });
         println!("RESULT: supervisor listening pipe={} broker_sid={}", cfg.pipes.supervisor, cfg.allowed_broker_sid);
         pipe::run_server(&cfg.pipes.supervisor, &cfg.allowed_broker_sid, &core);

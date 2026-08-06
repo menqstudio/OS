@@ -63,7 +63,9 @@ from governed_supervisor import (
     SupervisorConfig,
     SupervisorError,
     accept_open,
+    build_execution_receipt,
     build_run_attestation,
+    build_terminal_record,
     recompute_request_sha256 as default_recompute_request_sha256,
 )
 
@@ -349,6 +351,7 @@ def dispatch(
     clock_ms: Callable[[], int],
     *,
     conn: Any,
+    publish_artifact: Optional[Callable[[bytes], str]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -401,7 +404,7 @@ def dispatch(
     if op == OP_EXECUTION_STARTED:
         return _op_execution_started(request, conn, clock_ms)
     if op == OP_COMPLETE_RUN:
-        return _op_complete_run(request, conn, clock_ms)
+        return _op_complete_run(request, conn, clock_ms, publish_artifact)
 
     raise ServerError("unknown op %r" % (op,))
 
@@ -498,11 +501,40 @@ def _op_execution_started(request, conn, clock_ms):
     return {"ok": True, "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt}
 
 
-def _op_complete_run(request, conn, clock_ms):
+def _op_complete_run(request, conn, clock_ms, publish_artifact):
     _require_exact_fields(request, OP_COMPLETE_RUN, ("execution_attempt_id", "produced"))
     attempt = _require_str(request, "execution_attempt_id")
+    if publish_artifact is None:
+        raise SupervisorError(
+            "complete-run requires an injected publish_artifact seam (the supervisor must be "
+            "able to publish the terminal artifacts it addresses)"
+        )
+    row = ledger.load_acceptance(conn, attempt)
+    if row is None:
+        return _refusal(OP_COMPLETE_RUN, REFUSE_UNKNOWN_ATTEMPT,
+                        "no acceptance row for attempt %r" % (attempt,))
     try:
-        outcome = ledger.record_completion(conn, attempt, request["produced"], clock_ms())
+        produced = ledger.validate_completion_facts(request["produced"])
+    except ledger.LedgerError as exc:
+        return _ledger_refusal(OP_COMPLETE_RUN, exc)
+
+    # F-02: the supervisor BUILDS its terminal artifacts from its own rows and publishes them
+    # to the protected store, then names their content addresses in the evidence. These were
+    # deployment-static constants the broker copied out of a world-readable config, which made
+    # the isolated signer's protected-chain check a tautology over bytes anyone had written once.
+    try:
+        derived = {
+            "lease_handle": publish_artifact(bytes(row["lease_payload_bytes"])),
+            "record_handle": publish_artifact(build_terminal_record(row, produced)),
+            "execution_receipt_handle": publish_artifact(build_execution_receipt(row, produced)),
+        }
+    except Exception as exc:  # a store failure must refuse the completion, never fake a handle
+        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
+                        "could not publish terminal artifacts: %s" % exc)
+
+    try:
+        outcome = ledger.record_completion(conn, attempt, request["produced"], clock_ms(),
+                                           derived=derived)
     except ledger.LedgerError as exc:
         return _ledger_refusal(OP_COMPLETE_RUN, exc)
     return {"ok": True, "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
@@ -558,6 +590,7 @@ def handle_connection(
     clock_ms: Callable[[], int],
     *,
     ledger_conn: Any,
+    publish_artifact: Optional[Callable[[bytes], str]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -586,6 +619,7 @@ def handle_connection(
             recompute_request_sha256,
             clock_ms,
             conn=ledger_conn,
+            publish_artifact=publish_artifact,
             sign_attestation=sign_attestation,
             supervisor_attestation_key_id=supervisor_attestation_key_id,
         )
@@ -650,6 +684,7 @@ def serve_forever(
     clock_ms: Callable[[], int],
     *,
     ledger_conn: Any,
+    publish_artifact: Optional[Callable[[bytes], str]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
 ) -> None:
@@ -674,6 +709,7 @@ def serve_forever(
                 recompute_request_sha256,
                 clock_ms,
                 ledger_conn=ledger_conn,
+                publish_artifact=publish_artifact,
                 sign_attestation=sign_attestation,
                 supervisor_attestation_key_id=supervisor_attestation_key_id,
             )
