@@ -494,6 +494,17 @@ def check(root: pathlib.Path, *, changed: list[str] | None = None) -> list[str]:
         elif len(txt.strip()) < 40:
             problems.append(f"canonical file is empty/stub: {rel}")
 
+    # 1b. F-19: the four semantic checks below each early-return when NEXT_CHAT.md is absent, so
+    # deleting NEXT_CHAT.md silently disables the ENTIRE semantic layer while the gate still prints
+    # GREEN. A real coordination repo is identified by the machine anchor config/current_state.json;
+    # if that anchor exists but NEXT_CHAT.md does not, the skip is not "this isn't a coordination
+    # repo" — it is a deleted state doc. Fail closed instead of skipping.
+    if _read(root, "NEXT_CHAT.md") is None and _read(root, CURRENT_STATE_JSON) is not None:
+        problems.append(
+            "NEXT_CHAT.md is missing while config/current_state.json exists — the semantic "
+            "coordination checks are gated on NEXT_CHAT.md and would silently skip (fail-closed)"
+        )
+
     roadmap = _read(root, ROADMAP)
     if roadmap is not None:
         # 2. Roadmap has a status line.

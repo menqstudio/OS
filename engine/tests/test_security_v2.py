@@ -73,6 +73,23 @@ class SecurityV2Tests(unittest.TestCase):
         self.assertFalse(safe.dangerous_config, "color.ui is display-only")
         self.assertFalse(safe.mutating, "color.ui on status stays read-only")
 
+    def test_git_path_global_options_surface_containment_targets(self):
+        # A read-only git subcommand steered by -C/--git-dir/--work-tree reads a filesystem
+        # location; that location MUST be a containment target so the workspace/scope gates
+        # can deny an out-of-workspace read exactly like `cat /elsewhere` — not sail through
+        # with empty targets (audit F-04).
+        for command, expected in (
+            ("git -C /home/victim/repo show", "/home/victim/repo"),
+            ("git --git-dir=/home/v/.git log", "/home/v/.git"),
+            ("git --work-tree=/etc status", "/etc"),
+            ("git -C .. diff", ".."),
+        ):
+            info = analyze_command(command)[0]
+            self.assertTrue(info.recognized_read_only, command)
+            self.assertIn(expected, info.targets, command)
+        # A config option (-c) is NOT a filesystem path and must not become a target.
+        self.assertEqual(analyze_command("git -c color.ui=false status")[0].targets, ())
+
     def test_segments_quotes_windows_and_mixed_case(self):
         infos = analyze_command(
             'git status && C:\\Git\\bin\\GIT.EXE -C . commit -m "x y"; '

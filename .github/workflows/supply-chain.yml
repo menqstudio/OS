@@ -256,7 +256,6 @@ jobs:
         run: |
           gitleaks detect \
             --source . \
-            --no-git \
             --config "${SUPPLY_CHAIN_DIR}/gitleaks.toml" \
             --log-opts "${BASE_SHA}..${HEAD_SHA}" \
             --redact \

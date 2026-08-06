@@ -1855,13 +1855,20 @@ pub mod runs {
             }
 
             let now = now();
-            tx.execute(
-                "UPDATE run_steps SET status = 'done', updated_at = ?1 WHERE run_id = ?2 AND status = 'active'",
-                rusqlite::params![now, run_id],
-            )?;
-            // The grant that unlocked the just-completed gated step is spent
-            // in the same transaction (M-2).
+            // Complete ONLY the single active step we approval-checked above (`active`),
+            // not every row in status='active'. A run can transiently hold more than one
+            // 'active' step (set_step_status can activate a step directly), and a blanket
+            // `WHERE status='active'` UPDATE would silently mark those extra steps `done`
+            // WITHOUT their own requires_approval gate — completing an unapproved gated
+            // step (M-6 / audit F-12). Bind the completion to the exact step we gated; any
+            // other active step stays active and gets its own gate on the next advance().
             if let Some(active) = &active {
+                tx.execute(
+                    "UPDATE run_steps SET status = 'done', updated_at = ?1 WHERE id = ?2 AND status = 'active'",
+                    rusqlite::params![now, active.id],
+                )?;
+                // The grant that unlocked the just-completed gated step is spent
+                // in the same transaction (M-2).
                 if active.requires_approval {
                     super::approvals::consume_for(
                         tx,
