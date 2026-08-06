@@ -153,8 +153,8 @@
     "note": "First tagged GitHub Release: the Windows installer (NSIS .exe + MSI). Cut from the PR #53 branch; the branch is NOT merged to main. Shipping the installer does NOT change the fail-closed posture — platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor, so no production trusted_verified renders in the shipped app."
   },
   "shipped_this_cycle": {
-    "range": "1bda438..0442d89",
-    "branch_head": "0442d89",
+    "range": "1bda438..3cd1a10",
+    "branch_head": "3cd1a10",
     "ci": "green",
     "custody": "Production key custody graduated: offline root-key ceremony (win_gen_root + CUSTODY_CEREMONY.md); the operator's production root is TCB-pinned with its private half OFFLINE, and a SEPARATE compiled-in demonstration anchor drives the in-process proof/tests; per-principal seeds sealed at rest via DPAPI (TOFU).",
     "in_app_agent": "The in-app Bro became a bounded, owner-authorized coding agent with file tools + Bash in acceptEdits, behind a hard --disallowedTools deny-list (never push/delete/install); the agent-mode 'claude CLI timed out' bug is fixed (runs with --setting-sources \"\" + a 900s budget vs a chat's 180s).",
