@@ -59,17 +59,26 @@ pub fn resolve_trust_state(
     };
     match resolve_production_key(manifest, signer_key_id, protocol, now_ms) {
         Ok(k) => {
-            // Bind the production verdict to the key that ACTUALLY verified the envelope. A matching
-            // `key_id` is not enough — the resolved key's public key must be the one §7 verified under,
-            // else a manifest key_id with an attacker-chosen public_key_hex (or a key_id collision) could
-            // decouple "Production" from the signing key. Fail closed on mismatch.
+            // Bind the production verdict to the key that ACTUALLY verified the envelope.
             //
-            // **F-29.** This guard used to be inert at every real call site, because callers passed the
-            // `public_key_hex` that `resolve_production_key` had just returned for the same
-            // (manifest, key_id, protocol, now) — so it compared a value against itself and could not
-            // fail. `envelope_verifying_key_hex` must therefore be built with [`verifying_key_hex`] from
-            // the very bytes handed to `verify_and_accept`; that is the only form in which the
-            // comparison carries information.
+            // **F-29, and the remediation audit's R-39.** Two rounds of "fix" left this comparison
+            // unable to fail. Callers first passed the `public_key_hex` this same lookup had just
+            // returned; the remediation changed them to pass `verifying_key_hex(bytes)` — but those
+            // bytes are `hex32(resolve_production_key(...).public_key_hex)` over the SAME manifest
+            // value with the SAME key_id, `resolve_production_key` selects by first match and is
+            // time-independent for a fixed manifest, and the hex round trip is exact. So the second
+            // audit found the same tautology wearing one more indirection, and a guard that cannot
+            // fail is worse than no guard: it is a claim of a check that is not happening.
+            //
+            // The honest form is not a third indirection, and it is not deleting the check
+            // either: a cheap fail-closed comparison that protects a FUTURE call site which
+            // obtains its key some other way costs nothing and is worth keeping. What has to
+            // change is the CLAIM. This is defence in depth against a caller contract being
+            // broken later; it is not what binds the trust verdict to the verifying key today,
+            // and the AUDIT_LEDGER must not cite it as though it were. The property that
+            // actually holds today holds by CONSTRUCTION: every call site derives the key it
+            // hands `verify_and_accept` from this same resolution, so there is one source, not
+            // two agreeing ones.
             if k.public_key_hex.to_lowercase() != envelope_verifying_key_hex.to_lowercase() {
                 return TrustState::NoTrustedManifest("signing key does not match the verifying key");
             }
@@ -129,6 +138,9 @@ mod tests {
         let m = manifest();
         let vk = verifying_key();
         assert!(!resolve_trust_state(Some(&m), "unknown", PROTO, 5000, &vk).is_production_verified());
+        // NOTE (F-29 / R-39): there is deliberately no "mismatched verifying key" case here any
+        // more. It asserted a state no call site can reach, which is exactly how a guard that
+        // could not fail was mistaken twice for a guard that was working.
         assert!(!resolve_trust_state(Some(&m), "signer-prod", PROTO, 500, &vk).is_production_verified()); // out of window
         assert!(!resolve_trust_state(Some(&m), "signer-prod", "other", 5000, &vk).is_production_verified()); // protocol
         let mut dev = manifest(); dev.keys[0].trust_class = TrustClass::Development;
