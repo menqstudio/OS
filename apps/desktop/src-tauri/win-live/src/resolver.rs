@@ -50,6 +50,19 @@ pub struct ManifestResolver {
     /// The root the manifest is verified against. In production this is the TCB PRODUCTION anchor
     /// (`crate::tcb`, never config); the in-process proof passes the demonstration anchor instead.
     pinned: PinnedRoot,
+    /// The isolated-signer public key THIS resolver handed the chain for the last resolved turn —
+    /// i.e. the exact bytes `verify_and_accept` verified the envelope under. The caller reports the
+    /// production verdict against this, not against a second manifest lookup, so the
+    /// `production_trust` key guard compares the verification path instead of comparing a value with
+    /// itself (audit F-29).
+    last_verifying_key: Mutex<Option<[u8; 32]>>,
+}
+
+impl ManifestResolver {
+    /// The isolated-signer key the last `resolve` handed the chain, if any.
+    pub fn last_verifying_key(&self) -> Option<[u8; 32]> {
+        *self.last_verifying_key.lock().unwrap()
+    }
 }
 
 impl ManifestResolver {
@@ -94,6 +107,7 @@ impl ManifestResolver {
             sup_attest_key_id,
             facts,
             pinned,
+            last_verifying_key: Mutex::new(None),
         }
     }
 
@@ -203,6 +217,29 @@ pub fn load_verified_floor(floor_path: &Path) -> Result<AntiRollbackFloor, Strin
     Ok(floor)
 }
 
+/// A shared handle to one [`ManifestResolver`], so the driver can keep a reference to the SAME
+/// resolver the chain drives and read back the key it bound for the turn (audit F-29) without the
+/// chain having to hand ownership back. A newtype because the orphan rule forbids implementing the
+/// foreign `TurnResolver` directly for `Arc<_>`.
+pub struct SharedResolver(pub std::sync::Arc<ManifestResolver>);
+
+impl SharedResolver {
+    pub fn last_verifying_key(&self) -> Option<[u8; 32]> {
+        self.0.last_verifying_key()
+    }
+}
+
+impl TurnResolver for SharedResolver {
+    fn resolve(
+        &self,
+        req: &ValidatedRequest,
+        broker_turn_id: &str,
+        request_nonce: &str,
+    ) -> Result<ResolvedTurn, TurnReason> {
+        self.0.resolve(req, broker_turn_id, request_nonce)
+    }
+}
+
 impl TurnResolver for ManifestResolver {
     fn resolve(
         &self,
@@ -237,6 +274,9 @@ impl TurnResolver for ManifestResolver {
         )
         .map_err(|_| TurnReason::UpstreamBlocked)?;
         let iso_pub = crypto::hex32(&iso.public_key_hex).ok_or(TurnReason::UpstreamBlocked)?;
+        // Record the bytes the chain will verify under, so the caller's production verdict is bound to
+        // the VERIFICATION PATH rather than to a second manifest lookup (audit F-29).
+        *self.last_verifying_key.lock().unwrap() = Some(iso_pub);
         let sup_pub = crypto::hex32(&sup.public_key_hex).ok_or(TurnReason::UpstreamBlocked)?;
 
         let f = &self.facts;

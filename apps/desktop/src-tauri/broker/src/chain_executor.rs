@@ -374,6 +374,13 @@ where
             message_id: &message_id,
             conversation_id: &req.conversation_id,
             author: &resolved.author,
+            // F-26: the run identity the broker itself authorized — its own resolution for
+            // run/task, and the attempt id from the lease the supervisor granted IT. The final
+            // acceptance compares the signed envelope against these; a receipt from another
+            // attempt no longer passes on a matching nonce + output alone.
+            expected_run_id: &resolved.run_id,
+            expected_task_id: &resolved.task_id,
+            expected_execution_attempt_id: &lease.execution_attempt_id,
         };
         let mut ledger = self.ledger.lock().map_err(|_| TurnReason::UpstreamBlocked)?;
         verify_and_accept(

@@ -427,6 +427,48 @@ class GovernedChainE2E(unittest.TestCase):
                 })
                 self.assertFalse(reply["ok"])
 
+    def test_challenge_accepted_at_is_the_supervisors_accept_clock(self):
+        """F-27: `challenge_accepted_at_ms` is a SIGNED receipt field documented as the time the
+        supervisor accepted the challenge. The broker used to stamp it with its own completion clock,
+        making it identical to `completed_at` — every receipt asserted a zero-duration turn, so the
+        lease-window containment property could not be checked from the receipt at all.
+
+        It now comes from the acceptance row, written from the supervisor's own clock at accept-open.
+        Accept at T-2000 and complete at T: the two timestamps must differ by exactly that.
+        """
+        accept_at = NOW - 2_000
+        challenge = self._issue_challenge(nonce="6ba7b814-9dad-11d1-80b4-00c04fd430c8")
+        accepted = self._supervisor(
+            {"op": OP_ACCEPT_OPEN, "challenge_doc": challenge}, now=accept_at
+        )
+        attempt = accepted["lease"]["execution_attempt_id"]
+        self._supervisor({"op": OP_LAUNCH_GATE, "execution_attempt_id": attempt}, now=accept_at)
+        self._supervisor({
+            "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt,
+            "process_group_id": "77", "cgroup_id": "cg-e2e", "execution_started_marker": None,
+        }, now=accept_at)
+        self._supervisor({
+            "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+            "produced": {
+                "output_handle": self.store.put(b"reply for the clock test"),
+                "containment_evidence_handle": self.handles["containment"],
+                "completed_at_ms": NOW,
+                "evidence_final_event_hash": _sha256_hex(b"evidence-head-clock"),
+                "evidence_event_count": 1,
+                "evidence_last_sequence": 1,
+                "evidence_head_sequence": 21,
+            },
+        })
+        attn = self._attest(attempt)
+        self.assertTrue(attn["ok"], attn)
+        evidence = json.loads(_unb64u(attn["evidence_jcs_b64"]).decode("utf-8"))
+        self.assertEqual(evidence["challenge_accepted_at_ms"], accept_at)
+        self.assertEqual(evidence["completed_at"], NOW)
+        self.assertNotEqual(
+            evidence["challenge_accepted_at_ms"], evidence["completed_at"],
+            "the acceptance clock must not be the completion clock",
+        )
+
     def test_the_authority_and_the_supervisor_agree_on_canonical_bytes(self):
         # A silent divergence between the two `_canonical_bytes` implementations would make
         # every challenge signature fail — or, worse, make the supervisor verify different

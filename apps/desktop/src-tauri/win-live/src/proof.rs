@@ -23,11 +23,11 @@ use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFAC
 use brops_core::key_manifest::{
     check_and_advance, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest, PinnedRoot,
 };
-use brops_core::production_trust::{resolve_trust_state, TrustState};
+use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
 
 use crate::crypto;
 use crate::execution::{ExecutionParams, GovernedExecutionCore};
-use crate::resolver::{ManifestResolver, ResolvedFacts};
+use crate::resolver::{ManifestResolver, ResolvedFacts, SharedResolver};
 use crate::servers::{
     Authority, AuthorityConfig, DispatchCore, Signer, SignerConfig, Supervisor, SupervisorConfig,
 };
@@ -180,7 +180,9 @@ where
     // Keep-alive clone + resolved signer pubkey for the final trust classification (the resolver, below, is
     // the enforcement path that re-verifies the manifest + anti-rollback + resolves keys INSIDE the chain).
     let manifest_for_trust = manifest.clone();
-    let signer_pub_hex = resolve_production_key(&manifest, &signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now_ms)
+    // Kept as an EARLY fail-closed check that the production signer key resolves at all; the
+        // production VERDICT no longer reads it (F-29 — it now uses the key the chain verified under).
+        let _signer_pub_hex = resolve_production_key(&manifest, &signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now_ms)
         .map_err(|e| format!("key_resolution: {e:?}"))?
         .public_key_hex;
 
@@ -285,7 +287,10 @@ where
         facts,
     );
 
-    let chain = GovernedChain::new(connector, resolver, exec, InMemoryLedger::new());
+    // Keep a handle to the SAME resolver the chain drives, so the production verdict below is
+    // bound to the key it actually verified under (F-29).
+    let resolver_handle = std::sync::Arc::new(resolver);
+    let chain = GovernedChain::new(connector, SharedResolver(resolver_handle.clone()), exec, InMemoryLedger::new());
     let executor = ChainExecutor::new(chain);
 
     // ---- run ONE governed turn ----
@@ -307,12 +312,18 @@ where
     let message = result.message.ok_or("committed_without_message")?;
     let bound = message.trust_state == TRUSTED_VERIFIED;
 
+    // F-29: the key the CHAIN verified under, recorded by the resolver — not a second lookup of the
+    // manifest, which made this guard compare a value against itself and never fail.
+    let verified_under = match resolver_handle.last_verifying_key() {
+        Some(k) => verifying_key_hex(&k),
+        None => return Err("resolver never bound a verifying key".to_string()),
+    };
     let ts = resolve_trust_state(
         Some(&manifest_for_trust),
         &signer_key_id,
         RECEIPT_ENVELOPE_ARTIFACT_TYPE,
         now_ms,
-        &signer_pub_hex,
+        &verified_under,
     );
     let production_verified = ts.is_production_verified();
     let trust_str = match &ts {

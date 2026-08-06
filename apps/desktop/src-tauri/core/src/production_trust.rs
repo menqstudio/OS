@@ -34,6 +34,18 @@ impl TrustState {
 /// the §7 `verify_and_accept` actually verified the envelope under; the resolved manifest key's
 /// `public_key_hex` MUST equal it before Production is rendered, so the production verdict is bound to the
 /// key that cryptographically signed the turn — not merely to a matching `key_id` string.
+/// Lowercase hex of the 32-byte Ed25519 public key the chain actually verified under. Callers pass
+/// the bytes they handed to `governed_verification::verify_and_accept` as
+/// `PinnedKeys::isolated_signer_public_key`, so the guard below compares the manifest's key against
+/// the VERIFICATION PATH rather than against a second lookup of itself (audit F-29).
+pub fn verifying_key_hex(public_key: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(64);
+    for b in public_key {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
 pub fn resolve_trust_state(
     manifest: Option<&KeyManifest>,
     signer_key_id: &str,
@@ -51,6 +63,13 @@ pub fn resolve_trust_state(
             // `key_id` is not enough — the resolved key's public key must be the one §7 verified under,
             // else a manifest key_id with an attacker-chosen public_key_hex (or a key_id collision) could
             // decouple "Production" from the signing key. Fail closed on mismatch.
+            //
+            // **F-29.** This guard used to be inert at every real call site, because callers passed the
+            // `public_key_hex` that `resolve_production_key` had just returned for the same
+            // (manifest, key_id, protocol, now) — so it compared a value against itself and could not
+            // fail. `envelope_verifying_key_hex` must therefore be built with [`verifying_key_hex`] from
+            // the very bytes handed to `verify_and_accept`; that is the only form in which the
+            // comparison carries information.
             if k.public_key_hex.to_lowercase() != envelope_verifying_key_hex.to_lowercase() {
                 return TrustState::NoTrustedManifest("signing key does not match the verifying key");
             }

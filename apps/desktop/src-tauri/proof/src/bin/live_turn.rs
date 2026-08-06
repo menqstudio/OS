@@ -53,7 +53,7 @@ mod linux {
         check_and_advance, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest,
         PinnedRoot,
     };
-    use brops_core::production_trust::{resolve_trust_state, TrustState};
+    use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
 
     // ------------------------------------------------------------------------------------------------
     // small helpers
@@ -311,14 +311,15 @@ mod linux {
         // isolated-signer envelope over this exact output — that IS the binding.
         let bound = message.trust_state == TRUSTED_VERIFIED;
 
-        // Bind the production verdict to the EXACT isolated-signer key the manifest resolved AND that the
-        // envelope was Ed25519-verified under (iso.public_key_hex).
+        // F-29: pass the key the CHAIN actually verified under — the exact bytes handed to
+        // `verify_and_accept` as `PinnedKeys::isolated_signer_public_key` — not a second lookup of the
+        // manifest, which made this guard compare a value against itself and never fail.
         let ts = resolve_trust_state(
             Some(&manifest),
             &signer_key_id,
             RECEIPT_ENVELOPE_ARTIFACT_TYPE,
             now,
-            &iso.public_key_hex,
+            &verifying_key_hex(&resolved.isolated_signer_public_key),
         );
         let production_verified = ts.is_production_verified();
         let ts_str = match &ts {

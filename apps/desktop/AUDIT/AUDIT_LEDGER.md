@@ -28,7 +28,7 @@ audit passes, and the Owner approves. See [`NEXT_CHAT.md`](../../../NEXT_CHAT.md
 | **F-08** request↔output unbound | ⚠️ OPEN | — |
 | **F-10** §2.5 TCB integrity floor has no caller | ⚠️ OPEN | — |
 | **F-07 / F-17 / F-28** self-certifying + world-writable custody | ⚠️ OPEN | The supervisor's own ledger dir is now 0700/supervisor-owned; the signer store is still `1777`. |
-| **F-26 / F-27 / F-29** decorative binding checks | ⚠️ OPEN | — |
+| **F-26 / F-27 / F-29** decorative binding checks | ✅ **closed 2026-08-06** | **F-26:** `verify_and_accept` now binds the signed `run_id`/`task_id`/`execution_attempt_id` to the run the broker authorized (its own resolution + the attempt id from the lease it obtained); three negative tests. **F-27:** `challenge_accepted_at_ms` is the supervisor's accept clock from the acceptance row, not the broker's completion clock — closed by F-01 and now asserted end-to-end (accept at T−2000, complete at T). **F-29:** the production verdict is compared against the key the CHAIN verified under (`verifying_key_hex` of the bytes handed to `verify_and_accept`), not a second manifest lookup of itself; the second lookup is retired to an early resolvability check. |
 | **F-31 / F-32 / F-36** proof-kit DoS | ⚠️ OPEN | — |
 | **F-06 / F-13 / F-14** engine anti-rollback honesty | ⚠️ OPEN | — |
 

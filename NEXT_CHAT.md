@@ -28,10 +28,14 @@
 > blobs are deleted); the RECORDER now writes a per-run containment report the broker content-addresses (a missing
 > report is a refusal), so the ONLY static values left are the four `evidence_*` counters — nothing
 > measures a real recorder evidence chain. **Do not read F-02 as closed.**
-> **REMAINING: 11 blockers** — F-02/F-18 (the open half above),
+> **F-26/F-27/F-29 are CLOSED** (2026-08-06): the final acceptance now binds the signed run/task/attempt
+> to the run the broker authorized; `challenge_accepted_at_ms` is the supervisor's accept clock (closed by
+> F-01, now asserted e2e); and the production verdict compares the key the CHAIN verified under instead of
+> a second lookup of itself.
+> **REMAINING blockers** — F-02/F-18 (the open half above),
 > F-08 (request↔output binding), F-09's acceptance-CAS *lease-budget* framing is satisfied but the
 > §2.5 TCB floor **F-10** has no caller, F-07/F-17/F-28 (self-certifying + world-writable custody),
-> F-26/F-27/F-29 (decorative binding checks), F-31/F-32/F-36 (proof-kit DoS), F-06/F-13/F-14 (engine
+>  F-31/F-32/F-36 (proof-kit DoS), F-06/F-13/F-14 (engine
 > anti-rollback honesty). Take them ONE AT A TIME, same discipline. **The gate stays false.**
 >
 > **▶ NEXT KEYSTONE — production `trusted_verified` model-image slice (P0-2/P0-3), owner-approved to resume in a fresh focused session (2026-08-05).**
