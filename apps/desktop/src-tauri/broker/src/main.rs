@@ -44,6 +44,13 @@ const EXIT_DB: i32 = 3;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const EXIT_SOCKET: i32 = 4;
 
+/// Per-read/write deadline armed on every accepted renderer connection (audit F-31). The accept loop
+/// is serial by design — one governed turn per connection — so a peer that connects and then stays
+/// silent must not be able to hold the only thread. A governed turn is buffered and can take a while
+/// upstream, so this is generous; it exists to bound the SILENT case, not to rush a real turn.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const CONN_IO_TIMEOUT_MS: u64 = 120_000;
+
 // ---------------------------------------------------------------------------------------------------
 // Broker DB schema init — pure, host-independent, testable on any platform. Creates the four governed-turn
 // schemas through brops-core so the broker shares exactly one schema authority with the recorder side.
@@ -178,6 +185,18 @@ mod linux {
         for stream in listener.incoming() {
             match stream {
                 Ok(mut s) => {
+                    // Audit F-31: this loop is strictly serial, so ONE peer that connects and then
+                    // sends nothing used to hold `read_one_frame`'s blocking read open forever and
+                    // no further connection was ever accepted — a permanent, self-sustaining denial
+                    // of the governed path from any process sharing the renderer's uid, which the
+                    // design treats as untrusted. A deadline turns that into a refused connection.
+                    let deadline = std::time::Duration::from_millis(CONN_IO_TIMEOUT_MS);
+                    if s.set_read_timeout(Some(deadline)).is_err()
+                        || s.set_write_timeout(Some(deadline)).is_err()
+                    {
+                        eprintln!("brops-broker: could not arm connection deadline; refusing");
+                        continue;
+                    }
                     if let Err(e) = handle_conn(&conn, &mut s, allowed_uid, &ids, executor.as_ref()) {
                         eprintln!("brops-broker: connection refused: {e}");
                     }

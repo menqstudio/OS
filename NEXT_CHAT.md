@@ -32,10 +32,12 @@
 > to the run the broker authorized; `challenge_accepted_at_ms` is the supervisor's accept clock (closed by
 > F-01, now asserted e2e); and the production verdict compares the key the CHAIN verified under instead of
 > a second lookup of itself.
+> **F-31/F-32/F-36 are CLOSED** (2026-08-06): the broker's serial accept loop arms a per-connection
+> deadline, and the renderer→broker client both times out and caps ingress before buffering.
 > **REMAINING blockers** — F-02/F-18 (the open half above),
 > F-08 (request↔output binding), F-09's acceptance-CAS *lease-budget* framing is satisfied but the
 > §2.5 TCB floor **F-10** has no caller, F-07/F-17/F-28 (self-certifying + world-writable custody),
->  F-31/F-32/F-36 (proof-kit DoS), F-06/F-13/F-14 (engine
+>   F-06/F-13/F-14 (engine
 > anti-rollback honesty). Take them ONE AT A TIME, same discipline. **The gate stays false.**
 >
 > **▶ NEXT KEYSTONE — production `trusted_verified` model-image slice (P0-2/P0-3), owner-approved to resume in a fresh focused session (2026-08-05).**

@@ -15,6 +15,18 @@ use brops_core::broker_client::{send_governed_turn, BrokerConn, TransportError};
 #[cfg(target_os = "linux")]
 const BROKER_SOCKET_PATH: &str = "/run/brops/broker.sock";
 
+/// Hard ceiling on the bytes this client will buffer from the broker (audit F-32/F-36). The framed
+/// protocol's own payload cap is `ipc_framing::MAX_FRAME_PAYLOAD_BYTES`; this allows that plus the
+/// 4-byte length prefix and a little slack, so a legal reply always fits and a flood never does.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES as u64) + 64;
+
+/// Per-read/write deadline on the broker socket (audit F-32/F-36). A governed turn is buffered by
+/// design and can legitimately take a while upstream, but a silent socket must eventually surface as
+/// a transport failure the renderer renders as `blocked` — never as a wedged command.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const IO_TIMEOUT_MS: u64 = 120_000;
+
 /// Forward one governed turn to the broker service and return its committed/blocked reply. The renderer
 /// supplies only the closed request; the broker resolves everything else and is the sole author of the
 /// reply.
@@ -34,9 +46,14 @@ fn connect_broker() -> Result<Box<dyn BrokerConn>, ()> {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::net::UnixStream;
-        UnixStream::connect(BROKER_SOCKET_PATH)
-            .map(|s| Box::new(linux::UnixBrokerConn(s)) as Box<dyn BrokerConn>)
-            .map_err(|_| ())
+        use std::time::Duration;
+        let s = UnixStream::connect(BROKER_SOCKET_PATH).map_err(|_| ())?;
+        // Audit F-32/F-36: without these the reply read is untimed, so a broker-side endpoint that
+        // accepts the connection and then never writes and never closes hangs this Tauri command
+        // forever. Fail-closed is a transport error the renderer sees as `blocked`; hanging is not.
+        s.set_read_timeout(Some(Duration::from_millis(IO_TIMEOUT_MS))).map_err(|_| ())?;
+        s.set_write_timeout(Some(Duration::from_millis(IO_TIMEOUT_MS))).map_err(|_| ())?;
+        Ok(Box::new(linux::UnixBrokerConn(s)) as Box<dyn BrokerConn>)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -59,8 +76,18 @@ mod linux {
             self.0.flush().map_err(|_| TransportError::Io)
         }
         fn recv_all(&mut self) -> Result<Vec<u8>, TransportError> {
+            // Audit F-32/F-36: this was an unbounded `read_to_end`. `ipc_framing` documents that the
+            // declared length is checked against the cap BEFORE any read, but that check runs in
+            // `decode_one` — i.e. AFTER these bytes are already resident — so the bound protected
+            // nothing on the direction the desktop actually reads. Cap ingress here, at the read.
             let mut buf = Vec::new();
-            self.0.read_to_end(&mut buf).map_err(|_| TransportError::Io)?;
+            let mut limited = (&mut self.0).take(MAX_REPLY_BYTES);
+            limited.read_to_end(&mut buf).map_err(|_| TransportError::Io)?;
+            if buf.len() as u64 >= MAX_REPLY_BYTES {
+                // At the cap we cannot tell a legal maximal frame from a truncated flood, so refuse:
+                // a reply this large is not one the bounded framing can produce.
+                return Err(TransportError::Io);
+            }
             Ok(buf)
         }
     }
