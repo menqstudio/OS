@@ -35,7 +35,15 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - uses: actions/setup-node@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+      # The SHA below is actions/setup-node v4.1.0 — the SAME pin every other workflow in this
+      # repo uses (ci.yml, a11y.yml, perf-budget.yml, supply-chain.yml). It previously carried
+      # 0b93645e9fea7318ecaed2b359559ac225c90a2b, which is actions/setup-PYTHON's v5.3.0 commit:
+      # a commit that does not exist in the setup-node repository, so GitHub could not resolve the
+      # action and every `v*` tag push failed here — before `npm ci`, before the bundle, before the
+      # signing step. No installer has ever been produced by this workflow (independent audit F-46).
+      # The trailing comment is the human-auditable half of a SHA pin, so it must name the action's
+      # real version; copying a pin between actions defeats the review value of pinning at all.
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: '22'
 
