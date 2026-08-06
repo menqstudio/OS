@@ -92,6 +92,7 @@ pub enum AnswerSource {
     BuiltinPlaceholderModelFailed,
 }
 
+#[cfg(windows)]
 fn run_selftest_model(cmd: Option<&str>) -> (Vec<u8>, AnswerSource) {
     let cmd = match cmd {
         Some(c) if !c.trim().is_empty() => c,
