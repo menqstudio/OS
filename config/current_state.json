@@ -153,8 +153,8 @@
     "note": "First tagged GitHub Release: the Windows installer (NSIS .exe + MSI). Cut from the PR #53 branch; the branch is NOT merged to main. Shipping the installer does NOT change the fail-closed posture — platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor, so no production trusted_verified renders in the shipped app."
   },
   "shipped_this_cycle": {
-    "range": "1bda438..26443b5",
-    "branch_head": "26443b5",
+    "range": "1bda438..462edc5",
+    "branch_head": "462edc5",
     "ci": "green",
     "custody": "Production key custody graduated: offline root-key ceremony (win_gen_root + CUSTODY_CEREMONY.md); the operator's production root is TCB-pinned with its private half OFFLINE, and a SEPARATE compiled-in demonstration anchor drives the in-process proof/tests; per-principal seeds sealed at rest via DPAPI (TOFU).",
     "in_app_agent": "The in-app Bro became a bounded, owner-authorized coding agent with file tools + Bash in acceptEdits, behind a hard --disallowedTools deny-list (never push/delete/install); the agent-mode 'claude CLI timed out' bug is fixed (runs with --setting-sources \"\" + a 900s budget vs a chat's 180s).",
@@ -182,5 +182,6 @@
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",
     "open": "obtain Architect CODE-audit GREEN on the exact head, then wire the live chain into the shipped desktop runtime",
     "merged": "n/a until Architect CODE-audit GREEN + Owner approval"
-  }
+  },
+  "keystone_next_2026_08_05": "Production trusted_verified model-image slice (P0-2/P0-3), owner-approved to resume in a fresh focused session. FINDING: the session-0 governed chain (win-live) runs ENTIRELY over HASHES (ResolvedTurn/win_live_turn/executor carry only system_sha256/history_sha256/generation_config_sha256, never raw prompt; win_executor emits a constant, executor build_output is a SHA-256 stand-in). Wiring a real model = a trust-chain extension: carry raw system/history in the request envelope + verify sha256==pinned hash at the boundary; plumb raw prompt request->broker->resolved->execution->contained executor stdin; win_executor runs an env-gated GENERIC local model command (owner's choice; mirror demo run_demonstration_model/BROPS_SELFTEST_MODEL_CMD) and emits the reply for content-addressing. ALL fail-closed; platform_governed_execution_supported() STAYS false, main() keeps UpstreamBlockedExecutor (win-live PROOF KIT, not shipped runtime). Trust-critical: design->implement->verify, never rush. Exposing production Verified still needs owner pinned MODEL + 3 servers running + INDEPENDENT audit + owner approval. Linux broker already config-driven drop-in; broker+desktop client LINUX-ONLY (SO_PEERCRED); Windows session-0 cross-account containment PROVEN (0xC0000142 was a debug-CRT DLL dep, fixed by release bins)."
 }
