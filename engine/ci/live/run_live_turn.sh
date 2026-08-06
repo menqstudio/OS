@@ -74,6 +74,12 @@ mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$SUPSTATE" "$LIVE/eng
 mkdir -p "$LIVE/engine/ci/live" "$LIVE/engine/runtime"
 cp "$REPO_ROOT"/engine/ci/live/*.py "$LIVE/engine/ci/live/"
 cp "$REPO_ROOT"/engine/runtime/*.py "$LIVE/engine/runtime/"
+# The supervisor's durable ledger loads its schema from the canonical `supervisor_ledger.sql`
+# beside the runtime modules, so the staged tree needs the .sql too — copying only *.py left the
+# supervisor unable to read its own schema, and it correctly refused to start (F-01: a supervisor
+# with no durable state must not serve). Stage it explicitly rather than widening the glob, so a
+# future non-code file has to be considered rather than silently swept into the TCB.
+cp "$REPO_ROOT"/engine/runtime/supervisor_ledger.sql "$LIVE/engine/runtime/"
 chmod -R a+rX "$LIVE/engine"
 PYLIVE="$LIVE/engine/ci/live"
 
