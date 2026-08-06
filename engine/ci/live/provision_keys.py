@@ -295,10 +295,31 @@ def main() -> int:
     recorder_bin = args.recorder_bin or os.path.join(bin_dir, "governed_recorder")
     recorder_command = ["sudo", "-n", "-u", args.sudo_recorder_user, recorder_bin]
 
+    # ---- (3b) per-service IPC peer-auth policies (audit F-10) ----
+    # These exist so the §2.5 floor's `*.ipc-policy` artifacts have something REAL to measure, and
+    # so the peer-auth rule has custody of its own instead of living in the shared config the
+    # broker also writes to. Each server loads only its own file, and refuses to serve without it.
+    ipc_policies = {}
+    for service in ("desktop-challenge-authority", "supervisor", "isolated-signer",
+                    "trusted-verifier-broker"):
+        path = os.path.join(tcb_dir, service + ".ipc-policy.json")
+        write_file(path, json.dumps({
+            "protocol": "brops.ipc-policy.v1",
+            "service": service,
+            # The broker is the CLIENT of every hop; nothing connects TO it. An empty allowlist is
+            # the honest statement of that, and it is fail-closed if anything ever loads it.
+            "allowed_peer_uids": [] if service == "trusted-verifier-broker"
+                                 else [DEFAULT_UIDS["broker"]],
+        }, separators=(",", ":")).encode("utf-8"), 0o644)
+        ipc_policies[service] = path
+
     # ---- (4) the ONE shared config both sides read ----
     config = {
+        # Kept for the Rust broker's own allowlist; the SERVERS no longer read their peer-auth
+        # rule from here (F-10 — see `ipc_policies` below).
         "allowed_broker_uid": DEFAULT_UIDS["broker"],
         "uids": DEFAULT_UIDS,
+        "ipc_policies": ipc_policies,
         "sockets": {
             "authority": os.path.join(sock_dir, "authority.sock"),
             "supervisor": os.path.join(sock_dir, "supervisor.sock"),
@@ -318,6 +339,10 @@ def main() -> int:
             "manifest_path": manifest_path,
             "manifest_sig_path": manifest_sig_path,
             "floor_path": floor_path,
+            # F-10: the root-owned §2.5 pin manifest. Built by build_tcb_pin_manifest.py AFTER every
+            # artifact exists and BEFORE any service starts, because the pin is a start-time
+            # measurement of the deployment.
+            "tcb_pin_manifest_path": os.path.join(tcb_dir, "tcb-pin-manifest.json"),
             # F-17: the anchor is a TCB FILE, not two config strings. `root_key_id`/`root_pub_hex` are
             # deliberately absent — the driver refuses a config that still carries them, so the
             # self-certifying "verifier reads the anchor out of the same file it reads its own knobs

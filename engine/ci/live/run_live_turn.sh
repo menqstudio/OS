@@ -199,6 +199,17 @@ SUDOERS=/etc/sudoers.d/brops-live-recorder
 echo "$BROKER_USER ALL=($RECORDER_USER) NOPASSWD: $BIN/governed_recorder" > "$SUDOERS"
 chmod 0440 "$SUDOERS"
 
+# ----- the §2.5 TCB pin manifest (audit F-10) -----------------------------------------------------
+# Built LAST, because the pin is a start-time measurement: the lease, the root anchor, the IPC
+# policies and the sudoers allowlist all have to exist first, and nothing may be provisioned after.
+# The kit is orchestrated by THIS script rather than by systemd, so a root-owned copy of it is what
+# the two `.unit` roles pin — inventing plausible unit files would make the manifest describe a
+# deployment that is not this one.
+install -m 0644 "$SCRIPT_DIR/run_live_turn.sh" "$TCB/brops-live.unit"; chown 0:0 "$TCB/brops-live.unit"
+chown 0:0 "$TCB"/*.ipc-policy.json; chmod 0644 "$TCB"/*.ipc-policy.json
+python3 "$PYLIVE/build_tcb_pin_manifest.py" --root-dir "$LIVE"   --sudoers "$SUDOERS" --unit "$TCB/brops-live.unit" --out "$TCB/tcb-pin-manifest.json"   || { echo "FAIL: build_tcb_pin_manifest.py"; exit 1; }
+chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
+
 # ----- start the three service servers as their accounts ------------------------------------------
 PIDS=()
 cleanup() {

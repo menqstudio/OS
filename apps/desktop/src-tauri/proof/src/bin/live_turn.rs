@@ -250,6 +250,33 @@ mod linux {
             return blocked("anti_rollback");
         }
 
+        // ---- the §2.5 TCB integrity floor (audit F-10) ----
+        // Every signature below is computed by a binary this process is about to trust. Measuring
+        // those binaries, their configs, their IPC policies, the launch allowlist and the root anchor
+        // BEFORE entering governed mode is what makes the rest of the chain mean anything — an
+        // unmeasured supervisor signing a perfect attestation proves only that something signed it.
+        // Fail-closed on every path: no manifest configured, unreadable, or any violation.
+        let pin_manifest_path = s(&cfg, &["trust", "tcb_pin_manifest_path"]);
+        let runtime_uids: Vec<u32> = cfg
+            .get("uids")
+            .and_then(|v| v.as_object())
+            .map(|m| m.values().filter_map(|v| v.as_u64().map(|u| u as u32)).collect())
+            .unwrap_or_default();
+        // SAFETY: getuid cannot fail and takes no arguments.
+        let login_uid = unsafe { libc::getuid() };
+        let mut principals = runtime_uids.clone();
+        if !principals.contains(&login_uid) {
+            principals.push(login_uid);
+        }
+        if let Err(why) = brops_broker::tcb_probe::verify_deployment_tcb(
+            pin_manifest_path.as_deref(),
+            &principals,
+            login_uid,
+        ) {
+            eprintln!("live_turn: TCB integrity floor REFUSED: {why}");
+            return blocked("tcb_integrity_floor");
+        }
+
         let signer_key_id = s(&cfg, &["trust", "signer_key_id"]).unwrap_or_default();
         let sup_attest_key_id = s(&cfg, &["trust", "supervisor_attestation_key_id"]).unwrap_or_default();
         let iso = match resolve_production_key(&manifest, &signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now)
