@@ -342,6 +342,11 @@ mod linux {
                     };
                     let event = serde_json::json!({
                         "event_type": event_type,
+                        // The PAYLOAD travels with the event, not just its digest. The supervisor
+                        // reads this chain to derive the evidence head AND to check that the reply
+                        // digest the completion reports is the one this recorder captured (audit
+                        // F-01); it cannot check a digest whose bytes it never sees.
+                        "payload": payload,
                         "payload_sha256": brops_core::governed_message_store::sha256_hex(&payload_bytes),
                         "previous_event_hash": previous,
                         "sequence": sequence,

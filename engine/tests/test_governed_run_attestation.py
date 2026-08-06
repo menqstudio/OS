@@ -442,6 +442,32 @@ def _challenge_doc(handles, nonce="550e8400-e29b-41d4-a716-446655440000"):
     }
 
 
+def _run_evidence(output_handle, *, head_sequence=4, event_count=3):
+    """A recorder evidence chain shaped as `governed_recorder` writes one (audit F-01)."""
+    import hashlib as _h, json as _j
+
+    def canon(payload):
+        return _j.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def sha(data):
+        return _h.sha256(data).hexdigest()
+
+    payloads = [("lease-validated", {"n": i}) for i in range(1, event_count)]
+    payloads.append(("output-captured", {"launcher_exit": 0, "output_sha256": output_handle}))
+    previous, events = None, []
+    for sequence, (event_type, payload) in enumerate(payloads, start=1):
+        event = {"event_type": event_type, "payload": payload,
+                 "payload_sha256": sha(canon(payload)),
+                 "previous_event_hash": previous, "sequence": sequence}
+        previous = sha(canon(event))
+        events.append(event)
+    return _j.dumps({"event_count": len(events), "events": events,
+                     "final_event_hash": previous, "head_sequence": head_sequence,
+                     "last_sequence": len(events),
+                     "protocol": "brops.run-evidence-chain.v1"},
+                    sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
 class AttestRunServerTests(unittest.TestCase):
     def setUp(self):
         self.ed = _Ed25519()
@@ -458,6 +484,9 @@ class AttestRunServerTests(unittest.TestCase):
             lambda: NOW_MS,
             conn=self.ledger_conn,
             publish_artifact=self.store.put,
+            # F-01: the supervisor reads the RECORDER's chain for the evidence head and to check
+            # that `output_handle` is the digest the recorder captured. Never caller-supplied.
+            read_run_evidence=lambda attempt: _run_evidence(self.handles["output_handle"]),
             sign_attestation=(self.ed.sign_attestation if ed else None),
             supervisor_attestation_key_id=key_id if ed else None,
         )
@@ -484,10 +513,6 @@ class AttestRunServerTests(unittest.TestCase):
                 # accept-open (NOW_MS here), so a completion must not predate it — the signer's
                 # `_check_timestamps` enforces requested_at <= challenge_accepted <= completed.
                 "completed_at_ms": NOW_MS,
-                "evidence_final_event_hash": "a" * 64,
-                "evidence_event_count": 3,
-                "evidence_last_sequence": 3,
-                "evidence_head_sequence": 4,
             },
         })["ok"])
         return attempt

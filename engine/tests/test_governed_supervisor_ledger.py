@@ -77,7 +77,23 @@ def _acceptance(attempt="att-1", **over):
 
 
 #: The three handles the SUPERVISOR derives and publishes (F-02) — never part of `produced`.
-DERIVED = {"record_handle": H_C, "lease_handle": H_A, "execution_receipt_handle": H_B}
+# What the SUPERVISOR contributes: the three terminal handles it publishes (F-02) and the
+# evidence head it reads out of the recorder's chain (F-01). None of it comes from the wire.
+DERIVED = {
+    "record_handle": H_C,
+    "lease_handle": H_A,
+    "execution_receipt_handle": H_B,
+    "evidence_final_event_hash": H_C,
+    "evidence_event_count": 3,
+    "evidence_last_sequence": 3,
+    "evidence_head_sequence": 12,
+}
+
+
+def _derived(**over):
+    d = dict(DERIVED)
+    d.update(over)
+    return d
 
 
 def _produced(**over):
@@ -85,10 +101,6 @@ def _produced(**over):
         output_handle=H_A,
         containment_evidence_handle=H_B,
         completed_at_ms=1_050_000,
-        evidence_final_event_hash=H_C,
-        evidence_event_count=3,
-        evidence_last_sequence=3,
-        evidence_head_sequence=12,
     )
     facts.update(over)
     return facts
@@ -312,11 +324,11 @@ class EvidenceFloorTests(unittest.TestCase):
     def test_a_stale_head_refuses_the_whole_completion(self):
         conn = _conn()
         _drive_to_executing(conn, "att-1")
-        gsl.record_completion(conn, "att-1", _produced(evidence_head_sequence=12), 50, derived=DERIVED)
+        gsl.record_completion(conn, "att-1", _produced(), 50, derived=_derived(evidence_head_sequence=12))
 
         _drive_to_executing(conn, "att-2", _acceptance("att-2"))
         with self.assertRaises(gsl.StaleEvidence):
-            gsl.record_completion(conn, "att-2", _produced(evidence_head_sequence=11), 60, derived=DERIVED)
+            gsl.record_completion(conn, "att-2", _produced(), 60, derived=_derived(evidence_head_sequence=11))
         # Rolled back entirely: the stale attempt has no completion to attest over.
         self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-2"))
 
@@ -328,16 +340,16 @@ class EvidenceFloorTests(unittest.TestCase):
         _drive_to_executing(conn, "att-2", _acceptance("att-2"))
         with self.assertRaises(gsl.EvidenceFork):
             gsl.record_completion(
-                conn, "att-2", _produced(evidence_final_event_hash=H_A), 60, derived=DERIVED
+                conn, "att-2", _produced(), 60, derived=_derived(evidence_final_event_hash=H_A)
             )
         self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-2"))
 
     def test_a_strictly_higher_head_advances_the_floor(self):
         conn = _conn()
         _drive_to_executing(conn, "att-1")
-        gsl.record_completion(conn, "att-1", _produced(evidence_head_sequence=12), 50, derived=DERIVED)
+        gsl.record_completion(conn, "att-1", _produced(), 50, derived=_derived(evidence_head_sequence=12))
         _drive_to_executing(conn, "att-2", _acceptance("att-2"))
-        gsl.record_completion(conn, "att-2", _produced(evidence_head_sequence=13), 60, derived=DERIVED)
+        gsl.record_completion(conn, "att-2", _produced(), 60, derived=_derived(evidence_head_sequence=13))
         floor = conn.execute(
             "SELECT highest_head_sequence FROM governed_evidence_head_floor"
         ).fetchone()[0]

@@ -192,7 +192,11 @@ chown -R "$SUPERVISOR_USER": "$SUPSTATE"; chmod 0700 "$SUPSTATE"
 # The recorder's evidence head-sequence counter is the same kind of thing (F-02): it is what makes
 # the evidence head MONOTONIC across runs, so if another uid could rewind it, the supervisor's
 # anti-rollback floor would again be comparing a number the attacker chose. Recorder-private.
-chown -R "$RECORDER_USER": "$RECSTATE"; chmod 0700 "$RECSTATE"
+# Recorder-owned, SUPERVISOR-readable (audit F-01): the supervisor reads each run's evidence
+# chain from here to derive the evidence head and to check that the reply digest the completion
+# reports is the one the recorder captured. The broker is in neither the owner nor the group, so
+# it cannot write what the supervisor is about to believe — that is the whole property.
+chown -R "$RECORDER_USER":"$SUPERVISOR_USER" "$RECSTATE"; chmod 0750 "$RECSTATE"
 
 # ----- sudoers: the broker may spawn ONLY the recorder helper as the recorder account (invoker gate) ----
 SUDOERS=/etc/sudoers.d/brops-live-recorder

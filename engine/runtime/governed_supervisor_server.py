@@ -104,6 +104,10 @@ LEASE_FIELDS = (
 
 #: The durable CAS refused: a challenge/nonce/attempt/receipt rebound to a different turn.
 REFUSE_ACCEPTANCE_CONFLICT = "acceptance_conflict"
+#: The reply digest the completion reports is not the digest the recorder captured (audit
+#: **F-01**). Typed separately from a malformed chain because the two mean different things: one
+#: is a broken deployment, this one is a caller naming output the execution did not produce.
+REFUSE_EVIDENCE_MISMATCH = "evidence_mismatch"
 #: The named attempt has no acceptance row — a fabricated or already-purged attempt.
 REFUSE_UNKNOWN_ATTEMPT = "unknown_attempt"
 #: The requested lifecycle move is not legal from the attempt's current durable state.
@@ -352,6 +356,7 @@ def dispatch(
     *,
     conn: Any,
     publish_artifact: Optional[Callable[[bytes], str]] = None,
+    read_run_evidence: Optional[Callable[[str], Optional[bytes]]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -404,7 +409,7 @@ def dispatch(
     if op == OP_EXECUTION_STARTED:
         return _op_execution_started(request, conn, clock_ms)
     if op == OP_COMPLETE_RUN:
-        return _op_complete_run(request, conn, clock_ms, publish_artifact)
+        return _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidence)
 
     raise ServerError("unknown op %r" % (op,))
 
@@ -501,13 +506,19 @@ def _op_execution_started(request, conn, clock_ms):
     return {"ok": True, "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt}
 
 
-def _op_complete_run(request, conn, clock_ms, publish_artifact):
+def _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidence):
     _require_exact_fields(request, OP_COMPLETE_RUN, ("execution_attempt_id", "produced"))
     attempt = _require_str(request, "execution_attempt_id")
     if publish_artifact is None:
         raise SupervisorError(
             "complete-run requires an injected publish_artifact seam (the supervisor must be "
             "able to publish the terminal artifacts it addresses)"
+        )
+    if read_run_evidence is None:
+        raise SupervisorError(
+            "complete-run requires an injected read_run_evidence seam: the supervisor must read "
+            "the recorder's evidence chain ITSELF (audit F-01) — taking the evidence head, or the "
+            "reply digest it commits to, from the caller is the oracle in its most valuable form"
         )
     row = ledger.load_acceptance(conn, attempt)
     if row is None:
@@ -518,16 +529,39 @@ def _op_complete_run(request, conn, clock_ms, publish_artifact):
     except ledger.LedgerError as exc:
         return _ledger_refusal(OP_COMPLETE_RUN, exc)
 
+    # (audit F-01) Read the RECORDER's evidence chain for this attempt — from a directory only
+    # the recorder can write, never from the wire and never from the content-addressed store,
+    # because a store handle the caller names addresses bytes the caller can also have written.
+    # This is the first point in the protocol where the supervisor looks at something the
+    # executing chain did not choose. It yields the evidence head, and it refuses outright if the
+    # reply digest the completion reports is not the digest the recorder actually captured.
+    try:
+        chain_bytes = read_run_evidence(attempt)
+    except Exception as exc:
+        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
+                        "could not read the run evidence chain: %s" % exc)
+    if not chain_bytes:
+        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
+                        "no run evidence chain for attempt %r; a run whose execution the "
+                        "supervisor cannot observe must not be recorded" % (attempt,))
+    try:
+        evidence = ledger.derive_evidence_from_chain(chain_bytes, produced["output_handle"])
+    except ledger.EvidenceMismatch as exc:
+        return _refusal(OP_COMPLETE_RUN, REFUSE_EVIDENCE_MISMATCH, str(exc))
+    except ledger.LedgerError as exc:
+        return _ledger_refusal(OP_COMPLETE_RUN, exc)
+
     # F-02: the supervisor BUILDS its terminal artifacts from its own rows and publishes them
     # to the protected store, then names their content addresses in the evidence. These were
     # deployment-static constants the broker copied out of a world-readable config, which made
     # the isolated signer's protected-chain check a tautology over bytes anyone had written once.
     try:
-        derived = {
+        derived = dict(evidence)
+        derived.update({
             "lease_handle": publish_artifact(bytes(row["lease_payload_bytes"])),
             "record_handle": publish_artifact(build_terminal_record(row, produced)),
             "execution_receipt_handle": publish_artifact(build_execution_receipt(row, produced)),
-        }
+        })
     except Exception as exc:  # a store failure must refuse the completion, never fake a handle
         return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
                         "could not publish terminal artifacts: %s" % exc)
@@ -591,6 +625,7 @@ def handle_connection(
     *,
     ledger_conn: Any,
     publish_artifact: Optional[Callable[[bytes], str]] = None,
+    read_run_evidence: Optional[Callable[[str], Optional[bytes]]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -620,6 +655,7 @@ def handle_connection(
             clock_ms,
             conn=ledger_conn,
             publish_artifact=publish_artifact,
+            read_run_evidence=read_run_evidence,
             sign_attestation=sign_attestation,
             supervisor_attestation_key_id=supervisor_attestation_key_id,
         )
@@ -685,6 +721,7 @@ def serve_forever(
     *,
     ledger_conn: Any,
     publish_artifact: Optional[Callable[[bytes], str]] = None,
+    read_run_evidence: Optional[Callable[[str], Optional[bytes]]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
 ) -> None:
@@ -710,6 +747,7 @@ def serve_forever(
                 clock_ms,
                 ledger_conn=ledger_conn,
                 publish_artifact=publish_artifact,
+                read_run_evidence=read_run_evidence,
                 sign_attestation=sign_attestation,
                 supervisor_attestation_key_id=supervisor_attestation_key_id,
             )
@@ -751,6 +789,7 @@ __all__ = [
     "OP_LAUNCH_GATE",
     "OP_EXECUTION_STARTED",
     "OP_COMPLETE_RUN",
+    "REFUSE_EVIDENCE_MISMATCH",
     "OP_ATTEST_RUN",
     "REFUSE_ACCEPTANCE_CONFLICT",
     "REFUSE_COMPLETION_CONFLICT",

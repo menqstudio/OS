@@ -90,6 +90,31 @@ def main() -> int:
     # address IS the filename, so republishing identical bytes is a no-op.
     store_dir = cfg["store_dir"]
 
+    # read_run_evidence(attempt) -> the RECORDER's evidence chain bytes, or None (audit F-01).
+    # Read from the recorder's OWN directory, which the broker cannot write. That is the whole
+    # point: every other input to the attestation either comes from the supervisor's rows or from
+    # the caller, and `output_handle` — the digest of the exact reply the desktop commits — was in
+    # the second group. Reading the chain here puts it in neither: the recorder is the privileged
+    # component that actually captured the executor's bytes, and it is the only writer of this
+    # directory. Bounded so a hostile file cannot exhaust the supervisor.
+    evidence_dir = cfg["execution"]["evidence_state_dir"]
+    MAX_EVIDENCE_BYTES = 1 << 20
+
+    def read_run_evidence(attempt: str):
+        # The attempt id reaches the filesystem, so it must not be able to escape the directory.
+        # It is a supervisor-minted id, but the supervisor does not get to assume its own inputs.
+        if not attempt or not all(c.isalnum() or c in "-_" for c in attempt):
+            return None
+        path = os.path.join(evidence_dir, attempt + ".evidence.json")
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read(MAX_EVIDENCE_BYTES + 1)
+        except OSError:
+            return None
+        if len(data) > MAX_EVIDENCE_BYTES:
+            return None
+        return data
+
     def publish_artifact(data: bytes) -> str:
         handle = hashlib.sha256(data).hexdigest()
         final = os.path.join(store_dir, handle)
@@ -148,6 +173,7 @@ def main() -> int:
             clock_ms,
             ledger_conn=ledger_conn,
             publish_artifact=publish_artifact,
+            read_run_evidence=read_run_evidence,
             sign_attestation=sign_attestation,
             supervisor_attestation_key_id=sup_attest_key_id,
         )
