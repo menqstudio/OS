@@ -31,6 +31,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..", "..", "runtime")))
 
+import ipc_policy
 import live_crypto as lc  # noqa: E402
 import isolated_signer_server as iss  # noqa: E402
 from isolated_signer import ArtifactStore, IsolatedSigner, SignerConfig, SignerError  # noqa: E402
@@ -66,7 +67,12 @@ def main() -> int:
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
-    allowed_broker_uid = int(cfg["allowed_broker_uid"])
+    # F-10: the peer-auth rule comes from this service's OWN root-owned IPC policy file, not
+    # from the shared config the broker also writes its knobs into. That is what gives the
+    # §2.5 floor a `isolated-signer.ipc-policy` artifact to measure, and what stops a service
+    # account from widening who may talk to it. Fail-closed: no policy, no serving.
+    allowed_broker_uid = ipc_policy.load_allowed_peer_uid(
+        cfg["ipc_policies"]["isolated-signer"], "isolated-signer")
     sock_path = cfg["sockets"]["signer"]
     signer_key_id = cfg["trust"]["signer_key_id"]
     sup_attest_key_id = cfg["trust"]["supervisor_attestation_key_id"]

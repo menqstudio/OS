@@ -102,7 +102,7 @@ EXECUTOR_SHA=$(sha256sum "$TCB/contained-executor.bin" | cut -d' ' -f1)
 echo "== provisioning keys + root-signed manifest + store + config =="
 python3 "$PYLIVE/provision_keys.py" --root-dir "$LIVE" \
   --launcher-sha "$LAUNCHER_SHA" --executor-sha "$EXECUTOR_SHA" \
-  --recorder-bin "$BIN/governed_recorder" --sudo-recorder-user "$RECORDER_USER" \
+  --recorder-bin "$BIN/governed_recorder" --sudo-recorder-user "$RECORDER_USER" --login-uid "$(id -u "${SUDO_USER:-root}")" \
   || { echo "FAIL: provision_keys.py"; exit 1; }
 
 CONFIG="$LIVE/config.json"
@@ -198,6 +198,50 @@ chown -R "$RECORDER_USER": "$RECSTATE"; chmod 0700 "$RECSTATE"
 SUDOERS=/etc/sudoers.d/brops-live-recorder
 echo "$BROKER_USER ALL=($RECORDER_USER) NOPASSWD: $BIN/governed_recorder" > "$SUDOERS"
 chmod 0440 "$SUDOERS"
+
+# ----- the §2.5 TCB pin manifest (audit F-10) -----------------------------------------------------
+# Built LAST, because the pin is a start-time measurement: the lease, the root anchor, the IPC
+# policies and the sudoers allowlist all have to exist first, and nothing may be provisioned after.
+# The kit is orchestrated by THIS script rather than by systemd, so a root-owned copy of it is what
+# the two `.unit` roles pin — inventing plausible unit files would make the manifest describe a
+# deployment that is not this one.
+install -m 0644 "$SCRIPT_DIR/run_live_turn.sh" "$TCB/brops-live.unit"; chown 0:0 "$TCB/brops-live.unit"
+chown 0:0 "$TCB"/*.ipc-policy.json; chmod 0644 "$TCB"/*.ipc-policy.json
+python3 "$PYLIVE/build_tcb_pin_manifest.py" --root-dir "$LIVE"   --sudoers "$SUDOERS" --unit "$TCB/brops-live.unit" --out "$TCB/tcb-pin-manifest.json"   || { echo "FAIL: build_tcb_pin_manifest.py"; exit 1; }
+chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
+# The §2.5 floor requires every ANCESTOR of a pinned artifact to be TCB-owned and non-writable by
+# any other principal — a writable parent is a rename/replace vector, so it is treated exactly like
+# a writable artifact. Those modes were left to `umask` and to whatever `/opt` hands down (a default
+# ACL on the parent shows through in a directory's group bits), which is not something a TCB should
+# INHERIT. State them: root-owned, 0755, no group or other write, for the whole pinned tree.
+chown 0:0 "$LIVE" "$TCB" "$BIN"; chmod 0755 "$LIVE" "$TCB" "$BIN"
+chown -R 0:0 "$LIVE/engine"; find "$LIVE/engine" -type d -exec chmod 0755 {} +
+# /opt is drwxrwxrwx on the hosted runner image, and the floor is right to refuse that: anyone who
+# can write /opt can rename /opt/brops-live aside and substitute an entire tree, which defeats every
+# content pin below it. A real operator would have to fix this before deploying, so the kit fixes it
+# here rather than pretending the deployment root is safe.
+echo "== hardening the deployment root (/opt was $(stat -c %A /opt)) =="
+chown 0:0 /opt; chmod 0755 /opt
+# The mode bits are only the whole truth if there is no ACL beside them. These directories carry
+# default ACLs inherited from the runner image (the `+` in ls), and the probe reads mode and
+# ownership, not ACLs — a documented narrowing that can only make it MORE permissive than reality.
+# Strip the ACLs from the pinned tree so the two agree, instead of relying on the narrowing.
+if command -v setfacl >/dev/null 2>&1; then
+  setfacl -Rb /opt "$LIVE" 2>/dev/null || true
+fi
+# The floor refuses on an ancestor a non-TCB principal could write, and "which bit, on which
+# directory" is exactly what a refusal needs to be actionable. Print the pinned set's ancestors.
+echo "== TCB ancestor modes (the §2.5 floor checks these) =="
+ls -ld / /opt "$LIVE" "$TCB" "$BIN" "$LIVE/engine" "$LIVE/engine/ci" "$LIVE/engine/ci/live" /etc /etc/sudoers.d
+
+# ----- the §2.5 TCB integrity floor, evaluated by ROOT (audit F-10) -------------------------------
+# Root, and before anything starts. The pinned set deliberately includes artifacts the serving
+# principals must NOT be able to read — the launcher is 4750 so only the recorder group may execute
+# it, and the allowlist lives in a root-only directory — so a broker that could measure them could
+# also read them, and asking it to would loosen the containment the floor exists to confirm. Root is
+# the only principal that can honestly evaluate the whole set, and a floor that has not passed means
+# no service starts at all.
+"$BIN/live_turn" --config "$CONFIG" --verify-tcb || { echo "FAIL: the §2.5 TCB integrity floor"; exit 1; }
 
 # ----- start the three service servers as their accounts ------------------------------------------
 PIDS=()

@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "a79c6624cb49ee654749836e737848f3f4bdd6cb",
-    "snapshot_branch": "feat/windows-broker-machineproof",
-    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD a79c662 — the squash-merge of PR #54 (the release-workflow supply-chain hotfix: the unresolvable actions/setup-node pin, the action-pin gate, the undici override and the triaged cryptography waivers). The active workflow branch feat/windows-broker-machineproof (PR #53) has been merged up to that tip, so the pull_request base-sha baseline check APPLIES and passes: baseline_main_head_at_sync == the PR base sha == main tip.",
+    "baseline_main_head_at_sync": "de38cb1156fdab1c764579098906d4d4d9dfd5af",
+    "snapshot_branch": "fix/tcb-pin-manifest-live-kit",
+    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD de38cb1 — the squash-merge of PR #53 (the keystone remediation) on top of PR #54. The active branch fix/tcb-pin-manifest-live-kit is a DIRECT child of that tip, so the pull_request base-sha baseline check APPLIES and passes.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #53). PR #53's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "feat/windows-broker-machineproof"
+    "branch": "fix/tcb-pin-manifest-live-kit"
   },
   "prs": [],
   "status_tokens": {
@@ -133,6 +133,10 @@
     {
       "number": 54,
       "reason": "Release-workflow supply-chain hotfix; the setup-node pin named actions/setup-PYTHON's commit so no v* tag push ever produced an installer. Merged 2026-08-06 at a79c662."
+    },
+    {
+      "number": 53,
+      "reason": "Windows LIVE governed-turn machine-proof + the 2026-08-06 independent-audit remediation (F-01/F-02/F-06/F-08/F-13/F-14/F-17/F-07/F-28 and more). Merged 2026-08-06."
     }
   ],
   "product_roadmap": {
@@ -176,11 +180,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 53,
-    "branch": "feat/windows-broker-machineproof",
+    "number": 55,
+    "branch": "fix/tcb-pin-manifest-live-kit",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #53 body, kept in lockstep with every push. check_repo_state requires event head == live headRefOid == marker. Base is main directly (branch is a child of main tip b91f2356), so the base-sha baseline check applies: baseline_main_head_at_sync == the PR base sha.",
-    "note": "PR #53 = the Windows LIVE governed-turn machine-proof (crate brops-win-live). Additive only — implements the pub HopConnector/GovernedExecution/TurnResolver seams + assembles the SAME brops-broker GovernedChain; no change to broker/core, workspace still builds+tests on Linux CI. Proven: (1) in-process full crypto chain -> trusted_verified, host-independent (cargo test -p brops-win-live, runs on the Linux runner); (2) real named pipes same-account (3 processes) -> trusted_verified (production signer key, epoch 2) production_verified=true bound=true; (3) peer-SID gate fail-closed both directions; (4) cross-account -> the three principals as DISTINCT dedicated Windows service accounts (session-0), peer-SID authed across real account boundaries -> trusted_verified. Does NOT flip the shipped Windows gate (see product_roadmap.windows_production_isolation / stop_gates); no production trusted_verified ships; fail-closed preserved."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #55 body, kept in lockstep with every push. check_repo_state requires event head == live headRefOid == marker. Base is main directly, so the base-sha baseline check applies: baseline_main_head_at_sync == the PR base sha.",
+    "note": "PR #55 = the second half of audit F-10. The §2.5 TCB integrity floor had a real probe and a fail-closed caller after PR #53, but the live kit had no TcbPinManifest to present, so the floor could only ever refuse for absence. This provisions the full TCB_REQUIRED_ARTIFACTS set from real digests of the files that genuinely serve each role, makes the *.ipc-policy roles real (each server now loads its own root-owned peer-auth policy and refuses to serve without it), and calls the floor from live_turn before the governed turn runs. No gate-logic change; platform_governed_execution_supported() stays false."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",

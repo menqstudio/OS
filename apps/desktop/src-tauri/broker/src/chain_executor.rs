@@ -525,6 +525,10 @@ impl OwnedEnvelope {
 /// a real socket [`HopConnector`], and (once provisioned) the privileged execution spawn. The pure
 /// orchestration above is host-independent; only the socket transport + the setuid spawn live here.
 /// The four evidence-head values, READ from the recorder's per-run chain (audit **F-02**).
+///
+/// Constructed only on the Linux execution path; the parser is host-independent and unit-tested
+/// everywhere, so a non-Linux library build legitimately has no constructor for it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 struct RunEvidence {
     final_event_hash: String,
     event_count: i64,
@@ -532,6 +536,7 @@ struct RunEvidence {
     head_sequence: i64,
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 impl RunEvidence {
     /// Parse the recorder's `brops.run-evidence-chain.v1` document. Every field is required and
     /// must be well-formed — a chain the broker cannot read is a run it cannot evidence, and a
