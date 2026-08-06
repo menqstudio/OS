@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "de38cb1156fdab1c764579098906d4d4d9dfd5af",
-    "snapshot_branch": "fix/tcb-pin-manifest-live-kit",
-    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD de38cb1 — the squash-merge of PR #53 (the keystone remediation) on top of PR #54. The active branch fix/tcb-pin-manifest-live-kit is a DIRECT child of that tip, so the pull_request base-sha baseline check APPLIES and passes.",
+    "baseline_main_head_at_sync": "219c76312e0a5204c4e9a4f1b012581742e93191",
+    "snapshot_branch": "remediation/audit-red-response",
+    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 219c763 — the squash-merge of PR #55. The active branch remediation/audit-red-response is a DIRECT child of it, so the base-sha baseline check applies and passes.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #53). PR #53's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "fix/tcb-pin-manifest-live-kit"
+    "branch": "remediation/audit-red-response"
   },
   "prs": [],
   "status_tokens": {
@@ -137,6 +137,10 @@
     {
       "number": 53,
       "reason": "Windows LIVE governed-turn machine-proof + the 2026-08-06 independent-audit remediation (F-01/F-02/F-06/F-08/F-13/F-14/F-17/F-07/F-28 and more). Merged 2026-08-06."
+    },
+    {
+      "number": 55,
+      "reason": "Audit F-10 second half: the §2.5 TCB pin manifest and real per-service IPC policies. Merged 2026-08-06."
     }
   ],
   "product_roadmap": {
@@ -180,11 +184,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 55,
-    "branch": "fix/tcb-pin-manifest-live-kit",
+    "number": 56,
+    "branch": "remediation/audit-red-response",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #55 body, kept in lockstep with every push. check_repo_state requires event head == live headRefOid == marker. Base is main directly, so the base-sha baseline check applies: baseline_main_head_at_sync == the PR base sha.",
-    "note": "PR #55 = the second half of audit F-10. The §2.5 TCB integrity floor had a real probe and a fail-closed caller after PR #53, but the live kit had no TcbPinManifest to present, so the floor could only ever refuse for absence. This provisions the full TCB_REQUIRED_ARTIFACTS set from real digests of the files that genuinely serve each role, makes the *.ipc-policy roles real (each server now loads its own root-owned peer-auth policy and refuses to serve without it), and calls the floor from live_turn before the governed turn runs. No gate-logic change; platform_governed_execution_supported() stays false."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #56 body, kept in lockstep with every push. Base is main directly, so baseline_main_head_at_sync == the PR base sha.",
+    "note": "PR #56 = the response to the SECOND independent audit, which returned RED against main @ 219c763. It lands that report, corrects the ledger rows it refutes (F-01, F-02, F-13/F-14, F-29, F-10), and fixes the P0: the supervisor no longer attests an `output_handle` it never observed — it reads the recorder's evidence chain from a directory the broker cannot write, derives the evidence head from it, and refuses a mismatch. The same fix is applied to the Windows twin, where F-02's original defect was still live after being marked CLOSED. platform_governed_execution_supported() stays false."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",
