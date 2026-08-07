@@ -42,7 +42,7 @@
 - ActivityEvent
 - EvidenceRecord
 
-These entities define the conceptual data model. The concrete persisted schema (tables, keys, indexes, migrations) is intentionally not specified yet; it is a Phase 3–4 deliverable (see [ROADMAP.md](../ROADMAP.md)) and will be recorded in a dedicated `DATA_MODEL.md` when the application foundation begins.
+These entities define the conceptual data model. The concrete persisted schema (tables, keys, indexes, migrations) is intentionally not specified yet; it is a Phase 3–4 deliverable (see [MASTER_EXECUTION_ROADMAP.md](../../../../MASTER_EXECUTION_ROADMAP.md)) and will be recorded in a dedicated `DATA_MODEL.md` when the application foundation begins.
 
 ## Execution model
 

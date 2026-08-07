@@ -1,9 +1,8 @@
 {
   "schema": 2,
-  "purpose": "Files injected/read at startup and every 30-minute checkpoint. NOTE (2026-08-08): CLAUDE.md, AGENTS.md and NEXT_CHAT.md were removed from engine/ in the monorepo -- they were agent-instruction files that tools load by directory proximity, and they told an agent in engine/ that it was in the standalone menqstudio/Bro repository and must not touch the other half of this one. The monorepo's single copies live at the repository root.",
+  "purpose": "Files injected/read at startup and every 30-minute checkpoint. NOTE (2026-08-08): CLAUDE.md, AGENTS.md, NEXT_CHAT.md and ROADMAP.md were removed from engine/ in the monorepo -- they were agent-instruction files that tools load by directory proximity, and they told an agent in engine/ that it was in the standalone menqstudio/Bro repository and must not touch the other half of this one. The monorepo's single copies live at the repository root.",
   "paths": [
     "README.md",
-    "ROADMAP.md",
     "config/sst-registry.json",
     "laws/LAW_INDEX.md",
     "laws/registry.json",

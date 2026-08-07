@@ -56,7 +56,7 @@ BroPS is a single-user local app; the trust boundary that matters is **webview �
 - [PRINCIPLES.md](docs/PRINCIPLES.md) — principles and enforceable laws (L-001..L-012)
 - [TERMINOLOGY.md](docs/TERMINOLOGY.md) — glossary
 - [DECISIONS.md](docs/DECISIONS.md) — decision format and log
-- [ROADMAP.md](docs/ROADMAP.md) — phased future work
+- [MASTER_EXECUTION_ROADMAP.md](../../MASTER_EXECUTION_ROADMAP.md) — phased future work
 - [SUCCESS_CRITERIA.md](docs/SUCCESS_CRITERIA.md) — MVP definition of done
 - [CHANGELOG.md](CHANGELOG.md) — repository history
 - [AGENTS.md](docs/AGENTS.md) — contributor working contract

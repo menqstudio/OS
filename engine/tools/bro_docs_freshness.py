@@ -67,11 +67,9 @@ def validate_docs(root: pathlib.Path = ROOT) -> int:
         # whoever worked in `engine/` that they were in the standalone repository and must not
         # touch the other half of this one. The monorepo's handoff is the root `NEXT_CHAT.md`,
         # which this tool does not police -- `tools/check_coordination.py` does.
-        "ROADMAP.md": [
-            "**Merged PR:** `#4`",
-            "**Merge commit:** `61bf9bc4a42b512926bf848b79a0cac063196993`",
-            "1. **Orchestration Runtime V1:**",
-        ],
+        # `ROADMAP.md` had an entry here; the file was removed on 2026-08-08. The monorepo has
+        # one plan, `MASTER_EXECUTION_ROADMAP.md` at the root, policed by
+        # `tools/check_coordination.py` rather than by this tool.
         "docs/ORCHESTRATION_RUNTIME_V1_SPEC.md": [
             "implementation active in PR #6",
             "**Baseline:** `main` at `b5d1a343a8777738d4113e3e28cf27527f04020a`",
