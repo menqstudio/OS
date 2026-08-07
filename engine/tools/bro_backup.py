@@ -8,12 +8,17 @@ silently corrupting — the audit history.
 
 This tool snapshots a named set of those stores into an archive with a per-file
 SHA-256 manifest, and restores them back with the manifest re-verified. It is
-fail-closed on integrity: every append-only ledger (``*.jsonl``, verified through
-bro_audit_log's hash chain + head anchor) is chain-verified at BOTH backup and
-restore time, so a tampered or truncated ledger is never archived and never
-restored. Whether a file IS a ledger is derived from its archived ``*.jsonl``
-suffix, never from the attacker-supplied manifest — a crafted manifest cannot opt
-a ledger out of chain verification by declaring ``audit_chain: null``.
+fail-closed on integrity: every append-only ledger (``*.jsonl``) is verified at
+BOTH backup and restore time against bro_audit_log's hash chain AND its Ed25519
+SIGNED head anchor, so a tampered, truncated or UNANCHORED ledger is never
+archived and never restored. The signed anchor is what makes that verdict mean
+anything: the plaintext ``.head`` sidecar is rewritten by the same ``append()``
+that writes the records, so a keyless check proves only self-consistency - which
+is precisely what a forger produces. There is therefore no keyless mode here;
+"unanchored" and "tampered" are reported as the different facts they are. Whether
+a file IS a ledger is derived from its archived ``*.jsonl`` suffix, never from the
+attacker-supplied manifest — a crafted manifest cannot opt a ledger out of chain
+verification by declaring ``audit_chain: null``.
 
 The manifest itself may be signed by the offline operator (an Ed25519 detached
 signature over the canonical payload, verified through bro_signature's key
@@ -37,7 +42,12 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
 
-from bro_audit_log import AuditError, verify as verify_audit_chain, verify_signed_payload
+from bro_audit_log import (
+    AuditAnchorMissing,
+    AuditError,
+    verify as verify_audit_chain,
+    verify_signed_payload,
+)
 
 MANIFEST_NAME = "backup-manifest.json"
 # Like bro_audit_log's audit-head, this artifact type is deliberately unknown to
@@ -100,24 +110,59 @@ def _is_ledger(name: str) -> bool:
     return pathlib.PurePosixPath(name).suffix.lower() == ".jsonl"
 
 
-def _verify_ledger(path: pathlib.Path) -> int:
-    """Chain-verify an append-only ledger; return its record count. A broken chain
-    fails closed."""
+def _anchor_keys(supplied: dict | None) -> dict:
+    """Trusted keys for every archived ledger's SIGNED head anchor.
+
+    There is deliberately no keyless mode. A ledger's plaintext ``.head`` sidecar is
+    rewritten by the same ``append()`` that writes its records, so an unkeyed
+    ``verify()`` proves only that the file is self-consistent - exactly what a
+    forger produces. Archiving or restoring on that basis would print GREEN over a
+    ledger nobody can vouch for. A registry that cannot be loaded is therefore a
+    refusal, not a downgrade.
+    """
+    if supplied is not None:
+        return supplied
+    from bro_signature import SignatureError, load_trusted_keys
     try:
-        return verify_audit_chain(path)
+        return load_trusted_keys()
+    except (SignatureError, OSError, ValueError) as exc:
+        raise BackupError(
+            "the operator-pinned trusted key registry cannot be loaded, so no archived "
+            "ledger's signed head anchor can be verified; refusing rather than falling "
+            f"back to the plaintext head the ledger's own writer controls: {exc}") from exc
+
+
+def _verify_ledger(path: pathlib.Path, anchor_keys: dict) -> int:
+    """Chain-verify an append-only ledger against its SIGNED head anchor; return its
+    record count. A broken chain fails closed, and so does an unanchored one - but
+    they are reported as the different facts they are."""
+    try:
+        return verify_audit_chain(path, keys=anchor_keys)
+    except AuditAnchorMissing as exc:
+        raise BackupError(
+            f"append-only ledger is UNANCHORED - it carries no signed head anchor, so "
+            f"its integrity was never established (this is not a tamper report): "
+            f"{path}: {exc}") from exc
     except AuditError as exc:
         raise BackupError(f"append-only ledger failed chain verification: {path}: {exc}") from exc
 
 
-def _chain_count(path: pathlib.Path) -> int | None:
+def _chain_count(path: pathlib.Path, anchor_keys: dict) -> int | None:
     """Record count for a ``*.jsonl`` ledger, None for any other file."""
     if not _is_ledger(path.name):
         return None
-    return _verify_ledger(path)
+    return _verify_ledger(path, anchor_keys)
 
 
-def backup(sources: dict[str, pathlib.Path], dest: pathlib.Path, *, now: int) -> dict:
-    """Archive each named source under ``dest/<name>/`` with an integrity manifest."""
+def backup(sources: dict[str, pathlib.Path], dest: pathlib.Path, *, now: int,
+           anchor_keys: dict | None = None) -> dict:
+    """Archive each named source under ``dest/<name>/`` with an integrity manifest.
+
+    ``anchor_keys`` is the trusted key registry each archived ledger's signed head
+    anchor is verified against; when omitted it is loaded from the operator pin.
+    There is no way to ask for the keyless check.
+    """
+    anchor_keys = _anchor_keys(anchor_keys)
     dest = dest.expanduser()
     if dest.exists() and any(dest.iterdir()):
         raise BackupError(f"backup destination is not empty: {dest}")
@@ -139,7 +184,8 @@ def backup(sources: dict[str, pathlib.Path], dest: pathlib.Path, *, now: int) ->
                 "rel": rel,
                 "sha256": _sha256(absolute),
                 "bytes": absolute.stat().st_size,
-                "audit_chain": (lambda c: {"count": c} if c is not None else None)(_chain_count(absolute)),
+                "audit_chain": (lambda c: {"count": c} if c is not None else None)(
+                    _chain_count(absolute, anchor_keys)),
             })
         manifest["sources"][name] = {
             "kind": "file" if pathlib.Path(source).expanduser().is_file() else "dir",
@@ -253,10 +299,17 @@ def _load_manifest(archive: pathlib.Path, keys: dict | None, now: int | None) ->
 
 
 def verify_archive(archive: pathlib.Path, *, keys: dict | None = None,
-                   now: int | None = None) -> dict:
+                   anchor_keys: dict | None = None, now: int | None = None) -> dict:
     """Re-verify an archive against its manifest without restoring. Raises on any
-    checksum mismatch, missing file, broken ledger chain, unsafe/duplicate path,
-    or (with ``keys``) a missing/invalid operator signature on the manifest."""
+    checksum mismatch, missing file, broken or UNANCHORED ledger chain,
+    unsafe/duplicate path, or (with ``keys``) a missing/invalid operator signature
+    on the manifest.
+
+    ``keys`` gates the manifest's own operator signature and stays optional (an
+    unsigned manifest is a structural-only check). ``anchor_keys`` gates each
+    archived ledger's signed head anchor and is NOT optional - when omitted it is
+    loaded from the operator pin, and a registry that will not load is a refusal."""
+    anchor_keys = _anchor_keys(anchor_keys)
     archive = archive.expanduser()
     manifest = _load_manifest(archive, keys, now)
     for name, spec in manifest.get("sources", {}).items():
@@ -281,7 +334,7 @@ def verify_archive(archive: pathlib.Path, *, keys: dict | None = None,
                 if not isinstance(declared, dict) or not isinstance(declared.get("count"), int):
                     raise BackupError(
                         f"manifest does not declare a ledger chain for {name}/{rel}")
-                if _verify_ledger(archived) != declared["count"]:
+                if _verify_ledger(archived, anchor_keys) != declared["count"]:
                     raise BackupError(f"archived ledger chain length changed: {name}/{rel}")
             elif entry.get("audit_chain") is not None:
                 raise BackupError(
@@ -290,15 +343,17 @@ def verify_archive(archive: pathlib.Path, *, keys: dict | None = None,
 
 
 def restore(archive: pathlib.Path, targets: dict[str, pathlib.Path], *, force: bool = False,
-            keys: dict | None = None, now: int | None = None) -> dict:
+            keys: dict | None = None, anchor_keys: dict | None = None,
+            now: int | None = None) -> dict:
     """Restore named sources from a verified archive into their target directories.
 
-    Every file is checksum-verified, every ledger chain re-verified, and (with
-    ``keys``) the manifest's operator signature verified before any write. Existing
-    target files are not clobbered unless ``force`` is set.
+    Every file is checksum-verified, every ledger chain re-verified against its
+    SIGNED head anchor, and (with ``keys``) the manifest's operator signature
+    verified before any write. Existing target files are not clobbered unless
+    ``force`` is set.
     """
     archive = archive.expanduser()
-    manifest = verify_archive(archive, keys=keys, now=now)
+    manifest = verify_archive(archive, keys=keys, anchor_keys=anchor_keys, now=now)
     restored: dict[str, int] = {}
     for name, target in targets.items():
         spec = manifest.get("sources", {}).get(name)

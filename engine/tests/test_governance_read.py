@@ -45,8 +45,8 @@ from _operator_pin import use_operator_pin
 # Helper functions and constants only — importing a TestCase from another module would
 # re-run that module's whole suite under this one's name.
 from test_orchestration_runtime import (AGENT, AUTHORITIES, RUN_CMD, VERIFIER_AGENT,
-                                        VERIFIER_ROLE, build_evidence, task_contract,
-                                        verification_contract)
+                                        VERIFIER_ROLE, build_evidence, head_binding,
+                                        task_contract, verification_contract)
 
 EVENT_SCHEMA = json.loads((ROOT / "schemas" / "evidence-event.schema.json").read_text(encoding="utf-8"))
 RECEIPT_SCHEMA = json.loads((ROOT / "schemas" / "verifier-receipt.schema.json").read_text(encoding="utf-8"))
@@ -348,6 +348,7 @@ class GovernanceMirrorTests(unittest.TestCase):
             "tests": [{"command": list(document["payload"]["command"]), "status": "passed",
                        "evidence_event_id": refs[1], "execution_receipt_id": receipt_id}],
             "evidence_event_ids": refs, "open_risks": [], "rollback_ready": True,
+            **head_binding(self.store, task_id),
             "nonce": uuid.uuid4().hex,
             "issued_at_epoch": now, "expires_at_epoch": now + 3600,
         }

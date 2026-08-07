@@ -20,14 +20,16 @@
 
 | Item | Engine ticket | Severity | Status | Needs an Owner secret? | One-line defect |
 |---|---|---|---|---|---|
-| **O-1** | `L-6` / `H-6-protected-set-gaps` | HIGH | OPEN | no | `assert_no_bytecode_shadow` has **zero callers** and the wall is not run with `-B` |
-| **O-2** | *(none — untracked engine-side)* | MEDIUM | OPEN | no | the signed audit-head anchor has **no producer**, and every production `verify()` is called without keys |
-| **O-3** | `M-4` | MEDIUM | OPEN | **yes** (operator-signed session artifact) | conductor session token is implemented but `require_conductor_session_token` defaults to **false** and is absent from the shipped policy |
-| **O-4** | `L-8` | LOW | OPEN | no | control-room command actor is a **string comparison on caller-supplied JSON** |
-| **O-5** | `L-4` | LOW | OPEN | no | the evidence high-water mark lives on the filesystem and is **not bound into the signed completion manifest** |
+| **O-1** | `L-6` / `H-6-protected-set-gaps` | HIGH | OPEN | no | the gate is now called on every digest-trusting path and the hook interpreters run `-B`; what stays open is the *read* half — CPython imports an existing `.pyc` before any Python check can run |
+| **O-2** | `H-4-forgeable-audit-trail` (fix #1) | MEDIUM | OPEN | no | `append()` now attaches a signed head anchor and both production verifiers require one; OPEN until the Owner provides the signing custody — without it every ledger is honestly **UNANCHORED** and refused |
+| **O-3** | `M-4` | MEDIUM | OPEN | **yes** (operator-signed session artifact) | code now fails closed and the shipped policy requires the token; OPEN until the Owner mints the `conductor-session` artifact and exports `BRO_CONDUCTOR_SESSION_TOKEN` |
+| **O-4** | `L-8` | LOW | OPEN | no | conductor actor is now signature-verified and an owner actor is refused by name; OPEN until an owner-authority artifact type + schema signature field exist |
+| **O-5** | `L-4` | LOW | OPEN | **yes** (operator-signed `evidence-floor-anchor`) | the manifest binding is **now required and enforced**; the residual is a wiped-and-re-provisioned floor, which only an owner-signed anchor can distinguish from a first sighting |
 
-**All five are engine-side code remediation, not credentials** — with the single exception of O-3, whose
-*deployment* half needs the Owner to mint an operator-signed artifact. None of them is closeable by editing
+**All five are engine-side code remediation, not credentials** — with the exception of O-3, whose
+*deployment* half needs the Owner to mint an operator-signed artifact, and of the residual half of O-5,
+whose "was this floor wiped or is this task new?" question no code can answer without an Owner-signed
+`evidence-floor-anchor` (see §1 O-5; the code half of O-5 is built and enforced). None of them is closeable by editing
 CI, `tauri.conf.json` or `docs/`; each is an audited change under `engine/` (the golden rule: *deliberate,
 tested, never rushed*), on its own branch/PR with Owner approval.
 
@@ -49,58 +51,135 @@ tested, never rushed*), on its own branch/PR with Owner approval.
 - **Status:** OPEN
 - **Owner secret needed:** no
 - **Engine ticket:** `engine/AUDIT/tickets/H-6-protected-set-gaps.md` (also `L-6`); independent audit `D-09`
-- **Engine code:** `engine/runtime/bro_protected.py` — `assert_no_bytecode_shadow` (raises
-  `ProtectedScopeError` for `__pycache__` / `.pyc` / `.pyo` under a digest root)
-- **Closure requires:** (a) a fail-closed call to `assert_no_bytecode_shadow(ROOT, load_protected_manifest(ROOT))`
-  on the wall's startup path in `engine/runtime/bro_hook.py`, alongside `_bind_workspace`; (b) the hook
-  commands in `engine/.claude/settings.json` invoking `python -B …` (or exporting
-  `PYTHONDONTWRITEBYTECODE=1` **plus** a `sys.dont_write_bytecode` self-check); (c) reordering/scoping the
-  `python -m compileall -q runtime tools tests` step so it does not leave caches under a digest root before
-  `tools/bro_live_validate.py` spawns the wall; (d) a regression test that drops a stray `.pyc` beside a
-  control-plane module and asserts the wall refuses to start.
+- **Engine code:** `engine/runtime/bro_protected.py` — `assert_no_bytecode_shadow` /
+  `bytecode_shadow_offenders` (raise `ProtectedScopeError` for `__pycache__` / `.pyc` / `.pyo` under a
+  digest root), called from `verify_control_plane_digest`; `engine/runtime/bro_control_plane.py` —
+  `_bind_workspace` and `_settle_execution_tool`; `engine/.claude/settings.json` — the wired hook
+  commands; `engine/tests/test_bytecode_shadow.py` — the regression tests
+- **Closure requires:** (a) ✅ fail-closed calls to `assert_no_bytecode_shadow` on every path that
+  trusts the control-plane digest; (b) ✅ the hook commands in `engine/.claude/settings.json` invoking
+  `python -B` on **every** `||` interpreter alternative; (c) ◑ reordering/scoping the
+  `python -m compileall -q runtime tools tests` step in `.github/workflows/ci.yml` and
+  `engine/.github/workflows/verify.yml` so it does not leave caches under a digest root before
+  `engine/tools/bro_live_validate.py` spawns the wall — **not done, out of this task's scope**;
+  (d) ✅ regression tests that plant bytecode beside a control-plane module and assert the wall
+  refuses; (e) ❌ the *read* half of the hole below, which is **not closeable from inside Python**
+  and needs an owner decision on how the wall's interpreter is launched.
 
 **The defect in full.** `is_digest_member` deliberately excludes `__pycache__`, `.pyc` and `.pyo` from the
-control-plane digest, so a forged bytecode file changes nothing the digest can see. `assert_no_bytecode_shadow`
-is the compensating control — and it is called from **nowhere**: a repo-wide grep finds only its own
-definition and comments. The only mitigation in force is `sys.dont_write_bytecode = True` set at *import time*
-inside `bro_protected.py`, i.e. after the interpreter has already been free to import (and mint bytecode for)
-`bro_hook`, `bro_control_plane`, `bro_policy`, `bro_audit_log`, `bro_completion`, `bro_contracts` and
-`bro_release_v3`. Not one hook command in `engine/.claude/settings.json` passes `-B`; neither does the
-subprocess spawn in `engine/tools/bro_live_validate.py`. The digest is verified on every PreToolUse and
-PostToolUse decision (`_bind_workspace` ← `authorize_tool` / `settle_execution_tool`), so a shadowed `.pyc`
-subverts **every** gate decision while the digest still reports intact.
+control-plane digest, so a forged bytecode file changes nothing the digest can see.
+`assert_no_bytecode_shadow` is the compensating control — and it used to be called from **nowhere**: a
+repo-wide grep found only its own definition and comments. The only mitigation in force was
+`sys.dont_write_bytecode = True` set at *import time* inside `bro_protected.py`, i.e. after the interpreter
+had already been free to import (and mint bytecode for) `bro_hook`, `bro_control_plane`, `bro_policy`,
+`bro_audit_log`, `bro_completion`, `bro_contracts` and `bro_release_v3`. Not one hook command in
+`engine/.claude/settings.json` passed `-B`; neither does the subprocess spawn in
+`engine/tools/bro_live_validate.py`.
 
-**Why it is not closed here.** `engine/**` is a security perimeter and is read-only to this task; and (c)
-interacts with two CI workflows (`.github/workflows/ci.yml` and `engine/.github/workflows/verify.yml`) that
-currently run `compileall` immediately before the live-wall validation, so enabling the assertion without
-reordering them turns CI red for the *right* reason in the *wrong* place. That coupling is exactly why the
-ledger calls it "keystone-class". Flag: an accepted **HIGH** should not be carried to the end of Phase 10 —
+**What this pass changed.**
+
+1. `verify_control_plane_digest` now asserts no bytecode shadow **before** it compares digests. That is the
+   one function every digest-trusting path goes through, so no caller — including one that does not exist
+   yet — can trust a digest without the check.
+2. `_bind_workspace` asserts it again, first, before a binding is loaded or any git subprocess is spawned,
+   so the wall refuses on its own authority at its own entry point.
+3. `_settle_execution_tool` asserts it too. PostToolUse settlement runs in a **second** process, never
+   reaches `_bind_workspace`, and passes `control_plane_digest=None` to the lease — so it inherited no
+   check from either. (Correction to the earlier text below and to the independent audit's wording: the
+   digest is verified on PreToolUse only, **not** on PostToolUse.)
+4. Every `||` alternative of every hook command in `engine/.claude/settings.json` now launches
+   `python -B` / `python3 -B` / `py -3 -B`. The interpreter token stays first, so
+   `engine/tools/bro_live_validate.py`'s `command.split()[0]` wiring probe is unaffected.
+5. `engine/tests/test_bytecode_shadow.py` proves the premise (a hand-forged timestamp-valid `.pyc`
+   really executes in place of its source **and** leaves the digest bit-identical), proves each of the
+   three call sites and the `-B` wiring, and pins the import ordering: importing `bro_hook` without `-B`
+   mints caches for 19 runtime modules **including `bro_protected` itself**, whose cache CPython writes
+   before the module body sets `sys.dont_write_bytecode`.
+
+**What is still open, precisely.** `-B` and `sys.dont_write_bytecode` stop bytecode being **written**.
+Neither stops CPython **reading** an existing `.pyc`, and CPython has no flag that does. Imports happen
+before any Python-level assertion can run, so a cache forged *before* the wall process starts shadows the
+very module that would detect it — including `bro_protected` itself. The gate therefore raises the cost of
+the attack (the shadow must be planted before the process starts, and any leftover cache is now a hard
+refusal rather than silence) without eliminating it. Closing it needs something outside the interpreter:
+launching the wall where no cache under a digest root can be read (e.g. `PYTHONPYCACHEPREFIX` pointed
+outside the tree, or a read-only/freshly-cleaned control plane), or a pre-flight check in the launcher
+before the interpreter starts. That is an owner/deployment decision, so the item stays **OPEN**.
+
+**Also open:** item (c). The CI `compileall` step still runs before `engine/tools/bro_live_validate.py`,
+which now means the live-wall probe runs against a tree with `runtime/__pycache__` present. The probe
+asserts only that the wall **denies**, and it still denies (with the bytecode reason instead of the scope
+reason), so CI does not turn red — but the live-wiring proof is no longer proving what it was written to
+prove, and `.github/**` is outside this task's scope. In the engine's own repository, where
+`engine/tests/test_full_execution_transaction_e2e.py` and `engine/tests/test_hooks_subprocess.py` are not
+monorepo-skipped, those suites run the wall against the real root and **will** need the same reordering
+plus a clean cache. Flag retained: an accepted **HIGH** should not be carried to the end of Phase 10 —
 the independent audit's `D-09` recommends pulling it forward.
 
-### O-2 · audit-head anchor is dead code
+### O-2 · audit-head anchor (was dead code; now produced and required)
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Owner secret needed:** no
-- **Engine ticket:** *none — this item is untracked engine-side; it exists only in the outer repo's docs*
-- **Engine code:** `engine/runtime/bro_audit_log.py` — `head_anchor_payload`, `attach_head_anchor`,
-  `_check_anchor_against_chain`, and `verify(path, *, keys=None, now=None)` whose signed-anchor branch is
-  guarded by `if keys is not None`
-- **Closure requires:** a real producer — operator tooling (`engine/tools/broctl.py` is the natural home; it
-  already documents `ANCHOR_AUTHORITIES`) that calls `head_anchor_payload`, signs it out-of-band with an
-  `evidence-recorder` or `operator-root` Ed25519 key, and installs it via `attach_head_anchor` — **plus**
-  every production verifier passing `keys=…` so the anchor branch actually executes:
-  `engine/tools/bro_monitor.py` (`verify_chain(ledger)`), `engine/tools/bro_backup.py`
-  (`verify_audit_chain(path)`), and the procedure in `engine/docs/OPERATOR_RUNBOOK.md`.
+- **Owner secret needed:** no CI secret — but a **deploy-time signing custody the Owner must provide**
+  (see *What the Owner must provide* below). Nothing here is closeable by inventing a key.
+- **Engine ticket:** `engine/AUDIT/tickets/H-4-forgeable-audit-trail.md` — fix #1 (*"sign the audit head with
+  a recorder/operator Ed25519 authority … and verify that signature inside `verify()`"*) is exactly this
+  item. **Correction to §0's provenance note above:** O-2 is *not* untracked engine-side; only the outer
+  repo's `O-2` label is absent from `engine/`. H-4 fixes #2 and #3 (ledger-ness from the `*.jsonl` suffix,
+  signed backup manifest) were already implemented in `engine/tools/bro_backup.py`.
+- **Engine code:** `engine/runtime/bro_audit_log.py` — `append` (attaches the anchor),
+  `anchor_custody` / `anchor_custody_configured` / `_signer_argv` (owner custody),
+  `_sign_anchor` / `_install_anchor` / `_check_anchor_monotonic`, `head_anchor_payload`,
+  `attach_head_anchor`, `_check_anchor_against_chain`, `verify(path, *, keys=None, now=None)`, and the
+  refusal types `AuditAnchorMissing` / `AuditAnchorCustodyMissing`; the two production verifiers
+  `engine/tools/bro_monitor.py` (`_anchor_state` → `verify_chain(ledger, keys=…)`) and
+  `engine/tools/bro_backup.py` (`_anchor_keys` → `verify_audit_chain(path, keys=…)`)
+- **Closure requires:** the Owner's signing custody in the deployment environment, and an operator
+  procedure in `engine/docs/OPERATOR_RUNBOOK.md`. The code half is done; the custody half cannot be done by
+  this repository and must not be faked.
 
-**The defect in full.** The append-only ledger's tamper-evidence terminates in a head pointer. The signed
-anchor (`.head.sig`, artifact type `audit-head`) is the thing that makes that pointer unforgeable — and
-nothing ever writes one: `head_anchor_payload` and `attach_head_anchor` have **zero callers** repo-wide.
-Meanwhile every caller of `verify()` passes no keys, so verification falls through to the **plaintext**
-`.head` branch — and that plaintext head is rewritten by the ledger's own `append()`. An attacker who can
-write the ledger can rewrite the head to match, and `verify()` says the chain is intact. `.head` forgery is
-open, and the code that would close it is inert. This is the one item with no engine-side ticket, so it is
-also the one most likely to be lost.
+**The defect, and what changed.** The append-only ledger's tamper-evidence terminated in a head pointer. The
+signed anchor (`.head.sig`, artifact type `audit-head`) is what makes that pointer unforgeable — and nothing
+ever wrote one: `head_anchor_payload` and `attach_head_anchor` had **zero callers** repo-wide. Meanwhile both
+production verifiers — `bro_monitor.verify_chain(ledger)` and `bro_backup.verify_audit_chain(path)` — passed
+no keys, so verification fell through to the **plaintext** `.head` branch, and that plaintext head is
+rewritten by the ledger's own `append()`. A party who could write the ledger could drop records, recompute
+the chain, rewrite the head, and `verify()` reported the chain intact.
+
+Now: `append()` assembles the anchor payload itself, hands it to the Owner's external signing command, and
+installs the result only after verifying it against the operator-pinned trusted key registry **and** against
+the chain on disk — refusing any document whose payload is not the one the ledger assembled. `verify()` with
+keys REQUIRES that anchor, keyed on the existence of the ledger *file* (an emptied ledger with both sidecars
+deleted used to return a clean `0`). Both production verifiers now pass keys, and neither has a keyless
+mode: for `bro_backup` a key registry that will not load is a refusal, not a downgrade.
+
+**Unanchored is not tampered.** They are separate refusal types — `AuditAnchorMissing` versus a plain
+`AuditError` — because they call for different actions: provision custody versus incident response.
+`bro_monitor` reports a three-valued `shadow.anchor.state` (`signed` / `unanchored` / `invalid` /
+`keys-unavailable`); every non-`signed` state is ATTENTION, but the operator is told which.
+
+**What the Owner must provide (deploy-time, not a CI secret).** No key is compiled in and none is invented;
+an anchor signed with a key that lives in the repository would prove nothing, so a signing command resolving
+inside `engine/` is refused by name. The Owner must export, from outside this repository:
+
+| Variable | What it is |
+|---|---|
+| `BRO_AUDIT_ANCHOR_SIGNER` | Absolute path to a signing command (or a JSON argv array whose first element is that path). It reads one canonical `audit-head` payload as JSON on stdin and writes a `{payload, signature}` JSON document on stdout. It **must** run under a principal that cannot write the audit ledger, **must not** live inside `engine/`, and **must** refuse to sign an anchor whose `count` is below the last one it signed (anti-rollback; `previous_anchor_sha256` is carried in the payload so it can chain its own decisions). |
+| `BRO_AUDIT_ANCHOR_KEY_ID` | The key id that command signs with, registered in the operator-pinned trusted-key registry under an `evidence-recorder` or `operator-root` authority. The private half never enters the engine process. |
+
+Until both are set, ledgers are written **UNANCHORED** — the wall keeps running, but every keyed `verify()`
+refuses them by name and prints exactly this list. That is deliberate: a silent green over an unanchored
+ledger is the defect this item exists to remove.
+
+**What this does NOT buy.** It does not defend against a party who can also make the Owner's signing command
+sign arbitrary heads; that boundary is the signer's custody, which is why separate-principal execution and
+signer-side anti-rollback are stated as requirements rather than assumed. The install-side monotonic check in
+`_check_anchor_monotonic` is defence in depth only — a writer who drops a `.head.sig` in directly bypasses it.
+
+**Status stays OPEN** because the Owner's custody is not provisioned, so no deployment is anchored yet.
+Tests: `engine/tests/test_audit_head_anchor.py` (26 cases, including a ledger that is appended to, has its
+plaintext head rewritten over dropped records, and must be REFUSED — the exact forgery that previously
+verified green).
 
 ### O-3 · conductor session token off by default
 
@@ -113,11 +192,12 @@ also the one most likely to be lost.
   "BRO_CONDUCTOR_SESSION_TOKEN"` (a *path* to a signed artifact), `verify_conductor_session_token`, and the
   `require_conductor_session_token` flag read from `engine/.bro/policy.json` with default **`False`**;
   consumed by `authorize_conductor_stop` in `engine/runtime/bro_completion.py`
-- **Closure requires:** setting `"require_conductor_session_token": true` in `engine/.bro/policy.json` (that
-  file is inside the protected digest, so the requirement cannot be switched off by environment); an Owner
-  deploy step that mints and rotates the operator-signed `conductor-session` artifact and exports
-  `BRO_CONDUCTOR_SESSION_TOKEN` to the harness; and tests for the required-and-absent, mismatched-binding
-  and expired branches — **there is currently no test in `engine/tests/` that references either symbol.**
+- **Closure requires:** ~~setting `"require_conductor_session_token": true` in `engine/.bro/policy.json`~~
+  **(done)**; ~~tests for the required-and-absent, mismatched-binding and expired branches~~ **(done —
+  `engine/tests/test_conductor_session_token.py`, 17 tests)**. What remains is the half only the Owner can
+  do: a deploy step that mints and rotates the operator-root-signed `conductor-session` artifact and exports
+  `BRO_CONDUCTOR_SESSION_TOKEN` to the harness. **Until then the conductor stop exemption is REFUSED, by
+  design** — see "what the Owner must provide" below.
 
 **The defect in full.** The verifier exists and is wired into `authorize_conductor_stop`, but it fails closed
 only when a token is *presented and bad*. With the flag absent from the shipped policy (it is not merely
@@ -126,6 +206,53 @@ only when a token is *presented and bad*. With the flag absent from the shipped 
 rests on `CONDUCTOR_ROLE`/`CANONICAL_CONDUCTOR_ID` read from the environment: anything that can set two
 environment variables can authorize a conductor stop. The `identity_basis` note is honestly recorded in the
 audit log, which is what keeps this MEDIUM rather than HIGH.
+
+**Verified (2026-08-07).** The diagnosis was confirmed exactly as written: the key was absent from
+`engine/.bro/policy.json`, the read defaulted to `False`, and a repo-wide grep found no test in
+`engine/tests/` referencing `require_conductor_session_token` or `verify_conductor_session_token`.
+
+**What changed in this pass (code half).**
+
+- `engine/.bro/policy.json` now declares `"require_conductor_session_token": true`. The file is inside the
+  protected control-plane digest, so the requirement cannot be unset by an environment variable.
+- `engine/runtime/bro_policy.py` gained `conductor_session_token_required(root)`. **An undeclared flag is now
+  REQUIRED, not waived** — an absent key, a non-boolean value, or an unreadable policy all fail closed. Only
+  an explicit boolean `false` waives it, and it is reported as an `EXPLICITLY waives` waiver so
+  `authorize_conductor_stop` writes that word into the append-only ledger instead of a note about the
+  environment.
+- The refusal quotes `CONDUCTOR_SESSION_PROVISIONING` verbatim: the exact artifact payload shape, the
+  registry entry, and the env var. Nothing here mints a token and no seed key is shipped — the check can only
+  be satisfied by the Owner's offline operator-root key.
+- The policy is now read from the `root` passed by the caller, not a module constant, so the requirement is
+  testable against a fixture root.
+
+**Consequence, deliberately accepted:** with the shipped policy fail-closed and no Owner artifact deployed,
+`authorize_conductor_stop` refuses every conductor stop, naming what is missing. That is the honest state of
+an unverifiable identity; it is not a regression to be "fixed" by re-defaulting the flag.
+
+**Why it is still OPEN.** The credential half is the Owner's and is not in the repository. **This item is not
+closeable by any agent.**
+
+**Exactly what Gev must provide.** Mint, offline with the operator-root key, an artifact of the form
+
+```json
+{"payload": {"schema": 1, "artifact_type": "conductor-session", "key_id": "<operator-root key_id>",
+             "session_id": "<the harness session id>", "agent_id": "bro-000", "role": "bro",
+             "issued_at_epoch": 0, "expires_at_epoch": 0},
+ "signature": "<ed25519 hex over the canonical payload>"}
+```
+
+with that `key_id` listed `active` in the operator-signed `engine/config/trusted-keys.json` (an
+`operator-root` authority key is already allowed to sign `conductor-session`), then export
+`BRO_CONDUCTOR_SESSION_TOKEN=<path to that file>` in the harness environment, and rotate it per session.
+
+**Test evidence:** `engine/tests/test_conductor_session_token.py` — the shipped policy declares the flag;
+absent / non-boolean / unreadable policy all require; only an explicit `false` waives; required-and-absent
+refuses and names the env var, the artifact type and the registry; an operator-signed token bound to the
+session verifies (real Ed25519 against an operator-signed registry); wrong-authority, tampered,
+wrong-session/agent/role, expired, wrong-artifact-type and unreadable tokens all refuse; and a bad token
+refuses even when the policy waives the requirement. `engine/tests/test_completion_gate.py` carries the
+matching stop-gate refusal. Every one of these checks was deleted once and the matching test went red.
 
 ### O-4 · control-room actor is self-asserted
 
@@ -141,7 +268,8 @@ audit log, which is what keeps this MEDIUM rather than HIGH.
 - **Closure requires:** promoting the control-room command to a signed artifact — register a
   `control-room-command` type in `engine/runtime/bro_signature.py`'s authority registry bound to the
   owner/bro authorities, extend `control-room-command.schema.json` with `artifact_type` / `key_id` and a
-  detached signature, and verify it before `validate_command_intent` can stamp `"valid": true`.
+  detached signature, and verify it before `validate_command_intent` can stamp `"valid": true`. **The
+  conductor half of this is done** (below); the owner half needs those three out-of-module changes.
 
 **The defect in full.** The check is a string comparison on data the caller supplied. Anyone who can reach the
 control-room API can claim to be `owner-gev`, and the API then echoes the claimed identity back inside a
@@ -150,30 +278,98 @@ The downstream policy check `validate_control_room_command` (`engine/runtime/bro
 no signature verification either. LOW because reaching the API already implies significant access; it is
 nonetheless an unauthenticated identity claim inside the governance surface.
 
+**Verified (2026-08-07).** Confirmed as written, including the downstream half: `validate_control_room_command`
+checks the registry, the state and the expiry, and verifies no signature. `bro_orchestration_runtime._validate_actor`
+carries the same self-assertion pattern (out of this pass's scope).
+
+**What changed in this pass.** `validate_command_intent` no longer compares the claim; it demands proof, via
+a new `_prove_command_actor`. There is no return path for an unproven actor — every branch raises, so
+`"valid": true` is unreachable without a verified signature.
+
+- A command claiming `bro`/`bro-000` must present the operator-root-signed `conductor-session` artifact of
+  O-3/M-4 as the new `actor_attestation` argument. It is verified with `verify_artifact` against the
+  runtime's trusted-key registry (authority binding, key status, key validity window, Ed25519 signature) and
+  must bind `role` and `agent_id` to the claimed actor with an unexpired integer `expires_at_epoch`. Reusing
+  the artifact the Owner already has to mint for O-3 means no new artifact type is invented by the code that
+  consumes it.
+- The attestation is judged against the **wall clock**, not the caller-supplied `now_epoch` every other view in that module takes: whether a key and a session credential are live right now is not the caller's question to ask, and a backdated clock would otherwise revive an expired identity.
+- A runtime constructed without trusted keys refuses rather than accepting the claim unverified.
+- The reply now carries `actor_identity` (`operator-signed-conductor-session`), `actor_key_id`,
+  `actor_session_id` and `actor_attestation_sha256` — what verified the identity, not what was claimed. No
+  value exists meaning "the caller said so".
+- A command claiming `owner`/`owner-gev` is **refused by name**, and the refusal states the three changes
+  that would close it. It is not validated on its say-so.
+
+**Known, documented limit.** A `conductor-session` artifact proves the caller holds an operator-issued
+session credential; it is not bound to the individual command, so within its validity window it authorises
+any command that caller could already reach. That is a session credential's semantics and a strictly smaller
+claim than "anyone who can spell `bro-000`". Per-command non-repudiation needs the signed
+`control-room-command` artifact type.
+
+**Why it is still OPEN.** The owner actor cannot be verified at all: `bro_signature.ARTIFACT_AUTHORITY` has
+no owner-bound artifact type, `engine/schemas/control-room-command.schema.json` has no signature field, and
+no trusted key may sign one — and `_parse_key` rejects any registry entry naming an artifact type that is not
+in `ARTIFACT_AUTHORITY`, so this cannot be provisioned from configuration alone. All three files are outside
+this change. `bro_orchestration_runtime._validate_actor` is also untouched.
+
+**Test evidence:** `engine/tests/test_control_room_api.py` (`ControlRoomActorProofTests`, real Ed25519
+against an operator-signed registry) — a signed session proves the conductor actor; missing attestation,
+owner actor, wrong authority, tampered payload, wrong agent/role, expired, wrong artifact type, malformed
+document, and a keyless runtime all refuse; and a proven actor does not soften the state or scope gates.
+Every one of these checks was deleted once and the matching test went red.
+
 ### O-5 · evidence high-water not bound into the signed manifest
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Owner secret needed:** no
+- **Progress:** the manifest-binding half is built and enforced; what remains needs an Owner key (below)
+- **Owner secret needed:** yes — an operator-root-signed `evidence-floor-anchor` artifact (an Owner
+  deploy step, not a CI secret). This corrects the earlier "no": the binding half needed no secret, the
+  floor-reset half cannot be closed without one.
 - **Engine ticket:** `engine/AUDIT/tickets/LOW-findings.md` § L-4
 - **Engine code:** `engine/runtime/bro_evidence.py` (`min_head_sequence` / `EvidenceHead.head_sequence`,
-  staleness rejection in `load_head`, propagation through `validate_chain`) versus
-  `engine/runtime/bro_completion.py` — `_check_manifest`, whose strict required-field set contains **no**
-  `evidence_head_sha256` and no `head_sequence`; mirrored in
+  staleness rejection in `load_head`, propagation through `validate_chain`) and
+  `engine/runtime/bro_completion.py` — `_check_manifest` (strict required-field set),
+  `validate_evidence_chain`, `_head_document_digest`, `_require_store_agrees_with_head`,
+  `_require_establishable_mark`, `_signed_floor_anchor`, `_head_floor_dir` / `_load_head_floor` /
+  `_advance_head_floor`; the manifest shape is mirrored in
   `engine/schemas/completion-manifest.schema.json`
-- **Closure requires:** adding `evidence_head_sha256` and/or `head_sequence` to the builder-signed completion
-  manifest (both the `_check_manifest` required set and the JSON schema — the shape is enforced strictly, so
-  this is a deliberate schema-breaking change), feeding it as `min_head_sequence` into `_validate_evidence` /
-  `validate_chain` instead of `None`, and mirroring the binding into the verifier receipt.
+- **Closure requires:** *(done)* `evidence_head_sha256` + `head_sequence` in the strict `_check_manifest`
+  required set, fed through to `validate_chain` instead of `None`, checked for exact equality against the
+  store's signed head, mirrored onto the verifier-receipt chain check and into the persisted completion
+  proof. *(remaining, Owner)* an operator-root-signed `evidence-floor-anchor` presented at
+  `BRO_EVIDENCE_FLOOR_ANCHOR`, the `evidence-floor-anchor` → `operator-root` entry in
+  `engine/runtime/bro_signature.py`'s `ARTIFACT_AUTHORITY`, and the same two fields added to
+  `engine/schemas/completion-manifest.schema.json` (`required` + `properties`, since
+  `additionalProperties` is `false`) — that file was outside the editing scope of the pass that
+  landed the runtime half, so the schema currently under-describes the enforced shape.
 
-**The defect in full.** The anti-rollback property — "evidence cannot be replayed at an older head" — is
-carried today by an on-disk floor directory (`engine/runtime/bro_completion.py`: `_head_floor_dir`,
+**The defect in full.** The anti-rollback property — "evidence cannot be replayed at an older head" — was
+carried entirely by an on-disk floor directory (`engine/runtime/bro_completion.py`: `_head_floor_dir`,
 `_load_head_floor`, `_advance_head_floor`, overridable by the `BRO_EVIDENCE_HEAD_FLOOR` environment
-variable). Every production entry point passes `min_head_sequence=None`, so nothing about the high-water mark
-is signed: it is filesystem state, and whoever can write the store can move it. Binding the mark into the
-manifest the builder already signs makes the floor cryptographic rather than custodial. This is the same class
+variable). Every production entry point passed `min_head_sequence=None`, so nothing about the high-water mark
+was signed: it was filesystem state, and whoever could write the store could move it. This is the same class
 of finding as the desktop side's Windows anti-rollback work
 (`apps/desktop/src-tauri/win-live/WINDOWS_ANTIROLLBACK_HARDENING.md`).
+
+**What is now enforced.** The builder-signed manifest must name exactly one evidence head — its monotonic
+`head_sequence` and the sha256 of the signed head *document* — and the store must hold that head and no
+other, so the mark is carried in signed bytes rather than only in a directory. The binding is mirrored onto
+the verifier receipt (which is already hash-bound to the manifest) and persisted into the hash-chained
+transition record, which lives in a different store from the evidence it polices: a later completion naming
+a lower `head_sequence` than one already recorded there is a rollback an auditor can see. Independently of
+any bookkeeping file, the store's own recorder-signed events must not reach past the presented chain, so the
+classic truncation rollback is refused even with the floor directory deleted — the surplus events are signed
+by an authority the builder does not hold and cannot be re-minted. Each floor mark now records the digest of
+the head it was taken against, and two different signed heads sharing one sequence is a refusal.
+
+**What is NOT closed, and why.** A floor that is deleted **and re-provisioned** reads exactly like a task
+being seen for the first time. Nothing the runtime can reach distinguishes them, so a manifest binding a
+re-anchored head (`head_sequence` > 1) with no durable mark behind it is **refused by name** rather than
+defaulted to zero, and the refusal states what the Owner must provide. Presenting
+`BRO_EVIDENCE_FLOOR_ANCHOR` today also fails closed, because `evidence-floor-anchor` is deliberately absent
+from the signature module's authority registry: registering it without an Owner-held offline key would mean
+inventing an authority. No key is compiled in and no seed is invented.
 
 ---
 

@@ -111,36 +111,87 @@ def is_conductor(state: State) -> bool:
 
 CONDUCTOR_SESSION_TOKEN_ENV = "BRO_CONDUCTOR_SESSION_TOKEN"
 CONDUCTOR_SESSION_ARTIFACT = "conductor-session"
+CONDUCTOR_SESSION_POLICY_KEY = "require_conductor_session_token"
+
+# Every refusal names this. A refusal that does not say what is missing is a
+# refusal somebody eventually "fixes" by deleting the check, and this particular
+# check can only be satisfied by an artifact the owner holds the key for. Nothing
+# in this repository can mint it, and nothing here ships a seed that would let a
+# process satisfy its own identity requirement.
+CONDUCTOR_SESSION_PROVISIONING = (
+    "the owner must mint an operator-root-signed `conductor-session` artifact "
+    "({\"payload\": {\"artifact_type\": \"conductor-session\", \"key_id\": <operator key>, "
+    "\"session_id\": <this session>, \"agent_id\": \"" + CANONICAL_CONDUCTOR_ID + "\", "
+    "\"role\": \"" + CONDUCTOR_ROLE + "\", \"expires_at_epoch\": <int>}, \"signature\": <ed25519 hex>}), "
+    "with that key_id listed ACTIVE in config/trusted-keys.json, and export "
+    + CONDUCTOR_SESSION_TOKEN_ENV + "=<path to that artifact> in the harness environment"
+)
+
+
+def conductor_session_token_required(root: pathlib.Path = ROOT) -> tuple[bool, str]:
+    """Is a signed conductor session token mandatory? Absence is not permission.
+
+    The flag used to be read with a default of ``False`` while the key itself was
+    absent from the shipped policy, so the requirement was off in every
+    deployment and the only thing between two environment variables and a
+    conductor authorisation was a documented deploy step nobody had performed.
+
+    An UNDECLARED requirement is now a REQUIRED one. A control-plane file that
+    forgot to say anything is not an owner decision to trust the environment, and
+    neither is a value of the wrong JSON type. Only an explicit boolean is
+    honoured, and an explicit ``false`` is reported as the waiver it is, so
+    ``authorize_conductor_stop`` writes that word into the append-only ledger
+    instead of a soothing note about environment identity.
+
+    Raises OSError/ValueError when the protected policy cannot be read at all;
+    callers must treat that as a refusal, not as an absent requirement.
+    """
+    document = load_json(root / ".bro" / "policy.json")
+    if not isinstance(document, dict):
+        raise ValueError(".bro/policy.json is not a JSON object")
+    if CONDUCTOR_SESSION_POLICY_KEY not in document:
+        return True, (f"the protected policy does not declare "
+                      f"{CONDUCTOR_SESSION_POLICY_KEY!r}, and an undeclared requirement is "
+                      f"required rather than waived")
+    value = document[CONDUCTOR_SESSION_POLICY_KEY]
+    if not isinstance(value, bool):
+        return True, (f"{CONDUCTOR_SESSION_POLICY_KEY} must be a JSON boolean, got "
+                      f"{type(value).__name__!r}, so the requirement stands")
+    if value:
+        return True, "the protected policy requires a signed conductor session token"
+    return False, ("the protected policy EXPLICITLY waives the conductor session token, so "
+                   "conductor identity rests on environment variables alone")
 
 
 def verify_conductor_session_token(state: State, root: pathlib.Path = ROOT) -> tuple[bool, str]:
-    """M-4 hook: bind the conductor identity to a signed session token.
+    """M-4: bind the conductor identity to a signed session token.
 
     The conductor identity otherwise rests on plain environment variables
     (BRO_ROLE/BRO_AGENT_ID), which anyone controlling the harness environment can
-    set. This hook closes that when deployed:
+    set. This closes that:
 
     - A presented token (BRO_CONDUCTOR_SESSION_TOKEN, a path to a signed
       `conductor-session` artifact) MUST verify against the operator-signed
       trusted-key registry and bind to this session id, agent id and role, with
       an unexpired validity window; any failure denies (fail closed).
-    - `.bro/policy.json` may set `"require_conductor_session_token": true` to
-      make the token mandatory. The policy file lives inside the protected
-      control-plane digest, unlike the environment, so the requirement itself
-      cannot be switched off by unsetting an env var.
-    - With no token and no requirement the caller may proceed on env identity
-      alone, and the returned note says so — authorize_conductor_stop writes it
-      into the append-only audit ledger on every exemption stop.
+    - `.bro/policy.json` governs whether the token is mandatory, and the shipped
+      policy now says it is. That file lives inside the protected control-plane
+      digest, unlike the environment, so the requirement cannot be switched off
+      by unsetting an env var — and an absent key no longer reads as "off".
+    - The requirement can therefore only be satisfied by an artifact the owner
+      signs offline: see CONDUCTOR_SESSION_PROVISIONING, which is quoted verbatim
+      in the refusal so the missing artifact is named rather than guessed at.
     """
     try:
-        required = bool(load_json(POLICY_PATH).get("require_conductor_session_token", False))
+        required, requirement_note = conductor_session_token_required(root)
     except (OSError, ValueError) as exc:
-        return False, f"conductor session policy unreadable: {exc}"
+        return False, f"conductor session policy unreadable, refusing the exemption: {exc}"
     raw = os.getenv(CONDUCTOR_SESSION_TOKEN_ENV)
     if not raw:
         if required:
-            return False, "policy requires a signed conductor session token and none is presented"
-        return True, "no conductor session token presented; identity rests on environment"
+            return False, (f"no conductor session token presented and {requirement_note}; "
+                           f"to proceed, {CONDUCTOR_SESSION_PROVISIONING}")
+        return True, f"no conductor session token presented; {requirement_note}"
     from bro_signature import SignatureError, load_trusted_keys, verify_artifact
     try:
         document = json.loads(pathlib.Path(raw).read_text(encoding="utf-8"))

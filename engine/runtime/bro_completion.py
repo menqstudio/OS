@@ -184,7 +184,10 @@ def _external_dir(env_name: str) -> pathlib.Path:
 def validate_evidence_chain(task_id: str, event_ids: list[str],
                             root: pathlib.Path = ROOT, *, keys: dict | None = None,
                             store: pathlib.Path | None = None,
-                            min_head_sequence: int | None = None) -> str:
+                            min_head_sequence: int | None = None,
+                            expected_head_sequence: int | None = None,
+                            expected_head_digest: str | None = None,
+                            now: int | None = None) -> str:
     """Prove the submitted events are the whole chain, not a flattering prefix.
 
     The previous implementation checked backward linkage over a caller-supplied
@@ -204,6 +207,15 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
     for the signed head's monotonic ``head_sequence``. A genuinely signed but
     OLDER head — the retained anchor of a self-consistent truncated chain — is
     rejected as stale.
+
+    O-5 (the signed half): ``expected_head_sequence`` and ``expected_head_digest``
+    come out of the BUILDER-SIGNED completion manifest, so the high-water mark is
+    no longer only filesystem state. The presented head must be exactly the head
+    the manifest names — same monotonic sequence, same signed document — which
+    means a rollback can no longer be performed silently: it requires a freshly
+    signed, freshly dated manifest naming the older head, and that manifest is
+    persisted whole into the hash-chained transition record. The mark stops being
+    custodial and becomes something an auditor can re-derive from signed bytes.
     """
     resolved_keys = keys if keys is not None else load_trusted_keys(root)
     resolved_store = store if store is not None else _external_dir("BRO_EVIDENCE_STORE")
@@ -215,23 +227,205 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
         # any call path in the repository. The high-water mark now comes from a DURABLE
         # record that survives between calls, which is the only way a rollback that
         # happened BEFORE this call can be seen at all.
-        durable_floor = _load_head_floor(resolved_store, task_id)
-        floor = durable_floor if min_head_sequence is None else max(
-            min_head_sequence, durable_floor)
+        durable_floor, recorded_digest = _load_head_floor(resolved_store, task_id)
+        # O-5: a mark this deployment cannot ESTABLISH is a refusal, not a default of zero.
+        # A floor that was deleted and re-provisioned reads identically to a first sighting,
+        # and the only thing that can tell them apart is a signed statement from outside the
+        # store. Absent that, refuse and name what is missing.
+        _require_establishable_mark(task_id, expected_head_sequence, durable_floor, root, now)
         # `floor or None` used to disable the check whenever the mark read 0 (R-06). A recorded
         # zero is a floor like any other; only a genuinely-new task has no mark, and 0 is then
         # trivially satisfied by any positive head anyway.
+        floor = max(durable_floor, min_head_sequence or 0, expected_head_sequence or 0)
         digest = validate_chain(task_id, event_ids, resolved_keys,
                                 store=resolved_store,
                                 min_head_sequence=floor)
+        head = load_head(resolved_store, task_id, resolved_keys)
+        head_digest = _head_document_digest(resolved_store, task_id)
+        # The manifest names ONE head. A store holding a different one — older or newer —
+        # is not the state the builder signed for, so the completion is not the completion
+        # that was signed. Fail closed rather than accept "close enough".
+        if expected_head_sequence is not None and head.head_sequence != expected_head_sequence:
+            raise CompletionError(
+                f"the signed completion binds evidence head_sequence {expected_head_sequence} "
+                f"for {task_id}, but the store's signed head is at "
+                f"{head.head_sequence}")
+        if expected_head_digest is not None and head_digest != expected_head_digest:
+            raise CompletionError(
+                f"the signed completion binds evidence head {expected_head_digest} for "
+                f"{task_id}, but the store holds a different signed head ({head_digest})")
+        # Two different signed heads carrying the SAME sequence is a recorder that re-anchored
+        # without bumping its counter — or a swapped head. Either way the sequence has stopped
+        # being a high-water mark, so it cannot be trusted as one.
+        if durable_floor >= 1 and head.head_sequence == durable_floor and recorded_digest != head_digest:
+            raise CompletionError(
+                f"the evidence head for {task_id} changed without advancing head_sequence "
+                f"{durable_floor}: the recorded mark was taken against {recorded_digest} and "
+                f"the store now holds {head_digest}")
+        # The store's own recorder-signed events must not extend past the head being
+        # presented. No file deletion turns this check off, and the surplus events are
+        # signed by an authority the builder does not hold, so they cannot be re-minted
+        # to match a rolled-back head.
+        _require_store_agrees_with_head(task_id, resolved_store, resolved_keys, event_ids, now)
         # Advance the mark only after the chain verified, and only upward. A later run
         # presenting a genuinely signed but OLDER head — the retained anchor of a
         # self-consistent truncated chain — is then refused against this record.
-        _advance_head_floor(resolved_store, task_id,
-                            load_head(resolved_store, task_id, resolved_keys).head_sequence)
+        _advance_head_floor(resolved_store, task_id, head.head_sequence, head_digest)
         return digest
     except (EvidenceError, SignatureError) as exc:
         raise CompletionError(str(exc)) from exc
+
+
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+#: The environment variable that would name an operator-signed statement of a task's evidence
+#: high-water mark — the one thing that can tell a genuinely new task apart from a floor that was
+#: deleted and re-provisioned. Nothing in the shipped trusted-key registry can sign one: the
+#: artifact type below is deliberately NOT registered here, because registering it without an
+#: owner-held key would mean inventing an authority. Presenting the variable therefore fails
+#: closed with a message naming exactly what the owner must supply.
+ENV_FLOOR_ANCHOR = "BRO_EVIDENCE_FLOOR_ANCHOR"
+FLOOR_ANCHOR_ARTIFACT = "evidence-floor-anchor"
+
+
+def _head_document_digest(store: pathlib.Path, task_id: str) -> str:
+    """The canonical digest of the SIGNED head document, signature included.
+
+    Hashing the document rather than the payload means the binding in the completion
+    manifest pins the exact signed bytes the recorder produced, so a re-signature by a
+    different trusted key is a different head as far as the manifest is concerned.
+    """
+    path = pathlib.Path(store) / f"{task_id}.head.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CompletionError(
+            f"cannot read the signed evidence head for {task_id}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise CompletionError(f"the signed evidence head for {task_id} is not an object")
+    return canonical_json_sha256(document)
+
+
+def _require_store_agrees_with_head(task_id: str, store: pathlib.Path, keys: dict,
+                                    event_ids: list[str], now: int | None) -> None:
+    """The store's own signed events must not reach past the chain being presented (**O-5**).
+
+    ``validate_chain`` checks the ids the CALLER submitted. This asks the store instead:
+    every recorder-signed event that belongs to this task must be one of the submitted ids.
+    A retained older head plus its matching prefix is self-consistent against the caller's
+    list and contradicted by the store, because the later events are still sitting there —
+    signed by an authority the builder does not hold and therefore impossible to re-mint
+    against a rolled-back head.
+
+    Unlike the floor, this rests on no bookkeeping file: there is nothing to delete that
+    turns the check off, only signed evidence to destroy.
+
+    ``bro_evidence.read_chain`` would be the obvious implementation and cannot be used:
+    ``bro_run_receipt.run_and_sign`` stamps execution receipts with ``artifact_type:
+    "evidence-event"`` too, and the durable runtime keeps receipts in the same store, so
+    that enumerator raises "unexpected shape" on every receipt it meets. Chain events are
+    told apart here by their exact field set, and anything claiming to be one and failing
+    verification is a hard error rather than a silent skip.
+    """
+    from bro_evidence import EVENT_FIELDS
+    from bro_signature import verify_artifact
+    directory = pathlib.Path(store)
+    submitted = set(event_ids)
+    surplus = []
+    try:
+        entries = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix == ".json")
+    except OSError as exc:
+        raise CompletionError(f"evidence store is unreadable: {exc}") from exc
+    for path in entries:
+        if path.name == f"{task_id}.head.json":
+            continue
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue  # not an artifact this check can speak about
+        claimed = document.get("payload") if isinstance(document, dict) else None
+        if not isinstance(claimed, dict):
+            continue
+        if (claimed.get("artifact_type") != "evidence-event"
+                or claimed.get("task_id") != task_id
+                or set(claimed) != EVENT_FIELDS):
+            continue  # another signed artifact — an execution receipt shares the type
+        try:
+            payload = verify_artifact(document, "evidence-event", keys, now=now)
+        except SignatureError as exc:
+            raise CompletionError(
+                f"the evidence store holds a file claiming to be an evidence event for "
+                f"{task_id} that does not verify ({path.name}): {exc}") from exc
+        if payload["event_id"] not in submitted:
+            surplus.append(payload["event_id"])
+    if surplus:
+        raise CompletionError(
+            f"the evidence store holds signed events for {task_id} that the presented chain "
+            f"does not include: {sorted(surplus)}. A retained older head cannot anchor a "
+            "completion the store itself contradicts")
+
+
+def _signed_floor_anchor(task_id: str, root: pathlib.Path, now: int | None) -> int | None:
+    """The operator-signed high-water statement for ``task_id``, if the deployment has one.
+
+    Returns ``None`` only when the deployment presents nothing. A presented anchor that does
+    not verify is a refusal — never a fallback — and today NO anchor can verify, because
+    ``evidence-floor-anchor`` is deliberately absent from the signature module's authority
+    registry. That absence is the honest state of this item: the check exists, the key does
+    not, and no seed is compiled in to pretend otherwise.
+    """
+    raw = os.getenv(ENV_FLOOR_ANCHOR)
+    if not raw:
+        return None
+    from bro_signature import verify_artifact
+    document = _json(pathlib.Path(raw))
+    try:
+        payload = verify_artifact(document, FLOOR_ANCHOR_ARTIFACT,
+                                  load_trusted_keys(root), now=now)
+    except SignatureError as exc:
+        raise CompletionError(
+            f"{ENV_FLOOR_ANCHOR} is set but does not verify as an operator-signed "
+            f"{FLOOR_ANCHOR_ARTIFACT}: {exc}. The owner must mint this artifact with an "
+            f"offline operator-root key and register '{FLOOR_ANCHOR_ARTIFACT}' against the "
+            "operator-root authority; this runtime holds no key for it and none is "
+            "compiled in") from exc
+    if payload.get("task_id") != task_id:
+        raise CompletionError(
+            f"the {FLOOR_ANCHOR_ARTIFACT} at {ENV_FLOOR_ANCHOR} names task "
+            f"{payload.get('task_id')!r}, not {task_id!r}")
+    sequence = payload.get("head_sequence")
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+        raise CompletionError(
+            f"the {FLOOR_ANCHOR_ARTIFACT} at {ENV_FLOOR_ANCHOR} carries no positive "
+            "head_sequence")
+    return sequence
+
+
+def _require_establishable_mark(task_id: str, declared: int | None, recorded: int,
+                                root: pathlib.Path, now: int | None) -> None:
+    """Refuse a declared high-water mark that this deployment cannot establish (**O-5**).
+
+    A signed manifest naming ``head_sequence`` 1 is the chain's first anchor and needs no
+    corroboration. Anything above 1 says the chain has been re-anchored at least once, so a
+    deployment that has been policing the task must already hold a mark for it. Holding none
+    means either the floor was never provisioned or it was wiped and re-provisioned — and a
+    floor is exactly the sort of state whose reset must not read as "start again at zero".
+    """
+    if declared is None or declared <= 1 or recorded >= 1:
+        return
+    anchor = _signed_floor_anchor(task_id, root, now)
+    if anchor is not None and anchor >= declared:
+        return
+    raise CompletionError(
+        f"cannot establish the evidence high-water mark for {task_id}: the signed completion "
+        f"binds head_sequence {declared}, but this deployment holds no durable mark for the "
+        "task. A floor that was deleted and re-provisioned is indistinguishable from a first "
+        "sighting, so this refuses rather than defaulting to zero. Closing it needs an "
+        f"owner-provided key: mint an operator-root-signed '{FLOOR_ANCHOR_ARTIFACT}' artifact "
+        f"(task_id + head_sequence) offline, present it at {ENV_FLOOR_ANCHOR} under a "
+        f"principal the policed account cannot write, and register '{FLOOR_ANCHOR_ARTIFACT}' "
+        "against the operator-root authority in the signature module's artifact registry. No "
+        "key is invented here and none is compiled in")
 
 
 #: The marker file that says "this deployment HAS an anti-rollback floor". Its absence is the
@@ -316,12 +510,17 @@ def _load_floor_index(directory: pathlib.Path) -> set[str]:
     return set(recorded)
 
 
-def _load_head_floor(store: pathlib.Path, task_id: str) -> int:
-    """The recorded high-water mark for ``task_id``; 0 only when this task is genuinely new.
+def _load_head_floor(store: pathlib.Path, task_id: str) -> tuple[int, str | None]:
+    """The recorded mark for ``task_id`` as ``(head_sequence, head_digest)``.
 
-    A corrupt or non-integer record is NOT treated as absent — that would let a rollback be
-    laundered into a fresh start by truncating one small file — and neither is a MISSING record
-    for a task the index knows about, which is a deleted mark (**R-06**).
+    ``(0, None)`` only when this task is genuinely new. A corrupt or non-integer record is NOT
+    treated as absent — that would let a rollback be laundered into a fresh start by truncating
+    one small file — and neither is a MISSING record for a task the index knows about, which is
+    a deleted mark (**R-06**).
+
+    The mark also carries the digest of the signed head it was taken against (**O-5**), so the
+    filesystem record points at signed bytes rather than standing alone as a bare number. A
+    record without it cannot say *which* head it measured and is refused.
     """
     directory = _head_floor_dir(store)
     known = _load_floor_index(directory)
@@ -332,9 +531,10 @@ def _load_head_floor(store: pathlib.Path, task_id: str) -> int:
                 f"the evidence head floor for {task_id} is missing but the floor index still "
                 "names the task: the mark was removed. Refusing rather than restarting the "
                 "anti-rollback floor at zero")
-        return 0
+        return 0, None
     try:
-        recorded = json.loads(path.read_text(encoding="utf-8"))["head_sequence"]
+        record = json.loads(path.read_text(encoding="utf-8"))
+        recorded = record["head_sequence"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise CompletionError(
             f"evidence head floor for {task_id} is unreadable; refusing rather than "
@@ -342,23 +542,31 @@ def _load_head_floor(store: pathlib.Path, task_id: str) -> int:
     if isinstance(recorded, bool) or not isinstance(recorded, int) or recorded < 0:
         raise CompletionError(
             f"evidence head floor for {task_id} is not a non-negative integer: {recorded!r}")
-    return recorded
+    digest = record.get("evidence_head_sha256") if isinstance(record, dict) else None
+    if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+        raise CompletionError(
+            f"evidence head floor for {task_id} records no signed head digest; a mark that "
+            "cannot say which signed head it was taken against is not evidence of anything")
+    return recorded, digest
 
 
-def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int) -> None:
+def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
+                        head_digest: str) -> None:
     """Raise the recorded mark to ``head_sequence``, and enrol the task in the index.
 
     Never lowers the mark, and never removes a task from the index — a task that has been
     measured once must stay measurable, or deleting its mark would be a way back to zero.
+    The digest of the head the mark was taken against is recorded with it (**O-5**).
     """
-    if head_sequence <= _load_head_floor(store, task_id):
+    if head_sequence <= _load_head_floor(store, task_id)[0]:
         return
     directory = _head_floor_dir(store)
     try:
         final = directory / f"{task_id}.floor.json"
         temporary = directory / f"{task_id}.floor.json.tmp"
         temporary.write_text(
-            json.dumps({"task_id": task_id, "head_sequence": head_sequence}),
+            json.dumps({"task_id": task_id, "head_sequence": head_sequence,
+                        "evidence_head_sha256": head_digest}),
             encoding="utf-8")
         # Rename over the old mark so a crash mid-write cannot leave a truncated file
         # that the loader above would (correctly) refuse forever.
@@ -409,7 +617,11 @@ def _check_manifest(task: dict[str, Any], agent_id: str, manifest: dict[str, Any
     (env + live repository) and the durable runtime (in-process keys/store). When
     ``require_live`` the manifest candidate must equal the current repository state;
     otherwise it is bound internally (the durable runtime holds no checkout)."""
-    required = {"schema", "task_id", "agent_id", "task_contract_sha256", "candidate_head", "candidate_tree", "done_criteria", "tests", "evidence_event_ids", "open_risks", "rollback_ready", "nonce", "issued_at_epoch", "expires_at_epoch"}
+    # O-5: `evidence_head_sha256` and `head_sequence` are REQUIRED. Without them the
+    # anti-rollback high-water mark existed only as filesystem state, and the artifact the
+    # builder signs said nothing at all about which evidence head it was claiming against.
+    # They are in the strict set deliberately: an optional binding is one an attacker omits.
+    required = {"schema", "task_id", "agent_id", "task_contract_sha256", "candidate_head", "candidate_tree", "done_criteria", "tests", "evidence_event_ids", "evidence_head_sha256", "head_sequence", "open_risks", "rollback_ready", "nonce", "issued_at_epoch", "expires_at_epoch"}
     if set(manifest) - {"artifact_type", "key_id"} != required or manifest.get("schema") != 1:
         raise CompletionError("invalid completion manifest shape")
     task_hash = canonical_json_sha256(task)
@@ -470,11 +682,23 @@ def _check_manifest(task: dict[str, Any], agent_id: str, manifest: dict[str, Any
         raise CompletionError("completion tests are not all passed")
     if manifest.get("open_risks") or manifest.get("rollback_ready") is not True:
         raise CompletionError("completion has open risks or rollback is not ready")
+    # O-5: the high-water mark the manifest binds itself to. Types are checked here rather
+    # than left to the shape test, because "head_sequence": "1" or a negative number would
+    # otherwise sail through and then silently compare false against a real head.
+    declared_sequence = manifest.get("head_sequence")
+    if isinstance(declared_sequence, bool) or not isinstance(declared_sequence, int) or declared_sequence < 1:
+        raise CompletionError("completion manifest head_sequence must be a positive integer")
+    declared_head = manifest.get("evidence_head_sha256")
+    if not isinstance(declared_head, str) or not _SHA256.fullmatch(declared_head):
+        raise CompletionError("completion manifest evidence_head_sha256 must be a sha256 digest")
     chain_ids = manifest["evidence_event_ids"]
     # L-4 (binding half): the caller's recorded high-water mark rides along so a
-    # genuinely signed but OLDER evidence head cannot anchor this completion.
+    # genuinely signed but OLDER evidence head cannot anchor this completion. O-5: the
+    # signed manifest now carries its own, so the mark no longer rests on the filesystem.
     validate_evidence_chain(task["task_id"], chain_ids, root, keys=trusted, store=evidence_store,
-                            min_head_sequence=min_head_sequence)
+                            min_head_sequence=min_head_sequence,
+                            expected_head_sequence=declared_sequence,
+                            expected_head_digest=declared_head, now=now)
     # The criteria above only had to cite *some* evidence id. Nothing tied those
     # ids to the chain that was just proven, so a criterion could rest on a real,
     # signed event belonging to a different chain entirely.
@@ -549,9 +773,15 @@ def _check_verifier_receipt(task: dict[str, Any], manifest: dict[str, Any], task
     level = receipt["independence_level"]
     if level not in LEVELS or LEVELS.index(level) < LEVELS.index(minimum):
         raise CompletionError("verifier independence level is insufficient")
+    # O-5 (mirror): the receipt is already bound to the manifest by hash, so it inherits the
+    # manifest's evidence-head binding rather than carrying a second, independently forgeable
+    # copy of it. The verifier's chain must anchor at the same signed head as the builder's.
     validate_evidence_chain(task["task_id"], receipt["evidence_event_ids"], root,
                             keys=trusted, store=evidence_store,
-                            min_head_sequence=min_head_sequence)
+                            min_head_sequence=min_head_sequence,
+                            expected_head_sequence=manifest.get("head_sequence"),
+                            expected_head_digest=manifest.get("evidence_head_sha256"),
+                            now=now)
     return receipt
 
 
@@ -597,6 +827,12 @@ def authorize_completion_docs(task: dict[str, Any], agent_id: str, *, manifest_d
         "candidate_head": manifest["candidate_head"],
         "candidate_tree": manifest["candidate_tree"],
         "evidence_event_ids": list(manifest["evidence_event_ids"]),
+        # O-5: the high-water mark travels into the hash-chained transition record, which
+        # lives in a different store from the evidence the mark polices. Wiping the evidence
+        # store's floor does not erase this: a later completion naming a LOWER head_sequence
+        # than one already recorded here is a rollback an auditor can see from signed bytes.
+        "evidence_head_sha256": manifest["evidence_head_sha256"],
+        "evidence_head_sequence": manifest["head_sequence"],
         "execution_receipt_ids": receipt_ids,
     }
     if (task.get("verification") or {}).get("required") is True:

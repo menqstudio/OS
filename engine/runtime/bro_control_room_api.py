@@ -11,6 +11,8 @@ from bro_evidence import EvidenceError, list_chain_task_ids, read_chains
 from bro_identity import IdentityError, all_agent_identities
 from bro_orchestration import OrchestrationError, validate_control_room_command
 from bro_orchestration_runtime import DurableOrchestrationRuntime, OrchestrationRuntimeError
+from bro_policy import (CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE,
+                        CONDUCTOR_SESSION_ARTIFACT)
 from bro_signature import SignatureError, verify_artifact
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
@@ -46,6 +48,64 @@ _GOVERNANCE_REQUEST_FIELDS = frozenset({"protocol", "op", "surface", "task_id", 
 # letting a consumer assume the stronger one.
 _ED25519 = "ed25519-signature-verified"
 _HASH_CHAIN = "runtime-hash-chain-verified"
+
+# --------------------------------------------------------------------------- #
+# O-4: the control-room command actor is PROVEN, never claimed.
+#
+# `requested_by_type` / `requested_by` are two strings out of the caller's own
+# JSON. Comparing them against the literals "owner-gev" and "bro-000" tests
+# nothing except that the caller can spell them, and the reply then echoed the
+# claimed identity back inside `"valid": true` — laundering a self-assertion into
+# something a downstream reader takes as verified.
+#
+# So the claim must now be discharged by a signature. The conductor already has
+# exactly the credential this needs: the operator-root-signed `conductor-session`
+# artifact (M-4 / O-3), which binds a role and an agent id to a key no agent
+# process holds. A command claiming `bro` / `bro-000` must present one.
+#
+# The owner has no equivalent, and this task does not invent one: there is no
+# owner-authority artifact type in `bro_signature.ARTIFACT_AUTHORITY`, no
+# signature field in `schemas/control-room-command.schema.json`, and no trusted
+# key that could sign either. An owner-issued command is therefore REFUSED by
+# name rather than validated on its say-so. What would close it is written out in
+# OWNER_ACTOR_UNPROVABLE, and all three of those files are outside this change.
+#
+# Known and deliberate limit: a `conductor-session` artifact proves the caller
+# holds an operator-issued session credential; it is not bound to this individual
+# command, so within its validity window it authorises any command the caller can
+# already reach. That is a session credential's semantics, and it is a strictly
+# smaller claim than "anyone who can spell bro-000". Per-command non-repudiation
+# needs the signed `control-room-command` artifact type described below.
+# --------------------------------------------------------------------------- #
+CONTROL_ROOM_ACTORS = {("owner", "owner-gev"), (CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID)}
+
+#: The credential a conductor-issued command must present. Reusing the artifact the
+#: operator already signs for M-4/O-3 is deliberate: one owner-minted credential, one
+#: authority binding, and no new artifact type invented by the code that consumes it.
+CONTROL_ROOM_ACTOR_ARTIFACT = CONDUCTOR_SESSION_ARTIFACT
+
+#: How a proven actor identity is described in the reply. There is deliberately no
+#: value here meaning "the caller said so".
+ACTOR_PROVEN_BY_SESSION = "operator-signed-conductor-session"
+
+ACTOR_ATTESTATION_MISSING = (
+    "control-room command actor identity is self-asserted: the command carries no "
+    "proof and this API will not stamp `valid: true` on an identity it cannot "
+    "verify. Present the signed artifact document as the `actor_attestation` "
+    "argument — for the conductor, the operator-root-signed `conductor-session` "
+    "artifact described in engine/runtime/bro_policy.py "
+    "(CONDUCTOR_SESSION_PROVISIONING)")
+
+OWNER_ACTOR_UNPROVABLE = (
+    "an owner-issued control-room command cannot be validated: nothing in this "
+    "engine can verify that a caller is the owner. Closing it needs three changes "
+    "outside this module — (1) an owner-bound artifact type (e.g. "
+    "`control-room-command`) registered in bro_signature.ARTIFACT_AUTHORITY "
+    "against the operator-root or a new owner authority, (2) a key entry for it in "
+    "the operator-signed config/trusted-keys.json, and (3) `artifact_type`, "
+    "`key_id` and a detached signature added to "
+    "schemas/control-room-command.schema.json. Until then the owner's identity is "
+    "a claim, and a claim is refused")
 
 
 class ControlRoomAPIError(ValueError):
@@ -633,7 +693,63 @@ class ControlRoomAPIV1:
         return (approvals, self._runtime_source("orchestration-runtime-approval-queue"),
                 reason, _HASH_CHAIN)
 
-    def validate_command_intent(self, command: dict[str, Any], *, now_epoch: int) -> dict[str, Any]:
+    def _prove_command_actor(self, actor: tuple[str, str],
+                             attestation: Any) -> dict[str, Any]:
+        """Discharge the actor claim with a signature, or refuse.
+
+        Returns the proof to be recorded in the reply. There is no return path
+        for an unproven actor: every failure raises, so `valid: true` cannot be
+        reached on an identity nobody verified.
+
+        The credential is judged against the wall clock, NOT the caller-supplied
+        `now_epoch` every other view here takes. Every other check in this module
+        answers "was this command valid at time T", which is the caller's question
+        to ask; whether a signing key and a session credential are live right now
+        is not, and a caller that could backdate the clock could revive an expired
+        identity.
+        """
+        moment = int(time.time())
+        if actor not in CONTROL_ROOM_ACTORS:
+            raise ControlRoomAPIError("command actor identity is not canonical")
+        if attestation is None:
+            raise ControlRoomAPIError(f"{ACTOR_ATTESTATION_MISSING}; actor claimed: "
+                                      f"{actor[0]}/{actor[1]}")
+        if actor[0] != CONDUCTOR_ROLE:
+            raise ControlRoomAPIError(OWNER_ACTOR_UNPROVABLE)
+        keys = self.runtime.evidence_keys
+        if keys is None:
+            raise ControlRoomAPIError(
+                "this runtime holds no trusted keys, so it cannot tell a signed actor "
+                "attestation from a forged one; refusing to validate a command rather "
+                "than accepting the identity claim unverified")
+        try:
+            payload = verify_artifact(attestation, CONTROL_ROOM_ACTOR_ARTIFACT, keys,
+                                      now=moment)
+        except (SignatureError, AttributeError, TypeError) as exc:
+            raise ControlRoomAPIError(
+                f"control-room actor attestation is RED: {exc}") from exc
+        for field, claimed in (("role", actor[0]), ("agent_id", actor[1])):
+            if payload.get(field) != claimed:
+                raise ControlRoomAPIError(
+                    f"actor attestation does not speak for this actor: it binds "
+                    f"{field}={payload.get(field)!r}, the command claims {claimed!r}")
+        expires = payload.get("expires_at_epoch")
+        if isinstance(expires, bool) or not isinstance(expires, int) or expires <= moment:
+            raise ControlRoomAPIError(
+                "actor attestation is expired or carries no integer expires_at_epoch")
+        session_id = payload.get("session_id")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ControlRoomAPIError("actor attestation carries no session_id")
+        return {
+            "identity_basis": ACTOR_PROVEN_BY_SESSION,
+            "key_id": payload["key_id"],
+            "session_id": session_id,
+            "expires_at_epoch": expires,
+            "attestation_sha256": _sha(attestation),
+        }
+
+    def validate_command_intent(self, command: dict[str, Any], *, now_epoch: int,
+                                actor_attestation: dict[str, Any] | None = None) -> dict[str, Any]:
         now = self._now(now_epoch)
         required = {"schema", "command_id", "task_id", "command", "requested_by_type", "requested_by", "requested_at_epoch", "expires_at_epoch", "expected_task_state", "scope", "reason", "evidence_refs"}
         if not isinstance(command, dict) or set(command) != required:
@@ -651,8 +767,7 @@ class ControlRoomAPIV1:
         if any({x for x in re.split(r"[^a-z0-9]+", item.lower()) if x} & FORBIDDEN_SCOPE for item in scope):
             raise ControlRoomAPIError("command scope crosses a forbidden mutation boundary")
         actor = (command["requested_by_type"], command["requested_by"])
-        if actor not in {("owner", "owner-gev"), ("bro", "bro-000")}:
-            raise ControlRoomAPIError("command actor identity is not canonical")
+        proof = self._prove_command_actor(actor, actor_attestation)
         if command["scope"] != scope or command["evidence_refs"] != evidence:
             raise ControlRoomAPIError("command list values must already be normalized")
         snap = self._snapshot(command["task_id"], now)
@@ -670,6 +785,13 @@ class ControlRoomAPIV1:
             "command": command["command"],
             "requested_by_type": actor[0],
             "requested_by": actor[1],
+            # Not the claim: what verified it. A reader that trusted the two
+            # fields above was trusting the caller; these four say which key,
+            # which session and which document discharged the claim.
+            "actor_identity": proof["identity_basis"],
+            "actor_key_id": proof["key_id"],
+            "actor_session_id": proof["session_id"],
+            "actor_attestation_sha256": proof["attestation_sha256"],
             "current_state": snap["state"],
             "validated_at_epoch": now,
             "valid": True,

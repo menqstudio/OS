@@ -20,13 +20,17 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 import bro_audit_log
 import bro_backup
+import bro_signature
+import _audit_anchor
 
 NOW = 1_700_000_000
 
@@ -39,6 +43,12 @@ class BackupRestoreTests(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-backup-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # O-2: archived ledgers are now verified against their SIGNED head anchor,
+        # never the plaintext .head their own writer controls, so this fixture
+        # stands up real anchor custody. The refusal for an UNANCHORED ledger, and
+        # the refusal when the key registry will not load, are covered in
+        # tests/test_audit_head_anchor.py.
+        self.custody = _audit_anchor.provision(self)
         # A realistic external state set: an append-only shadow ledger (+head
         # sidecar) and a recovery store directory of transaction journals.
         self.ledger = self.tmp / "state" / "shadow-ledger.jsonl"
@@ -62,7 +72,10 @@ class BackupRestoreTests(unittest.TestCase):
         bro_backup.verify_archive(archive)  # manifest + chains verify
         out = self.tmp / "restored"
         restored = bro_backup.restore(archive, {"shadow": out / "shadow", "recovery": out / "recovery"})
-        self.assertEqual(restored, {"shadow": 2, "recovery": 2})  # ledger+head; two journals
+        # ledger + plaintext head + SIGNED head anchor; two journals
+        self.assertEqual(restored, {"shadow": 3, "recovery": 2})
+        self.assertTrue((out / "shadow" / "shadow-ledger.jsonl.head.sig").is_file(),
+                        "the signed head anchor must travel with the ledger")
         # byte-faithful
         self.assertEqual(_sha(out / "shadow" / "shadow-ledger.jsonl"), _sha(self.ledger))
         self.assertEqual(_sha(out / "recovery" / "nested" / "b.state.json"),
@@ -123,6 +136,13 @@ class RestoreTraversalTests(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-trav-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # These archives carry no *.jsonl ledger, so no head anchor is ever checked;
+        # an empty registry stands in so the path-safety refusal under test is the
+        # one that fires, and not an incidental "the key registry will not load".
+        patcher = unittest.mock.patch.object(bro_signature, "load_trusted_keys",
+                                             lambda *a, **k: {})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _archive(self, rel, *, content=b"pwned", place_at=None):
         """Craft an archive whose single entry has an attacker-chosen rel, with a

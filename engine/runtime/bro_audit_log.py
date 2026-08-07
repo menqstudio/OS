@@ -16,13 +16,35 @@ append can also drop records, recompute the chain and rewrite the plaintext
 that forger is an Ed25519 head ANCHOR, mirroring how ``bro_evidence`` anchors its
 ``evidence-head``: an external recorder/operator signs a payload naming the ledger,
 its record count and its tail hash, and ``verify(path, keys=...)`` refuses any chain
-that does not reproduce that signed head exactly. This module only ever VERIFIES —
-it holds no private key and cannot sign (an enforcement point that could sign is an
-enforcement point that could forge), so anchoring happens out-of-band via
-``head_anchor_payload`` + ``attach_head_anchor``.
+that does not reproduce that signed head exactly.
 
-Pure standard library on the append hot path; signature verification lazily imports
-``bro_signature`` only when a caller supplies trusted keys.
+WHO SIGNS (custody). This module holds no private key and cannot sign - an
+enforcement point that could sign is an enforcement point that could forge. The
+signature comes from an OWNER-PROVIDED signing command named by
+``BRO_AUDIT_ANCHOR_SIGNER``, which lives outside this engine, runs under a
+principal that cannot write the ledger, and holds the private half of the
+``BRO_AUDIT_ANCHOR_KEY_ID`` key registered under an ``evidence-recorder`` or
+``operator-root`` authority. ``append()`` assembles the payload itself, hands it to
+that command, and REFUSES any returned document whose payload is not identical to
+the one it assembled, does not verify against the operator-pinned trusted key
+registry, or disagrees with the chain on disk. No seed is compiled in and none is
+invented: with no custody configured the ledger is honestly UNANCHORED, which every
+keyed ``verify()`` reports as its own distinct refusal (``AuditAnchorMissing``) -
+never as "intact", and never confused with tampering (a plain ``AuditError``).
+
+WHAT THIS BUYS, EXACTLY. It closes the O-2 defect: a party who can write the
+ledger file can no longer drop records, recompute the chain, rewrite the plaintext
+``.head`` and have ``verify()`` report intact - it cannot produce the signature.
+It does NOT defend against a party who can also make the owner's signing command
+sign arbitrary heads; that boundary belongs to the signer's custody, which is
+required to run as a separate principal and to REFUSE any anchor whose count is
+below the last one it signed. ``previous_anchor_sha256`` is carried in the payload
+so such a signer can chain its own decisions, and a count rollback is additionally
+refused here on install.
+
+Pure standard library on the append hot path when no custody is configured;
+``bro_signature`` and the signing subprocess are reached only when anchoring is
+provisioned or a caller supplies trusted keys.
 """
 from __future__ import annotations
 
@@ -30,6 +52,7 @@ import hashlib
 import json
 import os
 import pathlib
+import subprocess
 import time
 
 from bro_secrets import redact_mapping
@@ -45,15 +68,65 @@ ANCHOR_ARTIFACT_TYPE = "audit-head"
 # external authority that anchors evidence chains) or the offline operator. The
 # builder/writer of the ledger holds neither.
 ANCHOR_AUTHORITIES = ("evidence-recorder", "operator-root")
+# The anchor payload's EXACT field set. Checked as an exact set, not a subset, so a
+# signing command cannot smuggle extra fields into a document the verifier then
+# treats as authoritative, and cannot omit one the chain check relies on.
+ANCHOR_PAYLOAD_FIELDS = frozenset({
+    "artifact_type", "key_id", "ledger", "count", "last_hash",
+    "previous_anchor_sha256", "issued_at_epoch",
+})
+# Owner-provided custody. Deliberately two variables: a path with no key id (or a
+# key id with no path) is a HALF-configuration and is refused loudly rather than
+# silently degrading to an unanchored ledger.
+SIGNER_ENV = "BRO_AUDIT_ANCHOR_SIGNER"
+SIGNER_KEY_ID_ENV = "BRO_AUDIT_ANCHOR_KEY_ID"
+# The signer runs inside the ledger's exclusive append lock (the anchor must
+# describe the chain exactly as written, with no interleaved writer), so a wedged
+# signer must surface rather than starve other writers past their lock timeout.
+_SIGNER_TIMEOUT = 10.0
+_ENGINE_ROOT = pathlib.Path(__file__).resolve().parents[1]
 # Bound on how long a writer waits for the exclusive append lock before failing
 # closed. Appends are short (read tail, hash, append one line, replace head), so a
-# wait longer than this means a crashed or wedged holder — surfaced, never ignored.
+# wait longer than this means a crashed or wedged holder - surfaced, never ignored.
 _LOCK_TIMEOUT = 10.0
 _LOCK_POLL = 0.01
+
+CUSTODY_REFUSAL = (
+    "Audit-head anchor custody is NOT configured. No signing key is compiled into "
+    "this engine and none will be invented: an anchor signed with a key the "
+    "ledger's own writer can reach proves nothing. The OWNER must provide, from "
+    "outside this repository:\n"
+    "  1. " + SIGNER_ENV + " - an absolute path to a signing command (or a JSON "
+    "argv array whose first element is that path). It reads one canonical "
+    "audit-head payload as JSON on stdin and writes a "
+    "{payload, signature} JSON document on stdout. It MUST run under a principal "
+    "that cannot write the audit ledger, it MUST NOT live inside this engine, and "
+    "it MUST refuse to sign an anchor whose count is lower than the last one it "
+    "signed (anti-rollback).\n"
+    "  2. " + SIGNER_KEY_ID_ENV + " - the key id that command signs with, "
+    "registered in the operator-pinned trusted-key registry under an "
+    "'evidence-recorder' or 'operator-root' authority. The private half never "
+    "enters this process."
+)
 
 
 class AuditError(ValueError):
     """Raised on a broken/tampered/truncated audit chain (fail-closed)."""
+
+
+class AuditAnchorMissing(AuditError):
+    """The ledger carries NO signed head anchor.
+
+    A distinct fact from tampering: "unanchored" says the integrity of this ledger
+    was never established, and the action it calls for is provisioning custody.
+    "Tampered" (plain AuditError) says an established integrity claim was broken,
+    and the action it calls for is incident response. Collapsing them would lose
+    the one that gets acted on, so they are separate types - both refusals.
+    """
+
+
+class AuditAnchorCustodyMissing(AuditError):
+    """Anchor-signing custody is absent or half-configured; the owner must supply it."""
 
 
 def _canonical(obj) -> str:
@@ -80,7 +153,7 @@ def _acquire_lock(path: pathlib.Path) -> int:
     """Take an exclusive, cross-process append lock via an O_EXCL lock file.
 
     O_CREAT|O_EXCL is atomic on POSIX and Windows alike, so exactly one writer holds
-    the lock at a time — the ledger's read-modify-write (compute seq/prev_hash from
+    the lock at a time - the ledger's read-modify-write (compute seq/prev_hash from
     the tail, append, replace head) can never interleave and fork the chain. A holder
     that crashes leaves the lock file behind; the next writer waits out the bounded
     timeout and then fails closed, which is the audit ledger's contract."""
@@ -138,35 +211,207 @@ def read_all(path: pathlib.Path) -> list[dict]:
     return records
 
 
-def append(path, kind: str, payload: dict, *, repo_root: pathlib.Path | None = None) -> dict:
-    p = pathlib.Path(path)
-    if repo_root is not None:
-        _assert_external(p, repo_root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    # The whole read-modify-write is one critical section: two writers that both read
-    # the tail before either appended would compute the same seq/prev_hash and fork
-    # the chain. The lock serialises them; the tail is re-read inside it.
-    lock_fd = _acquire_lock(p)
+# ---------------------------------------------------------------------------
+# Anchor custody - owner-provided, never compiled in
+# ---------------------------------------------------------------------------
+
+def anchor_custody_configured(env=None) -> bool:
+    """True when the owner has named anchor custody at all.
+
+    Either variable counts: a half-configuration must reach ``anchor_custody`` and
+    become a loud refusal, not silently leave the ledger unanchored because of a
+    typo in one variable name.
+    """
+    source = os.environ if env is None else env
+    return bool((source.get(SIGNER_ENV) or "").strip()) or \
+        bool((source.get(SIGNER_KEY_ID_ENV) or "").strip())
+
+
+def _signer_argv(raw: str) -> list[str]:
+    if raw.startswith("["):
+        try:
+            argv = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise AuditAnchorCustodyMissing(
+                f"{SIGNER_ENV} looks like a JSON argv array but does not parse: {exc}") from exc
+        if not (isinstance(argv, list) and argv and all(isinstance(a, str) for a in argv)):
+            raise AuditAnchorCustodyMissing(
+                f"{SIGNER_ENV} as a JSON array must be a non-empty array of strings")
+    else:
+        argv = [raw]
+    executable = pathlib.Path(argv[0])
+    if not executable.is_absolute():
+        raise AuditAnchorCustodyMissing(
+            f"{SIGNER_ENV} must be an absolute path, got {argv[0]!r}")
+    resolved = executable.resolve()
+    if not resolved.is_file():
+        raise AuditAnchorCustodyMissing(
+            f"{SIGNER_ENV} does not name an existing file: {resolved}")
+    # A signing command inside the engine is reachable by whatever can write the
+    # ledger, so its signature proves nothing. Refuse it by name rather than ship a
+    # protection that only reads as one.
     try:
-        existing = read_all(p)
-        prev_hash = existing[-1]["hash"] if existing else GENESIS
-        seq = existing[-1]["seq"] + 1 if existing else 0
-        body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, "payload": redact_mapping(payload)}
-        record = dict(body)
-        record["hash"] = _record_hash(prev_hash, body)
-        with p.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, sort_keys=True) + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        # Replace the head atomically so a crash mid-write can never leave a torn head
-        # that verify() would read as a truncation.
-        head = _head_path(p)
-        tmp = head.with_suffix(head.suffix + ".tmp")
-        tmp.write_text(json.dumps({"count": seq + 1, "last_hash": record["hash"]}), encoding="utf-8")
-        os.replace(tmp, head)
-        return record
-    finally:
-        _release_lock(lock_fd, p)
+        resolved.relative_to(_ENGINE_ROOT)
+    except ValueError:
+        pass
+    else:
+        raise AuditAnchorCustodyMissing(
+            f"the audit-head signing command must not live inside this engine: {resolved}. "
+            "A key the engine can reach is a key the ledger's own writer can reach, and "
+            "an anchor it signs proves nothing.")
+    return [str(resolved)] + [str(a) for a in argv[1:]]
+
+
+def anchor_custody(env=None) -> tuple[list[str], str]:
+    """Resolve the owner-provided (signing argv, key id), or refuse by name.
+
+    Never falls back to any built-in key: the refusal names both variables and
+    states exactly what the owner must provide.
+    """
+    source = os.environ if env is None else env
+    signer_raw = (source.get(SIGNER_ENV) or "").strip()
+    key_id = (source.get(SIGNER_KEY_ID_ENV) or "").strip()
+    missing = [name for name, value in ((SIGNER_ENV, signer_raw),
+                                        (SIGNER_KEY_ID_ENV, key_id)) if not value]
+    if missing:
+        raise AuditAnchorCustodyMissing(f"{' and '.join(missing)} not set. {CUSTODY_REFUSAL}")
+    return _signer_argv(signer_raw), key_id
+
+
+def _trusted_keys():
+    """The operator-pinned trusted key registry, or a fail-closed refusal.
+
+    ``append`` needs it to VERIFY what the signing command returned before that
+    document is installed as this ledger's anchor: an unverified anchor would be an
+    integrity claim nobody checked.
+    """
+    from bro_signature import SignatureError, load_trusted_keys
+    try:
+        return load_trusted_keys()
+    except SignatureError as exc:
+        raise AuditError(
+            "audit-head anchor custody is configured but the operator-pinned trusted "
+            "key registry cannot be loaded, so a returned anchor could not be "
+            f"verified before installation: {exc}") from exc
+
+
+def _is_sha256_hex(value) -> bool:
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def _anchor_sha256(p: pathlib.Path) -> str | None:
+    """Digest of the anchor being superseded, so the owner's signing command can
+    chain its own decisions and refuse a rollback past one it already signed."""
+    try:
+        return hashlib.sha256(_anchor_path(p).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _anchor_payload(p: pathlib.Path, *, key_id: str, count: int,
+                    last_hash: str, now) -> dict:
+    return {
+        "artifact_type": ANCHOR_ARTIFACT_TYPE,
+        "key_id": key_id,
+        "ledger": p.name,
+        "count": count,
+        "last_hash": last_hash,
+        "previous_anchor_sha256": _anchor_sha256(p),
+        "issued_at_epoch": int(now),
+    }
+
+
+def _sign_anchor(argv: list[str], payload: dict) -> dict:
+    """Hand the assembled payload to the owner's signing command and take back a
+    signed document - refusing anything that is not a signature over EXACTLY the
+    payload this ledger assembled."""
+    try:
+        proc = subprocess.run(argv, input=_canonical(payload), capture_output=True,
+                              text=True, timeout=_SIGNER_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise AuditError(
+            f"audit-head signing command failed to run ({argv[0]}): {exc}") from exc
+    if proc.returncode != 0:
+        raise AuditError(
+            f"audit-head signing command refused (exit {proc.returncode}): "
+            f"{(proc.stderr or '').strip()[:400]}")
+    try:
+        document = json.loads(proc.stdout)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise AuditError(
+            f"audit-head signing command did not return a signed document: {exc}") from exc
+    if not isinstance(document, dict) or document.get("payload") != payload:
+        # The signing command signs what the ledger says its head is, or nothing.
+        # Without this it could return a signature over a shorter chain it preferred
+        # and the install path would verify that signature happily.
+        raise AuditError(
+            "audit-head signing command returned a signature over a DIFFERENT payload "
+            "than the one this ledger assembled")
+    return document
+
+
+def head_anchor_payload(path, *, key_id: str, now: int) -> dict:
+    """Build the audit-head payload an EXTERNAL recorder/operator signs.
+
+    The out-of-band path, for an operator anchoring a ledger by hand. This module
+    never signs - the returned payload leaves the process, is signed by the
+    recorder/operator authority, and comes back through ``attach_head_anchor``. The
+    chain is structurally verified first so an anchor is never minted over an
+    already-broken ledger.
+    """
+    p = pathlib.Path(path)
+    count = verify(p)
+    records = read_all(p)
+    return _anchor_payload(p, key_id=key_id, count=count,
+                           last_hash=records[-1]["hash"] if records else GENESIS, now=now)
+
+
+def attach_head_anchor(path, document: dict, keys: dict, *, now: int | None = None) -> dict:
+    """Install a signed head anchor beside the ledger, verifying it first.
+
+    The document must verify against the trusted registry AND describe the ledger's
+    current chain exactly - a stale or foreign anchor is refused rather than stored.
+    """
+    return _install_anchor(pathlib.Path(path), document, keys, now=now)
+
+
+def _install_anchor(p: pathlib.Path, document: dict, keys: dict, *,
+                    now: int | None = None) -> dict:
+    payload = verify_signed_payload(document, ANCHOR_ARTIFACT_TYPE, keys,
+                                    authorities=ANCHOR_AUTHORITIES, now=now)
+    _check_anchor_against_chain(p, payload)
+    _check_anchor_monotonic(p, payload)
+    anchor = _anchor_path(p)
+    tmp = anchor.with_suffix(anchor.suffix + ".tmp")
+    tmp.write_text(json.dumps(document, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, anchor)
+    return payload
+
+
+def _check_anchor_monotonic(p: pathlib.Path, payload: dict) -> None:
+    """Refuse to replace an installed anchor with one describing a SHORTER chain.
+
+    Defence in depth only - the authoritative anti-rollback lives in the owner's
+    signing command, which must refuse to sign a lower count at all. This side can
+    still be bypassed by a writer who drops the sidecar in directly, so it is never
+    presented as the guarantee.
+    """
+    anchor = _anchor_path(p)
+    if not anchor.exists():
+        return
+    try:
+        installed = json.loads(anchor.read_text(encoding="utf-8"))["payload"]["count"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, IndexError) as exc:
+        raise AuditError(
+            f"the installed audit head anchor is unreadable; refusing to replace it: {exc}") from exc
+    if not isinstance(installed, int) or isinstance(installed, bool):
+        raise AuditError("the installed audit head anchor has no integer count; "
+                         "refusing to replace it")
+    if payload["count"] < installed:
+        raise AuditError(
+            f"audit head anchor rollback refused: new count {payload['count']} is below "
+            f"the installed anchor's {installed}")
 
 
 def verify_signed_payload(document, artifact_type: str, keys: dict, *,
@@ -176,8 +421,8 @@ def verify_signed_payload(document, artifact_type: str, keys: dict, *,
     ``keys`` is the registry loaded by ``bro_signature.load_trusted_keys`` (anchored
     to the external operator pin); the raw signature check is
     ``bro_signature.verify_detached`` itself. Key policy mirrors
-    ``bro_signature.verify_artifact`` — known key id, active status, validity
-    window — with the artifact binding enforced by ``authorities`` (the artifact
+    ``bro_signature.verify_artifact`` - known key id, active status, validity
+    window - with the artifact binding enforced by ``authorities`` (the artifact
     types here are intentionally unknown to the registry, so per-key
     ``allowed_artifact_types`` cannot name them; the authority type carries the
     binding instead). Raises AuditError; never returns an unverified payload.
@@ -217,53 +462,87 @@ def verify_signed_payload(document, artifact_type: str, keys: dict, *,
     return payload
 
 
-def head_anchor_payload(path, *, key_id: str, now: int) -> dict:
-    """Build the audit-head payload an EXTERNAL recorder/operator signs.
-
-    This module never signs — the returned payload leaves the process, is signed by
-    the recorder/operator authority out-of-band, and comes back through
-    ``attach_head_anchor``. The chain is structurally verified first so an anchor is
-    never minted over an already-broken ledger.
-    """
-    p = pathlib.Path(path)
-    count = verify(p)
-    records = read_all(p)
-    return {
-        "artifact_type": ANCHOR_ARTIFACT_TYPE,
-        "key_id": key_id,
-        "ledger": p.name,
-        "count": count,
-        "last_hash": records[-1]["hash"] if records else GENESIS,
-        "issued_at_epoch": int(now),
-    }
-
-
-def attach_head_anchor(path, document: dict, keys: dict, *, now: int | None = None) -> dict:
-    """Install a signed head anchor beside the ledger, verifying it first.
-
-    The document must verify against the trusted registry AND describe the ledger's
-    current chain exactly — a stale or foreign anchor is refused rather than stored.
-    """
-    p = pathlib.Path(path)
-    payload = verify_signed_payload(document, ANCHOR_ARTIFACT_TYPE, keys,
-                                    authorities=ANCHOR_AUTHORITIES, now=now)
-    _check_anchor_against_chain(p, payload)
-    anchor = _anchor_path(p)
-    tmp = anchor.with_suffix(anchor.suffix + ".tmp")
-    tmp.write_text(json.dumps(document, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, anchor)
-    return payload
-
-
 def _check_anchor_against_chain(p: pathlib.Path, payload: dict) -> None:
+    # Exact field set, not a subset: an anchor carrying fields the verifier does not
+    # check is an anchor whose meaning the signer, not the verifier, decided.
+    if set(payload) != set(ANCHOR_PAYLOAD_FIELDS):
+        raise AuditError(
+            "audit head anchor payload has the wrong field set; unexpected="
+            f"{sorted(set(payload) - set(ANCHOR_PAYLOAD_FIELDS))} missing="
+            f"{sorted(set(ANCHOR_PAYLOAD_FIELDS) - set(payload))}")
     records = read_all(p)
     if payload.get("ledger") != p.name:
         raise AuditError("audit head anchor names a different ledger")
-    if payload.get("count") != len(records):
+    count = payload.get("count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        raise AuditError("audit head anchor count is not an integer")
+    if count != len(records):
         raise AuditError("audit head anchor count disagrees with chain length")
     tail = records[-1]["hash"] if records else GENESIS
     if payload.get("last_hash") != tail:
         raise AuditError("audit head anchor hash disagrees with chain tail")
+    previous = payload.get("previous_anchor_sha256")
+    if previous is not None and not _is_sha256_hex(previous):
+        raise AuditError("audit head anchor previous_anchor_sha256 is neither null "
+                         "nor a sha256 hex digest")
+
+
+def append(path, kind: str, payload: dict, *, repo_root: pathlib.Path | None = None) -> dict:
+    p = pathlib.Path(path)
+    if repo_root is not None:
+        _assert_external(p, repo_root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # The whole read-modify-write is one critical section: two writers that both read
+    # the tail before either appended would compute the same seq/prev_hash and fork
+    # the chain. The lock serialises them; the tail is re-read inside it. Anchoring
+    # happens inside the same section so the signed head can never describe a chain
+    # another writer has already extended.
+    lock_fd = _acquire_lock(p)
+    try:
+        configured = anchor_custody_configured()
+        if not configured and _anchor_path(p).exists():
+            # Silently appending past an installed anchor would strand it and turn
+            # every later keyed verify() into a tamper report on an honest ledger.
+            # Refuse before writing anything.
+            raise AuditAnchorCustodyMissing(
+                f"{p.name} carries a signed head anchor but no anchor custody is "
+                f"configured, so this append could not be anchored and would strand "
+                f"it. {CUSTODY_REFUSAL}")
+        signer_argv = anchor_key_id = trusted = None
+        if configured:
+            # Resolve custody and the verification registry BEFORE writing, so a
+            # misconfiguration refuses without leaving an unanchorable record behind.
+            signer_argv, anchor_key_id = anchor_custody()
+            trusted = _trusted_keys()
+        existing = read_all(p)
+        prev_hash = existing[-1]["hash"] if existing else GENESIS
+        seq = existing[-1]["seq"] + 1 if existing else 0
+        body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, "payload": redact_mapping(payload)}
+        record = dict(body)
+        record["hash"] = _record_hash(prev_hash, body)
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        # Replace the head atomically so a crash mid-write can never leave a torn head
+        # that verify() would read as a truncation.
+        head = _head_path(p)
+        tmp = head.with_suffix(head.suffix + ".tmp")
+        tmp.write_text(json.dumps({"count": seq + 1, "last_hash": record["hash"]}), encoding="utf-8")
+        os.replace(tmp, head)
+        if configured:
+            # Fail-closed: if signing or installation raises, the record stays (the
+            # ledger is append-only) but the anchor is now stale, so every keyed
+            # verify() refuses this ledger until an operator re-anchors it. A
+            # silently unanchored append would be the O-2 defect all over again.
+            document = _sign_anchor(
+                signer_argv,
+                _anchor_payload(p, key_id=anchor_key_id, count=seq + 1,
+                                last_hash=record["hash"], now=time.time()))
+            _install_anchor(p, document, trusted)
+        return record
+    finally:
+        _release_lock(lock_fd, p)
 
 
 def verify(path, *, keys: dict | None = None, now: int | None = None) -> int:
@@ -273,8 +552,11 @@ def verify(path, *, keys: dict | None = None, now: int | None = None) -> int:
     authoritative: a signed head anchor from the recorder/operator authority is
     REQUIRED and the chain must reproduce it exactly, so a writer that drops
     records, recomputes the chain and rewrites the plaintext ``.head`` still fails
-    (it cannot re-sign the anchor). Without ``keys`` the check is structural only —
-    sufficient against corruption, not against the ledger's own writer.
+    (it cannot re-sign the anchor). A ledger that exists but carries no anchor is
+    refused as ``AuditAnchorMissing`` - a different fact from tampering, raised as
+    its own type so an operator can act on the one that actually applies. Without
+    ``keys`` the check is structural only - sufficient against corruption, not
+    against the ledger's own writer.
 
     Returns the record count. Raises AuditError on any break.
     """
@@ -302,10 +584,16 @@ def verify(path, *, keys: dict | None = None, now: int | None = None) -> int:
     if keys is not None:
         anchor_file = _anchor_path(p)
         if not anchor_file.exists():
-            if records:
-                raise AuditError(
-                    "audit ledger has no signed head anchor; a self-hashed head "
-                    "cannot resist the party that writes the log")
+            # Keyed on the ledger FILE, not on the record count: a ledger emptied to
+            # zero records with its sidecars deleted must not verify as a clean
+            # "return 0". Only a ledger that was never created has nothing to anchor.
+            if p.exists():
+                raise AuditAnchorMissing(
+                    f"{p.name} has no signed head anchor (.head.sig): this ledger is "
+                    f"UNANCHORED - its integrity was never established, which is a "
+                    f"different fact from tampering. A self-hashed head cannot resist "
+                    f"the party that writes the log, so this verification refuses "
+                    f"rather than reporting the chain intact. {CUSTODY_REFUSAL}")
             return 0
         try:
             document = json.loads(anchor_file.read_text(encoding="utf-8"))

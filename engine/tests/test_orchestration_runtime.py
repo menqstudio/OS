@@ -82,6 +82,21 @@ def build_evidence(store: pathlib.Path, keys: dict, task_id: str, count: int) ->
         encoding="utf-8")
     return ids
 
+
+def head_binding(store: pathlib.Path, task_id: str) -> dict:
+    """The O-5 evidence-head binding a completion manifest must now carry.
+
+    The manifest names exactly one signed head — its monotonic `head_sequence` and the
+    digest of the signed document itself — so the anti-rollback high-water mark lives in
+    something the builder signed rather than only in a directory anyone can delete.
+    """
+    document = json.loads((store / f"{task_id}.head.json").read_text(encoding="utf-8"))
+    return {
+        "evidence_head_sha256": canonical_json_sha256(document),
+        "head_sequence": document["payload"]["head_sequence"],
+    }
+
+
 AGENT = "agt-p01-r01"
 OTHER_AGENT = "agt-p01-r02"
 
@@ -325,6 +340,7 @@ class DurableVerificationCompletionTests(DurableRuntimeTests):
             "tests": [{"command": command, "status": "passed", "evidence_event_id": refs[1],
                        "execution_receipt_id": rid}],
             "evidence_event_ids": refs, "open_risks": [], "rollback_ready": True,
+            **head_binding(self.store, contract["task_id"]),
             "nonce": uuid.uuid4().hex,
             "issued_at_epoch": issued_at,
             "expires_at_epoch": issued_at + 3600,
@@ -459,6 +475,15 @@ class DurableVerificationCompletionTests(DurableRuntimeTests):
         # and the signing key's bound identity still holds
         self.assertEqual(self.trusted[rpayload["key_id"]].subject_agent_id, VERIFIER_AGENT)
         self.assertEqual(self.trusted[mpayload["key_id"]].subject_agent_id, AGENT)
+
+        # O-5: the evidence high-water mark travels into this record, which lives in a
+        # different store from the evidence it polices. Wiping the evidence store's
+        # anti-rollback floor — just done above — does not erase it, so a later completion
+        # naming a LOWER head_sequence than one already recorded here is a rollback an
+        # auditor can see from signed bytes rather than from custodial filesystem state.
+        self.assertEqual(record["evidence_head_sequence"], mpayload["head_sequence"])
+        self.assertEqual(record["evidence_head_sha256"], mpayload["evidence_head_sha256"])
+        self.assertGreaterEqual(record["evidence_head_sequence"], 1)
 
     def test_a_non_required_task_still_completes_without_a_receipt(self):
         now = int(time.time())
