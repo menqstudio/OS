@@ -2,14 +2,20 @@ name: supply-chain
 
 # Supply-chain scan gate for menqstudio/OS.
 #
-# Six INDEPENDENT jobs (one per ecosystem / concern) so a failure in one scanner
+# TEN INDEPENDENT jobs (one per ecosystem / concern) so a failure in one scanner
 # never masks the others and each surfaces its own red X:
-#   cargo-audit  - RustSec advisory scan of the Cargo.lock graph
-#   cargo-deny   - advisories + license/bans/sources policy over the Rust graph
-#   pip-audit    - PyPI advisory scan of the hash-pinned engine requirements
-#   npm-audit    - npm advisory scan, filtered through a fail-closed high+ gate
-#   sbom         - CycloneDX SBOMs (Rust + npm + Python) published as artifacts
-#   gitleaks     - secret scan of the working tree and (on PRs) the commit range
+#   cargo-audit      - RustSec advisory scan of the Cargo.lock graph
+#   cargo-deny       - advisories + license/bans/sources policy over the Rust graph
+#   pip-audit        - PyPI advisory scan of the hash-pinned engine requirements
+#   npm-audit        - npm advisory scan, filtered through a fail-closed high+ gate
+#   sbom             - CycloneDX SBOMs (Rust + npm + Python) published as artifacts
+#   action-pins      - one action to one pin, one commit to one action (F-46)
+#   release-signing  - signing key and updater config can only move together
+#   residual-items   - the O-1..O-5 inventory cannot drift from the canonical docs
+#   reachability     - nothing ships implemented-and-uncalled without a written reason
+#   gitleaks         - secret scan of the working tree and (on PRs) the commit range
+# (The count and list above were stale at "Six" while four jobs had already been added —
+#  corrected here rather than left as another claim nothing checks.)
 #
 # Every job fails closed on HIGH/CRITICAL severity. All third-party actions are
 # pinned by full commit SHA (tag in trailing comment); the shared SHAs match the
@@ -268,6 +274,36 @@ jobs:
       - name: Gate self-tests
         working-directory: tools
         run: python -m unittest test_check_residual_items
+
+  reachability:
+    name: Reachability - nothing implemented-and-uncalled
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # Stdlib only, no network. Five separate times this week the same defect shipped:
+      # something implemented that nothing calls - a capability policy with no enforcement,
+      # 262 agent definitions the app could not see, two backend commands with no frontend
+      # wrapper, five engine security functions with zero callers. Every one read as
+      # protection while doing nothing, and every one was found by a human audit, because a
+      # gate that checks a thing EXISTS cannot tell you the thing is REACHED. This makes
+      # reachability a checked claim: every registered #[tauri::command] is invoked from
+      # apps/desktop/src/** or declared in config/reachability-declarations.json WITH A
+      # WRITTEN REASON; the security-critical engine symbols named in
+      # docs/PHASE_10_PRODUCTION_ITEMS.md carry an expectation the gate defends in BOTH
+      # directions (a caller that disappears is red, and so is an exception that outlives the
+      # condition it described); and capability grants must correspond to registered commands.
+      # Unreachable is often correct - unreachable-AND-undeclared is the defect. The gate
+      # prints its own limits on every run (a static scan: dynamic dispatch slips past)
+      # because a gate that overstates its coverage is the same lie one level up.
+      # See docs/REACHABILITY_GATE.md.
+      - name: Reachability gate
+        run: python tools/check_reachability.py
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_reachability
 
   gitleaks:
     name: Secrets - gitleaks
