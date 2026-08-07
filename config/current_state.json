@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "57944e41d786668c3673de58cdab4c4b5e17bbe3",
-    "snapshot_branch": "feat/close-o4-and-owner-ceremony",
+    "baseline_main_head_at_sync": "4788535714727b59d5dfc1ad69b1dbb571e5fca5",
+    "snapshot_branch": "feat/o1-readonly-control-plane",
     "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 0efa99e (PR #65 merged). The active branch chore/staleness-sweep is a direct child of it.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #67). PR #67's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #68). PR #68's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "feat/close-o4-and-owner-ceremony"
+    "branch": "feat/o1-readonly-control-plane"
   },
   "prs": [],
   "status_tokens": {
@@ -212,11 +212,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 67,
-    "branch": "feat/close-o4-and-owner-ceremony",
+    "number": 68,
+    "branch": "feat/o1-readonly-control-plane",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #67 body.",
-    "note": "PR #67 closes O-4 in code and writes docs/OWNER_CEREMONY.md. _prove_command_actor now routes by actor: the conductor keeps its conductor-session credential (a window, authorising any command the caller could already reach) while the OWNER must present a control-room-command artifact bound to this exact command_id, task_id and command -- per-command non-repudiation, so a stolen artifact replays exactly the command that was already signed. The schema carries artifact_type/key_id/signature, optional because a conductor command is proven by a separate credential and carries none. Four checks were deleted one at a time; one stayed GREEN (the guard refusing to prove an owner without a command to bind against, untested because every caller passes one) and now has its own test. O-4 stays OPEN: the shipped registry pins no key for the type and a test holds that a flawless artifact signed by an ungranted key still refuses. Two tests that pinned the old state were rewritten rather than deleted. Also: three roadmaps cut to one -- engine/ROADMAP.md claimed Canonical branch main / Merged PR #52 of the STANDALONE repo, frozen 2026-07-19, with nothing marking it history; apps/desktop/docs/ROADMAP.md admitted the master wins and its eight inbound links now go there. engine/AUDIT/ stays because five of its tickets carry live status. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #68 body.",
+    "note": "PR #68 hardens O-1s read half. -B stops bytecode being WRITTEN; nothing stops CPython READING a .pyc already present, and it reads it during import before any check in the process exists -- so a detector can never reach that case. assert_control_plane_not_writable refuses to trust a control plane the running account can write into: a cache file that cannot exist cannot be forged. It answers by ATTEMPTING a create rather than asking os.access, proven by a test that applies a deny ACE and asserts os.access says True while the real create is refused. PYTHONPYCACHEPREFIX was rejected as weakest -- it moves the caches, so whoever can write the new location can still plant one. Five mutations, all red; the pass found a real bug where a leftover probe made O_EXCL raise and the directory read as unwritable. docs/DEBIAN_DEPLOYMENT.md covers O-1/O-2/O-3/O-5 on a Debian box acting as both offline signer and second account. All five items stay OPEN: the code is ready, the artifacts are not minted. The gate is untouched."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",
