@@ -3,6 +3,7 @@
 
 use crate::AppState;
 use brops_core::{
+    local_write_record::{SubjectState, WriteRecord},
     repo, ActivityEvent, Agent, Approval, Automation, AutomationRun, Conversation, Decision, Event, Integration,
     KnowledgeNote, LibraryItem, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
     NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject, NewResearchItem,
@@ -102,6 +103,10 @@ const MAX_STEP_DETAIL_CHARS: usize = 4_000;
 const MAX_AUTOMATION_NAME_CHARS: usize = 200;
 const MAX_AUTOMATION_TRIGGER_CHARS: usize = 500;
 const MAX_AUTOMATION_ACTION_CHARS: usize = 4_000;
+// Phase-9 connector declaration: a name and a provider are display/registry strings, so
+// they are bounded at write time like every other renderer-supplied free text here.
+const MAX_INTEGRATION_NAME_CHARS: usize = 200;
+const MAX_INTEGRATION_PROVIDER_CHARS: usize = 200;
 
 /// Reject a field longer than `max` characters (fail closed, no truncation).
 fn require_len(field: &str, value: &str, max: usize) -> Result<(), String> {
@@ -818,6 +823,63 @@ pub fn delete_memory(id: String) -> Result<(), String> {
     Err(forbidden_hard_delete("delete_memory"))
 }
 
+// --- local write records for memory entries and knowledge notes (READ-ONLY) ---------
+//
+// READ THE VOCABULARY BEFORE YOU RENDER ANY OF THIS. These four commands surface
+// `core/src/local_write_record.rs`, which appends a record for every memory/knowledge
+// write INSIDE that write's own transaction, append-only enforced by the migration-0021
+// database triggers. What that supports is narrow and exact:
+//
+//   * the subject's content AT WRITE TIME is pinned by a digest, and
+//   * a later out-of-band edit of the database file is DETECTED — the row stops hashing
+//     to its record and the state becomes `content_diverged`, never silently absorbed.
+//
+// What it does NOT support: nothing here is signed. There is no key, no manifest, no
+// external authority, no containment; the record is produced by the same local process
+// that performs the write, so it attests the CONTENT, never the WRITER. This is
+// tamper-evidence, not attestation and not verification.
+//
+// Consequently the honest words are `recorded`, `write record`, `content diverged`,
+// `unrecorded` — and the production trust vocabulary (`verified`, `trusted_verified`,
+// the receipt path in `governed_verification`) must NEVER be borrowed for them. A
+// "Verifiable memory" pill was removed from this product for exactly that reason: it
+// claimed custody nothing here establishes. These commands are also strictly READ-ONLY —
+// they read records, they cannot append, amend or delete one.
+
+/// Where one memory entry stands against its own write record: `recorded`,
+/// `content_diverged` (the row changed outside the recorded path), `deleted_but_present`,
+/// or `unrecorded` (written before the ledger existed — deliberately never back-filled).
+/// Nothing here is signed; see the section header.
+#[tauri::command]
+pub fn memory_write_record_state(state: State<AppState>, id: String) -> Result<SubjectState, String> {
+    let conn = locked(&state)?;
+    repo::memory::write_record_state(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Every write record appended for one memory entry, oldest first (records outlive the
+/// row). Read-only; nothing here is signed.
+#[tauri::command]
+pub fn memory_write_records(state: State<AppState>, id: String) -> Result<Vec<WriteRecord>, String> {
+    let conn = locked(&state)?;
+    repo::memory::write_records(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Where one knowledge note stands against its own write record — same four states and
+/// the same limits as [`memory_write_record_state`].
+#[tauri::command]
+pub fn knowledge_write_record_state(state: State<AppState>, id: String) -> Result<SubjectState, String> {
+    let conn = locked(&state)?;
+    repo::knowledge::write_record_state(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Every write record appended for one knowledge note, oldest first. Read-only; nothing
+/// here is signed.
+#[tauri::command]
+pub fn knowledge_write_records(state: State<AppState>, id: String) -> Result<Vec<WriteRecord>, String> {
+    let conn = locked(&state)?;
+    repo::knowledge::write_records(&conn, &id).map_err(|e| e.to_string())
+}
+
 // --- runs (command) ---
 
 #[tauri::command]
@@ -939,31 +1001,6 @@ pub enum StreamEvent {
     },
 }
 
-/// UTC ISO-8601, seconds resolution — the shape the renderer's `str()` reader accepts.
-fn now_iso() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    // Civil-from-days (Howard Hinnant's algorithm). No chrono in this crate, and a delegation
-    // timestamp is not worth a dependency.
-    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, m, d, rem / 3600, (rem % 3600) / 60, rem % 60
-    )
-}
-
 /// Turn one [`crate::ai::AgentEvent`] into the frontend frame, or `None` when there is nothing
 /// honest to send.
 ///
@@ -991,7 +1028,7 @@ fn delegation_frame(ev: crate::ai::AgentEvent, conversation_id: &str) -> StreamE
                 },
             );
             obj.insert("parent".into(), json!("Bro"));
-            obj.insert("startedAt".into(), json!(now_iso()));
+            obj.insert("startedAt".into(), json!(crate::ai::now_iso()));
             if let Some(x) = d.description {
                 obj.insert("description".into(), json!(x));
             }
@@ -1023,7 +1060,7 @@ fn delegation_frame(ev: crate::ai::AgentEvent, conversation_id: &str) -> StreamE
             id: s.id,
             outcome: s.outcome.to_string(),
             summary: s.summary,
-            ended_at: now_iso(),
+            ended_at: crate::ai::now_iso(),
         },
     }
 }
@@ -2160,6 +2197,20 @@ pub fn list_automation_runs(state: State<AppState>, id: String) -> Result<Vec<Au
 pub fn list_integrations(state: State<AppState>) -> Result<Vec<Integration>, String> {
     let conn = locked(&state)?;
     repo::integrations::list(&conn).map_err(|e| e.to_string())
+}
+
+/// Declare a connector in the local registry: record that this product knows about an
+/// external channel. It records a NAME and a PROVIDER and nothing else — there is
+/// deliberately no credential parameter, because the Phase-9 boundary keeps secrets out
+/// of the desktop. `repo::integrations::create` starts the row `disconnected`, which is
+/// the truth about it: declared here, not configured anywhere and never contacted.
+/// Declaring a connector is not connecting one, and this command claims neither.
+#[tauri::command]
+pub fn create_integration(state: State<AppState>, name: String, provider: String) -> Result<Integration, String> {
+    require_len("name", &name, MAX_INTEGRATION_NAME_CHARS)?;
+    require_len("provider", &provider, MAX_INTEGRATION_PROVIDER_CHARS)?;
+    let conn = locked(&state)?;
+    repo::integrations::create(&conn, &name, &provider).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

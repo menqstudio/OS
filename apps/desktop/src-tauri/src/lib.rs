@@ -176,6 +176,14 @@ pub fn run() {
             commands::create_memory,
             commands::set_memory_pinned,
             commands::delete_memory,
+            // READ-ONLY local write records for memory/knowledge (Phase 5). These
+            // report what was RECORDED — an unsigned, in-transaction, append-only
+            // tamper-evidence record — and never claim verification; see the section
+            // header in commands.rs before naming any of this on screen.
+            commands::memory_write_record_state,
+            commands::memory_write_records,
+            commands::knowledge_write_record_state,
+            commands::knowledge_write_records,
             commands::list_runs,
             commands::create_run,
             commands::set_run_status,
@@ -193,6 +201,7 @@ pub fn run() {
             commands::run_automation,
             commands::list_automation_runs,
             commands::list_integrations,
+            commands::create_integration,
             commands::set_integration_status,
             commands::search_all,
             commands::get_analytics,

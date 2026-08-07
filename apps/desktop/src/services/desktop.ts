@@ -90,6 +90,65 @@ export interface TrustSelftest {
   platform_note: string;
 }
 
+
+// --- local write records for memory entries and knowledge notes (READ-ONLY) ---------
+//
+// READ THIS BEFORE PUTTING ANY OF IT ON SCREEN. The Rust side
+// (`core/src/local_write_record.rs`) appends a record for every memory/knowledge write
+// inside that write's own transaction, append-only at the database layer. It pins the
+// subject's CONTENT at write time and detects a later out-of-band edit of the database
+// file. It is NOT signed: no key, no manifest, no external authority, no containment,
+// and the record is produced by the same local process that performed the write — so it
+// says nothing about WHO wrote the row.
+//
+// So this is tamper-evidence, not verification. The honest words are `recorded`,
+// `write record`, `content diverged`, `unrecorded`; the production trust vocabulary
+// (`verified`, `trusted_verified`, the governed receipt path) must never be borrowed for
+// it. A "Verifiable memory" pill was removed from this product for exactly that reason.
+
+/** Which kind of row a write record describes. Mirrors the Rust `SubjectKind`. */
+export type WriteRecordSubjectKind = 'memory_entry' | 'knowledge_note';
+
+/** The write that produced a record. Mirrors the Rust `WriteOp`. */
+export type WriteRecordOperation = 'created' | 'updated' | 'deleted';
+
+/** One durable record in the append-only chain. Unsigned — see the note above. */
+export interface WriteRecord {
+  id: string;
+  /** Chain position, contiguous from 1. */
+  seq: number;
+  subjectKind: WriteRecordSubjectKind;
+  subjectId: string;
+  operation: WriteRecordOperation;
+  /** Digest of the subject's fields at the moment of the write. */
+  contentSha256: string;
+  prevRecordSha256: string;
+  recordSha256: string;
+  recordedAt: string;
+}
+
+/**
+ * Where a subject stands against its own records — the exact four states the backend can
+ * defend. There is deliberately no "verified" state, because nothing here is signed.
+ *
+ *  - `recorded`             the row's current content hashes to its most recent record
+ *  - `content_diverged`     a record exists but the row no longer hashes to it: the row was
+ *                           changed outside the recorded path. This is the tamper signal and
+ *                           must never be rounded up to `recorded`
+ *  - `deleted_but_present`  the latest record says deleted, yet a row is present under that id
+ *  - `unrecorded`           no record at all (written before the ledger existed; never
+ *                           back-filled, because minting a record for an unwitnessed write
+ *                           would be a forgery)
+ *
+ * `actual_content_sha256` keeps the Rust field name — it arrives verbatim from the
+ * internally-tagged enum, which renames variants but not their fields.
+ */
+export type WriteRecordState =
+  | { state: 'recorded'; record: WriteRecord }
+  | { state: 'content_diverged'; record: WriteRecord; actual_content_sha256: string }
+  | { state: 'deleted_but_present'; record: WriteRecord }
+  | { state: 'unrecorded' };
+
 export const desktop = {
   // projects
   listProjects: () => invoke<Project[]>('list_projects'),
@@ -199,6 +258,16 @@ export const desktop = {
     invoke<MemoryEntry>('set_memory_pinned', { id, pinned }),
   deleteMemory: (id: string) => invoke<void>('delete_memory', { id }),
 
+  // local write records (READ-ONLY). These report what was RECORDED — an unsigned,
+  // in-transaction, append-only tamper-evidence record — and never that anything was
+  // verified; see the WriteRecordState docs above before rendering a state.
+  memoryWriteRecordState: (id: string) =>
+    invoke<WriteRecordState>('memory_write_record_state', { id }),
+  memoryWriteRecords: (id: string) => invoke<WriteRecord[]>('memory_write_records', { id }),
+  knowledgeWriteRecordState: (id: string) =>
+    invoke<WriteRecordState>('knowledge_write_record_state', { id }),
+  knowledgeWriteRecords: (id: string) => invoke<WriteRecord[]>('knowledge_write_records', { id }),
+
   // files (filesystem browser; path omitted = home dir). read/write a text file
   listDir: (path?: string) => invoke<DirListing>('list_dir', { path: path ?? null }),
   readFile: (path: string) => invoke<FileContent>('read_file', { path }),
@@ -236,6 +305,11 @@ export const desktop = {
 
   // integrations
   listIntegrations: () => invoke<Integration[]>('list_integrations'),
+  // Declare a connector: a NAME and a PROVIDER, never a credential — there is no field
+  // for one, by design. The new row starts `disconnected`: declared here, not configured
+  // anywhere and never contacted. Declaring is not connecting.
+  createIntegration: (name: string, provider: string) =>
+    invoke<Integration>('create_integration', { name, provider }),
   setIntegrationStatus: (id: string, status: string) =>
     invoke<Integration>('set_integration_status', { id, status }),
 

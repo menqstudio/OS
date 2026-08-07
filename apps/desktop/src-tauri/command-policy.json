@@ -327,6 +327,26 @@
     "write_file": {
       "tier": "X",
       "grant": "allow"
+    },
+    "memory_write_record_state": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "memory_write_records": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "knowledge_write_record_state": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "knowledge_write_records": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "create_integration": {
+      "tier": "L1",
+      "grant": "allow"
     }
   }
 }

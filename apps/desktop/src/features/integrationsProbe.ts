@@ -15,19 +15,25 @@
 //
 // WHAT ACTUALLY HAPPENS TODAY
 // ---------------------------
-// Neither command below exists. `src-tauri/src/commands.rs` implements exactly two
-// integration commands — `list_integrations` and `set_integration_status` — and
-// `src-tauri/capabilities/default.json` grants exactly the matching two permissions
-// (`allow-list-integrations`, `allow-set-integration-status`). A window capability set is
-// deny-by-default, so an ungranted command is refused by the wall with
-// `"<cmd> not allowed. Permissions associated with this command: "` before any Rust runs.
+// `create_integration` NOW EXISTS: it is registered in `commands.rs`, declared in
+// `command-policy.json` and `build.rs`, and granted as `allow-create-integration`. The
+// desktop can declare a connector. Use `desktop.createIntegration` — the typed boundary —
+// rather than the local wrapper below, which stays only until this file's caller moves over.
 //
-// That refusal is REAL, so the honest report is produced by really attempting the call and
-// classifying the real refusal — not by hard-coding "unsupported". The moment the backend
-// ships `probe_integration` and its capability grant, this same code path starts returning
-// genuine answers with no UI change. (At that point these two wrappers should move into
-// `services/desktop.ts`, the typed IPC boundary, alongside `listIntegrations`; they live
-// here only because that boundary has nothing to wrap yet.)
+// `probe_integration` STILL DOES NOT EXIST, and that is a decision rather than an omission.
+// Nothing downstream can answer it: `bridge/engine_sidecar.py` has no op dispatch at all —
+// it reads one task-request and runs one governed turn — and no engine, operator or
+// supervisor endpoint knows anything about external connectors. Registering a command that
+// cannot produce a boolean `reachable` would make this surface WORSE: today's capability-wall
+// refusal classifies as `unsupported` ("this build cannot ask", a fact about the build, and
+// true), while a registered no-answer command downgrades it to `indeterminate` ("we asked and
+// learned nothing", a fact about an attempt that never happened).
+//
+// A window capability set is deny-by-default, so an ungranted command is refused by the wall
+// with `"<cmd> not allowed. Permissions associated with this command: "` before any Rust
+// runs. That refusal is REAL, so the honest report comes from really attempting the call and
+// classifying what came back — not from hard-coding "unsupported". The day a probe backend
+// exists, this same code path starts returning genuine answers with no UI change.
 //
 // The probe is ALWAYS user-initiated. Nothing here runs on mount, so the page never
 // generates capability-wall noise on its own.
@@ -40,9 +46,8 @@ import type { Reachability } from './integrationsModel';
  *  Not implemented and not granted today — see the header. */
 export const PROBE_COMMAND = 'probe_integration';
 
-/** The backend command that would append a connector to the registry. `repo.rs` has
- *  `integrations::create`, but no `#[tauri::command]` exposes it and no capability
- *  grants it, so the desktop cannot declare a connector today. */
+/** Appends a connector to the registry. Registered and granted — see the header. Declaring
+ *  is not connecting: the row starts `disconnected` and no credential is passed. */
 export const DECLARE_COMMAND = 'create_integration';
 
 /** Injectable IPC for tests. Production is Tauri's `invoke`; nothing else is simulated. */
