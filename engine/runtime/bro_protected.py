@@ -165,6 +165,91 @@ def assert_no_bytecode_shadow(root: pathlib.Path, manifest: ProtectedManifest) -
             f"sources; run enforcement with `python -B` and remove: {offenders}")
 
 
+#: Environment acknowledgement for a deployment that CANNOT make the control plane read-only.
+#:
+#: Deliberately not a boolean flag with a friendly name. Setting it says, in the operator's own
+#: hand, that this deployment accepts the residual O-1 hole: an attacker who can write into the
+#: control-plane tree before the process starts can plant a `.pyc` that CPython imports in place
+#: of a digest-verified source, and no Python-level check can see it — the shadow is loaded before
+#: any check exists to run.
+WRITABLE_CONTROL_PLANE_ENV = "BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED"
+WRITABLE_CONTROL_PLANE_TOKEN = "accepted-o1-residual-risk"
+
+
+def control_plane_writable_by_me(root: pathlib.Path,
+                                 manifest: ProtectedManifest) -> list[str]:
+    """Every digest-scoped directory this process could still plant a `.pyc` into.
+
+    The *read* half of O-1 has no fix inside Python. `-B` and `dont_write_bytecode` stop bytecode
+    being WRITTEN; nothing stops CPython READING a `.pyc` that is already there, and it reads it
+    during import — before any assertion in this module has had a chance to exist. So the only
+    real defence is that a cache file cannot be created at all, which is a property of the
+    FILESYSTEM, not of the interpreter.
+
+    This function is how that property stops being a hope. It does not ask what the mode bits say;
+    it tries to create a file and deletes it again, because that is the same question CPython's
+    import machinery asks and the only one whose answer cannot be argued with — a read-only mount,
+    an ACL, an immutable attribute and a full disk all answer it correctly, and none of them is
+    legible from a `stat()` alone.
+
+    Returns the writable directories, sorted. Empty means a `.pyc` cannot be planted here by this
+    account, which is the condition `assert_no_bytecode_shadow` can only detect after the fact.
+    """
+    writable: list[str] = []
+    for dirpath, dirnames, _filenames in os.walk(root, followlinks=False):
+        here = pathlib.Path(dirpath)
+        relative = _relative_posix(root, here) if here != root else "."
+        # Only where a shadow would matter: a directory holding digest-scoped sources.
+        probe_scope = f"{relative}/probe" if relative != "." else "probe"
+        if not _digest_scope(manifest, probe_scope):
+            continue
+        probe = here / ".bro-write-probe"
+        try:
+            fd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            # A leftover probe from an interrupted run. Something created a file here, so this
+            # directory IS writable — treating EEXIST as "cannot write" would make a stale file
+            # turn the gate green, which is the failure mode the gate exists to prevent.
+            writable.append(relative)
+            continue
+        except OSError:
+            continue          # cannot create here — exactly what we want
+        os.close(fd)
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass              # left behind, but the finding is that it was creatable
+        writable.append(relative)
+    return sorted(writable)
+
+
+def assert_control_plane_not_writable(root: pathlib.Path,
+                                      manifest: ProtectedManifest) -> None:
+    """Refuse to trust a control plane this account can still write into (**O-1, read half**).
+
+    `assert_no_bytecode_shadow` catches a shadow that is already present. It cannot catch one
+    planted a moment later, and it cannot catch one that was loaded before this process started.
+    Making the tree unwritable removes the whole class instead of racing it.
+
+    A deployment that genuinely cannot do this — a developer checkout, a Windows box without a
+    second account — may say so by exporting the acknowledgement, and the refusal names it. That is
+    not a bypass dressed up as an option: an accepted risk somebody typed out is a different thing
+    from one nobody noticed, and it is the difference between a deployment that has weighed O-1 and
+    one that has not.
+    """
+    if os.getenv(WRITABLE_CONTROL_PLANE_ENV) == WRITABLE_CONTROL_PLANE_TOKEN:
+        return
+    writable = control_plane_writable_by_me(root, manifest)
+    if writable:
+        raise ProtectedScopeError(
+            "the control plane is writable by the account running enforcement, so a forged .pyc "
+            "can be planted and CPython will import it in place of a digest-verified source — "
+            "before any check in this process exists to notice. `-B` does not help: it stops "
+            "bytecode being written, not read. Make these directories read-only for this account "
+            f"(a read-only mount, or an owner the runner is not): {writable}. A deployment that "
+            f"cannot do that must say so: {WRITABLE_CONTROL_PLANE_ENV}={WRITABLE_CONTROL_PLANE_TOKEN}")
+
+
 def _relative_posix(root: pathlib.Path, path: pathlib.Path) -> str:
     try:
         return path.relative_to(root).as_posix()

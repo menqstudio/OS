@@ -12,7 +12,7 @@ from bro_contracts import ContractError, validate_agent_profile, validate_task_c
 from bro_execution_lease import LeaseError, finalize_execution_lease, load_execution_lease_from_env, quarantine_execution_lease, reserve_execution_lease
 from bro_freeze import FreezeError, authorize_under_freeze, freeze_authority, load_freeze
 from bro_policy import State, authorize_classified_action
-from bro_protected import ProtectedScopeError, assert_no_bytecode_shadow, authorize_protected_scope, load_protected_manifest, verify_control_plane_digest
+from bro_protected import ProtectedScopeError, assert_control_plane_not_writable, assert_no_bytecode_shadow, authorize_protected_scope, load_protected_manifest, verify_control_plane_digest
 from bro_recovery import RecoveryError, cancel_prepared, prepare_mutation, settle_mutation
 from bro_release_v3 import ReleaseV3Error, authorize_release_push
 from bro_repository_state import RepositoryStateError, verify_repository_binding
@@ -78,6 +78,9 @@ def _bind_workspace(classification: ActionClassification) -> Workspace:
     # authority at its own entry point rather than only as a side effect of the
     # digest comparison further down.
     assert_no_bytecode_shadow(ROOT, manifest)
+    # ...and the half a detector cannot reach: a tree this account can still write
+    # into can be shadowed a moment from now, or was shadowed before we started.
+    assert_control_plane_not_writable(ROOT, manifest)
     workspace = load_workspace(ROOT)
     # M-7: the digest/repository gates verify against ROOT while target scope
     # resolves against the binding-supplied workspace.root. Unless the two are the
@@ -264,7 +267,9 @@ def _settle_execution_tool(state: State, tool_name: str, tool_input: dict, tool_
     # to the lease, so it inherits no bytecode check from either — it needs its own.
     # A settlement that consumes a lease under an unprovable control plane is RED.
     try:
-        assert_no_bytecode_shadow(ROOT, load_protected_manifest(ROOT))
+        _manifest = load_protected_manifest(ROOT)
+        assert_no_bytecode_shadow(ROOT, _manifest)
+        assert_control_plane_not_writable(ROOT, _manifest)
     except ProtectedScopeError as exc:
         return True, False, f"control-plane bytecode shadow gate RED: {exc}"
     try:
