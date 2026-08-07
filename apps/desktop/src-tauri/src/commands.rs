@@ -1044,6 +1044,13 @@ fn delegation_frame(
             if let Some(x) = d.prompt {
                 obj.insert("prompt".into(), json!(x));
             }
+            // WHERE THE NAME CAME FROM, always. Unlike `tools`, this is knowable for every
+            // spawn: a name is either one of our tiers, a pack-role file we read, a CLI built-in
+            // we have observed, or none of those. `cli_builtin` and `unrecognized` both mean this
+            // app neither established nor bounded the agent, which the surface renders as a
+            // warning. Kept separate from `toolsSource` so an UNBOUNDED agent cannot look like
+            // one whose tool list we merely failed to read.
+            obj.insert("agentOrigin".into(), json!(d.origin.as_str()));
             // Omitted, not nulled, when unresolved.
             if let (Some(tools), Some(src)) = (d.tools, d.tools_source) {
                 obj.insert("tools".into(), json!(tools));

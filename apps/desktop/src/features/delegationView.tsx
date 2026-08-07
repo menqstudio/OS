@@ -24,6 +24,7 @@ import { Badge, Button, EmptyState } from '../components/ui';
 import type { Tone } from '../domain/enums';
 import { STR, type ChatStringKey } from './Chat.strings';
 import { loadDelegations, type DelegationFeed, type InvokeFn } from './delegationSource';
+import { originIsUnbounded } from './delegation';
 import type { Delegation, DelegationOutcome } from './delegation';
 
 const VIEW_CSS = `
@@ -68,6 +69,28 @@ const VIEW_CSS = `
  * the two files can be edited together these belong beside their siblings.
  */
 export const SURFACE_STR = {
+  /** Rendered when `agentOrigin` says this app neither defined nor bounded the agent. This is a
+   *  claim about the NAME, which is always knowable — unlike the tool list, which usually is not
+   *  for such an agent. Without it the card showed a blank where an unbounded specialist was,
+   *  and a blank reads as "nothing to see". */
+  originOutsideModel: {
+    en: 'Outside the capability model — this app did not define this agent and did not bound it. '
+      + 'No tier Bro chose applies. The app denies these at launch, so the settlement below should '
+      + 'report it stopped; the attempt is shown because a deny list cannot make an attempt go away.',
+    hy: 'Կարողությունների մոդելից դուրս — այս հավելվածը այս ագենտին չի սահմանել ու չի սահմանափակել։ '
+      + 'Bro-ի ընտրած ոչ մի tier չի կիրառվում։ Հավելվածը դրանք մերժում է մեկնարկին, ուստի ներքևի '
+      + 'ավարտը պիտի հաղորդի կանգնեցված; փորձը ցույց է տրվում, որովհետև մերժման ցանկը փորձը չի ջնջում։',
+    ru: 'Вне модели полномочий — это приложение не определяло этого агента и не ограничивало его. '
+      + 'Ни один выбранный Bro уровень не применяется. Приложение отклоняет их при запуске, поэтому '
+      + 'итог ниже должен сообщить об остановке; попытка показана, потому что список запретов её не отменяет.',
+  },
+  /** The backend said nothing about where the name came from — an older build. Not a verdict
+   *  either way, and it must not be shown as one. */
+  originUnstated: {
+    en: 'This build did not report where this agent type came from, so whether Bro bounded it is unknown.',
+    hy: 'Այս build-ը չհաղորդեց, թե որտեղից է այս ագենտի տեսակը, ուստի անհայտ է՝ Bro-ն սահմանափակե՞լ է այն։',
+    ru: 'Эта сборка не сообщила, откуда взялся этот тип агента, поэтому неизвестно, ограничил ли его Bro.',
+  },
   /** Replaces the old "the backend does not report delegations yet" copy, which the live
    *  channel has made false. What is missing now is STORAGE, not reporting. */
   noLedgerTitle: {
@@ -180,6 +203,11 @@ export function DelegationCard({ delegation: d }: { delegation: Delegation }) {
   // read but enforced nothing, so it warns exactly like an unresolved capability does.
   const capabilityEnforced = d.toolsSource === 'agent_definition';
   const capabilityWarns = d.toolsSource === 'unresolved' || d.toolsSource === 'pack_role_file';
+  // WHERE THE NAME CAME FROM, which is a separate question from where its tool list came from
+  // and one we can always answer. An agent this app never defined is the case the blank hid:
+  // `toolsSource` is `unresolved` for it, exactly as it is for a tier whose list we failed to
+  // read, and those two are not the same situation at all.
+  const originWarns = originIsUnbounded(d.agentOrigin);
 
   return (
     <li>
@@ -226,6 +254,12 @@ export function DelegationCard({ delegation: d }: { delegation: Delegation }) {
           <span aria-hidden="true">{capabilityEnforced ? '🔒' : '⚠'}</span>
           <span>{L(capabilityClaim)}</span>
         </p>
+        {originWarns && (
+          <p className="dg-claim warn" role="note">{L('originOutsideModel')}</p>
+        )}
+        {d.agentOrigin === 'unstated' && (
+          <p className="dg-claim muted">{L('originUnstated')}</p>
+        )}
         {d.toolsConflict && (
           <p className="dg-claim warn"><span aria-hidden="true">⚠</span><span>{L('capabilityConflict')}</span></p>
         )}

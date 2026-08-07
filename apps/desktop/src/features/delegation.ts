@@ -96,6 +96,49 @@ export function isWorkPath(v: unknown): v is string {
 // ── The wire contract ───────────────────────────────────────────────────────────────
 
 /** Where a rendered tool list came from. Never invented. */
+/**
+ * Where the spawned agent's NAME came from — the backend's `agentOrigin`.
+ *
+ *  * `app_tier` — one of the three tiers this app passes to the CLI via `--agents`. The ONLY
+ *    value meaning Bro's capability choice actually bounded the specialist.
+ *  * `pack_role_file` — a `.claude/agents/<name>.md` we could read. Its `tools:` line is the
+ *    authority the role was derived with; with `--setting-sources ""` that file is never loaded,
+ *    so it bounded nothing on this run.
+ *  * `cli_builtin` — a name the CLI offers and this app did not define. We do not know what it
+ *    can do; we know we did not decide it. The app now denies these at argv, so a spawn is an
+ *    ATTEMPT that the settlement reports as stopped — and the attempt is the part worth showing.
+ *  * `unrecognized` — none of the above. Same conclusion as `cli_builtin`, stated separately only
+ *    because we know strictly less.
+ *  * `unstated` — the backend sent no origin at all (an older build). Not a verdict.
+ */
+export type AgentOrigin =
+  | 'app_tier'
+  | 'pack_role_file'
+  | 'cli_builtin'
+  | 'unrecognized'
+  | 'unstated';
+
+const AGENT_ORIGINS: readonly AgentOrigin[] = [
+  'app_tier',
+  'pack_role_file',
+  'cli_builtin',
+  'unrecognized',
+];
+
+/** Fail-closed: an unknown or absent value is `unstated`, never `app_tier`. Reading a strange
+ *  value as "bounded by a tier" is the one direction that hides an unbounded agent. */
+export function readAgentOrigin(raw: unknown): AgentOrigin {
+  const v = str(raw);
+  return v !== null && (AGENT_ORIGINS as readonly string[]).includes(v)
+    ? (v as AgentOrigin)
+    : 'unstated';
+}
+
+/** True when this app neither established nor bounded the agent — the card must warn, not blank. */
+export function originIsUnbounded(o: AgentOrigin): boolean {
+  return o === 'cli_builtin' || o === 'unrecognized';
+}
+
 export type ToolsSource =
   /** The definition this app handed the CLI as `--agents` for that exact agent type. It IS what
    *  bounds the run, so the card may call it enforced. (`ai.rs::ToolsSource::AgentDefinition`.) */
@@ -151,6 +194,12 @@ export interface Delegation {
   prompt: string | null;
   tools: readonly string[];
   toolsSource: ToolsSource;
+  /** Where the agent NAME came from, which is knowable for every spawn even when its tool list
+   *  is not. Deliberately separate from `toolsSource`: that answers "where did this list come
+   *  from" and is absent when there is none, so folding the two would make an agent this app
+   *  never bounded look identical to one whose tools we merely failed to read. Anything other
+   *  than `app_tier` means Bro reached outside the capability model. */
+  agentOrigin: AgentOrigin;
   /** True when the backend's read of the agent definition and `TIER_TOOLS` disagreed. The
    *  union is shown (never the narrower list) and the card flags the disagreement. */
   toolsConflict: boolean;
@@ -319,6 +368,7 @@ export function parseDelegation(raw: unknown): Delegation | null {
     prompt: str(d.prompt),
     tools,
     toolsSource,
+    agentOrigin: readAgentOrigin(d.agentOrigin),
     toolsConflict,
     grant,
     rawGrant,

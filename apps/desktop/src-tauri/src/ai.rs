@@ -1477,13 +1477,12 @@ pub enum AgentOrigin {
 }
 
 impl AgentOrigin {
-    // Not read outside this module YET. `commands.rs::delegation_frame` is what turns a
-    // `DelegationSpawn` into the IPC frame, and it does not carry this field, so today the origin
-    // is established and pinned here but does not reach the screen. That is a real gap and it is
-    // named rather than hidden: what the surface needs is one `obj.insert("agentOrigin", ...)`
-    // beside the existing `tools`/`toolsSource` pair, and a reader in `features/delegation.ts`
-    // that renders anything other than `app_tier` as a warning rather than a blank.
-    #[allow(dead_code)]
+    // Carried on the wire as `agentOrigin` by `commands.rs::delegation_frame`, and read by
+    // `features/delegation.ts`, which renders anything other than `app_tier` as a warning rather
+    // than a blank. It is a SEPARATE field from `toolsSource` on purpose: that one answers "where
+    // did this tool list come from" and is absent when there is no list, while this one answers
+    // "where did this NAME come from" and is always knowable. Folding them would make an
+    // unbounded agent indistinguishable from one whose tools we simply could not read.
     pub fn as_str(self) -> &'static str {
         match self {
             AgentOrigin::Tier => "app_tier",
