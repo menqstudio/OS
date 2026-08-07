@@ -38,7 +38,7 @@
     },
     "§1.5": {
       "status": "partial",
-      "missing": "Step 4, the signer's policy-authorization check, is removed and its refusal reason is raised nowhere.",
+      "missing": "Step 4, the policy-authorization check, is IMPLEMENTED again: the signer requires the (policy_id, policy_version) pair to be on its operator's allowlist AND the evidence's policy_bundle_handle to be the bundle that pair is registered to, refusing with REASON_POLICY_MISMATCH — which had been defined and raised nowhere. An unprovisioned allowlist refuses. What remains of §1.5 unreviewed: the other steps of the authorization sequence have not been checked against the spec text.",
       "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
     },
     "§1.8": {
@@ -195,7 +195,7 @@
     },
     "§7.1": {
       "status": "partial",
-      "missing": "Freshness. The acceptance ledger's receipt-id and nonce checks exist; the §7.1 freshness window does not.",
+      "missing": "Freshness (the §7.1 time window) is still absent. The replay half is now DURABLE: receipt-id global uniqueness and the one-time nonce consume are a BEGIN IMMEDIATE CAS over SQLite rather than InMemoryLedger, so both survive a restart on Linux and Windows.",
       "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
     },
     "§7.1(c)": {

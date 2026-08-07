@@ -196,22 +196,60 @@ pub struct BrokerContext<'a> {
     pub expected_execution_attempt_id: &'a str,
 }
 
-/// The injected acceptance-ledger ports: `receipt_id` global-uniqueness and one-time `request_nonce`
-/// consume (§7.1(c)(d)). Kept as a trait so the pure verifier needs no DB — the broker's real
-/// implementation is a `BEGIN IMMEDIATE` transaction, and tests inject an in-memory fake.
-pub trait AcceptanceLedger {
-    /// Has this `receipt_id` already been accepted? (global-unique replay defense).
-    fn is_receipt_seen(&self, receipt_id: &str) -> bool;
-    /// Atomically consume the one-time `request_nonce`. Returns `true` if it was newly consumed, `false`
-    /// if it had already been consumed (a replay).
-    fn consume_nonce(&mut self, request_nonce: &str) -> bool;
-    /// Record a `receipt_id` as accepted (called only after every check passes).
-    fn record_receipt(&mut self, receipt_id: &str);
+/// Why the acceptance ledger refused to claim a turn — or failed trying.
+///
+/// Every variant is a REFUSAL. There is deliberately no "unknown/degraded" value that a caller could
+/// read as "probably fine": a replay defence that cannot answer must block, never accept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedgerRefusal {
+    /// §7.1(c): this `receipt_id` has already been accepted — a receipt replay.
+    ReceiptReplay,
+    /// §7.1(d): this `request_nonce` has already been consumed — a nonce replay.
+    NonceReplay,
+    /// The ledger could not be read or written (I/O, lock timeout, corrupt/absent table, a caller that
+    /// already held a transaction). NEVER reported as "fresh" — an unavailable replay defence refuses.
+    Fault,
 }
 
-/// A simple in-memory [`AcceptanceLedger`] (two sets). The real broker backs these by its receipt DB
-/// under one `BEGIN IMMEDIATE` transaction; this is for the pure verifier's own tests and any host-side
-/// dry-run. Fully offline.
+impl std::fmt::Display for LedgerRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LedgerRefusal::ReceiptReplay => write!(f, "receipt_id already accepted (replay)"),
+            LedgerRefusal::NonceReplay => write!(f, "request_nonce already consumed (replay)"),
+            LedgerRefusal::Fault => write!(f, "acceptance ledger unavailable (fail-closed)"),
+        }
+    }
+}
+
+/// The injected acceptance-ledger port: §7.1(c) `receipt_id` global uniqueness AND §7.1(d) one-time
+/// `request_nonce` consume, claimed together in ONE atomic step.
+///
+/// The two defences are a single trait method on purpose. Split into `is_seen` / `consume` / `record`
+/// they were a read-then-write: two concurrent turns could both observe a fresh `receipt_id`, and a
+/// failure to *record* had no way to be reported, so an accepted-but-unrecorded receipt stayed
+/// replayable. [`claim`](AcceptanceLedger::claim) is all-or-nothing — on any refusal NOTHING is
+/// recorded and NOTHING is consumed, so a blocked turn never burns state.
+///
+/// Kept as a trait so the pure verifier needs no DB. The production implementation is
+/// [`crate::broker_turns::DurableAcceptanceLedger`] (a `BEGIN IMMEDIATE` transaction over the broker's
+/// SQLite database, so both defences survive a restart). [`InMemoryLedger`] is for tests ONLY.
+pub trait AcceptanceLedger {
+    /// Atomically claim BOTH the `receipt_id` (globally once, ever) and the one-time `request_nonce`.
+    ///
+    /// `Ok(())` means both were fresh AND both are now recorded — the caller may accept. Every other
+    /// outcome is a [`LedgerRefusal`] and the turn MUST be refused.
+    fn claim(&mut self, receipt_id: &str, request_nonce: &str) -> Result<(), LedgerRefusal>;
+}
+
+/// A process-lifetime in-memory [`AcceptanceLedger`] (two sets).
+///
+/// **NOT FOR PRODUCTION — this is a test/dry-run double.** It holds the §7.1(c)(d) replay state in
+/// process memory, so every entry is lost when the process exits: after a restart the exact same signed
+/// `receipt_id` and the exact same one-time `request_nonce` are accepted again. It also shares nothing
+/// between processes, so two brokers over one deployment do not see each other's accepted receipts.
+/// Wiring this into a real governed turn silently removes the replay defence the chain claims to have.
+///
+/// Production callers MUST use [`crate::broker_turns::DurableAcceptanceLedger`].
 #[derive(Debug, Default)]
 pub struct InMemoryLedger {
     seen_receipts: HashSet<String>,
@@ -235,14 +273,18 @@ impl InMemoryLedger {
 }
 
 impl AcceptanceLedger for InMemoryLedger {
-    fn is_receipt_seen(&self, receipt_id: &str) -> bool {
-        self.seen_receipts.contains(receipt_id)
-    }
-    fn consume_nonce(&mut self, request_nonce: &str) -> bool {
-        self.consumed_nonces.insert(request_nonce.to_string())
-    }
-    fn record_receipt(&mut self, receipt_id: &str) {
+    fn claim(&mut self, receipt_id: &str, request_nonce: &str) -> Result<(), LedgerRefusal> {
+        // Mirrors the durable implementation's order and all-or-nothing semantics: check both, then
+        // write both, so a refusal leaves the set exactly as it was.
+        if self.seen_receipts.contains(receipt_id) {
+            return Err(LedgerRefusal::ReceiptReplay);
+        }
+        if self.consumed_nonces.contains(request_nonce) {
+            return Err(LedgerRefusal::NonceReplay);
+        }
         self.seen_receipts.insert(receipt_id.to_string());
+        self.consumed_nonces.insert(request_nonce.to_string());
+        Ok(())
     }
 }
 
@@ -352,15 +394,14 @@ pub fn verify_and_accept(
         Err(_) => return Err(TurnReason::UpstreamBlocked),
     };
 
-    // 6. receipt_id freshness (global-unique replay defense) — before consuming the nonce.
-    if ledger.is_receipt_seen(envelope.receipt_id) {
-        return Err(TurnReason::UpstreamBlocked);
-    }
-    // 7. request_nonce one-time consume; a replayed nonce Blocks. On success record the receipt_id.
-    if !ledger.consume_nonce(envelope.request_nonce) {
-        return Err(TurnReason::UpstreamBlocked);
-    }
-    ledger.record_receipt(envelope.receipt_id);
+    // 6+7. §7.1(c)(d) replay defence, claimed as ONE atomic step: `receipt_id` global uniqueness AND the
+    //      one-time `request_nonce` consume. A receipt replay, a nonce replay, or a ledger that cannot
+    //      answer (I/O, lock, missing table) all Block — there is no branch here that accepts on a
+    //      ledger it could not consult. On refusal the ledger records nothing, so a blocked turn does
+    //      not burn the nonce or the receipt id.
+    ledger
+        .claim(envelope.receipt_id, envelope.request_nonce)
+        .map_err(|_| TurnReason::UpstreamBlocked)?;
 
     Ok(AcceptedOutput {
         broker_turn_id: ctx.broker_turn_id.to_string(),
@@ -571,9 +612,17 @@ mod tests {
         assert_eq!(accepted.conversation_id, "conv-1");
         assert_eq!(accepted.author, "Bro");
         assert_eq!(accepted.created_at_ms, 2000);
-        // The nonce is now consumed and the receipt_id recorded.
-        assert!(ledger.is_receipt_seen("receipt-abc"));
-        assert!(!ledger.consume_nonce("nonce-xyz"), "nonce must be one-time");
+        // The receipt_id is now recorded (§7.1(c)) and the nonce spent (§7.1(d)).
+        assert_eq!(
+            ledger.claim("receipt-abc", "nonce-fresh"),
+            Err(LedgerRefusal::ReceiptReplay),
+            "the accepted receipt_id must never be claimable again"
+        );
+        assert_eq!(
+            ledger.claim("receipt-fresh", "nonce-xyz"),
+            Err(LedgerRefusal::NonceReplay),
+            "the spent nonce must be one-time"
+        );
     }
 
     // ---- REQUIRED: request_sha256 mismatch => Err(UpstreamBlocked) ----
@@ -590,8 +639,8 @@ mod tests {
         let mut exp = expected(&f);
         exp.system_sha256 = &wrong;
         assert!(matches!(verify_and_accept(&exp, &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger), Err(TurnReason::UpstreamBlocked)));
-        // A blocked turn consumes nothing.
-        assert!(!ledger.is_receipt_seen("receipt-abc"));
+        // A blocked turn consumes nothing — both ids are still claimable.
+        assert_eq!(ledger.claim("receipt-abc", "nonce-xyz"), Ok(()));
     }
 
     // ---- REQUIRED: output-hash mismatch => Err(CommitReadbackMismatch) ----
@@ -758,5 +807,84 @@ mod tests {
         // no whitespace between members.
         assert!(!s.contains(", "));
         assert!(!s.contains(": "));
+    }
+
+    // =============================================================================================
+    // IDX-67 / IDX-86 / IDX-94 — the replay defence must SURVIVE A RESTART.
+    //
+    // The finding was not that the §7.1(c)(d) checks were missing: it was that every production call
+    // site handed `verify_and_accept` an `InMemoryLedger`, whose two HashSets die with the process.
+    // The tests above prove the checks fire; these prove they still fire on a DIFFERENT run of the
+    // program, driving the REAL verifier against the REAL durable ledger over a REAL file. Swap
+    // `DurableAcceptanceLedger` back for `InMemoryLedger` here and both of these fail.
+    // =============================================================================================
+
+    fn durable(db: &std::path::Path) -> crate::broker_turns::DurableAcceptanceLedger {
+        crate::broker_turns::DurableAcceptanceLedger::open(db.to_str().unwrap())
+            .expect("open durable acceptance ledger")
+    }
+
+    #[test]
+    fn a_receipt_replayed_after_a_restart_is_still_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("broker.db");
+        let f = fx();
+        let env = envelope(&f);
+        let k = keys(&f);
+        let a = attest(&f);
+
+        // --- run 1: a genuine, fully-verified turn is accepted and its receipt_id recorded ---
+        {
+            let mut ledger = durable(&db);
+            verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger)
+                .expect("the first genuine turn must be accepted");
+        } // ledger + its connection dropped == the broker process exiting
+
+        // --- run 2: the SAME signed envelope, byte for byte, replayed against a fresh process ---
+        let mut ledger = durable(&db);
+        assert!(
+            matches!(
+                verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger),
+                Err(TurnReason::UpstreamBlocked)
+            ),
+            "a receipt_id accepted before the restart must still be refused after it"
+        );
+    }
+
+    #[test]
+    fn a_nonce_replayed_after_a_restart_is_still_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("broker.db");
+        let f = fx();
+        let k = keys(&f);
+        let a = attest(&f);
+
+        // --- run 1: accept a genuine turn, spending `nonce-xyz` ---
+        {
+            let env = envelope(&f);
+            let mut ledger = durable(&db);
+            verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger)
+                .expect("the first genuine turn must be accepted");
+        }
+
+        // --- run 2: a DIFFERENT receipt, genuinely re-signed by the same isolated signer, reusing the
+        //     already-spent request_nonce. The receipt-id defence cannot catch this one; only the
+        //     one-time nonce can, and only if it outlived the restart. ---
+        let mut second = envelope(&f);
+        second.receipt_id = "receipt-second";
+        let second_sig = sign_b64(&signing_key(7), &second.payload_jcs().unwrap());
+        assert_eq!(second.request_nonce, "nonce-xyz", "the replay reuses the spent nonce");
+
+        let mut ledger = durable(&db);
+        assert!(
+            matches!(
+                verify_and_accept(&expected(&f), &second, &second_sig, &a, &k, OUTPUT, &CTX, &mut ledger),
+                Err(TurnReason::UpstreamBlocked)
+            ),
+            "a request_nonce consumed before the restart must still be refused after it"
+        );
+        // And the refusal wrote nothing: `receipt-second` was rolled back with the failed claim, so it
+        // is still free for the turn it legitimately belongs to.
+        assert_eq!(ledger.claim("receipt-second", "nonce-unspent"), Ok(()));
     }
 }

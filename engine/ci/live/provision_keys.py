@@ -343,6 +343,11 @@ def main() -> int:
             "supervisor_attest_pub_hex_value": sup_pub_hex,
         },
         "store_dir": store_dir,
+        # (audit IDX-82) The broker's turn database. Without this key the live driver falls back to
+        # an in-memory database, and a DURABLE replay ledger over a store that vanishes on exit is
+        # not durable: the receipt-id and one-time-nonce defences would cover a single process and
+        # no more. Naming a real file is what makes them survive a restart.
+        "db": {"path": os.path.join(root, "live.db")},
         "trust": {
             "manifest_path": manifest_path,
             "manifest_sig_path": manifest_sig_path,
@@ -426,6 +431,12 @@ def main() -> int:
             "executor_ids": [EXECUTOR_ID],
             "builder_ids": [BUILDER_ID],
             "supervisor_ids": [SUPERVISOR_ID],
+            # §1.5 step 4 (audit round 3): the policy the signer may sign under, bound to the
+            # exact bundle digest it must resolve to. The id and version alone are a LABEL, and a
+            # label the supervisor picks is not an authorization — the pairing is what has teeth.
+            "policy_id": POLICY_ID,
+            "policy_version": POLICY_VERSION,
+            "policy_bundle_handle": handles["policy_bundle"],
         },
     }
     config_path = os.path.join(root, "config.json")

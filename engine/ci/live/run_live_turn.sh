@@ -106,6 +106,12 @@ python3 "$PYLIVE/provision_keys.py" --root-dir "$LIVE" \
   || { echo "FAIL: provision_keys.py"; exit 1; }
 
 CONFIG="$LIVE/config.json"
+# The launcher compiles in this exact path (`ATTESTED_REQUEST_PATH`) so that no argv or env can
+# redirect where it reads the attested request digests from — the same reasoning as the recorder's
+# compile-time policy path. Assert the coupling here: without it, moving $LIVE makes every launch
+# refuse, which is fail-closed but would surface as a cryptic store-input refusal instead of this.
+[ "$CONFIG" = "/opt/brops-live/config.json" ] || {
+  echo "FAIL: the launcher pins /opt/brops-live/config.json; this kit is at $CONFIG"; exit 1; }
 
 # ----- the launcher's §4.3 VALIDATED lease FILE (root-owned, non-writable) -------------------------
 # Written AFTER provisioning because it now also pins the three governed REQUEST inputs (audit F-08):
@@ -540,6 +546,50 @@ fi
 clear_case live-attack-c.out attack-c.evidence.json
 
 rm -f "$EVIL_LAUNCHER"
+
+# ----- NEGATIVE: a store input a non-TCB principal can write must refuse ------------------------
+# The launcher pins each store input's INODE (dev+ino) and requires TCB ownership with no group or
+# other write. The unit tests prove the decision; only the kit proves the wiring. `$STORE` is
+# group-writable by design (content addressing is the integrity boundary there), so the custody
+# floor is what stops a group member rewriting the bytes the executor is about to read.
+echo
+echo "== NEGATIVE: a group-writable store input must refuse the launch =="
+chmod g+w "$STORE/system"
+GW_OUT=$(sudo -u "$BROKER_USER" "$BIN/live_turn" --config "$CONFIG" 2>&1)
+chmod 0644 "$STORE/system"
+echo "$GW_OUT" | grep -E '^RESULT:' | tail -1
+if echo "$GW_OUT" | grep -qE '^RESULT: blocked'; then
+  echo "STORE-CUSTODY NEGATIVE: GREEN — the launcher refused a writable store input"
+else
+  echo "STORE-CUSTODY NEGATIVE: RED — a store input the broker's group can rewrite was accepted"
+  exit 1
+fi
+
+# ----- NEGATIVE: attested digests that diverge from the lease must refuse ------------------------
+# IDX-4: the lease's three request pins must equal `resolved.*_sha256` in the root-owned config AT
+# TURN TIME, not only in a provisioning-time assertion. Rewrite one digest after the lease was
+# written and the launcher must refuse — otherwise the receipt can name bytes never executed.
+echo
+echo "== NEGATIVE: a config whose attested digest diverges from the lease must refuse =="
+cp "$CONFIG" "$CONFIG.orig"
+python3 - "$CONFIG" <<'PYDIVERGE'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    cfg = json.load(f)
+cfg["resolved"]["system_sha256"] = "de" * 32
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYDIVERGE
+DIV_OUT=$(sudo -u "$BROKER_USER" "$BIN/live_turn" --config "$CONFIG" 2>&1)
+mv "$CONFIG.orig" "$CONFIG"
+echo "$DIV_OUT" | grep -E '^RESULT:' | tail -1
+if echo "$DIV_OUT" | grep -qE '^RESULT: blocked'; then
+  echo "LEASE-BINDING NEGATIVE: GREEN — the launcher refused a divergent attested digest"
+else
+  echo "LEASE-BINDING NEGATIVE: RED — the attested request can name bytes never executed"
+  exit 1
+fi
 
 echo
 echo "================================ live governed turn ================================"

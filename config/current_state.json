@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "327519ce5ccf9b669890f72bcb457fe5ad348751",
-    "snapshot_branch": "remediation/round3-p1s",
-    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 327519c (PRs #59 and #60 merged). The active branch remediation/round3-p1s has been merged up to that tip.",
+    "baseline_main_head_at_sync": "153a32f5b3f184d0519f956ef84095ee35bbd474",
+    "snapshot_branch": "remediation/round3-wave3",
+    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 153a32f (PR #61 merged). The active branch remediation/round3-wave3 is a direct child of it.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #53). PR #53's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "remediation/round3-p1s"
+    "branch": "remediation/round3-wave3"
   },
   "prs": [],
   "status_tokens": {
@@ -161,6 +161,10 @@
     {
       "number": 60,
       "reason": "R3-01: the isolated signer re-verifies chain documents instead of checking existence. Merged 2026-08-07."
+    },
+    {
+      "number": 61,
+      "reason": "Round-3 waves 1-2: the recorder identity borrow, the trust-verdict tautologies, Windows custody and the UI's false governance claims. Merged 2026-08-07."
     }
   ],
   "product_roadmap": {
@@ -204,11 +208,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 61,
-    "branch": "remediation/round3-p1s",
+    "number": 62,
+    "branch": "remediation/round3-wave3",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #61 body.",
-    "note": "PR #61 = round-3 remediation waves 1 and 2. Closes the surviving P0 (the broker could borrow the recorder identity through an unrestricted sudoers rule and have the trusted identity write an authentic evidence chain for an execution it authored), the `bound` tautology and `production_verified`'s blindness to which root anchor verified the manifest, Windows provisioning custody, the missing Windows §2.5 floor and pipe DACL, the UI's unconditional governance claims, and the zero CI coverage of brops-win-live. No gate enabled."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #62 body.",
+    "note": "PR #62 = round-3 wave 3. The replay defences (§7.1(c)(d) receipt-id uniqueness and one-time nonce consume) were InMemoryLedger — a declared test double — at every production site on both platforms, so they lived one process. They are a BEGIN IMMEDIATE CAS over SQLite now. Store inputs are bound to their inodes and re-measured before fexecve; the lease's request pins are compared at turn time by the launcher against a root-owned config at a compile-time path. Three more Windows twin-drift instances closed (publish-before-validate, existence-only chain check, unmeasured executor image, a PID from a report that observed nothing). §1.5 step 4 policy authorization implemented again. No gate enabled."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",

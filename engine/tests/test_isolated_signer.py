@@ -213,6 +213,10 @@ def _make_signer(sign_fn=None, verify=_accepting_verifier, clock=None, prepared=
         allowed_executor_ids={"exec-1"},
         allowed_builder_ids={"builder-1"},
         allowed_supervisor_ids={"sup-1"},
+        # §1.5 step 4: the (policy_id, policy_version) pair this signer is authorized to
+        # sign under, bound to the exact bundle it must resolve to. An unprovisioned
+        # allowlist REFUSES, so every construction site has to state one.
+        allowed_policies={("policy-1", "1.0.0"): handles["policy_bundle_handle"]},
     )
     recorder = _Recorder()
     signer = IsolatedSigner(
@@ -319,6 +323,39 @@ class RefusalTest(unittest.TestCase):
     def _sign_with(self, **kw):
         signer, _store, handles, _ = _make_signer(prepared=_build_store(**kw))
         return signer.sign_result(_request(_evidence(handles)))
+
+    # ---- §1.5 step 4: the policy-authorization check must be able to FAIL ------------------
+
+    def _sign_under_policy(self, **config_over):
+        store, handles = _build_store()
+        signer, _s, _h, _r = _make_signer(prepared=(store, handles))
+        for field, value in config_over.items():
+            setattr(signer._config, field, value)
+        return signer.sign_result(_request(_evidence(handles)))
+
+    def test_a_policy_the_operator_never_authorized_is_refused(self):
+        # The supervisor names policy_id/policy_version in the evidence. Before this, the signer
+        # required only that the bundle EXIST in its store — so a turn could be attested under a
+        # policy this signer's operator never approved, and the receipt would say so truthfully
+        # while meaning nothing. `REASON_POLICY_MISMATCH` sat in the source, raised nowhere.
+        out = self._sign_under_policy(
+            allowed_policies={("some-other-policy", "1.0.0"): "ab" * 32})
+        self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
+        self.assertEqual(out["reason"], "policy_mismatch")
+
+    def test_a_known_policy_label_on_different_bundle_bytes_is_refused(self):
+        # The check with teeth. An id and a version are a LABEL; binding them to the bundle's
+        # content address is what stops a known-good label being attached to other bytes.
+        out = self._sign_under_policy(allowed_policies={("policy-1", "1.0.0"): "cd" * 32})
+        self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
+        self.assertEqual(out["reason"], "policy_mismatch")
+
+    def test_an_unprovisioned_policy_allowlist_refuses_rather_than_allowing_everything(self):
+        # A gate that passes when unconfigured is indistinguishable from no gate — which is the
+        # state being fixed, so the unconfigured case must be the loudest one.
+        out = self._sign_under_policy(allowed_policies=None)
+        self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
+        self.assertEqual(out["reason"], "policy_mismatch")
 
     def test_a_record_about_a_different_run_is_refused(self):
         # The supervisor signs the evidence and separately publishes the documents. If the two

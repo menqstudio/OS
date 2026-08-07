@@ -451,10 +451,106 @@ struct Acceptance {
     lease_payload_bytes: Vec<u8>,
     challenge_handle: String,
     request_sha256: String,
+    /// The id of the executed process — EMPTY unless the execution actually observed one running
+    /// (audit **IDX-28/IDX-91**). It used to be filled unconditionally from whatever the caller
+    /// sent, which on this kit was the driver's own pid.
     process_group_id: String,
-    cgroup_id: String,
+    /// WHICH of the closed set of process observations the execution reported. This is the field
+    /// that makes `process_group_id` readable: an empty pid beside `driver-process` is an honest
+    /// account, an empty pid with no kind beside it is just a hole.
+    process_observation: String,
+    /// The supervisor's OWN clock at the `execution-started` transition. A completion timestamped
+    /// before it is refused, which is only a meaningful check because the execution now reports
+    /// the start BEFORE it runs the producer rather than after it exited.
+    execution_started_at_ms: i64,
     state: &'static str,
     completion: Option<Completion>,
+}
+
+// ---- §5 process-observation reporting (audit IDX-28 / IDX-91) ----------------------------------
+
+/// A separate process was spawned AND this execution held it while it ran, so the reported id is
+/// that process's.
+pub const OBSERVATION_OBSERVED_CHILD: &str = "observed-child";
+/// A separate process is spawned somewhere inside the producer, but this execution never held a
+/// handle to it: nothing here confirms it was running and no process id is known.
+pub const OBSERVATION_UNOBSERVED_CHILD: &str = "unobserved-child";
+/// The reply is produced INSIDE the driver process. There is no separate child at all.
+pub const OBSERVATION_IN_DRIVER: &str = "driver-process";
+
+/// PURE — the §5 `execution-started` report the supervisor will accept.
+///
+/// **audit IDX-28 / IDX-91.** The transition is documented as `EXECUTION_STARTING → EXECUTING on
+/// confirmed running process metadata`. On this kit it was neither confirmed nor running: the
+/// report was sent AFTER the executor had already exited and carried the DRIVER's own pid, which
+/// the supervisor then baked into a signed `brops.execution-receipt.v1` as `process_group_id` —
+/// a document that reads as an account of a supervised child.
+///
+/// So the kind of observation is now named from a CLOSED set, and a process id may accompany
+/// exactly the one kind that actually observed a process. An observation that watched nothing can
+/// no longer carry a pid, which is precisely how the driver's pid used to get in.
+fn admit_process_report(observation: &str, process_id: &str) -> Result<(), &'static str> {
+    match observation {
+        OBSERVATION_OBSERVED_CHILD => {
+            if process_id.is_empty() || !id_ok(process_id) {
+                // Claiming to have observed the child and then naming nothing is not an
+                // observation; refuse rather than record an empty one under that kind.
+                Err("process_id_missing")
+            } else {
+                Ok(())
+            }
+        }
+        OBSERVATION_UNOBSERVED_CHILD | OBSERVATION_IN_DRIVER => {
+            if process_id.is_empty() {
+                Ok(())
+            } else {
+                // The defect, stated as a rule: a report that observed no process must not name
+                // one. This is what stopped `std::process::id()` from being attested as the
+                // executed child.
+                Err("process_id_not_observed")
+            }
+        }
+        _ => Err("process_observation_unknown"),
+    }
+}
+
+/// The write-once admission decision for a completion — PURE, so the Linux CI runner covers it.
+#[derive(Debug, PartialEq, Eq)]
+enum CompletionAdmission {
+    /// First completion for this attempt: publish the terminal artifacts, then record it.
+    Accept,
+    /// A byte-identical retry of a completion already published and recorded.
+    Idempotent,
+    Refuse(&'static str),
+}
+
+/// **audit IDX-121 (gate-blocking).** The supervisor used to PUBLISH its three terminal artifacts —
+/// record, lease, execution receipt — into the protected store and only THEN consult the state
+/// machine. A refused `complete-run` therefore still planted a `brops.governed-turn-record.v1`
+/// asserting `"decision":"completed"` into the very store the isolated signer reads by handle, for
+/// an attempt the supervisor had just declined to complete.
+///
+/// The decision is a VALUE now, computed before anything reaches the filesystem; only `Accept`
+/// publishes. The order is the check.
+fn admit_completion(
+    state: &str,
+    execution_started_at_ms: i64,
+    existing: Option<&Completion>,
+    proposed: &Completion,
+) -> CompletionAdmission {
+    match existing {
+        // Write-once: an identical retry is idempotent, any divergence is refused. A second
+        // execution cannot rewrite what was already attested.
+        Some(e) if e == proposed => CompletionAdmission::Idempotent,
+        Some(_) => CompletionAdmission::Refuse("completion_conflict"),
+        None if state != ST_EXECUTING => CompletionAdmission::Refuse("illegal_state"),
+        // A run cannot have finished before the supervisor observed it start. This is only a real
+        // check because `execution-started` is now reported BEFORE the producer runs (IDX-28).
+        None if proposed.completed_at_ms < execution_started_at_ms => {
+            CompletionAdmission::Refuse("completed_before_execution_started")
+        }
+        None => CompletionAdmission::Accept,
+    }
 }
 
 const ST_LEASE_READY: &str = "LEASE_READY";
@@ -502,7 +598,7 @@ impl Supervisor {
         match o.get("op").and_then(Value::as_str) {
             Some("accept-open") => self.accept_open(o, now_ms),
             Some("launch-gate") => self.launch_gate(o, now_ms),
-            Some("execution-started") => self.execution_started(o),
+            Some("execution-started") => self.execution_started(o, now_ms),
             Some("complete-run") => self.complete_run(o),
             Some("attest-run") => self.attest_run(o),
             _ => refuse("?", "malformed"),
@@ -636,7 +732,8 @@ impl Supervisor {
             challenge_handle: challenge_handle.clone(),
             request_sha256: get_str(payload, "request_sha256").unwrap(),
             process_group_id: String::new(),
-            cgroup_id: String::new(),
+            process_observation: String::new(),
+            execution_started_at_ms: 0,
             state: ST_LEASE_READY,
             completion: None,
         };
@@ -680,11 +777,18 @@ impl Supervisor {
         json!({ "ok": true, "op": "launch-gate", "proceed": true, "execution_attempt_id": attempt })
     }
 
-    /// `EXECUTION_STARTING → EXECUTING` on confirmed-running process metadata.
-    fn execution_started(&self, o: &Map<String, Value>) -> Value {
+    /// `EXECUTION_STARTING → EXECUTING` on the execution's process report.
+    ///
+    /// **audit IDX-28 / IDX-91.** The docstring used to say "on confirmed-running process
+    /// metadata" and record whatever `process_group_id` / `cgroup_id` the caller sent. On this kit
+    /// that was the driver's own pid and the literal string `win-live` (there are no cgroups on
+    /// Windows), reported after the executor had already exited. The report now names WHICH kind of
+    /// observation it is, from a closed set, and [`admit_process_report`] refuses a process id from
+    /// a kind that observed no process.
+    fn execution_started(&self, o: &Map<String, Value>, now_ms: i64) -> Value {
         if !exact_keys(
             o,
-            &["op", "execution_attempt_id", "process_group_id", "cgroup_id",
+            &["op", "execution_attempt_id", "process_observation", "process_id",
               "execution_started_marker"],
         ) {
             return refuse("execution-started", "malformed");
@@ -693,6 +797,17 @@ impl Supervisor {
             Some(s) => s,
             None => return refuse("execution-started", "malformed"),
         };
+        let observation = match get_str(o, "process_observation") {
+            Some(s) => s,
+            None => return refuse("execution-started", "malformed"),
+        };
+        let process_id = match get_str(o, "process_id") {
+            Some(s) => s,
+            None => return refuse("execution-started", "malformed"),
+        };
+        if let Err(reason) = admit_process_report(&observation, &process_id) {
+            return refuse("execution-started", reason);
+        }
         let mut accepted = self.accepted.lock().unwrap();
         let a = match accepted.get_mut(&attempt) {
             Some(a) => a,
@@ -701,10 +816,12 @@ impl Supervisor {
         if a.state != ST_EXECUTION_STARTING {
             return refuse("execution-started", "illegal_state");
         }
-        // Durably record what the supervisor observed of the child: this is what the execution
-        // receipt it publishes at completion is built from (F-02).
-        a.process_group_id = get_str(o, "process_group_id").unwrap_or_default();
-        a.cgroup_id = get_str(o, "cgroup_id").unwrap_or_default();
+        // Durably record what the execution reported, INCLUDING the kind of report it was: this is
+        // what the execution receipt published at completion is built from (F-02), and it must
+        // read as what it is rather than as a supervised child.
+        a.process_group_id = process_id;
+        a.process_observation = observation;
+        a.execution_started_at_ms = now_ms;
         a.state = ST_EXECUTING;
         json!({ "ok": true, "op": "execution-started", "execution_attempt_id": attempt })
     }
@@ -794,36 +911,29 @@ impl Supervisor {
                 "lease_id": a.lease_id,
                 "lease_issued_at_ms": a.lease_issued_at_ms,
                 "lease_expires_at_ms": a.lease_expires_at_ms,
-                "process_group_id": a.process_group_id, "cgroup_id": a.cgroup_id,
+                // IDX-28/IDX-91: `process_group_id` is EMPTY unless a process was actually
+                // observed, and `process_observation` says which kind of report this was. The
+                // `cgroup_id` key is kept for shape-parity with the Linux twin's
+                // `brops.execution-receipt.v1` and is always empty here: Windows has no cgroups,
+                // and the constant `"win-live"` that used to sit in it named nothing.
+                "process_group_id": a.process_group_id,
+                "process_observation": a.process_observation,
+                "cgroup_id": "",
+                "execution_started_at_ms": a.execution_started_at_ms,
                 "completed_at_ms": ints[0], "output_handle": output_handle,
             })
             .as_object()
             .unwrap(),
         );
-        let publish = |bytes: &[u8]| -> Option<String> {
-            let handle = crypto::sha256_hex(bytes);
-            let path = self.cfg.store_dir.join(&handle);
-            if !path.exists() {
-                std::fs::write(&path, bytes).ok()?;
-            }
-            Some(handle)
-        };
-        let (record_handle, lease_handle, execution_receipt_handle) = match (
-            publish(&record_bytes),
-            publish(&a.lease_payload_bytes),
-            publish(&receipt_bytes),
-        ) {
-            (Some(r), Some(l), Some(e)) => (r, l, e),
-            // A store failure must refuse the completion, never name a handle nothing holds.
-            _ => return refuse("complete-run", "artifact_publish_failed"),
-        };
 
+        // IDX-121: content-address the three artifacts WITHOUT writing them. Nothing reaches the
+        // protected store until the state machine has accepted this completion.
         let completion = Completion {
+            record_handle: crypto::sha256_hex(&record_bytes),
+            lease_handle: crypto::sha256_hex(&a.lease_payload_bytes),
+            execution_receipt_handle: crypto::sha256_hex(&receipt_bytes),
             output_handle,
             containment_evidence_handle,
-            record_handle,
-            lease_handle,
-            execution_receipt_handle,
             completed_at_ms: ints[0],
             // F-01: the evidence head comes from the chain the supervisor read, never the wire.
             evidence_final_event_hash,
@@ -831,26 +941,37 @@ impl Supervisor {
             evidence_last_sequence: evidence.last_sequence,
             evidence_head_sequence: evidence.head_sequence,
         };
-        match &a.completion {
-            // Write-once: an identical retry is idempotent, any divergence is refused. A second
-            // execution cannot rewrite what was already attested.
-            Some(existing) => {
-                if *existing != completion {
-                    return refuse("complete-run", "completion_conflict");
-                }
+
+        // IDX-121: DECIDE FIRST. A refusal must leave the store exactly as it found it — a
+        // published record asserting `"decision":"completed"` for an attempt the supervisor
+        // declined is the artifact the isolated signer resolves handles against.
+        match admit_completion(a.state, a.execution_started_at_ms, a.completion.as_ref(), &completion)
+        {
+            CompletionAdmission::Refuse(reason) => return refuse("complete-run", reason),
+            CompletionAdmission::Idempotent => {
                 return json!({
                     "ok": true, "op": "complete-run", "execution_attempt_id": attempt,
                     "recorded": "idempotent"
-                });
+                })
             }
-            None => {
-                if a.state != ST_EXECUTING {
-                    return refuse("complete-run", "illegal_state");
-                }
-                a.completion = Some(completion);
-                a.state = ST_COMPLETED;
-            }
+            CompletionAdmission::Accept => {}
         }
+
+        // ACCEPTED — only now do the artifacts become visible to the signer.
+        let publish = |bytes: &[u8], handle: &str| -> bool {
+            let path = self.cfg.store_dir.join(handle);
+            path.exists() || std::fs::write(&path, bytes).is_ok()
+        };
+        if !publish(&record_bytes, &completion.record_handle)
+            || !publish(&a.lease_payload_bytes, &completion.lease_handle)
+            || !publish(&receipt_bytes, &completion.execution_receipt_handle)
+        {
+            // A store failure must refuse the completion, never name a handle nothing holds — and
+            // must not advance the state machine on a run whose artifacts are not all there.
+            return refuse("complete-run", "artifact_publish_failed");
+        }
+        a.completion = Some(completion);
+        a.state = ST_COMPLETED;
         json!({
             "ok": true, "op": "complete-run", "execution_attempt_id": attempt, "recorded": "created"
         })
@@ -954,6 +1075,109 @@ impl Supervisor {
 // =================================================================================================
 
 const EVIDENCE_FIELDS_LEN: usize = 29; // 28 attest facts + decision
+
+/// The refusal prefix for a protected-chain document that contradicts the attested evidence —
+/// the same string the Python signer emits, so an operator reading either platform's refusal is
+/// reading the same word.
+const REASON_CHAIN_DISAGREEMENT: &str = "chain_document_disagrees_with_attested_evidence";
+
+/// **audit IDX-121.** The fields each protected-chain document must AGREE with the attested
+/// evidence on — the Rust twin of `engine/runtime/isolated_signer.py::_CHAIN_AGREEMENT`,
+/// field-for-field.
+///
+/// The Windows signer's chain verification was three existence checks (`store_read(..).is_none()`).
+/// That is worth restating plainly: the signer runs as a SEPARATE OS principal for exactly one
+/// reason — to re-verify the chain independently of the supervisor — and a presence check
+/// re-verifies nothing. Meanwhile the Python signer had gained real cross-document agreement and
+/// the Rust twin had not, which is the recurring shape of these findings: hardening lands on one
+/// side of the pair and the other keeps the defect while the ledger reads CLOSED.
+///
+/// What this does NOT do, stated so nobody reads more into it: it cannot detect a supervisor that
+/// lies CONSISTENTLY in both the evidence and the documents. A second opinion catches
+/// disagreement, not a coherent forgery.
+const CHAIN_AGREEMENT: [(&str, Option<&str>, &[&str]); 3] = [
+    (
+        "record_handle",
+        Some("brops.governed-turn-record.v1"),
+        &[
+            "run_id",
+            "task_id",
+            "execution_attempt_id",
+            "workspace_id",
+            "install_id",
+            "request_nonce",
+            "receipt_id",
+            "supervisor_id",
+            "request_sha256",
+            "system_handle",
+            "history_handle",
+            "generation_config_handle",
+            "output_handle",
+            "containment_evidence_handle",
+            "decision",
+        ],
+    ),
+    // The lease payload carries no protocol tag of its own.
+    ("lease_handle", None, &["execution_attempt_id"]),
+    (
+        "execution_receipt_handle",
+        Some("brops.execution-receipt.v1"),
+        &["run_id", "execution_attempt_id", "output_handle"],
+    ),
+];
+
+/// PURE — does one protected-chain document AGREE with the attested evidence on every field they
+/// share? `recomputed` supplies the values the signer derived ITSELF (`request_sha256`); those are
+/// what the document must match, never a value lifted out of the evidence beside it.
+///
+/// Returns the refusal reason, which names WHICH document and WHICH field differ: a refusal that
+/// does not say that sends the operator to read two documents by hand.
+fn chain_document_agrees(
+    handle_field: &str,
+    doc_bytes: &[u8],
+    evidence: &Map<String, Value>,
+    recomputed: &Map<String, Value>,
+) -> Result<(), String> {
+    let entry = match CHAIN_AGREEMENT.iter().find(|(f, _, _)| *f == handle_field) {
+        Some(e) => e,
+        // An unlisted document is one this signer has no agreement rule for; refusing is the only
+        // honest outcome, because accepting it would restore the presence check for that field.
+        None => return Err(format!("{REASON_CHAIN_DISAGREEMENT}:{handle_field}.no_agreement_rule")),
+    };
+    let parsed: Value = match serde_json::from_slice(doc_bytes) {
+        Ok(v) => v,
+        // A chain document the signer cannot read is one it cannot check.
+        Err(_) => return Err("handle_unreadable".to_string()),
+    };
+    let doc = match parsed.as_object() {
+        Some(o) => o,
+        None => return Err("handle_unreadable".to_string()),
+    };
+    if let Some(protocol) = entry.1 {
+        if doc.get("protocol").and_then(Value::as_str) != Some(protocol) {
+            return Err(format!("{REASON_CHAIN_DISAGREEMENT}:{handle_field}.protocol"));
+        }
+    }
+    for field in entry.2 {
+        let expected = match recomputed.get(*field).or_else(|| evidence.get(*field)) {
+            Some(v) => v,
+            None => {
+                return Err(format!("{REASON_CHAIN_DISAGREEMENT}:{handle_field}.{field}_unattested"))
+            }
+        };
+        match doc.get(*field) {
+            // REQUIRED, not merely "checked where present". Skipping absent fields would let a
+            // document carrying nothing but its protocol tag agree vacuously — a hole exactly the
+            // shape of the presence check this replaces.
+            None => {
+                return Err(format!("{REASON_CHAIN_DISAGREEMENT}:{handle_field}.{field}_missing"))
+            }
+            Some(v) if v == expected => {}
+            Some(_) => return Err(format!("{REASON_CHAIN_DISAGREEMENT}:{handle_field}.{field}")),
+        }
+    }
+    Ok(())
+}
 
 pub struct SignerConfig {
     pub receipt_key_id: String,
@@ -1095,16 +1319,11 @@ impl Signer {
             None => return self.refuse_sign("handle_missing"),
         };
         let output_sha256 = output_handle;
-        // Deep-verify the chain handles resolve.
-        for k in ["record_handle", "lease_handle", "execution_receipt_handle"] {
-            let h = get_str(evidence, k).unwrap_or_default();
-            if store_read(store, &h).is_none() {
-                return self.refuse_sign("handle_missing");
-            }
-        }
         let _ = (policy_bundle_sha256, containment_evidence_sha256); // re-derived + resolved (bound via request/handles)
 
-        // request_sha256 recomputed from the signer's OWN derived component hashes.
+        // request_sha256 recomputed from the signer's OWN derived component hashes. It is computed
+        // HERE, before the chain check below, because the terminal record must agree with the
+        // signer's own recompute rather than with a digest the supervisor also chose.
         let request_sha256 = crypto::request_sha256(
             &get_str(evidence, "workspace_id").unwrap_or_default(),
             &get_str(evidence, "install_id").unwrap_or_default(),
@@ -1114,6 +1333,23 @@ impl Signer {
             &generation_config_sha256,
             &requested_at.to_string(),
         );
+
+        // (4b) IDX-121: RE-VERIFY the three protected-chain documents. This was three existence
+        // checks; the signer now READS each document and requires it to agree with the attested
+        // evidence on every field they share — the same second opinion the Python signer gained.
+        let mut recomputed = Map::new();
+        recomputed.insert("request_sha256".into(), json!(request_sha256));
+        for (handle_field, _, _) in CHAIN_AGREEMENT {
+            let h = get_str(evidence, handle_field).unwrap_or_default();
+            let bytes = match store_read(store, &h) {
+                Some(b) => b,
+                None => return self.refuse_sign("handle_missing"),
+            };
+            if let Err(reason) = chain_document_agrees(handle_field, &bytes, evidence, &recomputed) {
+                return self.refuse_sign(&reason);
+            }
+        }
+
         let attestation_evidence_sha256 = crypto::sha256_hex(&evidence_jcs);
 
         // (5) Build the flat 23-key envelope payload.
@@ -1203,6 +1439,553 @@ fn verify_ed25519_hex(public_key_hex: &str, msg: &[u8], sig_b64url: &str) -> boo
     }
 }
 
+
+/// (audit **IDX-121**, **IDX-28/IDX-91**) Everything here runs on the LINUX CI runner: the
+/// supervisor and signer cores are pure `serde_json` + filesystem, so "Windows-only" was never a
+/// reason to leave these properties untested. Each test names the check it is holding down and
+/// fails if that check is removed — not merely if the parser beside it breaks.
+#[cfg(test)]
+mod terminal_artifact_tests {
+    use super::*;
+    use std::path::Path;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("brops-winlive-{tag}-{}", brops_core::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    struct Kit {
+        authority: Authority,
+        supervisor: Supervisor,
+        store: PathBuf,
+        evidence: PathBuf,
+    }
+
+    const SUP_ID: &str = "brops-supervisor";
+
+    fn kit() -> Kit {
+        let challenge_seed = crypto::gen_seed();
+        let store = tmp("store");
+        let evidence = tmp("ev");
+        Kit {
+            authority: Authority::new(AuthorityConfig {
+                challenge_key_id: "ck-1".into(),
+                supervisor_id: SUP_ID.into(),
+                challenge_signing_seed: challenge_seed,
+            }),
+            supervisor: Supervisor::new(SupervisorConfig {
+                supervisor_id: SUP_ID.into(),
+                supervisor_attestation_key_id: "ak-1".into(),
+                challenge_public_key_hex: crypto::public_key_hex(&crypto::signing_key(
+                    &challenge_seed,
+                )),
+                attest_signing_seed: crypto::gen_seed(),
+                launcher_executable_sha256: "11".repeat(32),
+                executor_executable_sha256: "22".repeat(32),
+                executor_id: "ex-1".into(),
+                builder_id: "bu-1".into(),
+                policy_id: "p-1".into(),
+                policy_version: "1".into(),
+                policy_bundle_handle: "33".repeat(32),
+                store_dir: store.clone(),
+                evidence_dir: evidence.clone(),
+            }),
+            store,
+            evidence,
+        }
+    }
+
+    /// create-pending → issue → accept-open, returning the granted `execution_attempt_id`.
+    fn lease(kit: &Kit, now: i64) -> String {
+        let pending = kit.authority.dispatch(
+            &json!({
+                "op": "create-pending",
+                "run_id": "run-1", "task_id": "task-1", "workspace_id": "ws-1",
+                "install_id": "in-1", "request_nonce": format!("n-{now}"),
+                "system_sha256": "aa".repeat(32), "history_sha256": "bb".repeat(32),
+                "generation_config_sha256": "cc".repeat(32), "requested_at_ms": now,
+            }),
+            now,
+        );
+        assert_eq!(pending["ok"], json!(true), "{pending}");
+        let issued = kit.authority.dispatch(
+            &json!({ "op": "issue", "pending_challenge_id": pending["pending_challenge_id"] }),
+            now,
+        );
+        let open = kit.supervisor.dispatch(
+            &json!({ "op": "accept-open", "challenge_doc": issued["challenge"] }),
+            now,
+        );
+        assert_eq!(open["ok"], json!(true), "{open}");
+        open["lease"]["execution_attempt_id"].as_str().unwrap().to_string()
+    }
+
+    /// The chain the execution would have written, so `complete-run` can get past `derive_evidence`
+    /// and reach the decision this test is actually about.
+    fn write_chain(kit: &Kit, attempt: &str, output_handle: &str) {
+        std::fs::write(
+            kit.evidence.join(format!("{attempt}.evidence.json")),
+            crate::execution::build_run_evidence(attempt, output_handle, 7, 1),
+        )
+        .unwrap();
+    }
+
+    fn complete(kit: &Kit, attempt: &str, output_handle: &str, completed_at_ms: i64) -> Value {
+        kit.supervisor.dispatch(
+            &json!({
+                "op": "complete-run", "execution_attempt_id": attempt,
+                "produced": {
+                    "output_handle": output_handle,
+                    "containment_evidence_handle": "dd".repeat(32),
+                    "completed_at_ms": completed_at_ms,
+                },
+            }),
+            completed_at_ms,
+        )
+    }
+
+    /// Does the protected store hold a document claiming this protocol?
+    fn store_holds(dir: &Path, protocol: &str) -> bool {
+        std::fs::read_dir(dir).unwrap().flatten().any(|e| {
+            std::fs::read(e.path())
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+                .and_then(|v| v.get("protocol").and_then(Value::as_str).map(str::to_string))
+                .as_deref()
+                == Some(protocol)
+        })
+    }
+
+    // ---- IDX-121: nothing is published until the state machine has accepted ---------------------
+
+    #[test]
+    fn a_refused_completion_publishes_no_terminal_record() {
+        let now = 1_700_000_000_000i64;
+        let kit = kit();
+        let attempt = lease(&kit, now);
+        let output_handle = "ee".repeat(32);
+        write_chain(&kit, &attempt, &output_handle);
+        // LEASE_READY: never gated, never started. The §5 machine must refuse.
+        let reply = complete(&kit, &attempt, &output_handle, now + 10);
+        assert_eq!(reply["ok"], json!(false), "{reply}");
+        assert_eq!(reply["reason"], json!("illegal_state"), "{reply}");
+        // THE CHECK: a refusal must leave the store as it found it. Publishing before the decision
+        // planted a record asserting `"decision":"completed"` for a run the supervisor declined —
+        // and that store is what the isolated signer resolves `record_handle` against.
+        assert!(
+            !store_holds(&kit.store, "brops.governed-turn-record.v1"),
+            "a REFUSED complete-run published a terminal record into the protected store"
+        );
+        assert!(!store_holds(&kit.store, "brops.execution-receipt.v1"));
+        let _ = std::fs::remove_dir_all(&kit.store);
+        let _ = std::fs::remove_dir_all(&kit.evidence);
+    }
+
+    #[test]
+    fn an_accepted_completion_does_publish_all_three() {
+        let now = 1_700_000_000_000i64;
+        let kit = kit();
+        let attempt = lease(&kit, now);
+        assert_eq!(
+            kit.supervisor
+                .dispatch(&json!({"op":"launch-gate","execution_attempt_id":attempt}), now)["ok"],
+            json!(true)
+        );
+        assert_eq!(
+            kit.supervisor.dispatch(
+                &json!({"op":"execution-started","execution_attempt_id":attempt,
+                        "process_observation": OBSERVATION_IN_DRIVER, "process_id": "",
+                        "execution_started_marker": Value::Null}),
+                now,
+            )["ok"],
+            json!(true)
+        );
+        let output_handle = "ee".repeat(32);
+        write_chain(&kit, &attempt, &output_handle);
+        let reply = complete(&kit, &attempt, &output_handle, now + 10);
+        assert_eq!(reply["ok"], json!(true), "{reply}");
+        assert_eq!(reply["recorded"], json!("created"));
+        assert!(store_holds(&kit.store, "brops.governed-turn-record.v1"));
+        assert!(store_holds(&kit.store, "brops.execution-receipt.v1"));
+        // Idempotent retry: still accepted, still exactly one record.
+        assert_eq!(complete(&kit, &attempt, &output_handle, now + 10)["recorded"], json!("idempotent"));
+        let _ = std::fs::remove_dir_all(&kit.store);
+        let _ = std::fs::remove_dir_all(&kit.evidence);
+    }
+
+    #[test]
+    fn the_admission_decision_is_taken_on_state_not_on_arrival() {
+        let c = |completed_at_ms: i64| Completion {
+            output_handle: "ee".repeat(32),
+            containment_evidence_handle: "dd".repeat(32),
+            record_handle: "11".repeat(32),
+            lease_handle: "22".repeat(32),
+            execution_receipt_handle: "33".repeat(32),
+            completed_at_ms,
+            evidence_final_event_hash: "44".repeat(32),
+            evidence_event_count: 3,
+            evidence_last_sequence: 3,
+            evidence_head_sequence: 1,
+        };
+        assert_eq!(admit_completion(ST_EXECUTING, 10, None, &c(20)), CompletionAdmission::Accept);
+        for state in [ST_LEASE_READY, ST_EXECUTION_STARTING, ST_EXPIRED, ST_COMPLETED] {
+            assert_eq!(
+                admit_completion(state, 10, None, &c(20)),
+                CompletionAdmission::Refuse("illegal_state"),
+                "{state}"
+            );
+        }
+        // IDX-28: a run cannot finish before the supervisor observed it start.
+        assert_eq!(
+            admit_completion(ST_EXECUTING, 30, None, &c(20)),
+            CompletionAdmission::Refuse("completed_before_execution_started")
+        );
+        // Write-once.
+        assert_eq!(
+            admit_completion(ST_COMPLETED, 10, Some(&c(20)), &c(20)),
+            CompletionAdmission::Idempotent
+        );
+        assert_eq!(
+            admit_completion(ST_COMPLETED, 10, Some(&c(20)), &c(21)),
+            CompletionAdmission::Refuse("completion_conflict")
+        );
+    }
+
+    // ---- IDX-28 / IDX-91: the process report says what it is -----------------------------------
+
+    #[test]
+    fn a_report_that_observed_nothing_cannot_name_a_process() {
+        // The defect: the driver sent `std::process::id()` after the executor had exited and the
+        // supervisor recorded it as the executed process.
+        for kind in [OBSERVATION_IN_DRIVER, OBSERVATION_UNOBSERVED_CHILD] {
+            assert_eq!(admit_process_report(kind, ""), Ok(()));
+            assert_eq!(admit_process_report(kind, "4321"), Err("process_id_not_observed"));
+        }
+        assert_eq!(admit_process_report(OBSERVATION_OBSERVED_CHILD, "4321"), Ok(()));
+        assert_eq!(admit_process_report(OBSERVATION_OBSERVED_CHILD, ""), Err("process_id_missing"));
+        // Closed set: an unknown kind is refused, never treated as the permissive one.
+        for bogus in ["", "win-live", "child", "observed_child", "driver"] {
+            assert_eq!(admit_process_report(bogus, ""), Err("process_observation_unknown"), "{bogus}");
+        }
+    }
+
+    #[test]
+    fn the_supervisor_refuses_a_process_id_from_an_unobserving_report() {
+        let now = 1_700_000_000_000i64;
+        let kit = kit();
+        let attempt = lease(&kit, now);
+        kit.supervisor.dispatch(&json!({"op":"launch-gate","execution_attempt_id":attempt}), now);
+        let reply = kit.supervisor.dispatch(
+            &json!({"op":"execution-started","execution_attempt_id":attempt,
+                    "process_observation": OBSERVATION_IN_DRIVER, "process_id": "4321",
+                    "execution_started_marker": Value::Null}),
+            now,
+        );
+        assert_eq!(reply["ok"], json!(false), "{reply}");
+        assert_eq!(reply["reason"], json!("process_id_not_observed"), "{reply}");
+        // And the OLD wire shape — the one that carried the driver's pid as `process_group_id`
+        // beside a `cgroup_id` of `"win-live"` — is now simply not a message this supervisor knows.
+        let old = kit.supervisor.dispatch(
+            &json!({"op":"execution-started","execution_attempt_id":attempt,
+                    "process_group_id": "4321", "cgroup_id": "win-live",
+                    "execution_started_marker": Value::Null}),
+            now,
+        );
+        assert_eq!(old["ok"], json!(false), "{old}");
+        let _ = std::fs::remove_dir_all(&kit.store);
+        let _ = std::fs::remove_dir_all(&kit.evidence);
+    }
+
+    #[test]
+    fn a_completion_dated_before_the_observed_start_is_refused() {
+        let now = 1_700_000_000_000i64;
+        let kit = kit();
+        let attempt = lease(&kit, now);
+        kit.supervisor.dispatch(&json!({"op":"launch-gate","execution_attempt_id":attempt}), now);
+        kit.supervisor.dispatch(
+            &json!({"op":"execution-started","execution_attempt_id":attempt,
+                    "process_observation": OBSERVATION_IN_DRIVER, "process_id": "",
+                    "execution_started_marker": Value::Null}),
+            now,
+        );
+        let output_handle = "ee".repeat(32);
+        write_chain(&kit, &attempt, &output_handle);
+        let reply = complete(&kit, &attempt, &output_handle, now - 1);
+        assert_eq!(reply["reason"], json!("completed_before_execution_started"), "{reply}");
+        assert!(!store_holds(&kit.store, "brops.governed-turn-record.v1"));
+        let _ = std::fs::remove_dir_all(&kit.store);
+        let _ = std::fs::remove_dir_all(&kit.evidence);
+    }
+}
+
+/// (audit **IDX-121**) The Windows signer's protected-chain verification. It was three existence
+/// checks; these hold down the cross-document agreement that replaced them. Pure + filesystem, so
+/// they run on the Linux CI runner.
+#[cfg(test)]
+mod signer_chain_tests {
+    use super::*;
+
+    fn tmp() -> PathBuf {
+        let d = std::env::temp_dir().join(format!("brops-winlive-sign-{}", brops_core::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn blob(dir: &std::path::Path, bytes: &[u8]) -> String {
+        let h = crypto::sha256_hex(bytes);
+        std::fs::write(dir.join(&h), bytes).unwrap();
+        h
+    }
+
+    const NOW: i64 = 1_700_000_000_000;
+    const REQUESTED_AT: i64 = 1_699_999_000_000;
+
+    /// A store + the 29-field evidence for one coherent run, with the three chain documents built
+    /// so that everything agrees. Each test then perturbs exactly ONE document.
+    struct Fixture {
+        signer: Signer,
+        store: PathBuf,
+        evidence: Map<String, Value>,
+        attest_seed: [u8; 32],
+        /// `record` / `lease` / `receipt` as JSON, so a test can edit one and re-publish it.
+        docs: BTreeMap<&'static str, Value>,
+    }
+
+    fn fixture() -> Fixture {
+        let store = tmp();
+        let attest_seed = crypto::gen_seed();
+        let signer = Signer::new(SignerConfig {
+            receipt_key_id: "rk-1".into(),
+            supervisor_attestation_key_id: "ak-1".into(),
+            supervisor_attestation_public_key_hex: crypto::public_key_hex(&crypto::signing_key(
+                &attest_seed,
+            )),
+            receipt_signing_seed: crypto::gen_seed(),
+            store_dir: store.clone(),
+            allowed_executors: vec!["ex-1".into()],
+            allowed_builders: vec!["bu-1".into()],
+            allowed_supervisors: vec!["sup-1".into()],
+        });
+        let system_handle = blob(&store, b"system");
+        let history_handle = blob(&store, b"history");
+        let generation_config_handle = blob(&store, b"gen-config");
+        let policy_bundle_handle = blob(&store, b"policy-bundle");
+        let containment_evidence_handle = blob(&store, b"containment");
+        let output_handle = blob(&store, b"the reply bytes");
+
+        // The digest the SIGNER will recompute for itself — the record has to match this one.
+        let request_sha256 = crypto::request_sha256(
+            "ws-1",
+            "in-1",
+            "nonce-1",
+            &system_handle,
+            &history_handle,
+            &generation_config_handle,
+            &REQUESTED_AT.to_string(),
+        );
+        let record = json!({
+            "protocol": "brops.governed-turn-record.v1",
+            "run_id": "run-1", "task_id": "task-1", "execution_attempt_id": "EA-1",
+            "workspace_id": "ws-1", "install_id": "in-1", "request_nonce": "nonce-1",
+            "receipt_id": "R-1", "supervisor_id": "sup-1", "request_sha256": request_sha256,
+            "system_handle": system_handle, "history_handle": history_handle,
+            "generation_config_handle": generation_config_handle,
+            "output_handle": output_handle,
+            "containment_evidence_handle": containment_evidence_handle,
+            "decision": "completed",
+        });
+        let lease = json!({
+            "lease_id": "L-1", "execution_attempt_id": "EA-1",
+            "lease_expires_at_ms": NOW + 1000,
+            "launcher_executable_sha256": "11".repeat(32),
+            "executor_executable_sha256": "22".repeat(32),
+        });
+        let receipt = json!({
+            "protocol": "brops.execution-receipt.v1",
+            "run_id": "run-1", "execution_attempt_id": "EA-1", "output_handle": output_handle,
+        });
+        let record_handle = blob(&store, &serde_json::to_vec(&record).unwrap());
+        let lease_handle = blob(&store, &serde_json::to_vec(&lease).unwrap());
+        let execution_receipt_handle = blob(&store, &serde_json::to_vec(&receipt).unwrap());
+
+        let mut evidence = Map::new();
+        for (k, v) in [
+            ("run_id", "run-1"), ("execution_attempt_id", "EA-1"), ("task_id", "task-1"),
+            ("request_nonce", "nonce-1"), ("receipt_id", "R-1"), ("workspace_id", "ws-1"),
+            ("install_id", "in-1"), ("supervisor_id", "sup-1"), ("executor_id", "ex-1"),
+            ("builder_id", "bu-1"), ("policy_id", "p-1"), ("policy_version", "1"),
+            ("policy_bundle_handle", &policy_bundle_handle),
+            ("generation_config_handle", &generation_config_handle),
+            ("system_handle", &system_handle), ("history_handle", &history_handle),
+            ("output_handle", &output_handle),
+            ("containment_evidence_handle", &containment_evidence_handle),
+            ("record_handle", &record_handle), ("lease_handle", &lease_handle),
+            ("execution_receipt_handle", &execution_receipt_handle),
+            ("evidence_final_event_hash", &"44".repeat(32)),
+            ("decision", "completed"),
+        ] {
+            evidence.insert(k.into(), json!(v));
+        }
+        for (k, v) in [
+            ("requested_at", REQUESTED_AT), ("completed_at", NOW - 1000),
+            ("challenge_accepted_at_ms", REQUESTED_AT + 1), ("evidence_event_count", 3),
+            ("evidence_last_sequence", 3), ("evidence_head_sequence", 1),
+        ] {
+            evidence.insert(k.into(), json!(v));
+        }
+        assert_eq!(evidence.len(), EVIDENCE_FIELDS_LEN, "fixture must build a full evidence set");
+
+        let mut docs = BTreeMap::new();
+        docs.insert("record_handle", record);
+        docs.insert("lease_handle", lease);
+        docs.insert("execution_receipt_handle", receipt);
+        Fixture { signer, store, evidence, attest_seed, docs }
+    }
+
+    impl Fixture {
+        /// Re-publish `doc` under `handle_field` (its content address changes, so the evidence has
+        /// to name the new one) and ask the signer to sign.
+        fn sign_with(&self, handle_field: &str, doc: &Value) -> Value {
+            let mut evidence = self.evidence.clone();
+            let bytes = serde_json::to_vec(doc).unwrap();
+            evidence.insert(handle_field.into(), json!(blob(&self.store, &bytes)));
+            self.sign(evidence)
+        }
+        fn sign(&self, evidence: Map<String, Value>) -> Value {
+            let jcs = crypto::jcs(&evidence);
+            let sig = crypto::sign_b64url(&crypto::signing_key(&self.attest_seed), &jcs);
+            self.signer.dispatch(
+                &json!({
+                    "op": "sign-result",
+                    "sign_request": {
+                        "protocol": SIGN_REQUEST_PROTOCOL,
+                        "attestation": { "supervisor_key_id": "ak-1", "sig": sig },
+                        "evidence": Value::Object(evidence),
+                    }
+                }),
+                NOW,
+            )
+        }
+        fn doc(&self, handle_field: &str) -> Value {
+            self.docs[handle_field].clone()
+        }
+    }
+
+    #[test]
+    fn a_coherent_chain_signs() {
+        let f = fixture();
+        let reply = f.sign(f.evidence.clone());
+        assert_eq!(reply["ok"], json!(true), "{reply}");
+        let _ = std::fs::remove_dir_all(&f.store);
+    }
+
+    #[test]
+    fn a_record_that_names_another_run_is_refused() {
+        // THE CHECK. Under the existence check this was indistinguishable from the happy path:
+        // the blob resolved, so the signer signed. It is a different account of a different run.
+        let f = fixture();
+        for (field, wrong) in [
+            ("run_id", json!("run-2")),
+            ("execution_attempt_id", json!("EA-2")),
+            ("output_handle", json!("ff".repeat(32))),
+            ("receipt_id", json!("R-2")),
+            ("supervisor_id", json!("sup-2")),
+            ("request_nonce", json!("nonce-2")),
+            ("containment_evidence_handle", json!("ff".repeat(32))),
+            ("decision", json!("refused")),
+        ] {
+            let mut record = f.doc("record_handle");
+            record[field] = wrong;
+            let reply = f.sign_with("record_handle", &record);
+            assert_eq!(reply["ok"], json!(false), "{field}: {reply}");
+            assert_eq!(
+                reply["reason"],
+                json!(format!("{REASON_CHAIN_DISAGREEMENT}:record_handle.{field}")),
+                "{field}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&f.store);
+    }
+
+    #[test]
+    fn a_record_disagreeing_with_the_signers_own_request_digest_is_refused() {
+        // `request_sha256` is not in the attested evidence at all — the expected value is the one
+        // the signer RECOMPUTED from the store bytes. A record naming any other digest is a
+        // different request.
+        let f = fixture();
+        let mut record = f.doc("record_handle");
+        record["request_sha256"] = json!("ab".repeat(32));
+        let reply = f.sign_with("record_handle", &record);
+        assert_eq!(
+            reply["reason"],
+            json!(format!("{REASON_CHAIN_DISAGREEMENT}:record_handle.request_sha256")),
+            "{reply}"
+        );
+        let _ = std::fs::remove_dir_all(&f.store);
+    }
+
+    #[test]
+    fn a_document_that_agrees_vacuously_is_refused() {
+        // A blob carrying nothing but its protocol tag resolved fine under the existence check.
+        let f = fixture();
+        let reply = f.sign_with(
+            "record_handle",
+            &json!({ "protocol": "brops.governed-turn-record.v1" }),
+        );
+        assert_eq!(
+            reply["reason"],
+            json!(format!("{REASON_CHAIN_DISAGREEMENT}:record_handle.run_id_missing")),
+            "{reply}"
+        );
+        // ...and so did a blob that is not the document it claims to be at all.
+        let wrong_protocol = f.sign_with("record_handle", &json!({ "protocol": "something.else" }));
+        assert_eq!(
+            wrong_protocol["reason"],
+            json!(format!("{REASON_CHAIN_DISAGREEMENT}:record_handle.protocol")),
+            "{wrong_protocol}"
+        );
+        // ...and so did a blob that is not JSON.
+        let mut evidence = f.evidence.clone();
+        evidence.insert("record_handle".into(), json!(blob(&f.store, b"not json at all")));
+        assert_eq!(f.sign(evidence)["reason"], json!("handle_unreadable"));
+        let _ = std::fs::remove_dir_all(&f.store);
+    }
+
+    #[test]
+    fn the_lease_and_receipt_must_be_about_this_attempt_too() {
+        let f = fixture();
+        let mut lease = f.doc("lease_handle");
+        lease["execution_attempt_id"] = json!("EA-2");
+        assert_eq!(
+            f.sign_with("lease_handle", &lease)["reason"],
+            json!(format!("{REASON_CHAIN_DISAGREEMENT}:lease_handle.execution_attempt_id"))
+        );
+        let mut receipt = f.doc("execution_receipt_handle");
+        receipt["output_handle"] = json!("ff".repeat(32));
+        assert_eq!(
+            f.sign_with("execution_receipt_handle", &receipt)["reason"],
+            json!(format!("{REASON_CHAIN_DISAGREEMENT}:execution_receipt_handle.output_handle"))
+        );
+        // A lease with no attempt id at all is not "nothing to check" — it is a missing account.
+        let bare = f.sign_with("lease_handle", &json!({ "lease_id": "L-1" }));
+        assert_eq!(
+            bare["reason"],
+            json!(format!("{REASON_CHAIN_DISAGREEMENT}:lease_handle.execution_attempt_id_missing")),
+            "{bare}"
+        );
+        let _ = std::fs::remove_dir_all(&f.store);
+    }
+
+    #[test]
+    fn a_missing_chain_blob_is_still_refused() {
+        let f = fixture();
+        let mut evidence = f.evidence.clone();
+        evidence.insert("record_handle".into(), json!("ab".repeat(32)));
+        assert_eq!(f.sign(evidence)["reason"], json!("handle_missing"));
+        let _ = std::fs::remove_dir_all(&f.store);
+    }
+}
 
 #[cfg(test)]
 mod evidence_tests {

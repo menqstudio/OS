@@ -224,7 +224,7 @@ def _state(handles):
     )
 
 
-def _make_signer(ed, store):
+def _make_signer(ed, store, handles):
     config = SignerConfig(
         receipt_key_id=RECEIPT_KEY_ID,
         receipt_private_key_handle="kms://receipt",
@@ -233,6 +233,10 @@ def _make_signer(ed, store):
         allowed_executor_ids={"exec-1"},
         allowed_builder_ids={"builder-1"},
         allowed_supervisor_ids={"sup-1"},
+        # §1.5 step 4: the (policy_id, policy_version) pair this signer is authorized to
+        # sign under, bound to the exact bundle it must resolve to. An unprovisioned
+        # allowlist REFUSES, so every construction site has to state one.
+        allowed_policies={("policy-1", "1.0.0"): handles["policy_bundle_handle"]},
     )
     return IsolatedSigner(
         config=config,
@@ -277,7 +281,7 @@ class BuildRunAttestationTests(unittest.TestCase):
             _state(handles), config=config,
             supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation,
         )
-        signer = _make_signer(ed, store)
+        signer = _make_signer(ed, store, handles)
         # Full sign_result: the supervisor's attestation must verify inside the signer's real
         # verify path, and the envelope's attestation_evidence_sha256 must equal
         # sha256(evidence_jcs) the supervisor produced. The evidence handed to the signer is
@@ -303,7 +307,7 @@ class BuildRunAttestationTests(unittest.TestCase):
             _state(handles), config=_config(handles),
             supervisor_key_id="attacker-key", sign_attestation=ed.sign_attestation,
         )
-        signer = _make_signer(ed, store)
+        signer = _make_signer(ed, store, handles)
         result = signer.sign_result(
             {
                 "protocol": "brops.sign-request.v1",
@@ -321,7 +325,7 @@ class BuildRunAttestationTests(unittest.TestCase):
             _state(handles), config=_config(handles),
             supervisor_key_id=SUP_KEY_ID, sign_attestation=ed.sign_attestation,
         )
-        signer = _make_signer(ed, store)
+        signer = _make_signer(ed, store, handles)
         # Feed the signer a tampered evidence (run_id flipped) with the ORIGINAL attestation
         # sig: the signer re-hashes different bytes -> sig invalid.
         tampered = json.loads(attn.evidence_jcs.decode("utf-8"))
@@ -371,7 +375,7 @@ class BuildRunAttestationTests(unittest.TestCase):
         )
         evidence = json.loads(attn.evidence_jcs.decode("utf-8"))
         self.assertEqual(evidence["executor_id"], "exec-ROGUE")
-        result = _make_signer(ed, store).sign_result(
+        result = _make_signer(ed, store, handles).sign_result(
             {
                 "protocol": "brops.sign-request.v1",
                 "attestation": attn.attestation,
@@ -606,7 +610,7 @@ class AttestRunServerTests(unittest.TestCase):
         reply = self._op({"op": OP_ATTEST_RUN, "run_id": "run-abc",
                           "execution_attempt_id": attempt})
         evidence_jcs = _unb64u(reply["evidence_jcs_b64"])
-        result = _make_signer(self.ed, self.store).sign_result({
+        result = _make_signer(self.ed, self.store, self.handles).sign_result({
             "protocol": "brops.sign-request.v1",
             "attestation": reply["attestation"],
             "evidence": json.loads(evidence_jcs.decode("utf-8")),

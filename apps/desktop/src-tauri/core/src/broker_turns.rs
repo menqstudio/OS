@@ -17,12 +17,20 @@
 //! **Testable without the OS trust chain:** every fn takes a `&rusqlite::Connection`, and `now_ms` is an
 //! injected parameter — no clock, socket, or global state. Tests open `Connection::open_in_memory()` and
 //! drive the full lifecycle offline.
+//!
+//! This module also owns the broker's [`DurableAcceptanceLedger`] — the §7.1(c)(d) receipt-id /
+//! request-nonce replay defence that `governed_verification::verify_and_accept` consults. It lives here
+//! for the same reason the live-turn table does: it is broker-side durable state, created by the same
+//! [`create_schema`] the broker runs at boot, so there is exactly one schema authority for the broker DB.
+
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, ErrorCode};
 
 use crate::governed_turn_ipc::{
     decide_idempotency, IdempotencyDecision, IdempotencyKey, LiveTurn, ValidatedRequest,
 };
+use crate::governed_verification::{AcceptanceLedger, LedgerRefusal};
 
 /// The durable lifecycle state of a broker turn. Exactly mirrors the SQL `CHECK(state IN (...))` domain.
 /// A turn is born [`TurnState::Live`] via [`record_new`] and moves to a terminal
@@ -116,6 +124,19 @@ impl From<rusqlite::Error> for StoreError {
 /// such INSERT fail at the DB, so the invariant no longer rests on the broker's single-threaded accept
 /// loop alone. Because it is partial (`WHERE state='live'`), terminal (committed/blocked) rows are exempt,
 /// so a settled conversation can start a fresh live turn.
+///
+/// The same call also creates the two §7.1(c)(d) acceptance-ledger tables backing
+/// [`DurableAcceptanceLedger`]:
+///
+/// - `governed_accepted_receipts` — every `receipt_id` the broker has ever accepted, `receipt_id` as a
+///   write-once PRIMARY KEY. This is §7.1(c) global uniqueness, and because the row is on disk it holds
+///   ACROSS a broker restart: a signed receipt replayed after a reboot still collides with its own row.
+/// - `governed_consumed_nonces` — every `request_nonce` ever spent, `request_nonce` as a write-once
+///   PRIMARY KEY (§7.1(d) one-time consume), with the accepting `receipt_id` retained for forensics.
+///
+/// Neither table is ever UPDATEd or DELETEd by this module: a row, once written, is the permanent proof
+/// that the id was spent. Both use `INSERT OR IGNORE` + `rows_affected` as the compare-and-set, so the
+/// uniqueness decision is SQLite's PK, not a Rust-side read.
 pub fn create_schema(conn: &Connection) -> Result<(), StoreError> {
     conn.execute_batch(
         r#"
@@ -131,6 +152,16 @@ pub fn create_schema(conn: &Connection) -> Result<(), StoreError> {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_broker_turns_one_live
             ON broker_turns (conversation_id)
             WHERE state = 'live';
+
+        CREATE TABLE IF NOT EXISTS governed_accepted_receipts (
+            receipt_id     TEXT PRIMARY KEY NOT NULL CHECK (length(receipt_id) > 0),
+            accepted_at_ms INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS governed_consumed_nonces (
+            request_nonce  TEXT PRIMARY KEY NOT NULL CHECK (length(request_nonce) > 0),
+            receipt_id     TEXT NOT NULL,
+            consumed_at_ms INTEGER NOT NULL
+        );
         "#,
     )?;
     Ok(())
@@ -275,6 +306,156 @@ pub fn expire_stale_live(conn: &Connection, now_ms: i64, ttl_ms: i64) -> Result<
         params![cutoff],
     )?;
     Ok(affected)
+}
+
+// =================================================================================================
+// The DURABLE §7.1(c)(d) acceptance ledger.
+// =================================================================================================
+
+/// How long a claim waits for another connection's write lock before giving up. A claim is two tiny
+/// INSERTs, so a wait this long means a genuinely stuck writer; timing out yields
+/// [`LedgerRefusal::Fault`], i.e. the turn is REFUSED — never accepted-without-checking.
+const CLAIM_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Wall clock in epoch milliseconds. Only ever written to the ledger's `*_at_ms` forensic columns; no
+/// acceptance decision reads a timestamp, so a wrong clock cannot weaken the replay defence. Tests
+/// override it via [`DurableAcceptanceLedger::with_clock`].
+fn wall_clock_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// The production [`AcceptanceLedger`]: §7.1(c) `receipt_id` global uniqueness and §7.1(d) one-time
+/// `request_nonce` consume, backed by the broker's SQLite database so **both survive a restart**.
+///
+/// What this replaces matters. Every production call site used to pass
+/// `governed_verification::InMemoryLedger`, whose two `HashSet`s live and die with the process. The
+/// chain therefore advertised a replay defence that was really a process-lifetime cache: stop the
+/// broker, start it again, and the exact same signed receipt envelope and the exact same one-time nonce
+/// were accepted a second time. Nothing about the cryptography changed — the replay just walked in
+/// through an empty ledger.
+///
+/// **Atomicity.** [`claim`](DurableAcceptanceLedger::claim) takes the database write lock UP FRONT with
+/// `BEGIN IMMEDIATE` and does both inserts inside that one transaction, following
+/// [`crate::supervisor_ledger::evidence_floor_cas`]. There is no read-then-write window: the
+/// "was it seen?" question is answered by whether SQLite's PRIMARY KEY accepted the row
+/// (`INSERT OR IGNORE` + `rows_affected == 0` ⇒ it was already there). Two concurrent turns claiming
+/// the same nonce serialize on the write lock and exactly one gets `Ok(())`.
+///
+/// **Fail-closed.** Every SQLite error — I/O, `SQLITE_BUSY` past the timeout, a missing/corrupt table,
+/// a caller that already held a transaction — maps to [`LedgerRefusal::Fault`], which
+/// `verify_and_accept` turns into a blocked turn. No path returns "fresh" for a ledger it could not
+/// consult. A refused claim ROLLBACKs, so a blocked turn spends neither the nonce nor the receipt id.
+///
+/// The ledger owns its own [`Connection`] because the chain owns the ledger by value. Pointing it at the
+/// broker's DB file (via [`DurableAcceptanceLedger::open`]) is what makes it durable; two connections on
+/// one file are fine (WAL + busy timeout are set here).
+pub struct DurableAcceptanceLedger {
+    conn: Connection,
+    clock: fn() -> i64,
+}
+
+impl std::fmt::Debug for DurableAcceptanceLedger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DurableAcceptanceLedger").finish_non_exhaustive()
+    }
+}
+
+impl DurableAcceptanceLedger {
+    /// Open a dedicated connection to the broker database at `db_path` and ensure the ledger tables
+    /// exist. THIS is the constructor production wiring should use: `db_path` must be a real file for
+    /// the ledger to be durable — a `:memory:` database vanishes with the process and gives back
+    /// exactly the `InMemoryLedger` weakness this type exists to remove.
+    pub fn open(db_path: &str) -> Result<Self, StoreError> {
+        let conn = Connection::open(db_path)?;
+        Self::from_connection(conn)
+    }
+
+    /// Adopt an already-open [`Connection`]. Arms the busy timeout, requests WAL (a no-op for in-memory
+    /// databases, which legitimately report `memory`), and creates the ledger tables idempotently.
+    pub fn from_connection(conn: Connection) -> Result<Self, StoreError> {
+        conn.busy_timeout(CLAIM_BUSY_TIMEOUT)?;
+        // WAL lets the broker's own connection read while a claim holds the write lock. It is a
+        // persistent property of the file, so requesting it here is enough; an in-memory database
+        // refuses it and stays on `memory`, which is fine.
+        let _: Result<String, _> =
+            conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0));
+        create_schema(&conn)?;
+        Ok(DurableAcceptanceLedger {
+            conn,
+            clock: wall_clock_ms,
+        })
+    }
+
+    /// Replace the forensic clock (tests only — no acceptance decision reads it).
+    pub fn with_clock(mut self, clock: fn() -> i64) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// The claim body, run INSIDE the owned `BEGIN IMMEDIATE`. Returning `Err` means the caller
+    /// ROLLBACKs, so a refusal writes nothing at all.
+    fn claim_body(&self, receipt_id: &str, request_nonce: &str, now_ms: i64) -> Result<(), LedgerRefusal> {
+        // §7.1(c). `INSERT OR IGNORE` + rows_affected IS the compare-and-set: 0 rows means the
+        // PRIMARY KEY already held this receipt_id (or the length CHECK rejected an empty one) — either
+        // way this receipt does not get to be accepted again.
+        let inserted = self
+            .conn
+            .execute(
+                "INSERT OR IGNORE INTO governed_accepted_receipts (receipt_id, accepted_at_ms) \
+                 VALUES (?1, ?2)",
+                params![receipt_id, now_ms],
+            )
+            .map_err(|_| LedgerRefusal::Fault)?;
+        if inserted == 0 {
+            return Err(LedgerRefusal::ReceiptReplay);
+        }
+
+        // §7.1(d). Same CAS on the one-time nonce.
+        let consumed = self
+            .conn
+            .execute(
+                "INSERT OR IGNORE INTO governed_consumed_nonces \
+                 (request_nonce, receipt_id, consumed_at_ms) VALUES (?1, ?2, ?3)",
+                params![request_nonce, receipt_id, now_ms],
+            )
+            .map_err(|_| LedgerRefusal::Fault)?;
+        if consumed == 0 {
+            return Err(LedgerRefusal::NonceReplay);
+        }
+        Ok(())
+    }
+}
+
+impl AcceptanceLedger for DurableAcceptanceLedger {
+    fn claim(&mut self, receipt_id: &str, request_nonce: &str) -> Result<(), LedgerRefusal> {
+        // The CAS must OWN its transaction: nested inside somebody else's, a later ROLLBACK could undo a
+        // claim we already reported as won, and the write lock would not be ours to hold.
+        if !self.conn.is_autocommit() {
+            return Err(LedgerRefusal::Fault);
+        }
+        let now_ms = (self.clock)();
+        self.conn
+            .execute_batch("BEGIN IMMEDIATE;")
+            .map_err(|_| LedgerRefusal::Fault)?;
+        match self.claim_body(receipt_id, request_nonce, now_ms) {
+            Ok(()) => match self.conn.execute_batch("COMMIT;") {
+                // Only a COMMIT that actually landed lets the caller accept: if the commit fails the
+                // rows are not on disk, so reporting success would leave a replayable receipt.
+                Ok(()) => Ok(()),
+                Err(_) => {
+                    let _ = self.conn.execute_batch("ROLLBACK;");
+                    Err(LedgerRefusal::Fault)
+                }
+            },
+            Err(refusal) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(refusal)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -521,5 +702,208 @@ mod tests {
         let live = live_turns(&conn).unwrap();
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].broker_turn_id, "bt-b");
+    }
+
+    // =============================================================================================
+    // DurableAcceptanceLedger — §7.1(c)(d) across a restart, and under concurrency.
+    // =============================================================================================
+
+    /// A ledger on a real FILE, so "drop it and open it again" is a genuine restart of the store.
+    fn file_ledger(db: &std::path::Path) -> DurableAcceptanceLedger {
+        DurableAcceptanceLedger::open(db.to_str().unwrap()).expect("open durable ledger")
+    }
+
+    #[test]
+    fn a_fresh_receipt_and_nonce_are_claimed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut l = file_ledger(&dir.path().join("l.db"));
+        assert_eq!(l.claim("r-1", "n-1"), Ok(()));
+        // Distinct ids are independent.
+        assert_eq!(l.claim("r-2", "n-2"), Ok(()));
+    }
+
+    #[test]
+    fn a_replayed_receipt_id_is_refused_across_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("l.db");
+        {
+            let mut l = file_ledger(&db);
+            assert_eq!(l.claim("r-1", "n-1"), Ok(()));
+        } // connection closed == the broker process exiting
+
+        // A brand-new connection to the same file: the receipt_id is STILL spent. With the old
+        // in-memory ledger this claim succeeded, which is exactly the finding.
+        let mut l = file_ledger(&db);
+        assert_eq!(
+            l.claim("r-1", "n-fresh"),
+            Err(LedgerRefusal::ReceiptReplay),
+            "a receipt_id accepted before the restart must not be claimable after it"
+        );
+    }
+
+    #[test]
+    fn a_replayed_nonce_is_refused_across_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("l.db");
+        {
+            let mut l = file_ledger(&db);
+            assert_eq!(l.claim("r-1", "n-1"), Ok(()));
+        }
+
+        // Fresh receipt_id, already-spent nonce: only the §7.1(d) one-time consume can catch this,
+        // and only because it is on disk.
+        let mut l = file_ledger(&db);
+        assert_eq!(
+            l.claim("r-fresh", "n-1"),
+            Err(LedgerRefusal::NonceReplay),
+            "a request_nonce consumed before the restart must not be consumable after it"
+        );
+    }
+
+    #[test]
+    fn a_refused_claim_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("l.db");
+        let mut l = file_ledger(&db);
+        assert_eq!(l.claim("r-1", "n-1"), Ok(()));
+
+        // This claim dies on the nonce, AFTER the receipt row was inserted inside the transaction.
+        // The ROLLBACK must undo that insert, or a blocked turn would burn a receipt_id it never used.
+        assert_eq!(l.claim("r-2", "n-1"), Err(LedgerRefusal::NonceReplay));
+        drop(l);
+
+        let mut l = file_ledger(&db);
+        assert_eq!(
+            l.claim("r-2", "n-2"),
+            Ok(()),
+            "the rolled-back receipt_id must still be free (all-or-nothing), even after a restart"
+        );
+    }
+
+    #[test]
+    fn only_one_of_two_concurrent_claims_on_the_same_nonce_wins() {
+        // The property the `BEGIN IMMEDIATE` exists for: two turns racing the SAME one-time nonce over
+        // two SEPARATE connections. A read-then-write would let both observe "unspent" and both
+        // proceed; the write-lock-up-front CAS lets exactly one through.
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("race.db");
+        // Create the schema once up front so the race is over the claim, not over the DDL.
+        drop(file_ledger(&db));
+
+        let path = db.to_str().unwrap().to_string();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = ["r-a", "r-b"]
+            .into_iter()
+            .map(|rid| {
+                let path = path.clone();
+                let start = std::sync::Arc::clone(&start);
+                std::thread::spawn(move || {
+                    let mut l = DurableAcceptanceLedger::open(&path).expect("open");
+                    start.wait();
+                    l.claim(rid, "n-contested")
+                })
+            })
+            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+
+        let winners = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(winners, 1, "exactly one claim on a one-time nonce may win, got {results:?}");
+        assert!(
+            results.contains(&Err(LedgerRefusal::NonceReplay)),
+            "the loser must be refused as a nonce replay, got {results:?}"
+        );
+    }
+
+    #[test]
+    fn concurrent_claims_on_the_same_receipt_id_have_one_winner_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("race2.db");
+        drop(file_ledger(&db));
+
+        let path = db.to_str().unwrap().to_string();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = ["n-a", "n-b"]
+            .into_iter()
+            .map(|nonce| {
+                let path = path.clone();
+                let start = std::sync::Arc::clone(&start);
+                std::thread::spawn(move || {
+                    let mut l = DurableAcceptanceLedger::open(&path).expect("open");
+                    start.wait();
+                    l.claim("r-contested", nonce)
+                })
+            })
+            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+
+        assert_eq!(
+            results.iter().filter(|r| r.is_ok()).count(),
+            1,
+            "a receipt_id is globally unique — one winner only, got {results:?}"
+        );
+        assert!(results.contains(&Err(LedgerRefusal::ReceiptReplay)), "got {results:?}");
+    }
+
+    #[test]
+    fn a_ledger_that_cannot_be_read_refuses_rather_than_accepts() {
+        // The dangerous failure mode is a ledger that answers "never seen it" because it is broken.
+        // Drop the table out from under it and the claim must come back Fault (⇒ the turn Blocks),
+        // NOT Ok. If `claim_body` mapped SQLite errors to "fresh", this is the test that catches it.
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("l.db");
+        let mut l = file_ledger(&db);
+        assert_eq!(l.claim("r-1", "n-1"), Ok(()));
+
+        let sabotage = Connection::open(&db).unwrap();
+        sabotage.execute_batch("DROP TABLE governed_accepted_receipts;").unwrap();
+        drop(sabotage);
+
+        assert_eq!(l.claim("r-2", "n-2"), Err(LedgerRefusal::Fault));
+    }
+
+    #[test]
+    fn a_claim_inside_someone_elses_transaction_is_refused() {
+        // The CAS must own its BEGIN IMMEDIATE (mirrors supervisor_ledger's NestedTransaction guard):
+        // nested inside an outer transaction, a later ROLLBACK could silently undo a claim already
+        // reported as won, making the "spent" nonce spendable again.
+        let dir = tempfile::tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("l.db")).unwrap();
+        let mut l = DurableAcceptanceLedger::from_connection(conn).unwrap();
+        l.conn.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        assert_eq!(l.claim("r-1", "n-1"), Err(LedgerRefusal::Fault));
+        l.conn.execute_batch("ROLLBACK;").unwrap();
+        // ...and once the outer transaction is gone the same claim is fine.
+        assert_eq!(l.claim("r-1", "n-1"), Ok(()));
+    }
+
+    #[test]
+    fn an_empty_receipt_id_or_nonce_is_refused() {
+        // The length CHECK means `INSERT OR IGNORE` writes no row, which the CAS reads as "not fresh".
+        // Either way an empty id never yields Ok — it can never be accepted.
+        let dir = tempfile::tempdir().unwrap();
+        let mut l = file_ledger(&dir.path().join("l.db"));
+        assert!(l.claim("", "n-1").is_err());
+        assert!(l.claim("r-1", "").is_err());
+        // The failed attempts left nothing behind.
+        assert_eq!(l.claim("r-1", "n-1"), Ok(()));
+    }
+
+    #[test]
+    fn the_ledger_tables_are_created_by_the_broker_boot_schema() {
+        // `init_broker_schema` in the broker binary calls exactly this; the ledger must not need a
+        // separate provisioning step that a deployment could forget.
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        create_schema(&conn).unwrap(); // idempotent
+        for t in ["governed_accepted_receipts", "governed_consumed_nonces"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    params![t],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "create_schema must create `{t}`");
+        }
     }
 }
