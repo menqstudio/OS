@@ -303,17 +303,22 @@ class RollbackTests(HeadBindingFixture):
         self.assertIn("none is compiled in", message)
 
     def test_a_presented_floor_anchor_that_cannot_verify_refuses(self):
-        # There is no owner key for this yet and none is invented: presenting an anchor
-        # fails closed and says what the owner must mint.
+        # A presented anchor is never a fallback: one this deployment cannot verify is a
+        # refusal that says what the owner must mint. `evidence-floor-anchor` is now a
+        # registered artifact type (bro_signature.ARTIFACT_AUTHORITY), so the anchor is
+        # signed here by an authority that may NOT sign it — registering the type gave
+        # nobody a key, and this is what that looks like from the consuming side. The
+        # matching positive path, and the case where the type is registered but no key is
+        # pinned for it, live in test_owner_artifact_registration.py.
         from bro_completion import CompletionError
         self.advance_to(5)
         shutil.rmtree(self.store / "head-floor")
         self.provision_floor()
         anchor = self.tmp / "floor-anchor.json"
         anchor.write_text(json.dumps(sign_payload(
-            self.keys["operator-root"]["private_key"],
+            self.keys["builder"]["private_key"],
             {"artifact_type": "evidence-floor-anchor",
-             "key_id": self.keys["operator-root"]["key_id"],
+             "key_id": self.keys["builder"]["key_id"],
              "task_id": "task-1", "head_sequence": 5})), encoding="utf-8")
         with unittest.mock.patch.dict(os.environ,
                                       {"BRO_EVIDENCE_FLOOR_ANCHOR": str(anchor)}):

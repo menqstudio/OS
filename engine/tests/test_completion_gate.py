@@ -264,7 +264,12 @@ class CompletionEd25519Tests(unittest.TestCase):
             "task_contract_sha256": "a" * 64, "candidate_head": "b" * 40, "candidate_tree": "c" * 64,
             "done_criteria": [{"criterion": "done", "status": "satisfied", "evidence_event_ids": ["e1"]}],
             "tests": [{"command": ["pytest"], "status": "passed", "evidence_event_id": "e2", "execution_receipt_id": "rcpt-00000000000000e2"}],
-            "evidence_event_ids": ["e1", "e2"], "open_risks": [], "rollback_ready": True,
+            "evidence_event_ids": ["e1", "e2"],
+            # The O-5 head binding is in `_check_manifest`'s strict required set AND in
+            # schemas/completion-manifest.schema.json, whose `additionalProperties: false`
+            # + `required` this test validates against. See test_manifest_schema_agreement.
+            "evidence_head_sha256": "d" * 64, "head_sequence": 1,
+            "open_risks": [], "rollback_ready": True,
             "nonce": "nonce-ed25519-manifest-01",
             "issued_at_epoch": self.NOW, "expires_at_epoch": self.NOW + 3600,
         }

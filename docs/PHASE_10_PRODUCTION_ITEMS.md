@@ -268,11 +268,12 @@ matching stop-gate refusal. Every one of these checks was deleted once and the m
   literals `("owner", "owner-gev")` / `("bro", "bro-000")`; the same pattern in
   `engine/runtime/bro_orchestration_runtime.py` (`_validate_actor`); schema
   `engine/schemas/control-room-command.schema.json` carries **no signature or key field**
-- **Closure requires:** promoting the control-room command to a signed artifact — register a
-  `control-room-command` type in `engine/runtime/bro_signature.py`'s authority registry bound to the
-  owner/bro authorities, extend `control-room-command.schema.json` with `artifact_type` / `key_id` and a
-  detached signature, and verify it before `validate_command_intent` can stamp `"valid": true`. **The
-  conductor half of this is done** (below); the owner half needs those three out-of-module changes.
+- **Closure requires:** promoting the control-room command to a signed artifact — (a) ✅ register a
+  `control-room-command` type in `engine/runtime/bro_signature.py`'s authority registry (**done** — bound to
+  `operator-root` — which grants no key: see below); (b) ❌ extend `control-room-command.schema.json` with
+  `artifact_type` / `key_id` and a detached signature; (c) ❌ verify it before `validate_command_intent` can
+  stamp `"valid": true`. **The conductor half of this is done** (below); the owner half still needs (b) and
+  (c), plus an operator key that is actually granted the new type.
 
 **The defect in full.** The check is a string comparison on data the caller supplied. Anyone who can reach the
 control-room API can claim to be `owner-gev`, and the API then echoes the claimed identity back inside a
@@ -309,17 +310,34 @@ any command that caller could already reach. That is a session credential's sema
 claim than "anyone who can spell `bro-000`". Per-command non-repudiation needs the signed
 `control-room-command` artifact type.
 
-**Why it is still OPEN.** The owner actor cannot be verified at all: `bro_signature.ARTIFACT_AUTHORITY` has
-no owner-bound artifact type, `engine/schemas/control-room-command.schema.json` has no signature field, and
-no trusted key may sign one — and `_parse_key` rejects any registry entry naming an artifact type that is not
-in `ARTIFACT_AUTHORITY`, so this cannot be provisioned from configuration alone. All three files are outside
-this change. `bro_orchestration_runtime._validate_actor` is also untouched.
+**The registration blocker is removed (2026-08-07).** `_parse_key` rejects any registry entry naming an
+artifact type absent from `ARTIFACT_AUTHORITY`, so while `control-room-command` was unregistered the closure
+could not be provisioned from configuration *at all* — an operator-signed registry granting it would not even
+load. `engine/runtime/bro_signature.py` now registers `control-room-command` against the `operator-root`
+authority. **Registering a type provisions no key and weakens nothing:** `verify_artifact` still requires the
+presenting key to carry the type in its own `allowed_artifact_types`, the committed
+`engine/config/trusted-keys.json` grants it to no key, no key material is compiled in or generated, and
+nothing consumes a `control-room-command` document yet — so `validate_command_intent` is exactly as strict as
+before.
+
+**Why it is still OPEN.** The owner actor still cannot be verified:
+`engine/schemas/control-room-command.schema.json` has no `artifact_type` / `key_id` / signature field, no
+trusted key is granted the type, and `validate_command_intent` verifies no command signature — an
+owner-issued command is still **refused by name**, exactly as before.
+`bro_orchestration_runtime._validate_actor` is also untouched. Proven in
+`engine/tests/test_owner_artifact_registration.py`: an owner command carrying a flawless, operator-signed,
+registry-granted `control-room-command` artifact is *still* refused by name, and the committed registry
+grants the type to nobody.
 
 **Test evidence:** `engine/tests/test_control_room_api.py` (`ControlRoomActorProofTests`, real Ed25519
 against an operator-signed registry) — a signed session proves the conductor actor; missing attestation,
 owner actor, wrong authority, tampered payload, wrong agent/role, expired, wrong artifact type, malformed
 document, and a keyless runtime all refuse; and a proven actor does not soften the state or scope gates.
-Every one of these checks was deleted once and the matching test went red.
+`engine/tests/test_owner_artifact_registration.py` covers the registration: the type is bound to
+`operator-root` and to no other authority, a registry entry may now name it, a still-unregistered type is
+refused exactly as before, the committed registry grants it to no key, and an owner command is refused by
+name even with a valid signed `control-room-command` presented. Every one of these checks was deleted once
+and the matching test went red.
 
 ### O-5 · evidence high-water not bound into the signed manifest
 
@@ -339,12 +357,14 @@ Every one of these checks was deleted once and the matching test went red.
 - **Closure requires:** *(done)* `evidence_head_sha256` + `head_sequence` in the strict `_check_manifest`
   required set, fed through to `validate_chain` instead of `None`, checked for exact equality against the
   store's signed head, mirrored onto the verifier-receipt chain check and into the persisted completion
-  proof. *(remaining, Owner)* an operator-root-signed `evidence-floor-anchor` presented at
-  `BRO_EVIDENCE_FLOOR_ANCHOR`, the `evidence-floor-anchor` → `operator-root` entry in
+  proof. *(done, 2026-08-07)* the `evidence-floor-anchor` → `operator-root` entry in
   `engine/runtime/bro_signature.py`'s `ARTIFACT_AUTHORITY`, and the same two fields added to
   `engine/schemas/completion-manifest.schema.json` (`required` + `properties`, since
-  `additionalProperties` is `false`) — that file was outside the editing scope of the pass that
-  landed the runtime half, so the schema currently under-describes the enforced shape.
+  `additionalProperties` is `false`) — the schema no longer under-describes the enforced shape, and
+  `engine/tests/test_manifest_schema_agreement.py` turns RED if the schema and the runtime required-set
+  disagree in either direction. *(remaining, Owner)* an operator-root-signed `evidence-floor-anchor`,
+  minted offline and granted to a key in the operator-signed registry, presented at
+  `BRO_EVIDENCE_FLOOR_ANCHOR`.
 
 **The defect in full.** The anti-rollback property — "evidence cannot be replayed at an older head" — was
 carried entirely by an on-disk floor directory (`engine/runtime/bro_completion.py`: `_head_floor_dir`,
@@ -368,10 +388,21 @@ the head it was taken against, and two different signed heads sharing one sequen
 **What is NOT closed, and why.** A floor that is deleted **and re-provisioned** reads exactly like a task
 being seen for the first time. Nothing the runtime can reach distinguishes them, so a manifest binding a
 re-anchored head (`head_sequence` > 1) with no durable mark behind it is **refused by name** rather than
-defaulted to zero, and the refusal states what the Owner must provide. Presenting
-`BRO_EVIDENCE_FLOOR_ANCHOR` today also fails closed, because `evidence-floor-anchor` is deliberately absent
-from the signature module's authority registry: registering it without an Owner-held offline key would mean
-inventing an authority. No key is compiled in and no seed is invented.
+defaulted to zero, and the refusal states what the Owner must provide.
+
+`evidence-floor-anchor` is now **registered** in the signature module's authority registry against
+`operator-root` (2026-08-07). That was a hard blocker, not a formality: `_parse_key` refuses any registry
+entry naming an unregistered artifact type, so the Owner could not have been given a key for it even
+offline — the registry would not load. **Registering the type provisioned nothing and weakened nothing.**
+Authority to sign comes from the per-key `allowed_artifact_types` grant in the operator-signed registry, and
+no key holds it: the committed `engine/config/trusted-keys.json` grants the type to nobody, so presenting
+`BRO_EVIDENCE_FLOOR_ANCHOR` today still **fails closed by name** — including when the document is genuinely
+signed by the deployment's own registry-signing operator key, which is the "type registered, key not pinned"
+case pinned by `test_registered_but_unpinned_the_anchor_is_still_refused` in
+`engine/tests/test_owner_artifact_registration.py`. No key is compiled in, none is generated, and no seed is
+shipped. What remains is the Owner's: mint the anchor offline, grant the type to that key in the
+operator-signed registry, and present the file under a principal the policed account cannot write. The item
+therefore stays **OPEN**.
 
 ---
 

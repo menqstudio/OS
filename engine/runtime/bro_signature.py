@@ -133,6 +133,23 @@ ARTIFACT_AUTHORITY = {
     # not a claim, so like the workspace binding it may only come from the
     # owner-held operator authority — never a key any agent process could hold.
     "conductor-session": OPERATOR,
+    # O-4. The control-room command itself, so an owner-issued command can be a signed
+    # artifact instead of two strings out of the caller's own JSON. Registering the type
+    # provisions NOTHING and weakens nothing: `verify_artifact` still requires the
+    # presented key to carry "control-room-command" in its OWN allowed_artifact_types,
+    # the committed config/trusted-keys.json grants it to no key, and no key material is
+    # shipped or generated here. What the entry buys is that the owner CAN be given one —
+    # before it, `_parse_key` refused any registry entry naming the type, so the closure
+    # could not be provisioned from configuration at all. Until the owner mints an
+    # offline key and pins it, an owner-issued command remains a refusal by name.
+    "control-room-command": OPERATOR,
+    # O-5. The operator's statement of the evidence high-water mark for one task, read
+    # from BRO_EVIDENCE_FLOOR_ANCHOR when a floor was deleted and re-provisioned. It is
+    # an authorisation about state the policed builder can write, so it may only come
+    # from the owner-held operator authority. The same rule applies: a registered type is
+    # not a provisioned key. With no pinned key allowed to sign it, `_signed_floor_anchor`
+    # refuses every presented anchor — exactly as it did before this entry existed.
+    "evidence-floor-anchor": OPERATOR,
     "evidence-event": EVIDENCE,
     # The head anchors where a chain ends. It must come from the recorder, never
     # the builder, or the builder signs a head describing whichever prefix suits it.
