@@ -374,7 +374,13 @@ export function Research() {
 
       <header className="pageHead reveal">
         <div className="pageHead-lead">
-          <Mark state="live" size={34} className="rsx-glyph" />
+          {/* Posture from the REAL `list_research` read — `live` here was on in every
+              state, including a failed read. */}
+          <Mark
+            state={s.error ? 'alert' : loading ? 'thinking' : 'idle'}
+            size={34}
+            className="rsx-glyph"
+          />
           <div>
             <span className="eyebrow">{L('eyebrow')}</span>
             <h1>{t('nav.research')}</h1>
@@ -399,7 +405,9 @@ export function Research() {
               </div>
             ))}
           </div>
-          <div className="wire live" aria-hidden="true" />
+          {/* Plain divider. `wire.live` animates a travelling pulse that reads as a
+              running feed; this page issues one `list_research` read and has none. */}
+          <div className="wire" aria-hidden="true" />
         </section>
       )}
 

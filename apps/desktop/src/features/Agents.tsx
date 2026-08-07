@@ -288,7 +288,9 @@ export function Agents() {
       </div>
       {agents.length > 0 && (
         <div className="right">
-          <span className="pill live">{active} {L('activeWord')}</span>
+          {/* Green/`live` is earned by a real active count. "0 active" rendered green
+              is a live indicator that is always on — bind it to the number it states. */}
+          <span className={`pill ${active > 0 ? 'live' : 'off'}`}>{active} {L('activeWord')}</span>
           <span className="pill info">{agents.length} {L('agentWord')}</span>
         </div>
       )}
@@ -418,7 +420,9 @@ export function Agents() {
             {/* central conductor anchor — structural, not agent data. The desktop
                 observes the pack and holds no lease. */}
             <div className="ag-hub" aria-hidden="true">
-              <Mark state="live" size={30} />
+              {/* Structural anchor, not agent data — the desktop observes the pack and
+                  holds no lease, so this mark must not read as a live conductor. */}
+              <Mark state="idle" size={30} />
               <span className="ag-hub-name">Bro</span>
               <span className="ag-hub-role">{L('conductor')}</span>
             </div>

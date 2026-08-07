@@ -41,7 +41,7 @@ export const hy: Record<DictKey, string> = {
   'state.loading': 'Բեռնվում է…',
   'state.empty': 'Այստեղ դեռ ոչինչ չկա',
   'state.emptyHint': 'Տարրերն այստեղ կհայտնվեն աշխատանքի ընթացքում։',
-  'state.prototype': 'Նախատիպ — փորձնական տվյալներ, backend-ը միացված չէ։',
+  'state.prototype': 'Desktop backend-ը միացված չէ։ Փորձնական տվյալներ չկան — ամեն վահանակ ցույց կտա իր սեփական սխալի վիճակը, մինչև սա աշխատի BroPS desktop հավելվածի ներսում։',
 
   'action.new': 'Նոր',
   'action.approve': 'Հաստատել',

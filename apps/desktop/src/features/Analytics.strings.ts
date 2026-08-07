@@ -115,10 +115,28 @@ export const STR = {
   },
 
   // -- hero deck framing ------------------------------------------------------
-  streamLive: {
-    en: 'STREAM · LIVE',
-    hy: 'ՀՈՍՔ · ԿԵՆԴԱՆԻ',
-    ru: 'ПОТОК · В ЭФИРЕ',
+  // There is no stream. `get_analytics` is a one-shot read of an all-time aggregate,
+  // so the old always-on "STREAM · LIVE" pill was decoration dressed as telemetry.
+  // These three name the REAL state of that single read instead.
+  readReading: {
+    en: 'READ · in flight',
+    hy: 'ԸՆԹԵՐՑՈՒՄ · ընթացքում',
+    ru: 'ЧТЕНИЕ · выполняется',
+  },
+  readUnavailable: {
+    en: 'READ · unavailable',
+    hy: 'ԸՆԹԵՐՑՈՒՄ · անհասանելի',
+    ru: 'ЧТЕНИЕ · недоступно',
+  },
+  readBlocked: {
+    en: 'READ · blocked at the wall',
+    hy: 'ԸՆԹԵՐՑՈՒՄ · արգելափակված է պատի մոտ',
+    ru: 'ЧТЕНИЕ · заблокировано на стене',
+  },
+  readSnapshot: {
+    en: 'SNAPSHOT · all-time aggregate',
+    hy: 'ԴԻՊՈՒԿ · ամբողջ ժամանակի ագրեգատ',
+    ru: 'СНИМОК · агрегат за всё время',
   },
   nodes: {
     en: 'nodes',

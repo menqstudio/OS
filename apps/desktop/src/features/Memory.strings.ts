@@ -55,7 +55,42 @@ export const STR = {
     hy: 'ՀԻՇՈՂՈՒԹՅԱՆ ԴԱՇՏ · ԺԱՄԱՆԱԿԱՅԻՆ ԴԱՇՏ',
     ru: 'ПОЛЕ ПАМЯТИ · ТЕМПОРАЛЬНОЕ ПОЛЕ',
   },
-  verifiable: { en: 'Verifiable memory', hy: 'Ստուգելի հիշողություն', ru: 'Проверяемая память' },
+  // The old header pill read "Verifiable memory" unconditionally. Nothing verifies a
+  // memory entry: `list_memory` returns plain rows from the local SQLite store with no
+  // signature, receipt or chain behind them, so that claim was unbacked and is gone.
+  // What IS real is the outcome of the one `list_memory` read, so the pill names that.
+  storeReading: { en: 'Reading the store…', hy: 'Կարդում ենք պահոցը…', ru: 'Читаем хранилище…' },
+  storeUnavailable: { en: 'Store unavailable', hy: 'Պահոցն անհասանելի է', ru: 'Хранилище недоступно' },
+  storeLoaded: { en: 'Read from the store', hy: 'Կարդացված է պահոցից', ru: 'Прочитано из хранилища' },
+  // Local, unverified provenance stated plainly next to the counts.
+  noVerification: {
+    en: 'Local store · no verification chain',
+    hy: 'Տեղական պահոց · ստուգման շղթա չկա',
+    ru: 'Локальное хранилище · нет цепочки проверки',
+  },
+
+  // --- Refused writes (delete/pin may be denied by the window capability set) --
+  deleteRefusedTitle: {
+    en: 'Delete refused — nothing was removed',
+    hy: 'Ջնջումը մերժվեց — ոչինչ չհեռացվեց',
+    ru: 'Удаление отклонено — ничего не удалено',
+  },
+  deleteRefusedBody: {
+    en: 'The backend rejected this delete, so the memory is still in the store and still listed.',
+    hy: 'Backend-ը մերժեց այս ջնջումը, ուստի հիշողությունը դեռ պահոցում է և դեռ ցուցակում է։',
+    ru: 'Бэкенд отклонил это удаление, поэтому воспоминание всё ещё в хранилище и в списке.',
+  },
+  pinRefusedTitle: {
+    en: 'Pin change refused — nothing was changed',
+    hy: 'Ամրացման փոփոխությունը մերժվեց — ոչինչ չփոխվեց',
+    ru: 'Изменение закрепления отклонено — ничего не изменено',
+  },
+  pinRefusedBody: {
+    en: 'The backend rejected this change, so the pin state is exactly as it was.',
+    hy: 'Backend-ը մերժեց այս փոփոխությունը, ուստի ամրացման վիճակը մնում է նույնը։',
+    ru: 'Бэкенд отклонил это изменение, поэтому состояние закрепления осталось прежним.',
+  },
+  deleting: { en: 'Deleting…', hy: 'Ջնջվում է…', ru: 'Удаление…' },
 
   // --- Browser --------------------------------------------------------------
   memoriesHeading: { en: 'Memories', hy: 'Հիշողություններ', ru: 'Воспоминания' },
@@ -112,6 +147,30 @@ export const STR = {
 
 // Parameterised copy — kept as per-language builders so the real counts
 // interpolate into each language's phrasing (Russian included).
+
+/** Announced ONLY on a real backend rejection — the entry was not deleted. */
+export function deleteRefusedLive(lang: Lang, reason: string): string {
+  switch (lang) {
+    case 'hy':
+      return `Ջնջումը մերժվեց. հիշողությունը չհեռացվեց։ ${reason}`;
+    case 'ru':
+      return `Удаление отклонено: воспоминание не удалено. ${reason}`;
+    default:
+      return `Delete refused: the memory was not removed. ${reason}`;
+  }
+}
+
+/** Announced ONLY on a real backend rejection — the pin state did not change. */
+export function pinRefusedLive(lang: Lang, reason: string): string {
+  switch (lang) {
+    case 'hy':
+      return `Ամրացումը մերժվեց. վիճակը չփոխվեց։ ${reason}`;
+    case 'ru':
+      return `Закрепление отклонено: состояние не изменилось. ${reason}`;
+    default:
+      return `Pin change refused: the pin state did not change. ${reason}`;
+  }
+}
 
 // "{shown} of {total} memories." — live-region result count.
 export function liveCount(lang: Lang, shown: number, total: number): string {

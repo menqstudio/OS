@@ -314,7 +314,9 @@ export function Integrations() {
             <span className="capsule"><b>{totals.connected}</b><span>{L('activeChannel')}</span></span>
             <span className={`capsule ${totals.attention > 0 ? 'is-warn' : ''}`}><b>{totals.attention}</b><span>{L('attention')}</span></span>
           </div>
-          <div className="wire live" aria-hidden="true" />
+          {/* The travelling `live` pulse is earned only when a connector is REALLY
+              connected; with zero connected it is a still divider, not a feed. */}
+          <div className={`wire${totals.anyConnected ? ' live' : ''}`} aria-hidden="true" />
           <p className="micro intg-scale">
             {L('stateScale')}
           </p>

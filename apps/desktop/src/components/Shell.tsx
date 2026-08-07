@@ -217,7 +217,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </aside>
 
         <main id="main-content" className="stage" tabIndex={-1}>
-          {!hasBackend() && <div className="proto-banner">◍ {t('state.prototype')}</div>}
+          {/* Outside the Tauri runtime there is NO mock/fixture layer: `services/desktop.ts`
+              maps every IPC name to a registered `#[tauri::command]`, so each call simply
+              rejects and each panel renders its own error state. The banner says exactly
+              that — it must never advertise mock data the build does not contain. */}
+          {!hasBackend() && <div className="proto-banner" role="status">◍ {t('state.prototype')}</div>}
           {/* keyed on route so the stage replays a soft page-enter on each view change */}
           <div key={route} className="stage-enter">
             {children}

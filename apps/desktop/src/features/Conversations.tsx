@@ -56,6 +56,11 @@ const VIEW_CSS = `
 .v-chat .recall-link:focus-visible{outline:2px solid rgb(var(--cyan-rgb)/.6);outline-offset:2px;border-radius:6px}
 .v-chat .recall-link .rc-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .v-chat .recall-link .rc-sub{color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.v-chat .chat-delete-error{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-bottom:14px;
+  padding:10px 12px;border:1px solid rgb(var(--danger-rgb)/.4);border-radius:var(--r);
+  background:rgb(var(--danger-rgb)/.08);font-size:13px}
+.v-chat .chat-delete-error b{color:var(--danger)}
+.v-chat .chat-delete-reason{color:var(--ink-muted);font-size:12px;word-break:break-word}
 .v-chat .chat-workspace{display:grid;grid-template-columns:minmax(198px,238px) minmax(0,1fr);gap:18px;align-items:start}
 .v-chat .chat-main{min-width:0}
 .v-chat .th-actions{display:flex;align-items:center;gap:10px;flex:0 0 auto}
@@ -799,11 +804,16 @@ function RenameConversationForm({ conversation, onClose, onRenamed }:
 /** Two-pane conversation workspace shared by the Chat (direct) and Group Chat
  *  (group) screens. Both are backed by the same conversations/messages tables. */
 export function Conversations({ kind }: { kind: Kind }) {
-  const { t, focus, clearFocus } = useApp();
+  const { t, lang, focus, clearFocus } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<Conversation | null>(null);
   const [deleting, setDeleting] = useState<Conversation | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  // The backend's own reason for REFUSING a delete. `delete_conversation` is denied by
+  // the window capability set today, so this is the expected path and must be readable.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const s = useAsync(() => desktop.listConversations(kind), [kind]);
 
   // Consume a command-palette deep-link. The palette already routed to the
@@ -835,7 +845,9 @@ export function Conversations({ kind }: { kind: Kind }) {
 
   const confirmDelete = () => {
     const target = deleting;
-    if (!target) return;
+    if (!target || deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
     desktop
       .deleteConversation(target.id)
       .then(() => {
@@ -843,7 +855,14 @@ export function Conversations({ kind }: { kind: Kind }) {
         setDeleting(null);
         s.reload();
       })
-      .catch(() => setDeleting(null));
+      .catch((e: unknown) => {
+        // A refusal used to vanish here. State it, keep the conversation selected, and
+        // re-read so the rail provably still holds the row the backend kept.
+        setDeleting(null);
+        setDeleteError(e instanceof Error ? e.message : String(e));
+        s.reload();
+      })
+      .finally(() => setDeleteBusy(false));
   };
 
   return (
@@ -878,11 +897,21 @@ export function Conversations({ kind }: { kind: Kind }) {
         <ConfirmDialog
           title={t('chat.deleteConversation')}
           message={t('chat.deleteConfirm')}
-          confirmLabel={t('action.delete')}
+          confirmLabel={deleteBusy ? L('deleting') : t('action.delete')}
           cancelLabel={t('action.cancel')}
           onConfirm={confirmDelete}
-          onCancel={() => setDeleting(null)}
+          onCancel={() => { if (!deleteBusy) setDeleting(null); }}
         />
+      )}
+
+      {/* A REFUSED delete, stated plainly and left on screen until dismissed. */}
+      {deleteError && (
+        <div className="chat-delete-error" role="alert">
+          <b>{L('deleteRefusedTitle')}</b>
+          <span>{L('deleteRefusedBody')}</span>
+          <span className="mono chat-delete-reason">{deleteError}</span>
+          <Button small variant="ghost" onClick={() => setDeleteError(null)}>{t('action.close')}</Button>
+        </div>
       )}
 
       <div className="chat-workspace">

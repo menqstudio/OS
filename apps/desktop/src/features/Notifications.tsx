@@ -378,13 +378,47 @@ export function Notifications() {
               {L('gateReasonLabel')}{gov.data.reason}
             </div>
           ) : null}
-          {/* Honest read-path chain: engine → mirror. The middle node lights only when
-              events genuinely arrived; an empty or sealed read leaves it un-lit. */}
-          <div className="chain nsig-gate-chain" aria-hidden="true">
-            <b className="done">{L('gateChainEngine')}</b>
-            <b className={gov.data && hasRecords(gov.data) ? 'now' : ''}>{L('gateChainMirror')}</b>
-            <b>{gov.data === null ? L('gateChainReading') : L('gateChainMirror')}</b>
-          </div>
+          {/* Honest read-path chain: READ → ENGINE → MIRROR, built exactly like the
+              Decisions evidence strip. Every node maps to a fact from the real
+              GovernanceRead — none is hard-coded lit:
+                * READ   — the desktop's own IPC call. `now` while in flight, `done`
+                           once it settled, whatever the outcome was.
+                * ENGINE — `done` ONLY for `state: 'ok'`. A blocked or unreachable read
+                           leaves it neutral and its label names which one it was; the
+                           old code painted this node `done` unconditionally.
+                * MIRROR — `done` ONLY when records actually arrived AND the backend
+                           states they were authenticated (never true in this build).
+                           Zero records is the absence of a stream, and unauthenticated
+                           records are not verified ones — both stay neutral and labelled. */}
+          {(() => {
+            const r = gov.data;
+            const mirrored = r ? recordCount(r) : 0;
+            const mirrorProven = !!r && r.state === 'ok' && mirrored > 0 && r.authenticated === true;
+            const engineLabel = !r || r.state === 'ok'
+              ? L('gateChainEngine')
+              : r.state === 'blocked'
+                ? L('gateChainEngineSealed')
+                : L('gateChainEngineUnreachable');
+            const mirrorLabel = !r || r.state !== 'ok'
+              ? L('gateChainMirror')
+              : mirrored === 0
+                ? L('gateChainMirrorNone')
+                : mirrorProven
+                  ? L('gateChainMirror')
+                  : L('gateChainMirrorUnverified');
+            const nodes: { label: string; cls: '' | 'done' | 'now' }[] = [
+              { label: L('gateChainRead'), cls: r === null ? 'now' : 'done' },
+              { label: engineLabel, cls: r?.state === 'ok' ? 'done' : '' },
+              { label: mirrorLabel, cls: mirrorProven ? 'done' : '' },
+            ];
+            return (
+              <div className="chain nsig-gate-chain" aria-hidden="true">
+                {nodes.map((n, i) => (
+                  <b key={i} className={n.cls || undefined}>{n.label}</b>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </section>
     </div>

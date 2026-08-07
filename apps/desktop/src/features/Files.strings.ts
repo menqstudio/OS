@@ -138,10 +138,23 @@ export const STR = {
     hy: 'ՏՎՅԱԼ-ՍԵՂԱՆ · ՏԱՐԱԾԱԿԱՆ ԱՇԽԱՏԱՏԱՐԱԾՔ',
     ru: 'СТЕНД ДАННЫХ · ПРОСТРАНСТВЕННАЯ РАБОЧАЯ ОБЛАСТЬ',
   },
-  indexing: {
-    en: 'Bro · indexing',
-    hy: 'Bro · ինդեքսավորում',
-    ru: 'Bro · индексация',
+  // Was an unconditional "Bro · indexing" pill. Nothing indexes: the page calls
+  // `list_dir` once per path and filters the returned entries in memory. These three
+  // name the REAL state of that read.
+  dirReading: {
+    en: 'Reading the directory…',
+    hy: 'Կարդում ենք թղթապանակը…',
+    ru: 'Читаем каталог…',
+  },
+  dirUnavailable: {
+    en: 'Directory unreadable',
+    hy: 'Թղթապանակն ընթեռնելի չէ',
+    ru: 'Каталог недоступен для чтения',
+  },
+  dirListed: {
+    en: 'Listed from disk',
+    hy: 'Ցուցակված է սկավառակից',
+    ru: 'Получено с диска',
   },
   path: {
     en: 'Path',
