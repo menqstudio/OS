@@ -64,10 +64,14 @@ tested, never rushed*), on its own branch/PR with Owner approval.
   commands; `engine/tests/test_bytecode_shadow.py` — the regression tests
 - **Closure requires:** (a) ✅ fail-closed calls to `assert_no_bytecode_shadow` on every path that
   trusts the control-plane digest; (b) ✅ the hook commands in `engine/.claude/settings.json` invoking
-  `python -B` on **every** `||` interpreter alternative; (c) ◑ reordering/scoping the
-  `python -m compileall -q runtime tools tests` step in `.github/workflows/ci.yml` and
-  `engine/.github/workflows/verify.yml` so it does not leave caches under a digest root before
-  `engine/tools/bro_live_validate.py` spawns the wall — **not done, out of this task's scope**;
+  `python -B` on **every** `||` interpreter alternative; (c) ◑ done: `compileall` now runs AFTER
+  `engine/tools/bro_live_validate.py` in both `.github/workflows/ci.yml` and
+  `engine/.github/workflows/verify.yml`, a cache-clearing step runs immediately before the probe,
+  the validator is invoked as `python -B`, and both jobs carry `PYTHONDONTWRITEBYTECODE=1` — which
+  `compileall` was NOT the only producer of: `engine/tools/bro_validate.py` calls `py_compile`,
+  which writes caches even under that variable, and the probe planted a shadow on itself by
+  importing `runtime/**` and by spawning `unittest` without `-B`. The probe now also names the
+  refusal it wants;
   (d) ✅ regression tests that plant bytecode beside a control-plane module and assert the wall
   refuses; (e) ❌ the *read* half of the hole below, which is **not closeable from inside Python**
   and needs an owner decision on how the wall's interpreter is launched.
@@ -112,14 +116,22 @@ launching the wall where no cache under a digest root can be read (e.g. `PYTHONP
 outside the tree, or a read-only/freshly-cleaned control plane), or a pre-flight check in the launcher
 before the interpreter starts. That is an owner/deployment decision, so the item stays **OPEN**.
 
-**Also open:** item (c). The CI `compileall` step still runs before `engine/tools/bro_live_validate.py`,
-which now means the live-wall probe runs against a tree with `runtime/__pycache__` present. The probe
-asserts only that the wall **denies**, and it still denies (with the bytecode reason instead of the scope
-reason), so CI does not turn red — but the live-wiring proof is no longer proving what it was written to
-prove, and `.github/**` is outside this task's scope. In the engine's own repository, where
-`engine/tests/test_full_execution_transaction_e2e.py` and `engine/tests/test_hooks_subprocess.py` are not
-monorepo-skipped, those suites run the wall against the real root and **will** need the same reordering
-plus a clean cache. Flag retained: an accepted **HIGH** should not be carried to the end of Phase 10 —
+**Item (c) is closed, and closing it found something worse than the masking it was about.** The
+live-wall probe had **never once reached the check it is named for**, in either ordering:
+`engine/tests/test_live_hook_deny.py` stripped `BRO_SESSION_STATE_DIR` as well as
+`BRO_WORKSPACE_BINDING`, and the freeze gate is evaluated before the workspace gate — so the observed
+refusal was always `freeze state gate RED`, both before O-1 and after. The probe and the test now run
+the WIRED PreToolUse argv against a real temporary state dir and require the refusal to contain
+`missing BRO_WORKSPACE_BINDING`; a bare `deny` no longer passes anything. Seven further negatives in
+`engine/tests/test_hooks_subprocess.py` were asserting only that a call was denied and now each name
+the gate they exercise — one of which turned out to refuse for `unknown tool/action` rather than the
+review-mode rule in its own name, which is recorded in place rather than blessed.
+
+The engine's standalone repository was not merely going to need this: it is **broken today on a clean
+checkout**, verified in a standalone simulation — the unittest runner's own imports plant the shadow
+and the wall refuses the real-root tests for it. Notably the suites that go red are the ones that name
+their cause; the bare-deny ones keep passing on the shadow reason. The fix is already applied to
+`verify.yml`. Flag retained: an accepted **HIGH** should not be carried to the end of Phase 10 —
 the independent audit's `D-09` recommends pulling it forward.
 
 ### O-2 · audit-head anchor (was dead code; now produced and required)

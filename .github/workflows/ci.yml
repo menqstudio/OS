@@ -180,6 +180,16 @@ jobs:
       # the ROOT .github/workflows/), so bro_validate.py + bro_live_validate.py ran NOWHERE in CI (audit
       # F-22). They now run here, on the workflow GitHub actually executes.
       BRO_OPERATOR_ROOT_PUBKEY: 7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c
+      # O-1 posture, job-wide: every python this job starts — and every child it spawns,
+      # since this is an env var rather than a command-line flag — refuses to mint
+      # __pycache__. runtime/, tools/ and tests/ are digest roots, and compiled bytecode
+      # under one makes the wall refuse for the shadow, displacing the refusal the
+      # live-wiring probe below exists to observe. (It does NOT cover py_compile /
+      # compileall, which write explicitly whatever this says — hence the clean step.)
+      # Deliberately safe for the bytecode tests: test_bytecode_shadow's clean_env()
+      # strips this var precisely so its "without -B the wall mints its own cache"
+      # assertions still exercise the real behaviour.
+      PYTHONDONTWRITEBYTECODE: "1"
     defaults:
       run:
         working-directory: engine
@@ -194,10 +204,33 @@ jobs:
         run: python tools/bro_validate.py
       - name: Run the engine test suite
         run: python -m unittest discover -s tests
-      - name: Compile Python
-        run: python -m compileall -q runtime tools tests
+      # The live-wiring probe must watch the wall refuse FOR SCOPE. Since O-1,
+      # assert_no_bytecode_shadow refuses on any __pycache__ under a digest root, and it
+      # refuses from the SAME gate — so bytecode left by an earlier step replaces the
+      # reason the probe exists to demonstrate while the probe still sees "deny", and
+      # the check stays green having proven something else. PYTHONDONTWRITEBYTECODE
+      # above stops the interpreters minting caches, but NOT py_compile: `Validate
+      # foundation` calls tools/bro_validate.py, which py_compile's 30-odd targets and
+      # writes runtime/__pycache__ + tools/__pycache__ whatever that variable says. So
+      # the tree is cleaned HERE, immediately before the proof, rather than assumed.
+      - name: Clear bytecode caches before the live-wiring proof
+        run: |
+          python -Bc "import pathlib, shutil; [shutil.rmtree(p, ignore_errors=True) for p in list(pathlib.Path('.').rglob('__pycache__'))]; [p.unlink() for p in list(pathlib.Path('.').rglob('*.pyc')) + list(pathlib.Path('.').rglob('*.pyo'))]"
+      # -B is load-bearing, not hygiene: without it this validator's own imports of
+      # runtime/** mint the shadow it is about to check for, and it fails closed on
+      # itself. It refuses under a shadow and requires the refusal it observes to name
+      # `missing BRO_WORKSPACE_BINDING` (the rule ci/live/run_live_turn.sh states in
+      # expect_blocked: a negative must assert WHY, not merely THAT).
       - name: Assure live wiring (laws enforced by the WIRED hook, not merely present)
-        run: python tools/bro_live_validate.py
+        run: python -B tools/bro_live_validate.py
+      # AFTER the live-wiring proof, never before. compileall is the syntax gate for the
+      # .py files no test imports, and it does its job by WRITING __pycache__ into
+      # runtime/, tools/ and tests/ — all digest roots. Run first (as it was until now)
+      # it made the wall refuse for the cache instead of for the scope, and the probe
+      # went green on the wrong refusal. Last in the job, the caches it leaves can mask
+      # nothing.
+      - name: Compile Python (syntax gate for the files no test imports)
+        run: python -m compileall -q runtime tools tests
 
   bridge:
     name: Bridge · engine adapter (python)
