@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseGovernanceRead, isMirrored, isBlockedOrUnreachable,
+  hasRecords, recordCount, isUnauthenticatedMirror,
   type GovernanceSurface,
 } from './governance';
 
@@ -43,5 +44,45 @@ describe('parseGovernanceRead — fail-closed governance mirror parse', () => {
     const r = parseGovernanceRead(SURFACE, { state: 'verified', records: [{ id: 'x' }] });
     expect(r.state).toBe('unreachable');
     expect(isMirrored(r)).toBe(false);
+  });
+});
+
+describe('an ok mirror is not authentication, and empty is not evidence', () => {
+  it('defaults `authenticated` to false when the backend does not say otherwise', () => {
+    const r = parseGovernanceRead(SURFACE, { state: 'ok', surface: 'verdicts', records: [{ id: 'r-1' }] });
+    expect(r.authenticated).toBe(false);
+    expect(isUnauthenticatedMirror(r)).toBe(true);
+  });
+
+  it('never reads a truthy non-true value as authenticated', () => {
+    for (const v of ['true', 1, {}, 'yes']) {
+      const r = parseGovernanceRead(SURFACE, {
+        state: 'ok', surface: 'verdicts', records: [{ id: 'r-1' }], authenticated: v,
+      });
+      expect(r.authenticated).toBe(false);
+    }
+  });
+
+  it('carries a literal authenticated:true through (so a future signature check can flip it)', () => {
+    const r = parseGovernanceRead(SURFACE, {
+      state: 'ok', surface: 'verdicts', records: [{ id: 'r-1' }], authenticated: true,
+    });
+    expect(r.authenticated).toBe(true);
+    expect(isUnauthenticatedMirror(r)).toBe(false);
+  });
+
+  it('reports an ok reply with an EMPTY record set as carrying no records', () => {
+    const r = parseGovernanceRead(SURFACE, { state: 'ok', surface: 'verdicts', records: [] });
+    // The read succeeded — that is honest — but there is nothing to show, and no page
+    // may treat it as satisfied evidence.
+    expect(r.state).toBe('ok');
+    expect(recordCount(r)).toBe(0);
+    expect(hasRecords(r)).toBe(false);
+  });
+
+  it('reports no records for blocked / unreachable reads', () => {
+    expect(hasRecords(parseGovernanceRead(SURFACE, { state: 'blocked', reason: 'x' }))).toBe(false);
+    expect(recordCount(parseGovernanceRead(SURFACE, { state: 'unreachable', reason: 'x' }))).toBe(0);
+    expect(isUnauthenticatedMirror(parseGovernanceRead(SURFACE, { state: 'blocked' }))).toBe(false);
   });
 });

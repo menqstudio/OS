@@ -52,6 +52,11 @@ class LiveTcbPinManifestTests(unittest.TestCase):
             os.path.join(root, "tcb", "contained-executor.bin"),
             os.path.join(root, "tcb", "executor.lease"),
             os.path.join(root, "tcb", "root-anchor.json"),
+            # The recorder's policy is now what `evidence-recorder-runner.config` pins: the
+            # recorder reads its paths and pins from here, never from argv, so this is the file
+            # whose integrity actually steers the privileged execution (audit round 3, the
+            # recorder identity-borrow finding).
+            os.path.join(root, "tcb", "recorder-policy.json"),
             os.path.join(root, "tcb", "desktop-challenge-authority.ipc-policy.json"),
             os.path.join(root, "tcb", "trusted-verifier-broker.ipc-policy.json"),
             os.path.join(root, "config.json"),

@@ -105,10 +105,101 @@ export const STR = {
   aboutProductLabel: { en: 'Product', hy: 'Արտադրանք', ru: 'Продукт' },
   aboutVersionLabel: { en: 'Version', hy: 'Տարբերակ', ru: 'Версия' },
   aboutGovernanceLabel: { en: 'Governance', hy: 'Կառավարում', ru: 'Управление' },
-  aboutGovernanceValue: {
-    en: 'Fail-closed, verified-receipt-mandatory',
-    hy: 'Fail-closed, պարտադիր ստուգված անդորրագրով',
-    ru: 'Fail-closed, обязательна проверенная квитанция',
+
+  // — governance posture (finding: this row used to state "Fail-closed, verified-
+  //   receipt-mandatory" UNCONDITIONALLY, while the shipped default resolves an
+  //   ungoverned provider and every reply streams ungoverned. The row now reports the
+  //   ACTUAL runtime state from ai_status, including an explicit unknown.) —
+  govUnknown: {
+    en: 'Unknown — not verified here',
+    hy: 'Անհայտ — այստեղ չի ստուգվում',
+    ru: 'Неизвестно — здесь не проверяется',
+  },
+  govUnknownNote: {
+    en: 'There is no desktop backend to ask in this window, so the governance state of AI '
+      + 'replies cannot be checked from here. Treat it as unverified.',
+    hy: 'Այս պատուհանում հարցնելու backend չկա, ուստի AI պատասխանների կառավարման վիճակը '
+      + 'այստեղից չի կարող ստուգվել։ Համարեք այն չստուգված։',
+    ru: 'В этом окне нет серверной части, у которой можно спросить, поэтому состояние '
+      + 'управления AI-ответами отсюда не проверить. Считайте его непроверенным.',
+  },
+  govChecking: { en: 'Checking…', hy: 'Ստուգվում է…', ru: 'Проверка…' },
+  govCheckingNote: {
+    en: 'Reading the provider the backend actually resolved.',
+    hy: 'Կարդում ենք այն մատակարարը, որը backend-ը իրականում ընտրել է։',
+    ru: 'Читаем провайдера, которого действительно выбрала серверная часть.',
+  },
+  govUnavailableNote: {
+    en: 'The backend did not report a provider status, so the governance state of AI replies '
+      + 'is unknown. Treat it as unverified.',
+    hy: 'Backend-ը մատակարարի վիճակ չհաղորդեց, ուստի AI պատասխանների կառավարման վիճակն անհայտ է։ '
+      + 'Համարեք այն չստուգված։',
+    ru: 'Серверная часть не сообщила статус провайдера, поэтому состояние управления '
+      + 'AI-ответами неизвестно. Считайте его непроверенным.',
+  },
+  govNoProvider: {
+    en: 'No provider — no model runs',
+    hy: 'Մատակարար չկա — մոդել չի աշխատում',
+    ru: 'Провайдера нет — модель не запускается',
+  },
+  govNoProviderNote: {
+    en: 'No AI provider is resolved, so no model call happens at all. Nothing is governed here '
+      + 'because nothing runs.',
+    hy: 'AI մատակարար ընտրված չէ, ուստի մոդելի կանչ ընդհանրապես տեղի չի ունենում։ Այստեղ ոչինչ '
+      + 'չի կառավարվում, որովհետև ոչինչ չի աշխատում։',
+    ru: 'AI-провайдер не выбран, поэтому вызова модели вообще не происходит. Здесь нечем '
+      + 'управлять, потому что ничего не выполняется.',
+  },
+  govUngoverned: {
+    en: 'Not governed — replies are not verified',
+    hy: 'Չկառավարվող — պատասխանները չեն ստուգվում',
+    ru: 'Не управляется — ответы не проверяются',
+  },
+  govUngovernedNote: {
+    en: 'The resolved provider runs on the ungoverned path: replies stream straight from the '
+      + 'model with no lease, no signed receipt and no verification. Fail-closed, '
+      + 'verified-receipt-mandatory governance applies only when the backend resolves the '
+      + 'governed engine provider — it does not apply to this session.',
+    hy: 'Ընտրված մատակարարն աշխատում է չկառավարվող ուղով. պատասխանները հոսում են ուղիղ մոդելից՝ '
+      + 'առանց lease-ի, առանց ստորագրված անդորրագրի և առանց ստուգման։ Fail-closed, պարտադիր '
+      + 'ստուգված անդորրագրով կառավարումը գործում է միայն այն դեպքում, երբ backend-ը ընտրում է '
+      + 'կառավարվող շարժիչի մատակարարը — այս սեսիային այն չի վերաբերում։',
+    ru: 'Выбранный провайдер работает по неуправляемому пути: ответы идут напрямую от модели — '
+      + 'без аренды, без подписанной квитанции и без проверки. Управление в режиме fail-closed '
+      + 'с обязательной проверенной квитанцией действует, только когда серверная часть выбирает '
+      + 'провайдер управляемого движка — к этой сессии оно не относится.',
+  },
+  govGovernedBlocked: {
+    en: 'Governed — fail-closed, currently blocking',
+    hy: 'Կառավարվող — fail-closed, ներկայում արգելափակում է',
+    ru: 'Управляется — fail-closed, сейчас блокирует',
+  },
+  govGovernedBlockedNote: {
+    en: 'The governed engine is the resolved provider, so a reply is delivered only against a '
+      + 'verified receipt. The sidecar is not ready, so governed turns produce no reply at all '
+      + 'rather than falling back to an ungoverned one.',
+    hy: 'Ընտրված մատակարարը կառավարվող շարժիչն է, ուստի պատասխան տրվում է միայն ստուգված '
+      + 'անդորրագրի դիմաց։ Կողմնակի ծառայությունը պատրաստ չէ, ուստի կառավարվող շրջադարձերն '
+      + 'ընդհանրապես պատասխան չեն տալիս՝ չկառավարվողի անցնելու փոխարեն։',
+    ru: 'Выбранный провайдер — управляемый движок, поэтому ответ выдаётся только при проверенной '
+      + 'квитанции. Вспомогательная служба не готова, поэтому управляемые обращения не выдают '
+      + 'ответа вовсе, а не переходят в неуправляемый режим.',
+  },
+  govGoverned: {
+    en: 'Governed — verified receipt required',
+    hy: 'Կառավարվող — պահանջվում է ստուգված անդորրագիր',
+    ru: 'Управляется — требуется проверенная квитанция',
+  },
+  govGovernedNote: {
+    en: 'The governed engine is the resolved provider: model calls run behind the wall and a '
+      + 'reply is delivered only if its signed receipt verifies. A turn that cannot be verified '
+      + 'is blocked, never downgraded to an ungoverned reply.',
+    hy: 'Ընտրված մատակարարը կառավարվող շարժիչն է. մոդելի կանչերն աշխատում են պատի հետևում, և '
+      + 'պատասխան տրվում է միայն եթե ստորագրված անդորրագիրը ստուգվում է։ Չստուգվող շրջադարձն '
+      + 'արգելափակվում է, երբեք չի իջեցվում չկառավարվող պատասխանի։',
+    ru: 'Выбранный провайдер — управляемый движок: вызовы модели идут за стеной, и ответ '
+      + 'выдаётся, только если его подписанная квитанция проходит проверку. Обращение, которое '
+      + 'нельзя проверить, блокируется и никогда не понижается до неуправляемого ответа.',
   },
   providerNotConfiguredHint: {
     en: 'No AI provider is resolved by the backend environment. Configure one to enable turns.',

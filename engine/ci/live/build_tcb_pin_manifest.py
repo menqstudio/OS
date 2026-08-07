@@ -72,7 +72,12 @@ def main() -> int:
         "desktop-challenge-authority.bin": os.path.join(live, "run_authority.py"),
         # ---- each executable's configuration ----
         "supervisor.config": config,
-        "evidence-recorder-runner.config": config,
+        # The recorder's configuration is NOT the shared config.json — it never reads that file. It
+        # reads exactly one root-owned document, at a path compiled into the binary, and takes the
+        # launcher/executor/lease/store/state paths and the two image digests from it. Pinning
+        # config.json here would have measured a file the recorder does not consult while leaving the
+        # file that actually steers it unmeasured.
+        "evidence-recorder-runner.config": os.path.join(tcb, "recorder-policy.json"),
         # The launcher takes its invoker/drop-target uids, its image pin and (F-08) the three
         # request digests from the lease. That file IS its configuration.
         "privileged-launcher.config": lease,

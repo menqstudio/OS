@@ -6,7 +6,7 @@ import {
 import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
-import type { GovernanceRead } from '../services/governance';
+import { hasRecords, recordCount, type GovernanceRead } from '../services/governance';
 import type { Decision } from '../domain/entities';
 import { STR } from './Decisions.strings';
 
@@ -167,9 +167,13 @@ export function Decisions() {
     desktop.readEvidenceChain(evidenceOpenId).then((r) => {
       if (!alive) return;
       setEvidenceRead(r);
-      setAnnounce(r.state === 'ok'
-        ? L('chainMirrored')
-        : L('chainSealedAnnounce'));
+      // An `ok` read that carried nothing is announced as "no evidence" — announcing
+      // it as "mirrored" would tell a screen-reader user evidence arrived when none did.
+      setAnnounce(r.state !== 'ok'
+        ? L('chainSealedAnnounce')
+        : hasRecords(r)
+          ? L('chainMirrored')
+          : L('chainEmptyAnnounce'));
     });
     return () => { alive = false; };
   }, [evidenceOpenId]);
@@ -268,15 +272,34 @@ export function Decisions() {
       );
     }
     if (evidenceRead.state === 'ok') {
-      const n = evidenceRead.records?.length ?? 0;
+      const n = recordCount(evidenceRead);
+      // Zero records is the honest ABSENCE of evidence. Reporting it with the
+      // "mirrored read-only" copy (and a count of 0) let an empty chain read as a
+      // satisfied one — the defect this branch exists to prevent.
+      if (n === 0) {
+        return (
+          <div role="note">
+            <span className="ev-tag micro">{L('evidenceNone')}</span>
+            <p>{L('evidenceNoneBody')}</p>
+          </div>
+        );
+      }
+      // Records exist — but they are schema-checked only, from a source the desktop
+      // does not authenticate. Say so beside them, every time.
       return (
         <div role="note">
           <span className="ev-tag micro">
             {L('engineEvidenceCount')}{n}
           </span>
+          {!evidenceRead.authenticated && (
+            <span className="pill warn" style={{ marginLeft: 8 }}>{L('unauthenticatedTag')}</span>
+          )}
           <p>
             {L('mirroredReadOnly')}
           </p>
+          {!evidenceRead.authenticated && (
+            <p className="micro" style={{ marginTop: 6 }}>{L('unauthenticatedBody')}</p>
+          )}
         </div>
       );
     }
@@ -310,15 +333,32 @@ export function Decisions() {
     const face = statusMeta(d.status).face;
     const blocked = face === 'blocked';
     const inProgress = face === 'waiting';
-    // Only a real, mirrored engine chain (state === 'ok') earns the evidence node.
-    const mirrored = evidenceOpenId === d.id && evidenceRead?.state === 'ok';
+    // The evidence read belonging to THIS decision (null while closed/loading).
+    const ev = evidenceOpenId === d.id ? evidenceRead : null;
+    // Two things used to be conflated into a green node here:
+    //   * `state === 'ok'` with an EMPTY record set — zero evidence painted as
+    //     satisfied evidence;
+    //   * records whose origin is unauthenticated (schema-shape only, from whatever
+    //     process the governed-sidecar setting names).
+    // So the node goes mint ONLY if records actually arrived AND the backend states
+    // they were authenticated — which it does not today. Otherwise the node stays
+    // neutral and its LABEL says which honest case it is.
+    const mirroredCount = ev ? recordCount(ev) : 0;
+    const evidenceProven = !!ev && ev.state === 'ok' && mirroredCount > 0 && ev.authenticated === true;
+    const evidenceLabel = !ev || ev.state !== 'ok'
+      ? L('nodeEvidence')
+      : mirroredCount === 0
+        ? L('nodeEvidenceNone')
+        : evidenceProven
+          ? L('nodeEvidence')
+          : L('nodeEvidenceUnauthenticated');
     const nodes: { label: string; cls: '' | 'done' | 'now' }[] = [
       // The decision is recorded in the append-only ledger — a plain, always-true fact.
       { label: L('nodeRecorded'), cls: 'done' },
       // Real ledger status: still deliberating (now) · blocked (neutral) · settled (done).
       { label: L('nodeDeliberation'), cls: blocked ? '' : inProgress ? 'now' : 'done' },
-      // Earns `done` ONLY when the engine evidence chain actually mirrored read-only.
-      { label: L('nodeEvidence'), cls: mirrored ? 'done' : '' },
+      // Earns `done` ONLY for records that exist AND are authenticated.
+      { label: evidenceLabel, cls: evidenceProven ? 'done' : '' },
     ];
     const live = nodes.some((n) => n.cls === 'now');
     return (

@@ -24,6 +24,25 @@
 //!     `engine/schemas/evidence-event.schema.json`) and rejects anything that does
 //!     not conform (fail-closed).
 //!
+//! # What this mirror does NOT establish (read this before trusting a record)
+//!
+//! Validation here is SCHEMA-SHAPE ONLY. It is not authentication:
+//!
+//!   * The engine artifacts have no signature to check. Both schemas declare
+//!     `"additionalProperties": false` and neither lists a signature/MAC field, so a
+//!     conforming record CANNOT carry one — there is nothing for this module to
+//!     verify, and no trusted-key material is reachable from this read path.
+//!   * The source is unauthenticated. The reply comes from whatever process
+//!     `BROPS_GOVERNED_SIDECAR` names (see [`crate::ai`]); the desktop does not
+//!     authenticate that process, so any writer of well-formed JSON on that pipe
+//!     produces records that pass every check in this file.
+//!
+//! Consequence: a `GovernanceRead::Ok` means "well-formed records arrived from the
+//! configured sidecar", NOT "these records are genuine engine truth". Every `Ok`
+//! therefore carries [`GovernanceRead::Ok::authenticated`] = `false`, which the
+//! renderer MUST surface — a GREEN verdict or a satisfied evidence node resting on
+//! this data without saying it is unauthenticated is a false claim.
+//!
 //! Because the Phase-2 engine read endpoints do not answer yet, in practice every
 //! command below returns `Unreachable`/`Blocked` today — that is expected and is the
 //! point: a real read-IPC surface plus an honest blocked state, with zero fabrication.
@@ -56,7 +75,18 @@ fn bounded(reason: &str) -> String {
 pub enum GovernanceRead {
     /// The engine mirrored these records; every record conforms to its engine
     /// schema. Read-only — the desktop neither authored nor decided any of it.
-    Ok { surface: String, records: Vec<Value> },
+    ///
+    /// `records` MAY be empty: an `ok` reply carrying zero records means the sidecar
+    /// had nothing to mirror. That is an EMPTY chain, not a satisfied one — the
+    /// renderer must show "no evidence", never a green/verified node.
+    ///
+    /// `authenticated` reports whether the records' origin was cryptographically
+    /// verified. It is `false` in this build and is emitted on every `ok` so the
+    /// renderer cannot forget: the engine schemas define no signature field and no
+    /// trusted key is reachable here, so nothing on this path is authenticated (see
+    /// the module docs). It exists as a field rather than a comment precisely so a
+    /// future signature check can flip it and the UI follows.
+    Ok { surface: String, records: Vec<Value>, authenticated: bool },
     /// The engine was reached but explicitly refused the read, returned a
     /// malformed/`ok:false` result, or returned a record that fails its schema
     /// (fail-closed). Honest "blocked", never fabricated data.
@@ -311,10 +341,21 @@ fn parse_identified_record(o: &Value) -> Result<Value, String> {
     Ok(o.clone())
 }
 
+/// Records mirrored by this module are NEVER cryptographically authenticated — the
+/// engine schemas carry no signature field (`additionalProperties: false`) and no
+/// trusted key is reachable from the read path, so there is nothing to verify and
+/// the sidecar's identity is not established. Emitted on every `Ok` so the UI can
+/// state it. Flip this only together with a real signature check.
+const RECORDS_ARE_AUTHENTICATED: bool = false;
+
 /// Pull the `records` array out of a successful (`ok:true`) sidecar reply and validate
 /// every entry with `parse_one`, re-serializing each validated record. A single
 /// invalid record fails the WHOLE read (fail-closed): a partly-fabricated mirror is
 /// never shown as `ok`.
+///
+/// An EMPTY `records` array is well-formed and yields an empty `Vec` — the read
+/// succeeded and there is simply nothing to show. Callers/renderers must not read
+/// that as satisfied evidence (see [`GovernanceRead::Ok`]).
 fn validate_records<T, F>(doc: &Value, parse_one: F) -> Result<Vec<Value>, String>
 where
     T: Serialize,
@@ -361,7 +402,12 @@ where
                 };
             }
             match validate(&doc) {
-                Ok(records) => GovernanceRead::Ok { surface: surface.to_string(), records },
+                Ok(records) => GovernanceRead::Ok {
+                    surface: surface.to_string(),
+                    records,
+                    // Schema-shape only. Never claim more than that (module docs).
+                    authenticated: RECORDS_ARE_AUTHENTICATED,
+                },
                 Err(e) => GovernanceRead::Blocked {
                     surface: surface.to_string(),
                     reason: format!("schema-invalid engine reply: {}", bounded(&e)),
@@ -576,12 +622,59 @@ mod tests {
         let doc = json!({ "ok": true, "records": [ valid_receipt() ] });
         let got = classify("verdicts", Ok(doc), |d| validate_records(d, parse_verifier_receipt));
         match got {
-            GovernanceRead::Ok { records, surface } => {
+            GovernanceRead::Ok { records, surface, authenticated } => {
                 assert_eq!(surface, "verdicts");
                 assert_eq!(records.len(), 1);
+                // Schema-valid is NOT authenticated: no signature exists to check.
+                assert!(!authenticated);
             }
             other => panic!("expected Ok, got {other:?}"),
         }
+    }
+
+    // --- honesty: an `ok` mirror is unauthenticated, and empty means EMPTY ---
+
+    #[test]
+    fn an_ok_mirror_is_never_reported_as_authenticated() {
+        // The engine schemas carry no signature field and no trusted key is reachable
+        // from this read path, so `Ok` must always report authenticated:false — the UI
+        // relies on this flag to avoid painting a green verdict on unauthenticated data.
+        for doc in [
+            json!({ "ok": true, "records": [ valid_receipt() ] }),
+            json!({ "ok": true, "records": [] }),
+        ] {
+            match classify("verdicts", Ok(doc), |d| validate_records(d, parse_verifier_receipt)) {
+                GovernanceRead::Ok { authenticated, .. } => assert!(!authenticated),
+                other => panic!("expected Ok, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn empty_records_mirror_as_zero_records_not_as_evidence() {
+        // An empty chain is a real, honest answer ("nothing to mirror") — it must not
+        // be conflated with a satisfied evidence chain by anything downstream.
+        let doc = json!({ "ok": true, "records": [] });
+        let got = classify("evidenceChain", Ok(doc), |d| validate_records(d, parse_evidence_event));
+        match got {
+            GovernanceRead::Ok { records, .. } => assert!(records.is_empty()),
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ok_reply_serializes_the_authenticated_flag_for_the_renderer() {
+        // The renderer switches on this JSON; if the flag ever stops being emitted the
+        // frontend's fail-closed default (false) still holds, but the contract is here.
+        let got = GovernanceRead::Ok {
+            surface: "evidenceChain".into(),
+            records: vec![],
+            authenticated: RECORDS_ARE_AUTHENTICATED,
+        };
+        let v = serde_json::to_value(&got).expect("serializes");
+        assert_eq!(v["state"], json!("ok"));
+        assert_eq!(v["authenticated"], json!(false));
+        assert_eq!(v["records"], json!([]));
     }
 
     #[test]

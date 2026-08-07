@@ -49,7 +49,7 @@ async function governanceRead(
     return parseGovernanceRead(surface, raw);
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
-    return { state: 'unreachable', surface, reason };
+    return { state: 'unreachable', surface, reason, authenticated: false };
   }
 }
 

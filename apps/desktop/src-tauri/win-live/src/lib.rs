@@ -21,6 +21,9 @@ pub mod pipe;
 /// The named-pipe DACL decision — pure, so the Linux runner covers it even though the pipe is not there.
 pub mod pipe_acl;
 pub mod proof;
+/// Custody of what `win_provision` writes: the deployment root it is allowed to adopt, and the explicit
+/// security descriptor every secret-bearing file is CREATED with. Pure decisions + a Windows effect.
+pub mod provision_custody;
 pub mod resolver;
 #[cfg(windows)]
 pub mod seedstore;

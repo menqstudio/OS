@@ -72,6 +72,25 @@ export const STR = {
     ru: 'событий отражено из цепочки движка.',
   },
   gateReasonLabel: { en: 'Reason: ', hy: 'Պատճառ՝ ', ru: 'Причина: ' },
+  // An `ok` read that carried zero events: the honest absence of a stream, which must
+  // not be worded (or lit) as a mirrored one.
+  gateEmpty: {
+    en: 'The engine chain answered with no events. There is nothing mirrored here yet — '
+      + 'an empty stream is not a verified one.',
+    hy: 'Շարժիչի շղթան պատասխանեց առանց իրադարձությունների։ Այստեղ դեռ ոչինչ արտացոլված չէ — '
+      + 'դատարկ հոսքը ստուգված չէ։',
+    ru: 'Цепочка движка ответила без событий. Здесь пока ничего не отражено — '
+      + 'пустой поток не является проверенным.',
+  },
+  // Shown whenever events ARE displayed: schema-checked only, origin not authenticated.
+  gateUnauthenticated: {
+    en: 'Unauthenticated mirror: these events are checked for shape only and carry no '
+      + 'signature, and the desktop does not authenticate the process that supplied them.',
+    hy: 'Չհաստատված արտացոլում. այս իրադարձությունները ստուգվում են միայն ձևով և '
+      + 'ստորագրություն չեն կրում, իսկ desktop-ը չի հաստատում դրանք տրամադրող գործընթացը։',
+    ru: 'Неподтверждённое зеркало: эти события проверены только по форме и не содержат '
+      + 'подписи, а десктоп не аутентифицирует процесс, который их выдал.',
+  },
   gateBody: {
     en: 'The engine governance-event stream is not connected to this desktop yet. Signals '
       + 'from the engine ledger appear here once the read bridge lands — the desktop mirrors, '
