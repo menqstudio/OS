@@ -317,21 +317,23 @@ mod linux {
             None => return fail_closed(),
         };
         // Anti-rollback floor (audit P0, honest note): this Linux broker path reads only {highest_epoch,
-        // highest_hash} and does NOT verify a signature — and a signature would not help anyway, since any
-        // floor-integrity key here would also be a public source constant (see win-live tcb::FLOOR_SEED_HEX).
-        // The real anti-rollback boundary is the OS write-protection on the deployment dir: floor_path MUST be
-        // owned by / writable only by the broker service principal (file mode 0600, dedicated UID; the
-        // in-scope sidecar runs as a DIFFERENT UID and cannot write it). See WINDOWS_ANTIROLLBACK_HARDENING.md
-        // (the Windows twin) + the TPM/monotonic-counter roadmap item for a same-principal-compromise defense.
-        let floor = match s(&["trust", "floor_path"])
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|b| serde_json::from_str::<Value>(&b).ok())
-            .and_then(|v| {
-                Some(AntiRollbackFloor {
-                    highest_epoch: v.get("highest_epoch")?.as_u64()?,
-                    highest_hash: v.get("highest_hash")?.as_str()?.to_string(),
-                })
-            }) {
+        // highest_hash} and does NOT verify a signature. The anti-rollback boundary here is the OS
+        // write-protection on the deployment dir: floor_path MUST be owned by / writable only by the broker
+        // service principal (file mode 0600, dedicated UID; the in-scope sidecar runs as a DIFFERENT UID and
+        // cannot write it). See WINDOWS_ANTIROLLBACK_HARDENING.md (the Windows twin) + the TPM/monotonic-counter
+        // roadmap item for a same-principal-compromise defense. An absent or malformed floor fails CLOSED —
+        // it is never read as "no floor required".
+        //
+        // The path is kept: the resolver WRITES the advanced floor back to it after every accepted manifest
+        // (audit — the advance used to live only in memory and reset on restart).
+        let floor_path = match s(&["trust", "floor_path"]) {
+            Some(p) => std::path::PathBuf::from(p),
+            None => return fail_closed(),
+        };
+        let floor = match std::fs::read(&floor_path)
+            .ok()
+            .and_then(|b| brops_core::key_manifest::parse_floor_json(&b))
+        {
             Some(f) => f,
             None => return fail_closed(),
         };
@@ -351,6 +353,7 @@ mod linux {
             manifest,
             root_sig,
             floor,
+            floor_path,
             s(&["trust", "signer_key_id"]).unwrap_or_default(),
             s(&["trust", "supervisor_attestation_key_id"]).unwrap_or_default(),
             facts,

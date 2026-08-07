@@ -278,6 +278,14 @@ pub enum RollbackError {
 /// Anti-rollback CAS (3b-0 contract): accept `manifest` only if its epoch is strictly higher than the
 /// floor, OR equal to the floor with the SAME content hash (idempotent re-accept). Refuse a lower epoch,
 /// or an equal epoch with a differing hash. On accept, returns the advanced floor to persist.
+///
+/// **This function alone is not the anti-rollback control.** It is a comparison; the control is the
+/// comparison PLUS a floor that (a) outlives the process and (b) is not derived from the very manifest
+/// being checked. The audit found three of four call sites failing one of those: two advanced a floor
+/// that was only ever held in memory, and one built the floor from `manifest.content_hash()` seconds
+/// before comparing it against the same manifest — a predicate that cannot fail. Prefer
+/// [`check_and_persist`], which cannot be called without somewhere durable to put the result.
+#[must_use = "the advanced floor MUST be persisted, or the anti-rollback control is in-memory only"]
 pub fn check_and_advance(
     floor: &AntiRollbackFloor,
     manifest: &KeyManifest,
@@ -290,6 +298,79 @@ pub fn check_and_advance(
         return Err(RollbackError::SameEpochDifferentHash);
     }
     Ok(AntiRollbackFloor { highest_epoch: manifest.manifest_epoch, highest_hash: new_hash })
+}
+
+/// Why a durable anti-rollback advance refused. Every variant is a REFUSAL — there is deliberately no
+/// "could not persist, carried on anyway" outcome, because that is precisely the state the audit found:
+/// a floor that advanced in memory and reset to the provisioned constant on the next process start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FloorPersistError {
+    /// The manifest is a rollback or a same-epoch fork.
+    Rollback(RollbackError),
+    /// The advanced floor could not be written durably. The turn is refused: a floor that did not
+    /// survive is not a floor.
+    NotPersisted(String),
+}
+
+impl std::fmt::Display for FloorPersistError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FloorPersistError::Rollback(e) => write!(f, "anti_rollback: {e:?}"),
+            FloorPersistError::NotPersisted(why) => {
+                write!(f, "anti_rollback_floor_not_persisted: {why}")
+            }
+        }
+    }
+}
+
+/// The on-disk `{highest_epoch, highest_hash}` form both Linux drivers read and write.
+pub fn floor_json_bytes(floor: &AntiRollbackFloor) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "highest_epoch": floor.highest_epoch,
+        "highest_hash": floor.highest_hash,
+    }))
+    .expect("floor serializes")
+}
+
+/// Parse the on-disk floor form. `None` for absent/malformed — a caller MUST treat that as a refusal
+/// and never as "no floor required" (audit R-06: an absent floor that reads as absent is not a floor).
+pub fn parse_floor_json(bytes: &[u8]) -> Option<AntiRollbackFloor> {
+    let v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    Some(AntiRollbackFloor {
+        highest_epoch: v.get("highest_epoch")?.as_u64()?,
+        highest_hash: v.get("highest_hash")?.as_str()?.to_string(),
+    })
+}
+
+/// Anti-rollback CAS **plus the durable advance**, as one operation that cannot be half-done.
+///
+/// The audited defect was not that [`check_and_advance`] was wrong — it is right — but that its result
+/// was dropped. Two of the four call sites advanced an in-memory floor and never wrote it back, so a
+/// restart reset the floor to whatever the provisioner had written and the "highest accepted epoch"
+/// never actually rose. This function writes the advanced floor through a temp file + rename, and a
+/// write failure REFUSES the turn rather than proceeding on an unadvanced floor.
+///
+/// Custody is NOT solved here and this doc does not pretend otherwise: whoever can write `path` can
+/// write a lower floor. What this establishes is that the floor the next process reads is the one this
+/// process accepted, which is the precondition for any custody control to mean anything.
+pub fn check_and_persist(
+    floor: &AntiRollbackFloor,
+    manifest: &KeyManifest,
+    path: &std::path::Path,
+) -> Result<AntiRollbackFloor, FloorPersistError> {
+    let advanced = check_and_advance(floor, manifest).map_err(FloorPersistError::Rollback)?;
+    write_floor_atomically(path, &floor_json_bytes(&advanced))?;
+    Ok(advanced)
+}
+
+/// Temp-file + rename so a crash mid-write cannot leave a truncated floor that reads as absent.
+pub fn write_floor_atomically(path: &std::path::Path, bytes: &[u8]) -> Result<(), FloorPersistError> {
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, bytes)
+        .map_err(|e| FloorPersistError::NotPersisted(format!("write {}: {e}", tmp.display())))?;
+    std::fs::rename(&tmp, path)
+        .map_err(|e| FloorPersistError::NotPersisted(format!("rename {}: {e}", path.display())))?;
+    Ok(())
 }
 
 // --- tiny hex/base64 helpers (no extra deps; base64 crate is present but keep this module self-checking) -
@@ -459,5 +540,60 @@ mod tests {
         // same epoch, DIFFERENT hash => fork refused
         let mut m5b = manifest(5, &prod); m5b.keys[0].key_epoch = 8; // changes content hash
         assert_eq!(check_and_advance(&floor, &m5b), Err(RollbackError::SameEpochDifferentHash));
+    }
+
+    // ---- the durable half: an advance nobody wrote down is not an advance ----
+
+    #[test]
+    fn a_persisted_advance_is_what_the_next_process_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("floor.json");
+        let prod = signing_key(2);
+        let m5 = manifest(5, &prod);
+        std::fs::write(&path, floor_json_bytes(&AntiRollbackFloor { highest_epoch: 5, highest_hash: m5.content_hash() })).unwrap();
+
+        // --- process 1: accept epoch 6 ---
+        let floor = parse_floor_json(&std::fs::read(&path).unwrap()).expect("provisioned floor parses");
+        let m6 = manifest(6, &prod);
+        let advanced = check_and_persist(&floor, &m6, &path).expect("a higher epoch is accepted");
+        assert_eq!(advanced.highest_epoch, 6);
+
+        // --- process 2: the SAME rolled-back manifest that process 1 superseded ---
+        // This is the whole point. With the advance held only in memory, process 2 re-read epoch 5 from
+        // disk and accepted epoch 5 (and every lower-but-genuinely-signed manifest above it) forever.
+        let reread = parse_floor_json(&std::fs::read(&path).unwrap()).expect("floor survived");
+        assert_eq!(reread.highest_epoch, 6, "the advance must have been written down");
+        assert_eq!(
+            check_and_persist(&reread, &m5, &path),
+            Err(FloorPersistError::Rollback(RollbackError::EpochBelowFloor)),
+            "a manifest below the floor a PREVIOUS process accepted must be refused"
+        );
+    }
+
+    #[test]
+    fn a_floor_that_cannot_be_written_refuses_the_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory where the floor file should be: `rename` onto it fails on every platform, and
+        // so does creating `floor.json.tmp` inside a path component that is itself a file.
+        let path = dir.path().join("nonexistent-subdir").join("floor.json");
+        let prod = signing_key(2);
+        let m5 = manifest(5, &prod);
+        let floor = AntiRollbackFloor { highest_epoch: 1, highest_hash: "x".into() };
+        match check_and_persist(&floor, &m5, &path) {
+            Err(FloorPersistError::NotPersisted(_)) => {}
+            other => panic!("an unwritable floor must refuse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_absent_or_malformed_floor_does_not_parse_as_absent() {
+        assert!(parse_floor_json(b"").is_none());
+        assert!(parse_floor_json(b"{}").is_none());
+        assert!(parse_floor_json(br#"{"highest_epoch":5}"#).is_none());
+        assert!(parse_floor_json(br#"{"highest_hash":"a"}"#).is_none());
+        assert!(parse_floor_json(br#"{"highest_epoch":"5","highest_hash":"a"}"#).is_none());
+        // ...and a well-formed one round-trips.
+        let f = AntiRollbackFloor { highest_epoch: 7, highest_hash: "abc".into() };
+        assert_eq!(parse_floor_json(&floor_json_bytes(&f)), Some(f));
     }
 }

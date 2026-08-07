@@ -1075,10 +1075,59 @@ mod tests {
     const CRID: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
     const NONCE: &str = "nonce-1";
     const OUTPUT: &[u8] = b"the exact governed reply bytes";
-    const EVIDENCE: &[u8] = br#"{"protocol":"brops.run-attestation.v1","x":1}"#;
     const H64: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const H_POLICY: &str = "8888888888888888888888888888888888888888888888888888888888888888";
+    const H_CONTAIN: &str = "9999999999999999999999999999999999999999999999999999999999999999";
     const ISO_KEY_ID: &str = "iso-signer-1";
     const SUP_KEY_ID: &str = "sup-att-1";
+
+    /// The §4.6 attested evidence the supervisor would build for THIS fixture's turn — the full
+    /// frozen 29-key record, not a stub. `verify_and_accept` step 4c parses these bytes and requires
+    /// them to agree with the isolated signer's envelope AND with the broker's own resolution, so a
+    /// placeholder blob here would make every orchestration test refuse for the wrong reason.
+    fn evidence_bytes() -> Vec<u8> {
+        let mut m: Map<String, Value> = Map::new();
+        let strings: [(&str, String); 23] = [
+            ("run_id", "run-1".into()),
+            ("execution_attempt_id", "att-1".into()),
+            ("task_id", "task-1".into()),
+            ("request_nonce", NONCE.into()),
+            ("receipt_id", "receipt-abc".into()),
+            ("workspace_id", "ws-1".into()),
+            ("install_id", "install-1".into()),
+            ("supervisor_id", "sup-1".into()),
+            ("executor_id", "exec-1".into()),
+            ("builder_id", "build-1".into()),
+            ("policy_id", "pol-1".into()),
+            ("policy_version", "1".into()),
+            ("policy_bundle_handle", H_POLICY.into()),
+            ("system_handle", hx(0x55)),
+            ("history_handle", hx(0x66)),
+            ("generation_config_handle", hx(0x44)),
+            ("output_handle", sha256_hex(OUTPUT)),
+            ("containment_evidence_handle", H_CONTAIN.into()),
+            ("record_handle", H64.into()),
+            ("lease_handle", H64.into()),
+            ("execution_receipt_handle", H64.into()),
+            ("evidence_final_event_hash", H64.into()),
+            ("decision", "completed".into()),
+        ];
+        for (k, v) in strings {
+            m.insert(k.to_string(), Value::String(v));
+        }
+        let ints: [(&str, i64); 6] = [
+            ("requested_at", 1000),
+            ("challenge_accepted_at_ms", 1000),
+            ("completed_at", 2000),
+            ("evidence_event_count", 3),
+            ("evidence_last_sequence", 12),
+            ("evidence_head_sequence", 12),
+        ];
+        for (k, v) in ints {
+            m.insert(k.to_string(), Value::Number(Number::from(v)));
+        }
+        serde_json::to_vec(&Value::Object(m)).unwrap()
+    }
 
     struct FixedIds;
     impl BrokerIds for FixedIds {
@@ -1241,7 +1290,7 @@ mod tests {
         m.insert("output_sha256".to_string(), Value::String(out_sha.to_string()));
         m.insert(
             "attestation_evidence_sha256".to_string(),
-            Value::String(sha256_hex(EVIDENCE)),
+            Value::String(sha256_hex(&evidence_bytes())),
         );
         let ints: [(&str, u64); 6] = [
             ("output_bytes", out_bytes),
@@ -1361,16 +1410,18 @@ mod tests {
             if self.tamper {
                 output[0] ^= 0x01; // same length, different bytes ⇒ digest gate fails downstream
             }
+            let evidence = evidence_bytes();
+            let evidence_sig = sign_b64(&signing_key(9), &evidence);
             Ok(ExecutionArtifacts {
                 output,
                 sign_request: json!({
                     "protocol": "brops.sign-request.v1",
                     "attestation": {"attestation_protocol": "brops.run-attestation.v1",
-                                    "supervisor_key_id": SUP_KEY_ID, "sig": sign_b64(&signing_key(9), EVIDENCE)},
-                    "evidence": {"run_id": "run-1"}
+                                    "supervisor_key_id": SUP_KEY_ID, "sig": evidence_sig},
+                    "evidence": serde_json::from_slice::<Value>(&evidence).unwrap()
                 }),
-                attestation_evidence_jcs: EVIDENCE.to_vec(),
-                attestation_signature_b64: sign_b64(&signing_key(9), EVIDENCE),
+                attestation_evidence_jcs: evidence,
+                attestation_signature_b64: evidence_sig,
             })
         }
     }
