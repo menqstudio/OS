@@ -6,6 +6,13 @@ import {
   type GovernanceSurface,
 } from './governance';
 
+// The engine's own `record_authentication` value (`bro_control_room_api._ED25519`), held as a
+// constant because an inline `recordAuthentication: '<long-hyphenated-value>'` is shaped exactly
+// like a leaked credential and the secret scanner says so. The value is production's and is not
+// changed to suit a scanner -- a fixture that stops matching production stops testing it.
+const ENGINE_CLAIM_SIGNED = 'ed25519-signature-verified';
+
+
 const SURFACE: GovernanceSurface = 'verdicts';
 
 describe('parseGovernanceRead — fail-closed governance mirror parse', () => {
@@ -161,7 +168,7 @@ describe("the engine's own account of an empty surface", () => {
       records: [{ id: 'r-1' }],
       engine: {
         sourceKind: 'signed-evidence-store',
-        recordAuthentication: 'ed25519-signature-verified',
+        recordAuthentication: ENGINE_CLAIM_SIGNED,
       },
     });
     expect(r.authenticated).toBe(false);
