@@ -50,7 +50,9 @@ it with `broctl build-registry` rather than editing by hand.
 > key, and a tool offering both would invite running it on the box that serves.
 >
 > ```bash
-> python3 engine/tools/mint_owner_payloads.py \n>     --key-id gev-operator-root-1 --session-id s-2026-08-08-a \n>     --task-id t-example.1 --head-sequence 5 --hours 8 --out /media/usb/payloads
+> python3 engine/tools/mint_owner_payloads.py \
+>     --key-id gev-operator-root-1 --session-id s-2026-08-08-a \
+>     --task-id t-example.1 --head-sequence 5 --hours 8 --out /media/usb/payloads
 > ```
 
 ## O-3 — conductor session token *(start here, it is the smallest)*

@@ -52,7 +52,9 @@ tool on a networked machine — if you see that refusal, it is working.
 > key, and a tool offering both would invite running it on the box that serves.
 >
 > ```bash
-> python3 engine/tools/mint_owner_payloads.py \n>     --key-id gev-operator-root-1 --session-id s-2026-08-08-a \n>     --task-id t-example.1 --head-sequence 5 --hours 8 --out /media/usb/payloads
+> python3 engine/tools/mint_owner_payloads.py \
+>     --key-id gev-operator-root-1 --session-id s-2026-08-08-a \
+>     --task-id t-example.1 --head-sequence 5 --hours 8 --out /media/usb/payloads
 > ```
 
 ## Step 2 — O-3, the conductor session
