@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "c139bde1fc2cf9648747da10975e4a6098f7f12d",
-    "snapshot_branch": "remediation/bro-conductor-and-custody",
-    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD c139bde (PR #63 merged). The active branch remediation/bro-conductor-and-custody is a direct child of it.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #64). PR #64's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
+    "baseline_main_head_at_sync": "09b480354fdbe7b980e8d1050d9cabb35b5c27b2",
+    "snapshot_branch": "wave/phase-push-1",
+    "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 09b4803 (PR #64 merged). The active branch wave/phase-push-1 is a direct child of it.",
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #65). PR #65's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "remediation/bro-conductor-and-custody"
+    "branch": "wave/phase-push-1"
   },
   "prs": [],
   "status_tokens": {
@@ -212,11 +212,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 64,
-    "branch": "remediation/bro-conductor-and-custody",
+    "number": 65,
+    "branch": "wave/phase-push-1",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #64 body.",
-    "note": "PR #64 closes the first round of findings from the Owner's four read-only auditors. The load-bearing one: governed_messages.trust_state was the literal 'trusted_verified' in the INSERT behind a CHECK that permitted no other value, so every committed row asserted full trust by construction — and no production path called production_trust::resolve_trust_state at all, so the custody question was never asked and the answer was stored regardless. GovernedExecutor::execute_and_verify now returns (AcceptedOutput, TrustState) so the compiler forces every implementation to answer; persist_committed stores the resolved label (trusted_verified / demonstration_custody) or REFUSES; custody is an input to the turn via ChainExecutor::with_custody, and ChainExecutor::new resolves to NoTrustedManifest so forgetting to wire it fails loudly. Mutation-checked. Two tautologies removed: CommittedMessage::new hardcoded trust_state, so bound = trust_state == TRUSTED_VERIFIED could not be false on either Windows path. Also: six denied deletes that announced success and swallowed the refusal (backend + frontend), GOVERNED_PLACEHOLDER_HASH = 64 zeros which is a WIRE-LEGAL sha256 a receipt could have matched, 52 unreachable pack identities, risk_ceiling never enforced on the builder half, absolute task scope reconciled between schema and validator, a Verifiable-memory pill over unverified rows, 16 always-on live indicators, and 262 generated .claude/agents definitions so Task has specialists to pick by name. platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor — the gate is untouched."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #65 body.",
+    "note": "PR #65 is a broad phase-1-to-10 push driven by a fan-out of specialist agents. Every commit on it is one of two shapes. Something was built and nothing could reach it: the 262 generated agent definitions the app could not see (--setting-sources \"\" excludes project settings, so the Task tool only ever offered the CLI built-ins and every specialist Bro spawned inherited the default capability); two backend commands with no frontend wrapper; five engine security functions with zero callers (O-1..O-5, now inventoried in docs/PHASE_10_PRODUCTION_ITEMS.md); a release workflow that could not sign and published a draft release anyway. Or something was displayed and nothing established it: an integration that rendered Connected after writing a local SQLite row and contacting nothing; a bound flag that could not be false; a memory store with no record of its own writes. Landed: capability tiers passed to the CLI inline via --agents (verified against the real binary); delegation as a first-class thing in chat that states plainly nothing emits it yet; group-room consensus where silence is never consent; the four-fact integration model; a fail-closed release gate; in-transaction memory/knowledge write records with append-only enforced by database triggers and deliberately NOT called verified; the unreachable bridge commands wired with refusal and absence no longer collapsed. platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor — the gate is untouched."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",
