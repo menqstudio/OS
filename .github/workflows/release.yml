@@ -1,10 +1,24 @@
 name: release
 
-# Tag-triggered signed-installer build (v*). Does NOT run on PRs/pushes — so it never gates day-to-day CI.
-# The signing + updater steps activate ONLY when the Owner's secrets are present (see docs/RELEASE_SETUP.md);
-# without them the job still builds unsigned installers (useful for smoke-testing the bundle) and skips
-# signing rather than failing. A production release is additionally gated by the fail-closed RELEASE GATE in
-# docs/RELEASE_SETUP.md (code-audit GREEN + governed chain running + 3b-2/3b-3) — enforce that before tagging.
+# Tag-triggered SIGNED-installer build (v*). Does NOT run on PRs/pushes — so it never gates
+# day-to-day CI.
+#
+# FAIL-CLOSED BY CONSTRUCTION. This workflow cannot produce a release artifact unless the
+# Owner's signing material is present. The `preflight` job runs
+# `tools/check_release_signing.py --require-release-ready`, which refuses — loudly, naming
+# every missing secret and every missing half of the updater configuration — when anything
+# is absent. `build` declares `needs: preflight`, so a refusal stops the release before
+# `npm ci`, before the bundle, before anything is uploaded.
+#
+# This replaces the previous behaviour, where a missing key merely bypassed the signing step
+# and the job still published a draft release. That is the exact silent-failure mode this
+# repository's audits keep finding: a green check over a build nobody can trust or update.
+# To smoke-test the bundle locally without secrets, run `npm run tauri build` in
+# `apps/desktop` — CI is for releases, and a release is signed.
+#
+# A production release is ADDITIONALLY gated by the fail-closed RELEASE GATE in
+# docs/RELEASE_SETUP.md §5 (code-audit GREEN + governed chain running + 3b-2/3b-3). That gate
+# is a human/audit judgement and is enforced before tagging, not by this file.
 
 on:
   push:
@@ -16,7 +30,44 @@ permissions:
   contents: write
 
 jobs:
+  # ---------------------------------------------------------------------------------------
+  # The refusal. Nothing builds until this passes.
+  # ---------------------------------------------------------------------------------------
+  preflight:
+    name: Release preflight - fail closed without the Owner's signing material
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      # The gate is only worth what its own tests are worth; run them here too, so a broken
+      # gate cannot silently pass a release.
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_release_signing
+
+      # Secret NAMES are mapped in; the script only ever reports which names are empty, never
+      # a value or any prefix of one.
+      - name: Refuse unless every Owner secret and the updater configuration are present
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: python tools/check_release_signing.py --require-release-ready
+
   build:
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +98,10 @@ jobs:
         with:
           node-version: '22'
 
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
@@ -55,16 +110,93 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
-      - name: Build + bundle (signed if secrets present, unsigned otherwise)
+      # Windows Authenticode. The certificate thumbprint is NOT committed to tauri.conf.json:
+      # a thumbprint in the repo names a certificate the runner may not hold, and Tauri then
+      # emits an unsigned binary while the job stays green. Instead the real thumbprint is
+      # derived from the certificate the Owner actually supplied, at build time, and merged
+      # into the config with `--config`.
+      - name: Import the Owner's Windows Authenticode certificate
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'brops-codesign.pfx'
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $pw = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+          Remove-Item $pfxPath -Force
+          if (-not $cert.Thumbprint) { throw 'RELEASE REFUSED: the imported certificate has no thumbprint.' }
+          $overlayPath = Join-Path $env:RUNNER_TEMP 'tauri.signing.windows.json'
+          @{ bundle = @{ windows = @{ certificateThumbprint = $cert.Thumbprint } } } |
+            ConvertTo-Json -Depth 6 | Set-Content -Path $overlayPath -Encoding utf8
+          "TAURI_WINDOWS_CONFIG_OVERLAY=$overlayPath" >> $env:GITHUB_ENV
+
+      - name: Build + bundle (signed; the preflight guarantees the material is present)
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Updater signing — set these two secrets (see docs/RELEASE_SETUP.md §3) to sign updates.
+          # Updater signing (docs/RELEASE_SETUP.md §3). The PUBLIC half lives in
+          # tauri.conf.json `plugins.updater.pubkey`; the preflight refuses if either is absent.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing + notarization (docs/RELEASE_SETUP.md §2).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
           releaseName: 'BroPS ${{ github.ref_name }}'
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.platform == 'windows-latest' && format('--config {0}', env.TAURI_WINDOWS_CONFIG_OVERLAY) || '' }}
+
+      # ---- post-build verification: prove the artifacts are actually signed ----------------
+      # tauri-action succeeding is not evidence of a signature: an absent certificate, a
+      # thumbprint that matches nothing in the store, or updater artifacts that were never
+      # requested all leave a green step behind. These checks read the produced bytes.
+
+      - name: Verify every updater payload carries a signature
+        shell: bash
+        run: |
+          python tools/check_release_signing.py \
+            --verify-updater-signatures apps/desktop/src-tauri/target/release/bundle
+
+      - name: Verify the Windows installers are Authenticode-signed
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'apps/desktop/src-tauri/target/release/bundle'
+          $installers = Get-ChildItem -Path $root -Recurse -Include *.exe,*.msi -File
+          if (-not $installers) { throw 'RELEASE REFUSED: no Windows installer was produced.' }
+          $bad = @()
+          foreach ($f in $installers) {
+            $sig = Get-AuthenticodeSignature -FilePath $f.FullName
+            if ($sig.Status -ne 'Valid') { $bad += "$($f.Name): $($sig.Status)" }
+          }
+          if ($bad) { throw "RELEASE REFUSED: invalidly-signed installer(s): $($bad -join '; ')" }
+          Write-Host "OK: $($installers.Count) Windows installer(s) carry a valid Authenticode signature."
+
+      - name: Verify the macOS bundle is signed and notarization-accepted
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=apps/desktop/src-tauri/target/release/bundle
+          app="$(find "$root" -maxdepth 3 -name '*.app' -type d | head -n 1)"
+          if [ -z "$app" ]; then
+            echo "RELEASE REFUSED: no .app bundle was produced." >&2
+            exit 1
+          fi
+          codesign --verify --strict --deep --verbose=2 "$app"
+          # Gatekeeper's own verdict — this is what a user's machine will run.
+          spctl --assess --type execute --verbose=4 "$app"
