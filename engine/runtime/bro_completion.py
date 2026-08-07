@@ -320,12 +320,19 @@ def _require_store_agrees_with_head(task_id: str, store: pathlib.Path, keys: dic
     Unlike the floor, this rests on no bookkeeping file: there is nothing to delete that
     turns the check off, only signed evidence to destroy.
 
-    ``bro_evidence.read_chain`` would be the obvious implementation and cannot be used:
-    ``bro_run_receipt.run_and_sign`` stamps execution receipts with ``artifact_type:
-    "evidence-event"`` too, and the durable runtime keeps receipts in the same store, so
-    that enumerator raises "unexpected shape" on every receipt it meets. Chain events are
-    told apart here by their exact field set, and anything claiming to be one and failing
-    verification is a hard error rather than a silent skip.
+    ``bro_evidence.read_chain`` would be the obvious implementation and is deliberately not
+    used, though the reason changed. It USED to be that ``read_chain`` raised "unexpected
+    shape" on every execution receipt it met, because ``run_and_sign`` signs receipts as
+    ``artifact_type: "evidence-event"`` too and the durable runtime keeps both in one store.
+    That was the READER being too narrow -- ``artifact_type`` names the authority allowed to
+    sign, not the document's shape -- and ``_scan_events`` now discriminates by field set,
+    so the enumerator works on a shared store.
+
+    What remains is a different reason: this check must be able to see a chain event the
+    submitted list does NOT contain, which is the whole point of corroborating the store
+    against the head, and it must hard-error on a document claiming to be a chain event and
+    failing verification rather than skipping it. A shared enumerator that skipped unknown
+    documents would be the wrong instrument here even now that it exists.
     """
     from bro_evidence import EVENT_FIELDS
     from bro_signature import verify_artifact
