@@ -23,7 +23,7 @@
 | **O-1** | `L-6` / `H-6-protected-set-gaps` | HIGH | OPEN | no | the gate is now called on every digest-trusting path and the hook interpreters run `-B`; what stays open is the *read* half — CPython imports an existing `.pyc` before any Python check can run |
 | **O-2** | `H-4-forgeable-audit-trail` (fix #1) | MEDIUM | OPEN | no | `append()` now attaches a signed head anchor and both production verifiers require one; OPEN until the Owner provides the signing custody — without it every ledger is honestly **UNANCHORED** and refused |
 | **O-3** | `M-4` | MEDIUM | OPEN | **yes** (operator-signed session artifact) | code now fails closed and the shipped policy requires the token; OPEN until the Owner mints the `conductor-session` artifact and exports `BRO_CONDUCTOR_SESSION_TOKEN` |
-| **O-4** | `L-8` | LOW | OPEN | no | conductor actor is now signature-verified and an owner actor is refused by name; OPEN until an owner-authority artifact type + schema signature field exist |
+| **O-4** | `L-8` | LOW | OPEN | yes | conductor actor is now signature-verified and an owner actor is refused by name; OPEN until an owner-authority artifact type + schema signature field exist |
 | **O-5** | `L-4` | LOW | OPEN | **yes** (operator-signed `evidence-floor-anchor`) | the manifest binding is **now required and enforced**; the residual is a wiped-and-re-provisioned floor, which only an owner-signed anchor can distinguish from a first sighting |
 
 **All five are engine-side code remediation, not credentials** — with the exception of O-3, whose
@@ -279,7 +279,10 @@ matching stop-gate refusal. Every one of these checks was deleted once and the m
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Owner secret needed:** no
+- **Owner secret needed:** yes
+  A `control-room-command` artifact per owner command, signed by the offline operator root and
+  bound to that command's `command_id`, `task_id` and `command`, with its key listed `active` in
+  `config/trusted-keys.json`. See [`OWNER_CEREMONY.md`](./OWNER_CEREMONY.md).
 - **Engine ticket:** `engine/AUDIT/tickets/LOW-findings.md` § L-8
 - **Engine code:** `engine/runtime/bro_control_room_api.py` — `validate_command_intent`, which reads
   `requested_by_type` / `requested_by` straight out of the caller's JSON and compares them against the
@@ -357,6 +360,20 @@ refused exactly as before, the committed registry grants it to no key, and an ow
 name even with a valid signed `control-room-command` presented. Every one of these checks was deleted once
 and the matching test went red.
 
+
+**Closed in code 2026-08-08.** `_prove_command_actor` now routes by actor: the conductor keeps
+its `conductor-session` credential, and the OWNER must present a `control-room-command` artifact
+bound to this exact command. The difference is deliberate — a session authorises any command in a
+window, and `owner-gev` is the identity that can cancel, recover and retry, so a window is the
+wrong shape for it. A stolen owner artifact replays exactly the command that was already signed.
+The schema carries `artifact_type`/`key_id`/`signature`, optional because a conductor command is
+proven by a separate credential and carries none.
+
+Four checks were deleted one at a time to confirm their tests go red. One — the guard that
+refuses to prove an owner without the command to bind to — **stayed green**, because every caller
+passes the command and nothing reached it directly. It was untested, not merely redundant, and it
+has its own test now. **Status stays OPEN:** the shipped registry pins no key for the type, and a
+test holds that even a flawless artifact signed by an ungranted key still refuses.
 ### O-5 · evidence high-water not bound into the signed manifest
 
 - **Severity:** LOW

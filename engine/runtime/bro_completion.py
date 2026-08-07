@@ -376,10 +376,14 @@ def _signed_floor_anchor(task_id: str, root: pathlib.Path, now: int | None) -> i
     """The operator-signed high-water statement for ``task_id``, if the deployment has one.
 
     Returns ``None`` only when the deployment presents nothing. A presented anchor that does
-    not verify is a refusal — never a fallback — and today NO anchor can verify, because
-    ``evidence-floor-anchor`` is deliberately absent from the signature module's authority
-    registry. That absence is the honest state of this item: the check exists, the key does
-    not, and no seed is compiled in to pretend otherwise.
+    not verify is a refusal — never a fallback.
+
+    ``evidence-floor-anchor`` IS registered against ``operator-root`` in
+    ``bro_signature.ARTIFACT_AUTHORITY`` (it was absent when this was written, which made the
+    check unusable rather than merely unprovisioned). So an anchor can verify here — once the
+    Owner mints one offline and lists that key ``active`` in ``config/trusted-keys.json`` with
+    the type among its ``allowed_artifact_types``. The shipped registry grants it to nobody, and
+    no seed is compiled in to pretend otherwise: registering a type opens no path on its own.
     """
     raw = os.getenv(ENV_FLOOR_ANCHOR)
     if not raw:
