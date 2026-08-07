@@ -27,11 +27,56 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
 
-from bro_audit_log import AuditError, read_all as read_ledger, verify as verify_chain
+from bro_audit_log import (
+    AuditAnchorMissing,
+    AuditError,
+    read_all as read_ledger,
+    verify as verify_chain,
+)
 from bro_recovery import BLOCKING
 
 GREEN = "GREEN"
 ATTENTION = "ATTENTION"
+
+
+def _anchor_keys() -> tuple[dict | None, str | None]:
+    """The operator-pinned trusted key registry, for the ledger's SIGNED head anchor.
+
+    The plaintext ``.head`` sidecar is rewritten by the ledger's own ``append()``,
+    so an unkeyed ``verify()`` cannot tell an intact ledger from one its own writer
+    rebuilt - it reports the chain green either way. The monitor therefore always
+    asks for the keyed check. A registry it cannot load is a blind spot and is
+    reported as one, never a silent downgrade back to the plaintext head.
+    """
+    from bro_signature import SignatureError, load_trusted_keys
+    try:
+        return load_trusted_keys(), None
+    except (SignatureError, OSError, ValueError) as exc:
+        return None, str(exc)
+
+
+def _anchor_state(ledger: pathlib.Path) -> dict:
+    """Three-valued readout of the ledger's signed head anchor.
+
+    "unanchored" (no signature was ever installed) and "invalid" (a signature was
+    installed and no longer matches) are DIFFERENT facts calling for different
+    actions - provision custody versus incident response - so they are never
+    collapsed into one "chain not ok" bit.
+    """
+    keys, problem = _anchor_keys()
+    if keys is None:
+        return {"state": "keys-unavailable",
+                "detail": f"trusted key registry unavailable: {problem}"}
+    try:
+        verify_chain(ledger, keys=keys)
+    except AuditAnchorMissing as exc:
+        return {"state": "unanchored", "detail": str(exc).splitlines()[0]}
+    except AuditError as exc:
+        return {"state": "invalid", "detail": str(exc).splitlines()[0]}
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError,
+            AttributeError) as exc:
+        return {"state": "invalid", "detail": f"head anchor unverifiable: {exc}"}
+    return {"state": "signed", "detail": None}
 
 
 def _is_json_object(path: pathlib.Path) -> bool:
@@ -61,7 +106,8 @@ def _validate_store(path: pathlib.Path | None, *, want_dir: bool, kind: str, pro
 
 def _shadow(ledger: pathlib.Path | None) -> dict:
     if ledger is None:
-        return {"records": 0, "by_kind": {}, "chain_ok": True, "readable": True}
+        return {"records": 0, "by_kind": {}, "chain_ok": True, "readable": True,
+                "anchor": {"state": "not-configured", "detail": None}}
     # A shadow ledger the monitor cannot fully account for is a blind spot, not
     # GREEN. `read_all` does a bare `json.loads` per line, so corrupt content raises
     # `json.JSONDecodeError`/`OSError`/`ValueError`, NOT `AuditError`; and a line
@@ -77,7 +123,8 @@ def _shadow(ledger: pathlib.Path | None) -> dict:
             if not isinstance(rec.get("payload", {}), dict):
                 raise ValueError("shadow record payload is not a JSON object")
     except (OSError, ValueError, json.JSONDecodeError, AuditError, AttributeError):
-        return {"records": 0, "by_kind": {}, "chain_ok": False, "readable": False}
+        return {"records": 0, "by_kind": {}, "chain_ok": False, "readable": False,
+                "anchor": {"state": "unverifiable", "detail": "ledger unreadable"}}
     # Records read and well-shaped; a chain that does not verify is ATTENTION but
     # still "readable" (distinct from corrupt content). But verify_chain indexes
     # record fields (e.g. `kind`) directly, so a record missing an expected field
@@ -89,12 +136,19 @@ def _shadow(ledger: pathlib.Path | None) -> dict:
     except AuditError:
         count, chain_ok = len(records), False
     except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError, AttributeError):
-        return {"records": 0, "by_kind": {}, "chain_ok": False, "readable": False}
+        return {"records": 0, "by_kind": {}, "chain_ok": False, "readable": False,
+                "anchor": {"state": "unverifiable", "detail": "ledger unreadable"}}
+    # The structural walk above is what `chain_ok` reports; it is NOT authority over
+    # the ledger's own writer. The keyed pass below is, and it is a separate walk so
+    # "the chain is internally consistent" and "a signature says this is the chain"
+    # stay two distinguishable answers.
+    anchor = _anchor_state(ledger)
     by_kind: dict[str, int] = {}
     for rec in records:
         kind = str(rec.get("payload", {}).get("kind") or rec.get("kind") or "unknown")
         by_kind[kind] = by_kind.get(kind, 0) + 1
-    return {"records": count, "by_kind": by_kind, "chain_ok": chain_ok, "readable": True}
+    return {"records": count, "by_kind": by_kind, "chain_ok": chain_ok,
+            "readable": True, "anchor": anchor}
 
 
 # A real execution-lease record (bro_execution_lease.reserve_execution_lease)
@@ -190,6 +244,20 @@ def scan(*, shadow_ledger: pathlib.Path | None = None, recovery_store: pathlib.P
         attention.append("shadow ledger is unreadable or corrupt")
     elif not shadow["chain_ok"]:
         attention.append("shadow ledger chain does not verify")
+    anchor_state = shadow["anchor"]["state"]
+    if anchor_state == "unanchored":
+        attention.append(
+            "shadow ledger has NO signed head anchor: it is UNANCHORED, not tampered - "
+            "its plaintext head is written by the same party that writes the ledger, so "
+            "nothing here can resist that writer")
+    elif anchor_state == "invalid":
+        attention.append(
+            "shadow ledger signed head anchor does NOT verify against the chain "
+            f"(tampered or stale): {shadow['anchor']['detail']}")
+    elif anchor_state == "keys-unavailable":
+        attention.append(
+            "shadow ledger head anchor could not be checked at all: "
+            f"{shadow['anchor']['detail']}")
     if recovery["blocking"]:
         attention.append(f"{recovery['blocking']} recovery journal(s) in a blocking phase")
     if recovery["degraded"]:
@@ -233,7 +301,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         s, r, le = report["shadow"], report["recovery"], report["leases"]
-        print(f"{report['health']}: shadow_records={s['records']} chain_ok={s['chain_ok']}; "
+        print(f"{report['health']}: shadow_records={s['records']} chain_ok={s['chain_ok']} "
+              f"anchor={s['anchor']['state']}; "
               f"recovery_journals={r['journals']} blocking={r['blocking']} degraded={r['degraded']}; "
               f"leases active={le['active']} used={le['used']} quarantined={le['ambiguous']}; "
               f"locks={report['locks']['active']}")

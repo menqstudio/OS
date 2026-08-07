@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../app/store';
-import { ALL_ITEMS, type RouteId } from '../app/nav';
+import { ALL_ITEMS, navLabel, type RouteId } from '../app/nav';
 import { desktop, hasBackend } from '../services/desktop';
 import type { SearchResult } from '../domain/entities';
 
 export function CommandPalette() {
-  const { paletteOpen, setPaletteOpen, setRoute, openEntity, t } = useApp();
+  const { paletteOpen, setPaletteOpen, setRoute, openEntity, lang, t } = useApp();
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const [entities, setEntities] = useState<SearchResult[]>([]);
@@ -35,11 +35,13 @@ export function CommandPalette() {
 
   // Nav matches — the original palette behaviour, kept intact.
   const navResults = useMemo(() => {
-    const items = ALL_ITEMS.map((i) => ({ ...i, label: t(i.labelKey) }));
+    // navLabel, not t(labelKey): a page whose copy lives in its own *.strings.ts catalog
+    // must still be findable here by its real name, in the active language.
+    const items = ALL_ITEMS.map((i) => ({ ...i, label: navLabel(i, lang, t) }));
     if (!q.trim()) return items;
     const s = q.toLowerCase();
     return items.filter((i) => i.label.toLowerCase().includes(s) || i.id.toLowerCase().includes(s));
-  }, [q, t]);
+  }, [q, lang, t]);
 
   // Debounced global entity search. Guards against races (stale responses) and
   // against the palette closing / unmounting via a per-effect `cancelled` flag.

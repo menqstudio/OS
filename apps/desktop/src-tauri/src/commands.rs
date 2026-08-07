@@ -3,6 +3,7 @@
 
 use crate::AppState;
 use brops_core::{
+    local_write_record::{SubjectState, WriteRecord},
     repo, ActivityEvent, Agent, Approval, Automation, AutomationRun, Conversation, Decision, Event, Integration,
     KnowledgeNote, LibraryItem, MemoryEntry, Message, Metric, NewAutomation, NewEvent,
     NewKnowledgeNote, NewLibraryItem, NewMemoryEntry, NewMessage, NewProject, NewResearchItem,
@@ -102,6 +103,10 @@ const MAX_STEP_DETAIL_CHARS: usize = 4_000;
 const MAX_AUTOMATION_NAME_CHARS: usize = 200;
 const MAX_AUTOMATION_TRIGGER_CHARS: usize = 500;
 const MAX_AUTOMATION_ACTION_CHARS: usize = 4_000;
+// Phase-9 connector declaration: a name and a provider are display/registry strings, so
+// they are bounded at write time like every other renderer-supplied free text here.
+const MAX_INTEGRATION_NAME_CHARS: usize = 200;
+const MAX_INTEGRATION_PROVIDER_CHARS: usize = 200;
 
 /// Reject a field longer than `max` characters (fail closed, no truncation).
 fn require_len(field: &str, value: &str, max: usize) -> Result<(), String> {
@@ -818,6 +823,63 @@ pub fn delete_memory(id: String) -> Result<(), String> {
     Err(forbidden_hard_delete("delete_memory"))
 }
 
+// --- local write records for memory entries and knowledge notes (READ-ONLY) ---------
+//
+// READ THE VOCABULARY BEFORE YOU RENDER ANY OF THIS. These four commands surface
+// `core/src/local_write_record.rs`, which appends a record for every memory/knowledge
+// write INSIDE that write's own transaction, append-only enforced by the migration-0021
+// database triggers. What that supports is narrow and exact:
+//
+//   * the subject's content AT WRITE TIME is pinned by a digest, and
+//   * a later out-of-band edit of the database file is DETECTED — the row stops hashing
+//     to its record and the state becomes `content_diverged`, never silently absorbed.
+//
+// What it does NOT support: nothing here is signed. There is no key, no manifest, no
+// external authority, no containment; the record is produced by the same local process
+// that performs the write, so it attests the CONTENT, never the WRITER. This is
+// tamper-evidence, not attestation and not verification.
+//
+// Consequently the honest words are `recorded`, `write record`, `content diverged`,
+// `unrecorded` — and the production trust vocabulary (`verified`, `trusted_verified`,
+// the receipt path in `governed_verification`) must NEVER be borrowed for them. A
+// "Verifiable memory" pill was removed from this product for exactly that reason: it
+// claimed custody nothing here establishes. These commands are also strictly READ-ONLY —
+// they read records, they cannot append, amend or delete one.
+
+/// Where one memory entry stands against its own write record: `recorded`,
+/// `content_diverged` (the row changed outside the recorded path), `deleted_but_present`,
+/// or `unrecorded` (written before the ledger existed — deliberately never back-filled).
+/// Nothing here is signed; see the section header.
+#[tauri::command]
+pub fn memory_write_record_state(state: State<AppState>, id: String) -> Result<SubjectState, String> {
+    let conn = locked(&state)?;
+    repo::memory::write_record_state(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Every write record appended for one memory entry, oldest first (records outlive the
+/// row). Read-only; nothing here is signed.
+#[tauri::command]
+pub fn memory_write_records(state: State<AppState>, id: String) -> Result<Vec<WriteRecord>, String> {
+    let conn = locked(&state)?;
+    repo::memory::write_records(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Where one knowledge note stands against its own write record — same four states and
+/// the same limits as [`memory_write_record_state`].
+#[tauri::command]
+pub fn knowledge_write_record_state(state: State<AppState>, id: String) -> Result<SubjectState, String> {
+    let conn = locked(&state)?;
+    repo::knowledge::write_record_state(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Every write record appended for one knowledge note, oldest first. Read-only; nothing
+/// here is signed.
+#[tauri::command]
+pub fn knowledge_write_records(state: State<AppState>, id: String) -> Result<Vec<WriteRecord>, String> {
+    let conn = locked(&state)?;
+    repo::knowledge::write_records(&conn, &id).map_err(|e| e.to_string())
+}
+
 // --- runs (command) ---
 
 #[tauri::command]
@@ -922,6 +984,101 @@ pub enum StreamEvent {
     /// this opaque one-time id. The webview passes it to `save_ask_to_chat` to
     /// persist the pair — it never carries the agent body itself (P1-6).
     Ready { result_id: String },
+    /// Bro handed work to a specialist. Carries the delegation as an already-shaped JSON object
+    /// rather than a typed struct so the OMISSION of a field is expressible: an absent `tools`
+    /// means capability could not be established, and the renderer says "unknown" instead of
+    /// drawing a grant nobody can stand behind. A typed struct with `Option` would serialise
+    /// `null`, which reads as an answer.
+    DelegationSpawned { delegation: serde_json::Value },
+    /// That specialist returned. `outcome` is `"ok"`/`"error"` only when the stream actually
+    /// reported `is_error`; otherwise `"unknown"` — an absent flag is not a success report.
+    DelegationSettled {
+        id: String,
+        outcome: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+        ended_at: String,
+    },
+}
+
+/// Turn one [`crate::ai::AgentEvent`] into the frontend frame, or `None` when there is nothing
+/// honest to send.
+///
+/// `tools` is omitted entirely when the backend could not establish it — see
+/// [`StreamEvent::DelegationSpawned`]. `grant` is `null` unless the task prompt actually stated a
+/// scope, and even then it goes out as `enforcement: "none"`, because `scope`/`prohibited_scope`
+/// travel as PROSE inside a prompt on this route: `engine/runtime/bro_security.enforce_scope` is
+/// what actually contains a path, and a desktop `claude` spawn never reaches it. Claiming
+/// otherwise would be the same lie the surface was built to stop.
+fn delegation_frame(
+    ev: crate::ai::AgentEvent,
+    conversation_id: &str,
+    parent: &str,
+) -> StreamEvent {
+    use serde_json::json;
+    match ev {
+        crate::ai::AgentEvent::Spawned(d) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("id".into(), json!(d.id));
+            obj.insert("subagentType".into(), json!(d.subagent_type));
+            // Empty ⇒ this turn has no conversation (a one-shot ask). `null` says so; the empty
+            // string would read as a conversation whose id is blank.
+            obj.insert(
+                "conversationId".into(),
+                if conversation_id.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    json!(conversation_id)
+                },
+            );
+            // The turn's validated author, not the literal "Bro". In a group room a
+            // specialist can hold the turn, and hard-coding Bro made the card say
+            // "Bro -> reader" for work Scout handed out -- a wrong attribution on the one
+            // surface whose whole job is saying WHO put work on whom. `author` has already
+            // been checked against the agent roster upstream, so a renderer cannot mint one.
+            obj.insert("parent".into(), json!(parent));
+            obj.insert("startedAt".into(), json!(crate::ai::now_iso()));
+            if let Some(x) = d.description {
+                obj.insert("description".into(), json!(x));
+            }
+            if let Some(x) = d.prompt {
+                obj.insert("prompt".into(), json!(x));
+            }
+            // WHERE THE NAME CAME FROM, always. Unlike `tools`, this is knowable for every
+            // spawn: a name is either one of our tiers, a pack-role file we read, a CLI built-in
+            // we have observed, or none of those. `cli_builtin` and `unrecognized` both mean this
+            // app neither established nor bounded the agent, which the surface renders as a
+            // warning. Kept separate from `toolsSource` so an UNBOUNDED agent cannot look like
+            // one whose tool list we merely failed to read.
+            obj.insert("agentOrigin".into(), json!(d.origin.as_str()));
+            // Omitted, not nulled, when unresolved.
+            if let (Some(tools), Some(src)) = (d.tools, d.tools_source) {
+                obj.insert("tools".into(), json!(tools));
+                obj.insert("toolsSource".into(), json!(src.as_str()));
+            }
+            obj.insert(
+                "grant".into(),
+                if d.scope.is_empty() {
+                    // No scope stated is a fact, and `null` is how the reader is told it.
+                    serde_json::Value::Null
+                } else {
+                    json!({
+                        "scope": d.scope,
+                        "prohibitedScope": d.prohibited_scope,
+                        "source": "task_prompt_text",
+                        "enforcement": "none",
+                    })
+                },
+            );
+            StreamEvent::DelegationSpawned { delegation: serde_json::Value::Object(obj) }
+        }
+        crate::ai::AgentEvent::Settled(s) => StreamEvent::DelegationSettled {
+            id: s.id,
+            outcome: s.outcome.to_string(),
+            summary: s.summary,
+            ended_at: crate::ai::now_iso(),
+        },
+    }
 }
 
 // Wave 3a strict-3a identity/policy placeholders for the governed request envelope.
@@ -1288,11 +1445,17 @@ pub async fn stream_reply(
     // leaks and a second window on the same conversation can't clobber this turn's flag.
     let cancel_guard = crate::ai::arm_cancel(&conversation_id);
     let ch = on_event.clone();
+    let ch_ev = on_event.clone();
+    let conv_for_events = conversation_id.clone();
+    let author_for_events = author.clone();
     let result = crate::ai::generate_stream(
         &system,
         &history,
         move |delta| {
             let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
+        },
+        move |ev| {
+            let _ = ch_ev.send(delegation_frame(ev, &conv_for_events, &author_for_events));
         },
         Some(cancel_guard.flag()),
     )
@@ -1634,9 +1797,12 @@ pub async fn stream_run_step(
         Ok(false) => {
             // Ungoverned (dev-only, BROPS_ALLOW_UNGOVERNED): streamed as before.
             let ch = on_event.clone();
+            // No delegation surface on the run-step channel: `RunStepEvent` has no variant for
+            // one, and inventing a silent drop-through is how an event ends up "handled". Any
+            // delegation inside a run step is genuinely not reported yet.
             match crate::ai::generate_stream(&system, &history, move |delta| {
                 let _ = ch.send(RunStepEvent::Delta { text: delta.to_string() });
-            }, None)
+            }, |_ev| {}, None)
             .await
             {
                 Ok(full) => full,
@@ -1861,8 +2027,15 @@ pub async fn stream_ask(
 
     // --- Ungoverned (dev-only, BROPS_ALLOW_UNGOVERNED): streamed as before. ---
     let ch = on_event.clone();
+    let ch_ev = on_event.clone();
+    // Genuinely Bro here, not a placeholder: `stream_ask` is a one-shot with no conversation and
+    // no selectable agent -- its system prompt names Bro, so no other identity can hold this turn.
+    let ask_author = "Bro".to_string();
     match crate::ai::generate_stream(&system, &history, move |delta| {
         let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
+    }, move |ev| {
+        // A one-shot ask has no conversation to file the delegation under, and says so.
+        let _ = ch_ev.send(delegation_frame(ev, "", &ask_author));
     }, None)
     .await
     {
@@ -2046,10 +2219,45 @@ pub fn list_integrations(state: State<AppState>) -> Result<Vec<Integration>, Str
     repo::integrations::list(&conn).map_err(|e| e.to_string())
 }
 
+/// Declare a connector in the local registry: record that this product knows about an
+/// external channel. It records a NAME and a PROVIDER and nothing else — there is
+/// deliberately no credential parameter, because the Phase-9 boundary keeps secrets out
+/// of the desktop. `repo::integrations::create` starts the row `disconnected`, which is
+/// the truth about it: declared here, not configured anywhere and never contacted.
+/// Declaring a connector is not connecting one, and this command claims neither.
+#[tauri::command]
+pub fn create_integration(state: State<AppState>, name: String, provider: String) -> Result<Integration, String> {
+    require_len("name", &name, MAX_INTEGRATION_NAME_CHARS)?;
+    require_len("provider", &provider, MAX_INTEGRATION_PROVIDER_CHARS)?;
+    let conn = locked(&state)?;
+    repo::integrations::create(&conn, &name, &provider).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn set_integration_status(state: State<AppState>, id: String, status: String) -> Result<Integration, String> {
     let conn = locked(&state)?;
     repo::integrations::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+}
+
+/// Point a connector at where its secret lives. `None` clears the reference.
+///
+/// The argument is a REFERENCE (`scheme:locator`), never the secret itself, and the desktop is on
+/// the wrong side of the Phase-9 trust boundary to hold one. `repo::integrations::set_auth_ref`
+/// enforces the shape and refuses known key-material prefixes; both it and the migration state the
+/// limit in the same words, because it bounds SHAPE and not meaning -- `engine:hunter2` is a
+/// well-formed reference and also a password, and nothing here can tell which.
+///
+/// The refusal deliberately does not echo what was rejected: this `String` reaches the renderer
+/// and the logs, so repeating a value that might be a credential would defeat the point of
+/// refusing it.
+#[tauri::command]
+pub fn set_integration_auth_ref(
+    state: State<AppState>,
+    id: String,
+    auth_ref: Option<String>,
+) -> Result<Integration, String> {
+    let conn = locked(&state)?;
+    repo::integrations::set_auth_ref(&conn, &id, auth_ref.as_deref()).map_err(|e| e.to_string())
 }
 
 // --- global search ---

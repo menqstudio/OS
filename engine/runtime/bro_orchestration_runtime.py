@@ -14,6 +14,9 @@ from bro_contracts import ContractError, validate_task_contract
 from bro_evidence import EvidenceError, validate_chain
 from bro_identity import IdentityError, all_agent_identities
 from bro_orchestration import OrchestrationError, build_control_room_projection, validate_transition
+from bro_policy import (CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE,
+                        CONDUCTOR_SESSION_ARTIFACT)
+from bro_signature import SignatureError, verify_artifact
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ZERO_HASH = "0" * 64
@@ -22,6 +25,88 @@ DEFAULT_LEASE_SECONDS = 300
 MAX_LEASE_SECONDS = 86400
 LOCK_TIMEOUT_SECONDS = 10
 STALE_LOCK_SECONDS = 30
+
+# --------------------------------------------------------------------------- #
+# The lifecycle actor is PROVEN, never claimed (the O-4 defect, in the runtime).
+#
+# `_validate_actor` compared two caller-supplied strings against the literals
+# "owner-gev", "bro-000" and a "system-" prefix, returned None, and the caller then
+# wrote the claimed identity into the hash-chained transition record. Anything able
+# to reach this runtime could therefore approve its own retry, clear its own recovery
+# quarantine or cancel a task AS THE OWNER, and the governance mirror re-published
+# that self-assertion as a hash-chain-verified owner decision. Spelling an identity
+# is not holding it.
+#
+# So a caller-supplied identity is now discharged by a signature (`_prove_actor`) at
+# every entry point that accepts one for a PRIVILEGED actor. The conductor already has
+# the credential this needs: the operator-root-signed `conductor-session` artifact of
+# M-4/O-3, which binds a role and an agent id to a key no agent process holds.
+#
+# The owner has no equivalent, and this change does not invent one: there is no
+# owner-bound artifact type in `bro_signature.ARTIFACT_AUTHORITY`, no trusted key that
+# could sign one, and no seed is compiled in here to pretend otherwise. An owner-issued
+# lifecycle decision is therefore REFUSED BY NAME, and `OWNER_ACTOR_UNPROVABLE` states
+# exactly what the owner must mint to re-open it. That refusal currently closes
+# `retry_blocked` and `recover_task` outright — which is the honest state of an owner
+# gate nothing can authenticate, not a regression to be papered over with a default.
+#
+# `system-*` is what this runtime calls its OWN automatic decisions (the budget gate,
+# the reconciler); no caller may borrow it. The agent identity is not a literal — it is
+# checked against the derived identity registry and, on every mutating path, against a
+# claim lease this runtime minted itself — so it is recorded with the weaker basis it
+# actually has rather than refused or dressed up.
+# --------------------------------------------------------------------------- #
+
+#: The credential a caller-claimed conductor actor must present. Reusing the artifact
+#: the operator already signs for M-4/O-3 is deliberate: one owner-minted credential,
+#: one authority binding, and no new artifact type invented by its consumer.
+RUNTIME_ACTOR_ARTIFACT = CONDUCTOR_SESSION_ARTIFACT
+
+# How a recorded actor identity was established. There is deliberately no value here
+# meaning "validated because the caller said so": ACTOR_UNPROVEN says the OPPOSITE —
+# it marks a record as carrying an identity nothing discharged, so a later reader is
+# told rather than misled.
+ACTOR_PROVEN_BY_SESSION = "operator-signed-conductor-session"
+ACTOR_RUNTIME_ORIGINATED = "runtime-originated"
+ACTOR_ASSIGNEE_LEASE = "contract-assignee-under-runtime-issued-claim-lease"
+ACTOR_UNPROVEN = "unproven-caller-claim"
+
+ACTOR_ATTESTATION_MISSING = (
+    "orchestration actor identity is self-asserted: this call carries no proof, and the "
+    "runtime will not write a lifecycle decision under an identity it cannot verify. "
+    "Present the signed artifact document as the `actor_attestation` argument — for the "
+    "conductor, the operator-root-signed `conductor-session` artifact described in "
+    "engine/runtime/bro_policy.py (CONDUCTOR_SESSION_PROVISIONING)")
+
+OWNER_ACTOR_UNPROVABLE = (
+    "an owner-issued orchestration decision cannot be validated: nothing in this engine "
+    "can verify that a caller is the owner, so the claim is refused rather than recorded "
+    "as an owner decision. The OWNER must provide three things, all outside this module: "
+    "(1) an owner-bound artifact type (e.g. `orchestration-actor`) registered in "
+    "bro_signature.ARTIFACT_AUTHORITY against the operator-root authority, (2) an ACTIVE "
+    "key entry allowing that artifact type in the operator-signed config/trusted-keys.json, "
+    "and (3) a document minted with that offline key binding {\"role\": \"owner\", "
+    "\"agent_id\": \"owner-gev\", \"session_id\": <session>, \"expires_at_epoch\": <int>}, "
+    "passed here as `actor_attestation`. This runtime holds no key for it and none is "
+    "compiled in, so until that artifact exists every owner-actor path refuses")
+
+SYSTEM_ACTOR_UNPROVABLE = (
+    "a caller may not act as the runtime: `system-*` is the identity this runtime "
+    "attributes to its OWN automatic decisions (the budget gate, the reconciler), and no "
+    "artifact type exists by which a caller could prove it is one. A system decision is "
+    "made by the runtime or it is not made")
+
+AGENT_ACTOR_UNPROVABLE = (
+    "an agent may not issue this decision on a bare identity claim: the only agent "
+    "credential this runtime can check is the claim lease it minted itself, and this "
+    "entry point takes none. Use the lease-gated entry points (checkpoint, record_usage, "
+    "submit_for_verification, complete_task), or a proven conductor actor")
+
+_ACTOR_UNPROVABLE = {
+    "owner": OWNER_ACTOR_UNPROVABLE,
+    "system": SYSTEM_ACTOR_UNPROVABLE,
+    "agent": AGENT_ACTOR_UNPROVABLE,
+}
 
 
 class OrchestrationRuntimeError(ValueError):
@@ -206,7 +291,15 @@ class DurableOrchestrationRuntime:
         reason_code: str,
         evidence_refs: list[str],
         extra: dict[str, Any] | None = None,
+        *,
+        identity_basis: str = ACTOR_UNPROVEN,
     ) -> dict[str, Any]:
+        """Append a lifecycle transition, recording HOW its actor was established.
+
+        ``identity_basis`` defaults to ACTOR_UNPROVEN so that a call site which says
+        nothing records the weakest claim, never the strongest: a record can only
+        assert a proven identity if its caller explicitly proved one.
+        """
         previous = None
         records = self._records(task_id)
         transitions = [item for item in records if item.get("kind") == "transition"]
@@ -222,6 +315,9 @@ class DurableOrchestrationRuntime:
             "next_state": next_state,
             "actor_type": actor_type,
             "actor_id": actor_id,
+            # Not the claim: what established it. A reader that trusted the two
+            # fields above was trusting whoever called this method.
+            "actor_identity_basis": identity_basis,
             "reason_code": reason_code,
             "evidence_refs": _strings(evidence_refs, "evidence_refs"),
         }
@@ -233,9 +329,21 @@ class DurableOrchestrationRuntime:
         return self.task_snapshot(task_id, now_epoch)
 
     def _validate_actor(self, actor_type: str, actor_id: str) -> None:
+        """Is this pair a CANONICAL actor identity? That is all this answers.
+
+        It is a spelling check, not an identity check: it proves the caller can name
+        an identity the model recognises, and nothing whatever about the caller
+        holding it. It is safe for identities this runtime ORIGINATES (its own
+        `bro-000` bookkeeping, its own `system-*` automatic decisions) and for the
+        agent paths, which are additionally held against the derived identity registry
+        and a claim lease this runtime minted.
+
+        It must NEVER be the only gate on a caller-supplied privileged identity —
+        that was the defect. `_prove_actor` is that gate.
+        """
         if actor_type == "owner" and actor_id == "owner-gev":
             return
-        if actor_type == "bro" and actor_id == "bro-000":
+        if actor_type == CONDUCTOR_ROLE and actor_id == CANONICAL_CONDUCTOR_ID:
             return
         if actor_type == "system" and isinstance(actor_id, str) and actor_id.startswith("system-"):
             return
@@ -246,6 +354,59 @@ class DurableOrchestrationRuntime:
             except IdentityError as exc:
                 raise OrchestrationRuntimeError(str(exc)) from exc
         raise OrchestrationRuntimeError("actor identity is not canonical")
+
+    def _prove_actor(self, actor_type: str, actor_id: str,
+                     attestation: Any) -> dict[str, Any]:
+        """Discharge a caller's actor claim with a signature, or refuse.
+
+        Returns the proof to be recorded in the transition. There is no return path
+        for an unproven actor: every failure raises, so no lifecycle record can be
+        written under an identity nobody verified, and no returned value means "the
+        caller said so".
+
+        The credential is judged against the WALL clock, not the ``now_epoch`` every
+        lifecycle call takes. Whether a signing key and a session credential are live
+        is not the caller's question to answer, and a caller that could backdate the
+        clock could otherwise revive an expired identity.
+        """
+        moment = int(time.time())
+        self._validate_actor(actor_type, actor_id)
+        if actor_type != CONDUCTOR_ROLE:
+            raise OrchestrationRuntimeError(
+                f"{_ACTOR_UNPROVABLE[actor_type]}; actor claimed: {actor_type}/{actor_id}")
+        if attestation is None:
+            raise OrchestrationRuntimeError(
+                f"{ACTOR_ATTESTATION_MISSING}; actor claimed: {actor_type}/{actor_id}")
+        if self.evidence_keys is None:
+            raise OrchestrationRuntimeError(
+                "this runtime holds no trusted keys, so it cannot tell a signed actor "
+                "attestation from a forged one; refusing to record a lifecycle decision "
+                "rather than accepting the identity claim unverified")
+        try:
+            payload = verify_artifact(attestation, RUNTIME_ACTOR_ARTIFACT,
+                                      self.evidence_keys, now=moment)
+        except (SignatureError, AttributeError, TypeError) as exc:
+            raise OrchestrationRuntimeError(
+                f"orchestration actor attestation is RED: {exc}") from exc
+        for field, claimed in (("role", actor_type), ("agent_id", actor_id)):
+            if payload.get(field) != claimed:
+                raise OrchestrationRuntimeError(
+                    f"actor attestation does not speak for this actor: it binds "
+                    f"{field}={payload.get(field)!r}, the call claims {claimed!r}")
+        expires = payload.get("expires_at_epoch")
+        if isinstance(expires, bool) or not isinstance(expires, int) or expires <= moment:
+            raise OrchestrationRuntimeError(
+                "actor attestation is expired or carries no integer expires_at_epoch")
+        session_id = payload.get("session_id")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise OrchestrationRuntimeError("actor attestation carries no session_id")
+        return {
+            "identity_basis": ACTOR_PROVEN_BY_SESSION,
+            "key_id": payload["key_id"],
+            "session_id": session_id,
+            "expires_at_epoch": expires,
+            "attestation_sha256": hashlib.sha256(_canonical(attestation)).hexdigest(),
+        }
 
     def create_task(
         self,
@@ -268,8 +429,10 @@ class DurableOrchestrationRuntime:
         limits = self._validate_budget_limits(budget_limits or {})
         _atomic_json(directory / "contract.json", contract)
         self._append(task_id, "runtime-config", now_epoch, {"queue_class": queue_class, "budget_limits": limits})
-        self._transition(task_id, "draft", "bro", "bro-000", now_epoch, "task-created", [])
-        return self._transition(task_id, "queued", "bro", "bro-000", now_epoch, "queued-for-routing", [])
+        self._transition(task_id, "draft", CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID, now_epoch,
+                         "task-created", [], identity_basis=ACTOR_RUNTIME_ORIGINATED)
+        return self._transition(task_id, "queued", CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID, now_epoch,
+                                "queued-for-routing", [], identity_basis=ACTOR_RUNTIME_ORIGINATED)
 
     def _validate_budget_limits(self, limits: dict[str, dict[str, int | None]]) -> dict[str, dict[str, int | None]]:
         supported = set(self.registry["budget_policy"]["supported_dimensions"])
@@ -439,7 +602,7 @@ class DurableOrchestrationRuntime:
         return latest
 
     def _enforce_execution_authority(self, task_id: str, actor_id: str,
-                                     lease_id: str | None, now_epoch: int) -> None:
+                                     lease_id: str | None, now_epoch: int) -> str:
         """Deny any assignee mutation that does not ride an active claim lease.
 
         Every path — base class or subclass — now requires the task to hold an
@@ -448,13 +611,21 @@ class DurableOrchestrationRuntime:
         the caller offers a lease_id it must additionally be THE active lease
         (the V1 entry points always do); a wrapper that already validated its
         lease may delegate here without repeating the id.
+
+        Returns the identity basis this established, for the record. Presenting the
+        lease id is a bearer credential THIS runtime minted and handed to the claimant,
+        so it is worth recording; delegating without it proves only that some active
+        lease names that agent, which is not a fact about the caller, so that path is
+        recorded as an unproven claim. Neither is a signature, and neither is written
+        down as one.
         """
         if lease_id is not None:
             self._require_lease(task_id, actor_id, lease_id, now_epoch)
-            return
+            return ACTOR_ASSIGNEE_LEASE
         active = self._active_lease(task_id, now_epoch)
         if active is None or active.get("agent_id") != actor_id:
             raise OrchestrationRuntimeError("claim lease is missing, expired, or mismatched")
+        return ACTOR_UNPROVEN
 
     def claim_next(self, agent_id: str, *, now_epoch: int,
                    lease_seconds: int = DEFAULT_LEASE_SECONDS) -> dict[str, Any] | None:
@@ -483,8 +654,13 @@ class DurableOrchestrationRuntime:
                 return None
             _, _, task_id = sorted(candidates)[0]
             lease_id = self._mint_lease(task_id, agent_id, now_epoch, lease_seconds)
-            self._transition(task_id, "routing", "bro", "bro-000", now_epoch, "routing-started", [])
-            snapshot = self._transition(task_id, "running", "agent", agent_id, now_epoch, "execution-started", [])
+            self._transition(task_id, "routing", CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID, now_epoch,
+                             "routing-started", [], identity_basis=ACTOR_RUNTIME_ORIGINATED)
+            # The claimant named this agent id; nothing established that it is one.
+            # The lease minted above is the credential, and it is issued here, not
+            # presented here, so this transition records an unproven claim.
+            snapshot = self._transition(task_id, "running", "agent", agent_id, now_epoch,
+                                        "execution-started", [], identity_basis=ACTOR_UNPROVEN)
             snapshot["lease_id"] = lease_id
             snapshot["lease_expires_at_epoch"] = now_epoch + lease_seconds
             return snapshot
@@ -559,9 +735,13 @@ class DurableOrchestrationRuntime:
                     self._append(task_id, "claim-released", now_epoch,
                                  {"lease_id": active["lease_id"], "reason": "budget-exceeded"})
             if hard:
-                return self._transition(task_id, "blocked", "system", "system-budget", now_epoch, "budget-exceeded", evidence)
+                return self._transition(task_id, "blocked", "system", "system-budget", now_epoch,
+                                        "budget-exceeded", evidence,
+                                        identity_basis=ACTOR_RUNTIME_ORIGINATED)
             if soft:
-                return self._transition(task_id, "waiting-approval", "system", "system-budget", now_epoch, "budget-exceeded", evidence)
+                return self._transition(task_id, "waiting-approval", "system", "system-budget", now_epoch,
+                                        "budget-exceeded", evidence,
+                                        identity_basis=ACTOR_RUNTIME_ORIGINATED)
             return self.task_snapshot(task_id, now_epoch)
 
     def _usage_totals(self, task_id: str) -> dict[str, int]:
@@ -573,11 +753,26 @@ class DurableOrchestrationRuntime:
                 totals[key] = totals.get(key, 0) + value
         return totals
 
-    def retry_blocked(self, task_id: str, *, owner_id: str, now_epoch: int, evidence_refs: list[str]) -> dict[str, Any]:
+    def retry_blocked(self, task_id: str, *, owner_id: str, now_epoch: int,
+                      evidence_refs: list[str],
+                      actor_attestation: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Owner approval to re-queue a budget-stopped task.
+
+        The approval is the owner's, so the actor must be PROVEN, and no owner-bound
+        artifact type exists for this engine to verify — see OWNER_ACTOR_UNPROVABLE.
+        This path therefore refuses today. That is the honest state of an owner gate
+        nothing can authenticate: the alternative is re-queueing on the strength of a
+        caller having typed "owner-gev", which is the defect this closes. The
+        attestation argument is here so the owner's artifact plugs in where it belongs
+        rather than being retrofitted through a new entry point.
+        """
         if self._state(task_id) not in {"blocked", "waiting-approval"}:
             raise OrchestrationRuntimeError("retry requires blocked or waiting-approval state")
-        self._validate_actor("owner", owner_id)
-        return self._transition(task_id, "queued", "owner", owner_id, now_epoch, "retry-approved", _strings(evidence_refs, "evidence_refs", required=True))
+        proof = self._prove_actor("owner", owner_id, actor_attestation)
+        return self._transition(task_id, "queued", "owner", owner_id, now_epoch,
+                                "retry-approved", _strings(evidence_refs, "evidence_refs", required=True),
+                                extra={"actor_proof": proof},
+                                identity_basis=proof["identity_basis"])
 
     def cancel_task(
         self,
@@ -588,33 +783,66 @@ class DurableOrchestrationRuntime:
         now_epoch: int,
         effect_in_flight: bool,
         evidence_refs: list[str],
+        actor_attestation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Cancel a task, or send it to recovery when effects may be in flight.
+
+        Both the actor TYPE and the actor ID arrive from the caller here, so this was
+        the widest self-assertion in the runtime: anything that could reach it could
+        cancel any task as the owner or as the conductor. The identity is now proven
+        or the call refuses; a conductor discharges it with the operator-signed
+        `conductor-session` artifact, and the owner cannot discharge it at all yet
+        (OWNER_ACTOR_UNPROVABLE).
+        """
         state = self._state(task_id)
         if state in TERMINAL:
             raise OrchestrationRuntimeError("terminal task is immutable")
-        self._validate_actor(actor_type, actor_id)
+        proof = self._prove_actor(actor_type, actor_id, actor_attestation)
         evidence = _strings(evidence_refs, "evidence_refs")
         if effect_in_flight:
             if not evidence:
                 raise OrchestrationRuntimeError("in-flight cancellation requires evidence")
-            return self._transition(task_id, "recovery-required", actor_type, actor_id, now_epoch, "recovery-required", evidence)
-        return self._transition(task_id, "cancelled", actor_type, actor_id, now_epoch, "task-cancelled", evidence)
+            return self._transition(task_id, "recovery-required", actor_type, actor_id,
+                                    now_epoch, "recovery-required", evidence,
+                                    extra={"actor_proof": proof},
+                                    identity_basis=proof["identity_basis"])
+        return self._transition(task_id, "cancelled", actor_type, actor_id, now_epoch,
+                                "task-cancelled", evidence,
+                                extra={"actor_proof": proof},
+                                identity_basis=proof["identity_basis"])
 
     def recover_task(self, task_id: str, *, owner_id: str, now_epoch: int, evidence_refs: list[str],
-                     lease_seconds: int = DEFAULT_LEASE_SECONDS) -> dict[str, Any]:
+                     lease_seconds: int = DEFAULT_LEASE_SECONDS,
+                     actor_attestation: dict[str, Any] | None = None) -> dict[str, Any]:
         """Recovery hands back authority, not just state: with mutations now
         lease-gated in the base class, a recovery that issued no lease would land
         the task in running with nobody authorised to touch it. A wrapper that
         already holds the guard (the V1 runtime) mints its own lease after this
-        returns, so the base mints only for direct callers."""
+        returns, so the base mints only for direct callers.
+
+        Clearing a recovery quarantine is an OWNER authorisation — the builder that
+        interrupted the mutation must not be able to clear it — so the actor is proven
+        or the call refuses. No owner-bound artifact type exists to prove it with
+        (OWNER_ACTOR_UNPROVABLE), so this path refuses today and stranded tasks stay
+        stranded until the owner mints one. A recovery anybody could sign off by typing
+        "owner-gev" is not a recovery; the loud refusal is the honest state.
+
+        `DurableOrchestrationRuntimeV1.recover_task` overrides this and cannot forward
+        an attestation; that forwarding is part of the same owner-artifact change, and
+        it costs nothing today because no owner attestation can verify anyway.
+        """
         delegated = self._guard_held_by_this_process()
         if not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= MAX_LEASE_SECONDS:
             raise OrchestrationRuntimeError("lease duration invalid")
         with self._mutation_guard():
             if self._state(task_id) != "recovery-required":
                 raise OrchestrationRuntimeError("recovery proof requires recovery-required state")
-            self._validate_actor("owner", owner_id)
-            snapshot = self._transition(task_id, "running", "owner", owner_id, now_epoch, "recovery-proved", _strings(evidence_refs, "evidence_refs", required=True))
+            proof = self._prove_actor("owner", owner_id, actor_attestation)
+            snapshot = self._transition(task_id, "running", "owner", owner_id, now_epoch,
+                                        "recovery-proved",
+                                        _strings(evidence_refs, "evidence_refs", required=True),
+                                        extra={"actor_proof": proof},
+                                        identity_basis=proof["identity_basis"])
             if not delegated:
                 lease_id = self._mint_lease(
                     task_id, self._contract(task_id)["agent_id"], now_epoch, lease_seconds)
@@ -652,7 +880,7 @@ class DurableOrchestrationRuntime:
         builder's hands to completed.
         """
         with self._mutation_guard():
-            self._enforce_execution_authority(task_id, actor_id, lease_id, now_epoch)
+            basis = self._enforce_execution_authority(task_id, actor_id, lease_id, now_epoch)
             if self._state(task_id) != "running":
                 raise OrchestrationRuntimeError("verification requires running task")
             contract = self._contract(task_id)
@@ -661,23 +889,25 @@ class DurableOrchestrationRuntime:
             refs = _strings(evidence_refs, "evidence_refs", required=True)
             self._resolve_evidence(task_id, refs)
             return self._transition(task_id, "verification", "agent", actor_id, now_epoch,
-                                    "verification-requested", refs)
+                                    "verification-requested", refs,
+                                    identity_basis=basis)
 
     def complete_task(self, task_id: str, *, actor_id: str, now_epoch: int, evidence_refs: list[str],
                       completion_manifest: dict[str, Any] | None = None,
                       verifier_receipt: dict[str, Any] | None = None,
                       lease_id: str | None = None) -> dict[str, Any]:
         with self._mutation_guard():
-            self._enforce_execution_authority(task_id, actor_id, lease_id, now_epoch)
+            basis = self._enforce_execution_authority(task_id, actor_id, lease_id, now_epoch)
             return self._complete_task_locked(
                 task_id, actor_id=actor_id, now_epoch=now_epoch,
                 evidence_refs=evidence_refs, completion_manifest=completion_manifest,
-                verifier_receipt=verifier_receipt)
+                verifier_receipt=verifier_receipt, identity_basis=basis)
 
     def _complete_task_locked(self, task_id: str, *, actor_id: str, now_epoch: int,
                               evidence_refs: list[str],
                               completion_manifest: dict[str, Any] | None,
-                              verifier_receipt: dict[str, Any] | None) -> dict[str, Any]:
+                              verifier_receipt: dict[str, Any] | None,
+                              identity_basis: str = ACTOR_UNPROVEN) -> dict[str, Any]:
         state = self._state(task_id)
         contract = self._contract(task_id)
         verification = contract.get("verification") or {}
@@ -707,7 +937,8 @@ class DurableOrchestrationRuntime:
         if contract.get("agent_id") != actor_id:
             raise OrchestrationRuntimeError("completion actor is not task assignee")
         return self._transition(task_id, "completed", "agent", actor_id, now_epoch,
-                                "task-completed", refs, extra=extra)
+                                "task-completed", refs, extra=extra,
+                                identity_basis=identity_basis)
 
     def _authorize_independent_completion(self, contract: dict[str, Any], actor_id: str,
                                           completion_manifest: dict[str, Any] | None,

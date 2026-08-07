@@ -595,6 +595,19 @@
         "peer-uid-acl-denial",
         "supervisor-only-run-handle"
       ]
+    },
+    {
+      "id": "governance-read-v1",
+      "path": "tests/test_governance_read.py",
+      "covers": [
+        "governance-request-validation",
+        "decision-ledger-surface",
+        "evidence-chain-surface",
+        "verifier-verdicts-surface",
+        "approval-queue-surface",
+        "empty-is-not-a-refusal",
+        "unreadable-store-refuses"
+      ]
     }
   ]
 }

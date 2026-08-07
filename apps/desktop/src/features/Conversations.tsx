@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import {
+  useCallback, useEffect, useMemo, useRef, useState,
+  type ChangeEvent, type KeyboardEvent,
+} from 'react';
 import { useApp } from '../app/store';
 import type { RouteId } from '../app/nav';
 import {
@@ -12,19 +15,61 @@ import { Mark } from '../components/Ambient';
 import type { Conversation, Message, SearchResult } from '../domain/entities';
 import type { Tone } from '../domain/enums';
 import { STR } from './Conversations.strings';
+import {
+  asDelegationEvent, applyDelegationEventForConversation,
+  type Delegation, type DelegationEvent,
+} from './delegation';
+import { DelegationSurface } from './delegationView';
 
-/** Map a message's server-derived receipt outcome to its trust badge, or `null` for
- *  no badge. `development_untrusted` → amber dev badge; `trusted_verified` → green
- *  "Verified" (Wave 3b only); anything else → no badge. A blocked governed turn
- *  produces no message, so it never reaches here. Pure — unit-tested. */
-export function receiptBadge(
-  receipt: Message['receipt'],
-): { tone: Tone; key: 'chat.receiptVerified' | 'chat.receiptDev' | 'chat.receiptDemo' } | null {
-  if (receipt === 'trusted_verified') return { tone: 'success', key: 'chat.receiptVerified' };
-  // Real crypto verification, but DEMONSTRATION custody — a distinct badge, never the production green.
-  if (receipt === 'demonstration_verified') return { tone: 'info', key: 'chat.receiptDemo' };
-  if (receipt === 'development_untrusted') return { tone: 'warning', key: 'chat.receiptDev' };
-  return null;
+export interface ReceiptBadge {
+  tone: Tone;
+  key: 'chat.receiptVerified' | 'chat.receiptDev' | 'chat.receiptDemo';
+}
+
+/**
+ * Map a message's server-derived receipt string to its trust badge, or `null` for no badge.
+ *
+ * The vocabulary is the BACKEND's, and the two labels that matter are the two a committed
+ * governed row can carry (`production_trust::TrustState::committed_label`, enforced by the
+ * `governed_messages.trust_state` CHECK constraint in `governed_message_store.rs`):
+ *
+ *  - `trusted_verified` — `TrustState::Production`: a production-class signing key resolved out
+ *    of a manifest whose root signature verified under an anchor whose custody is EXTERNAL to
+ *    this build. The ONLY string that earns the green production badge.
+ *  - `demonstration_custody` — `TrustState::DemonstrationCustody`: every chain and manifest check
+ *    passed and the body is genuinely bound, but the anchor that vouched for the signing key is
+ *    kit-generated or the compiled-in demonstration key — whose private half ships in this
+ *    repository. So the run is REAL and the custody claim is not. It gets its own badge: showing
+ *    the production green would be the lie the Rust side exists to prevent, and showing nothing
+ *    would erase the evidence that a governed chain ran at all.
+ *  - `demonstration_verified` — the in-process demo-verify reply path. Same trust class as
+ *    `demonstration_custody` (real ed25519 crypto, demonstration custody, never production), so
+ *    it carries the same badge rather than a second demo vocabulary on screen.
+ *  - `development_untrusted` — amber dev badge.
+ *
+ * Everything else — null, undefined, and any string a future backend invents — gets NO badge.
+ * Fail closed: an unrecognised value is never promoted, least of all to the green. A blocked
+ * governed turn persists no message, so it never reaches here.
+ *
+ * The parameter is a plain string rather than `Message['receipt']` on purpose: the value crosses
+ * the IPC boundary untouched (`normalizeMessage` only fixes `role`), so the declared union is a
+ * hope about the backend, not a guarantee — the `default` arm is what actually holds. Pure —
+ * unit-tested.
+ */
+export function receiptBadge(receipt: string | null | undefined): ReceiptBadge | null {
+  switch (receipt) {
+    case 'trusted_verified':
+      return { tone: 'success', key: 'chat.receiptVerified' };
+    // Real governed run, custody that proves nothing about who holds the root: a badge of its
+    // own — never the production green, never silence.
+    case 'demonstration_custody':
+    case 'demonstration_verified':
+      return { tone: 'info', key: 'chat.receiptDemo' };
+    case 'development_untrusted':
+      return { tone: 'warning', key: 'chat.receiptDev' };
+    default:
+      return null;
+  }
 }
 
 type Kind = 'direct' | 'group';
@@ -127,7 +172,14 @@ function CopyButton({ text, label, doneLabel }: { text: string; label: string; d
   );
 }
 
-function MessageThread({ conversation, onActivity }: { conversation: Conversation; onActivity: () => void }) {
+function MessageThread({ conversation, onActivity, onDelegation }: {
+  conversation: Conversation;
+  onActivity: () => void;
+  /** Called once per delegation frame this thread's own stream reported, with the conversation
+   *  it belongs to. The thread does not keep the ledger — the workspace does, because the
+   *  surface that draws it sits outside this component and must not drift from what is open. */
+  onDelegation?: (ev: DelegationEvent, conversationId: string) => void;
+}) {
   const { t, lang, openEntity } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
@@ -323,6 +375,15 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
           // Governed turn Blocked by desktop receipt verification: a transient
           // turn-level notice, NO persisted agent message (Wave 3a Blocks every turn).
           else if (ev.type === 'blocked') setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`);
+          else {
+            // Bro handed work to a specialist mid-turn. `asDelegationEvent` matches the two
+            // delegation tags and returns null for everything else, so an unrecognised frame —
+            // a variant a future backend adds, or a malformed one — is simply ignored: it never
+            // throws inside the channel callback (which would abort the reply the user is
+            // reading) and it can never be mistaken for a delegation.
+            const delegation = asDelegationEvent(ev);
+            if (delegation) onDelegation?.(delegation, conversation.id);
+          }
         }, who);
         // #4 per-agent isolation: one agent's error/block no longer aborts the whole room —
         // its error is surfaced inline and the remaining agents still get their turn. Only a
@@ -804,7 +865,7 @@ function RenameConversationForm({ conversation, onClose, onRenamed }:
 /** Two-pane conversation workspace shared by the Chat (direct) and Group Chat
  *  (group) screens. Both are backed by the same conversations/messages tables. */
 export function Conversations({ kind }: { kind: Kind }) {
-  const { t, lang, focus, clearFocus } = useApp();
+  const { t, lang, focus, clearFocus, setSelectedConversation } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -815,6 +876,18 @@ export function Conversations({ kind }: { kind: Kind }) {
   // the window capability set today, so this is the expected path and must be readable.
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const s = useAsync(() => desktop.listConversations(kind), [kind]);
+
+  // Delegations the OPEN thread's stream reported while this workspace has been mounted.
+  //
+  // It lives here rather than inside `MessageThread` because the surface that draws it sits
+  // below the whole workspace, and because `MessageThread` is keyed by conversation id — state
+  // held there would be discarded by the remount before anything could read it. The fold is the
+  // conversation-scoped one, so a frame whose payload names a different conversation (or none,
+  // as `stream_ask` emits) is dropped rather than filed under whatever thread happens to be open.
+  const [delegations, setDelegations] = useState<Delegation[]>([]);
+  const onDelegation = useCallback((ev: DelegationEvent, conversationId: string) => {
+    setDelegations((prev) => applyDelegationEventForConversation(prev, ev, conversationId));
+  }, []);
 
   // Consume a command-palette deep-link. The palette already routed to the
   // Conversations instance matching the picked conversation's kind, so only the
@@ -828,6 +901,31 @@ export function Conversations({ kind }: { kind: Kind }) {
       clearFocus();
     }
   }, [focus, s.data, s.loading, clearFocus]);
+
+  // The thread ACTUALLY on screen: the explicit pick when there is one, the first row when there
+  // is not, and null when neither resolves (still loading, empty list, or a selected id that is
+  // not in this kind's list — all of which render the "pick a conversation" state). Derived once
+  // here so the rail's active highlight, the main pane and the published selection cannot drift.
+  const loadedConversations = s.data ?? [];
+  const activeConversation =
+    loadedConversations.find((c) => c.id === (selectedId ?? loadedConversations[0]?.id)) ?? null;
+  const activeId = activeConversation?.id ?? null;
+
+  // Lift the selection out of this component's private state. `selectedId` is still owned here —
+  // this only PUBLISHES the resolved thread, keyed by kind, so surfaces that cannot reach into
+  // this component (the delegation ledger beside the direct chat, the consensus deck under the
+  // group rooms) can follow what the owner is looking at instead of guessing or asking again.
+  useEffect(() => {
+    setSelectedConversation(kind, activeId);
+  }, [kind, activeId, setSelectedConversation]);
+  // Leaving the screen retracts the claim. A stale id left behind would have those surfaces
+  // filtering by a conversation nothing is showing — worse than showing everything.
+  useEffect(() => () => setSelectedConversation(kind, null), [kind, setSelectedConversation]);
+
+  // A different thread is a different ledger. The fold already refuses a frame belonging to
+  // another conversation, so this is not what keeps the two apart — it is what stops the
+  // previous thread's cards from lingering under the new one while it has reported nothing.
+  useEffect(() => { setDelegations((prev) => (prev.length === 0 ? prev : [])); }, [activeId]);
 
   const titleKey = kind === 'group' ? 'nav.groupChat' : 'nav.chat';
   const subtitleKey = kind === 'group' ? 'groupChat.subtitle' : 'chat.subtitle';
@@ -921,7 +1019,7 @@ export function Conversations({ kind }: { kind: Kind }) {
         <Rail variant="panel" label={t('chat.conversations')}>
           <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
             {(conversations) => {
-              const active = selectedId ?? conversations[0]?.id ?? null;
+              const active = activeId;
               return (
                 <div className="stack">
                   {conversations.map((c) => (
@@ -961,8 +1059,7 @@ export function Conversations({ kind }: { kind: Kind }) {
 
         <div className="chat-main">
           {(() => {
-            const conversations = s.data ?? [];
-            const active = conversations.find((c) => c.id === (selectedId ?? conversations[0]?.id)) ?? null;
+            const active = activeConversation;
             if (!active) {
               return (
                 <section className="chat-canvas surface soft lg" aria-label={t('chat.pickHint')}>
@@ -972,10 +1069,25 @@ export function Conversations({ kind }: { kind: Kind }) {
             }
             // key on the conversation id so switching remounts the thread —
             // its streaming/error state never bleeds across conversations.
-            return <MessageThread key={active.id} conversation={active} onActivity={() => s.reload()} />;
+            return (
+              <MessageThread
+                key={active.id}
+                conversation={active}
+                onActivity={() => s.reload()}
+                onDelegation={onDelegation}
+              />
+            );
           })()}
         </div>
       </div>
+
+      {/* Who was put on this — beneath the workspace, bound to the thread actually on screen.
+          Rendered for BOTH kinds. It was direct-only because that is where the surface was
+          first built, which meant a delegation handed out inside a group room was drawn
+          nowhere at all — and a group room is where handing work to a named specialist
+          matters most. The events already arrive here for both kinds; only this guard
+          discarded half of them. */}
+      <DelegationSurface conversationId={activeId ?? undefined} live={delegations} />
     </div>
   );
 }

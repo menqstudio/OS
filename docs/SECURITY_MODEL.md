@@ -61,7 +61,12 @@ ARCHITECT_PENDING`).
 
 ## 4. Residual engine items (O-1 … O-5)
 
-Tracked on Bro's `fix/audit-followups`; each is its own audited engine task (never rushed).
+Tracked in `engine/AUDIT/tickets/` under the engine's own IDs — the `O-n` numbering is this
+repository's, and does not appear in `engine/` at all. `docs/PHASE_10_PRODUCTION_ITEMS.md` is the
+inventory: what each item is, which engine path it lives in, and what the Owner must provide.
+(This line previously said *"tracked on Bro's `fix/audit-followups`"*. That ref exists neither
+locally nor on `origin`, so the claim was unbacked.) Each is its own audited engine task, never
+rushed.
 
 - **O-1 (HIGH)** — bytecode-shadow: `assert_no_bytecode_shadow` has no caller and the wall is not run with `-B`.
 - **O-2 (MED)** — audit-head anchor is dead code.

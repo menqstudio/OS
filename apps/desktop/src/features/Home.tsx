@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useApp } from '../app/store';
 import { Button, Async, Input, TileGroup, StatTile, EmptyState, Skeleton } from '../components/ui';
 import { Mark } from '../components/Ambient';
@@ -10,6 +10,7 @@ import { Beatline, BarChart } from '../components/charts/Chart';
 import { Markdown } from '../components/markdown';
 import { useToast } from '../components/toast';
 import { STR, taskSummary, activitySummary } from './Home.strings';
+import { countOf, percentOf, readList, isUnreadable, type Reading } from './homeMetrics';
 
 // Real status → aios `.pill` modifier. The pill only re-skins a status that the
 // backend actually returned — it never invents a "verified"/"live" state.
@@ -31,6 +32,9 @@ const RING_R = 60;
 const RING_LEN = 2 * Math.PI * RING_R;
 // Equal time-buckets for the activity throughput sparkline.
 const FLOW_BUCKETS = 12;
+// Agent statuses that count as engaged. Mirrors the same set the Agents screen
+// treats as working; it classifies real backend statuses, it does not invent one.
+const BUSY_AGENT_STATUSES: ReadonlySet<string> = new Set(['working', 'thinking', 'observing', 'review']);
 
 // Parse an event timestamp (ISO or epoch string) to ms, or null if unparseable.
 // Same honest derivation Activity.tsx uses for its beat timeline.
@@ -123,7 +127,28 @@ export function Home() {
   // page-local copy for the active language, falling back to English.
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
+  // ── What this page actually KNOWS ────────────────────────────────────────
+  // Every headline number is a four-way Reading (loading · unreadable · empty ·
+  // value) rather than `data?.length ?? 0`. The old `?? 0` rendered a refused or
+  // failed read as a confident zero, so a broken backend looked like a quiet
+  // workspace. See `homeMetrics.ts` for the full argument.
+  const activeR = countOf(active);
+  const approvalsR = countOf(approvals);
+  const agentsR = countOf(agents);
+  const projectsR = countOf(projects);
+  const tasksR = readList(allTasks);
+  const agentRowsR = readList(agents);
+  const activityR = readList(activity);
+
+  // Derived ratios — a quotient of two counts from ONE real read, so the ratio
+  // inherits that read's state: unreadable stays unreadable, and an empty set
+  // yields `empty` (a share of nothing is undefined) rather than 0 %.
+  const agentsBusyR = percentOf(agents, (a) => BUSY_AGENT_STATUSES.has(a.status));
+  const tasksBlockedR = percentOf(allTasks, (x) => x.status === 'blocked');
+  const approvalsPendingR = percentOf(allApprovals, (a) => a.status === 'pending');
+
   // Task completion + attention — counts of real task statuses from listTasks().
+  // Only ever rendered inside the `value` arm of `tasksR`.
   const taskStats = useMemo(() => {
     const rows = allTasks.data ?? [];
     const total = rows.length;
@@ -131,34 +156,19 @@ export function Home() {
     const done = by('done');
     const active = by('active');
     const blocked = by('blocked');
-    return {
-      total, done, active, blocked,
-      donePct: total ? Math.round((done / total) * 100) : 0,
-      blockedPct: total ? Math.round((blocked / total) * 100) : null,
-    };
+    return { total, done, active, blocked, donePct: total ? Math.round((done / total) * 100) : 0 };
   }, [allTasks.data]);
 
-  // Agent engagement + status distribution — grouped counts from listAgents().
-  const agentStats = useMemo(() => {
+  // Agent status distribution — grouped counts from listAgents(). Rendered only
+  // inside the `value` arm of `agentRowsR`.
+  const agentDist = useMemo(() => {
     const rows = agents.data ?? [];
-    const total = rows.length;
-    const busySet = new Set(['working', 'thinking', 'observing', 'review']);
-    const busy = rows.filter((a) => busySet.has(a.status)).length;
     const counts = new Map<string, number>();
     for (const a of rows) counts.set(a.status, (counts.get(a.status) ?? 0) + 1);
-    const dist = [...counts.entries()]
+    return [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([status, value]) => ({ key: status, label: statusLabel(status, lang), value }));
-    return { total, busyPct: total ? Math.round((busy / total) * 100) : null, dist };
   }, [agents.data, lang]);
-
-  // Approval backlog share — pending / all approvals from the unfiltered read.
-  const approvalStats = useMemo(() => {
-    const rows = allApprovals.data ?? [];
-    const total = rows.length;
-    const pending = rows.filter((a) => a.status === 'pending').length;
-    return { total, pending, pendingPct: total ? Math.round((pending / total) * 100) : null };
-  }, [allApprovals.data]);
 
   // Recent-activity throughput — real events bucketed into equal time windows across
   // their own span (same parseTime derivation as Activity's beatline).
@@ -186,8 +196,16 @@ export function Home() {
   }, [activity.data, lang]);
 
   const showAnswerBlock = asking || answer || askError || blocked;
-  // The greeting power-mark tracks the real interaction state — nothing else.
-  const markState = askError || blocked ? 'alert' : asking ? 'thinking' : 'live';
+  // At least one of the four workspace reads did not come back. The hero mark must
+  // not paint "live" over a dashboard that could not read its own workspace.
+  const workspaceUnreadable = [activeR, approvalsR, agentsR, projectsR].some(isUnreadable);
+  // The greeting power-mark tracks the real interaction state and the real read
+  // state — nothing else. It is never a decoration.
+  const markState = askError || blocked
+    ? 'alert'
+    : asking
+      ? 'thinking'
+      : workspaceUnreadable ? 'idle' : 'live';
 
   return (
     <>
@@ -275,41 +293,33 @@ export function Home() {
         <div className="ledger-wrap">
           <span className="micro since">{t('home.subtitle')}</span>
           <TileGroup label={t('home.subtitle')}>
-            <StatTile glyph="◆" value={active.data?.length ?? 0} label={t('home.priorities')} countUp onActivate={() => setRoute('tasks')} />
-            <StatTile glyph="⚑" value={approvals.data?.length ?? 0} label={t('home.approvals')} countUp onActivate={() => setRoute('approvals')} />
-            <StatTile glyph="⬡" value={agents.data?.length ?? 0} label={t('home.agents')} countUp onActivate={() => setRoute('agents')} />
-            <StatTile glyph="▤" value={projects.data?.length ?? 0} label={t('nav.projects')} countUp onActivate={() => setRoute('projects')} />
+            <StatTile glyph="◆" {...tile(activeR, L)} label={t('home.priorities')} onActivate={() => setRoute('tasks')} />
+            <StatTile glyph="⚑" {...tile(approvalsR, L)} label={t('home.approvals')} onActivate={() => setRoute('approvals')} />
+            <StatTile glyph="⬡" {...tile(agentsR, L)} label={t('home.agents')} onActivate={() => setRoute('agents')} />
+            <StatTile glyph="▤" {...tile(projectsR, L)} label={t('nav.projects')} onActivate={() => setRoute('projects')} />
           </TileGroup>
         </div>
       </section>
 
       {/* ── INSTRUMENTS · honest read-outs derived from the real arrays ───── */}
       <div className="hx-instruments">
-        {/* Derived ratios — each a plain quotient of two real counts. Shows "—"
-            until its source has loaded (never a placeholder number). */}
+        {/* Derived ratios — each a plain quotient of two real counts, and each
+            carrying its source read's state. "no data yet" and "could not read"
+            are rendered differently on purpose; they are different problems. */}
         <div className="hx-ratios" role="group" aria-label={L('derivedRatios')}>
-          <div className="hx-ratio">
-            <b>{agentStats.busyPct ?? '—'}{agentStats.busyPct != null && <i>%</i>}</b>
-            <span className="micro">{L('agentsBusy')}</span>
-          </div>
-          <div className="hx-ratio">
-            <b>{taskStats.blockedPct ?? '—'}{taskStats.blockedPct != null && <i>%</i>}</b>
-            <span className="micro">{L('tasksBlocked')}</span>
-          </div>
-          <div className="hx-ratio">
-            <b>{approvalStats.pendingPct ?? '—'}{approvalStats.pendingPct != null && <i>%</i>}</b>
-            <span className="micro">{L('approvalsPending')}</span>
-          </div>
+          <Ratio r={agentsBusyR} label={L('agentsBusy')} L={L} />
+          <Ratio r={tasksBlockedR} label={L('tasksBlocked')} L={L} />
+          <Ratio r={approvalsPendingR} label={L('approvalsPending')} L={L} />
         </div>
 
         <div className="hx-board">
           {/* Task-progress ring — done / total from listTasks(). */}
           <section className="surface soft hx-resolve reveal">
             <div className="sec-head"><h2>{L('taskProgress')}</h2></div>
-            {allTasks.loading && allTasks.data === null ? (
+            {tasksR.kind === 'loading' ? (
               <Skeleton rows={3} />
-            ) : allTasks.error ? (
-              <p className="hx-note note">{L('progressUnavailable')}</p>
+            ) : tasksR.kind === 'unreadable' ? (
+              <Unreadable title={L('progressUnavailable')} reason={tasksR.error} />
             ) : taskStats.total === 0 ? (
               <EmptyState glyph="◇" title={t('home.emptyPriorities')} />
             ) : (
@@ -339,15 +349,15 @@ export function Home() {
               BarChart carries its own summary + data-table for a11y. */}
           <section className="surface soft reveal">
             <div className="sec-head"><h2>{L('agentsByStatus')}</h2></div>
-            {agents.loading && agents.data === null ? (
+            {agentRowsR.kind === 'loading' ? (
               <Skeleton rows={4} />
-            ) : agents.error ? (
-              <p className="hx-note note">{L('distributionUnavailable')}</p>
-            ) : agentStats.total === 0 ? (
+            ) : agentRowsR.kind === 'unreadable' ? (
+              <Unreadable title={L('distributionUnavailable')} reason={agentRowsR.error} />
+            ) : agentDist.length === 0 ? (
               <EmptyState glyph="⬡" title={t('home.emptyAgents')} />
             ) : (
               <BarChart
-                data={agentStats.dist}
+                data={agentDist}
                 caption={L('agentsByStatus')}
                 unit={L('agentsUnit')}
                 totalLabel={L('total')}
@@ -366,12 +376,12 @@ export function Home() {
               <h2>{L('recentActivity')}</h2>
               <span className="note">{L('eventsPerInterval')}</span>
             </div>
-            {activity.error ? (
-              <p className="hx-note note">{L('activityUnavailable')}</p>
+            {activityR.kind === 'unreadable' ? (
+              <Unreadable title={L('activityUnavailable')} reason={activityR.error} />
             ) : (
               <Beatline
                 data={flow.points}
-                loading={activity.loading && activity.data === null}
+                loading={activityR.kind === 'loading'}
                 caption={L('recentActivityCaption')}
                 summary={activitySummary(lang, flow.total, FLOW_BUCKETS, flow.peak)}
                 unit={L('eventsUnit')}
@@ -479,9 +489,86 @@ export function Home() {
   );
 }
 
+type Localize = (k: keyof typeof STR) => string;
+
+/**
+ * StatTile props for one reading. The four states are visually and textually
+ * distinct on purpose:
+ *
+ *   value      → the number, with the count-up animation (a real quantity)
+ *   loading    → an ellipsis + "reading…"      (the page does not know yet)
+ *   empty      → an em dash + "no data yet"    (the page knows there is nothing)
+ *   unreadable → a warning glyph + "could not read" + the backend's own words
+ *
+ * The last two used to render identically as `0`, which is exactly how a refused
+ * `list_approvals` reads as "nothing needs your approval".
+ */
+function tile(r: Reading<number>, L: Localize): { value: ReactNode; countUp: boolean; hint?: string } {
+  switch (r.kind) {
+    case 'value':
+      return { value: r.value, countUp: true };
+    case 'loading':
+      return {
+        value: <span className="hx-pending" role="img" aria-label={L('readingLabel')}>…</span>,
+        countUp: false,
+        hint: L('reading'),
+      };
+    case 'empty':
+      return { value: <span className="hx-none" aria-hidden="true">—</span>, countUp: false, hint: L('noDataYet') };
+    default:
+      return {
+        value: <span className="hx-broken" role="img" aria-label={L('couldNotReadLabel')} title={r.error}>⚠</span>,
+        countUp: false,
+        hint: L('couldNotRead'),
+      };
+  }
+}
+
+/** One derived ratio, carrying its source read's state instead of flattening it. */
+function Ratio({ r, label, L }: { r: Reading<number>; label: string; L: Localize }) {
+  return (
+    <div className="hx-ratio">
+      {r.kind === 'value' ? (
+        <b>{r.value}<i>%</i></b>
+      ) : r.kind === 'loading' ? (
+        <b className="hx-pending">…</b>
+      ) : r.kind === 'empty' ? (
+        <b className="hx-none">—</b>
+      ) : (
+        <b className="hx-broken" aria-hidden="true">⚠</b>
+      )}
+      <span className="micro">{label}</span>
+      {r.kind !== 'value' && (
+        <span
+          className={`micro hx-state${r.kind === 'unreadable' ? ' hx-broken' : ''}`}
+          title={r.kind === 'unreadable' ? r.error : undefined}
+        >
+          {r.kind === 'loading' ? L('reading') : r.kind === 'empty' ? L('noDataYet') : L('couldNotRead')}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * An instrument whose source read failed. It states WHICH instrument is missing and
+ * quotes the backend's reason verbatim — a permission refusal, an IPC failure and a
+ * command that returned nothing must be tellable apart by the person looking at it.
+ * Deliberately not an EmptyState: an empty result is not a fault and must not look
+ * like one, and a fault must not look like calm.
+ */
+function Unreadable({ title, reason }: { title: string; reason: string }) {
+  return (
+    <div className="hx-note note hx-broken" role="status">
+      <div><span aria-hidden="true">⚠ </span>{title}</div>
+      <p className="micro hx-reason">{reason}</p>
+    </div>
+  );
+}
+
 // Page-local chrome only: the derived-instruments strip, the three-up instrument
-// board layout, and a reduced-motion guard for the ring sweep. Everything visual
-// otherwise is shared aios classes (.ring/.surface/.sec-head/.chart/.barchart).
+// board layout, the honest-absence markers, and a reduced-motion guard for the ring
+// sweep. Everything visual otherwise is shared aios classes.
 const HOME_STYLE = `
 .v-home .hx-instruments{display:grid;gap:16px;margin-top:20px}
 .v-home .hx-ratios{display:flex;flex-wrap:wrap;gap:12px}
@@ -495,6 +582,12 @@ const HOME_STYLE = `
 .v-home .hx-resolve{display:grid;gap:14px;justify-items:center}
 .v-home .hx-resolve .sec-head{width:100%}
 .v-home .hx-note{color:var(--ink-muted);text-align:center;max-width:36ch;margin-inline:auto}
+/* honest-absence markers — "reading", "nothing", and "broken" must not look alike */
+.v-home .hx-pending{color:var(--ink-muted);letter-spacing:.1em}
+.v-home .hx-none{color:var(--ink-muted)}
+.v-home .hx-broken{color:var(--menq-color-danger,#e5484d)}
+.v-home .hx-state{display:block;margin-top:1px}
+.v-home .hx-reason{margin-top:6px;font-family:var(--f-mono);opacity:.85;overflow-wrap:anywhere;color:var(--ink-muted)}
 @media (max-width:1080px){
   .v-home .hx-board{grid-template-columns:1fr 1fr}
   .v-home .hx-resolve{grid-column:1 / -1}

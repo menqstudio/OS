@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-knowledge-write-record-state"
+description = "Enables the knowledge_write_record_state command without any pre-configured scope."
+commands.allow = ["knowledge_write_record_state"]
+
+[[permission]]
+identifier = "deny-knowledge-write-record-state"
+description = "Denies the knowledge_write_record_state command without any pre-configured scope."
+commands.deny = ["knowledge_write_record_state"]

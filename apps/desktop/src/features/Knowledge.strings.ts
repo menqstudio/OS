@@ -249,6 +249,29 @@ export const STR = {
     hy: 'պահոցից հաշված',
     ru: 'посчитано из хранилища',
   },
+  // Heading for the per-article local write record block.
+  recordSection: {
+    en: 'Write record',
+    hy: 'Գրման գրանցում',
+    ru: 'Журнал записи',
+  },
+  // Provenance stated plainly, exactly as the Memory page does — and kept CURRENT.
+  //
+  // This line used to read "Local store · no verification chain". That was true when it
+  // was written and is not true now: every knowledge write appends a record in the same
+  // transaction as the row (`core/src/local_write_record.rs`, migration 0021), hashing
+  // the note's content into an append-only chain the database itself enforces, so a
+  // later out-of-band edit reads back as `content_diverged`. A stale honest label
+  // becomes a dishonest one, so the line now says what the record really is.
+  //
+  // What it must NOT say: nothing here is signed — no key, no manifest, no authority, no
+  // containment — and the record attests CONTENT, never the writer. So no "verified", no
+  // "trusted", and no badge a reader would file beside a governed turn's.
+  provenance: {
+    en: 'Local store · each write appends a local record · shows the row is unchanged since it was written, never who wrote it',
+    hy: 'Տեղական պահոց · ամեն գրում ավելացնում է լոկալ գրանցում · ցույց է տալիս, որ տողը գրվելուց հետո չի փոխվել, բայց ոչ թե ով է գրել',
+    ru: 'Локальное хранилище · каждая запись добавляет локальный журнальный след · показывает, что строка не менялась с момента записи, но не кто её записал',
+  },
 } as const;
 
 // ── Interpolated strings — authored per language, args filled at the call

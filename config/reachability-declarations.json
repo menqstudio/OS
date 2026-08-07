@@ -1,0 +1,100 @@
+{
+  "$comment": [
+    "Declared unreachable surfaces, with a WRITTEN REASON for each. Enforced by",
+    "tools/check_reachability.py (CI job 'Reachability - nothing implemented-and-uncalled').",
+    "",
+    "Unreachable is sometimes exactly correct: a capability-denied command MUST have no caller,",
+    "and a superseded sibling legitimately outlives its last call site. What hides a defect is",
+    "unreachable-AND-undeclared - the state in which nobody can tell which of those it is. So",
+    "this file is the point of the gate, not an escape hatch from it: every entry costs a",
+    "sentence that a reviewer can disagree with, and 'unreachable, no reason given' is refused",
+    "by the gate itself (see MIN_REASON_CHARS / PLACEHOLDER_REASONS).",
+    "",
+    "Adding an entry is a claim. If the command later gains a real caller, the gate turns RED",
+    "and asks you to DELETE the entry - deliberately, so an exception cannot silently outlive",
+    "the condition it described.",
+    "",
+    "Reasons: capability-denied | superseded | governed-wall | backend-only | not-yet-wired.",
+    "'not-yet-wired' is an honest OPEN gap and must name where it is tracked.",
+    "",
+    "Observed state recorded 2026-08-07 on branch wave/phase-push-1; the gate re-derives it on",
+    "every run rather than trusting these notes."
+  ],
+  "tauri_commands": {
+    "decide_approval": {
+      "reason": "capability-denied",
+      "note": "The generic approve verb is DENIED to the main window in capabilities/default.json (deny-decide-approval, T-011): approving must require a renderer-independent native confirmation, so a compromised webview cannot approve anything. Having no caller is the ENFORCED state, not an oversight - apps/desktop/src/features/approvalsAuthority.ts names it only as DENIED_DECIDE_COMMAND, a constant that exists so the page can assert it never renders a control for it. The reachable approve path is confirm_approval; the fail-safe path is reject_approval.",
+      "observed": "2026-08-07: no invoke; one non-call mention as DENIED_DECIDE_COMMAND in features/approvalsAuthority.ts."
+    },
+    "post_message": {
+      "reason": "superseded",
+      "note": "Superseded by post_user_message for every renderer path (P1-6): post_user_message fixes the role server-side, so the webview cannot choose it, while post_message only VALIDATES the role against WEBVIEW_MESSAGE_ROLES = [\"user\"]. services/desktop.ts exposes postMessage(), which invokes post_user_message. post_message is therefore the WIDER of the two - it accepts a role and checks it, where the superseding command never lets the webview name one at all - and it stays registered and allow-granted with nothing calling it. That is residual invokable surface with no user; flipping its grant to deny is the cheapest way to remove it, and the gate will say so again the moment anyone wonders.",
+      "observed": "2026-08-07: zero invocations anywhere under apps/desktop/src/**, production or test."
+    },
+    "reply_in_conversation": {
+      "reason": "superseded",
+      "note": "The non-streaming twin of stream_reply: same context assembly, same one-time-challenge -> governed_turn -> verify_and_record_receipt pipeline, differing only in delivery. Every chat surface uses the streaming sibling (services/desktop.ts streamReply), so the buffered variant has no frontend wrapper. It is kept because the governed pipeline it carries is the same audited one and a non-streaming caller (automation, a headless turn) is a plausible future consumer; until such a caller exists it is unreached by design.",
+      "observed": "2026-08-07: zero invocations under apps/desktop/src/**; commands.rs keeps it on the governed path."
+    },
+    "set_run_step_status": {
+      "reason": "superseded",
+      "note": "No surface authors a run-step status directly. Command.tsx drives steps through stream_run_step (the governed execution path, which sets status as a consequence of real work) and advance_run (which moves the run forward transactionally). A renderer that could stamp an arbitrary step status could claim a step succeeded without it having run, which is the exact honesty defect the six-surface work closed, so leaving this uncalled is the safer state.",
+      "observed": "2026-08-07: zero invocations under apps/desktop/src/**; add_run_step / advance_run / stream_run_step are the live callers of the run-step repo."
+    },
+    "create_decision": {
+      "reason": "not-yet-wired",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "note": "An OPEN gap, declared rather than dressed up. The Decisions page is a read-only mirror today - it renders list_decisions plus the engine evidence-chain read - and offers no control that records a decision, so create_decision is registered and allow-granted with nothing invoking it. Two honest closures exist: wire a create control on the Decisions page, or flip the grant to deny because authoring governance decisions from the webview is not wanted. Until one is chosen this is invokable surface with no user.",
+      "observed": "2026-08-07: zero invocations under apps/desktop/src/**; grant is allow-create-decision, policy tier L1."
+    }
+  },
+  "engine_symbols": {
+    "assert_no_bytecode_shadow": {
+      "kind": "function",
+      "defined_in": "engine/runtime/bro_protected.py",
+      "expectation": "must_have_caller",
+      "residual_item": "O-1",
+      "tracked_by": "docs/PHASE_10_PRODUCTION_ITEMS.md",
+      "reason": "The worked example this gate was built around, and it CHANGED STATE while the gate was being written. Residual item O-1 (HIGH) is the canonical 'implemented and nothing calls it': the function exists, is documented, raises ProtectedScopeError for __pycache__/.pyc/.pyo under a digest root - and for the whole life of the repository had zero callers, so a forged .pyc could shadow a digest-verified .py and nothing noticed. It now has real callers on the wall's own path, so the expectation is must_have_caller and the gate protects those call sites: if either is refactored away the gate turns RED rather than the defect silently reopening. NOTE THE LIMIT - this proves the calls EXIST; it does not verify the rest of O-1 closure (hooks running python -B, compileall scoped off digest roots, the stray-.pyc regression test), and O-1's status in docs/PHASE_10_PRODUCTION_ITEMS.md is owned there, not here.",
+      "observed": "2026-08-07: two call sites in engine/runtime/bro_control_plane.py - line 80 in _bind_workspace (before any binding is loaded) and line 267 in the settlement path (a second process the binding path never covers). Both were UNCOMMITTED working-tree changes by a concurrent agent at the time of this run; the gate re-derives them every run, so a revert turns it RED."
+    },
+    "head_anchor_payload": {
+      "kind": "function",
+      "defined_in": "engine/runtime/bro_audit_log.py",
+      "expectation": "declared_unreachable",
+      "residual_item": "O-2",
+      "tracked_by": "docs/PHASE_10_PRODUCTION_ITEMS.md",
+      "reason": "The OWNER-FACING half of the anchor API. O-2's fix landed: `append` now assembles the anchor payload itself and refuses any document that is not a signature over exactly those bytes, via the private `_anchor_payload` this function also wraps. What stays caller-less in this repo is deliberate -- the caller is the owner's out-of-band signing command, reached through BRO_AUDIT_ANCHOR_SIGNER, and a key the ledger's own writer could reach would prove nothing. So this is an exported API with an external consumer, NOT dead code. It gains an in-repo caller only if a signing helper ships inside the engine, which would defeat the point.",
+      "observed": "2026-08-07, after O-2 landed: zero call-shaped references outside bro_audit_log.py. The enforcement now lives in `append` + `verify(keys=...)`, which the gate does not track by name."
+    },
+    "attach_head_anchor": {
+      "kind": "function",
+      "defined_in": "engine/runtime/bro_audit_log.py",
+      "expectation": "declared_unreachable",
+      "residual_item": "O-2",
+      "tracked_by": "docs/PHASE_10_PRODUCTION_ITEMS.md",
+      "reason": "The install half of the same owner-facing API: it verifies a signed anchor against the trusted registry and against the ledger's current chain before storing it. Caller-less in this repo for the same reason as `head_anchor_payload` -- the party holding the signing key is outside the engine by design. Not dead code, and not the O-2 gap: that gap closed when `append` started attaching an anchor and keyed `verify` started requiring one.",
+      "observed": "2026-08-07, after O-2 landed: zero call-shaped references outside bro_audit_log.py."
+    },
+    "verify_conductor_session_token": {
+      "kind": "function",
+      "defined_in": "engine/runtime/bro_policy.py",
+      "expectation": "must_have_caller",
+      "residual_item": "O-3",
+      "reason": "ENFORCED, not excused: this is the one of the five that genuinely has a caller, and the gate now protects that. If the call site is removed or refactored away the gate turns RED, because losing it would silently return conductor identity to a plain environment-variable claim.",
+      "observed": "2026-08-07: called from engine/runtime/bro_completion.py (authorize_conductor_stop path), which also audit-logs the exemption."
+    },
+    "require_conductor_session_token": {
+      "kind": "policy_flag",
+      "defined_in": null,
+      "expectation": "must_have_caller",
+      "residual_item": "O-3",
+      "read_via": {
+        "constant": "CONDUCTOR_SESSION_POLICY_KEY",
+        "bound_in": "engine/runtime/bro_policy.py"
+      },
+      "reason": "A policy KEY, not a function, so `defined_in` is null and the flag is 'called' by being read. It is read through the named constant CONDUCTOR_SESSION_POLICY_KEY rather than as a bare literal, so the declaration states that one hop and the gate verifies the binding is real before following it - an undeclared indirection would otherwise read as zero readers. IMPORTANT LIMIT, and the reason this entry is worth reading twice: the gate proves the flag is READ by the enforcement path and proves NOTHING about whether it is SET. That second half is residual item O-3 (MEDIUM), needs an operator-signed conductor-session artifact only the Owner can mint, and is outside this gate by construction.",
+      "observed": "2026-08-07: engine/runtime/bro_policy.py binds CONDUCTOR_SESSION_POLICY_KEY to the flag and reads it in conductor_session_token_required, which now treats an UNDECLARED requirement as a REQUIRED one (an uncommitted concurrent change - the previous code defaulted to False). Still absent from engine/.bro/policy.json."
+    }
+  }
+}

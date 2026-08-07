@@ -54,6 +54,12 @@ def manifest():
         "done_criteria": [{"criterion": "tests green", "status": "satisfied", "evidence_event_ids": ["evt-1"]}],
         "tests": [{"command": ["python", "-m", "unittest"], "status": "passed", "evidence_event_id": "evt-1", "execution_receipt_id": "rcpt-0000000000000001"}],
         "evidence_event_ids": ["evt-1"],
+        # O-5: the manifest binds itself to exactly one signed evidence head. These
+        # suites mock validate_evidence_chain, so the values only have to be
+        # well-formed; the real binding is exercised by StopGateFullFlowTests and by
+        # test_completion_head_binding.py.
+        "evidence_head_sha256": "c" * 64,
+        "head_sequence": 1,
         "open_risks": [],
         "rollback_ready": True,
         "nonce": "nonce-completion-gate-0001",
@@ -147,8 +153,30 @@ class ConductorStopTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             return authorize_conductor_stop(state, ROOT)
 
-    def test_conductor_without_a_contract_may_finish(self):
+    def test_conductor_without_a_signed_session_token_is_refused(self):
+        """O-3: the shipped policy now REQUIRES a signed conductor session token.
+
+        Without one the conductor identity is `BRO_ROLE` plus `BRO_AGENT_ID` and
+        nothing else, so the exemption is refused rather than granted on the
+        environment's word — and the refusal names the artifact the owner must
+        mint, because nothing in this repository can mint it.
+        """
         allowed, reason = self.authorize(self.conductor())
+        self.assertFalse(allowed, reason)
+        self.assertIn("no conductor session token presented", reason)
+        self.assertIn("BRO_CONDUCTOR_SESSION_TOKEN", reason)
+
+    def test_conductor_without_a_contract_may_finish_once_identity_is_settled(self):
+        """The exemption itself is unchanged: what changed is who may claim it.
+
+        The identity check is stubbed here (its own crypto is covered in
+        test_conductor_session_token.py) so this test still guards the property it
+        was written for — a conductor with no bound contract owes no builder
+        evidence.
+        """
+        with patch("bro_policy.conductor_session_token_required",
+                   return_value=(False, "waived for this test")):
+            allowed, reason = self.authorize(self.conductor())
         self.assertTrue(allowed, reason)
         self.assertIn("no builder evidence is owed", reason)
 
@@ -236,7 +264,12 @@ class CompletionEd25519Tests(unittest.TestCase):
             "task_contract_sha256": "a" * 64, "candidate_head": "b" * 40, "candidate_tree": "c" * 64,
             "done_criteria": [{"criterion": "done", "status": "satisfied", "evidence_event_ids": ["e1"]}],
             "tests": [{"command": ["pytest"], "status": "passed", "evidence_event_id": "e2", "execution_receipt_id": "rcpt-00000000000000e2"}],
-            "evidence_event_ids": ["e1", "e2"], "open_risks": [], "rollback_ready": True,
+            "evidence_event_ids": ["e1", "e2"],
+            # The O-5 head binding is in `_check_manifest`'s strict required set AND in
+            # schemas/completion-manifest.schema.json, whose `additionalProperties: false`
+            # + `required` this test validates against. See test_manifest_schema_agreement.
+            "evidence_head_sha256": "d" * 64, "head_sequence": 1,
+            "open_risks": [], "rollback_ready": True,
             "nonce": "nonce-ed25519-manifest-01",
             "issued_at_epoch": self.NOW, "expires_at_epoch": self.NOW + 3600,
         }
@@ -306,7 +339,11 @@ class CompletionEd25519Tests(unittest.TestCase):
 import subprocess
 
 from bro_contracts import canonical_json_sha256
-from test_orchestration_runtime import AGENT, build_evidence as _shared_build_evidence
+from test_orchestration_runtime import (
+    AGENT,
+    build_evidence as _shared_build_evidence,
+    head_binding,
+)
 
 
 def build_evidence(store, keys, task_id, count):
@@ -553,6 +590,7 @@ class StopGateFullFlowTests(unittest.TestCase):
             "tests": [{"command": command, "status": "passed", "evidence_event_id": refs[1],
                        "execution_receipt_id": rid}],
             "evidence_event_ids": refs, "open_risks": [], "rollback_ready": True,
+            **head_binding(self.stores["evidence"], "task-stop-flow"),
             "nonce": "nonce-stop-flow-000001",
             "issued_at_epoch": self.now, "expires_at_epoch": self.now + 3600,
         }

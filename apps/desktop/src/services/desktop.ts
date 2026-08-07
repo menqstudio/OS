@@ -90,6 +90,65 @@ export interface TrustSelftest {
   platform_note: string;
 }
 
+
+// --- local write records for memory entries and knowledge notes (READ-ONLY) ---------
+//
+// READ THIS BEFORE PUTTING ANY OF IT ON SCREEN. The Rust side
+// (`core/src/local_write_record.rs`) appends a record for every memory/knowledge write
+// inside that write's own transaction, append-only at the database layer. It pins the
+// subject's CONTENT at write time and detects a later out-of-band edit of the database
+// file. It is NOT signed: no key, no manifest, no external authority, no containment,
+// and the record is produced by the same local process that performed the write — so it
+// says nothing about WHO wrote the row.
+//
+// So this is tamper-evidence, not verification. The honest words are `recorded`,
+// `write record`, `content diverged`, `unrecorded`; the production trust vocabulary
+// (`verified`, `trusted_verified`, the governed receipt path) must never be borrowed for
+// it. A "Verifiable memory" pill was removed from this product for exactly that reason.
+
+/** Which kind of row a write record describes. Mirrors the Rust `SubjectKind`. */
+export type WriteRecordSubjectKind = 'memory_entry' | 'knowledge_note';
+
+/** The write that produced a record. Mirrors the Rust `WriteOp`. */
+export type WriteRecordOperation = 'created' | 'updated' | 'deleted';
+
+/** One durable record in the append-only chain. Unsigned — see the note above. */
+export interface WriteRecord {
+  id: string;
+  /** Chain position, contiguous from 1. */
+  seq: number;
+  subjectKind: WriteRecordSubjectKind;
+  subjectId: string;
+  operation: WriteRecordOperation;
+  /** Digest of the subject's fields at the moment of the write. */
+  contentSha256: string;
+  prevRecordSha256: string;
+  recordSha256: string;
+  recordedAt: string;
+}
+
+/**
+ * Where a subject stands against its own records — the exact four states the backend can
+ * defend. There is deliberately no "verified" state, because nothing here is signed.
+ *
+ *  - `recorded`             the row's current content hashes to its most recent record
+ *  - `content_diverged`     a record exists but the row no longer hashes to it: the row was
+ *                           changed outside the recorded path. This is the tamper signal and
+ *                           must never be rounded up to `recorded`
+ *  - `deleted_but_present`  the latest record says deleted, yet a row is present under that id
+ *  - `unrecorded`           no record at all (written before the ledger existed; never
+ *                           back-filled, because minting a record for an unwitnessed write
+ *                           would be a forgery)
+ *
+ * `actual_content_sha256` keeps the Rust field name — it arrives verbatim from the
+ * internally-tagged enum, which renames variants but not their fields.
+ */
+export type WriteRecordState =
+  | { state: 'recorded'; record: WriteRecord }
+  | { state: 'content_diverged'; record: WriteRecord; actual_content_sha256: string }
+  | { state: 'deleted_but_present'; record: WriteRecord }
+  | { state: 'unrecorded' };
+
 export const desktop = {
   // projects
   listProjects: () => invoke<Project[]>('list_projects'),
@@ -199,6 +258,16 @@ export const desktop = {
     invoke<MemoryEntry>('set_memory_pinned', { id, pinned }),
   deleteMemory: (id: string) => invoke<void>('delete_memory', { id }),
 
+  // local write records (READ-ONLY). These report what was RECORDED — an unsigned,
+  // in-transaction, append-only tamper-evidence record — and never that anything was
+  // verified; see the WriteRecordState docs above before rendering a state.
+  memoryWriteRecordState: (id: string) =>
+    invoke<WriteRecordState>('memory_write_record_state', { id }),
+  memoryWriteRecords: (id: string) => invoke<WriteRecord[]>('memory_write_records', { id }),
+  knowledgeWriteRecordState: (id: string) =>
+    invoke<WriteRecordState>('knowledge_write_record_state', { id }),
+  knowledgeWriteRecords: (id: string) => invoke<WriteRecord[]>('knowledge_write_records', { id }),
+
   // files (filesystem browser; path omitted = home dir). read/write a text file
   listDir: (path?: string) => invoke<DirListing>('list_dir', { path: path ?? null }),
   readFile: (path: string) => invoke<FileContent>('read_file', { path }),
@@ -236,8 +305,27 @@ export const desktop = {
 
   // integrations
   listIntegrations: () => invoke<Integration[]>('list_integrations'),
+  // Declare a connector: a NAME and a PROVIDER, never a credential — there is no field
+  // for one, by design. The new row starts `disconnected`: declared here, not configured
+  // anywhere and never contacted. Declaring is not connecting.
+  createIntegration: (name: string, provider: string) =>
+    invoke<Integration>('create_integration', { name, provider }),
   setIntegrationStatus: (id: string, status: string) =>
     invoke<Integration>('set_integration_status', { id, status }),
+
+  /**
+   * Point a connector at where its secret lives; `null` clears the reference.
+   *
+   * `authRef` is a REFERENCE (`scheme:locator`) and never the secret. The backend bounds its
+   * shape and refuses known key-material prefixes, and both it and the migration say the same
+   * thing about that limit: it constrains SHAPE, not meaning. `engine:hunter2` is a well-formed
+   * reference and also a password, and nothing on either side can tell which.
+   *
+   * A refusal deliberately does not echo what was rejected, so do not expect the offending value
+   * back in the error and do not log the argument yourself.
+   */
+  setIntegrationAuthRef: (id: string, authRef: string | null) =>
+    invoke<Integration>('set_integration_auth_ref', { id, authRef }),
 
   // global search (across projects, tasks, knowledge, decisions, agents, chats, memory)
   searchAll: (query: string) => invoke<SearchResult[]>('search_all', { query }),
@@ -255,6 +343,16 @@ export const desktop = {
   readEvidenceChain: (taskId?: string) =>
     governanceRead('evidenceChain', 'read_evidence_chain', { taskId: taskId ?? null }),
   readEngineApprovalQueue: () => governanceRead('approvalQueue', 'read_engine_approval_queue'),
+  // The engine's own append-only decision LEDGER. This is NOT `listDecisions()`: that reads the
+  // desktop's local SQLite table, while this mirrors the engine surface through the sidecar. The
+  // Rust command has been registered since Phase-2 but had no renderer wrapper, so the surface was
+  // unreachable from the UI — the ledger a page showed was always the local one.
+  readDecisionLedger: () => governanceRead('decisionLedger', 'read_decision_ledger'),
+  // The engine's independent-verifier VERDICTS (verifier-receipt records; the Rust mirror rejects any
+  // record whose verdict is not GREEN). Optionally filtered to one task/decision id. Same story as the
+  // ledger above: registered in Rust, previously unreachable from the renderer.
+  readVerifierVerdicts: (taskId?: string) =>
+    governanceRead('verdicts', 'read_verifier_verdicts', { taskId: taskId ?? null }),
 
   // Governed trust-chain self-test: runs the REAL in-process challenge→sign→verify→
   // trusted_verified chain (Windows) and returns the honest outcome + custody posture.
@@ -305,7 +403,21 @@ export type StreamEvent =
   // notice, never a persisted reply. `reason` is the machine verdict.
   | { type: 'blocked'; reason: string }
   // stream_ask only: the full answer is held server-side under this one-time id.
-  | { type: 'ready'; resultId: string };
+  | { type: 'ready'; resultId: string }
+  // Bro handed work to a specialist, mid-turn, on this same channel.
+  //
+  // `delegation` is typed `unknown` DELIBERATELY. The Rust side sends an already-shaped JSON
+  // object (`commands.rs::delegation_frame`) in which OMISSION carries meaning: `tools` is
+  // absent when capability could not be established, `grant` is `null` when the task stated no
+  // scope, and `conversationId` is `null` for a one-shot ask. Declaring an interface here would
+  // hand the renderer a promise about fields the backend may never send — this wave's recurring
+  // defect. Only the fail-closed reader in `features/delegation.ts` may decide what the payload
+  // establishes; everything else must treat it as untrusted JSON.
+  | { type: 'delegationSpawned'; delegation: unknown }
+  // …and that specialist returned. `outcome` is the backend's own word (`ok` / `error` /
+  // `unknown`); it is validated, never trusted, by `applyDelegationEvent`. `summary` is omitted
+  // (not nulled) when the stream reported no result text.
+  | { type: 'delegationSettled'; id: string; outcome: string; summary?: string; endedAt: string };
 
 export type RunStepEvent =
   | { type: 'delta'; text: string }
@@ -320,7 +432,8 @@ export type RunStepEvent =
 // forge a `trusted_verified` result — see services/governedTurn.ts.
 import {
   runGovernedTurn as runGovernedTurnCore,
-  type GovernedTurnRequest, type GovernedTurnResult,
+  attemptGovernedTurn as attemptGovernedTurnCore,
+  type GovernedTurnRequest, type GovernedTurnResult, type GovernedTurnAttempt,
 } from './governedTurn';
 
 /** Real broker transport: invoke the thin-proxy `governed_turn_execute` Tauri command. */
@@ -328,8 +441,38 @@ async function brokerTransport(request: GovernedTurnRequest): Promise<unknown> {
   return invoke('governed_turn_execute', { request });
 }
 
+/** A UUIDv4 from the platform CSPRNG. Isolated so a runtime without `crypto.randomUUID` fails as a
+ *  `malformed_request` non-decision rather than an unhandled rejection. */
+function requestId(): string {
+  return crypto.randomUUID();
+}
+
 /** Run a governed turn through the trusted broker service. `agent` is an optional authorized identifier;
- *  the broker resolves system/history/config/IDs itself — the renderer supplies none of them. */
+ *  the broker resolves system/history/config/IDs itself — the renderer supplies none of them.
+ *
+ *  REJECTS on any non-decision (no transport, connect failure, malformed reply). Prefer
+ *  {@link governedTurnAttempt} in UI code: it keeps "the broker refused" and "the broker was never
+ *  reached" apart, which a rejected promise cannot. */
 export function governedTurn(conversationId: string, agent?: string): Promise<GovernedTurnResult> {
-  return runGovernedTurnCore(conversationId, agent, brokerTransport, () => crypto.randomUUID());
+  return runGovernedTurnCore(conversationId, agent, brokerTransport, requestId);
+}
+
+/**
+ * The UI-facing governed turn: resolves with the broker's decision (`committed`/`blocked`) OR with an
+ * honest `unavailable` non-decision, and never rejects.
+ *
+ * Outside a Tauri runtime the proxy command does not exist at all, so this short-circuits to
+ * `no_desktop_backend` instead of letting a plain-browser invoke failure be classified as a broker
+ * problem — the broker was not merely unreachable there, it was never even addressable.
+ */
+export function governedTurnAttempt(conversationId: string, agent?: string): Promise<GovernedTurnAttempt> {
+  if (!hasBackend()) {
+    return Promise.resolve({
+      status: 'unavailable',
+      kind: 'no_desktop_backend',
+      detail: 'no_desktop_backend: there is no Tauri runtime here, so the governed_turn_execute proxy '
+        + 'does not exist and no broker was contacted.',
+    });
+  }
+  return attemptGovernedTurnCore(conversationId, agent, brokerTransport, requestId);
 }

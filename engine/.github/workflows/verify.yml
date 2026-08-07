@@ -21,6 +21,20 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python: ["3.12"]
     runs-on: ${{ matrix.os }}
+    env:
+      # O-1 posture, job-wide: every python this job starts — and every child it spawns,
+      # since this is an env var rather than a command-line flag — refuses to mint
+      # __pycache__. runtime/, tools/ and tests/ are digest roots, and compiled bytecode
+      # under one makes the wall refuse for the shadow. In THIS repo (where engine/ is the
+      # checkout root) that is not cosmetic: HookSubprocessTests and
+      # FullExecutionTransactionE2ETests are not monorepo-skipped, they exercise the real
+      # wall against the real root, and without this the runner's own imports plant the
+      # shadow that then refuses them. (It does NOT cover py_compile / compileall, which
+      # write explicitly whatever this says — hence the clean step below.)
+      # Deliberately safe for the bytecode tests: test_bytecode_shadow's clean_env()
+      # strips this var precisely so its "without -B the wall mints its own cache"
+      # assertions still exercise the real behaviour.
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
       # Third-party actions are pinned to a full commit SHA (a tag is mutable and a
       # compromised tag would run attacker code in CI); the comment tracks the version.
@@ -47,6 +61,15 @@ jobs:
           # here, never by an ambient/attacker env.
           BRO_ENV: ci
           BRO_OPERATOR_ROOT_PUBKEY: 7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c
+      # `Validate foundation` above py_compile's its targets into runtime/__pycache__ and
+      # tools/__pycache__, and py_compile writes whatever PYTHONDONTWRITEBYTECODE says. In
+      # THIS repo the suite below then runs the real wall against the real root, so that
+      # cache is not debris — it is a shadow the wall refuses on, and
+      # FullExecutionTransactionE2ETests / HookSubprocessTests go red for a reason that
+      # has nothing to do with what they test.
+      - name: Clear bytecode caches before the policy tests
+        run: |
+          python -Bc "import pathlib, shutil; [shutil.rmtree(p, ignore_errors=True) for p in list(pathlib.Path('.').rglob('__pycache__'))]; [p.unlink() for p in list(pathlib.Path('.').rglob('*.pyc')) + list(pathlib.Path('.').rglob('*.pyo'))]"
       - name: Run policy tests
         # The full-flow completion-gate tests exercise the REAL committed operator
         # registry (not an ephemeral per-fixture key), so they need the same CI pin
@@ -55,16 +78,42 @@ jobs:
         env:
           BRO_ENV: ci
           BRO_OPERATOR_ROOT_PUBKEY: 7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c
-      - name: Compile Python
-        run: python -m compileall -q runtime tools tests
+      # The live-wiring probe must watch the wall refuse FOR SCOPE. Since O-1,
+      # assert_no_bytecode_shadow refuses on any __pycache__ under a digest root, and it
+      # refuses from the SAME gate — so bytecode left by an earlier step replaces the
+      # reason the probe exists to demonstrate while the probe still sees "deny", and the
+      # check stays green having proven something else. PYTHONDONTWRITEBYTECODE above
+      # stops the interpreters minting caches, but NOT py_compile: `Validate foundation`
+      # calls tools/bro_validate.py, which py_compile's 30-odd targets and writes
+      # runtime/__pycache__ + tools/__pycache__ whatever that variable says. So the tree
+      # is cleaned HERE, immediately before the proof, rather than assumed. Runs on every
+      # matrix OS, hence pathlib rather than `find` / `Remove-Item`.
+      - name: Clear bytecode caches before the live-wiring proof
+        run: |
+          python -Bc "import pathlib, shutil; [shutil.rmtree(p, ignore_errors=True) for p in list(pathlib.Path('.').rglob('__pycache__'))]; [p.unlink() for p in list(pathlib.Path('.').rglob('*.pyc')) + list(pathlib.Path('.').rglob('*.pyo'))]"
       - name: Assure live wiring
         # The assurance validator runs each law's allow/deny cases through the WIRED
         # interpreter named in .claude/settings.json and requires the wired hook to
-        # actually deny — proving enforcement is live, not that files merely exist. It
-        # exits non-zero on any dead wiring. Runs on EVERY matrix OS: Windows is where
-        # bare `python3` wiring resolved to a dead Store alias and failed OPEN, so the
-        # Windows leg is the regression gate that turns fail-open wiring into a red build.
-        run: python tools/bro_live_validate.py
+        # actually deny — and to deny NAMING `missing BRO_WORKSPACE_BINDING`, because a
+        # negative that accepts any refusal certifies nothing about the check it names
+        # (the rule ci/live/run_live_turn.sh states in expect_blocked). It exits non-zero
+        # on any dead wiring, and refuses outright under a bytecode shadow. Runs on EVERY
+        # matrix OS: Windows is where bare `python3` wiring resolved to a dead Store alias
+        # and failed OPEN, so the Windows leg is the regression gate that turns fail-open
+        # wiring into a red build.
+        #
+        # -B is load-bearing, not hygiene: without it this validator's own imports of
+        # runtime/** mint the shadow it is about to check for, and it fails closed on
+        # itself.
+        run: python -B tools/bro_live_validate.py
+      # AFTER the live-wiring proof, never before. compileall is the syntax gate for the
+      # .py files no test imports, and it does its job by WRITING __pycache__ into
+      # runtime/, tools/ and tests/ — all digest roots. Run first (as it was until now) it
+      # made the wall refuse for the cache instead of for the scope, and the probe went
+      # green on the wrong refusal. The audit snapshot below already excludes __pycache__
+      # and *.pyc, so the caches this leaves change nothing downstream.
+      - name: Compile Python (syntax gate for the files no test imports)
+        run: python -m compileall -q runtime tools tests
       - name: Build canonical audit snapshot
         if: always() && runner.os == 'Linux'
         shell: bash

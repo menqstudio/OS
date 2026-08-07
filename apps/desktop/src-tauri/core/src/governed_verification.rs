@@ -23,7 +23,10 @@
 //!     `receipt.rs` documents), so tampering ANY field breaks the signature.
 //!  3. **Supervisor attestation** — Ed25519 over the attested `evidence_jcs` under the pinned attestation
 //!     key, AND `SHA256(evidence_jcs) == envelope.attestation_evidence_sha256` (the envelope's binding to
-//!     the exact bytes the supervisor signed, §4.9).
+//!     the exact bytes the supervisor signed, §4.9), AND — audit round 3 — the evidence is **PARSED** and
+//!     required to be an account of *this* turn: `decision == "completed"`, the run identity matches the
+//!     one the broker authorized, the request identity matches the broker's own `Expected`, and every
+//!     field the evidence and the envelope both carry agrees. See [`bind_attested_evidence`].
 //!  4. **Request binding** — `request_sha256` is **recomputed** from the broker's OWN trusted `Expected`
 //!     ([`receipt::IssuedRequest`], carrying the system/history/generation_config/context hashes the
 //!     broker resolved itself) via the frozen `receipt::request_envelope_sha256` formula, and required to
@@ -51,11 +54,14 @@
 //! **Verify-only:** like `receipt.rs`, the Ed25519 *signing* half is compiled solely under
 //! `#[cfg(test)]`, so the shipping broker core is never a `sign(arbitrary_bytes)` oracle.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::fmt;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use ed25519_dalek::{Signature, VerifyingKey};
+use serde::de::{self, Deserializer, MapAccess, Visitor};
+use serde::Deserialize;
 use serde_json::{Map, Number, Value};
 
 use crate::governed_message_store::AcceptedOutput;
@@ -162,6 +168,279 @@ impl ReceiptEnvelope<'_> {
 pub struct SupervisorAttestation<'a> {
     pub evidence_jcs: &'a [u8],
     pub signature_b64: &'a str,
+}
+
+// =================================================================================================
+// The attested evidence (§4.6) — PARSED, not merely hashed.
+//
+// AUDIT (round 3). Step 3 used to do exactly two things with `evidence_jcs`: verify the supervisor's
+// signature over it, and check `SHA256(evidence_jcs) == envelope.attestation_evidence_sha256`. It
+// never looked inside. Both of those hold for a supervisor attestation about a COMPLETELY DIFFERENT
+// turn, so the "supervisor attestation" contributed no fact about the run being accepted — it proved
+// only that the supervisor had, at some point, attested something, and that the signer had committed
+// to those bytes. Whether the attested run was this run was decided by nobody.
+//
+// The bytes are now parsed into the fixed §4.6 evidence record and required to be an account of THIS
+// turn. What that buys, stated exactly: the supervisor's signed account and the isolated signer's
+// signed account must AGREE, field by field, on every fact they share, and both must agree with the
+// broker's own resolution. It does not detect a supervisor and a signer that lie consistently — a
+// second opinion catches disagreement, not a coherent forgery by both key holders.
+// =================================================================================================
+
+/// Upper bound on the attested `evidence_jcs`. The §4.6 evidence is a fixed 29-key record of small
+/// ids, 64-hex handles and integers; anything larger is malformed or hostile and is refused before
+/// any parse allocation (mirrors `receipt::MAX_ENVELOPE_BYTES`).
+pub const MAX_ATTESTATION_EVIDENCE_BYTES: usize = 16 * 1024;
+
+/// The only `decision` that is a grant (§3.2 / §4.6). The supervisor STAMPS this itself.
+const EVIDENCE_DECISION_COMPLETED: &str = "completed";
+
+/// The 23 string-valued keys of the attested evidence object. This set is frozen by
+/// `governed_supervisor.evidence_from_state` + `isolated_signer.EVIDENCE_FIELDS` (Linux) and
+/// `win-live/src/servers.rs::attest_run` + `ATTEST_INPUT_FIELDS` (Windows) — both platforms build
+/// the identical 29-key object, which is what lets one parser serve both.
+const EVIDENCE_STRING_KEYS: [&str; 23] = [
+    "builder_id",
+    "containment_evidence_handle",
+    "decision",
+    "evidence_final_event_hash",
+    "execution_attempt_id",
+    "execution_receipt_handle",
+    "executor_id",
+    "generation_config_handle",
+    "history_handle",
+    "install_id",
+    "lease_handle",
+    "output_handle",
+    "policy_bundle_handle",
+    "policy_id",
+    "policy_version",
+    "receipt_id",
+    "record_handle",
+    "request_nonce",
+    "run_id",
+    "supervisor_id",
+    "system_handle",
+    "task_id",
+    "workspace_id",
+];
+
+/// The 6 integer-valued keys of the attested evidence object (bare JSON integers, never quoted).
+const EVIDENCE_INTEGER_KEYS: [&str; 6] = [
+    "challenge_accepted_at_ms",
+    "completed_at",
+    "evidence_event_count",
+    "evidence_head_sequence",
+    "evidence_last_sequence",
+    "requested_at",
+];
+
+/// One attested evidence value: the record is flat and every value is either a string or a bare
+/// integer. A nested object, an array, a bool, a null or a float is a shape violation, not a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EvidenceValue {
+    Str(String),
+    Int(i64),
+}
+
+/// A strict `serde` shim over the evidence object: duplicate keys are rejected (a JSON parser that
+/// silently keeps the last one is a parser-differential seam across the supervisor/signer/broker
+/// boundary), and only strings and bare integers are accepted as values.
+struct StrictEvidenceMap(BTreeMap<String, EvidenceValue>);
+
+impl<'de> Deserialize<'de> for StrictEvidenceMap {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = BTreeMap<String, EvidenceValue>;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a flat JSON object of string and integer values")
+            }
+            fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut out: BTreeMap<String, EvidenceValue> = BTreeMap::new();
+                while let Some(key) = access.next_key::<String>()? {
+                    let raw = access.next_value::<Value>()?;
+                    let value = match raw {
+                        Value::String(s) => EvidenceValue::Str(s),
+                        // `as_i64` is `None` for a float, for a `u64` above `i64::MAX`, and for any
+                        // non-number — so floats and oversize integers are refused here, not coerced.
+                        Value::Number(n) => match n.as_i64() {
+                            Some(i) => EvidenceValue::Int(i),
+                            None => return Err(de::Error::custom("evidence: non-i64 number")),
+                        },
+                        _ => return Err(de::Error::custom("evidence: value is not a string or integer")),
+                    };
+                    if out.insert(key, value).is_some() {
+                        return Err(de::Error::custom("evidence: duplicate key"));
+                    }
+                }
+                Ok(out)
+            }
+        }
+        deserializer.deserialize_map(V).map(StrictEvidenceMap)
+    }
+}
+
+/// The parsed §4.6 attested evidence — proven to carry EXACTLY the 29 frozen keys with the right
+/// value kinds. Construction is the only way to get one, so a caller cannot hold a half-checked
+/// record. Every accessor is infallible because the key set was proven at parse time.
+#[derive(Debug, Clone)]
+pub struct AttestedEvidence {
+    fields: BTreeMap<String, EvidenceValue>,
+}
+
+impl AttestedEvidence {
+    fn s(&self, key: &str) -> &str {
+        match self.fields.get(key) {
+            Some(EvidenceValue::Str(v)) => v.as_str(),
+            // Unreachable: `parse` proved every key in EVIDENCE_STRING_KEYS is present and a string.
+            _ => unreachable!("evidence string key {key} was proven present at parse time"),
+        }
+    }
+    fn i(&self, key: &str) -> i64 {
+        match self.fields.get(key) {
+            Some(EvidenceValue::Int(v)) => *v,
+            _ => unreachable!("evidence integer key {key} was proven present at parse time"),
+        }
+    }
+
+    /// Strict-parse the exact bytes the supervisor signed. Size-capped, duplicate keys rejected,
+    /// every value a string or a bare integer, and EXACTLY the frozen 29-key set — no unknown key,
+    /// none missing, none of the wrong kind. Any failure ⇒ Block (an evidence record the broker
+    /// cannot read is one it cannot check, and accepting it restores the digest-only step).
+    pub fn parse(evidence_jcs: &[u8]) -> Result<Self, TurnReason> {
+        if evidence_jcs.len() > MAX_ATTESTATION_EVIDENCE_BYTES {
+            return Err(TurnReason::UpstreamBlocked);
+        }
+        let fields = serde_json::from_slice::<StrictEvidenceMap>(evidence_jcs)
+            .map_err(|_| TurnReason::UpstreamBlocked)?
+            .0;
+
+        // Exact key set. Unknown keys first: an evidence object carrying an extra field is a
+        // different shape than the one both supervisors build, and the broker must not guess.
+        if fields.len() != EVIDENCE_STRING_KEYS.len() + EVIDENCE_INTEGER_KEYS.len() {
+            return Err(TurnReason::UpstreamBlocked);
+        }
+        for key in EVIDENCE_STRING_KEYS {
+            match fields.get(key) {
+                Some(EvidenceValue::Str(v)) if !v.is_empty() => {}
+                _ => return Err(TurnReason::UpstreamBlocked),
+            }
+        }
+        for key in EVIDENCE_INTEGER_KEYS {
+            match fields.get(key) {
+                Some(EvidenceValue::Int(_)) => {}
+                _ => return Err(TurnReason::UpstreamBlocked),
+            }
+        }
+        Ok(AttestedEvidence { fields })
+    }
+}
+
+/// Require the parsed attestation to be an account of **this** turn (audit round 3).
+///
+/// Three groups, and it is worth being precise about what each one is worth:
+///
+///  * **Grant** — `decision` must be `completed`. A `denied`/`uncontained` attestation is not a
+///    grant however validly it is signed.
+///  * **Agreement with the isolated signer** — every field the evidence and the envelope BOTH carry
+///    must be equal. The envelope is signed by the signer, the evidence by the supervisor; the two
+///    are separate key holders, so this is a genuine second opinion. `output_handle` is compared to
+///    `output_sha256` because both platforms' signers derive the latter from the content-addressed
+///    bytes named by the former, so they are the same digest by construction.
+///  * **Agreement with the broker's own resolution** — the run/task/attempt identity the broker
+///    authorized, and the workspace/install/nonce/request-component digests it resolved itself.
+///    Against a compromised broker this half is self-comparison; against a stale, foreign or
+///    replayed SUPERVISOR attestation it is exactly the check that was missing.
+///
+/// A supervisor attestation for a different turn now fails here even when its signature is perfect
+/// and the signer committed to its digest.
+pub fn bind_attested_evidence(
+    evidence: &AttestedEvidence,
+    envelope: &ReceiptEnvelope,
+    expected: &IssuedRequest,
+    ctx: &BrokerContext,
+) -> Result<(), TurnReason> {
+    // (a) The decision must be a grant.
+    if evidence.s("decision") != EVIDENCE_DECISION_COMPLETED {
+        return Err(TurnReason::UpstreamBlocked);
+    }
+
+    // (b) Every string field the supervisor's account and the signer's account both carry.
+    let string_pairs: [(&str, &str); 11] = [
+        (evidence.s("run_id"), envelope.run_id),
+        (evidence.s("execution_attempt_id"), envelope.execution_attempt_id),
+        (evidence.s("task_id"), envelope.task_id),
+        (evidence.s("workspace_id"), envelope.workspace_id),
+        (evidence.s("install_id"), envelope.install_id),
+        (evidence.s("request_nonce"), envelope.request_nonce),
+        (evidence.s("receipt_id"), envelope.receipt_id),
+        (evidence.s("record_handle"), envelope.record_handle),
+        (evidence.s("lease_handle"), envelope.lease_handle),
+        (evidence.s("execution_receipt_handle"), envelope.execution_receipt_handle),
+        (evidence.s("evidence_final_event_hash"), envelope.evidence_final_event_hash),
+    ];
+    for (attested, signed) in string_pairs {
+        if attested != signed {
+            return Err(TurnReason::UpstreamBlocked);
+        }
+    }
+    // The reply bytes: the store handle the supervisor attested IS the digest the signer signed.
+    if evidence.s("output_handle") != envelope.output_sha256 {
+        return Err(TurnReason::UpstreamBlocked);
+    }
+
+    // (c) The integer fields both accounts carry.
+    let int_pairs: [(i64, i64); 4] = [
+        (evidence.i("challenge_accepted_at_ms"), envelope.challenge_accepted_at_ms),
+        (evidence.i("completed_at"), envelope.completed_at_ms),
+        (evidence.i("evidence_event_count"), envelope.evidence_event_count),
+        (evidence.i("evidence_last_sequence"), envelope.evidence_last_sequence),
+    ];
+    for (attested, signed) in int_pairs {
+        if attested != signed {
+            return Err(TurnReason::UpstreamBlocked);
+        }
+    }
+    if evidence.i("evidence_head_sequence") != envelope.evidence_head_sequence {
+        return Err(TurnReason::UpstreamBlocked);
+    }
+
+    // (d) The run identity the BROKER authorized (its own resolution + the attempt id from the lease
+    //     the supervisor granted it) — the same three fields step 4b binds on the envelope, now also
+    //     required of the supervisor's independently-signed account.
+    if evidence.s("run_id") != ctx.expected_run_id
+        || evidence.s("task_id") != ctx.expected_task_id
+        || evidence.s("execution_attempt_id") != ctx.expected_execution_attempt_id
+    {
+        return Err(TurnReason::UpstreamBlocked);
+    }
+
+    // (e) The request the broker itself issued. The three component handles are compared to the
+    //     broker's own resolved digests: the store is content-addressed, so a handle IS the digest of
+    //     the bytes it names, on both platforms' signers.
+    if evidence.s("workspace_id") != expected.workspace_id
+        || evidence.s("install_id") != expected.install_id
+        || evidence.s("request_nonce") != expected.request_nonce
+        || evidence.s("system_handle") != expected.system_sha256
+        || evidence.s("history_handle") != expected.history_sha256
+        || evidence.s("generation_config_handle") != expected.generation_config_sha256
+    {
+        return Err(TurnReason::UpstreamBlocked);
+    }
+    // `requested_at` is an integer in the evidence and the canonical decimal string in the §2.2
+    // request envelope; compare in the request envelope's form.
+    if evidence.i("requested_at").to_string() != expected.requested_at {
+        return Err(TurnReason::UpstreamBlocked);
+    }
+
+    Ok(())
 }
 
 /// The two manifest keys the broker has **pinned** (§4.9 — the isolated-signer key the desktop pins, and
@@ -354,6 +633,8 @@ pub fn verify_and_accept(
     if sha256_hex(attestation.evidence_jcs) != envelope.attestation_evidence_sha256 {
         return Err(TurnReason::UpstreamBlocked);
     }
+    //    The attestation is not yet an account of THIS turn — that is step 4c, once the broker's own
+    //    Expected/ctx bindings below have been established to compare it against.
 
     // 4. Request binding: recompute request_sha256 from the broker's OWN trusted Expected and require the
     //    envelope to match it (+ the request-context ids). A forged/mismatched request hash Blocks.
@@ -379,6 +660,16 @@ pub fn verify_and_accept(
     {
         return Err(TurnReason::UpstreamBlocked);
     }
+
+    // 4c. ATTESTATION TURN BINDING (audit round 3). Step 3 proved the supervisor signed these exact
+    //     bytes and that the signer committed to their digest — both of which are equally true of an
+    //     attestation about a completely different turn. The bytes are now PARSED and required to be
+    //     an account of THIS turn: a grant decision, agreement with the isolated signer's separately
+    //     signed envelope field by field, and agreement with the broker's own resolution. Nothing is
+    //     parsed until the supervisor's signature over these exact bytes verified at step 3, so the
+    //     parser only ever runs on supervisor-authenticated input.
+    let attested = AttestedEvidence::parse(attestation.evidence_jcs)?;
+    bind_attested_evidence(&attested, envelope, expected, ctx)?;
 
     // 5. Output binding: length gate + digest gate over the RAW bytes (no normalization). A disagreement
     //    is a commit-readback-class failure — the accepted body would not match the envelope's digest.
@@ -435,14 +726,66 @@ mod tests {
     }
 
     const OUTPUT: &[u8] = b"the exact governed reply bytes";
-    const ATTEST_EVIDENCE: &[u8] = br#"{"protocol":"brops.governed-sign-request.v1","x":1}"#;
 
-    // 64-hex handle/head literals (owned 'static so borrowing them in the fixture is sound; their
-    // values are not cross-checked by this slice — only carried into the signed JCS).
+    // 64-hex handle/head literals (owned 'static so borrowing them in the fixture is sound).
     const H_RECORD: &str = "1111111111111111111111111111111111111111111111111111111111111111";
     const H_LEASE: &str = "2222222222222222222222222222222222222222222222222222222222222222";
     const H_RECEIPT: &str = "3333333333333333333333333333333333333333333333333333333333333333";
     const H_EVIDENCE: &str = "7777777777777777777777777777777777777777777777777777777777777777";
+    const H_POLICY: &str = "8888888888888888888888888888888888888888888888888888888888888888";
+    const H_CONTAIN: &str = "9999999999999999999999999999999999999999999999999999999999999999";
+
+    /// One §4.6 attested-evidence field, as the supervisor writes it.
+    struct Ev(&'static str, Value);
+
+    /// Build the canonical JCS of a full 29-key §4.6 evidence record. `overrides` replaces named
+    /// fields, so a test can produce a well-formed attestation for a DIFFERENT turn (or one that
+    /// disagrees with the envelope about exactly one fact) without hand-rolling 29 keys.
+    ///
+    /// `serde_json::to_vec` of a `Map` is sorted + compact, byte-identical to what both supervisors
+    /// sign (`json.dumps(sort_keys=True, separators=(",",":"))` / `crypto::jcs`).
+    fn evidence_jcs_with(system: &str, history: &str, generation: &str, output_sha256: &str, overrides: &[Ev]) -> Vec<u8> {
+        let mut m: Map<String, Value> = Map::new();
+        let base: [(&str, Value); 29] = [
+            ("run_id", "run-1".into()),
+            ("execution_attempt_id", "att-1".into()),
+            ("task_id", "task-1".into()),
+            ("request_nonce", "nonce-xyz".into()),
+            ("receipt_id", "receipt-abc".into()),
+            ("workspace_id", "ws-1".into()),
+            ("install_id", "install-1".into()),
+            ("supervisor_id", "sup-1".into()),
+            ("executor_id", "exec-1".into()),
+            ("builder_id", "build-1".into()),
+            ("policy_id", "pol-1".into()),
+            ("policy_version", "1".into()),
+            ("policy_bundle_handle", H_POLICY.into()),
+            ("system_handle", system.into()),
+            ("history_handle", history.into()),
+            ("generation_config_handle", generation.into()),
+            ("output_handle", output_sha256.into()),
+            ("containment_evidence_handle", H_CONTAIN.into()),
+            ("record_handle", H_RECORD.into()),
+            ("lease_handle", H_LEASE.into()),
+            ("execution_receipt_handle", H_RECEIPT.into()),
+            ("evidence_final_event_hash", H_EVIDENCE.into()),
+            ("decision", "completed".into()),
+            ("requested_at", Value::Number(Number::from(1000))),
+            ("challenge_accepted_at_ms", Value::Number(Number::from(1000))),
+            ("completed_at", Value::Number(Number::from(2000))),
+            ("evidence_event_count", Value::Number(Number::from(3))),
+            ("evidence_last_sequence", Value::Number(Number::from(12))),
+            ("evidence_head_sequence", Value::Number(Number::from(12))),
+        ];
+        for (k, v) in base {
+            m.insert(k.to_string(), v);
+        }
+        for Ev(k, v) in overrides {
+            assert!(m.contains_key(*k), "override names a field the evidence does not carry: {k}");
+            m.insert((*k).to_string(), v.clone());
+        }
+        serde_json::to_vec(&Value::Object(m)).unwrap()
+    }
 
     // Stable owned strings the borrowed structs point at.
     struct Fx {
@@ -451,6 +794,8 @@ mod tests {
         generation: String,
         request_sha256: String,
         output_sha256: String,
+        output_bytes: u64,
+        attest_evidence: Vec<u8>,
         attest_sha256: String,
         iso_pub: [u8; 32],
         sup_pub: [u8; 32],
@@ -459,14 +804,23 @@ mod tests {
     }
 
     fn fx() -> Fx {
+        fx_over(OUTPUT, &[])
+    }
+
+    /// The fixture for a genuine turn over `output`, with `overrides` applied to the attested
+    /// evidence. Every signature is recomputed, so the ONLY thing a test varies is the fact it is
+    /// testing — an override never leaves a broken signature behind to pass the test for it.
+    fn fx_over(output: &[u8], overrides: &[Ev]) -> Fx {
         let system = hx(0x55);
         let history = hx(0x66);
         let generation = hx(0x44);
         let request_sha256 = crate::receipt::request_envelope_sha256(
             "ws-1", "install-1", "nonce-xyz", &system, &history, &generation, "1000",
         );
-        let output_sha256 = sha256_hex(OUTPUT);
-        let attest_sha256 = sha256_hex(ATTEST_EVIDENCE);
+        let output_sha256 = sha256_hex(output);
+        let attest_evidence =
+            evidence_jcs_with(&system, &history, &generation, &output_sha256, overrides);
+        let attest_sha256 = sha256_hex(&attest_evidence);
         let iso = signing_key(7);
         let sup = signing_key(9);
         let mut f = Fx {
@@ -475,6 +829,8 @@ mod tests {
             generation,
             request_sha256,
             output_sha256,
+            output_bytes: output.len() as u64,
+            attest_evidence,
             attest_sha256,
             iso_pub: iso.verifying_key().to_bytes(),
             sup_pub: sup.verifying_key().to_bytes(),
@@ -482,12 +838,11 @@ mod tests {
             attest_sig: String::new(),
         };
         // Sign the reconstructed payload JCS + the attestation evidence.
-        let env_sig = {
+        f.env_sig = {
             let env = envelope(&f);
             sign_b64(&iso, &env.payload_jcs().unwrap())
         };
-        f.env_sig = env_sig;
-        f.attest_sig = sign_b64(&sup, ATTEST_EVIDENCE);
+        f.attest_sig = sign_b64(&sup, &f.attest_evidence);
         f
     }
 
@@ -519,7 +874,7 @@ mod tests {
             lease_handle: H_LEASE,
             execution_receipt_handle: H_RECEIPT,
             output_sha256: &f.output_sha256,
-            output_bytes: OUTPUT.len() as u64,
+            output_bytes: f.output_bytes,
             challenge_accepted_at_ms: 1000,
             completed_at_ms: 2000,
             evidence_final_event_hash: H_EVIDENCE,
@@ -541,7 +896,7 @@ mod tests {
     }
 
     fn attest(f: &Fx) -> SupervisorAttestation<'_> {
-        SupervisorAttestation { evidence_jcs: ATTEST_EVIDENCE, signature_b64: &f.attest_sig }
+        SupervisorAttestation { evidence_jcs: &f.attest_evidence, signature_b64: &f.attest_sig }
     }
 
     const CTX: BrokerContext<'static> = BrokerContext {
@@ -724,8 +1079,8 @@ mod tests {
         let k = keys(&f);
         let mut ledger = InMemoryLedger::new();
         // Attestation signed by the WRONG key.
-        let forged = sign_b64(&signing_key(123), ATTEST_EVIDENCE);
-        let a = SupervisorAttestation { evidence_jcs: ATTEST_EVIDENCE, signature_b64: &forged };
+        let forged = sign_b64(&signing_key(123), &f.attest_evidence);
+        let a = SupervisorAttestation { evidence_jcs: &f.attest_evidence, signature_b64: &forged };
         assert!(matches!(verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger), Err(TurnReason::UpstreamBlocked)));
     }
 
@@ -736,10 +1091,11 @@ mod tests {
         let k = keys(&f);
         let mut ledger = InMemoryLedger::new();
         // Different evidence bytes, correctly signed — but their SHA-256 no longer equals the envelope's
-        // attestation_evidence_sha256, so the binding fails.
-        let other_evidence = br#"{"protocol":"brops.governed-sign-request.v1","x":2}"#;
-        let sig = sign_b64(&signing_key(9), other_evidence);
-        let a = SupervisorAttestation { evidence_jcs: other_evidence, signature_b64: &sig };
+        // attestation_evidence_sha256, so the binding fails BEFORE the turn-binding parse.
+        let other_evidence =
+            evidence_jcs_with(&f.system, &f.history, &f.generation, &f.output_sha256, &[Ev("receipt_id", "receipt-OTHER".into())]);
+        let sig = sign_b64(&signing_key(9), &other_evidence);
+        let a = SupervisorAttestation { evidence_jcs: &other_evidence, signature_b64: &sig };
         assert!(matches!(verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger), Err(TurnReason::UpstreamBlocked)));
     }
 
@@ -771,24 +1127,12 @@ mod tests {
         // The envelope commits to the digest+length of raw (non-UTF8) bytes; the gates pass but the
         // strict-UTF8 decode for the committed body fails ⇒ Block.
         let raw: &[u8] = &[0xff, 0xfe, 0x00, 0x80];
-        let f0 = fx();
-        let iso = signing_key(7);
-        let sup = signing_key(9);
-        let out_sha = sha256_hex(raw);
-        let attest_sha = sha256_hex(ATTEST_EVIDENCE);
-        let f = Fx {
-            output_sha256: out_sha,
-            attest_sha256: attest_sha,
-            ..f0
-        };
-        let mut env = envelope(&f);
-        env.output_bytes = raw.len() as u64;
-        let env_sig = sign_b64(&iso, &env.payload_jcs().unwrap());
-        let attest_sig = sign_b64(&sup, ATTEST_EVIDENCE);
+        let f = fx_over(raw, &[]);
+        let env = envelope(&f);
         let k = keys(&f);
-        let a = SupervisorAttestation { evidence_jcs: ATTEST_EVIDENCE, signature_b64: &attest_sig };
+        let a = attest(&f);
         let mut ledger = InMemoryLedger::new();
-        assert!(matches!(verify_and_accept(&expected(&f), &env, &env_sig, &a, &k, raw, &CTX, &mut ledger), Err(TurnReason::UpstreamBlocked)));
+        assert!(matches!(verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, raw, &CTX, &mut ledger), Err(TurnReason::UpstreamBlocked)));
     }
 
     #[test]
@@ -807,6 +1151,205 @@ mod tests {
         // no whitespace between members.
         assert!(!s.contains(", "));
         assert!(!s.contains(": "));
+    }
+
+    // =============================================================================================
+    // Step 4c — the supervisor attestation must be an account of THIS turn.
+    //
+    // Before this, step 3 hashed `evidence_jcs` and never parsed it, so a supervisor attestation
+    // about a DIFFERENT run satisfied both of its checks: the signature verifies (it is genuine) and
+    // the digest matches (the signer committed to whatever bytes it was handed). The headline test
+    // below is exactly that adversary — every signature in it is real.
+    // =============================================================================================
+
+    /// Pair THIS turn's envelope with a genuine supervisor attestation for a DIFFERENT turn, and
+    /// re-sign the envelope so its `attestation_evidence_sha256` commits to the foreign bytes. Every
+    /// signature is valid, the digest binding holds, the request/output/run bindings all match the
+    /// broker's own Expected — the only defect is that the supervisor attested another run.
+    fn envelope_bound_to_foreign_attestation(f: &Fx, foreign: &[u8]) -> (String, String) {
+        let mut env = envelope(f);
+        let foreign_sha = sha256_hex(foreign);
+        env.attestation_evidence_sha256 = &foreign_sha;
+        let env_sig = sign_b64(&signing_key(7), &env.payload_jcs().unwrap());
+        (foreign_sha, env_sig)
+    }
+
+    #[test]
+    fn a_valid_attestation_for_a_different_turn_is_refused() {
+        let f = fx();
+        // A COMPLETE, well-formed, correctly-signed §4.6 attestation — about another run.
+        let foreign = evidence_jcs_with(
+            &hx(0x11),
+            &hx(0x22),
+            &hx(0x33),
+            &sha256_hex(b"a different turn's reply"),
+            &[
+                Ev("run_id", "run-OTHER".into()),
+                Ev("task_id", "task-OTHER".into()),
+                Ev("execution_attempt_id", "att-OTHER".into()),
+                Ev("request_nonce", "nonce-OTHER".into()),
+                Ev("receipt_id", "receipt-OTHER".into()),
+            ],
+        );
+        let foreign_sig = sign_b64(&signing_key(9), &foreign);
+        let (foreign_sha, env_sig) = envelope_bound_to_foreign_attestation(&f, &foreign);
+
+        let mut env = envelope(&f);
+        env.attestation_evidence_sha256 = &foreign_sha;
+        let k = keys(&f);
+        let a = SupervisorAttestation { evidence_jcs: &foreign, signature_b64: &foreign_sig };
+        let mut ledger = InMemoryLedger::new();
+
+        // Sanity: the attestation really is genuine and really is bound to this envelope, i.e. the
+        // test is not passing because something upstream of step 4c is broken.
+        assert!(
+            verify_ed25519(&f.sup_pub, &foreign, &foreign_sig).is_ok(),
+            "the foreign attestation must carry a REAL supervisor signature"
+        );
+        assert_eq!(
+            sha256_hex(a.evidence_jcs),
+            env.attestation_evidence_sha256,
+            "the envelope must be bound to the foreign evidence bytes (step 3 must pass)"
+        );
+
+        match verify_and_accept(&expected(&f), &env, &env_sig, &a, &k, OUTPUT, &CTX, &mut ledger) {
+            Err(TurnReason::UpstreamBlocked) => {}
+            Err(other) => panic!("expected UpstreamBlocked, got {other:?}"),
+            Ok(_) => panic!(
+                "a genuinely-signed supervisor attestation about ANOTHER run must never authorize this turn"
+            ),
+        }
+        // A blocked turn burns nothing.
+        assert_eq!(ledger.claim("receipt-abc", "nonce-xyz"), Ok(()));
+    }
+
+    #[test]
+    fn an_attestation_that_disagrees_with_the_envelope_about_one_fact_is_refused() {
+        // Each case is a genuine, fully-signed attestation for this turn that differs from the
+        // isolated signer's separately-signed envelope in exactly ONE field.
+        let cases: Vec<(&str, Ev)> = vec![
+            ("run_id", Ev("run_id", "run-2".into())),
+            ("execution_attempt_id", Ev("execution_attempt_id", "att-2".into())),
+            ("task_id", Ev("task_id", "task-2".into())),
+            ("workspace_id", Ev("workspace_id", "ws-2".into())),
+            ("install_id", Ev("install_id", "install-2".into())),
+            ("request_nonce", Ev("request_nonce", "nonce-2".into())),
+            ("receipt_id", Ev("receipt_id", "receipt-2".into())),
+            ("record_handle", Ev("record_handle", H_LEASE.into())),
+            ("lease_handle", Ev("lease_handle", H_RECORD.into())),
+            ("execution_receipt_handle", Ev("execution_receipt_handle", H_RECORD.into())),
+            ("evidence_final_event_hash", Ev("evidence_final_event_hash", H_RECORD.into())),
+            ("output_handle", Ev("output_handle", sha256_hex(b"other bytes").into())),
+            ("challenge_accepted_at_ms", Ev("challenge_accepted_at_ms", Value::Number(Number::from(1001)))),
+            ("completed_at", Ev("completed_at", Value::Number(Number::from(2001)))),
+            ("evidence_event_count", Ev("evidence_event_count", Value::Number(Number::from(4)))),
+            ("evidence_last_sequence", Ev("evidence_last_sequence", Value::Number(Number::from(13)))),
+            ("evidence_head_sequence", Ev("evidence_head_sequence", Value::Number(Number::from(13)))),
+            ("system_handle", Ev("system_handle", hx(0x56).into())),
+            ("history_handle", Ev("history_handle", hx(0x67).into())),
+            ("generation_config_handle", Ev("generation_config_handle", hx(0x45).into())),
+            ("requested_at", Ev("requested_at", Value::Number(Number::from(1001)))),
+            ("decision", Ev("decision", "denied".into())),
+        ];
+        for (name, over) in cases {
+            // The ENVELOPE stays this turn's (built by `fx()`); only the attestation varies, and it
+            // is re-signed, so the supervisor signature and the digest binding both still hold.
+            let f = fx();
+            let variant = evidence_jcs_with(&f.system, &f.history, &f.generation, &f.output_sha256, &[over]);
+            let variant_sig = sign_b64(&signing_key(9), &variant);
+            let variant_sha = sha256_hex(&variant);
+            let mut env = envelope(&f);
+            env.attestation_evidence_sha256 = &variant_sha;
+            let env_sig = sign_b64(&signing_key(7), &env.payload_jcs().unwrap());
+            let k = keys(&f);
+            let a = SupervisorAttestation { evidence_jcs: &variant, signature_b64: &variant_sig };
+            let mut ledger = InMemoryLedger::new();
+            match verify_and_accept(&expected(&f), &env, &env_sig, &a, &k, OUTPUT, &CTX, &mut ledger) {
+                Err(TurnReason::UpstreamBlocked) => {}
+                Err(other) => panic!("{name}: expected UpstreamBlocked, got {other:?}"),
+                Ok(_) => panic!("{name}: the supervisor and the signer disagree about this turn — Block"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_genuine_attestation_still_binds_and_accepts() {
+        // The counterweight to the refusals above: if `bind_attested_evidence` were merely "always
+        // refuse", every negative test would pass and the module would be dead. This proves the
+        // full 29-key record of a real turn passes step 4c.
+        let f = fx();
+        let attested = AttestedEvidence::parse(&f.attest_evidence).expect("real evidence must parse");
+        let env = envelope(&f);
+        bind_attested_evidence(&attested, &env, &expected(&f), &CTX)
+            .expect("the supervisor's account of THIS turn must bind");
+    }
+
+    #[test]
+    fn malformed_attested_evidence_is_refused_rather_than_ignored() {
+        let f = fx();
+        let good = String::from_utf8(f.attest_evidence.clone()).unwrap();
+        let cases: Vec<(&str, Vec<u8>)> = vec![
+            ("not json", b"not json at all".to_vec()),
+            ("not an object", b"[1,2,3]".to_vec()),
+            ("empty object", b"{}".to_vec()),
+            (
+                "duplicate key",
+                // A duplicate `run_id`: a lax parser keeps the last one, so the field the broker
+                // reads and the field a differently-lax reader reads can disagree.
+                good.replacen(r#""run_id":"run-1""#, r#""run_id":"run-1","run_id":"run-1""#, 1).into_bytes(),
+            ),
+            (
+                "unknown extra key",
+                good.replacen('{', r#"{"aaa_unknown":"x","#, 1).into_bytes(),
+            ),
+            (
+                "missing key",
+                good.replacen(r#""supervisor_id":"sup-1","#, "", 1).into_bytes(),
+            ),
+            (
+                "integer field sent as a string",
+                good.replacen(r#""completed_at":2000"#, r#""completed_at":"2000""#, 1).into_bytes(),
+            ),
+            (
+                "string field sent as a number",
+                good.replacen(r#""run_id":"run-1""#, r#""run_id":1"#, 1).into_bytes(),
+            ),
+            (
+                "nested value",
+                good.replacen(r#""run_id":"run-1""#, r#""run_id":{"a":1}"#, 1).into_bytes(),
+            ),
+            (
+                "empty string field",
+                good.replacen(r#""run_id":"run-1""#, r#""run_id":"""#, 1).into_bytes(),
+            ),
+            (
+                "float where an integer is required",
+                good.replacen(r#""completed_at":2000"#, r#""completed_at":2000.5"#, 1).into_bytes(),
+            ),
+            ("oversize", vec![b'x'; MAX_ATTESTATION_EVIDENCE_BYTES + 1]),
+        ];
+        for (name, bytes) in cases {
+            assert!(
+                AttestedEvidence::parse(&bytes).is_err(),
+                "{name}: malformed attested evidence must be refused, not read past"
+            );
+            // ...and it must Block the whole turn, with every signature over it genuine.
+            let sig = sign_b64(&signing_key(9), &bytes);
+            let sha = sha256_hex(&bytes);
+            let mut env = envelope(&f);
+            env.attestation_evidence_sha256 = &sha;
+            let env_sig = sign_b64(&signing_key(7), &env.payload_jcs().unwrap());
+            let k = keys(&f);
+            let a = SupervisorAttestation { evidence_jcs: &bytes, signature_b64: &sig };
+            let mut ledger = InMemoryLedger::new();
+            assert!(
+                matches!(
+                    verify_and_accept(&expected(&f), &env, &env_sig, &a, &k, OUTPUT, &CTX, &mut ledger),
+                    Err(TurnReason::UpstreamBlocked)
+                ),
+                "{name}: must Block"
+            );
+        }
     }
 
     // =============================================================================================

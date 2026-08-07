@@ -18,7 +18,7 @@ use brops_broker::chain_executor::{ChainExecutor, CustodyResolver, ExecutionPlan
 use brops_broker::chain_hops::{HopConn, HopError, Principal};
 
 use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
-use brops_core::governed_turn_ipc::{REQUEST_PROTOCOL, TRUSTED_VERIFIED};
+use brops_core::governed_turn_ipc::REQUEST_PROTOCOL;
 use brops_core::broker_turns::DurableAcceptanceLedger;
 use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
 use brops_core::key_manifest::{

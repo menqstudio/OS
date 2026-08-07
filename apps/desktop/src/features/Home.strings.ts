@@ -35,6 +35,25 @@ export const STR = {
   eventsHeader: { en: 'Events', hy: 'Իրադ.', ru: 'События' },
   timeHeader: { en: 'Time', hy: 'Ժամ', ru: 'Время' },
   noActivityYet: { en: 'No activity yet', hy: 'Դեռ ակտիվություն չկա', ru: 'Пока нет активности' },
+
+  // ── Honest-absence vocabulary ─────────────────────────────────────────────
+  // Three DIFFERENT states that used to render as the same `0` / `—`. They are
+  // worded (and styled) apart on purpose: an owner must be able to tell a quiet
+  // workspace from a broken read at a glance, because only one of them is a bug.
+  reading: { en: 'reading…', hy: 'կարդում է…', ru: 'чтение…' },
+  readingLabel: { en: 'Reading', hy: 'Կարդում է', ru: 'Чтение' },
+  noDataYet: { en: 'no data yet', hy: 'դեռ տվյալ չկա', ru: 'пока нет данных' },
+  couldNotRead: { en: 'could not read', hy: 'չհաջողվեց կարդալ', ru: 'не удалось прочитать' },
+  couldNotReadLabel: {
+    en: 'Could not read this value',
+    hy: 'Չհաջողվեց կարդալ այս արժեքը',
+    ru: 'Не удалось прочитать это значение',
+  },
+  tasksUnavailable: {
+    en: 'Task list could not be read',
+    hy: 'Առաջադրանքների ցանկը չհաջողվեց կարդալ',
+    ru: 'Не удалось прочитать список задач',
+  },
 } as const;
 
 // Parameterised accessible-text equivalents. Kept as per-language builders so

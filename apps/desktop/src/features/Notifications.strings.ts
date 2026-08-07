@@ -91,6 +91,21 @@ export const STR = {
     ru: 'Неподтверждённое зеркало: эти события проверены только по форме и не содержат '
       + 'подписи, а десктоп не аутентифицирует процесс, который их выдал.',
   },
+  // --- The ENGINE's own account of an empty stream ---
+  // The engine explains an empty surface in its own words. This label ATTRIBUTES that
+  // sentence; the sentence is quoted verbatim and never re-voiced as the desktop's
+  // finding — the desktop read nothing itself, it only relays the engine's claim.
+  gateEngineSays: {
+    en: 'The engine’s own account:',
+    hy: 'Շարժիչի սեփական բացատրությունը՝',
+    ru: 'Собственное объяснение движка:',
+  },
+  // Provenance, never proof: the engine names the store it read.
+  gateEngineSource: {
+    en: 'Store the engine says it read: ',
+    hy: 'Պահոցը, որը շարժիչն ասում է կարդացել է՝ ',
+    ru: 'Хранилище, которое движок сообщает, что прочитал: ',
+  },
   gateBody: {
     en: 'The engine governance-event stream is not connected to this desktop yet. Signals '
       + 'from the engine ledger appear here once the read bridge lands — the desktop mirrors, '

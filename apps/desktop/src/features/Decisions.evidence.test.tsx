@@ -116,3 +116,81 @@ describe('Decisions — mirrored records are labelled unauthenticated', () => {
     expect(cls).toContain('done');
   });
 });
+
+describe("Decisions — the ENGINE's reason for an empty chain reaches the owner", () => {
+  it('quotes the engine sentence, attributed, beside the honest empty state', async () => {
+    // The mirror used to drop `empty_reason` / `known_task` / `source`, so an empty
+    // chain rendered as a blank panel and the owner could not tell "there is nothing to
+    // show" from "there is nothing to show BECAUSE the runtime has no such task".
+    mountWithChain({
+      state: 'ok',
+      surface: 'evidenceChain',
+      records: [],
+      authenticated: false,
+      engine: {
+        emptyReason: "the orchestration runtime has no task 'd-1'",
+        recordCount: 0,
+        knownTask: false,
+        sourceKind: 'signed-evidence-store',
+      },
+    });
+    await openEvidence();
+
+    // The honest empty state is still exactly what it was...
+    await waitFor(() => expect(screen.getByText('No evidence')).toBeInTheDocument());
+    expect(screen.getByText(/empty chain is not a verified chain/i)).toBeInTheDocument();
+
+    // ...and now the engine's own words sit BESIDE it, attributed to the engine and
+    // quoted verbatim rather than restated in the page's voice.
+    expect(screen.getByText('The engine’s own account:')).toBeInTheDocument();
+    const quote = screen.getByText("the orchestration runtime has no task 'd-1'");
+    expect(quote.tagName).toBe('Q');
+    expect(screen.getByText(/never heard of this decision id/i)).toBeInTheDocument();
+    expect(screen.getByText('signed-evidence-store')).toBeInTheDocument();
+
+    // Explaining the emptiness must not light anything up.
+    const [label, cls] = chainNodes()[2];
+    expect(label).toBe('no evidence');
+    expect(cls).not.toContain('done');
+  });
+
+  it('never prints an explanation of emptiness beside actual records', async () => {
+    // A reply that contradicts itself (records AND "it is empty because...") shows the
+    // records; the sentence about emptiness is dropped, not displayed under them.
+    mountWithChain({
+      state: 'ok',
+      surface: 'evidenceChain',
+      records: [{ event_id: 'ev-1' }],
+      authenticated: false,
+      engine: {
+        emptyReason: 'no evidence event has been recorded in this store yet',
+        recordCount: 1,
+        sourceKind: 'signed-evidence-store',
+      },
+    });
+    await openEvidence();
+
+    await waitFor(() => expect(screen.getByText(/ENGINE EVIDENCE · 1/)).toBeInTheDocument());
+    expect(screen.queryByText(/no evidence event has been recorded/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('The engine’s own account:')).not.toBeInTheDocument();
+    // Provenance still travels, and the unauthenticated notice still governs it.
+    expect(screen.getByText('signed-evidence-store')).toBeInTheDocument();
+    expect(screen.getByText('UNAUTHENTICATED MIRROR')).toBeInTheDocument();
+  });
+
+  it("keeps a refusal's own reason and grows no explanation of emptiness", async () => {
+    mountWithChain({
+      state: 'blocked',
+      surface: 'evidenceChain',
+      reason: 'this runtime is not bound to an evidence store',
+      engine: { emptyReason: 'the orchestration runtime holds no tasks' },
+    });
+    await openEvidence();
+
+    await waitFor(() => expect(screen.getByText('Evidence sealed')).toBeInTheDocument());
+    expect(screen.getByText(/not bound to an evidence store/)).toBeInTheDocument();
+    // "I could not look" must never be dressed as "I looked and found nothing".
+    expect(screen.queryByText('The engine’s own account:')).not.toBeInTheDocument();
+    expect(screen.queryByText(/holds no tasks/)).not.toBeInTheDocument();
+  });
+});

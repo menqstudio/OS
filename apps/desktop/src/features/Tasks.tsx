@@ -8,11 +8,18 @@ import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { useToast } from '../components/toast';
 import { statusTone, PRIORITIES, TASK_STATUSES } from '../domain/enums';
-import type { Lang } from '../domain/enums';
+import type { Lang, Tone } from '../domain/enums';
 import { statusLabel, priorityLabel } from '../domain/statusLabels';
-import type { Task } from '../domain/entities';
+import type { Agent, Task } from '../domain/entities';
 import type { DictKey } from '../i18n';
 import { STR } from './Tasks.strings';
+import {
+  CAPABILITY_TIERS, MODES, RISKS, TIER_TOOLS,
+  CONTRACT_SCHEMA_SOURCE, DISPATCH_REQUIREMENT,
+  attemptDispatch, buildAssignment, previewJson, splitLines, tauriDispatchTransport,
+  uuid, validateAssignment,
+  type Assignment, type CapabilityTier, type DispatchOutcome, type Mode, type Risk,
+} from '../services/agentsDispatch';
 
 type StrKey = keyof typeof STR;
 type Lstr = (k: StrKey) => string;
@@ -178,6 +185,264 @@ function TaskDetail({ task, onClose, onSaved }: { task: Task; onClose: () => voi
   );
 }
 
+// ── Governed dispatch (Phase 6) ─────────────────────────────────────────────
+// The board's missing half: turning a task into an ACTUAL contract-shaped assignment
+// — agent identity, role, capability tier, scope, prohibited_scope, risk, verifier —
+// and attempting to hand it to the engine.
+//
+// The three honesty rules this composer obeys:
+//   1. Nothing here is filled in on the user's behalf that the desktop cannot know.
+//      `pack_id` and `core_skills` stay empty and the pre-flight refuses until they are
+//      stated, because the desktop has no IPC that can read engine/packs/registry.json
+//      or engine/skills — and a guessed pack id in a signed contract is worse than a
+//      blocked form.
+//   2. The default grant is the NARROWEST one: `reader` tier, `review` mode, `low` risk.
+//      Widening is a deliberate act by whoever composes the dispatch.
+//   3. The outcome shown is the real outcome. `accepted` is rendered only for an
+//      engine-accepted frame carrying a lease, a sha256 contract digest and the sealed
+//      repository binding; every other result renders as refused, invalid, or — the
+//      state this build is actually in — not dispatched at all.
+
+const OUTCOME_TONE: Record<DispatchOutcome['state'], Tone> = {
+  accepted: 'success',
+  refused: 'danger',
+  unreachable: 'warning',
+  invalid: 'warning',
+};
+
+function DispatchModal({
+  task, agents, onClose, L,
+}: {
+  task: Task;
+  agents: Agent[];
+  onClose: () => void;
+  L: Lstr;
+}) {
+  const { t } = useApp();
+
+  const [agentSlug, setAgentSlug] = useState(() => {
+    const assigned = agents.find((a) => a.id === task.assignedAgentId);
+    return (assigned ?? agents[0])?.slug ?? '';
+  });
+  // Narrowest grant by default — see rule 2 above.
+  const [tier, setTier] = useState<CapabilityTier>('reader');
+  const [mode, setMode] = useState<Mode>('review');
+  const [risk, setRisk] = useState<Risk>('low');
+  const [packId, setPackId] = useState('');
+  const [objective, setObjective] = useState(task.description.trim() || task.title);
+  const [scopeText, setScopeText] = useState('');
+  const [prohibitedText, setProhibitedText] = useState('');
+  const [skillsText, setSkillsText] = useState('');
+  const [doneText, setDoneText] = useState('');
+  const [verifierSlug, setVerifierSlug] = useState('');
+  const [verifyCmdsText, setVerifyCmdsText] = useState('');
+  const [rollback, setRollback] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<DispatchOutcome | null>(null);
+
+  const selected = agents.find((a) => a.slug === agentSlug) ?? null;
+  const verifierCandidates = agents.filter((a) => a.slug !== agentSlug);
+  const verifier = agents.find((a) => a.slug === verifierSlug) ?? null;
+
+  const assignment: Assignment = useMemo(() => buildAssignment({
+    taskId: task.id,
+    title: task.title,
+    objective,
+    mode,
+    risk,
+    packId,
+    agentSlug,
+    assigneeRole: selected?.role ?? '',
+    tier,
+    scope: splitLines(scopeText),
+    prohibitedScope: splitLines(prohibitedText),
+    coreSkills: splitLines(skillsText),
+    doneCriteria: splitLines(doneText),
+    verifierAgentSlug: verifierSlug || null,
+    verifierRole: verifier?.role ?? null,
+    verificationCommands: splitLines(verifyCmdsText),
+    rollbackStrategy: rollback,
+  }), [
+    task.id, task.title, objective, mode, risk, packId, agentSlug, selected?.role, tier,
+    scopeText, prohibitedText, skillsText, doneText, verifierSlug, verifier?.role,
+    verifyCmdsText, rollback,
+  ]);
+
+  const problems = useMemo(() => validateAssignment(assignment), [assignment]);
+
+  const send = () => {
+    if (busy) return;
+    setBusy(true);
+    setOutcome(null);
+    attemptDispatch(assignment, tauriDispatchTransport(), uuid)
+      .then((o) => { setOutcome(o); setBusy(false); })
+      // attemptDispatch already maps a thrown transport to `unreachable`; this only
+      // catches a fault in the composer itself, and it must still not read as success.
+      .catch((e: unknown) => {
+        setOutcome({ state: 'unreachable', reason: e instanceof Error ? e.message : String(e) });
+        setBusy(false);
+      });
+  };
+
+  return (
+    <Modal title={`${L('dispatchTitle')} · ${task.title}`} onClose={onClose}>
+      <p className="muted dsp-note">{L('dispatchIntro')}</p>
+      <div className="dsp-warn" role="note">{L('draftWarning')}</div>
+
+      {agents.length === 0 && <div className="form-error">{L('noAgents')}</div>}
+
+      <FormRow label={L('fAgent')}>
+        <Select value={agentSlug} onChange={(e) => setAgentSlug(e.target.value)}>
+          {agents.map((a) => (
+            <option key={a.id} value={a.slug}>{a.displayName} · {a.role}</option>
+          ))}
+        </Select>
+      </FormRow>
+      <FormRow label={L('fTier')}>
+        <Select value={tier} onChange={(e) => setTier(e.target.value as CapabilityTier)}>
+          {CAPABILITY_TIERS.map((x) => <option key={x} value={x}>{x}</option>)}
+        </Select>
+      </FormRow>
+
+      {/* The capability half, split by what is actually enforced. The TIER is spawned and
+          its tool list is what the CLI receives — that is the real bound. The pack-role
+          definition is only READ, for the specialism and its authority record, so it is
+          labelled advisory rather than shown beside the tier as if it contained anything. */}
+      <div className="dsp-grant">
+        <span className="micro">{L('grantTitle')}</span>
+
+        <div className="dsp-half">
+          <span className="dsp-tag dsp-tag--on">{L('enforcedWord')}</span>
+          <div className="dsp-mono">{assignment.grant.tierDefinitionPath}</div>
+          <div className="dsp-tools">
+            <span className="micro">{L('toolsWord')}</span>
+            {TIER_TOOLS[tier].map((tool) => <span key={tool} className="chip">{tool}</span>)}
+          </div>
+          <p className="muted dsp-half-note">{L('enforcedNote')}</p>
+        </div>
+
+        <div className="dsp-half">
+          <span className="dsp-tag">{L('advisoryWord')}</span>
+          {assignment.grant.packRolePath ? (
+            <div className="dsp-mono">{assignment.grant.packRolePath}</div>
+          ) : (
+            <p className="muted dsp-half-note">{L('packRoleUnset')}</p>
+          )}
+          <p className="muted dsp-half-note">{L('packRoleNote')}</p>
+        </div>
+      </div>
+
+      <FormRow label={L('fMode')}>
+        <Select value={mode} onChange={(e) => setMode(e.target.value as Mode)}>
+          {MODES.map((x) => <option key={x} value={x}>{x}</option>)}
+        </Select>
+      </FormRow>
+      <FormRow label={L('fRisk')}>
+        <Select value={risk} onChange={(e) => setRisk(e.target.value as Risk)}>
+          {RISKS.map((x) => <option key={x} value={x}>{x}</option>)}
+        </Select>
+      </FormRow>
+      <FormRow label={L('fPack')}>
+        <Input value={packId} placeholder="architecture-audit" onChange={(e) => setPackId(e.target.value)} />
+      </FormRow>
+      <FormRow label={L('fObjective')}>
+        <Textarea value={objective} onChange={(e) => setObjective(e.target.value)} />
+      </FormRow>
+      <FormRow label={L('fScope')}>
+        <Textarea value={scopeText} placeholder={'apps/desktop/src/features'} onChange={(e) => setScopeText(e.target.value)} />
+      </FormRow>
+      <FormRow label={L('fProhibited')}>
+        <Textarea value={prohibitedText} placeholder={'engine'} onChange={(e) => setProhibitedText(e.target.value)} />
+      </FormRow>
+      <FormRow label={L('fSkills')}>
+        <Textarea value={skillsText} placeholder={'analysis-primary'} onChange={(e) => setSkillsText(e.target.value)} />
+      </FormRow>
+      <FormRow label={L('fDone')}>
+        <Textarea value={doneText} onChange={(e) => setDoneText(e.target.value)} />
+      </FormRow>
+      <FormRow label={L('fVerifier')}>
+        <Select value={verifierSlug} onChange={(e) => setVerifierSlug(e.target.value)}>
+          <option value="">{L('noVerifier')}</option>
+          {verifierCandidates.map((a) => (
+            <option key={a.id} value={a.slug}>{a.displayName} · {a.role}</option>
+          ))}
+        </Select>
+      </FormRow>
+      <FormRow label={L('fVerifyCmds')}>
+        <Textarea value={verifyCmdsText} onChange={(e) => setVerifyCmdsText(e.target.value)} />
+      </FormRow>
+      <FormRow label={L('fRollback')}>
+        <Input value={rollback} onChange={(e) => setRollback(e.target.value)} />
+      </FormRow>
+
+      {/* Pre-flight. Refusals only — clearing them is not acceptance. */}
+      {problems.length > 0 ? (
+        <div className="dsp-problems" role="alert">
+          <span className="micro">{L('problemsTitle')} · {CONTRACT_SCHEMA_SOURCE}</span>
+          <ul>
+            {problems.map((p, i) => (
+              <li key={`${p.field}-${i}`}><b className="dsp-mono">{p.field}</b> — {p.message}</li>
+            ))}
+          </ul>
+          <p className="muted">{L('problemsNote')}</p>
+        </div>
+      ) : (
+        <div className="dsp-ok" role="status">{L('wellFormed')}</div>
+      )}
+
+      <details className="dsp-preview">
+        <summary>{L('previewTitle')}</summary>
+        <pre className="dsp-json">{previewJson(assignment)}</pre>
+      </details>
+
+      {/* The true state of the attempt. */}
+      {outcome && (
+        <div className={`dsp-outcome dsp-outcome--${outcome.state}`} role="status">
+          <Badge tone={OUTCOME_TONE[outcome.state]}>
+            {outcome.state === 'accepted' ? L('outAccepted')
+              : outcome.state === 'refused' ? L('outRefused')
+                : outcome.state === 'invalid' ? L('outInvalid')
+                  : L('outUnreachable')}
+          </Badge>
+          {outcome.state === 'accepted' && (
+            <dl className="dsp-facts">
+              <dt>{L('assignmentId')}</dt><dd className="dsp-mono">{outcome.assignmentId}</dd>
+              <dt>{L('leaseId')}</dt><dd className="dsp-mono">{outcome.leaseId}</dd>
+              <dt>{L('contractDigest')}</dt><dd className="dsp-mono">{outcome.contractDigest}</dd>
+              <dt>base_commit</dt><dd className="dsp-mono">{outcome.repository.base_commit}</dd>
+              <dt>tree_identity</dt><dd className="dsp-mono">{outcome.repository.tree_identity}</dd>
+            </dl>
+          )}
+          {outcome.state === 'refused' && (
+            <p className="dsp-mono">{outcome.reason}{outcome.detail ? ` — ${outcome.detail}` : ''}</p>
+          )}
+          {outcome.state === 'unreachable' && (
+            <>
+              <p>{L('unreachableNote')}</p>
+              <p className="muted dsp-mono">{DISPATCH_REQUIREMENT}</p>
+              <p className="muted dsp-mono">{outcome.reason}</p>
+            </>
+          )}
+          {outcome.state === 'invalid' && (
+            <p className="muted">{outcome.problems.map((x) => `${x.field}: ${x.message}`).join(' · ')}</p>
+          )}
+        </div>
+      )}
+
+      <div className="form-actions">
+        <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
+        <Button
+          variant="primary"
+          onClick={send}
+          disabled={busy || problems.length > 0 || agents.length === 0}
+        >
+          {busy ? L('sending') : L('dispatch')}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 // The live mission clock — the one honestly-live HUD readout (no fabricated ETA,
 // no auto-recalc). Ticks the wall clock and cleans up on unmount.
 function MissionClock() {
@@ -198,12 +463,13 @@ function MissionClock() {
 // surfaces them as the blocker note; the "Ազատել" button is a real status
 // mutation (blocked → active), the honest equivalent of "freeing" the card.
 function TaskCard({
-  task, projectName, onOpen, onMove, t, lang, L,
+  task, projectName, onOpen, onMove, onDispatch, t, lang, L,
 }: {
   task: Task;
   projectName?: string;
   onOpen: (task: Task) => void;
   onMove: (task: Task, status: string) => void;
+  onDispatch: (task: Task) => void;
   t: (k: DictKey) => string;
   lang: Lang;
   L: Lstr;
@@ -278,6 +544,16 @@ function TaskCard({
             <option key={sv} value={sv}>{statusLabel(sv, lang)}</option>
           ))}
         </select>
+        {/* Opens the dispatch composer. The card shows no dispatch STATE badge, because
+            no dispatch state is persisted anywhere — a badge here would be decoration. */}
+        <button
+          className="chip mt-dispatch"
+          type="button"
+          aria-label={`${L('dispatch')}: ${task.title}`}
+          onClick={(e) => { e.stopPropagation(); onDispatch(task); }}
+        >
+          {L('dispatch')}
+        </button>
         {task.assignedAgentId && <span className="mt-own micro">{task.assignedAgentId}</span>}
       </div>
     </article>
@@ -290,9 +566,12 @@ export function Tasks() {
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState<Task | null>(null);
+  const [dispatching, setDispatching] = useState<Task | null>(null);
   const [announce, setAnnounce] = useState('');
   const s = useAsync(() => desktop.listTasks(), []);
   const projects = useAsync(() => desktop.listProjects(), []);
+  // The real roster — a dispatch names a real agent identity or it names nobody.
+  const agents = useAsync(() => desktop.listAgents(), []);
 
   const projectName = useMemo(() => {
     const m = new Map<string, string>();
@@ -340,6 +619,14 @@ export function Tasks() {
         />
       )}
       {detail && <TaskDetail task={detail} onClose={() => setDetail(null)} onSaved={() => s.reload()} />}
+      {dispatching && (
+        <DispatchModal
+          task={dispatching}
+          agents={agents.data ?? []}
+          onClose={() => setDispatching(null)}
+          L={L}
+        />
+      )}
 
       <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
         {(tasks) => {
@@ -428,6 +715,7 @@ export function Tasks() {
                             projectName={x.projectId ? projectName.get(x.projectId) : undefined}
                             onOpen={setDetail}
                             onMove={moveTo}
+                            onDispatch={setDispatching}
                             t={t}
                             lang={lang}
                             L={L}
@@ -464,4 +752,46 @@ const TASKS_CSS = `
 .v-tasks .mt-status:focus-visible { outline: none; border-color: var(--cyan);
   box-shadow: 0 0 0 2px rgb(var(--cyan-rgb)/.35); }
 .v-tasks .lane-empty { color: var(--ink-muted); padding: 6px 4px; }
+.v-tasks .mt-dispatch { cursor: pointer; }
+.v-tasks .mt-dispatch:focus-visible { outline: 2px solid var(--cyan-soft); outline-offset: 2px; }
+
+/* Dispatch composer. The warning band and the outcome block are deliberately louder
+   than the form: what state the dispatch is really in matters more than the inputs. */
+.dsp-note { font-size: 12.5px; line-height: 1.55; margin: 0 0 10px; }
+.dsp-warn { padding: 10px 12px; margin-bottom: 14px; border-radius: 10px; font-size: 12px;
+  line-height: 1.55; color: var(--ink); border: 1px solid rgb(var(--warn-rgb,var(--line-rgb))/.45);
+  background: rgb(var(--warn-rgb,var(--line-rgb))/.1); }
+.dsp-mono { font-family: var(--f-mono); font-size: 11px; word-break: break-all; }
+.dsp-grant { display: grid; gap: 6px; padding: 10px 12px; margin-bottom: 14px; border-radius: 10px;
+  border: 1px solid rgb(var(--line-rgb)/.8); background: rgb(var(--raised-rgb)/.45); }
+.dsp-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* The enforced half reads first and looks live; the advisory half is visibly quieter so
+   nobody mistakes the pack-role reference for the thing that contains the specialist. */
+.dsp-half { display: grid; gap: 5px; padding-top: 8px; }
+.dsp-half + .dsp-half { border-top: 1px dashed rgb(var(--line-rgb)/.8); }
+.dsp-half-note { margin: 0; font-size: 11px; line-height: 1.5; }
+.dsp-tag { justify-self: start; font-family: var(--f-mono); font-size: 8.5px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; padding: 2px 7px; border-radius: var(--r-pill);
+  color: var(--ink-muted); border: 1px solid rgb(var(--line-rgb)/.9); }
+.dsp-tag--on { color: var(--cyan); border-color: rgb(var(--cyan-rgb)/.45);
+  background: rgb(var(--cyan-rgb)/.1); }
+.dsp-problems { padding: 10px 12px; margin: 14px 0; border-radius: 10px;
+  border: 1px solid rgb(var(--danger-rgb)/.4); background: rgb(var(--danger-rgb)/.08); }
+.dsp-problems ul { margin: 8px 0; padding-left: 18px; display: grid; gap: 6px; }
+.dsp-problems li { font-size: 12px; line-height: 1.5; }
+.dsp-problems p { margin: 0; font-size: 11.5px; line-height: 1.5; }
+.dsp-ok { padding: 8px 12px; margin: 14px 0; border-radius: 10px; font-size: 12px;
+  border: 1px solid rgb(var(--line-rgb)/.8); color: var(--ink-muted); }
+.dsp-preview { margin-bottom: 12px; }
+.dsp-preview summary { cursor: pointer; font-size: 12px; color: var(--ink-muted); }
+.dsp-json { max-height: 280px; overflow: auto; font-family: var(--f-mono); font-size: 10.5px;
+  line-height: 1.5; padding: 10px; margin-top: 8px; border-radius: 8px;
+  background: rgb(var(--raised-rgb)/.55); border: 1px solid rgb(var(--line-rgb)/.7); }
+.dsp-outcome { display: grid; gap: 8px; padding: 12px; margin-bottom: 12px; border-radius: 10px;
+  border: 1px solid rgb(var(--line-rgb)/.8); background: rgb(var(--raised-rgb)/.4); }
+.dsp-outcome p { margin: 0; font-size: 12px; line-height: 1.55; }
+.dsp-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 11px; }
+.dsp-facts dt { font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-muted); }
+.dsp-facts dd { margin: 0; }
 `;

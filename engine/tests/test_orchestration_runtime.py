@@ -17,7 +17,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from bro_contracts import canonical_json_sha256
 from bro_evidence import event_hash
-from bro_orchestration_runtime import DurableOrchestrationRuntime, OrchestrationRuntimeError
+from bro_orchestration_runtime import (ACTOR_ASSIGNEE_LEASE, ACTOR_PROVEN_BY_SESSION,
+                                       ACTOR_RUNTIME_ORIGINATED,
+                                       ACTOR_UNPROVEN, DurableOrchestrationRuntime,
+                                       OrchestrationRuntimeError)
+from bro_policy import (CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE,
+                        CONDUCTOR_SESSION_ARTIFACT)
 from bro_run_receipt import candidate_state, run_and_sign
 from bro_signature import load_trusted_keys, verify_artifact
 from broctl import build_registry, generate_key, sign_payload
@@ -81,6 +86,21 @@ def build_evidence(store: pathlib.Path, keys: dict, task_id: str, count: int) ->
         json.dumps(sign_payload(keys["evidence-recorder"]["private_key"], head)),
         encoding="utf-8")
     return ids
+
+
+def head_binding(store: pathlib.Path, task_id: str) -> dict:
+    """The O-5 evidence-head binding a completion manifest must now carry.
+
+    The manifest names exactly one signed head — its monotonic `head_sequence` and the
+    digest of the signed document itself — so the anti-rollback high-water mark lives in
+    something the builder signed rather than only in a directory anyone can delete.
+    """
+    document = json.loads((store / f"{task_id}.head.json").read_text(encoding="utf-8"))
+    return {
+        "evidence_head_sha256": canonical_json_sha256(document),
+        "head_sequence": document["payload"]["head_sequence"],
+    }
+
 
 AGENT = "agt-p01-r01"
 OTHER_AGENT = "agt-p01-r02"
@@ -203,53 +223,232 @@ class DurableRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(hard["state"], "blocked")
 
-    def test_owner_retry_and_terminal_immutability(self):
+    def conductor_attestation(self, **overrides) -> dict:
+        """An operator-root-signed `conductor-session` — the one actor credential
+        this runtime can actually verify."""
+        now = int(time.time())
+        payload = {
+            "schema": 1,
+            "artifact_type": CONDUCTOR_SESSION_ARTIFACT,
+            "key_id": self.keys["operator-root"]["key_id"],
+            "session_id": "s-conductor-runtime",
+            "agent_id": CANONICAL_CONDUCTOR_ID,
+            "role": CONDUCTOR_ROLE,
+            "issued_at_epoch": now - 10,
+            "expires_at_epoch": now + 3600,
+        }
+        payload.update(overrides)
+        return sign_payload(self.keys["operator-root"]["private_key"], payload)
+
+    def blocked_task(self, task_id: str = "task-retry") -> None:
         limits = {"tool_calls": {"soft": None, "hard": 1}}
-        self.runtime.create_task(task_contract("task-retry"), now_epoch=100, budget_limits=limits)
+        self.runtime.create_task(task_contract(task_id), now_epoch=100, budget_limits=limits)
         self.runtime.claim_next(AGENT, now_epoch=101)
         self.runtime.record_usage(
-            "task-retry", actor_id=AGENT, now_epoch=102,
+            task_id, actor_id=AGENT, now_epoch=102,
             delta={"tool_calls": 2}, evidence_refs=["evidence/hard.json"]
         )
-        with self.assertRaises(OrchestrationRuntimeError):
+
+    def test_owner_retry_is_refused_and_names_the_missing_owner_artifact(self):
+        """O-4 in the runtime: `owner-gev` was a string the caller typed.
+
+        Approving a retry is the OWNER's decision and nothing in this engine can
+        verify that a caller is the owner, so the call refuses and says exactly what
+        the owner must mint. It must not re-queue on a self-assertion, and the task
+        must stay where the budget gate left it.
+        """
+        self.blocked_task()
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
             self.runtime.retry_blocked(
-                "task-retry", owner_id="owner-fake", now_epoch=103,
+                "task-retry", owner_id="owner-gev", now_epoch=103,
                 evidence_refs=["evidence/retry.json"]
             )
-        self.assertEqual(self.runtime.retry_blocked(
-            "task-retry", owner_id="owner-gev", now_epoch=103,
-            evidence_refs=["evidence/retry.json"]
-        )["state"], "queued")
-        self.runtime.claim_next(AGENT, now_epoch=104)
-        refs = build_evidence(self.store, self.keys, "task-retry", 2)
-        self.assertEqual(self.runtime.complete_task(
-            "task-retry", actor_id=AGENT, now_epoch=105, evidence_refs=refs
-        )["state"], "completed")
-        with self.assertRaises(OrchestrationRuntimeError):
-            self.runtime.cancel_task(
-                "task-retry", actor_type="owner", actor_id="owner-gev",
-                now_epoch=106, effect_in_flight=False, evidence_refs=[]
+        message = str(caught.exception)
+        self.assertIn("cannot be validated", message)
+        for named in ("ARTIFACT_AUTHORITY", "config/trusted-keys.json", "actor_attestation"):
+            self.assertIn(named, message)
+        self.assertEqual(self.runtime._state("task-retry"), "blocked")
+
+    def test_a_non_canonical_owner_is_still_refused_for_being_non_canonical(self):
+        self.blocked_task("task-retry-2")
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
+            self.runtime.retry_blocked(
+                "task-retry-2", owner_id="owner-fake", now_epoch=103,
+                evidence_refs=["evidence/retry.json"]
             )
+        self.assertIn("not canonical", str(caught.exception))
+
+    def test_an_owner_claim_is_not_rescued_by_another_signed_artifact(self):
+        """The owner path does not become passable by presenting SOMETHING signed.
+
+        A real operator-root-signed conductor-session is the strongest credential
+        this runtime holds, and it still does not make its bearer the owner.
+        """
+        self.blocked_task("task-retry-3")
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
+            self.runtime.retry_blocked(
+                "task-retry-3", owner_id="owner-gev", now_epoch=103,
+                evidence_refs=["evidence/retry.json"],
+                actor_attestation=self.conductor_attestation(role="owner",
+                                                             agent_id="owner-gev"),
+            )
+        self.assertIn("cannot be validated", str(caught.exception))
+        self.assertEqual(self.runtime._state("task-retry-3"), "blocked")
+
+    def test_terminal_task_is_immutable(self):
+        self.runtime.create_task(task_contract("task-terminal"), now_epoch=100)
+        self.runtime.claim_next(AGENT, now_epoch=101)
+        refs = build_evidence(self.store, self.keys, "task-terminal", 2)
+        self.assertEqual(self.runtime.complete_task(
+            "task-terminal", actor_id=AGENT, now_epoch=105, evidence_refs=refs
+        )["state"], "completed")
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
+            self.runtime.cancel_task(
+                "task-terminal", actor_type=CONDUCTOR_ROLE, actor_id=CANONICAL_CONDUCTOR_ID,
+                now_epoch=106, effect_in_flight=False, evidence_refs=[],
+                actor_attestation=self.conductor_attestation(),
+            )
+        self.assertIn("terminal task is immutable", str(caught.exception))
 
     def test_inflight_cancel_requires_recovery_proof(self):
+        """A proven conductor may cancel; recovery still needs the owner, who cannot
+        yet be proven, so the quarantine holds rather than being cleared on a claim."""
         self.runtime.create_task(task_contract("task-recovery"), now_epoch=100)
         self.runtime.claim_next(AGENT, now_epoch=101)
         state = self.runtime.cancel_task(
-            "task-recovery", actor_type="owner", actor_id="owner-gev",
+            "task-recovery", actor_type=CONDUCTOR_ROLE, actor_id=CANONICAL_CONDUCTOR_ID,
             now_epoch=102, effect_in_flight=True,
-            evidence_refs=["evidence/ambiguous.json"]
+            evidence_refs=["evidence/ambiguous.json"],
+            actor_attestation=self.conductor_attestation(),
         )
         self.assertEqual(state["state"], "recovery-required")
-        recovered = self.runtime.recover_task(
-            "task-recovery", owner_id="owner-gev", now_epoch=103,
-            evidence_refs=["evidence/recovery.json"]
-        )
-        self.assertEqual(recovered["state"], "running")
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
+            self.runtime.recover_task(
+                "task-recovery", owner_id="owner-gev", now_epoch=103,
+                evidence_refs=["evidence/recovery.json"]
+            )
+        self.assertIn("cannot be validated", str(caught.exception))
+        self.assertEqual(self.runtime._state("task-recovery"), "recovery-required")
+
+    def test_a_cancelling_conductor_is_proven_and_the_proof_is_persisted(self):
+        self.runtime.create_task(task_contract("task-cancel"), now_epoch=100)
+        self.runtime.claim_next(AGENT, now_epoch=101)
         cancelled = self.runtime.cancel_task(
-            "task-recovery", actor_type="bro", actor_id="bro-000",
-            now_epoch=104, effect_in_flight=False, evidence_refs=[]
+            "task-cancel", actor_type=CONDUCTOR_ROLE, actor_id=CANONICAL_CONDUCTOR_ID,
+            now_epoch=104, effect_in_flight=False, evidence_refs=[],
+            actor_attestation=self.conductor_attestation(),
         )
         self.assertEqual(cancelled["state"], "cancelled")
+        payload = self.runtime._records("task-cancel")[-1]["payload"]
+        # The record says what discharged the identity, not merely what was claimed.
+        self.assertEqual(payload["actor_identity_basis"], ACTOR_PROVEN_BY_SESSION)
+        self.assertEqual(payload["actor_proof"]["key_id"], self.keys["operator-root"]["key_id"])
+        self.assertEqual(payload["actor_proof"]["session_id"], "s-conductor-runtime")
+        self.assertRegex(payload["actor_proof"]["attestation_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_the_runtimes_own_decisions_are_recorded_as_runtime_originated(self):
+        """The bookkeeping transitions this runtime attributes to itself are not
+        caller claims, and the ones that ARE caller claims must not borrow that word."""
+        self.runtime.create_task(task_contract("task-basis"), now_epoch=100)
+        bases = [record["payload"]["actor_identity_basis"]
+                 for record in self.runtime._records("task-basis")
+                 if record["kind"] == "transition"]
+        self.assertEqual(bases, [ACTOR_RUNTIME_ORIGINATED, ACTOR_RUNTIME_ORIGINATED])
+        self.runtime.claim_next(AGENT, now_epoch=101)
+        running = self.runtime._records("task-basis")[-1]["payload"]
+        self.assertEqual(running["actor_type"], "agent")
+        self.assertEqual(running["actor_identity_basis"], ACTOR_UNPROVEN)
+
+    def test_an_agent_transition_records_the_credential_it_actually_had(self):
+        """The assignee paths are not literal comparisons and are not refused — but
+        they are not signatures either, so they must not be written down as proven.
+        Presenting the runtime-minted lease is worth recording; delegating without it
+        proves nothing about the caller and is recorded as the claim it is."""
+        self.runtime.create_task(task_contract("task-basis-lease"), now_epoch=100)
+        lease = self.runtime.claim_next(AGENT, now_epoch=101)["lease_id"]
+        refs = build_evidence(self.store, self.keys, "task-basis-lease", 2)
+        self.runtime.complete_task("task-basis-lease", actor_id=AGENT, lease_id=lease,
+                                   now_epoch=102, evidence_refs=refs)
+        self.assertEqual(
+            self.runtime._records("task-basis-lease")[-1]["payload"]["actor_identity_basis"],
+            ACTOR_ASSIGNEE_LEASE)
+
+        self.runtime.create_task(task_contract("task-basis-nolease"), now_epoch=100)
+        self.runtime.claim_next(AGENT, now_epoch=101)
+        refs = build_evidence(self.store, self.keys, "task-basis-nolease", 2)
+        self.runtime.complete_task("task-basis-nolease", actor_id=AGENT,
+                                   now_epoch=102, evidence_refs=refs)
+        self.assertEqual(
+            self.runtime._records("task-basis-nolease")[-1]["payload"]["actor_identity_basis"],
+            ACTOR_UNPROVEN)
+
+    def test_an_unproven_conductor_cancel_is_refused_every_way_it_can_be_faked(self):
+        """Every failure mode of the attestation, against a live task."""
+        self.runtime.create_task(task_contract("task-fake"), now_epoch=100)
+
+        def refuse(contains, **kwargs):
+            with self.assertRaises(OrchestrationRuntimeError) as caught:
+                self.runtime.cancel_task(
+                    "task-fake", actor_type=CONDUCTOR_ROLE, actor_id=CANONICAL_CONDUCTOR_ID,
+                    now_epoch=104, effect_in_flight=False, evidence_refs=[], **kwargs)
+            self.assertIn(contains, str(caught.exception))
+            self.assertEqual(self.runtime._state("task-fake"), "queued")
+
+        refuse("self-asserted")                                        # no attestation
+        forged = self.conductor_attestation()
+        forged["payload"]["session_id"] = "s-somebody-else"            # tampered
+        refuse("RED", actor_attestation=forged)
+        wrong_authority = dict(self.conductor_attestation()["payload"])
+        wrong_authority["key_id"] = self.keys["builder"]["key_id"]
+        refuse("RED", actor_attestation=sign_payload(
+            self.keys["builder"]["private_key"], wrong_authority))
+        refuse("RED", actor_attestation=self.conductor_attestation(    # wrong artifact type
+            artifact_type="workspace-binding"))
+        refuse("does not speak for this actor",                        # another identity
+               actor_attestation=self.conductor_attestation(agent_id="agt-p01-r01"))
+        refuse("expired", actor_attestation=self.conductor_attestation(
+            expires_at_epoch=int(time.time()) - 1))
+        refuse("expired", actor_attestation=self.conductor_attestation(
+            expires_at_epoch="9999999999"))
+        refuse("session_id", actor_attestation=self.conductor_attestation(session_id=""))
+        for value in ({}, [], 7, {"payload": {}}, "not-a-document"):
+            refuse("RED", actor_attestation=value)
+
+    def test_a_backdated_caller_clock_cannot_revive_an_expired_attestation(self):
+        """The credential is judged on the WALL clock, not the caller's now_epoch."""
+        self.runtime.create_task(task_contract("task-clock"), now_epoch=100)
+        stale = self.conductor_attestation(expires_at_epoch=int(time.time()) - 1)
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
+            self.runtime.cancel_task(
+                "task-clock", actor_type=CONDUCTOR_ROLE, actor_id=CANONICAL_CONDUCTOR_ID,
+                now_epoch=104, effect_in_flight=False, evidence_refs=[],
+                actor_attestation=stale)
+        self.assertIn("expired", str(caught.exception))
+
+    def test_a_runtime_without_trusted_keys_refuses_rather_than_trusting_the_claim(self):
+        blind = DurableOrchestrationRuntime(
+            pathlib.Path(self.temporary.name) / "blind-state", ROOT)
+        blind.create_task(task_contract("task-blind"), now_epoch=100)
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
+            blind.cancel_task(
+                "task-blind", actor_type=CONDUCTOR_ROLE, actor_id=CANONICAL_CONDUCTOR_ID,
+                now_epoch=104, effect_in_flight=False, evidence_refs=[],
+                actor_attestation=self.conductor_attestation())
+        self.assertIn("no trusted keys", str(caught.exception))
+
+    def test_a_caller_may_not_borrow_the_runtime_or_agent_identities(self):
+        self.runtime.create_task(task_contract("task-borrow"), now_epoch=100)
+        for actor_type, actor_id, expected in (
+                ("system", "system-budget", "may not act as the runtime"),
+                ("agent", AGENT, "bare identity claim")):
+            with self.subTest(actor_type=actor_type):
+                with self.assertRaises(OrchestrationRuntimeError) as caught:
+                    self.runtime.cancel_task(
+                        "task-borrow", actor_type=actor_type, actor_id=actor_id,
+                        now_epoch=104, effect_in_flight=False, evidence_refs=[],
+                        actor_attestation=self.conductor_attestation())
+                self.assertIn(expected, str(caught.exception))
+                self.assertEqual(self.runtime._state("task-borrow"), "queued")
 
     def test_hash_chain_tamper_is_denied(self):
         self.runtime.create_task(task_contract("task-tamper"), now_epoch=100)
@@ -325,6 +524,7 @@ class DurableVerificationCompletionTests(DurableRuntimeTests):
             "tests": [{"command": command, "status": "passed", "evidence_event_id": refs[1],
                        "execution_receipt_id": rid}],
             "evidence_event_ids": refs, "open_risks": [], "rollback_ready": True,
+            **head_binding(self.store, contract["task_id"]),
             "nonce": uuid.uuid4().hex,
             "issued_at_epoch": issued_at,
             "expires_at_epoch": issued_at + 3600,
@@ -459,6 +659,15 @@ class DurableVerificationCompletionTests(DurableRuntimeTests):
         # and the signing key's bound identity still holds
         self.assertEqual(self.trusted[rpayload["key_id"]].subject_agent_id, VERIFIER_AGENT)
         self.assertEqual(self.trusted[mpayload["key_id"]].subject_agent_id, AGENT)
+
+        # O-5: the evidence high-water mark travels into this record, which lives in a
+        # different store from the evidence it polices. Wiping the evidence store's
+        # anti-rollback floor — just done above — does not erase it, so a later completion
+        # naming a LOWER head_sequence than one already recorded here is a rollback an
+        # auditor can see from signed bytes rather than from custodial filesystem state.
+        self.assertEqual(record["evidence_head_sequence"], mpayload["head_sequence"])
+        self.assertEqual(record["evidence_head_sha256"], mpayload["evidence_head_sha256"])
+        self.assertGreaterEqual(record["evidence_head_sequence"], 1)
 
     def test_a_non_required_task_still_completes_without_a_receipt(self):
         now = int(time.time())

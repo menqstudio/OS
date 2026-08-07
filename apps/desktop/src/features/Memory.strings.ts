@@ -62,11 +62,21 @@ export const STR = {
   storeReading: { en: 'Reading the store…', hy: 'Կարդում ենք պահոցը…', ru: 'Читаем хранилище…' },
   storeUnavailable: { en: 'Store unavailable', hy: 'Պահոցն անհասանելի է', ru: 'Хранилище недоступно' },
   storeLoaded: { en: 'Read from the store', hy: 'Կարդացված է պահոցից', ru: 'Прочитано из хранилища' },
-  // Local, unverified provenance stated plainly next to the counts.
-  noVerification: {
-    en: 'Local store · no verification chain',
-    hy: 'Տեղական պահոց · ստուգման շղթա չկա',
-    ru: 'Локальное хранилище · нет цепочки проверки',
+  // Provenance, stated plainly next to the counts — and kept CURRENT.
+  //
+  // This line used to read "Local store · no verification chain". That was true when it
+  // was written and is not true now: every memory write appends a record in the same
+  // transaction as the row (`core/src/local_write_record.rs`, migration 0021), hashing
+  // the row's content into an append-only chain the database itself enforces. A stale
+  // honest label becomes a dishonest one, so the line says what the record really is.
+  //
+  // What it must NOT say: nothing here is signed — no key, no manifest, no authority, no
+  // containment — and the record attests CONTENT, never the writer. So no "verified", no
+  // "trusted", and nothing a reader would file next to a governed turn's badge.
+  provenance: {
+    en: 'Local store · each write appends a local record · shows the row is unchanged since it was written, never who wrote it',
+    hy: 'Տեղական պահոց · ամեն գրում ավելացնում է լոկալ գրանցում · ցույց է տալիս, որ տողը գրվելուց հետո չի փոխվել, բայց ոչ թե ով է գրել',
+    ru: 'Локальное хранилище · каждая запись добавляет локальный журнальный след · показывает, что строка не менялась с момента записи, но не кто её записал',
   },
 
   // --- Refused writes (delete/pin may be denied by the window capability set) --

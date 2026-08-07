@@ -2,8 +2,16 @@ import { describe, it, expect } from 'vitest';
 import {
   parseGovernanceRead, isMirrored, isBlockedOrUnreachable,
   hasRecords, recordCount, isUnauthenticatedMirror,
+  engineEmptyReason, engineSourceKind, engineDoesNotKnowTask,
   type GovernanceSurface,
 } from './governance';
+
+// The engine's own `record_authentication` value (`bro_control_room_api._ED25519`), held as a
+// constant because an inline `recordAuthentication: '<long-hyphenated-value>'` is shaped exactly
+// like a leaked credential and the secret scanner says so. The value is production's and is not
+// changed to suit a scanner -- a fixture that stops matching production stops testing it.
+const ENGINE_CLAIM_SIGNED = 'ed25519-signature-verified';
+
 
 const SURFACE: GovernanceSurface = 'verdicts';
 
@@ -84,5 +92,87 @@ describe('an ok mirror is not authentication, and empty is not evidence', () => 
     expect(hasRecords(parseGovernanceRead(SURFACE, { state: 'blocked', reason: 'x' }))).toBe(false);
     expect(recordCount(parseGovernanceRead(SURFACE, { state: 'unreachable', reason: 'x' }))).toBe(0);
     expect(isUnauthenticatedMirror(parseGovernanceRead(SURFACE, { state: 'blocked' }))).toBe(false);
+  });
+});
+
+describe("the engine's own account of an empty surface", () => {
+  // The reply the Rust mirror serializes for an empty read: the three-valued `ok`
+  // state, plus what the engine said about its own store.
+  const EMPTY = {
+    state: 'ok',
+    surface: 'verdicts',
+    records: [],
+    authenticated: false,
+    engine: {
+      emptyReason: 'the orchestration runtime holds no tasks, so nothing has been recorded',
+      recordCount: 0,
+      knownTask: false,
+      sourceKind: 'persisted-verifier-receipts',
+    },
+  };
+
+  it("carries the engine's reason through the parse, verbatim", () => {
+    const r = parseGovernanceRead(SURFACE, EMPTY);
+    expect(r.state).toBe('ok');
+    expect(engineEmptyReason(r)).toBe(
+      'the orchestration runtime holds no tasks, so nothing has been recorded',
+    );
+    expect(engineDoesNotKnowTask(r)).toBe(true);
+    expect(engineSourceKind(r)).toBe('persisted-verifier-receipts');
+    expect(r.engine?.recordCount).toBe(0);
+  });
+
+  it('never explains emptiness over a set of records', () => {
+    // "There is nothing here because ..." must not appear under a list of things.
+    const r = parseGovernanceRead(SURFACE, { ...EMPTY, records: [{ id: 'r-1' }] });
+    expect(hasRecords(r)).toBe(true);
+    expect(engineEmptyReason(r)).toBeNull();
+    // The provenance line is still legitimate beside records.
+    expect(engineSourceKind(r)).toBe('persisted-verifier-receipts');
+  });
+
+  it('never explains emptiness over a refusal', () => {
+    // "I could not look" is not "I looked and found nothing" — a blocked read keeps
+    // its own `reason` and grows no explanation-of-emptiness.
+    const r = parseGovernanceRead(SURFACE, {
+      state: 'blocked', surface: 'verdicts', reason: 'BROPS_GOVERNANCE_STATE_DIR is unset',
+      engine: { emptyReason: 'the orchestration runtime holds no tasks' },
+    });
+    expect(r.state).toBe('blocked');
+    expect(r.reason).toBe('BROPS_GOVERNANCE_STATE_DIR is unset');
+    expect(engineEmptyReason(r)).toBeNull();
+    expect(engineSourceKind(r)).toBeNull();
+    expect(engineDoesNotKnowTask(r)).toBe(false);
+  });
+
+  it('is fail-quiet: a malformed account is absent, never invented', () => {
+    const r = parseGovernanceRead(SURFACE, {
+      state: 'ok',
+      surface: 'verdicts',
+      records: [],
+      engine: { emptyReason: 42, knownTask: 'yes', sourceKind: '', recordCount: 'many' },
+    });
+    expect(r.state).toBe('ok');
+    expect(r.engine).toBeUndefined();
+    expect(engineEmptyReason(r)).toBeNull();
+    expect(engineDoesNotKnowTask(r)).toBe(false);
+  });
+
+  it("does not let the engine's word about its store raise the mirror's trust", () => {
+    // `record_authentication` is the engine vouching for itself; the Rust mirror drops
+    // it. Even if something upstream tried to smuggle a claim in beside the account,
+    // `authenticated` is decided only by the backend's own literal `true`.
+    const r = parseGovernanceRead(SURFACE, {
+      state: 'ok',
+      surface: 'verdicts',
+      records: [{ id: 'r-1' }],
+      engine: {
+        sourceKind: 'signed-evidence-store',
+        recordAuthentication: ENGINE_CLAIM_SIGNED,
+      },
+    });
+    expect(r.authenticated).toBe(false);
+    expect(isUnauthenticatedMirror(r)).toBe(true);
+    expect(JSON.stringify(r.engine)).not.toContain('ed25519');
   });
 });

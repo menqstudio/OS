@@ -87,6 +87,19 @@ function glyph(id: RouteId): React.ReactNode {
           <path d="M19 7l-2.4 5a2.4 2.4 0 0 0 4.8 0L19 7Z" />
         </>
       );
+    case 'bridge':
+      // A suspension bridge: two piers, the deck, the main cable and its hangers.
+      return (
+        <>
+          <path d="M3 15h18" />
+          <path d="M3 15V9" />
+          <path d="M21 15V9" />
+          <path d="M3 11.5a9 9 0 0 1 18 0" />
+          <path d="M8 15v-3.3" />
+          <path d="M12 15V9.7" />
+          <path d="M16 15v-3.3" />
+        </>
+      );
     case 'research':
       return (
         <>

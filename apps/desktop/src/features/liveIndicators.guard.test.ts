@@ -36,12 +36,17 @@ const LITERALS = [
  *    `size={0}`, not a state indicator; it asserts nothing about any backend.
  *  - `Tasks.tsx` — `pill live` for "path clear" is inside the `blocked === 0` arm of a
  *    ternary, so the literal is already gated on a real derived count.
+ *  - `Agents.tsx` — `pill live` for "dispatch channel present" is inside the
+ *    `channel.state === 'present'` arm, reached only after a probe genuinely answered.
+ *    Same shape as `Tasks.tsx`: this scan reads text, so it cannot see the branch the
+ *    literal already sits behind.
  *  - `ui.tsx` / `ui.primitives*.tsx` — the `LiveMark` primitive itself, whose `state` is
  *    a prop supplied by the caller.
  */
 const ALLOWED: Record<string, string[]> = {
   'Shell.tsx': ['<Mark state="live">'],
   'Tasks.tsx': ['className="pill live"'],
+  'Agents.tsx': ['className="pill live"'],
   'ui.tsx': ['<Mark state="live">'],
 };
 

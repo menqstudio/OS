@@ -13,12 +13,25 @@ from bro_workspace import matches_pattern
 # the control-plane digest deliberately excludes __pycache__/*.pyc (they are
 # non-deterministic build artifacts, see is_digest_member), which means a forged
 # .pyc under a digest root is INVISIBLE to verify_control_plane_digest while
-# CPython may still import it in place of the verified .py source. Enforcement
-# entry points are therefore expected to run with `python -B` (or
-# PYTHONDONTWRITEBYTECODE=1) and to call assert_no_bytecode_shadow() at startup.
+# CPython may still import it in place of the verified .py source.
+#
 # This process-wide flag stops THIS process minting fresh bytecode under the
-# digest roots; it cannot retroactively remove caches written by other processes
-# — that is what the assertion is for.
+# digest roots from here on. It is deliberately NOT the control: it runs when this
+# module is imported, which is already too late for every module imported before it
+# (bro_audit_log, bro_authority, bro_authorization, bro_contracts,
+# bro_execution_lease, bro_freeze, bro_policy ... and for bro_protected itself,
+# whose cache CPython writes before it executes this line). Closing the WRITE half
+# of that window needs the INTERPRETER to start with -B or
+# PYTHONDONTWRITEBYTECODE=1, which engine/.claude/settings.json now does for every
+# wired hook command. Caches written by some OTHER process are what
+# assert_no_bytecode_shadow is for; it is called from verify_control_plane_digest
+# below and, independently, from the wall's own paths in bro_control_plane.
+#
+# What stays open (docs/PHASE_10_PRODUCTION_ITEMS.md, O-1): neither -B nor this
+# flag stops CPython READING an existing .pyc, and imports happen before any
+# assertion can run — so a cache forged before the wall process starts can shadow
+# the very code that would detect it. That residue is not closeable from inside
+# Python.
 sys.dont_write_bytecode = True
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -105,18 +118,12 @@ def is_digest_member(manifest: ProtectedManifest, relative: str) -> bool:
     return _digest_scope(manifest, relative)
 
 
-def assert_no_bytecode_shadow(root: pathlib.Path, manifest: ProtectedManifest) -> None:
-    """Bytecode-shadowing defence, part 2: fail closed if compiled bytecode exists
-    under a digest root.
+def bytecode_shadow_offenders(root: pathlib.Path,
+                              manifest: ProtectedManifest) -> list[str]:
+    """Every compiled-bytecode path under a digest root, sorted.
 
-    The digest excludes __pycache__/*.pyc for determinism, so a crafted .pyc that
-    CPython would import in place of a digest-verified .py source is invisible to
-    verify_control_plane_digest. Enforcement entry points run with `python -B`
-    (this module also sets sys.dont_write_bytecode on import) and call this at
-    startup: with no bytecode present and none being written, the .py sources the
-    digest verified are the code that actually executes. Any cache under a digest
-    root — stale, legitimate or forged — is reported for removal rather than
-    silently trusted.
+    Split out of assert_no_bytecode_shadow so a caller that must report rather than
+    raise (diagnostics, tests) shares the exact detection logic of the gate.
     """
     offenders: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
@@ -132,10 +139,30 @@ def assert_no_bytecode_shadow(root: pathlib.Path, manifest: ProtectedManifest) -
             relative = _relative_posix(root, here / name)
             if _digest_scope(manifest, relative):
                 offenders.append(relative)
+    return sorted(offenders)
+
+
+def assert_no_bytecode_shadow(root: pathlib.Path, manifest: ProtectedManifest) -> None:
+    """Bytecode-shadowing defence, part 2: fail closed if compiled bytecode exists
+    under a digest root.
+
+    The digest excludes __pycache__/*.pyc for determinism, so a crafted .pyc that
+    CPython would import in place of a digest-verified .py source is invisible to
+    verify_control_plane_digest. This is the compensating control for that
+    exclusion, and it is a REFUSAL rather than a warning: at this point a stale
+    cache, a legitimate cache and a forged cache are indistinguishable, and a
+    shadow that cannot be ruled out is a denial.
+
+    Called from verify_control_plane_digest (so no path can trust a digest without
+    it) and, independently, from the wall's own entry paths in bro_control_plane.
+    Enforcement interpreters additionally start with -B so a governed session never
+    creates the condition itself.
+    """
+    offenders = bytecode_shadow_offenders(root, manifest)
     if offenders:
         raise ProtectedScopeError(
             "compiled bytecode under a digest root can shadow digest-verified "
-            f"sources; run enforcement with `python -B` and remove: {sorted(offenders)}")
+            f"sources; run enforcement with `python -B` and remove: {offenders}")
 
 
 def _relative_posix(root: pathlib.Path, path: pathlib.Path) -> str:
@@ -193,6 +220,14 @@ def compute_control_plane_digest(root: pathlib.Path,
 
 def verify_control_plane_digest(root: pathlib.Path, manifest: ProtectedManifest,
                                 bound_digest: str) -> str:
+    # O-1: the digest covers .py sources only (is_digest_member excludes
+    # __pycache__/*.pyc), so "current == bound" proves the SOURCES are unchanged and
+    # says nothing about what CPython would actually import. Asserting no bytecode
+    # shadow FIRST is what turns the digest into a statement about executing code
+    # rather than about files on disk. It lives here, in the one function every
+    # digest-trusting path goes through, so that no caller can trust a digest
+    # without it — including callers that do not exist yet.
+    assert_no_bytecode_shadow(root, manifest)
     if not isinstance(bound_digest, str) or len(bound_digest) != 64:
         raise ProtectedScopeError("workspace binding carries no control_plane_digest")
     current = compute_control_plane_digest(root, manifest)

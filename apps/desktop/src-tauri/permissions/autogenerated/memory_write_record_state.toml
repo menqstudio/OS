@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-memory-write-record-state"
+description = "Enables the memory_write_record_state command without any pre-configured scope."
+commands.allow = ["memory_write_record_state"]
+
+[[permission]]
+identifier = "deny-memory-write-record-state"
+description = "Denies the memory_write_record_state command without any pre-configured scope."
+commands.deny = ["memory_write_record_state"]

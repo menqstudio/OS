@@ -111,6 +111,33 @@ export const STR = {
     hy: 'Շարժիչի ապացույցների շղթան պատասխանեց առանց գրառումների — ապացույց չկա։',
     ru: 'Цепочка доказательств движка ответила без записей — доказательств нет.',
   },
+  // --- The ENGINE's own account of an empty surface ---
+  // When a governance surface comes back empty the engine says WHY, in its own words
+  // ("the orchestration runtime holds no tasks, so nothing has been recorded"). These
+  // labels ATTRIBUTE that sentence: the sentence itself is quoted verbatim, never
+  // translated and never re-voiced as the desktop's own finding, because the desktop
+  // did not read the engine's store — it only relays what the engine claimed about it.
+  engineSaysLabel: {
+    en: 'The engine’s own account:',
+    hy: 'Շարժիչի սեփական բացատրությունը՝',
+    ru: 'Собственное объяснение движка:',
+  },
+  engineUnknownTask: {
+    en: 'The engine also states its orchestration runtime has never heard of this decision id — '
+      + 'which is a different fact from “this decision recorded nothing”.',
+    hy: 'Շարժիչը նաև նշում է, որ իր orchestration runtime-ը երբեք չի լսել այս որոշման id-ի մասին — '
+      + 'դա այլ փաստ է, քան «այս որոշումը ոչինչ չի գրանցել»։',
+    ru: 'Движок также заявляет, что его orchestration runtime никогда не слышал об этом '
+      + 'идентификаторе решения — это не то же самое, что «по этому решению ничего не записано».',
+  },
+  // Provenance, never proof: the engine names the store it read; the desktop neither
+  // opened it nor verified anything in it.
+  engineSourceLabel: {
+    en: 'Store the engine says it read: ',
+    hy: 'Պահոցը, որը շարժիչն ասում է կարդացել է՝ ',
+    ru: 'Хранилище, которое движок сообщает, что прочитал: ',
+  },
+
   evidenceUnreachable: {
     en: 'Evidence chain unreachable',
     hy: 'Ապացույցների շղթան անհասանելի է',

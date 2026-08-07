@@ -2,7 +2,7 @@ import { AppProvider, useApp } from './app/store';
 import { Shell } from './components/Shell';
 import { CommandPalette } from './components/CommandPalette';
 import { ToastProvider, Toaster } from './components/toast';
-import { Screen } from './features/registry';
+import { RouteView } from './app/routes';
 import { Onboarding } from './features/Onboarding';
 import { hasBackend } from './services/desktop';
 
@@ -16,7 +16,7 @@ function AppInner() {
       <a className="skip-link" href="#main-content">{t('a11y.skipToContent')}</a>
       {!hasBackend() && <div className="offline-banner" role="status">{t('state.offlineBanner')}</div>}
       <Shell>
-        <Screen route={route} />
+        <RouteView route={route} />
       </Shell>
       <CommandPalette />
       <Toaster />

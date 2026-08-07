@@ -76,6 +76,11 @@ fn main() {
         "create_memory",
         "set_memory_pinned",
         "delete_memory",
+        // local write records (read-only)
+        "memory_write_record_state",
+        "memory_write_records",
+        "knowledge_write_record_state",
+        "knowledge_write_records",
         // runs
         "list_runs",
         "create_run",
@@ -97,7 +102,9 @@ fn main() {
         "list_automation_runs",
         // integrations
         "list_integrations",
+        "create_integration",
         "set_integration_status",
+    "set_integration_auth_ref",
         // search / analytics / security / ai status
         "search_all",
         "get_analytics",

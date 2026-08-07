@@ -20,15 +20,24 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 import bro_audit_log
 import bro_monitor
+import _audit_anchor
 
 
 class MonitorTests(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-monitor-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # O-2: the monitor now runs the KEYED chain check, because the plaintext
+        # .head it used to trust is rewritten by the ledger's own append(). These
+        # fixtures therefore stand up real anchor custody, so "healthy" here means a
+        # ledger whose head is actually signed rather than one nobody vouched for.
+        # The unanchored / invalid-anchor readouts are covered in
+        # tests/test_audit_head_anchor.py.
+        self.custody = _audit_anchor.provision(self)
 
     def _shadow(self):
         led = self.tmp / "shadow.jsonl"
@@ -66,6 +75,8 @@ class MonitorTests(unittest.TestCase):
         self.assertTrue(report["shadow"]["chain_ok"])
         self.assertEqual(report["shadow"]["by_kind"],
                          {"pre-tool-deny": 2, "execution-settlement-block": 1})
+        # GREEN only because the head is SIGNED; a self-hashed head is not enough.
+        self.assertEqual(report["shadow"]["anchor"]["state"], "signed")
         self.assertEqual(report["health"], "GREEN")  # would-blocks alone are not an alert
 
     def test_blocking_recovery_journal_raises_attention(self):

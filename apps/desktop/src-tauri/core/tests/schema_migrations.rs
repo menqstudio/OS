@@ -1,8 +1,8 @@
 //! End-to-end schema/migration test for `brops-core`.
 //!
-//! Applies every migration (0001..0015) in order to a fresh SQLite database and
-//! asserts the resulting shape: `SCHEMA_VERSION == 16`, the ledger is contiguous
-//! 1..=16, the key tables/columns exist, and the constraints introduced across
+//! Applies every migration (0001..0022) in order to a fresh SQLite database and
+//! asserts the resulting shape: `SCHEMA_VERSION == 22`, the ledger is contiguous
+//! 1..=22, the key tables/columns exist, and the constraints introduced across
 //! the migrations (status-guard triggers, the run_steps position uniqueness, and
 //! the Wave-3a receipt tables' CHECK/PK/one-time-consume invariants) actually
 //! bite. Migrations are forward-only (no down scripts), so the "down/idempotency"
@@ -72,10 +72,10 @@ fn migrate_applies_all_versions_in_order_to_a_fresh_db() {
     c.pragma_update(None, "foreign_keys", "ON").unwrap();
     db::migrate(&c).unwrap();
 
-    assert_eq!(db::SCHEMA_VERSION, 20, "crate SCHEMA_VERSION must be 20");
-    assert_eq!(db::current_version(&c).unwrap(), 20);
-    // The ledger is contiguous 1..=20 — nothing skipped, nothing double-counted.
-    assert_eq!(applied_versions(&c), (1..=20).collect::<Vec<i64>>());
+    assert_eq!(db::SCHEMA_VERSION, 22, "crate SCHEMA_VERSION must be 22");
+    assert_eq!(db::current_version(&c).unwrap(), 22);
+    // The ledger is contiguous 1..=22 — nothing skipped, nothing double-counted.
+    assert_eq!(applied_versions(&c), (1..=22).collect::<Vec<i64>>());
     // 0017 created the group-chat participants roster table.
     let has_participants: i64 = c
         .query_row(
@@ -114,6 +114,86 @@ fn migrate_applies_all_versions_in_order_to_a_fresh_db() {
         )
         .unwrap();
     assert_eq!(has_runs, 1, "0020 must create automation_runs");
+    // 0021 created the append-only LOCAL write-record ledger for memory/knowledge writes,
+    // guarded so it can be appended to but never rewritten.
+    let has_records: i64 = c
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='store_write_records'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(has_records, 1, "0021 must create store_write_records");
+    let guards: i64 = c
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN \
+             ('trg_store_write_records_no_update','trg_store_write_records_no_delete',\
+              'trg_store_write_records_extends_head')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(guards, 3, "0021 must install all three append-only chain guards");
+    // 0022 added the integrations credential REFERENCE column (never the credential).
+    assert!(
+        has_column(&c, "integrations", "auth_ref"),
+        "0022 must add integrations.auth_ref"
+    );
+}
+
+// --- 0021: the local write-record ledger is append-only in the DB itself ----
+
+#[test]
+fn store_write_records_rejects_update_delete_and_a_non_extending_insert() {
+    let c = conn();
+    let genesis = "0000000000000000000000000000000000000000000000000000000000000000";
+    let hex = |n: u8| std::iter::repeat_n(format!("{n:02x}"), 32).collect::<String>();
+
+    c.execute(
+        "INSERT INTO store_write_records
+           (seq, id, protocol, subject_kind, subject_id, operation, content_sha256,
+            prev_record_sha256, record_sha256, recorded_at)
+         VALUES (1, 'r-1', 'brops.local-write-record.v1', 'memory_entry', 'm-1', 'created',
+                 ?1, ?2, ?3, '1000')",
+        params![hex(0xaa), genesis, hex(0xbb)],
+    )
+    .unwrap();
+
+    assert!(
+        c.execute("UPDATE store_write_records SET content_sha256 = ?1 WHERE seq = 1", [hex(0xcc)])
+            .is_err(),
+        "a write record must never be rewritable"
+    );
+    assert!(
+        c.execute("DELETE FROM store_write_records WHERE seq = 1", []).is_err(),
+        "a write record must never be removable"
+    );
+    // A second record that does not link to the head is refused by the trigger.
+    assert!(
+        c.execute(
+            "INSERT INTO store_write_records
+               (seq, id, protocol, subject_kind, subject_id, operation, content_sha256,
+                prev_record_sha256, record_sha256, recorded_at)
+             VALUES (2, 'r-2', 'brops.local-write-record.v1', 'memory_entry', 'm-2', 'created',
+                     ?1, ?2, ?3, '1001')",
+            params![hex(0xaa), genesis, hex(0xdd)],
+        )
+        .is_err(),
+        "an appended record must extend the current head"
+    );
+    // A foreign subject_kind / operation is outside the CHECK domain.
+    assert!(
+        c.execute(
+            "INSERT INTO store_write_records
+               (seq, id, protocol, subject_kind, subject_id, operation, content_sha256,
+                prev_record_sha256, record_sha256, recorded_at)
+             VALUES (2, 'r-3', 'brops.local-write-record.v1', 'chat_message', 'x', 'created',
+                     ?1, ?2, ?3, '1001')",
+            params![hex(0xaa), hex(0xbb), hex(0xee)],
+        )
+        .is_err(),
+        "subject_kind is a closed domain"
+    );
 }
 
 #[test]
@@ -420,7 +500,7 @@ fn migrate_is_idempotent_in_process() {
     db::migrate(&c).unwrap();
     assert_eq!(db::current_version(&c).unwrap(), db::SCHEMA_VERSION);
     assert_eq!(applied_versions(&c), before, "re-running migrate must not add ledger rows");
-    assert_eq!(before.len(), 20);
+    assert_eq!(before.len(), 22);
 }
 
 #[test]
@@ -435,10 +515,198 @@ fn migrate_is_idempotent_across_a_real_file_reopen() {
 
     {
         let c1 = db::open(path).unwrap();
-        assert_eq!(db::current_version(&c1).unwrap(), 20);
+        assert_eq!(db::current_version(&c1).unwrap(), 22);
     } // c1 dropped
 
     let c2 = db::open(path).unwrap(); // reopen re-runs migrate() (idempotent)
-    assert_eq!(db::current_version(&c2).unwrap(), 20);
-    assert_eq!(applied_versions(&c2), (1..=20).collect::<Vec<i64>>());
+    assert_eq!(db::current_version(&c2).unwrap(), 22);
+    assert_eq!(applied_versions(&c2), (1..=22).collect::<Vec<i64>>());
+}
+
+// --- 0022: the integrations credential REFERENCE column ---------------------
+
+/// Every migration up to and including 0021, in order — the exact set a database
+/// created before 0022 landed would carry. Used to build a genuine pre-0022 file and
+/// then upgrade it, rather than asserting the upgrade against a database that was
+/// never old.
+const MIGRATIONS_THROUGH_0021: &[&str] = &[
+    include_str!("../schema/0001_initial.sql"),
+    include_str!("../schema/0002_decisions.sql"),
+    include_str!("../schema/0003_conversations.sql"),
+    include_str!("../schema/0004_knowledge_memory.sql"),
+    include_str!("../schema/0005_operations.sql"),
+    include_str!("../schema/0006_run_steps.sql"),
+    include_str!("../schema/0007_run_step_result.sql"),
+    include_str!("../schema/0008_approval_gating.sql"),
+    include_str!("../schema/0009_task_dependencies.sql"),
+    include_str!("../schema/0010_search_fts.sql"),
+    include_str!("../schema/0011_constraints.sql"),
+    include_str!("../schema/0012_approval_provenance.sql"),
+    include_str!("../schema/0013_step_execution_claim.sql"),
+    include_str!("../schema/0014_receipt_verification.sql"),
+    include_str!("../schema/0015_library_research.sql"),
+    include_str!("../schema/0016_held_answer_outcome.sql"),
+    include_str!("../schema/0017_conversation_participants.sql"),
+    include_str!("../schema/0018_demonstration_verified.sql"),
+    include_str!("../schema/0019_approval_escalated_status.sql"),
+    include_str!("../schema/0020_automation_runs.sql"),
+    include_str!("../schema/0021_store_write_records.sql"),
+];
+
+/// Build a real pre-0022 database at `path`: migrations 1..=21 applied and recorded in
+/// the ledger, and nothing else. `db::open` on this file later must upgrade it.
+fn open_pre_0022_db(path: &str) -> Connection {
+    let c = Connection::open(path).unwrap();
+    c.pragma_update(None, "foreign_keys", "ON").unwrap();
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
+    )
+    .unwrap();
+    for (i, sql) in MIGRATIONS_THROUGH_0021.iter().enumerate() {
+        c.execute_batch(sql).unwrap();
+        c.execute(
+            "INSERT INTO _migrations(version, applied_at) VALUES (?1, '1')",
+            params![(i + 1) as i64],
+        )
+        .unwrap();
+    }
+    assert_eq!(db::current_version(&c).unwrap(), 21, "fixture must be a v21 database");
+    assert!(
+        !has_column(&c, "integrations", "auth_ref"),
+        "a pre-0022 database must not already have the column"
+    );
+    c
+}
+
+#[test]
+fn an_existing_database_upgrades_to_0022_without_losing_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.db");
+    let path = path.to_str().unwrap();
+
+    // 1. A genuine pre-0022 database with real rows in it — connectors, and a couple of
+    //    unrelated tables so the assertion covers "the database", not just one table.
+    {
+        let old = open_pre_0022_db(path);
+        old.execute(
+            "INSERT INTO integrations(id, name, provider, status, created_at, updated_at)
+             VALUES ('i-1', 'Slack', 'slack', 'connected', '1', '1'),
+                    ('i-2', 'SMTP',  'smtp',  'error',     '2', '2')",
+            [],
+        )
+        .unwrap();
+        old.execute(
+            "INSERT INTO runs(id, intent, status, plan, created_at, updated_at)
+             VALUES ('r-1', 'ship it', 'drafted', '', '1', '1')",
+            [],
+        )
+        .unwrap();
+    } // closed, as if the app had been shut down before updating
+
+    // 2. The upgrade path production actually uses.
+    let c = db::open(path).unwrap();
+    assert_eq!(db::current_version(&c).unwrap(), 22, "reopening must apply 0022");
+    assert_eq!(applied_versions(&c), (1..=22).collect::<Vec<i64>>());
+    assert!(has_column(&c, "integrations", "auth_ref"));
+
+    // 3. Nothing was lost, and nothing was rewritten: the pre-existing rows are byte-for
+    //    -byte what they were, including their `updated_at` (the migration must not have
+    //    touched them).
+    let rows: Vec<(String, String, String, String, Option<String>)> = c
+        .prepare("SELECT id, name, status, updated_at, auth_ref FROM integrations ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("i-1".into(), "Slack".into(), "connected".into(), "1".into(), None),
+            ("i-2".into(), "SMTP".into(), "error".into(), "2".into(), None),
+        ],
+        "existing connectors must survive the upgrade unchanged, with NO reference"
+    );
+    let run: String = c
+        .query_row("SELECT intent FROM runs WHERE id = 'r-1'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(run, "ship it", "unrelated tables must be untouched by 0022");
+
+    // 4. NO BACKFILL: an upgraded row reads as SQL NULL — "no reference" — and never as
+    //    an empty string that a reader could mistake for a configured-but-blank one.
+    let empties: i64 = c
+        .query_row("SELECT count(*) FROM integrations WHERE auth_ref = ''", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(empties, 0, "an upgraded row must be NULL, never ''");
+
+    // 5. And the upgraded database enforces the new constraint on the OLD rows too.
+    assert!(
+        c.execute("UPDATE integrations SET auth_ref = 'sk-live-abcdefghijklmnop' WHERE id = 'i-1'", [])
+            .is_err(),
+        "the 0022 CHECK must bite on rows that predate it"
+    );
+}
+
+#[test]
+fn auth_ref_check_admits_references_and_refuses_secret_shaped_values() {
+    let c = conn();
+    c.execute(
+        "INSERT INTO integrations(id, name, provider, status, created_at, updated_at)
+         VALUES ('i-1', 'Slack', 'slack', 'disconnected', '1', '1')",
+        [],
+    )
+    .unwrap();
+
+    // Well-formed references, one per scheme, are accepted.
+    for good in [
+        "engine:slack/bot-token",
+        "operator:helpdesk-api",
+        "keychain:brops/github",
+        "env:SLACK_BOT_TOKEN",
+        "vault:kv/data/brops/smtp",
+    ] {
+        c.execute("UPDATE integrations SET auth_ref = ?1 WHERE id = 'i-1'", params![good])
+            .unwrap_or_else(|e| panic!("`{good}` should be a valid reference: {e}"));
+    }
+
+    // Secret-shaped, malformed, or unscoped values are refused BY THE DATABASE — not
+    // merely by the Rust caller — so anything else that opens this file is bound too.
+    for bad in [
+        "",                                   // empty is not a reference
+        "   ",                                // whitespace is not a reference
+        "slack-bot-token",                    // no scheme
+        "azure:kv/foo",                       // scheme this build does not know
+        "engine:",                            // no locator
+        "engine:has space",                   // whitespace never appears in a reference
+        "engine:tok=en",                      // '=' — base64 padding
+        "engine:eyJhbGciOiJIUzI1NiJ9.e30.x",  // a JWT
+        "engine:sk-ant-api03-AAAABBBBCCCC",   // an API key
+        "engine:ghp_AAAABBBBCCCCDDDDEEEE",    // a GitHub token
+        "engine:xoxb-1111-2222-abcdefg",      // a Slack token
+        "engine:AKIAIOSFODNN7EXAMPLE",        // an AWS access key id
+        "operator:-----BEGINPRIVATEKEY",      // PEM armor
+        "vault:AIzaSyA0000000000000000000",   // a Google API key
+    ] {
+        assert!(
+            c.execute("UPDATE integrations SET auth_ref = ?1 WHERE id = 'i-1'", params![bad])
+                .is_err(),
+            "`{bad}` must be refused by the 0022 CHECK"
+        );
+    }
+
+    // A 400-character blob cannot fit at all, whatever it is.
+    let blob = format!("engine:{}", "a".repeat(400));
+    assert!(
+        c.execute("UPDATE integrations SET auth_ref = ?1 WHERE id = 'i-1'", params![blob]).is_err(),
+        "a key-sized blob must not fit in a reference column"
+    );
+
+    // HONEST LIMIT, asserted so nobody mistakes the CHECK for a secret detector: a
+    // well-formed reference that happens to BE a password is indistinguishable from one
+    // that names a vault path, and the database accepts it. Shape is all SQL can see.
+    c.execute("UPDATE integrations SET auth_ref = 'engine:hunter2' WHERE id = 'i-1'", [])
+        .expect("the CHECK bounds shape, not meaning — this is the documented limit");
+
+    // NULL is always allowed: "no reference" is a state, not a violation.
+    c.execute("UPDATE integrations SET auth_ref = NULL WHERE id = 'i-1'", []).unwrap();
 }

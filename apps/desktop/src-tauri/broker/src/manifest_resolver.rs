@@ -10,6 +10,7 @@
 //! Only a fully-resolved manifest yields a `ResolvedTurn`, and only that lets the chain reach a real
 //! `verify_and_accept`.
 
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,7 +18,7 @@ use crate::chain_executor::{ResolvedTurn, TurnResolver};
 use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};
 use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
 use brops_core::key_manifest::{
-    check_and_advance, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest, PinnedRoot,
+    check_and_persist, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest, PinnedRoot,
 };
 
 use crate::tcb;
@@ -42,6 +43,10 @@ struct Provisioned {
     manifest: KeyManifest,
     root_sig_b64: String,
     floor: Mutex<AntiRollbackFloor>,
+    /// Where the advanced floor is WRITTEN BACK. Audit: this resolver used to advance `floor` in memory
+    /// and stop there, so the highest accepted epoch reset to the provisioned constant on every broker
+    /// restart and the control could not refuse a rollback across processes.
+    floor_path: PathBuf,
     signer_key_id: String,
     sup_attest_key_id: String,
     facts: ResolvedFacts,
@@ -68,6 +73,7 @@ impl ProductionResolver {
         manifest: KeyManifest,
         root_sig_b64: String,
         floor: AntiRollbackFloor,
+        floor_path: PathBuf,
         signer_key_id: String,
         sup_attest_key_id: String,
         facts: ResolvedFacts,
@@ -77,7 +83,7 @@ impl ProductionResolver {
             root_key_id: tcb::ROOT_KEY_ID.to_string(),
             public_key_hex: tcb::ROOT_PUBLIC_KEY_HEX.to_string(),
         };
-        Self::provisioned_with_pin(pinned, manifest, root_sig_b64, floor, signer_key_id, sup_attest_key_id, facts)
+        Self::provisioned_with_pin(pinned, manifest, root_sig_b64, floor, floor_path, signer_key_id, sup_attest_key_id, facts)
     }
 
     /// Provisioned against an explicit pinned root — production uses [`ProductionResolver::provisioned`] (TCB
@@ -90,6 +96,7 @@ impl ProductionResolver {
         manifest: KeyManifest,
         root_sig_b64: String,
         floor: AntiRollbackFloor,
+        floor_path: PathBuf,
         signer_key_id: String,
         sup_attest_key_id: String,
         facts: ResolvedFacts,
@@ -99,6 +106,7 @@ impl ProductionResolver {
                 manifest,
                 root_sig_b64,
                 floor: Mutex::new(floor),
+                floor_path,
                 signer_key_id,
                 sup_attest_key_id,
                 facts,
@@ -145,11 +153,19 @@ impl TurnResolver for ProductionResolver {
         //     config-supplied root); a demonstration anchor only under `provisioned_with_pin` in tests.
         verify_manifest(&p.manifest, &p.root_sig_b64, &p.pinned).map_err(|_| TurnReason::UpstreamBlocked)?;
 
-        // (2) Anti-rollback: accept only an epoch at/above the durable floor; advance in-memory.
+        // (2) Anti-rollback: accept only an epoch at/above the floor, advance it, and WRITE IT BACK.
+        //
+        //     AUDIT. This block used to end at `*floor = advanced;`. The advance therefore lived in one
+        //     broker process and died with it: the next start re-read `trust.floor_path`, which nothing
+        //     ever wrote, so the "highest accepted manifest_epoch" was permanently the value the
+        //     provisioner had put there. Any genuinely root-signed older manifest — including one whose
+        //     production signer key had since been revoked — was accepted again after a restart, which
+        //     is the whole attack the floor exists to stop. A persist failure REFUSES: continuing on an
+        //     unadvanced floor is the state this fix exists to remove.
         {
             let mut floor = p.floor.lock().map_err(|_| TurnReason::UpstreamBlocked)?;
-            let advanced =
-                check_and_advance(&floor, &p.manifest).map_err(|_| TurnReason::UpstreamBlocked)?;
+            let advanced = check_and_persist(&floor, &p.manifest, &p.floor_path)
+                .map_err(|_| TurnReason::UpstreamBlocked)?;
             *floor = advanced;
         }
 
@@ -202,6 +218,9 @@ mod tests {
     fn seed32(h: &str) -> [u8; 32] {
         super::hex32(h).unwrap()
     }
+    /// The DEMONSTRATION root private that matches the compiled-in `tcb::DEMO_ROOT_PUBLIC_KEY_HEX`.
+    const DEMO_ROOT_SEED_HEX: &str =
+        "0011223344556677001122334455667700112233445566770011223344556677"; // gitleaks:allow (demo test key)
 
     #[test]
     fn fail_closed_resolver_blocks_every_turn() {
@@ -256,8 +275,10 @@ mod tests {
             generation_config_sha256: "c".repeat(64), requested_at: "1900000000000".into(),
             run_id: "run".into(), task_id: "task".into(), requested_at_ms: 1_900_000_000_000, author: "Bro".into(),
         };
+        let dir = tempfile::tempdir().unwrap();
+        let floor_path = dir.path().join("floor.json");
         let r = ProductionResolver::provisioned_with_pin(
-            demo_pin(), manifest, root_sig, floor, "signer-1".into(), "sup-1".into(), facts,
+            demo_pin(), manifest, root_sig, floor, floor_path.clone(), "signer-1".into(), "sup-1".into(), facts,
         );
         let resolved = r.resolve(&req(), "bt", "nonce").expect("valid manifest resolves");
         assert_eq!(resolved.isolated_signer_key_id, "signer-1");
@@ -271,6 +292,7 @@ mod tests {
             })).unwrap(),
             "bogus".into(),
             AntiRollbackFloor { highest_epoch: 2, highest_hash: "x".into() },
+            dir.path().join("floor2.json"),
             "signer-1".into(), "sup-1".into(),
             ResolvedFacts {
                 workspace_id: "ws".into(), install_id: "inst".into(),
@@ -280,5 +302,113 @@ mod tests {
             },
         );
         assert!(matches!(r2.resolve(&req(), "bt", "nonce"), Err(TurnReason::UpstreamBlocked)));
+    }
+
+    /// A resolver over a manifest at `epoch`, sharing `floor_path`. The floor it starts from is READ
+    /// from that path, exactly as `main.rs` reads it at broker start — so calling this twice models
+    /// two broker processes over one deployment, which is the case the in-memory advance never covered.
+    fn resolver_at_epoch(epoch: u64, floor_path: &std::path::Path) -> (ProductionResolver, KeyManifest) {
+        let root = SigningKey::from_bytes(&seed32(DEMO_ROOT_SEED_HEX));
+        let signer = SigningKey::from_bytes(&seed32(
+            "1111111111111111111111111111111111111111111111111111111111111111", // gitleaks:allow (test key)
+        ));
+        let sup = SigningKey::from_bytes(&seed32(
+            "2222222222222222222222222222222222222222222222222222222222222222", // gitleaks:allow (test key)
+        ));
+        let manifest: KeyManifest = serde_json::from_value(json!({
+            "manifest_epoch": epoch,
+            "root_key_id": tcb::DEMO_ROOT_KEY_ID,
+            "keys": [
+                { "key_id": "signer-1", "public_key_hex": hex(signer.verifying_key().as_bytes()),
+                  "trust_class": "production", "valid_from_ms": 1, "valid_to_ms": 9999999999999i64,
+                  "key_epoch": 2u64, "revoked": false, "allowed_protocols": [RECEIPT_ENVELOPE_ARTIFACT_TYPE] },
+                { "key_id": "sup-1", "public_key_hex": hex(sup.verifying_key().as_bytes()),
+                  "trust_class": "production", "valid_from_ms": 1, "valid_to_ms": 9999999999999i64,
+                  "key_epoch": 2u64, "revoked": false, "allowed_protocols": [RECEIPT_ENVELOPE_ARTIFACT_TYPE] }
+            ]
+        })).unwrap();
+        let root_sig = base64::engine::general_purpose::STANDARD
+            .encode(root.sign(&manifest.canonical_bytes()).to_bytes());
+        let floor = brops_core::key_manifest::parse_floor_json(&std::fs::read(floor_path).unwrap())
+            .expect("the provisioned floor must parse");
+        let facts = ResolvedFacts {
+            workspace_id: "ws".into(), install_id: "inst".into(),
+            system_sha256: "a".repeat(64), history_sha256: "b".repeat(64),
+            generation_config_sha256: "c".repeat(64), requested_at: "1900000000000".into(),
+            run_id: "run".into(), task_id: "task".into(), requested_at_ms: 1_900_000_000_000, author: "Bro".into(),
+        };
+        let r = ProductionResolver::provisioned_with_pin(
+            demo_pin(), manifest.clone(), root_sig, floor, floor_path.to_path_buf(),
+            "signer-1".into(), "sup-1".into(), facts,
+        );
+        (r, manifest)
+    }
+
+    /// AUDIT: the advanced floor used to be dropped on the floor of `resolve`. It was written to a
+    /// `Mutex<AntiRollbackFloor>` and nowhere else, so the "highest accepted manifest_epoch" was reset
+    /// to the provisioned constant every time the broker restarted — and a rolled-back but genuinely
+    /// root-signed manifest (e.g. one reviving a revoked signer key) resolved again.
+    #[test]
+    fn a_rollback_is_refused_by_a_broker_that_restarted() {
+        let dir = tempfile::tempdir().unwrap();
+        let floor_path = dir.path().join("floor.json");
+        // Provisioned at epoch 2, exactly as `win_provision` / `provision_keys.py` write it.
+        let (_, m2) = {
+            std::fs::write(&floor_path, brops_core::key_manifest::floor_json_bytes(
+                &AntiRollbackFloor { highest_epoch: 0, highest_hash: String::new() },
+            )).unwrap();
+            resolver_at_epoch(2, &floor_path)
+        };
+
+        // --- broker process 1: serve a turn under epoch 3 ---
+        let (r3, _) = resolver_at_epoch(3, &floor_path);
+        r3.resolve(&req(), "bt", "nonce").expect("epoch 3 is above the floor");
+        drop(r3); // the broker process exits; the Mutex goes with it
+
+        // --- broker process 2: the SAME older manifest, still validly root-signed ---
+        let (r2, _) = resolver_at_epoch(2, &floor_path);
+        assert!(
+            matches!(r2.resolve(&req(), "bt", "nonce"), Err(TurnReason::UpstreamBlocked)),
+            "a manifest below the floor a PREVIOUS broker process accepted must be refused"
+        );
+        assert_eq!(m2.manifest_epoch, 2);
+        // And the durable floor really is at 3.
+        let on_disk = brops_core::key_manifest::parse_floor_json(&std::fs::read(&floor_path).unwrap()).unwrap();
+        assert_eq!(on_disk.highest_epoch, 3);
+    }
+
+    /// A floor that cannot be written down is not a floor: the turn refuses rather than serving on an
+    /// advance that will be lost.
+    #[test]
+    fn an_unwritable_floor_blocks_the_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let floor_path = dir.path().join("floor.json");
+        std::fs::write(&floor_path, brops_core::key_manifest::floor_json_bytes(
+            &AntiRollbackFloor { highest_epoch: 0, highest_hash: String::new() },
+        )).unwrap();
+        let (_, _) = resolver_at_epoch(2, &floor_path);
+        // Same starting floor, but the resolver is pointed at a path inside a directory that does not
+        // exist, so both the temp write and the rename fail.
+        let (r, _) = resolver_at_epoch(2, &floor_path);
+        drop(r);
+        let unwritable = dir.path().join("no-such-dir").join("floor.json");
+        let floor = brops_core::key_manifest::parse_floor_json(&std::fs::read(&floor_path).unwrap()).unwrap();
+        let root = SigningKey::from_bytes(&seed32(DEMO_ROOT_SEED_HEX));
+        let manifest: KeyManifest = serde_json::from_value(json!({
+            "manifest_epoch": 5u64, "root_key_id": tcb::DEMO_ROOT_KEY_ID, "keys": []
+        })).unwrap();
+        let root_sig = base64::engine::general_purpose::STANDARD
+            .encode(root.sign(&manifest.canonical_bytes()).to_bytes());
+        let r = ProductionResolver::provisioned_with_pin(
+            demo_pin(), manifest, root_sig, floor, unwritable,
+            "signer-1".into(), "sup-1".into(),
+            ResolvedFacts {
+                workspace_id: "ws".into(), install_id: "inst".into(),
+                system_sha256: "a".repeat(64), history_sha256: "b".repeat(64),
+                generation_config_sha256: "c".repeat(64), requested_at: "1".into(),
+                run_id: "r".into(), task_id: "t".into(), requested_at_ms: 1, author: "Bro".into(),
+            },
+        );
+        assert!(matches!(r.resolve(&req(), "bt", "nonce"), Err(TurnReason::UpstreamBlocked)));
     }
 }

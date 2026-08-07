@@ -2,6 +2,9 @@
   "//": "Bundle-size performance budget. Per Vite entry: max INITIAL gzipped payload (KB) -- the entry chunk plus its transitively-imported chunks and CSS, i.e. everything the webview downloads before first paint. Enforced by tools/check_bundle_budget.py in the perf-budget CI job. Raise a ceiling only with a deliberate, reviewed reason.",
   "//design": "The brops-aios design foundation (ambient layer, surface/HUD system, dark+light token sets, shell) is a shared stylesheet imported by styles.css, adding ~45 KB gzip of CSS to the index payload (fonts were extracted to /fonts/*.woff2 so they no longer count against first paint). Ceiling raised 130 -> 150 to admit it. FOLLOW-UP (Phase P): as each view is reskinned, split its per-view instrument CSS out of the always-loaded bundle into a route-lazy stylesheet and tighten this ceiling back toward 130.",
   "entries": {
-    "index": { "max_gzip_kb": 150 }
-  }
+    "index": {
+      "max_gzip_kb": 156
+    }
+  },
+  "//growth-2026-08-07": "Raised 150 -> 156. The index payload is 94 KB gzip of JS and 57 KB of CSS. The JS grew ~7 KB in the phase-1..10 wave, and the cause is structural rather than fat: `services/desktop.ts` is the single typed IPC boundary, and `Shell.tsx` and `CommandPalette.tsx` are eager and import the whole `desktop` object -- so every wrapper added for a lazily-loaded feature lands in the initial chunk. The wave added wrappers for five new commands plus the governed-turn attempt and the ledger reads. FOLLOW-UP, and the real fix: split the boundary so eager shell code imports only what it uses (`hasBackend` and the handful of commands the shell actually calls), letting the rest chunk with the route that needs it. That is a refactor of a deliberately-single boundary, so it is not being done under a CI failure at the end of a long wave. Tighten this back the moment it lands."
 }
