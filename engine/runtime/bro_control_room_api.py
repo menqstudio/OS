@@ -3,19 +3,123 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections import Counter
 from typing import Any
 
+from bro_evidence import EvidenceError, list_chain_task_ids, read_chains
 from bro_identity import IdentityError, all_agent_identities
 from bro_orchestration import OrchestrationError, validate_control_room_command
 from bro_orchestration_runtime import DurableOrchestrationRuntime, OrchestrationRuntimeError
+from bro_signature import SignatureError, verify_artifact
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
 FORBIDDEN_SCOPE = {"credential", "deploy", "git", "production", "release", "repository", "brops"}
 
+# --------------------------------------------------------------------------- #
+# The governance mirror wire contract (`brops.governance-read.v1`).
+#
+# The cockpit asks this engine for four read-only surfaces over one request/reply
+# document. The reply is deliberately three-valued, not two:
+#
+#   ok:true  + records:[...]            — the store was read and holds these records
+#   ok:true  + records:[] + empty:true  — the store was read and holds NOTHING
+#   ok:false + error:"..."              — the engine could not read, and says why
+#
+# The middle case is the one that is easy to get wrong and the one that matters most.
+# "I looked and there is nothing" and "I could not look" are different facts, and a
+# surface that collapses them will eventually paint an empty, reassuring page over a
+# blind engine. So a refusal never carries a `records` key at all: there is no shape
+# in which a refusal can be misread as a satisfied, empty chain.
+#
+# Nothing here decides anything. No approval is granted, no verdict is issued, no
+# state is written; the request carries no key, lease or nonce, and the only input
+# that reaches the stores is an optional task-id filter.
+# --------------------------------------------------------------------------- #
+GOVERNANCE_PROTOCOL = "brops.governance-read.v1"
+GOVERNANCE_OP = "governance.read"
+GOVERNANCE_SURFACES = ("decisionLedger", "evidenceChain", "verdicts", "approvalQueue")
+_GOVERNANCE_REQUEST_FIELDS = frozenset({"protocol", "op", "surface", "task_id", "read_only"})
+
+# How the records on each surface were established. Both are real integrity claims and
+# they are not the same claim, so the reply states which one applies rather than
+# letting a consumer assume the stronger one.
+_ED25519 = "ed25519-signature-verified"
+_HASH_CHAIN = "runtime-hash-chain-verified"
+
 
 class ControlRoomAPIError(ValueError):
     pass
+
+
+def _governance_request(request: Any) -> tuple[str, str | None]:
+    """Parse a governance-read request, fail-closed.
+
+    Field-set equality (not a subset check) is deliberate: an unknown field is a
+    request this build does not understand, and quietly ignoring it is how a reader
+    ends up answering a question that was not asked.
+    """
+    if not isinstance(request, dict):
+        raise ControlRoomAPIError("governance read request must be a JSON object")
+    if set(request) != _GOVERNANCE_REQUEST_FIELDS:
+        raise ControlRoomAPIError(
+            "governance read request fields do not match "
+            f"{GOVERNANCE_PROTOCOL} (expected {sorted(_GOVERNANCE_REQUEST_FIELDS)})")
+    if request["protocol"] != GOVERNANCE_PROTOCOL:
+        raise ControlRoomAPIError(f"unsupported governance protocol: {request['protocol']!r}")
+    if request["op"] != GOVERNANCE_OP:
+        raise ControlRoomAPIError(f"unsupported governance op: {request['op']!r}")
+    # `is not True` on purpose: 1, "true" and [] are not an assertion of read-only intent.
+    if request["read_only"] is not True:
+        raise ControlRoomAPIError(
+            "a governance read is served only for an explicit read_only:true request")
+    surface = request["surface"]
+    if surface not in GOVERNANCE_SURFACES:
+        raise ControlRoomAPIError(f"unknown governance surface: {surface!r}")
+    task_id = request["task_id"]
+    if task_id is not None and (not isinstance(task_id, str) or not ID_RE.fullmatch(task_id)):
+        raise ControlRoomAPIError("task_id must be null or a canonical id")
+    return surface, task_id
+
+
+def _governance_refusal(surface: str | None, task_id: str | None,
+                        now: int, error: str) -> dict[str, Any]:
+    """A refusal.
+
+    Note what is absent: there is no `records` key. A consumer cannot accidentally
+    read this as a successful read that happened to find nothing, because the field
+    it would have to read is not there at all.
+    """
+    return {
+        "protocol": GOVERNANCE_PROTOCOL,
+        "schema": 1,
+        "ok": False,
+        "surface": surface,
+        "task_id": task_id,
+        "read_at_epoch": now,
+        "error": error,
+    }
+
+
+def _evidence_wire(payload: dict[str, Any]) -> dict[str, Any]:
+    """Project a signed runtime evidence event onto `evidence-event.schema.json`.
+
+    The two shapes genuinely differ and neither is wrong: the runtime payload carries
+    `artifact_type` and `sequence` (it is a signed artifact in a chain), the published
+    schema carries `schema` and forbids extras (it is a wire record). `sequence` is not
+    dropped information — it is the order of this list, which the read preserves.
+    """
+    return {
+        "schema": 1,
+        "event_id": payload["event_id"],
+        "previous_event_hash": payload["previous_event_hash"],
+        "task_id": payload["task_id"],
+        "event_type": payload["event_type"],
+        "agent_id": payload["agent_id"],
+        "payload_hash": payload["payload_hash"],
+        "issued_at_epoch": payload["issued_at_epoch"],
+        "key_id": payload["key_id"],
+    }
 
 
 def _sha(value: Any) -> str:
@@ -307,6 +411,227 @@ class ControlRoomAPIV1:
             "audit": {"record_count": len(records), "timeline_sha256": timeline, "record_head_sha256": snap["record_head_sha256"]},
         })
         return out
+
+    # --- governance mirror (brops.governance-read.v1) --------------------------------
+
+    def governance_read(self, request: Any, *, now_epoch: int | None = None) -> dict[str, Any]:
+        """Serve one `brops.governance-read.v1` request from the engine's own stores.
+
+        Returns the reply document rather than raising, because the caller is a
+        request/reply transport that must always emit a reply. An exception there
+        surfaces as "the engine is unreachable", which would report a transport
+        failure for what is actually the engine refusing, with a reason worth reading.
+
+        `now_epoch` exists for tests and for a caller that already fixed a clock for a
+        batch of reads. It only bounds staleness and ordering; it is deliberately NOT
+        forwarded to signature verification, which always uses the runtime's own clock
+        so that no caller can rewind time to revive an expired signing key.
+        """
+        now = int(time.time()) if now_epoch is None else self._now(now_epoch)
+        try:
+            surface, task_id = _governance_request(request)
+        except ControlRoomAPIError as exc:
+            return _governance_refusal(None, None, now, str(exc))
+        try:
+            records, source, empty_reason, authentication = self._governance_surface(
+                surface, task_id, now)
+        except (ControlRoomAPIError, OrchestrationRuntimeError, OrchestrationError,
+                EvidenceError, IdentityError, OSError) as exc:
+            return _governance_refusal(surface, task_id, now, str(exc))
+        reply = {
+            "protocol": GOVERNANCE_PROTOCOL,
+            "schema": 1,
+            "ok": True,
+            "surface": surface,
+            "task_id": task_id,
+            "read_at_epoch": now,
+            "records": records,
+            "record_count": len(records),
+            # An empty mirror is an answer, not a failure — and not the same answer as
+            # a refusal, which never reaches here (it carries no `records` at all).
+            "empty": not records,
+            "empty_reason": None if records else empty_reason,
+            "record_authentication": authentication,
+            "source": source,
+        }
+        if task_id is not None:
+            # Lets a consumer tell "this task has recorded nothing" from "the engine
+            # has never heard of this id", instead of guessing from an empty list.
+            reply["known_task"] = task_id in set(self._ids())
+        return reply
+
+    def _governance_surface(self, surface: str, task_id: str | None,
+                            now: int) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
+        if surface == "decisionLedger":
+            return self._governance_decision_ledger(task_id)
+        if surface == "evidenceChain":
+            return self._governance_evidence_chain(task_id)
+        if surface == "verdicts":
+            return self._governance_verdicts(task_id)
+        return self._governance_approval_queue(task_id, now)
+
+    def _runtime_source(self, kind: str) -> dict[str, Any]:
+        return {
+            "kind": kind,
+            "runtime_state_dir": str(self.runtime.state_dir),
+            "source_integrity_sha256": self._integrity()["root_sha256"],
+        }
+
+    def _governance_tasks(self, task_id: str | None) -> tuple[list[str], list[str]]:
+        known = self._ids()
+        return known, ([x for x in known if x == task_id] if task_id is not None else known)
+
+    @staticmethod
+    def _governance_empty_reason(known: list[str], task_id: str | None,
+                                 targets: list[str], otherwise: str) -> str:
+        if not known:
+            return "the orchestration runtime holds no tasks, so nothing has been recorded"
+        if task_id is not None and not targets:
+            return f"the orchestration runtime has no task {task_id!r}"
+        return otherwise
+
+    def _governance_decision_ledger(
+            self, task_id: str | None) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
+        """The engine's own governance decisions: its hash-chained state transitions.
+
+        Every transition names who decided, from which state to which state, why, and
+        on what evidence, and each is bound into the per-task record chain that
+        `_records` re-derives on every read. That is the engine's decision history —
+        there is no second, tidier ledger it is holding back.
+        """
+        known, targets = self._governance_tasks(task_id)
+        records: list[dict[str, Any]] = []
+        for identifier in targets:
+            for record in self._call(self.runtime._records, identifier):
+                if record["kind"] != "transition":
+                    continue
+                payload = record["payload"]
+                records.append({
+                    "id": record["record_id"],
+                    "task_id": identifier,
+                    "sequence": record["sequence"],
+                    "decided_at_epoch": record["observed_at_epoch"],
+                    "previous_state": payload.get("previous_state"),
+                    "next_state": payload.get("next_state"),
+                    "actor_type": payload.get("actor_type"),
+                    "actor_id": payload.get("actor_id"),
+                    "reason_code": payload.get("reason_code"),
+                    "evidence_refs": list(payload.get("evidence_refs") or []),
+                    "record_sha256": record["record_sha256"],
+                    "previous_record_sha256": record["previous_record_sha256"],
+                })
+        records.sort(key=lambda item: (item["decided_at_epoch"], item["task_id"], item["sequence"]))
+        reason = self._governance_empty_reason(
+            known, task_id, targets, "no state transition has been recorded yet")
+        return (records, self._runtime_source("orchestration-runtime-transitions"),
+                reason, _HASH_CHAIN)
+
+    def _governance_evidence_chain(
+            self, task_id: str | None) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
+        """The signed evidence chain, head-anchored, from the runtime's evidence store.
+
+        Both refusals below are refusals on purpose. A runtime with no evidence store
+        is blind, and a runtime with no trusted keys cannot tell a signed event from a
+        file someone dropped into the directory. Reporting either as an empty chain
+        would be the most misleading thing this module could do.
+        """
+        store, keys = self.runtime.evidence_store, self.runtime.evidence_keys
+        if store is None:
+            raise ControlRoomAPIError(
+                "this runtime is not bound to an evidence store, so the engine cannot "
+                "read the evidence chain at all; that is a refusal, not an empty chain")
+        if keys is None:
+            raise ControlRoomAPIError(
+                "this runtime holds no trusted evidence keys, so evidence signatures "
+                "cannot be verified; refusing to mirror unverifiable evidence")
+        known = set(self._ids())
+        if task_id is not None:
+            targets = [task_id]
+        else:
+            # The union, not just the runtime's tasks: a chain in the store for a task
+            # the runtime no longer lists is exactly the history a viewer must still see.
+            targets = sorted(known | set(list_chain_task_ids(store)))
+        # One pass over the store for all of them; a page that asks for every chain
+        # should not cost a directory scan per task. now=None: signature validity is
+        # judged against the runtime's own clock, never a caller-supplied one.
+        chains = read_chains(store, targets, keys, now=None)
+        records = [_evidence_wire(payload)
+                   for identifier in targets for payload in chains[identifier]]
+        source = {
+            "kind": "signed-evidence-store",
+            "evidence_store": str(store),
+            "chain_task_ids": targets,
+        }
+        if task_id is not None and task_id not in known:
+            reason = (f"the engine holds no evidence chain for {task_id!r}, and the "
+                      "orchestration runtime has no such task")
+        elif task_id is not None:
+            reason = f"no evidence event has been recorded for {task_id!r} yet"
+        else:
+            reason = "no evidence event has been recorded in this store yet"
+        return records, source, reason, _ED25519
+
+    def _governance_verdicts(
+            self, task_id: str | None) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
+        """Independent verifier receipts, re-verified from the persisted documents.
+
+        A completion that required independent verification persists the WHOLE signed
+        receipt inside its hash-chained transition, precisely so that a later read does
+        not depend on the evidence store still existing. This re-verifies each one
+        rather than trusting the record that carries it.
+
+        One unverifiable receipt fails the whole surface. That is the rule the evidence
+        chain already uses, for the same reason: a silently shorter list of verdicts
+        reads as "fewer verdicts", not as "one of these I could not check".
+        """
+        known, targets = self._governance_tasks(task_id)
+        documents: list[tuple[str, Any]] = []
+        for identifier in targets:
+            for record in self._call(self.runtime._records, identifier):
+                proof = record["payload"].get("completion_proof")
+                if not isinstance(proof, dict) or proof.get("verifier_receipt_document") is None:
+                    continue
+                documents.append((identifier, proof["verifier_receipt_document"]))
+        records: list[dict[str, Any]] = []
+        if documents:
+            keys = self.runtime.evidence_keys
+            if keys is None:
+                raise ControlRoomAPIError(
+                    f"the runtime holds {len(documents)} verifier receipt(s) but was "
+                    "constructed without trusted keys; refusing to mirror a verdict "
+                    "whose signature cannot be re-verified")
+            for identifier, document in documents:
+                try:
+                    records.append(dict(verify_artifact(document, "verifier-receipt", keys)))
+                except SignatureError as exc:
+                    raise ControlRoomAPIError(
+                        f"the verifier receipt persisted for {identifier} is RED: {exc}") from exc
+            records.sort(key=lambda item: (item["issued_at_epoch"], item["receipt_id"]))
+        reason = self._governance_empty_reason(
+            known, task_id, targets,
+            "no task has completed under independent verification, so the engine has "
+            "issued no verdict")
+        return (records, self._runtime_source("persisted-verifier-receipts"),
+                reason, _ED25519)
+
+    def _governance_approval_queue(
+            self, task_id: str | None,
+            now: int) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
+        """Tasks the runtime is holding for an owner decision.
+
+        Derived state, not a store: a pending approval IS a task whose latest
+        transition parked it in an approval state. This mirrors that queue only — it
+        carries no approve/deny authority, and `allowed_commands` names what an owner
+        *could* command, never what anything here has done.
+        """
+        known, targets = self._governance_tasks(task_id)
+        approvals = [dict(item, id=item["task_id"])
+                     for item in self.approval_inbox(now_epoch=now)["approvals"]
+                     if task_id is None or item["task_id"] == task_id]
+        reason = self._governance_empty_reason(
+            known, task_id, targets, "no task is waiting on an owner approval")
+        return (approvals, self._runtime_source("orchestration-runtime-approval-queue"),
+                reason, _HASH_CHAIN)
 
     def validate_command_intent(self, command: dict[str, Any], *, now_epoch: int) -> dict[str, Any]:
         now = self._now(now_epoch)

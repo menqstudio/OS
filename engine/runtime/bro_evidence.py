@@ -182,3 +182,127 @@ def validate_criterion_evidence(task_id: str, criterion_event_ids: list[str],
     if unknown:
         raise EvidenceError(
             f"criterion cites evidence outside the validated chain: {unknown}")
+
+
+# --------------------------------------------------------------------------- #
+# Enumeration — the read path a viewer needs and a verifier never did.
+#
+# Everything above is caller-driven: `validate_chain` is handed the ids to check,
+# because the completion gate always receives them in a signed manifest. A read-only
+# governance surface has no manifest: it must ask the store what is there. That is a
+# genuinely different question, and answering it carelessly would reintroduce exactly
+# the truncation the anchor exists to prevent — an enumerator that returns whatever
+# files it managed to parse hands back a prefix the moment a file goes missing.
+#
+# So enumeration here only ever DISCOVERS candidate ids; the ids are then put through
+# `validate_chain`, which re-derives the linkage and requires the chain to reproduce
+# the signed head. A read that cannot be anchored raises rather than returning a
+# shorter, plausible history.
+# --------------------------------------------------------------------------- #
+
+_HEAD_SUFFIX = ".head.json"
+
+
+def _store_files(store: pathlib.Path) -> list[pathlib.Path]:
+    try:
+        return sorted(p for p in pathlib.Path(store).iterdir()
+                      if p.is_file() and p.name.endswith(".json"))
+    except OSError as exc:
+        raise EvidenceError(f"evidence store is unreadable: {exc}") from exc
+
+
+def list_chain_task_ids(store: pathlib.Path) -> list[str]:
+    """Task ids that have a signed head file in ``store``.
+
+    Discovery only. Presence here proves nothing about a chain, and absence proves
+    nothing about a task — a deleted head is precisely what an anchor exists to catch.
+    `read_chain` is what decides; this only says where to look.
+    """
+    return sorted({
+        p.name[: -len(_HEAD_SUFFIX)]
+        for p in _store_files(store)
+        if p.name.endswith(_HEAD_SUFFIX) and len(p.name) > len(_HEAD_SUFFIX)
+    })
+
+
+def _scan_events(store: pathlib.Path, keys: dict, wanted: set[str],
+                 now: int | None) -> dict[str, list[tuple[int, dict[str, Any]]]]:
+    """One pass over the store, collecting verified events for ``wanted`` tasks.
+
+    The store is a flat directory shared with other signed artifacts (heads, execution
+    receipts), so this cannot simply verify everything it finds. A file is treated as
+    part of a chain only when its payload *claims* to be an ``evidence-event``; a file
+    that claims that and then fails verification is a hard error, never a silently
+    skipped record — silent skipping is truncation with extra steps.
+    """
+    found: dict[str, list[tuple[int, dict[str, Any]]]] = {task: [] for task in wanted}
+    for path in _store_files(store):
+        if path.name.endswith(_HEAD_SUFFIX):
+            continue
+        document = _load(store, path.name)
+        claimed = document.get("payload") if isinstance(document, dict) else None
+        if not isinstance(claimed, dict) or claimed.get("artifact_type") != "evidence-event":
+            continue  # another signed artifact sharing the directory
+        if claimed.get("task_id") not in wanted:
+            continue
+        try:
+            payload = verify_artifact(document, "evidence-event", keys, now=now)
+        except SignatureError as exc:
+            raise EvidenceError(f"evidence event in {path.name} RED: {exc}") from exc
+        if set(payload) != EVENT_FIELDS:
+            raise EvidenceError(f"evidence event in {path.name} has unexpected shape")
+        sequence = payload["sequence"]
+        if not isinstance(sequence, int) or sequence < 1:
+            raise EvidenceError(
+                f"evidence event {payload['event_id']!r} has a non-positive sequence")
+        # The claimed task id is only a routing hint until the signature is checked;
+        # bucket on the VERIFIED one so an unsigned claim cannot move an event.
+        found.setdefault(payload["task_id"], []).append((sequence, payload))
+    return found
+
+
+def read_chains(store: pathlib.Path, task_ids: list[str], keys: dict, *,
+                now: int | None = None,
+                min_head_sequence: int | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Read several whole chains with a SINGLE pass over the store.
+
+    A governance page asks for every chain at once, and scanning the directory once
+    per task turns a page load into quadratic work over a store that also holds every
+    execution receipt. The per-chain guarantees are unchanged — each chain still has
+    to reproduce its own signed head.
+    """
+    directory = pathlib.Path(store)
+    ordered_ids = list(dict.fromkeys(task_ids))
+    scanned = _scan_events(directory, keys, set(ordered_ids), now)
+    chains: dict[str, list[dict[str, Any]]] = {}
+    for task_id in ordered_ids:
+        events = scanned.get(task_id, [])
+        head_path = directory / f"{task_id}{_HEAD_SUFFIX}"
+        if not events and not head_path.exists():
+            chains[task_id] = []  # the honestly empty chain: no anchor, no events
+            continue
+        if not head_path.exists():
+            raise EvidenceError(
+                f"the evidence store holds {len(events)} event(s) for {task_id} but no "
+                "signed head; an unanchored chain cannot be shown to be complete")
+        events.sort(key=lambda item: item[0])
+        ordered = [payload for _sequence, payload in events]
+        # The authority, not the enumeration: re-derives every link and requires the
+        # chain to end exactly at the signed head, with the head's own event count.
+        validate_chain(task_id, [payload["event_id"] for payload in ordered], keys,
+                       store=directory, now=now, min_head_sequence=min_head_sequence)
+        chains[task_id] = ordered
+    return chains
+
+
+def read_chain(store: pathlib.Path, task_id: str, keys: dict, *,
+               now: int | None = None,
+               min_head_sequence: int | None = None) -> list[dict[str, Any]]:
+    """Return one task's whole verified evidence chain, in sequence order.
+
+    Returns ``[]`` only for the honestly empty case: no anchor and no events. Events
+    without an anchor raise, because an unanchored set cannot be shown to be whole; so
+    does an anchor whose events do not reproduce it (see ``validate_chain``).
+    """
+    return read_chains(store, [task_id], keys, now=now,
+                       min_head_sequence=min_head_sequence)[task_id]
