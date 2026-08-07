@@ -58,7 +58,7 @@ mod linux {
     use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
     use brops_core::governed_message_store::verify_committed_binding;
     use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest, REQUEST_PROTOCOL};
-    use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
+    use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
     use brops_core::key_manifest::{
         check_and_advance, resolve_production_key, verify_manifest_anchored, AntiRollbackFloor,
         KeyManifest, PinnedRoot, RootAnchor, RootProvenance,
@@ -412,20 +412,65 @@ mod linux {
         };
 
         // ---- (D) run ONE governed turn through the real chain ----
-        let conn = match Connection::open_in_memory() {
-            Ok(c) => c,
-            Err(_) => return blocked("db_open"),
+        //
+        // `db.path` (optional) selects a real database file. When it is set, the committed row AND the
+        // §7.1(c)(d) acceptance ledger both live on disk and a replayed receipt/nonce is still refused
+        // after this process exits. When it is ABSENT the driver falls back to an in-memory database:
+        // the ledger below is still the durable implementation (never the in-memory one), but the store
+        // underneath it is thrown away at exit, so the replay defence only covers THIS process. That is
+        // audit IDX-82 and it is not silently papered over — the warning below says it out loud.
+        let db_path = s(&cfg, &["db", "path"]);
+        let conn = match &db_path {
+            Some(p) => match Connection::open(p) {
+                Ok(c) => c,
+                Err(_) => return blocked("db_open"),
+            },
+            None => {
+                eprintln!(
+                    "live_turn: WARNING no [db].path configured — running on an in-memory database. \
+                     The §7.1(c)(d) receipt-id/nonce replay ledger cannot outlive this process, so a \
+                     receipt replayed by a LATER run would not be detected (audit IDX-82)."
+                );
+                match Connection::open_in_memory() {
+                    Ok(c) => c,
+                    Err(_) => return blocked("db_open"),
+                }
+            }
         };
+        if let Err(e) = conn.busy_timeout(std::time::Duration::from_secs(5)) {
+            eprintln!("live_turn: cannot arm DB busy timeout: {e}");
+            return blocked("db_open");
+        }
         if let Err(e) = init_schema(&conn) {
             eprintln!("live_turn: schema init failed: {e}");
             return blocked("db_schema");
         }
 
+        // The DURABLE §7.1(c)(d) ledger (audit IDX-67 / IDX-86 / IDX-94). This driver used to pass
+        // `InMemoryLedger::new()`, whose HashSets are gone the moment the process exits — so the
+        // receipt-id uniqueness and one-time-nonce guarantees that the printed `production_verified=true`
+        // rests on did not survive a restart. It now goes through the same SQLite-backed BEGIN IMMEDIATE
+        // CAS the broker uses; with `db.path` set it is genuinely durable, without it the DB itself is
+        // the ephemeral part (warned about above), not the ledger implementation.
+        let ledger = match &db_path {
+            Some(p) => brops_core::broker_turns::DurableAcceptanceLedger::open(p),
+            None => Connection::open_in_memory()
+                .map_err(brops_core::broker_turns::StoreError::Db)
+                .and_then(brops_core::broker_turns::DurableAcceptanceLedger::from_connection),
+        };
+        let ledger = match ledger {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("live_turn: acceptance ledger unavailable: {e}");
+                return blocked("db_ledger");
+            }
+        };
+
         let chain = LinuxGovernedTurnChain::new(
             sockets,
             FixedResolver { resolved: resolved.clone() },
             LinuxGovernedExecution::new(exec_cfg),
-            InMemoryLedger::new(),
+            ledger,
         );
         let executor = ChainExecutor::new(chain);
 

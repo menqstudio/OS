@@ -19,7 +19,8 @@ use brops_broker::chain_hops::{HopConn, HopError, Principal};
 
 use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
 use brops_core::governed_turn_ipc::{REQUEST_PROTOCOL, TRUSTED_VERIFIED};
-use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
+use brops_core::broker_turns::DurableAcceptanceLedger;
+use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
 use brops_core::key_manifest::{
     check_and_advance, resolve_production_key, verify_manifest_anchored, AntiRollbackFloor, KeyManifest,
     PinnedRoot, RootAnchor, RootProvenance,
@@ -308,11 +309,22 @@ where
     // Keep a handle to the SAME resolver the chain drives, so the production verdict below is
     // bound to the key it actually verified under (F-29).
     let resolver_handle = std::sync::Arc::new(resolver);
-    let chain = GovernedChain::new(connector, SharedResolver(resolver_handle.clone()), exec, InMemoryLedger::new());
+    // A real file under the proof's own directory: the replay ledger has to have something
+    // durable underneath it or the receipt-id and nonce defences cover one process and no more
+    // (audit IDX-67/86/94, IDX-82).
+    let db_path = store_dir.join("win-live-proof-turns.db");
+    // (audit IDX-67/86/94) The replay defences — global receipt-id uniqueness and the
+    // one-time nonce consume — were an `InMemoryLedger` here, which its own doc calls a
+    // test double. They lived for the lifetime of a process, so the same signed receipt
+    // and the same one-time nonce were accepted again after a restart. This is the
+    // Windows PRODUCTION trusted_verified path, so it was the worst place for that.
+    let ledger = DurableAcceptanceLedger::open(&db_path.to_string_lossy())
+        .map_err(|e| format!("replay ledger unavailable: {e:?}"))?;
+    let chain = GovernedChain::new(connector, SharedResolver(resolver_handle.clone()), exec, ledger);
     let executor = ChainExecutor::new(chain);
 
     // ---- run ONE governed turn ----
-    let conn = Connection::open_in_memory().map_err(|e| format!("db_open: {e}"))?;
+    let conn = Connection::open(&db_path).map_err(|e| format!("db_open: {e}"))?;
     init_schema(&conn)?;
     let request = json!({
         "protocol": REQUEST_PROTOCOL,

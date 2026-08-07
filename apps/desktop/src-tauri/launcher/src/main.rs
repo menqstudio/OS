@@ -21,7 +21,10 @@
 //! gated behind `#[cfg(target_os = "linux")]`; on every other host `main` prints the platform-unsupported
 //! banner and exits non-zero (governed real-mode disabled — fail closed).
 
-use brops_core::fd_lifecycle::{verify_launcher_fd_set, FdFacts, FdViolation};
+use brops_core::fd_lifecycle::{
+    verify_launcher_fd_set, verify_store_inputs_unchanged, FdFacts, FdViolation, InodeIdentity,
+    StoreInputSnapshot,
+};
 use brops_core::privilege_drop::{
     verify_final_state, verify_order, CapSets, FinalState, OrderViolation, PrivViolation, Step,
 };
@@ -88,6 +91,9 @@ pub struct LaunchFacts {
     pub post_drop: FinalState,
     pub exec_uid: u32,
     pub exec_gid: u32,
+    /// The provisioned `brops-admin` TCB principal (besides root) permitted to own a store-input inode —
+    /// the boundary value the §2.7 store-input custody floor is evaluated against (audit IDX-3).
+    pub brops_admin_uid: u32,
 }
 
 /// The pure, host-independent launch gate — the launcher's fail-closed decision core. Composes the three
@@ -95,7 +101,7 @@ pub struct LaunchFacts {
 /// circuits, and only an all-clear returns `Ok(())`. This is exactly the predicate that must hold before any
 /// real `fexecve`, and it is fully unit-testable without spawning a process or touching a syscall.
 pub fn evaluate_launch(f: &LaunchFacts) -> Result<(), Refusal> {
-    verify_launcher_fd_set(&f.observed_fds)?;
+    verify_launcher_fd_set(&f.observed_fds, f.brops_admin_uid)?;
     verify_order(&f.drop_sequence)?;
     verify_final_state(&f.post_drop, f.exec_uid, f.exec_gid)?;
     Ok(())
@@ -343,27 +349,40 @@ pub fn parse_lease(content: &str) -> Option<Lease> {
     })
 }
 
-/// The §2.7 store-input identity DECISION (audit **F-08**), pure and host-independent.
+/// The §2.7 store-input identity DECISION (audit **F-08** + **IDX-3**), pure and host-independent.
 ///
-/// `digest_of` supplies the SHA-256 of the bytes behind a held descriptor; the Linux path passes
-/// a `pread`-from-zero reader, tests pass a map. Every input must digest to the lease's pin for
-/// its slot: an unreadable descriptor refuses (`store-input-read`), a mismatch refuses
-/// (`store-input-digest`), and there is no partial acceptance.
+/// `identity_of` supplies the `fstat` identity of the inode behind a held descriptor and `digest_of` the
+/// SHA-256 of its bytes; the Linux path passes real `fstat`/`pread`-from-zero readers, tests pass maps.
+/// Every input must digest to the lease's pin for its slot: an unreadable descriptor refuses
+/// (`store-input-read`), a mismatch refuses (`store-input-digest`), and there is no partial acceptance.
+///
+/// IDX-3: it now also RETURNS the measurement — which inode, holding which bytes — so the caller can
+/// re-run it immediately before `fexecve` and compare the two with
+/// [`verify_store_inputs_unchanged`]. A descriptor whose inode cannot be identified refuses
+/// (`store-input-identity`) rather than being pinned by content alone.
 ///
 /// It is a separate function precisely so it can be tested. The remediation audit found this
 /// check — the whole substance of F-08 — covered by no test at all, while four tests exercised
 /// the lease parser around it, so removing the check kept the suite green.
 pub fn verify_store_inputs(
     lease: &Lease,
+    identity_of: impl Fn(i32) -> Option<InodeIdentity>,
     digest_of: impl Fn(i32) -> Option<String>,
-) -> Result<(), Refusal> {
+) -> Result<Vec<StoreInputSnapshot>, Refusal> {
+    let mut measured = Vec::new();
     for (fd, pin) in store_input_pins(lease) {
         let digest = digest_of(fd).ok_or(Refusal::TcbIntegrity("store-input-read"))?;
         if digest != pin {
             return Err(Refusal::TcbIntegrity("store-input-digest"));
         }
+        let identity = identity_of(fd).ok_or(Refusal::TcbIntegrity("store-input-identity"))?;
+        measured.push(StoreInputSnapshot {
+            fd,
+            identity,
+            digest,
+        });
     }
-    Ok(())
+    Ok(measured)
 }
 
 /// The fd→pin map the §2.7 store-input binding checks (audit **F-08**): fd 3 is `system`, fd 4 `history`,
@@ -375,6 +394,98 @@ pub fn store_input_pins(lease: &Lease) -> [(i32, &str); 3] {
         (4, lease.history_sha256.as_str()),
         (5, lease.generation_config_sha256.as_str()),
     ]
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The ATTESTED request digests (audit **IDX-4**) — the root-owned declaration of the three digests the
+// receipt's `request_sha256` is built from.
+//
+// The lease pins the bytes the executor is handed; the receipt attests digests taken from `resolved.*_sha256`
+// in whatever config the BROKER loaded. Those two were compared only once, by a shell heredoc in
+// `engine/ci/live/run_live_turn.sh`, at PROVISIONING time. Nothing at turn time read the lease to compare,
+// so the two could diverge afterwards and the receipt's request binding would name bytes that were never
+// executed.
+//
+// The comparison now happens at TURN time, inside the setuid launcher, before any drop or exec — the same
+// custody pattern the recorder uses for its root-owned policy (`guard::POLICY_PATH` in
+// `proof/src/bin/governed_recorder.rs`): a COMPILE-TIME path, not an argv flag and not an environment
+// variable, so there is no runtime input by which the broker can redirect it, and a root-owned,
+// non-group/other-writable regular file so a non-TCB principal cannot forge it.
+// ---------------------------------------------------------------------------------------------------
+
+/// The deployment's canonical broker config — the file `resolved.*_sha256` is attested from. A compile-time
+/// constant on purpose (see the module note above); the deployment must place it exactly here.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub const ATTESTED_REQUEST_PATH: &str = "/opt/brops-live/config.json";
+
+/// The three request digests the receipt will attest, read from the root-owned canonical config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttestedRequest {
+    pub system_sha256: String,
+    pub history_sha256: String,
+    pub generation_config_sha256: String,
+}
+
+/// Extract `"<key>": "<64 lowercase hex>"` from a JSON document, fail-closed.
+///
+/// Deliberately NOT a JSON parser: this runs in a setuid-root binary, where a full deserializer is attack
+/// surface the launcher has consistently refused to take on (the lease is `key=value` for the same reason).
+/// It is a strict scanner instead, and its safety comes from being far pickier than a parser would be — the
+/// key must occur EXACTLY ONCE in the whole document, so "which object did this come from?" cannot be
+/// ambiguous, and a document that mentions the key twice is refused rather than resolved by a rule.
+fn scan_json_digest(content: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let mut hits = content.match_indices(&needle);
+    let (idx, _) = hits.next()?;
+    if hits.next().is_some() {
+        return None; // ambiguous ⇒ fail closed
+    }
+    let rest = content[idx + needle.len()..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let value = rest.get(..64)?;
+    if !rest[64..].starts_with('"') {
+        return None; // not exactly 64 chars of digest
+    }
+    if !value
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return None; // non-canonical digest ⇒ fail closed
+    }
+    Some(value.to_string())
+}
+
+/// Parse the three attested request digests out of the canonical config. Any missing, duplicated or
+/// non-canonical digest ⇒ `None` ⇒ the launcher refuses (never "attest whatever was readable").
+pub fn parse_attested_request(content: &str) -> Option<AttestedRequest> {
+    Some(AttestedRequest {
+        system_sha256: scan_json_digest(content, "system_sha256")?,
+        history_sha256: scan_json_digest(content, "history_sha256")?,
+        generation_config_sha256: scan_json_digest(content, "generation_config_sha256")?,
+    })
+}
+
+/// Audit **IDX-4**, the DECISION: the lease's three request pins — the bytes the launcher will actually
+/// let the executor read — must equal the three digests the receipt will attest. A divergence means the
+/// receipt would name a request that was never executed, so it is a refusal before the drop and the exec.
+///
+/// Pure and slot-by-slot: an equality over the triple as a set, or one that stopped at the first slot,
+/// would accept a transposed or partially-substituted request.
+pub fn verify_lease_matches_attested_request(
+    lease: &Lease,
+    attested: &AttestedRequest,
+) -> Result<(), Refusal> {
+    if lease.system_sha256 != attested.system_sha256 {
+        return Err(Refusal::TcbIntegrity("attested-request-system"));
+    }
+    if lease.history_sha256 != attested.history_sha256 {
+        return Err(Refusal::TcbIntegrity("attested-request-history"));
+    }
+    if lease.generation_config_sha256 != attested.generation_config_sha256 {
+        return Err(Refusal::TcbIntegrity("attested-request-generation-config"));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -453,6 +564,14 @@ mod linux {
         let lease = read_and_verify_lease(lease_handle)?;
         let (exec_uid, exec_gid) = (lease.executor_uid, lease.executor_gid);
 
+        // (2b) IDX-4 — the lease's request pins MUST equal the digests the receipt will attest. Read the
+        //      root-owned canonical config from the COMPILE-TIME path (no argv, no env: the broker has no
+        //      runtime input that redirects it) and compare, at TURN time, before any drop or exec. Until
+        //      now this comparison existed only as a provisioning-time shell assertion, so a receipt could
+        //      name a request that was never executed.
+        let attested = read_and_verify_attested_request()?;
+        verify_lease_matches_attested_request(&lease, &attested)?;
+
         // (3) §2.7 step 1 — INVOKER GATE, bound to the lease's recorder principal. Before ANY drop/exec,
         //     confirm the process that execve'd this setuid-root launcher is the recorder the lease names. A
         //     setuid-root binary starts euid=0 but INHERITS the caller's REAL uid/gid, so getresuid/
@@ -460,8 +579,11 @@ mod linux {
         verify_invoker_is_recorder(lease.recorder_uid, lease.recorder_gid)?;
 
         // (4) Verify the inherited descriptor table BEFORE any drop or exec (§2.7 launcher step 1–3).
+        //     IDX-3: this now also enforces the store-input CUSTODY floor — each of fds 3/4/5 must name a
+        //     regular inode owned by root/brops-admin with no group/other write bit, so no principal
+        //     outside the TCB can rewrite the bytes under the executor at any point.
         let observed = collect_fd_facts()?;
-        verify_launcher_fd_set(&observed)?;
+        verify_launcher_fd_set(&observed, TCB_OWNER_BROPS_ADMIN_UID)?;
 
         // (4b) §2.7 store-input identity (audit F-08). The three read-only inputs on fds 3/4/5 ARE the
         //      governed request; the attested `request_sha256` is built from exactly their three digests.
@@ -470,7 +592,11 @@ mod linux {
         //      so the executor could run on prompt A while the signed receipt attested prompt B. Re-hash the
         //      HELD descriptors against the root-owned lease pins here — before the drop, before the exec,
         //      and without a path re-lookup — so the bytes hashed are the bytes the executor reads.
-        verify_store_input_bindings(&lease)?;
+        //
+        //      IDX-3: keep the measurement. It records WHICH inode (dev/ino/uid/gid/mode/size) produced
+        //      each digest, so step (9b) can require that the descriptors still name the same inodes
+        //      holding the same bytes after the drop, the `/proc` reads and the image hash.
+        let pinned_inputs = verify_store_input_bindings(&lease)?;
 
         // (3) Verify the planned drop order is the load-bearing canonical order (§2.7 step ordering).
         verify_order(brops_core::privilege_drop::CANONICAL_SEQUENCE)?;
@@ -496,6 +622,16 @@ mod linux {
         //     against the lease `executor_executable_sha256` pin, and fexecve the SAME fd — the bytes hashed
         //     are the bytes executed, with no path re-lookup. Any mismatch ⇒ ImageIntegrity (no exec).
         let image_fd = open_executor_image(executor_image, &lease.executor_executable_sha256)?;
+
+        // (9b) IDX-3 — the LAST thing before the exec: re-measure fds 3/4/5 and require they still name the
+        //      SAME inodes holding the SAME bytes they did at step (4b). Between those two points the
+        //      launcher dropped privilege, read `/proc/self/status` and hashed the executor image; an
+        //      in-place rewrite in that interval would have made the model run prompt A under a receipt
+        //      attesting prompt B. Re-running the lease comparison as well means the recheck is bound to
+        //      the same root-owned pins, not merely self-consistent.
+        let recheck = verify_store_input_bindings(&lease)?;
+        verify_store_inputs_unchanged(&pinned_inputs, &recheck)?;
+
         fexecve_pinned(image_fd, executor_image)?; // returns ONLY on failure
         Err(Refusal::Syscall("fexecve"))
     }
@@ -544,13 +680,91 @@ mod linux {
     /// zero is NOT disturbed — the executor still starts each input at byte 0. Never re-opens by path: the
     /// bytes hashed are the bytes the executor will read from the same open file description. The §4.7
     /// per-artifact ceiling already bounds how much can be read (`collect_fd_facts` refuses a larger inode).
-    fn verify_store_input_bindings(lease: &Lease) -> Result<(), Refusal> {
+    fn verify_store_input_bindings(lease: &Lease) -> Result<Vec<StoreInputSnapshot>, Refusal> {
         // The DECISION lives in the pure `verify_store_inputs` (host-independent, unit-tested);
-        // this only supplies the real `pread`. The remediation audit found the previous shape had
-        // zero tests over the digest-and-compare — the four "F-08 tests" covered the lease parser
-        // and the fd→pin map, so deleting this whole check left the suite green. A parser test is
-        // not a test of the thing the parser feeds.
-        verify_store_inputs(lease, digest_fd_at_zero)
+        // this only supplies the real `fstat` + `pread`. The remediation audit found the previous
+        // shape had zero tests over the digest-and-compare — the four "F-08 tests" covered the lease
+        // parser and the fd→pin map, so deleting this whole check left the suite green. A parser test
+        // is not a test of the thing the parser feeds.
+        verify_store_inputs(lease, fd_inode_identity, digest_fd_at_zero)
+    }
+
+    /// The `fstat` identity of the inode behind a HELD descriptor (audit IDX-3). Never a `stat(path)`
+    /// re-lookup: the point is to name the object the executor will actually read. `None` on a failed
+    /// `fstat` ⇒ the caller fails closed rather than pinning content alone.
+    fn fd_inode_identity(fd: i32) -> Option<InodeIdentity> {
+        // SAFETY: `fd` is a live inherited descriptor; fstat gets a valid out-pointer to a plain C stat.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut st) } != 0 {
+            return None;
+        }
+        Some(inode_identity_from_stat(&st))
+    }
+
+    /// Widen a platform `stat` into the host-independent [`InodeIdentity`]. A negative `st_size` (which
+    /// the kernel does not produce for a regular file) is not silently coerced — it is folded to `u64::MAX`
+    /// so it can never compare equal to a plausible size, and the §4.7 ceiling in `collect_fd_facts`
+    /// rejects the descriptor as a store input in the first place.
+    fn inode_identity_from_stat(st: &libc::stat) -> InodeIdentity {
+        InodeIdentity {
+            dev: st.st_dev as u64,
+            ino: st.st_ino as u64,
+            uid: st.st_uid,
+            gid: st.st_gid,
+            mode: st.st_mode as u32,
+            size: if st.st_size < 0 {
+                u64::MAX
+            } else {
+                st.st_size as u64
+            },
+        }
+    }
+
+    /// Read + custody-verify the ROOT-OWNED canonical config the receipt's request digests come from
+    /// (audit **IDX-4**), from the COMPILE-TIME [`ATTESTED_REQUEST_PATH`].
+    ///
+    /// Same §2.5 floor as the lease and the executor image: opened `O_RDONLY|O_NOFOLLOW|O_CLOEXEC`, the
+    /// OPENED fd is `fstat`ed (regular, root/brops-admin owned, no group/other write), and the body is read
+    /// from that same descriptor — a non-TCB principal cannot forge the digests the lease is measured
+    /// against. Any open/stat/ownership/size/parse failure is a refusal, not a fallback.
+    fn read_and_verify_attested_request() -> Result<AttestedRequest, Refusal> {
+        // A config far larger than any plausible deployment config is refused rather than read: the
+        // scanner is bounded work over bytes this setuid-root process must not be made to buffer.
+        const MAX_ATTESTED_CONFIG_BYTES: u64 = 1024 * 1024;
+
+        let c = CString::new(ATTESTED_REQUEST_PATH)
+            .map_err(|_| Refusal::TcbIntegrity("attested-request-path"))?;
+        // SAFETY: open with a valid NUL-terminated path; flags are constants.
+        let fd = unsafe {
+            libc::open(
+                c.as_ptr(),
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(Refusal::TcbIntegrity("attested-request-open"));
+        }
+        // SAFETY: fd is a live descriptor; fstat gets a valid out-pointer to a plain C `stat`.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut st) } != 0 {
+            unsafe { libc::close(fd) };
+            return Err(Refusal::TcbIntegrity("attested-request-fstat"));
+        }
+        if !image_owner_mode_ok(st.st_mode, st.st_uid, TCB_OWNER_BROPS_ADMIN_UID) {
+            unsafe { libc::close(fd) };
+            return Err(Refusal::TcbIntegrity("attested-request-owner-mode"));
+        }
+        if st.st_size < 0 || st.st_size as u64 > MAX_ATTESTED_CONFIG_BYTES {
+            unsafe { libc::close(fd) };
+            return Err(Refusal::TcbIntegrity("attested-request-size"));
+        }
+        // SAFETY: we own `fd` exclusively; the File takes ownership and closes it on drop.
+        let mut f = unsafe { fs::File::from_raw_fd(fd) };
+        let mut body = String::new();
+        if f.read_to_string(&mut body).is_err() {
+            return Err(Refusal::TcbIntegrity("attested-request-read"));
+        }
+        parse_attested_request(&body).ok_or(Refusal::TcbIntegrity("attested-request-parse"))
     }
 
     /// SHA-256 (lowercase hex) of a held descriptor's contents, read positionally from offset 0. `None` on
@@ -665,7 +879,11 @@ mod linux {
             // regular file (S_ISREG) whose size is <= MAX_STORE_INPUT_BYTES; a non-regular or over-ceiling
             // inode yields is_regular_store_inode=false, so the pure verifier's StoreInput branch refuses it.
             // Small proof inputs pass unchanged. (O_RDONLY + offset-0 are supplied by the other fields.)
-            // TODO: bind st_dev to the lease's store device (full brops-store-namespace inode binding).
+            //
+            // IDX-3: the SAME fstat now also yields the inode IDENTITY (`st_dev`/`st_ino` plus the
+            // owner/mode/size that say who may rewrite it). `st_dev` is carried because an inode number
+            // alone is only unique within a device — this is the "bind st_dev" the previous TODO deferred.
+            // The verifier's StoreInput branch requires the identity to be present AND TCB-custodied.
             // SAFETY: `fd` is a live inherited descriptor; fstat gets a valid out-pointer to a plain C stat.
             let mut st: libc::stat = unsafe { std::mem::zeroed() };
             if unsafe { libc::fstat(fd, &mut st) } != 0 {
@@ -678,6 +896,7 @@ mod linux {
             let inert = target == "/dev/null";
             out.push(FdFacts {
                 fd,
+                identity: Some(inode_identity_from_stat(&st)),
                 is_inert_endpoint: inert,
                 // Stdio is inert-only; anything that is not the approved /dev/null endpoint is treated as
                 // interactive/inherited for the fail-closed 0/1/2 check.
@@ -852,9 +1071,24 @@ mod tests {
     use super::*;
 
     // ---- fixture builders (mirror the brops-core module tests) ------------------------------------
+    const ADMIN_UID: u32 = 500;
+
+    /// A TCB-owned (root), non-writable regular store inode — what the §2.5/IDX-3 custody floor accepts.
+    fn ident(fd: i32) -> InodeIdentity {
+        InodeIdentity {
+            dev: 66,
+            ino: 1000 + fd as u64,
+            uid: 0,
+            gid: 0,
+            mode: 0o100644,
+            size: 33,
+        }
+    }
+
     fn inert(fd: i32) -> FdFacts {
         FdFacts {
             fd,
+            identity: None,
             is_inert_endpoint: true,
             is_interactive_or_inherited: false,
             read_only: false,
@@ -868,6 +1102,7 @@ mod tests {
     fn store(fd: i32) -> FdFacts {
         FdFacts {
             fd,
+            identity: Some(ident(fd)),
             is_inert_endpoint: false,
             is_interactive_or_inherited: false,
             read_only: true,
@@ -881,6 +1116,7 @@ mod tests {
     fn output() -> FdFacts {
         FdFacts {
             fd: 6,
+            identity: None,
             is_inert_endpoint: false,
             is_interactive_or_inherited: false,
             read_only: false,
@@ -900,6 +1136,7 @@ mod tests {
     fn proc_fd(fd: i32) -> FdFacts {
         FdFacts {
             fd,
+            identity: None,
             is_inert_endpoint: false,
             is_interactive_or_inherited: true,
             read_only: true,
@@ -935,6 +1172,7 @@ mod tests {
             post_drop: dropped(),
             exec_uid: EXEC_UID,
             exec_gid: EXEC_GID,
+            brops_admin_uid: ADMIN_UID,
         }
     }
 
@@ -1228,17 +1466,29 @@ mod tests {
         parse_lease(&good_lease_body()).expect("parses")
     }
 
+    /// The honest digest for each slot, as the lease pins them.
+    fn honest_digest(fd: i32) -> String {
+        match fd {
+            3 => "11".repeat(32),
+            4 => "22".repeat(32),
+            _ => "33".repeat(32),
+        }
+    }
+
     #[test]
     fn matching_inputs_are_accepted() {
         let l = good_lease();
-        let ok = verify_store_inputs(&l, |fd| {
-            Some(match fd {
-                3 => "11".repeat(32),
-                4 => "22".repeat(32),
-                _ => "33".repeat(32),
-            })
-        });
-        assert_eq!(ok, Ok(()));
+        let ok = verify_store_inputs(&l, |fd| Some(ident(fd)), |fd| Some(honest_digest(fd)));
+        // IDX-3: acceptance now MEASURES — which inode produced each pinned digest — so the
+        // pre-fexecve recheck has something to compare against.
+        assert_eq!(
+            ok,
+            Ok(vec![
+                StoreInputSnapshot { fd: 3, identity: ident(3), digest: "11".repeat(32) },
+                StoreInputSnapshot { fd: 4, identity: ident(4), digest: "22".repeat(32) },
+                StoreInputSnapshot { fd: 5, identity: ident(5), digest: "33".repeat(32) },
+            ])
+        );
     }
 
     #[test]
@@ -1247,17 +1497,17 @@ mod tests {
         // One slot at a time, because a check that only looks at the first would pass two of these.
         let l = good_lease();
         for bad in [3, 4, 5] {
-            let r = verify_store_inputs(&l, |fd| {
-                Some(if fd == bad {
-                    "ff".repeat(32) // whatever the attacker substituted
-                } else {
-                    match fd {
-                        3 => "11".repeat(32),
-                        4 => "22".repeat(32),
-                        _ => "33".repeat(32),
-                    }
-                })
-            });
+            let r = verify_store_inputs(
+                &l,
+                |fd| Some(ident(fd)),
+                |fd| {
+                    Some(if fd == bad {
+                        "ff".repeat(32) // whatever the attacker substituted
+                    } else {
+                        honest_digest(fd)
+                    })
+                },
+            );
             assert_eq!(r, Err(Refusal::TcbIntegrity("store-input-digest")), "fd {bad}");
         }
     }
@@ -1268,21 +1518,228 @@ mod tests {
         // real store input, so a check that merely asked "is this one of the pinned digests?"
         // would accept it.
         let l = good_lease();
-        let r = verify_store_inputs(&l, |fd| {
-            Some(match fd {
-                3 => "22".repeat(32),
-                4 => "11".repeat(32),
-                _ => "33".repeat(32),
-            })
-        });
+        let r = verify_store_inputs(
+            &l,
+            |fd| Some(ident(fd)),
+            |fd| {
+                Some(match fd {
+                    3 => "22".repeat(32),
+                    4 => "11".repeat(32),
+                    _ => "33".repeat(32),
+                })
+            },
+        );
         assert_eq!(r, Err(Refusal::TcbIntegrity("store-input-digest")));
     }
 
     #[test]
     fn an_unreadable_input_refuses_rather_than_being_skipped() {
         let l = good_lease();
-        let r = verify_store_inputs(&l, |fd| if fd == 4 { None } else { Some("11".repeat(32)) });
+        let r = verify_store_inputs(
+            &l,
+            |fd| Some(ident(fd)),
+            |fd| if fd == 4 { None } else { Some("11".repeat(32)) },
+        );
         assert_eq!(r, Err(Refusal::TcbIntegrity("store-input-read")));
+    }
+
+    #[test]
+    fn an_input_whose_inode_cannot_be_identified_refuses() {
+        // IDX-3: the digest alone is a snapshot of an object nothing names. If the launcher cannot say
+        // WHICH inode produced the bytes, it must refuse — not pin content and hope.
+        let l = good_lease();
+        for missing in [3, 4, 5] {
+            let r = verify_store_inputs(
+                &l,
+                |fd| if fd == missing { None } else { Some(ident(fd)) },
+                |fd| Some(honest_digest(fd)),
+            );
+            assert_eq!(
+                r,
+                Err(Refusal::TcbIntegrity("store-input-identity")),
+                "fd {missing}"
+            );
+        }
+    }
+
+    // ---- IDX-3: the launch gate refuses a store inode the TCB does not exclusively own ------------
+
+    #[test]
+    fn gate_refuses_a_store_input_a_non_tcb_principal_could_rewrite() {
+        // The composed gate — not just the core predicate — must carry the custody floor, because that
+        // is what makes the pre-exec recheck meaningful: a group-writable or foreign-owned inode can be
+        // rewritten in the interval no launcher-side check can shrink to zero.
+        let mut foreign = good_facts();
+        foreign.observed_fds[3].identity = Some(InodeIdentity { uid: 5007, ..ident(3) });
+        assert_eq!(
+            evaluate_launch(&foreign),
+            Err(Refusal::Fd(FdViolation::StoreInputCustody(3)))
+        );
+
+        let mut writable = good_facts();
+        writable.observed_fds[5].identity = Some(InodeIdentity { mode: 0o100666, ..ident(5) });
+        assert_eq!(
+            evaluate_launch(&writable),
+            Err(Refusal::Fd(FdViolation::StoreInputCustody(5)))
+        );
+
+        let mut unpinned = good_facts();
+        unpinned.observed_fds[4].identity = None;
+        assert_eq!(
+            evaluate_launch(&unpinned),
+            Err(Refusal::Fd(FdViolation::StoreInputUnpinnedInode(4)))
+        );
+    }
+
+    #[test]
+    fn gate_refuses_when_an_input_is_rewritten_between_the_pin_and_the_exec() {
+        // The IDX-3 window itself, expressed over the two measurements the launcher takes: pin at digest
+        // time, recheck immediately before fexecve. Both flavours — a swapped inode and an in-place
+        // rewrite of the same inode — must refuse.
+        let l = good_lease();
+        let pinned = verify_store_inputs(&l, |fd| Some(ident(fd)), |fd| Some(honest_digest(fd)))
+            .expect("the honest measurement is accepted");
+
+        let mut swapped = pinned.clone();
+        swapped[0].identity.ino += 1; // fd 3 now names a different inode
+        assert_eq!(
+            verify_store_inputs_unchanged(&pinned, &swapped),
+            Err(FdViolation::StoreInputInodeChanged(3))
+        );
+
+        let mut rewritten = pinned.clone();
+        rewritten[2].digest = "ff".repeat(32); // fd 5 same inode, different bytes
+        assert_eq!(
+            verify_store_inputs_unchanged(&pinned, &rewritten),
+            Err(FdViolation::StoreInputContentChanged(5))
+        );
+
+        assert_eq!(verify_store_inputs_unchanged(&pinned, &pinned), Ok(()));
+    }
+
+    // ---- IDX-4: the lease's request pins vs the digests the receipt attests -----------------------
+
+    fn attested_config(system: &str, history: &str, generation_config: &str) -> String {
+        // The shape of the real `/opt/brops-live/config.json` `resolved` block.
+        format!(
+            "{{\n\
+             \x20 \"execution\": {{ \"cgroup_arg\": \"/brops.slice\" }},\n\
+             \x20 \"resolved\": {{\n\
+             \x20   \"workspace_id\": \"ws\",\n\
+             \x20   \"system_sha256\": \"{system}\",\n\
+             \x20   \"history_sha256\": \"{history}\",\n\
+             \x20   \"generation_config_sha256\": \"{generation_config}\",\n\
+             \x20   \"requested_at\": \"1700000000000\"\n\
+             \x20 }}\n}}\n"
+        )
+    }
+
+    fn honest_config() -> String {
+        attested_config(&"11".repeat(32), &"22".repeat(32), &"33".repeat(32))
+    }
+
+    #[test]
+    fn the_lease_pins_must_equal_the_digests_the_receipt_attests() {
+        let l = good_lease();
+        let a = parse_attested_request(&honest_config()).expect("parses");
+        assert_eq!(verify_lease_matches_attested_request(&l, &a), Ok(()));
+    }
+
+    #[test]
+    fn a_lease_pin_that_diverges_from_the_attested_digest_refuses() {
+        // The defect IDX-4 names: the receipt's request binding naming bytes that were never executed.
+        // One slot at a time and with a distinct reason per slot, because a check that stopped at the
+        // first comparison — or compared the triple as a set — would let two of these through.
+        let l = good_lease();
+        let cases = [
+            (
+                attested_config(&"ff".repeat(32), &"22".repeat(32), &"33".repeat(32)),
+                "attested-request-system",
+            ),
+            (
+                attested_config(&"11".repeat(32), &"ff".repeat(32), &"33".repeat(32)),
+                "attested-request-history",
+            ),
+            (
+                attested_config(&"11".repeat(32), &"22".repeat(32), &"ff".repeat(32)),
+                "attested-request-generation-config",
+            ),
+        ];
+        for (cfg, reason) in cases {
+            let a = parse_attested_request(&cfg).expect("parses");
+            assert_eq!(
+                verify_lease_matches_attested_request(&l, &a),
+                Err(Refusal::TcbIntegrity(reason))
+            );
+        }
+    }
+
+    #[test]
+    fn transposed_attested_digests_refuse() {
+        // Every digest is a REAL digest of a real store input; only the slots are swapped. A comparison
+        // that asked "is this one of the three?" would accept it and the receipt would attest the wrong
+        // prompt on the wrong descriptor.
+        let l = good_lease();
+        let a = parse_attested_request(&attested_config(
+            &"22".repeat(32),
+            &"11".repeat(32),
+            &"33".repeat(32),
+        ))
+        .expect("parses");
+        assert_eq!(
+            verify_lease_matches_attested_request(&l, &a),
+            Err(Refusal::TcbIntegrity("attested-request-system"))
+        );
+    }
+
+    #[test]
+    fn an_unreadable_or_ambiguous_attested_config_refuses() {
+        // Fail closed on anything that is not exactly one canonical digest per key. In particular a
+        // document that mentions a key TWICE is refused rather than resolved by a precedence rule — the
+        // launcher must not be the component that decides which of two `system_sha256` values counts.
+        assert_eq!(parse_attested_request("not json at all"), None);
+        // missing key
+        assert_eq!(
+            parse_attested_request(&honest_config().replace("\"history_sha256\"", "\"other_key\"")),
+            None
+        );
+        // duplicated key
+        let dup = honest_config().replace(
+            "\"requested_at\": \"1700000000000\"",
+            &format!("\"system_sha256\": \"{}\"", "44".repeat(32)),
+        );
+        assert_eq!(parse_attested_request(&dup), None);
+        // non-canonical digest: wrong length, then uppercase hex
+        assert_eq!(
+            parse_attested_request(&attested_config("beef", &"22".repeat(32), &"33".repeat(32))),
+            None
+        );
+        assert_eq!(
+            parse_attested_request(&attested_config(
+                &"AB".repeat(32),
+                &"22".repeat(32),
+                &"33".repeat(32)
+            )),
+            None
+        );
+        // a digest that is not a JSON string value at all
+        assert_eq!(
+            parse_attested_request(&honest_config().replace(
+                &format!("\"system_sha256\": \"{}\"", "11".repeat(32)),
+                "\"system_sha256\": null"
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn the_attested_config_is_read_from_a_compile_time_path() {
+        // IDX-4's whole point is that the broker cannot steer this. If the path ever becomes an argv flag
+        // or an environment lookup, the check reduces to "compare the lease against a file the attacker
+        // chose". The launcher takes exactly three argv tokens (lease, image, cgroup) and an EMPTY
+        // environment, so pinning the constant here is what keeps the source out of the broker's reach.
+        assert!(ATTESTED_REQUEST_PATH.starts_with('/'));
+        assert!(!ATTESTED_REQUEST_PATH.contains(".."));
     }
 
     #[test]

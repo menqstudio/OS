@@ -26,7 +26,8 @@ mod win {
 
     use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
     use brops_core::governed_turn_ipc::{REQUEST_PROTOCOL, TRUSTED_VERIFIED};
-    use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
+    use brops_core::broker_turns::DurableAcceptanceLedger;
+    use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
     use brops_core::key_manifest::{
         resolve_production_key, verify_manifest_anchored, KeyManifest, PinnedRoot, RootAnchor,
         RootProvenance,
@@ -220,15 +221,37 @@ mod win {
             evidence_dir: std::path::PathBuf::from(&cfg.store_dir).join("run-evidence"),
             head_sequence: cfg.facts.evidence_head_sequence,
         };
-        let exec = GovernedExecutionCore::new(params, produce, supervisor_op, now);
+        // IDX-19: this kit declares `windows-live-kit:` — it SPAWNS an executor — so the
+        // execution must measure that image against the lease's `executor_executable_sha256`
+        // before anything is reported or attested. Without this the core refuses
+        // (`executor_image_unmeasured`), which is the honest state: the Windows twin had zero
+        // comparison sites anywhere while the Linux launcher genuinely compared and fexecve'd
+        // the fd it hashed.
+        let exec = GovernedExecutionCore::new(params, produce, supervisor_op, now)
+            .with_executor_image(std::path::PathBuf::from(&cfg.executor_path));
 
         // ---- (D) run ONE governed turn ----
         // Keep a handle to the SAME resolver the chain drives (F-29).
         let resolver_handle = std::sync::Arc::new(resolver);
-        let chain = GovernedChain::new(connector, SharedResolver(resolver_handle.clone()), exec, InMemoryLedger::new());
+        // The turn database is a real FILE now. A durable ledger over a store that vanishes is
+        // not durable — it would give back exactly the weakness it exists to remove.
+        let db_path = std::path::Path::new(&cfg.store_dir).join("win-live-turns.db");
+        let ledger = match DurableAcceptanceLedger::open(&db_path.to_string_lossy()) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("win_live_turn: replay ledger unavailable ({e:?}) — refusing");
+                return 1;
+            }
+        };
+        // (audit IDX-67/86/94) The replay defences — global receipt-id uniqueness and the
+        // one-time nonce consume — were an `InMemoryLedger` here, which its own doc calls a
+        // test double. They lived for the lifetime of a process, so the same signed receipt
+        // and the same one-time nonce were accepted again after a restart. This is the
+        // Windows PRODUCTION trusted_verified path, so it was the worst place for that.
+        let chain = GovernedChain::new(connector, SharedResolver(resolver_handle.clone()), exec, ledger);
         let executor = ChainExecutor::new(chain);
 
-        let conn = match Connection::open_in_memory() {
+        let conn = match Connection::open(&db_path) {
             Ok(c) => c,
             Err(_) => return blocked("db_open"),
         };

@@ -103,6 +103,13 @@ def main() -> int:
         allowed_executor_ids=cfg["signer_allow"]["executor_ids"],
         allowed_builder_ids=cfg["signer_allow"]["builder_ids"],
         allowed_supervisor_ids=cfg["signer_allow"]["supervisor_ids"],
+        # §1.5 step 4 (audit round 3): the policy this signer may sign under, bound to the
+        # bundle digest it must resolve to. The signer refuses without one — a policy gate
+        # that passes when unconfigured is the state this is fixing.
+        allowed_policies={
+            (cfg["signer_allow"]["policy_id"], cfg["signer_allow"]["policy_version"]):
+                cfg["signer_allow"]["policy_bundle_handle"],
+        },
     )
     signer = IsolatedSigner(
         config=config,

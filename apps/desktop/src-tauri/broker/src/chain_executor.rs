@@ -418,6 +418,76 @@ fn parse_lease(v: &Value) -> Result<Lease, TurnReason> {
     })
 }
 
+// =================================================================================================
+// Audit **IDX-4** (broker-side half) — the request digests this turn will ATTEST must equal the pins in
+// the launcher's §4.3 lease FILE, checked at TURN time.
+//
+// The privileged half of this lives in the launcher, which compares the same lease against the root-owned
+// canonical config from a compile-time path; that is the wall, because the broker cannot steer it. This
+// half is deliberately the weaker one and is worth stating precisely:
+//
+//   * it does NOT constrain a hostile broker BINARY — a modified broker simply would not run it. What it
+//     constrains is the broker's INPUT: the deployment installs the driver root-owned under `$LIVE/bin`,
+//     so the broker uid picks the `--config` it loads, not the code that loads it;
+//   * a hostile config could name a lease file of its own alongside divergent digests, and this comparison
+//     would then be self-consistent — but the recorder's root-owned policy pins `--lease`, so a run whose
+//     lease is not the canonical one is refused before any execution. Either the lease compared here is
+//     the canonical lease, or there is no turn.
+//
+// Nothing about that argument makes the launcher's check redundant; it is why this one is not the wall.
+// =================================================================================================
+
+/// Extract the three governed-request digests from a §4.3 launcher lease body (`key=value`, the exact
+/// format `launcher/src/main.rs` parses). Fail-closed: each of the three keys must appear EXACTLY ONCE
+/// with a 64-char lowercase-hex value, and a line without `=` is malformed. Keys the launcher owns
+/// (uids/gids, the image pin) are not the broker's business and are ignored, not validated twice.
+pub fn lease_request_pins(body: &str) -> Option<(String, String, String)> {
+    let (mut system, mut history, mut generation_config) = (None, None, None);
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (k, v) = line.split_once('=')?;
+        let (k, v) = (k.trim(), v.trim());
+        let slot = match k {
+            "system_sha256" => &mut system,
+            "history_sha256" => &mut history,
+            "generation_config_sha256" => &mut generation_config,
+            _ => continue,
+        };
+        if slot.is_some()
+            || v.len() != 64
+            || !v.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return None; // duplicate or non-canonical digest ⇒ fail closed
+        }
+        *slot = Some(v.to_string());
+    }
+    Some((system?, history?, generation_config?))
+}
+
+/// Audit **IDX-4**, the broker-side DECISION: the digests this turn resolves — the ones the receipt's
+/// `request_sha256` is recomputed from — must equal the lease's request pins, which are the bytes the
+/// launcher will let the executor read. Any divergence, or a lease that cannot be read as a pinned
+/// request at all, is a closed turn: no spawn, no attestation, no receipt.
+///
+/// Slot-by-slot, so a transposed pair is a refusal rather than a set that happens to match.
+pub fn verify_resolved_matches_lease(
+    resolved: &ResolvedTurn,
+    lease_body: &str,
+) -> Result<(), TurnReason> {
+    let (system, history, generation_config) =
+        lease_request_pins(lease_body).ok_or(TurnReason::UpstreamBlocked)?;
+    if resolved.system_sha256 != system
+        || resolved.history_sha256 != history
+        || resolved.generation_config_sha256 != generation_config
+    {
+        return Err(TurnReason::UpstreamBlocked);
+    }
+    Ok(())
+}
+
 /// The isolated-signer's flat 23-key `brops.governed-receipt-envelope.v1` payload parsed into OWNED fields
 /// so the borrowed [`ReceiptEnvelope`] can point at it for the verify call. A missing/mistyped key fails
 /// closed BEFORE any signature check (verify_and_accept re-checks the identity fields regardless).
@@ -703,6 +773,16 @@ pub mod linux {
             if cfg.recorder_command.is_empty() {
                 return Err(TurnReason::UpstreamBlocked);
             }
+
+            // (0) IDX-4 — before spawning anything, require that the digests THIS turn will attest are the
+            //     digests the lease pins, i.e. the bytes the launcher will let the executor read. This was
+            //     asserted once at provisioning time by a shell heredoc and never again; a lease and a
+            //     config that drifted apart afterwards produced a receipt naming a request that was never
+            //     executed. The launcher performs the same comparison against a root-owned source the
+            //     broker cannot redirect — see the module note above for why this half is not the wall.
+            let lease_body = std::fs::read_to_string(&cfg.lease_file)
+                .map_err(|_| TurnReason::UpstreamBlocked)?;
+            verify_resolved_matches_lease(r, &lease_body)?;
             let report_path = format!(
                 "{}/live-{}-{}.out",
                 cfg.report_dir, plan.broker_turn_id, plan.lease.execution_attempt_id
@@ -1391,4 +1471,98 @@ mod tests {
         assert!(r.message.is_none());
     }
 
+    // =============================================================================================
+    // IDX-4 (broker-side half): the digests this turn will ATTEST must equal the lease's request pins.
+    // =============================================================================================
+
+    fn resolved_fixture() -> ResolvedTurn {
+        FakeResolver
+            .resolve(
+                &ValidatedRequest {
+                    conversation_id: "conv-1".into(),
+                    agent: Some("a".into()),
+                    client_request_id: CRID.into(),
+                },
+                "bt-1",
+                NONCE,
+            )
+            .expect("the fake resolver resolves")
+    }
+
+    /// A §4.3 lease body carrying the three request pins, in the exact `key=value` shape the launcher
+    /// parses (uids and the image pin included, so the scanner has to ignore what is not its business).
+    fn lease_body(system: &str, history: &str, generation_config: &str) -> String {
+        format!(
+            "recorder_uid=5005\nrecorder_gid=5005\nexecutor_uid=5007\nexecutor_gid=5007\n\
+             executor_executable_sha256={}\nsystem_sha256={system}\nhistory_sha256={history}\n\
+             generation_config_sha256={generation_config}\n",
+            hx(0xab)
+        )
+    }
+
+    #[test]
+    fn a_lease_pinning_exactly_the_resolved_digests_is_accepted() {
+        let r = resolved_fixture();
+        let body = lease_body(&hx(0x55), &hx(0x66), &hx(0x44));
+        assert_eq!(verify_resolved_matches_lease(&r, &body), Ok(()));
+    }
+
+    #[test]
+    fn a_lease_pinning_bytes_this_turn_will_not_attest_blocks_the_execution() {
+        // IDX-4 itself: the receipt's request binding would name bytes the executor never ran. One slot at
+        // a time, because a check that stopped at the first comparison would let two of these through.
+        let r = resolved_fixture();
+        let cases = [
+            lease_body(&hx(0xff), &hx(0x66), &hx(0x44)),
+            lease_body(&hx(0x55), &hx(0xff), &hx(0x44)),
+            lease_body(&hx(0x55), &hx(0x66), &hx(0xff)),
+        ];
+        for body in cases {
+            assert_eq!(
+                verify_resolved_matches_lease(&r, &body),
+                Err(TurnReason::UpstreamBlocked)
+            );
+        }
+        // A transposition: every digest is one this turn resolves, but on the wrong descriptor.
+        assert_eq!(
+            verify_resolved_matches_lease(&r, &lease_body(&hx(0x66), &hx(0x55), &hx(0x44))),
+            Err(TurnReason::UpstreamBlocked)
+        );
+    }
+
+    #[test]
+    fn a_lease_that_does_not_pin_the_request_at_all_blocks_the_execution() {
+        // "Unpinned" must not read as "nothing to compare, carry on".
+        let r = resolved_fixture();
+        for key in ["system_sha256", "history_sha256", "generation_config_sha256"] {
+            let without: String = lease_body(&hx(0x55), &hx(0x66), &hx(0x44))
+                .lines()
+                .filter(|l| !l.trim_start().starts_with(key))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            assert_eq!(
+                verify_resolved_matches_lease(&r, &without),
+                Err(TurnReason::UpstreamBlocked),
+                "{key}"
+            );
+        }
+        // A duplicated pin (which of the two would be authoritative?) and a non-canonical digest.
+        let dup = format!(
+            "{}system_sha256={}\n",
+            lease_body(&hx(0x55), &hx(0x66), &hx(0x44)),
+            hx(0x55)
+        );
+        assert_eq!(
+            verify_resolved_matches_lease(&r, &dup),
+            Err(TurnReason::UpstreamBlocked)
+        );
+        assert_eq!(
+            verify_resolved_matches_lease(&r, &lease_body("beef", &hx(0x66), &hx(0x44))),
+            Err(TurnReason::UpstreamBlocked)
+        );
+        assert_eq!(
+            verify_resolved_matches_lease(&r, "not a lease at all"),
+            Err(TurnReason::UpstreamBlocked)
+        );
+    }
 }

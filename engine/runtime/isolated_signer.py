@@ -363,6 +363,7 @@ class SignerConfig:
         allowed_executor_ids: Iterable[str],
         allowed_builder_ids: Iterable[str],
         allowed_supervisor_ids: Iterable[str],
+        allowed_policies: Optional[Mapping[Tuple[str, str], str]] = None,
         max_future_skew_ms: int = 60_000,
     ) -> None:
         if not _capped_str(receipt_key_id):
@@ -384,6 +385,28 @@ class SignerConfig:
         self.allowed_executor_ids = frozenset(allowed_executor_ids)
         self.allowed_builder_ids = frozenset(allowed_builder_ids)
         self.allowed_supervisor_ids = frozenset(allowed_supervisor_ids)
+        # §1.5 step 4 — the policy-authorization allowlist. Maps (policy_id, policy_version) to the
+        # content address of the policy bundle that pair MUST resolve to. The pairing is the point:
+        # an id and a version without a bundle digest is a label, and a label the supervisor picks
+        # is not an authorization.
+        #
+        # `None` means the deployment has not provisioned one. That is NOT "allow everything" — see
+        # `_check_policy_authorization`, which refuses. An unprovisioned gate that passes is how
+        # this check came to be absent while `REASON_POLICY_MISMATCH` sat in the source, defined
+        # and raised nowhere (audit round 3).
+        if allowed_policies is not None:
+            if not isinstance(allowed_policies, Mapping) or not allowed_policies:
+                raise SignerError("allowed_policies must be a non-empty mapping when provided")
+            for key, handle in allowed_policies.items():
+                if (not isinstance(key, tuple) or len(key) != 2
+                        or not all(_capped_str(part) for part in key)):
+                    raise SignerError(
+                        "allowed_policies keys must be (policy_id, policy_version) string pairs")
+                if not _is_sha256_hex(handle):
+                    raise SignerError(
+                        "allowed_policies values must be the 64-hex policy-bundle content address")
+            allowed_policies = dict(allowed_policies)
+        self.allowed_policies = allowed_policies
         self.max_future_skew_ms = max_future_skew_ms
 
 
@@ -532,6 +555,7 @@ class IsolatedSigner:
             # (3) independent authorization gate (§1.5).
             self._check_run_binding(evidence)
             self._check_identity(evidence)
+            self._check_policy_authorization(evidence)
             self._check_timestamps(evidence)
             # (4) recompute every store-derived hash from the STORE bytes named
             #     by the handle, and deep-verify the protected-chain handles.
@@ -619,6 +643,36 @@ class IsolatedSigner:
             raise _Refuse(REASON_IDENTITY_DENIED)
         if evidence["supervisor_id"] not in cfg.allowed_supervisor_ids:
             raise _Refuse(REASON_IDENTITY_DENIED)
+
+    def _check_policy_authorization(self, evidence: Mapping[str, Any]) -> None:
+        """§1.5 step 4 — the signer's INDEPENDENT policy-authorization check.
+
+        This step was removed at some point and `REASON_POLICY_MISMATCH` was left defined and
+        raised nowhere (audit round 3, spec-conformance pass). The consequence is narrow but real:
+        the supervisor names `policy_id`, `policy_version` and `policy_bundle_handle` in the
+        evidence, the signer required the bundle to merely EXIST in its store, and nothing checked
+        that the named policy was one this signer is authorized to sign under, or that the id and
+        version actually belong to that bundle. A supervisor could therefore attest a turn under a
+        policy the signer's operator never approved, and the receipt would say so truthfully while
+        meaning nothing.
+
+        Two things are checked, and the second is the one with teeth: the (id, version) pair must
+        be on the operator's allowlist, and the bundle handle the evidence names must be the one
+        that pair is registered to. Checking the pair alone would let a known-good label be
+        attached to different bytes.
+
+        An unprovisioned allowlist REFUSES. A gate that passes when it has not been configured is
+        indistinguishable from no gate, which is exactly the state this is fixing.
+        """
+        allowed = self._config.allowed_policies
+        if allowed is None:
+            raise _Refuse(REASON_POLICY_MISMATCH)
+        key = (evidence["policy_id"], evidence["policy_version"])
+        expected_bundle = allowed.get(key)
+        if expected_bundle is None:
+            raise _Refuse(REASON_POLICY_MISMATCH)
+        if evidence["policy_bundle_handle"] != expected_bundle:
+            raise _Refuse(REASON_POLICY_MISMATCH)
 
     def _check_timestamps(self, evidence: Mapping[str, Any]) -> None:
         requested_at = evidence["requested_at"]

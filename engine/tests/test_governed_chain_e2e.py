@@ -293,6 +293,10 @@ class GovernedChainE2E(unittest.TestCase):
             allowed_executor_ids={EXECUTOR_ID},
             allowed_builder_ids={BUILDER_ID},
             allowed_supervisor_ids={SUPERVISOR_ID},
+            # §1.5 step 4: the (policy_id, policy_version) pair this signer is authorized to
+            # sign under, bound to the exact bundle it must resolve to. An unprovisioned
+            # allowlist REFUSES, so every construction site has to state one.
+            allowed_policies={("e2e-policy", "1"): self.handles["policy_bundle"]},
         )
         return IsolatedSigner(
             config=config,

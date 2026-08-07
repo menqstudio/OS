@@ -157,10 +157,18 @@ mod linux {
             .unwrap_or_else(|| unsafe { libc::getuid() });
 
         // Open the broker DB and initialize the four governed-turn schemas before accepting a single peer.
-        let conn = Connection::open(&socket_path.replace(".sock", ".db")).map_err(|e| {
+        let db_path = socket_path.replace(".sock", ".db");
+        let conn = Connection::open(&db_path).map_err(|e| {
             eprintln!("brops-broker: cannot open broker DB: {e}");
             EXIT_DB
         })?;
+        // The durable acceptance ledger opens a SECOND connection to this same file (it is owned by the
+        // chain, which outlives any single turn). Arm a busy timeout here so an overlapping write from
+        // that connection makes this one wait its turn instead of failing instantly with SQLITE_BUSY.
+        if let Err(e) = conn.busy_timeout(std::time::Duration::from_secs(5)) {
+            eprintln!("brops-broker: cannot arm DB busy timeout: {e}");
+            return Err(EXIT_DB);
+        }
         init_broker_schema(&conn).map_err(|e| {
             eprintln!("brops-broker: {e}");
             EXIT_DB
@@ -178,7 +186,7 @@ mod linux {
         // with a TCB-root-signed manifest, serve real governed turns through the live chain; otherwise (no
         // config / malformed / no trusted manifest) fall back to the fail-closed default that Blocks every
         // turn — the shipped posture is unchanged until a trusted manifest is provisioned.
-        let executor: Box<dyn GovernedExecutor> = build_governed_executor(allowed_uid);
+        let executor: Box<dyn GovernedExecutor> = build_governed_executor(allowed_uid, &db_path);
 
         // One governed turn per connection (single-request/single-response). A bad peer or malformed frame
         // fails that ONE connection closed; the listener keeps serving.
@@ -211,15 +219,19 @@ mod linux {
     /// at `$BROPS_BROKER_CONFIG` (same shape the live-turn driver uses): if it parses and carries a
     /// `[trust].manifest_path` + signature + floor + the `[sockets]`/`[execution]`/`[facts]`/`[resolved]`
     /// blocks, the real `LinuxGovernedTurnChain` (with the production `ProductionResolver`) is served.
-    /// ANY problem — no env var, unreadable/malformed config, missing manifest — returns the fail-closed
-    /// `UpstreamBlockedExecutor`, so the broker keeps rendering `blocked` (never a fabricated acceptance).
-    fn build_governed_executor(login_uid: u32) -> Box<dyn GovernedExecutor> {
+    /// ANY problem — no env var, unreadable/malformed config, missing manifest, or an acceptance ledger
+    /// that will not open — returns the fail-closed `UpstreamBlockedExecutor`, so the broker keeps
+    /// rendering `blocked` (never a fabricated acceptance).
+    ///
+    /// `db_path` is the broker's own database file; the §7.1(c)(d) replay ledger is opened against it so
+    /// accepted `receipt_id`s and spent `request_nonce`s survive a restart of this process.
+    fn build_governed_executor(login_uid: u32, db_path: &str) -> Box<dyn GovernedExecutor> {
         use brops_broker::chain_executor::linux::{
             ChainSockets, ExecutionConfig, LinuxGovernedExecution, LinuxGovernedTurnChain,
         };
         use brops_broker::chain_executor::ChainExecutor;
         use brops_broker::manifest_resolver::{ProductionResolver, ResolvedFacts};
-        use brops_core::governed_verification::InMemoryLedger;
+        use brops_core::broker_turns::DurableAcceptanceLedger;
         use brops_core::key_manifest::{AntiRollbackFloor, KeyManifest};
         use serde_json::Value;
 
@@ -376,12 +388,29 @@ mod linux {
             evidence_state_dir: s(&["execution", "evidence_state_dir"]).unwrap_or_default(),
         };
 
+        // ---- §7.1(c)(d) DURABLE replay ledger (audit IDX-67 / IDX-86 / IDX-94) ----
+        //
+        // This used to be `InMemoryLedger::new()`. Its two HashSets died with the process, so the
+        // receipt-id uniqueness and one-time-nonce guarantees the chain advertises held only until the
+        // next restart: the same signed envelope and the same nonce were accepted again afterwards.
+        // The ledger now writes to the broker's own SQLite file, so both defences are on disk.
+        // If it cannot be opened there is no replay defence at all — refuse to serve governed turns.
+        let ledger = match DurableAcceptanceLedger::open(db_path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!(
+                    "brops-broker: durable acceptance ledger unavailable at {db_path} ({e}) — serving fail-closed"
+                );
+                return fail_closed();
+            }
+        };
+
         eprintln!("brops-broker: trusted manifest provisioned — serving the live governed chain");
         let chain = LinuxGovernedTurnChain::new(
             sockets,
             resolver,
             LinuxGovernedExecution::new(exec_cfg),
-            InMemoryLedger::new(),
+            ledger,
         );
         Box::new(ChainExecutor::new(chain))
     }
