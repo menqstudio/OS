@@ -187,7 +187,12 @@ present.
 - Everything lives in **one local SQLite database** on your machine — no cloud account, no server.
 - **API keys are never stored** in the database; they come only from your environment.
 - Chat with the local `claude` CLI uses **your own Claude Code subscription** (no separate API
-  key). The AI runs as a plain, tool-free text completion — a message can't make it read your files
-  or run commands.
+  key). By default the AI runs as a plain, tool-free text completion — a message can't make it read
+  your files or run commands.
+- **One setting changes that completely.** Started with `BROPS_PROJECT_DIR` pointing at a real
+  folder, Bro becomes the conductor: he gets file access, a bounded shell, and the ability to hand
+  work to specialists inside that folder. That is the mode where he can actually *do* things for
+  you — and it is genuinely file and shell access, so point it at a project you meant to give him.
+  Without it, he can only talk.
 
 To back up your work, quit BroPS and copy the app-data folder (see the Operator Guide, §8).

@@ -216,7 +216,13 @@ describe('declaring a connector', () => {
     await user.click(screen.getByRole('button', { name: 'Declare' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/This build cannot declare connectors/);
+    // The refusal names the WINDOW, not the build. `create_integration` is registered and
+    // granted since PR #65, so "this build cannot declare connectors" became false — a refusal
+    // that misdescribes its own cause sends whoever reads it to fix the wrong thing. What a
+    // refusal here now means is that the capability set the running window actually loaded did
+    // not carry the grant, and the copy says exactly that.
+    expect(alert).toHaveTextContent(/This window was not allowed to declare a connector/);
+    expect(alert).toHaveTextContent(/DOES expose `create_integration`/);
     expect(alert).toHaveTextContent(/create_integration not allowed/);
   });
 });

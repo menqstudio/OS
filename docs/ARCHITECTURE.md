@@ -18,7 +18,7 @@ OS is a **monorepo** that unifies a governance **engine** (`engine/`, from `menq
 4. **The boundary is a subprocess/sidecar**, not an embedding — it matches the engine's existing CLI/hook model and keeps the two toolchains (Rust, Python) cleanly separated.
 5. **History is preserved.** Both codebases are brought in with `git subtree`, so `git log` still tells each half's story.
 
-### The governed execution flow (target — Phase 1)
+### The governed execution flow — built, proven, and gated off
 
 ```
 👤 → Webview (React) → Tauri command (Rust) → bridge
@@ -29,7 +29,11 @@ OS is a **monorepo** that unifies a governance **engine** (`engine/`, from `menq
       → back to the cockpit
 ```
 
-Today (in `apps/desktop/`) the `ai.rs` layer spawns the `claude` CLI directly in a private sandbox. Phase 1 replaces that spawn with a `bridge` call into the engine's `bro_supervisor`, so the same turn now carries a lease and produces a receipt.
+That chain is real. It is machine-proven end to end on Linux (7 services, real uids, a setuid launcher) and on Windows (named pipes, cross-account, distinct service accounts), and CI runs both on every PR.
+
+**And it does not run in the shipped application.** `platform_governed_execution_supported()` returns false and `main()` keeps `UpstreamBlockedExecutor`, so every governed turn is refused rather than faked — production `trusted_verified` is unreachable. Ordinary chat goes through the `claude` CLI in a private sandbox: contained, not governed, and labelled as such. Opening the gate needs an independent audit and the Owner's approval.
+
+The distinction matters more than it looks. A proof kit that runs is not a shipped guarantee, and this repository keeps them apart on purpose — including in the words the UI is allowed to use.
 
 ### Resolved decisions
 
@@ -39,14 +43,27 @@ Today (in `apps/desktop/`) the `ai.rs` layer spawns the `claude` CLI directly in
 | Language boundary | **Subprocess/sidecar** (CLI + hooks), not PyO3 embedding. |
 | Data ownership | Desktop SQLite = product/UI state (conversations, tasks, projects). Engine ledger + evidence = the security truth. IDs cross the bridge; no shared table. |
 | Git history | **`git subtree`** for both halves. |
-| CI | One workflow, three legs (npm build · cargo test · python unittest) + a bridge smoke test (Phase 1). |
-| The wall | The OS-root `.claude/` hooks govern the repo's own dev/agent work too. |
+| CI | **7 workflows, 28 required checks** — frontend, Rust workspace, engine, bridge, a11y, perf budget, design gates, supply chain, and 15 repository gates under `tools/`. |
+| The wall | **`engine/.claude/settings.json`**, wired for nine events. The OS-root `.claude/` is NOT the wall: it holds the 262 generated specialist definitions and one `Stop` guard for coordination-document consistency. Wiring the wall at the root is an open decision — today it would deny every tool call until a session state directory and an operator-signed workspace binding exist, and `engine/` is not its own git checkout. |
 
-### What is NOT done yet (Phase 0 scope)
+### What is NOT done yet
 
-- `contracts/` is a placeholder describing intent — no dedupe code yet.
-- The desktop no longer *only* spawns `claude` directly: **Phase 1** added an **opt-in governed provider** (`Provider::GovernedEngine` in `ai.rs`, default OFF, merged PR #8) that routes an AI turn through the engine sidecar. This is **transport only** — the direct `claude` path is still the default, and the verify-seam, receipt-plumbing, governed streaming, and a real end-to-end round-trip are still pending.
-- Both halves still build and test independently. Phase 0 assembled; Phase 1 has begun wiring (transport landed, governance of the turn not yet complete).
+- **`contracts/` is still a placeholder** — a README describing intent, no extracted schemas. The
+  canonical definitions live in `engine/schemas/` and are mirrored informally in the desktop's Rust
+  domain. Principle 2 says the engine is authoritative, and today that is true by convention rather
+  than by a shared file.
+- **The production gate is closed** — see above. This is the single most important "not done" in
+  the repository and the one every phase percentage is subordinate to.
+- **Path scope is not enforced on the desktop route.** A task's `scope` / `prohibited_scope` travel
+  as text inside the prompt Bro writes; `engine/runtime/bro_security.enforce_scope` is what genuinely
+  contains a path, and a desktop spawn never reaches it. Principle 3 — "no ungoverned execution" —
+  therefore holds for the *governed* turn and not for the ordinary chat turn, and every delegation
+  card states which one it is showing.
+- **Five engine residual items remain OPEN** (`docs/PHASE_10_PRODUCTION_ITEMS.md`), three needing an
+  Owner-minted artifact. Until they exist, conductor stops and owner-issued control-room commands
+  refuse.
+- **`_real_callables()` in the bridge raises unconditionally**, pending the supervisor-reserved
+  execution attempt and the authoritative execution→receipt binding. Correct and fail-closed.
 
 ---
 
@@ -75,7 +92,9 @@ OS-ը **monorepo** ա, որ միավորում ա governance **engine**-ը (`eng
       → հետ՝ cockpit
 ```
 
-Հիմա (`apps/desktop/`-ում) `ai.rs`-ը ուղիղ `claude` CLI ա spawn անում private sandbox-ում։ Phase 1-ը էդ spawn-ը փոխարինում ա `bridge` call-ով engine-ի `bro_supervisor`-ի մեջ, ուրեմն նույն turn-ը հիմա lease ա կրում ու receipt ա արտադրում։
+Այդ շղթան իրական ա ու մեքենայորեն ապացուցված ծայրից ծայր՝ Linux-ի (7 ծառայություն, իրական uid-եր, setuid launcher) ու Windows-ի (named pipe, cross-account) վրա, ու CI-ը երկուսն էլ վազեցնում ա ամեն PR-ի վրա։
+
+**Ու այն shipped հավելվածում չի աշխատում։** `platform_governed_execution_supported()`-ը false ա, `main()`-ը պահում ա `UpstreamBlockedExecutor`-ը, ուստի ամեն կառավարվող turn մերժվում ա, ոչ թե կեղծվում — production `trusted_verified`-ը անհասանելի ա։ Սովորական չատը անցնում ա `claude` CLI-ով private sandbox-ում՝ զսպված, ոչ կառավարվող, ու հենց այդպես էլ պիտակավորված։ Դարպասը բացելու համար պետք ա անկախ աուդիտ ու Տիրոջ հաստատումը։
 
 ### Լուծված որոշումներ
 
@@ -85,11 +104,18 @@ OS-ը **monorepo** ա, որ միավորում ա governance **engine**-ը (`eng
 | Language boundary | **Subprocess/sidecar** (CLI + hooks), ոչ PyO3 |
 | Data ownership | Desktop SQLite = product/UI state; Engine ledger + evidence = security truth; ID-երն են անցնում bridge-ով |
 | Git history | **`git subtree`** երկու կեսի համար |
-| CI | Մեկ workflow, 3 leg + bridge smoke (Phase 1) |
-| Wall | OS-root `.claude/` hooks-ը govern ա անում նաև repo-ի dev/agent work-ը |
+| CI | **7 workflow, 28 պարտադիր ստուգում** + 15 gate `tools/`-ում |
+| Wall | **`engine/.claude/settings.json`**, ինը event։ OS-root-ի `.claude`-ը wall-ը **չի** — այնտեղ 262 գեներացված մասնագետի սահմանում ա ու մեկ `Stop` guard։ Root-ում wire անելը բաց որոշում ա (կմերժեր ամեն tool call)։ |
 
-### Ինչ դեռ արված չէ (Phase 0-ի scope)
+### Ինչ դեռ արված չէ
 
-- `contracts/`-ը placeholder ա՝ intent-ը նկարագրող, ոչ dedupe կոդ։
-- Desktop-ը այլևս *միայն* ուղիղ `claude` չի spawn անում. **Phase 1**-ը ավելացրեց **opt-in governed provider** (`Provider::GovernedEngine` `ai.rs`-ում, default OFF, merged PR #8), որ AI turn-ը route ա անում engine sidecar-ով։ Սա **transport-only** ա — ուղիղ `claude` path-ը դեռ default ա, ու verify-seam-ը, receipt-plumbing-ը, governed streaming-ը ու իրական end-to-end round-trip-ը դեռ pending են։
-- Երկու կեսն էլ դեռ independently build ու test են։ Phase 0-ը հավաքեց; Phase 1-ը սկսել ա wire անել (transport-ը land ա, turn-ի governance-ը դեռ ամբողջական չէ)։
+- **`contracts/`-ը դեռ placeholder ա** — README, ոչ հանված schema։ Կանոնական սահմանումները
+  `engine/schemas/`-ում են։ 2-րդ սկզբունքը ասում ա engine-ն ա authoritative, ու այսօր դա ճիշտ ա
+  պայմանավորվածությամբ, ոչ թե ընդհանուր ֆայլով։
+- **Production դարպասը փակ ա** — տես վերևը։ Սա ռեպոյի ամենակարևոր «արված չէ»-ն ա, ու ամեն phase-ի
+  տոկոս ստորադաս ա դրան։
+- **Ուղու scope-ը desktop-ի ճանապարհին չի պարտադրվում։** Տասկի `scope`/`prohibited_scope`-ը գնում ա
+  որպես տեքստ Բրոյի գրած prompt-ի ներսում; `bro_security.enforce_scope`-ն ա իրական պարունակողը, ու
+  desktop-ի spawn-ը դրան չի հասնում։
+- **Հինգ engine-ի մնացորդային կետ OPEN ա**, երեքին պետք ա Տիրոջ ստորագրած artifact։
+- **Bridge-ի `_real_callables()`-ը անվերապահ raise ա անում** — ճիշտ ու fail-closed։

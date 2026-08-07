@@ -35,8 +35,11 @@ is **expected current behaviour** (not a bug), it is labelled **By design**.
 
 ### "Governed reply blocked (unverified)" — no message appears
 - **By design, and expected today.** The governed "Verified" execution path is **fail-closed**: it
-  Blocks every governed turn and saves **no message** until the isolated-signer / signed-receipt
-  work lands (Wave 3b, in progress). Nothing is broken.
+  refuses rather than showing you a reply it could not verify. The chain itself is merged and
+  machine-proven on Linux and Windows, and CI runs both on every pull request — what refuses is the
+  **shipped application**, on purpose. Opening that gate needs an independent audit and the Owner's
+  approval, so it will not change by itself. Nothing is broken.
+
 - **What to do:** use an **ungoverned** provider for normal replies — the local `claude` CLI, the
   Anthropic API, or Ollama. Check the resolved provider in **Settings**; `governed` should read
   *false* for a working ungoverned reply.

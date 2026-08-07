@@ -62,11 +62,11 @@ def validate_docs(root: pathlib.Path = ROOT) -> int:
             "main merge commit: `61bf9bc4a42b512926bf848b79a0cac063196993`",
             "The next scoped phase is **Orchestration Runtime V1**",
         ],
-        "NEXT_CHAT.md": [
-            "PR `#4` is closed and merged",
-            "main merge commit: `61bf9bc4a42b512926bf848b79a0cac063196993`",
-            "Start **Orchestration Runtime V1**",
-        ],
+        # `NEXT_CHAT.md` had an entry here. The file was removed from `engine/` on 2026-08-08:
+        # in the monorepo it was an agent-instruction file loaded by directory proximity, telling
+        # whoever worked in `engine/` that they were in the standalone repository and must not
+        # touch the other half of this one. The monorepo's handoff is the root `NEXT_CHAT.md`,
+        # which this tool does not police -- `tools/check_coordination.py` does.
         "ROADMAP.md": [
             "**Merged PR:** `#4`",
             "**Merge commit:** `61bf9bc4a42b512926bf848b79a0cac063196993`",

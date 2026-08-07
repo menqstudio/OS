@@ -56,9 +56,10 @@ describe('no page under features/ is unreachable', () => {
    *   Conversations  — the shared thread workspace Chat and GroupChat both render.
    *   delegationView — the delegation ledger Chat renders beside the thread.
    *   Onboarding     — the first-run overlay, mounted by App.tsx outside the stage.
-   *   registry       — the OLD route table, superseded by app/routes.tsx. It is dead code
-   *                    and belongs to the features owner to delete; it is listed here so
-   *                    this guard reports real defects rather than that known one.
+   *   registry       — the OLD route table, superseded by app/routes.tsx. It has since
+   *                    been DELETED, so the glob never yields it and this entry is inert;
+   *                    it is kept only so a stray re-add is caught by review, not by a
+   *                    surprise failure here.
    *   writeRecord    — the shared local-write-record reader (badge + panel + notice)
    *                    that Memory and Knowledge both render, so the two surfaces cannot
    *                    drift into saying different things about the same records. Not a

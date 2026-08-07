@@ -8,6 +8,16 @@ starting: `NEXT_CHAT.md` (the definitive handoff — exact current branch/PR/HEA
 (the brain) → `PROJECT_STATE.md` → `TASKS.md` → `OWNERS.md` → `docs/ARCHITECTURE.md`.
 Read them all, `git pull`, claim a task in `TASKS.md` — then begin. No exceptions.
 
+Two things `START_HERE.md` explains that are worth knowing before you open a single file: a
+**documented claim is not evidence** here (twelve comments that were true when written and false
+when read were found in one week — check the code first), and a **green test is not a passing
+check** (when you add one, delete it once and confirm it goes red).
+
 `START_HERE.md`-ը թվարկում ա canonical ֆայլերը, որ ամեն agent պիտի կարդա ԱՄԲՈՂՋՈՎ սկսելուց առաջ՝
 `NEXT_CHAT.md` (վերջնական handoff՝ ընթացիկ branch/PR/HEAD/blockers) → `CLAUDE.md` → `PROJECT_STATE.md` →
 `TASKS.md` → `OWNERS.md` → `docs/ARCHITECTURE.md`։ Կարդա բոլորը, `git pull`, claim արա task `TASKS.md`-ում — հետո սկսի։ Բացառություն չկա։
+
+Երկու բան, որ `START_HERE.md`-ը բացատրում ա ու արժի իմանալ առաջին ֆայլը բացելուց առաջ․
+**փաստաթղթված պնդումը այստեղ ապացույց չի** (մեկ շաբաթում գտնվեց տասներկու մեկնաբանություն, որ ճիշտ
+էին գրվելիս ու սուտ՝ կարդալիս — նախ կոդը ստուգի), ու **կանաչ տեստը անցած ստուգում չի** (երբ նոր
+ստուգում ես ավելացնում, ջնջի այն մեկ անգամ ու համոզվի որ կարմրում ա)։

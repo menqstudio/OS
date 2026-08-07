@@ -21,9 +21,9 @@
 // rather than the local wrapper below, which stays only until this file's caller moves over.
 //
 // `probe_integration` STILL DOES NOT EXIST, and that is a decision rather than an omission.
-// Nothing downstream can answer it: `bridge/engine_sidecar.py` has no op dispatch at all —
-// it reads one task-request and runs one governed turn — and no engine, operator or
-// supervisor endpoint knows anything about external connectors. Registering a command that
+// Nothing downstream can answer it: `bridge/engine_sidecar.py` does dispatch named ops now,
+// but its whole table is one row (`governance.read`), and no engine, operator or supervisor
+// endpoint knows anything about external connectors. Registering a command that
 // cannot produce a boolean `reachable` would make this surface WORSE: today's capability-wall
 // refusal classifies as `unsupported` ("this build cannot ask", a fact about the build, and
 // true), while a registered no-answer command downgrades it to `indeterminate` ("we asked and

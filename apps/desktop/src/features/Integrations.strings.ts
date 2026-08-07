@@ -323,14 +323,14 @@ export const STR = {
     ru: '{name} объявлен — не включён, не настроен, не проверен',
   },
   declareUnsupported: {
-    en: 'This build cannot declare connectors',
-    hy: 'Այս տարբերակը չի կարող միակցիչներ հայտարարել',
-    ru: 'Эта сборка не может объявлять коннекторы',
+    en: 'This window was not allowed to declare a connector',
+    hy: 'Այս պատուհանին թույլ չտրվեց միակցիչ հայտարարել',
+    ru: 'Этому окну не разрешили объявить коннектор',
   },
   declareUnsupportedBody: {
-    en: 'The registry is read-plus-status-only here: `{cmd}` is not exposed as a command and not granted in the window capability set, so the desktop cannot add a row. The store already supports it — the operator needs to expose and grant it.',
-    hy: 'Ռեեստրն այստեղ միայն կարդալու և կարգավիճակ փոխելու համար է՝ `{cmd}`-ը որպես հրաման հասանելի չէ և թույլատրված չէ պատուհանի capability-ների մեջ, ուստի աշխատասեղանը չի կարող տող ավելացնել։ Պահոցն արդեն աջակցում է դրան — օպերատորը պետք է բացի և թույլատրի այն։',
-    ru: 'Реестр здесь доступен только для чтения и смены статуса: `{cmd}` не объявлена как команда и не разрешена в наборе capability окна, поэтому компьютер не может добавить строку. Хранилище это уже поддерживает — оператору нужно объявить и разрешить команду.',
+    en: 'This build DOES expose `{cmd}` and grants it as `allow-create-integration`, so this refusal came from the capability set the running window actually loaded, not from a missing command. Check the deployed `capabilities/default.json` for that grant — the store and the command are already there.',
+    hy: 'Այս տարբերակը `{cmd}`-ը հասանելի է դարձնում և թույլատրում է որպես `allow-create-integration`, ուստի այս մերժումը եկել է հենց այն capability-ների խմբից, որ բեռնել է աշխատող պատուհանը, ոչ թե բացակայող հրամանից։ Ստուգիր տեղակայված `capabilities/default.json`-ի այդ թույլտվությունը — պահոցն ու հրամանն արդեն կան։',
+    ru: 'Эта сборка объявляет `{cmd}` и разрешает её как `allow-create-integration`, поэтому отказ пришёл от набора capability, который фактически загрузило текущее окно, а не от отсутствующей команды. Проверьте это разрешение в развёрнутом `capabilities/default.json` — хранилище и команда уже на месте.',
   },
   declareRefused: { en: 'Declaration refused', hy: 'Հայտարարումը մերժվեց', ru: 'Объявление отклонено' },
 

@@ -12,13 +12,23 @@
 — the Owner's SECOND independent audit, of `main` @ `219c763` AFTER the remediation. **Verdict: RED.**
 4 of 18 blockers CONFIRMED CLOSED, 2 STILL OPEN, 12 PARTIALLY CLOSED, 45 surviving findings (1 P0).
 
+> **That audit's target is not the current tree.** It assessed `main` @ `219c763`. Nine PRs have
+> merged since (`2debb71`, `e81f50c`, `bfd55da`, `327519c`, `153a32f`, `8ac57c9`, `c139bde`,
+> `09b4803`, `0efa99e`), so some of its findings have been fixed and some of this ledger's rows
+> describe code that no longer exists. A Builder staleness sweep at `main` @ `0efa99e` is recorded
+> in [Staleness sweep](#staleness-sweep-2026-08-07--main--0efa99e-builder-unverified) below. It
+> re-checks rows against the code; it is **not** an audit and marks nothing ✅. **No independent
+> audit has been run on `0efa99e`, so the RED verdict above stands until one is.**
+
 > **Read this before any row below.** Every ✅ in the tables that follow was written by the session
 > that wrote the fix, and the second audit found several of them overclaimed. The clearest case is
 > **F-02**: it was marked CLOSED on the strength of the Linux remediation while the Windows twin
-> (`win-live/src/execution.rs:132`) still carries the four `evidence_*` deployment constants — and
+> (`win-live/src/execution.rs:132`) still carried the four `evidence_*` deployment constants — and
 > Windows is the only platform on which a `production_verified=true` has ever been shown to the
-> Owner. A row here is the Builder's claim; the remediation audit is the assessment of that claim.
-> Where the two disagree, the audit is the truth and the row is the defect.
+> Owner. (That particular defect has since been addressed on both platforms; the example stands
+> because the *rule* it produced is what this file is for.) A row here is the Builder's claim; the
+> remediation audit is the assessment of that claim. Where the two disagree, the audit is the truth
+> and the row is the defect.
 
 **Prior assessment:** [`2026-08-06-independent-audit.md`](./2026-08-06-independent-audit.md) — the
 25-agent zero-trust audit that produced the 12 soundness-blockers the remediation addressed.
@@ -42,9 +52,16 @@ live on the only platform where the Owner had ever been shown a `production_veri
 The SECOND audit of the remediation returned RED again. No new P0 was found, but the ground under
 several "closed" verdicts was softer than it looked. Addressed here:
 
+> **Marks in this table corrected 2026-08-07 (staleness sweep).** Every `✅ CLOSED` below was
+> written by the session that wrote the fix, which is precisely what the status legend above says
+> ✅ must NOT mean. They are demoted to ◑ — Builder's claim, nobody else has looked. Nothing about
+> the code changed when the mark did; only the honesty of the mark. The four rows that said
+> ⚠️ OPEN were re-checked against `main` @ `0efa99e` and the fixes have landed, so they are now ◑
+> with the code cited. Evidence for every change is in the sweep table below.
+
 | Finding | Status |
 |---|---|
-| **P1 — Windows signing seeds are plaintext until first read** | ✅ **CLOSED.** `win_provision::write_seed` now restricts each seed to its owning account before anything can read it, and DELETES the seed and aborts if the ACL cannot be applied. This was the shortest path in the repository from an in-scope adversary to a forged `production_verified=true`: `attest.seed` + `signer.seed` are the two production keys `verify_and_accept` checks, and reading them skips the governed chain entirely rather than defeating it. `seedstore.rs`'s "the boundary is cryptographic, not just an ACL" claim is corrected — that is true AFTER the lazy seal, and the window before it was exactly the exposure. |
+| **P1 — Windows signing seeds are plaintext until first read** | ◑ **Builder claims closed; NOT independently re-checked.** (Was marked ✅ by the fixing session; demoted 2026-08-07.) The named mechanism has since been replaced and strengthened: `win_provision::write_seed` no longer exists — every secret-bearing file is now created by `provision_custody::create_locked_file`, i.e. `CreateFileW` with a `SECURITY_ATTRIBUTES` already carrying the finished protected DACL, so the restrictive descriptor exists before the first byte does and `icacls` is gone from the seed path entirely (`win-live/src/provision_custody.rs:23-34`; call site `win_provision.rs:96`). `win_provision` additionally refuses a pre-existing deployment root it did not create (`check_root_custody`). This was the shortest path in the repository from an in-scope adversary to a forged `production_verified=true`: `attest.seed` + `signer.seed` are the two production keys `verify_and_accept` checks, and reading them skips the governed chain entirely rather than defeating it. `seedstore.rs`'s "the boundary is cryptographic, not just an ACL" claim is corrected — that is true AFTER the lazy seal, and the window before it was exactly the exposure. |
 | **F-08's enforcement had zero tests** | ✅ **CLOSED.** The four cited tests covered the lease parser and the fd→pin map; the digest-and-compare that IS F-08 had none, so deleting the check left every suite green. The decision is now a pure `verify_store_inputs` with 4 tests (per-slot mismatch, transposition, unreadable input), AND the live CI job runs a NEGATIVE case: it tampers with a pinned store input and requires the launcher to refuse. That is the test deleting the enforcement cannot pass. |
 | **52 tests in the production crates run in no CI job** | ✅ **CLOSED.** New `governed-crates` job tests launcher, executor, broker, live driver and both Windows crates. `brops-executor` was never compiled by CI at all. The Tauri host crate still is not built (webkit2gtk) — stated, not papered over. |
 | Windows machine-proof script rejected by its own provisioner (exit 3) | ⚠️ OPEN |
@@ -73,7 +90,14 @@ audit passes, and the Owner approves. See [`NEXT_CHAT.md`](../../../NEXT_CHAT.md
 | **F-31 / F-32 / F-36** proof-kit DoS | ✅ **closed 2026-08-06** | **F-31:** every accepted broker connection is armed with a read/write deadline, so a silent renderer-uid peer can no longer hold the serial accept loop forever. **F-32/F-36:** the renderer→broker client sets read/write timeouts at connect and caps ingress with `take(MAX_REPLY_BYTES)` BEFORE buffering — the framing cap only ran in `decode_one`, i.e. after the bytes were already resident, so it bounded nothing on the direction the desktop reads. |
 | **F-06 / F-13 / F-14** engine anti-rollback honesty | ◑ **R-06 addressed 2debb71; NOT re-audited** | **F-06:** `_pin_from_file` checked that group/other cannot write the anchor but never WHO owns it, so a file the reading account owned at 0644 passed while staying one write away from being any anchor that account liked (the Windows DACL branch had the same hole by construction — it skips owner and OWNER RIGHTS ACEs). Both platforms now refuse a self-owned pin: POSIX compares `st_uid` to `geteuid()`, Windows compares the owner SID to the process token's user SID. A deployment with no principal separation must say so explicitly via `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`, and the module's claim that the trust root cannot be swapped by environment variables alone is now stated with that condition attached. 1 new test; 903 engine tests green. **F-13/F-14:** the L-4 stale-head floor was read from the very head it polices (`load_head(...).head_sequence` fed back in as `min_head_sequence`, so `validate_chain` compared `x >= x`) and every production caller passed `None`, so it could not fail on any path. The high-water mark is now a DURABLE per-task record (`<store>/head-floor/<task>.floor.json`, or `BRO_EVIDENCE_HEAD_FLOOR` for a deployment that can put it under a principal the builder cannot write), advanced only after a chain verifies and only upward. A retained older-but-genuinely-signed head re-presented on a later call is now refused; a damaged mark refuses rather than reading as absent. 3 new tests. The remediation audit finds the durable mark does not close the rollback, and every F-06 test is skipped on Windows so the SID comparison is unverified. See the report. **F-13/F-14 re-addressed (2026-08-06, audit R-06):** the durable mark was defeated by the SAME capability the original attack needed — write access to the evidence store. `rm -rf head-floor/` made the floor silently stop existing, and `BRO_EVIDENCE_HEAD_FLOOR` was ungated. Now: an absent floor directory REFUSES instead of reading as 'no floor required' (bootstrapping is a deliberate act), a `_index.json` roster catches the removal of any single task's mark, the floor directory is held to the same self-owned-custody rule as the operator pin, and a recorded 0 is no longer coerced to 'no floor'. 3 new tests. |
 
-## Desktop tickets — `apps/desktop/AUDIT/tickets/`
+## Desktop tickets — from the 2026-07-19 BroPS audit (ticket files removed 2026-08-08)
+
+> The thirteen ticket files, the audit report and its README were deleted: every one was a
+> **read-only proposed patch** against `menqstudio/BroPS` at a single commit, all of them landed,
+> and the README's instructions ("hand a coding agent `tickets/H-1-…`") pointed at a workflow that
+> no longer exists. **This table is the surviving record** — it already carried each ticket's
+> status and evidence, which is why deleting the files loses nothing. Git history has the full
+> text if a finding ever needs re-reading.
 
 | Ticket | Status | Evidence / note |
 |---|---|---|

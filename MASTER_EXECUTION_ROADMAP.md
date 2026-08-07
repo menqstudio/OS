@@ -49,8 +49,36 @@ template) → §E (dependency map) → §G (ownership) → §H (artifact registr
 phase. That is the whole onboarding for *building*.
 
 ### Phase status board · Phase-երի վիճակ
+
+> **Read the board as "what exists", never as "what is guaranteed to work".** Every phase from 1
+> to 10 has surfaces built and wired; the honest remaining work is mostly *connecting* things that
+> were built and *removing* claims nothing established. The one status that is a hard fact rather
+> than a judgement is the production gate, and it is **CLOSED**:
+> `platform_governed_execution_supported()` is false and `main()` keeps `UpstreamBlockedExecutor`.
+>
+> The board below was rewritten on **2026-08-08**. It previously showed phases 2–10 as *Blocked*,
+> which had been false for weeks — the dependency chain it described (P3 blocked on P2, P4 on P3,
+> and so on) was never how the work actually proceeded.
+
 | Phase | Name | Status |
 |---|---|---|
+| 0 | Foundation | ✅ **Locked (done)** |
+| 1 | Bridge | 🔨 **Wired, real mode still refuses.** Contract, adapter, broker and receipt are real; the three previously unreachable commands (`read_decision_ledger`, `read_verifier_verdicts`, `governed_turn_execute`) now have wrappers and a `bridge` route. `engine_sidecar._real_callables()` still raises unconditionally, pending the supervisor-reserved execution attempt and the authoritative execution→receipt binding — correct and fail-closed. |
+| 2 | Governance Sidecar | 🔨 **Reachable at last.** The engine serves a three-valued `brops.governance-read.v1`, the sidecar dispatches named ops, and the desktop no longer requires the AI provider to be `governed-engine` to read a mirror. The mirror was never empty — it was never asked. |
+| 3 | Desktop Integration | 🔨 **Shell complete.** 23 routes, a total `Record<RouteId, …>` so a missing page is a compile error, an error boundary that renders the real cause, and route-change focus management. |
+| 4 | UI/UX System | 🔨 **Gated.** Design tokens, WCAG-AA contrast on 24 pairs, i18n parity across en/hy/ru on 233 keys, and a bundle budget — all enforced in CI. |
+| 5 | Memory & Knowledge | 🔨 **Recorded, not verified — deliberately.** Every write appends a local record in the same transaction, append-only by database trigger. It is *not* called verified: nothing is signed, and it attests content, never the writer. |
+| 6 | Multi-Agent | 🔨 **Capability model is real.** Three tiers reach the CLI inline via `--agents`; 262 pack-role definitions are generated and drift-gated. Path scope is stated per task and **not enforced** on the desktop route, and every card says so. |
+| 7 | Group Chat | 🔨 **Consensus and delegation.** Silence is never consent, dissent renders even when the vote passes, and delegations show in the room. |
+| 8 | Automation | 🔨 **Scheduler real, runs carry a contract.** Refused runs and their reasons are shown, not swallowed. |
+| 9 | Integrations | 🔨 **Modelled honestly.** Four independent facts per connector, each allowed to say "I don't know"; `auth_ref` names where a secret lives without ever holding one. `probe_integration` is deliberately **not** registered — nothing downstream can answer it, and a command that returns no answer would make the surface *worse*. |
+| 10 | Production | ⏳ **Supply chain strong, release blocked.** Release refuses to ship unsigned. O-1…O-5 are inventoried in [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md) and **all five remain OPEN**, three needing an Owner-minted artifact. |
+
+**What "blocked" now means here:** not a dependency on an earlier phase, but a named thing that
+does not exist — an Owner artifact, an independent audit, or an approval. Each is written down
+where it applies rather than inferred from a chain.
+
+---|---|---|
 | 0 | Foundation | ✅ **Locked (done)** |
 | 1 | Bridge | 🔨 **In progress** — slice 1 (contract + adapter + tests + bridge CI leg) **merged** (PR #3, `41cf4ff`, 10/10); slice 2 **transport** (desktop `Provider::GovernedEngine` in `ai.rs` opt-in + sidecar wiring + chat receipt badge + Settings toggle) **merged** (PR #8); verify-seam · receipt-plumbing · fail-closed governed round-trip **WIRED** (Wave 3a / T-016, PR #28 — matches `PROJECT_STATE` `CURRENT_VERIFY_SEAM: complete` / `CURRENT_RECEIPT_PLUMBING: complete` / `CURRENT_GOVERNED_ROUNDTRIP: complete`); streaming intentionally **not** implemented (governed turns are buffered by design); production **"Verified"** (`trusted_verified`) still awaits Wave 3b |
 | 2 | Governance Sidecar | ⏳ Ready (P1 contract exists) |

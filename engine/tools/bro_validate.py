@@ -41,8 +41,14 @@ def load_json(rel: str) -> dict:
 
 
 def main() -> int:
+    # `CLAUDE.md`, `AGENTS.md` and `NEXT_CHAT.md` were required here when `engine/` was its own
+    # repository. In the monorepo they were agent-INSTRUCTION files that tools load by directory
+    # proximity, and they told an agent working in `engine/` that it was "inside the canonical
+    # menqstudio/Bro repository" and must "not touch BroPS" -- the other half of the same
+    # repository. They were removed on 2026-08-08; the monorepo has exactly one of each, at the
+    # root. `README.md` and `ROADMAP.md` stay: those describe the engine rather than instruct.
     required = [
-        "README.md", "CLAUDE.md", "AGENTS.md", "ROADMAP.md", "NEXT_CHAT.md",
+        "README.md", "ROADMAP.md",
         ".bro/policy.json", ".claude/settings.json", "config/canonical-read-manifest.json",
         "config/documentation-manifest.json", "config/sst-registry.json",
         "laws/LAW_INDEX.md", "laws/registry.json", "packs/registry.json",
