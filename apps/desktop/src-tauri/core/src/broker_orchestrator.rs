@@ -29,12 +29,23 @@ const BROKER_TURN_STALE_TTL_MS: i64 = 300_000; // 5 minutes
 /// envelope) or a closed [`TurnReason`] on any upstream refusal.
 pub trait GovernedExecutor {
     /// Execute + verify the governed turn identified by `broker_turn_id`/`request_nonce` for `req`.
+    ///
+    /// Returns the accepted output TOGETHER WITH the custody state the chain resolved for it. The
+    /// two travel as one value because they are one answer: an accepted body whose custody nobody
+    /// established is not a weaker result, it is an unsupported claim. Returning only the body is
+    /// what let the broker commit every row as `trusted_verified` while
+    /// `production_trust::resolve_trust_state` went uncalled on every production path — the caller
+    /// had nothing to store but a constant, so it stored the constant.
+    ///
+    /// An implementation that cannot resolve custody returns
+    /// [`crate::production_trust::TrustState::NoTrustedManifest`], and the commit refuses. It must
+    /// not substitute a hopeful one.
     fn execute_and_verify(
         &self,
         req: &ValidatedRequest,
         broker_turn_id: &str,
         request_nonce: &str,
-    ) -> Result<AcceptedOutput, TurnReason>;
+    ) -> Result<(AcceptedOutput, crate::production_trust::TrustState), TurnReason>;
 }
 
 /// Broker-minted authoritative identities for a turn. In production these come from `brops_core::id()` +
@@ -113,7 +124,7 @@ pub fn run_governed_turn(
     }
 
     // 4. Drive the governed execution + verification chain.
-    let accepted = match executor.execute_and_verify(&req, &broker_turn_id, &request_nonce) {
+    let (accepted, trust_state) = match executor.execute_and_verify(&req, &broker_turn_id, &request_nonce) {
         Ok(a) => a,
         Err(reason) => {
             let _ = broker_turns::settle(conn, &broker_turn_id, TurnState::Blocked);
@@ -122,7 +133,7 @@ pub fn run_governed_turn(
     };
 
     // 5. Persist with in-tx commit-readback (rev-30 P0). On any mismatch, fail closed.
-    match persist_committed(conn, &accepted) {
+    match persist_committed(conn, &accepted, &trust_state) {
         Ok(message) => {
             let _ = broker_turns::settle(conn, &broker_turn_id, TurnState::Committed);
             RendererGovernedTurnResult::committed(crid, broker_turn_id, conv, message)
@@ -150,8 +161,9 @@ mod tests {
 
     struct OkExecutor { body: String }
     impl GovernedExecutor for OkExecutor {
-        fn execute_and_verify(&self, req: &ValidatedRequest, bt: &str, _n: &str) -> Result<AcceptedOutput, TurnReason> {
-            Ok(AcceptedOutput {
+        fn execute_and_verify(&self, req: &ValidatedRequest, bt: &str, _n: &str)
+            -> Result<(AcceptedOutput, crate::production_trust::TrustState), TurnReason> {
+            Ok((AcceptedOutput {
                 broker_turn_id: bt.to_string(),
                 message_id: format!("m-{bt}"),
                 conversation_id: req.conversation_id.clone(),
@@ -159,12 +171,17 @@ mod tests {
                 accepted_body: self.body.clone(),
                 envelope_body_sha256: sha256_hex(self.body.as_bytes()),
                 created_at_ms: 42,
-            })
+            }, crate::production_trust::TrustState::Production {
+                key_id: "test-signer".into(),
+                key_epoch: 1,
+                root_key_id: "test-root".into(),
+            }))
         }
     }
     struct BlockingExecutor;
     impl GovernedExecutor for BlockingExecutor {
-        fn execute_and_verify(&self, _r: &ValidatedRequest, _b: &str, _n: &str) -> Result<AcceptedOutput, TurnReason> {
+        fn execute_and_verify(&self, _r: &ValidatedRequest, _b: &str, _n: &str)
+            -> Result<(AcceptedOutput, crate::production_trust::TrustState), TurnReason> {
             Err(TurnReason::UpstreamBlocked)
         }
     }

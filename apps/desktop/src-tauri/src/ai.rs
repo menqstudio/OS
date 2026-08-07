@@ -980,10 +980,40 @@ fn bro_agent_system_suffix() -> String {
     match bro_agent_dir() {
         None => String::new(),
         Some(dir) => format!(
-            "\n\n--- PROJECT CONTEXT (you are a coding agent on this repo) ---\n\
-You operate inside the real repository rooted at {dir}, with file tools only (Read/Edit/Write/Grep/Glob). \
-You have NO shell/Bash and cannot run commands, git push, delete files, or install dependencies. If a command \
-(build, test, git, dependency) is needed, PROPOSE the exact command for the owner to run — never claim you ran it.\n\
+            "\n\n--- WHO YOU ARE ---\n\
+You are Bro, the conductor. Not a coding agent, not a worker. Gev brings you a task; you work out what \
+he actually wants, say it back in a line or two and get that confirmed, and THEN delegate the doing to \
+the right specialists. `engine/agents/registry.json` declares 52 packs and 311 roles — read \
+`engine/agents/` and the pack registry when you need to choose. Spawn them with the Task tool, several \
+in parallel when the work is independent. You stay free: you take checkpoints, blockers, approval \
+requests and evidence-backed results. You never become a pack lead or a verifier yourself.\n\
+Do a thing yourself only when it is genuinely small — a one-line fix, a lookup, a direct answer. More \
+than a few steps and it belongs to a specialist.\n\
+When something is ambiguous, confirm before acting. A wrong task done fast is worse than a question \
+asked early.\n\
+\n--- HOW YOU DELEGATE ---\n\
+Two things decide what a specialist may do, and you set both.\n\
+1. WHAT THEY MAY DO — YOU decide this, per task, by choosing the agent type. `.claude/agents/` holds \
+three capability tiers: `reader` (Read/Grep/Glob — cannot run, cannot change), `runner` (adds Bash — \
+can build and test but not edit), `builder` (adds Edit/Write — can change files). Grant the NARROWEST \
+tier that lets the job finish; a question about the code gets `reader`, finding out whether something \
+works gets `runner`, and only work that genuinely changes files gets `builder`. Beside those sit the \
+pack-role agents (generated from `engine/packs/registry.json` + `engine/agents/authority-policy.json`) \
+for work that belongs to a declared specialism — there an Independent Verifier deliberately cannot \
+write, because it must not be able to edit what it is judging. Never hand verification to whoever built \
+the thing.\n\
+2. WHERE — state `scope` and `prohibited_scope` in EVERY task you hand out, as concrete paths. Scope \
+may be repo-relative (`apps/desktop/src/features`) or absolute when the work genuinely lives elsewhere \
+(`C:/Users/Admin/Desktop/some-project`). No `..`, no backslashes. The scope is the entire grant: it is \
+the only record of what that specialist was allowed to touch, so name the narrowest thing that lets the \
+task succeed. Tell them plainly that outside scope is read-only and prohibited_scope is untouchable.\n\
+Also give each specialist the objective, what done looks like, and how it will be verified. An agent \
+that has to guess the goal will guess the scope too.\n\
+\n--- WHAT YOU CAN DO ---\n\
+You operate inside the real repository rooted at {dir}, with Read/Edit/Write/Grep/Glob, Bash, and Task. \
+You CAN run builds, tests, git status/diff/log/commit, and inspect anything. You CANNOT delete files, \
+git push, install dependencies, or open a nested shell — for those, give Gev the exact command. Never \
+claim you ran something you did not.\n\
 - App: apps/desktop (Tauri + React/TS). Frontend apps/desktop/src (views in features/, shell components/Shell.tsx, IPC wrapper services/desktop.ts). Rust backend apps/desktop/src-tauri/src (commands.rs, ai.rs, governance.rs, files.rs; commands registered in lib.rs). Data core src-tauri/core/src/repo.rs + schema core/schema/*.sql.\n\
 - Design system: apps/desktop/src/theme/aios.css (ported from the brops-aios mockup). Match it.\n\
 - IPC: Tauri #[tauri::command]s invoked from services/desktop.ts; channel names are the snake_case command names.\n\
@@ -994,10 +1024,17 @@ You have NO shell/Bash and cannot run commands, git push, delete files, or insta
     }
 }
 
-fn write_system_prompt_file(system: &str) -> Result<std::path::PathBuf, String> {
+/// Write the per-turn system prompt to its own file in the sandbox.
+///
+/// `agent` is a parameter, not a read of `BROPS_PROJECT_DIR` inside this function, because that
+/// made the produced content depend on the ambient environment of whoever ran the process — so a
+/// test asserting the sandboxed-chat shape passed on a CI box with the variable unset and failed on
+/// a developer machine that had it exported. The mode is now stated by the caller, and both shapes
+/// are assertable side by side.
+fn write_system_prompt_file(system: &str, agent: bool) -> Result<std::path::PathBuf, String> {
     // In agent mode, append the project context + boundaries to whatever per-turn
     // system prompt the caller built, so Bro always knows the repo it works on.
-    let system = format!("{system}{}", bro_agent_system_suffix());
+    let system = if agent { format!("{system}{}", bro_agent_system_suffix()) } else { system.to_string() };
     let system = system.as_str();
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1063,13 +1100,27 @@ const BRO_BASH_DENY: &[&str] = &[
     "Bash(sh:*)", "Bash(bash:*)", "Bash(zsh:*)", "Bash(pwsh:*)", "Bash(powershell:*)", "Bash(cmd:*)", "Bash(env:*)",
 ];
 
-/// The `--tools` (+ permission-mode / disallow) argv fragment. As a coding agent (BROPS_PROJECT_DIR set) Bro
-/// gets the file tools PLUS Bash in acceptEdits mode, bounded by [`BRO_BASH_DENY`] so it can build/test/inspect
-/// and edit the repo but can't push/delete/install. Unset ⇒ NO tools at all (the fail-closed sandboxed chat).
+/// The `--tools` (+ permission-mode / disallow) argv fragment.
+///
+/// With `BROPS_PROJECT_DIR` set, Bro gets the file tools, Bash, AND `Task` — the tool that spawns
+/// specialist agents. That last one is the point of him. `engine/agents/registry.json` declares 52
+/// packs and 311 roles, and `CLAUDE.md` says Bro "delegates long or specialist execution
+/// immediately" and "never becomes a pack lead, worker, or verifier" — a contract that was
+/// unenforceable while the only thing he could do was type. He was a name on a message.
+///
+/// The owner asked for this deliberately and knows what it means: Bro can start agents that write
+/// files and run commands in this repository without a per-step approval.
+///
+/// `BRO_BASH_DENY` still bounds the shell: no delete, no push, no dependency install, no nested
+/// shell that would re-parse its way past the prefix match. Those are blast-radius limits rather
+/// than capability limits — everything Bro can usefully do he can still do, and the four classes
+/// he cannot are the ones that are hard to undo.
+///
+/// Unset ⇒ NO tools at all (the fail-closed sandboxed chat).
 fn tool_args(agent: bool) -> Vec<String> {
     let mut a: Vec<String> = vec!["--tools".into()];
     if agent {
-        a.push("Read Edit Write Grep Glob Bash".into());
+        a.push("Read Edit Write Grep Glob Bash Task".into());
         a.push("--permission-mode".into());
         a.push("acceptEdits".into());
         a.push("--disallowedTools".into());
@@ -1091,7 +1142,12 @@ fn tool_args(agent: bool) -> Vec<String> {
 /// Neither the transcript nor the system prompt is passed as argv: the transcript
 /// goes to stdin and the system prompt is read from `system_file` (0600). So no
 /// user-controlled / confidential text ever lands in `/proc/<pid>/cmdline`.
-fn claude_args(system_file: &std::path::Path, streaming: bool, model: Option<&str>) -> Vec<String> {
+fn claude_args(
+    system_file: &std::path::Path,
+    streaming: bool,
+    model: Option<&str>,
+    agent: bool,
+) -> Vec<String> {
     let mut a: Vec<String> = vec!["-p".into(), "--output-format".into()];
     if streaming {
         a.push("stream-json".into());
@@ -1102,7 +1158,7 @@ fn claude_args(system_file: &std::path::Path, streaming: bool, model: Option<&st
     }
     a.push("--append-system-prompt-file".into());
     a.push(system_file.to_string_lossy().into_owned());
-    a.extend(tool_args(bro_agent_dir().is_some()));
+    a.extend(tool_args(agent));
     a.push("--strict-mcp-config".into()); // ignore every MCP config (we pass none)
     a.push("--setting-sources".into());
     // "" → load NO setting sources: excludes user AND project hooks/plugins/MCP. Critical for the coding
@@ -1126,7 +1182,7 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, String> {
     let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
-    let sys_file = TempFileGuard(write_system_prompt_file(system)?);
+    let sys_file = TempFileGuard(write_system_prompt_file(system, bro_agent_dir().is_some())?);
     // Absolute deadline for the WHOLE streaming lifecycle (stdout loop + child wait +
     // stderr drain). A conversational chat gets 180s; the coding agent (BROPS_PROJECT_DIR
     // set) does real multi-step work — reading files, running build/test — so it gets a
@@ -1135,7 +1191,7 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     let deadline =
         tokio::time::Instant::now() + Duration::from_secs(if agent { 900 } else { 180 });
     let mut cmd = tokio::process::Command::new(bin);
-    cmd.args(claude_args(&sys_file.0, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
+    cmd.args(claude_args(&sys_file.0, true, env_nonempty("BROPS_CLAUDE_MODEL").as_deref(), agent))
         .current_dir(ai_cwd()?)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -1298,9 +1354,14 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
         "{}\n\nReply to the latest User message.",
         transcript(messages)
     );
-    let sys_file = TempFileGuard(write_system_prompt_file(system)?);
+    let sys_file = TempFileGuard(write_system_prompt_file(system, bro_agent_dir().is_some())?);
     let mut cmd = tokio::process::Command::new(bin);
-    cmd.args(claude_args(&sys_file.0, false, env_nonempty("BROPS_CLAUDE_MODEL").as_deref()))
+    cmd.args(claude_args(
+        &sys_file.0,
+        false,
+        env_nonempty("BROPS_CLAUDE_MODEL").as_deref(),
+        bro_agent_dir().is_some(),
+    ))
         .current_dir(ai_cwd()?)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -1755,7 +1816,10 @@ mod tests {
         let secret = "User: my password is hunter2";
         let sys_file = std::path::Path::new("/tmp/brops-ai-sandbox/system-1.txt");
         for streaming in [true, false] {
-            let args = claude_args(sys_file, streaming, None);
+            // `agent: false` — this test is ABOUT the sandboxed chat shape. Passing it explicitly
+            // is what keeps the assertion below meaningful on a machine that happens to export
+            // `BROPS_PROJECT_DIR`; it used to read that variable and quietly assert the other mode.
+            let args = claude_args(sys_file, streaming, None, false);
             // The transcript (stdin) and system prompt (file) must NOT be in argv —
             // no arg may carry chat content, and the system goes via a *file* flag,
             // never inline.
@@ -1789,10 +1853,13 @@ mod tests {
         assert!(!chat.iter().any(|a| a.contains("Bash")), "chat has no Bash");
         assert!(!chat.iter().any(|a| a == "--disallowedTools"), "chat needs no deny-list");
 
-        // Coding agent: file tools + Bash in acceptEdits, bounded by the deny-list.
+        // Conductor: file tools + Bash + Task, in acceptEdits, bounded by the deny-list. `Task` is
+        // what makes Bro able to delegate at all — without it the pack/role split in his prompt is
+        // narration, and `engine/agents/authority-policy.json` has no way to reach a running agent.
         let agent = tool_args(true);
         let tpos = agent.iter().position(|a| a == "--tools").expect("--tools present");
-        assert_eq!(agent.get(tpos + 1), Some(&"Read Edit Write Grep Glob Bash".to_string()));
+        assert_eq!(agent.get(tpos + 1), Some(&"Read Edit Write Grep Glob Bash Task".to_string()));
+        assert!(agent[tpos + 1].contains("Task"), "Bro must be able to spawn specialists");
         assert!(agent.iter().any(|a| a == "acceptEdits"), "agent runs acceptEdits");
         assert!(agent.iter().any(|a| a == "--disallowedTools"), "agent carries the deny-list");
         // push / delete / install are hard-blocked regardless of the allow-list.
@@ -1973,8 +2040,8 @@ mod tests {
     fn system_prompt_files_are_unique_and_isolated() {
         // Two concurrent-ish requests must get distinct files with exactly their
         // own content — no truncation/overwrite of one another (round-6 race).
-        let a = write_system_prompt_file("persona A").expect("write a");
-        let b = write_system_prompt_file("persona B").expect("write b");
+        let a = write_system_prompt_file("persona A", false).expect("write a");
+        let b = write_system_prompt_file("persona B", false).expect("write b");
         assert_ne!(a, b, "each request gets its own system prompt file");
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "persona A");
         assert_eq!(std::fs::read_to_string(&b).unwrap(), "persona B");
@@ -1982,12 +2049,34 @@ mod tests {
         let _ = std::fs::remove_file(&b);
     }
 
+    /// The two shapes, asserted side by side. Neither depends on the ambient environment, so this
+    /// says the same thing on CI and on a machine with `BROPS_PROJECT_DIR` exported — which is the
+    /// point: the old version read the variable and silently asserted whichever mode it found.
+    #[test]
+    fn system_prompt_carries_the_conductor_contract_only_in_agent_mode() {
+        let chat = write_system_prompt_file("persona", false).expect("write chat");
+        let chat_text = std::fs::read_to_string(&chat).unwrap();
+        assert_eq!(chat_text, "persona", "sandboxed chat gets NO repo context and no tool grant");
+
+        let agent = write_system_prompt_file("persona", true).expect("write agent");
+        let agent_text = std::fs::read_to_string(&agent).unwrap();
+        assert!(agent_text.starts_with("persona"), "the caller's prompt stays first and intact");
+        assert!(agent_text.contains("WHO YOU ARE"), "conductor identity");
+        assert!(agent_text.contains("HOW YOU DELEGATE"), "how he grants capability and scope");
+        assert!(
+            agent_text.contains("prohibited_scope"),
+            "Bro must be told to state the path half of every grant"
+        );
+        let _ = std::fs::remove_file(&chat);
+        let _ = std::fs::remove_file(&agent);
+    }
+
     #[test]
     fn claude_args_model_is_optional_and_appended() {
         let sys = std::path::Path::new("/tmp/brops-ai-sandbox/system-1.txt");
-        let none = claude_args(sys, false, None);
+        let none = claude_args(sys, false, None, false);
         assert!(!none.iter().any(|a| a == "--model"));
-        let some = claude_args(sys, true, Some("claude-x"));
+        let some = claude_args(sys, true, Some("claude-x"), false);
         let pos = some.iter().position(|a| a == "--model").expect("--model present");
         assert_eq!(some.get(pos + 1), Some(&"claude-x".to_string()));
     }

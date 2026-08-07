@@ -13,6 +13,11 @@ use sha2::{Digest, Sha256};
 
 use crate::governed_turn_ipc::{CommittedMessage, TurnReason, TRUSTED_VERIFIED};
 
+/// The only trust states a committed row may carry — the closed set `TrustState::committed_label`
+/// can produce. Kept beside the readback so a schema without the CHECK constraint (an older
+/// database, a hand-made table) still cannot smuggle an unresolved state past verification.
+const COMMITTABLE_TRUST_STATES: [&str; 2] = [TRUSTED_VERIFIED, "demonstration_custody"];
+
 /// Lowercase-hex SHA-256 of `bytes` (matches the receipt/envelope hashing convention).
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
@@ -26,8 +31,24 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     s
 }
 
-/// Create the broker committed-message table. `trust_state` is pinned by a CHECK constraint to the single
-/// value `trusted_verified` — the DB itself refuses to store any other trust state.
+/// Create the broker committed-message table.
+///
+/// `trust_state` used to be pinned by `CHECK (trust_state = 'trusted_verified')`, so the column
+/// could hold exactly one value and every committed row asserted full trust by construction.
+/// Nothing computed it: an independent audit found that no production path ever called
+/// `production_trust::resolve_trust_state`, so the custody question that module exists to answer
+/// was never asked — and the answer was stored regardless.
+///
+/// The column now records what was actually RESOLVED. `demonstration_custody` is the honest value
+/// for a run whose chain completed under a kit or demonstration root: real cryptography, real
+/// binding, and custody that proves nothing about who controls the anchor. Storing that as
+/// `trusted_verified` was the lie; refusing to store it at all would delete the evidence that the
+/// chain ran. The renderer keys its badge off this string, so a demonstration turn renders as what
+/// it is. The CHECK stays closed — an unresolved or invented state cannot be written.
+///
+/// NOTE for an existing database: `CREATE TABLE IF NOT EXISTS` leaves an older table's stricter
+/// constraint in place, so a database created before this change rejects a `demonstration_custody`
+/// row until it is recreated. Stated rather than silently worked around.
 pub fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS governed_messages (
@@ -38,7 +59,8 @@ pub fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
             body           TEXT NOT NULL,
             body_sha256    TEXT NOT NULL,
             created_at_ms  INTEGER NOT NULL,
-            trust_state    TEXT NOT NULL CHECK (trust_state = 'trusted_verified')
+            trust_state    TEXT NOT NULL
+                CHECK (trust_state IN ('trusted_verified', 'demonstration_custody'))
         );",
     )
 }
@@ -64,11 +86,16 @@ pub fn verify_readback(
     readback_trust_state: &str,
     accepted_body: &str,
     envelope_body_sha256: &str,
+    expected_trust_state: &str,
 ) -> Result<(), TurnReason> {
     let ok = readback_body == accepted_body
         && readback_sha256 == envelope_body_sha256
         && sha256_hex(readback_body.as_bytes()) == envelope_body_sha256
-        && readback_trust_state == TRUSTED_VERIFIED;
+        // Both halves matter. The equality catches a row that stored something other than what the
+        // chain resolved; the membership catches a schema (an older DB without the CHECK) where the
+        // caller and the row could agree on a value neither is allowed to use.
+        && readback_trust_state == expected_trust_state
+        && COMMITTABLE_TRUST_STATES.contains(&readback_trust_state);
     if ok {
         Ok(())
     } else {
@@ -81,14 +108,25 @@ pub fn verify_readback(
 /// immutable projection to hand to the renderer, or a `TurnReason` (never a partial/committed frame on
 /// failure). The pre-persist gate also rejects an accepted body whose recomputed SHA-256 does not equal the
 /// envelope's (defense in depth — the caller should already have verified this).
+///
+/// `trust_state` is the state the chain actually RESOLVED for this turn, and it is a parameter
+/// rather than a constant because that resolution used to not happen at all: every row was written
+/// `'trusted_verified'` literally, so the value carried no information and could not be wrong. It
+/// now has to be produced by someone who consulted the manifest and its root anchor, and a state
+/// that does not warrant storing at all is refused here rather than downgraded silently.
 pub fn persist_committed(
     conn: &Connection,
     accepted: &AcceptedOutput,
+    trust_state: &crate::production_trust::TrustState,
 ) -> Result<CommittedMessage, TurnReason> {
     // Pre-persist: the body bytes must hash to exactly the envelope-committed digest.
     if sha256_hex(accepted.accepted_body.as_bytes()) != accepted.envelope_body_sha256 {
         return Err(TurnReason::CommitReadbackMismatch);
     }
+    // A turn whose chain did not bind has nothing to commit. `NoTrustedManifest` reaching here is a
+    // caller that verified nothing and asked to store it anyway — refuse, do not record a weaker
+    // claim, because a row in this table IS the claim that a governed turn produced this body.
+    let stored_state = trust_state.committed_label().ok_or(TurnReason::UpstreamBlocked)?;
     // Open ONE explicit transaction so the INSERT, the re-read, and every verification form a single
     // atomic snapshot. `unchecked_transaction` takes `&Connection` and yields a `Transaction` that ROLLS
     // BACK on drop unless `commit()` is called — so any fail-closed return below leaves NO committed row
@@ -100,7 +138,7 @@ pub fn persist_committed(
     tx.execute(
         "INSERT INTO governed_messages
             (message_id, conversation_id, broker_turn_id, author, body, body_sha256, created_at_ms, trust_state)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'trusted_verified')",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             accepted.message_id,
             accepted.conversation_id,
@@ -109,6 +147,7 @@ pub fn persist_committed(
             accepted.accepted_body,
             accepted.envelope_body_sha256,
             accepted.created_at_ms,
+            stored_state,
         ],
     )
     .map_err(|_| TurnReason::CommitReadbackMismatch)?;
@@ -123,7 +162,14 @@ pub fn persist_committed(
         )
         .map_err(|_| TurnReason::CommitReadbackMismatch)?;
 
-    verify_readback(&rb_body, &rb_sha, &rb_trust, &accepted.accepted_body, &accepted.envelope_body_sha256)?;
+    verify_readback(
+        &rb_body,
+        &rb_sha,
+        &rb_trust,
+        &accepted.accepted_body,
+        &accepted.envelope_body_sha256,
+        stored_state,
+    )?;
     if rb_created != accepted.created_at_ms {
         return Err(TurnReason::CommitReadbackMismatch);
     }
@@ -136,6 +182,7 @@ pub fn persist_committed(
         accepted.author.clone(),
         rb_body, // the exact committed-row body, not the caller's copy
         rb_created,
+        rb_trust, // likewise the row's own re-read trust state, not the value we asked it to store
     ))
 }
 
@@ -190,9 +237,10 @@ pub fn verify_committed_binding(
     if sha256_hex(message.body.as_bytes()) != body_sha256 {
         return Err(TurnReason::CommitReadbackMismatch);
     }
-    // Defence in depth behind the table CHECK constraint: a row reached through a schema that lacks it
-    // (an older DB, a hand-made table) must not pass.
-    if trust_state != TRUSTED_VERIFIED {
+    // Defence in depth behind the table CHECK constraint: a row reached through a schema that lacks
+    // it (an older DB, a hand-made table) must not pass. The set is closed — an unresolved or
+    // invented state is refused here even if some other schema let it be written.
+    if !COMMITTABLE_TRUST_STATES.contains(&trust_state.as_str()) {
         return Err(TurnReason::CommitReadbackMismatch);
     }
     if author != message.author || created_at_ms != message.created_at_ms {
@@ -205,6 +253,24 @@ pub fn verify_committed_binding(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::production_trust::TrustState;
+
+    fn production() -> TrustState {
+        TrustState::Production {
+            key_id: "signer-prod".into(),
+            key_epoch: 3,
+            root_key_id: "root-external".into(),
+        }
+    }
+
+    fn demonstration() -> TrustState {
+        TrustState::DemonstrationCustody {
+            key_id: "signer-prod".into(),
+            key_epoch: 3,
+            root_key_id: "root-kit".into(),
+            root_provenance: crate::key_manifest::RootProvenance::KitGenerated,
+        }
+    }
 
     fn accepted(body: &str) -> AcceptedOutput {
         AcceptedOutput {
@@ -222,11 +288,80 @@ mod tests {
     fn persist_then_readback_yields_the_committed_projection() {
         let conn = Connection::open_in_memory().unwrap();
         create_schema(&conn).unwrap();
-        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world"), &production()).unwrap();
         assert_eq!(msg.message_id, "m-1");
         assert_eq!(msg.body, "hello world");
         assert_eq!(msg.role, crate::governed_turn_ipc::ASSISTANT_ROLE);
         assert_eq!(msg.trust_state, TRUSTED_VERIFIED);
+    }
+
+    /// The custody gate itself. `trust_state` used to be the literal `'trusted_verified'` in the
+    /// INSERT, so this could not be written as a test at all — there was no input to vary. Delete
+    /// the `ok_or` in `persist_committed` and this goes red.
+    #[test]
+    fn a_turn_with_no_resolved_custody_cannot_be_committed() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        let unresolved = TrustState::NoTrustedManifest("no anchor in this deployment");
+        assert_eq!(
+            persist_committed(&conn, &accepted("hello world"), &unresolved),
+            Err(TurnReason::UpstreamBlocked)
+        );
+        // And nothing durable was left behind — a refusal is not a half-commit.
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM governed_messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "a refused turn must leave no row");
+    }
+
+    /// A demonstration-custody run is a real chain run whose anchor proves nothing about who holds
+    /// the root. It commits — the evidence that the chain ran is worth keeping — but it commits
+    /// under its own label, and nothing downstream can mistake it for production.
+    #[test]
+    fn demonstration_custody_commits_under_its_own_label_not_trusted_verified() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world"), &demonstration()).unwrap();
+        assert_eq!(msg.trust_state, "demonstration_custody");
+        assert_ne!(msg.trust_state, TRUSTED_VERIFIED, "demonstration custody is NOT production trust");
+        // The projection is the row, not a hopeful copy of it.
+        let stored: String = conn
+            .query_row("SELECT trust_state FROM governed_messages WHERE message_id = 'm-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stored, msg.trust_state);
+    }
+
+    /// The two states must not be interchangeable at the storage layer either: a row that says one
+    /// thing while the chain resolved the other fails the readback. Delete the equality half of
+    /// `verify_readback` and this goes red.
+    #[test]
+    fn readback_rejects_a_row_whose_trust_state_is_not_the_resolved_one() {
+        let body = "reply";
+        let good = sha256_hex(body.as_bytes());
+        // Both values are individually legal; they simply are not the same answer.
+        assert_eq!(
+            verify_readback(body, &good, "demonstration_custody", body, &good, TRUSTED_VERIFIED),
+            Err(TurnReason::CommitReadbackMismatch)
+        );
+        assert_eq!(
+            verify_readback(body, &good, TRUSTED_VERIFIED, body, &good, "demonstration_custody"),
+            Err(TurnReason::CommitReadbackMismatch)
+        );
+    }
+
+    /// `committed_label` is the only door from a resolved state to a stored string, so the closed
+    /// set it can produce is what the CHECK constraint and the readback are allowed to accept.
+    #[test]
+    fn every_committable_label_is_one_a_trust_state_can_actually_produce() {
+        assert_eq!(production().committed_label(), Some(TRUSTED_VERIFIED));
+        assert_eq!(demonstration().committed_label(), Some("demonstration_custody"));
+        assert_eq!(TrustState::NoTrustedManifest("x").committed_label(), None);
+        for label in COMMITTABLE_TRUST_STATES {
+            assert!(
+                [production().committed_label(), demonstration().committed_label()].contains(&Some(label)),
+                "{label} is accepted by the readback but no TrustState can produce it"
+            );
+        }
     }
 
     #[test]
@@ -235,7 +370,10 @@ mod tests {
         create_schema(&conn).unwrap();
         let mut a = accepted("hello");
         a.envelope_body_sha256 = sha256_hex(b"a DIFFERENT body"); // envelope says something else
-        assert_eq!(persist_committed(&conn, &a), Err(TurnReason::CommitReadbackMismatch));
+        assert_eq!(
+            persist_committed(&conn, &a, &production()),
+            Err(TurnReason::CommitReadbackMismatch)
+        );
     }
 
     #[test]
@@ -243,20 +381,20 @@ mod tests {
         let body = "reply";
         let good = sha256_hex(body.as_bytes());
         // happy path
-        assert!(verify_readback(body, &good, TRUSTED_VERIFIED, body, &good).is_ok());
+        assert!(verify_readback(body, &good, TRUSTED_VERIFIED, body, &good, TRUSTED_VERIFIED).is_ok());
         // tampered body
         assert_eq!(
-            verify_readback("TAMPERED", &good, TRUSTED_VERIFIED, body, &good),
+            verify_readback("TAMPERED", &good, TRUSTED_VERIFIED, body, &good, TRUSTED_VERIFIED),
             Err(TurnReason::CommitReadbackMismatch)
         );
         // wrong stored hash
         assert_eq!(
-            verify_readback(body, "deadbeef", TRUSTED_VERIFIED, body, &good),
+            verify_readback(body, "deadbeef", TRUSTED_VERIFIED, body, &good, TRUSTED_VERIFIED),
             Err(TurnReason::CommitReadbackMismatch)
         );
         // downgraded trust state
         assert_eq!(
-            verify_readback(body, &good, "unverified", body, &good),
+            verify_readback(body, &good, "unverified", body, &good, TRUSTED_VERIFIED),
             Err(TurnReason::CommitReadbackMismatch)
         );
     }
@@ -296,7 +434,7 @@ mod tests {
 
         // Must fail closed on the readback mismatch...
         assert_eq!(
-            persist_committed(&conn, &accepted("hello world")),
+            persist_committed(&conn, &accepted("hello world"), &production()),
             Err(TurnReason::CommitReadbackMismatch)
         );
 
@@ -316,7 +454,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         create_schema(&conn).unwrap();
         // No tampering: readback matches, so the transaction must commit and the row must be durable.
-        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world"), &production()).unwrap();
         assert_eq!(msg.body, "hello world");
         let count: i64 = conn
             .query_row(
@@ -337,7 +475,7 @@ mod tests {
     fn committed_binding_returns_the_envelope_digest_for_a_real_committed_row() {
         let conn = Connection::open_in_memory().unwrap();
         create_schema(&conn).unwrap();
-        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world"), &production()).unwrap();
         let b = verify_committed_binding(&conn, &msg).unwrap();
         assert_eq!(b.message_id, "m-1");
         assert_eq!(b.envelope_body_sha256, sha256_hex(b"hello world"));
@@ -350,7 +488,7 @@ mod tests {
         // other check is unreachable because there is nothing to compare against.
         let conn = Connection::open_in_memory().unwrap();
         create_schema(&conn).unwrap();
-        let ghost = CommittedMessage::new("never-committed".into(), "Bro".into(), "hi".into(), 1);
+        let ghost = CommittedMessage::new("never-committed".into(), "Bro".into(), "hi".into(), 1, TRUSTED_VERIFIED.into());
         assert_eq!(
             verify_committed_binding(&conn, &ghost),
             Err(TurnReason::CommitReadbackMismatch)
@@ -364,7 +502,7 @@ mod tests {
         // the body comparison can catch the drift.
         let conn = Connection::open_in_memory().unwrap();
         create_schema(&conn).unwrap();
-        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world"), &production()).unwrap();
         conn.execute("UPDATE governed_messages SET body = 'TAMPERED' WHERE message_id = 'm-1'", [])
             .unwrap();
         assert_eq!(verify_committed_binding(&conn, &msg), Err(TurnReason::CommitReadbackMismatch));
@@ -376,7 +514,7 @@ mod tests {
         // passes; only recomputing SHA-256 against the stored envelope digest catches it.
         let conn = Connection::open_in_memory().unwrap();
         create_schema(&conn).unwrap();
-        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world"), &production()).unwrap();
         conn.execute(
             "UPDATE governed_messages SET body_sha256 = ?1 WHERE message_id = 'm-1'",
             params![sha256_hex(b"a DIFFERENT body")],
@@ -404,7 +542,7 @@ mod tests {
             params![sha256_hex(b"hello world")],
         )
         .unwrap();
-        let msg = CommittedMessage::new("m-1".into(), "Bro".into(), "hello world".into(), 7);
+        let msg = CommittedMessage::new("m-1".into(), "Bro".into(), "hello world".into(), 7, TRUSTED_VERIFIED.into());
         assert_eq!(verify_committed_binding(&conn, &msg), Err(TurnReason::CommitReadbackMismatch));
     }
 
@@ -414,15 +552,15 @@ mod tests {
         // content checks pass and only the identity comparison can reject the substitution.
         let conn = Connection::open_in_memory().unwrap();
         create_schema(&conn).unwrap();
-        let msg = persist_committed(&conn, &accepted("hello world")).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world"), &production()).unwrap();
         let restamped =
-            CommittedMessage::new(msg.message_id.clone(), msg.author.clone(), msg.body.clone(), 1);
+            CommittedMessage::new(msg.message_id.clone(), msg.author.clone(), msg.body.clone(), 1, TRUSTED_VERIFIED.into());
         assert_eq!(
             verify_committed_binding(&conn, &restamped),
             Err(TurnReason::CommitReadbackMismatch)
         );
         let reauthored =
-            CommittedMessage::new(msg.message_id.clone(), "Someone Else".into(), msg.body.clone(), msg.created_at_ms);
+            CommittedMessage::new(msg.message_id.clone(), "Someone Else".into(), msg.body.clone(), msg.created_at_ms, TRUSTED_VERIFIED.into());
         assert_eq!(
             verify_committed_binding(&conn, &reauthored),
             Err(TurnReason::CommitReadbackMismatch)
@@ -433,8 +571,11 @@ mod tests {
     fn duplicate_message_id_is_refused() {
         let conn = Connection::open_in_memory().unwrap();
         create_schema(&conn).unwrap();
-        persist_committed(&conn, &accepted("one")).unwrap();
+        persist_committed(&conn, &accepted("one"), &production()).unwrap();
         // same message_id again ⇒ PK violation ⇒ mapped to fail-closed
-        assert_eq!(persist_committed(&conn, &accepted("one")), Err(TurnReason::CommitReadbackMismatch));
+        assert_eq!(
+            persist_committed(&conn, &accepted("one"), &production()),
+            Err(TurnReason::CommitReadbackMismatch)
+        );
     }
 }

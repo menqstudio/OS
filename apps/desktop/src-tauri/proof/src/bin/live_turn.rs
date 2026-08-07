@@ -53,7 +53,7 @@ mod linux {
     use brops_broker::chain_executor::linux::{
         ChainSockets, ExecutionConfig, LinuxGovernedExecution, LinuxGovernedTurnChain,
     };
-    use brops_broker::chain_executor::{ChainExecutor, ResolvedTurn, TurnResolver};
+    use brops_broker::chain_executor::{ChainExecutor, CustodyResolver, ResolvedTurn, TurnResolver};
 
     use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
     use brops_core::governed_message_store::verify_committed_binding;
@@ -99,6 +99,51 @@ mod linux {
             return Err("writable");
         }
         Ok(())
+    }
+
+    /// This deployment's answer to "whose keys were these?", wired INTO the broker rather than
+    /// computed after it.
+    ///
+    /// The driver used to call `resolve_trust_state` only once `run_governed_turn` had already
+    /// returned — so the custody verdict was a line this binary printed, and the row the broker had
+    /// just committed said `trusted_verified` regardless of what that line said. An independent
+    /// audit found the consequence: no production path consulted custody at all. Now the same
+    /// inputs go in before the turn runs, the broker stores the label this produces, and the line
+    /// printed below is a report of what was committed rather than a second opinion about it.
+    ///
+    /// `resolve()` re-reads the clock every call because a manifest token has a validity window: an
+    /// expired one must stop producing `Production` without anything having to notice and expire a
+    /// cached verdict.
+    struct LiveCustody {
+        manifest: KeyManifest,
+        verified_root: brops_core::key_manifest::VerifiedManifestRoot,
+        signer_key_id: String,
+        envelope_verifying_key_hex: String,
+    }
+
+    impl CustodyResolver for LiveCustody {
+        fn resolve(&self) -> TrustState {
+            resolve_trust_state(
+                Some(&self.manifest),
+                Some(&self.verified_root),
+                &self.signer_key_id,
+                RECEIPT_ENVELOPE_ARTIFACT_TYPE,
+                now_ms(),
+                &self.envelope_verifying_key_hex,
+            )
+        }
+    }
+
+    /// A handle the driver keeps while the broker owns one too. `Arc` alone cannot carry the impl —
+    /// both `Arc` and the trait are foreign here — so the shared handle is a local newtype, which is
+    /// also the clearer statement: exactly one resolver exists, and the RESULT line and the committed
+    /// row are answers from that same object.
+    struct SharedCustody(std::sync::Arc<LiveCustody>);
+
+    impl CustodyResolver for SharedCustody {
+        fn resolve(&self) -> TrustState {
+            self.0.resolve()
+        }
     }
 
     fn hex32(s: &str) -> Option<[u8; 32]> {
@@ -472,7 +517,16 @@ mod linux {
             LinuxGovernedExecution::new(exec_cfg),
             ledger,
         );
-        let executor = ChainExecutor::new(chain);
+        // F-29, in the type: the key handed to the custody resolver is the exact one the chain was
+        // pinned to verify envelopes under — `resolved.isolated_signer_public_key` — not a second
+        // manifest lookup, which would have made the guard compare a value against itself.
+        let custody = std::sync::Arc::new(LiveCustody {
+            manifest: manifest.clone(),
+            verified_root: verified_root.clone(),
+            signer_key_id: signer_key_id.clone(),
+            envelope_verifying_key_hex: verifying_key_hex(&resolved.isolated_signer_public_key),
+        });
+        let executor = ChainExecutor::with_custody(chain, Box::new(SharedCustody(custody.clone())));
 
         let conversation_id =
             s(&cfg, &["resolved", "conversation_id"]).unwrap_or_else(|| "conv-live-1".to_string());
@@ -517,15 +571,15 @@ mod linux {
         // "production" for a demonstration-rooted manifest, and every other consumer of that type had
         // to remember to re-apply the same string check. Now the anchor evidence goes IN and the
         // custody verdict comes OUT: a non-external anchor cannot produce a `Production` value at all.
-        let ts = resolve_trust_state(
-            Some(&manifest),
-            Some(&verified_root),
-            &signer_key_id,
-            RECEIPT_ENVELOPE_ARTIFACT_TYPE,
-            now,
-            &verifying_key_hex(&resolved.isolated_signer_public_key),
-        );
+        let ts = custody.resolve();
         let production_verified = ts.is_production_verified();
+        // The report and the durable row must be the SAME verdict. `message.trust_state` is the
+        // label re-read out of the committed row inside the commit transaction; if it disagrees
+        // with what this resolver says now, something between the two is not what it claims and the
+        // run is not a success no matter how the chain went.
+        if Some(message.trust_state.as_str()) != ts.committed_label() {
+            return blocked("custody_row_mismatch");
+        }
         let ts_str = match &ts {
             TrustState::Production { key_id, key_epoch, root_key_id } => {
                 format!("trusted_verified(production key={key_id} epoch={key_epoch} root={root_key_id})")

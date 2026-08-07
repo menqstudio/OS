@@ -55,6 +55,28 @@ impl TrustState {
         matches!(self, TrustState::Production { .. } | TrustState::DemonstrationCustody { .. })
     }
 
+    /// The exact string this state may be COMMITTED as, or `None` when it may not be committed.
+    ///
+    /// `governed_messages.trust_state` used to be the literal `'trusted_verified'` in the INSERT,
+    /// behind a CHECK constraint that permitted no other value — so the column asserted full trust
+    /// for every row and no code path could ever have made it say otherwise. An independent audit
+    /// found the matching hole: nothing in production called [`resolve_trust_state`] at all, so the
+    /// custody question was never asked and the answer was stored anyway.
+    ///
+    /// A demonstration-custody run gets its own label rather than being either promoted or thrown
+    /// away. The chain genuinely ran and genuinely bound the body; what is unproven is who controls
+    /// the anchor. The renderer keys its badge off this string, so the distinction survives all the
+    /// way to what the owner sees.
+    pub fn committed_label(&self) -> Option<&'static str> {
+        match self {
+            TrustState::Production { .. } => Some(crate::governed_turn_ipc::TRUSTED_VERIFIED),
+            TrustState::DemonstrationCustody { .. } => Some("demonstration_custody"),
+            // Nothing bound. A row here IS the claim that a governed turn produced this body, so
+            // there is no weaker row to write — only a refusal.
+            TrustState::NoTrustedManifest(_) => None,
+        }
+    }
+
     /// The root anchor that verified the manifest, when one did.
     pub fn root_key_id(&self) -> Option<&str> {
         match self {
