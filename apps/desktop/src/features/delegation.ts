@@ -1,28 +1,35 @@
-// The delegation contract: what a Bro `Task` spawn must look like on the wire, and the
-// fail-closed reader that turns backend JSON into something the chat is allowed to draw.
+// The delegation contract: what a Bro delegation looks like on the wire, and the fail-closed
+// reader that turns backend JSON into something the chat is allowed to draw.
 //
-// ── Why this file is a reader for a contract that does not exist yet ─────────────────
-// Bro can delegate: `tool_args(true)` in `src-tauri/src/ai.rs` grants him `Task`, and
-// `.claude/agents/` holds the three capability tiers plus the pack roles he picks between.
-// What he CANNOT do today is be seen doing it. `claude_cli_stream` parses exactly two line
-// shapes out of the CLI's `stream-json`: `stream_event → content_block_delta → delta.text`,
-// and the final `result`. Every other line falls into `_ => {}`. A `Task` spawn arrives on a
-// `{"type":"assistant"}` line as a `tool_use` content block, and its return on a
-// `{"type":"user"}` line as a `tool_result` block — both are dropped on the floor. Nothing
-// reaches `StreamEvent` (commands.rs), so nothing reaches the renderer.
+// ---- The wire this reader is now actually attached to --------------------------------
+// `src-tauri/src/ai.rs` parses the CLI's `stream-json` for delegation blocks (the live capture
+// in `docs/BRO_DELEGATION_EVIDENCE.md` shows the block is named `Agent`, not `Task`; both names
+// are accepted there), and `commands.rs::delegation_frame` turns each one into a
+// `StreamEvent::DelegationSpawned` / `DelegationSettled` on the SAME `tauri::ipc::Channel` that
+// already carries `Delta` and `Done`. `Conversations.tsx` reads that channel and folds the two
+// frames through `asDelegationEvent` -> `applyDelegationEventForConversation` below.
 //
-// So: this module parses a contract the backend must still emit (the exact shape is
-// documented on `DelegationEvent` below and repeated in the report), and every consumer of
-// it renders "not reported" rather than a plausible card, because a delegation card drawn
-// over data we do not have is a lie about what the owner authorised.
+// What still does NOT exist is a READ-side command: nothing stores a delegation, so nothing can
+// replay one after a reload. `delegationSource.ts` keeps probing for it and keeps saying so --
+// a live feed is not a history, and the surface must not start looking like one.
+//
+// Everything here stays fail-closed regardless: a payload that cannot establish that a
+// delegation genuinely happened yields no card at all, because a card drawn over data we do
+// not have is a lie about what the owner authorised.
 //
 // ── The honesty rule this module encodes ────────────────────────────────────────────
 // A grant has two halves and they are NOT equally real:
 //
-//   CAPABILITY (which tools)  — enforced. The `Task` tool takes the subagent's tool list
-//                               from its `.claude/agents/<name>.md` frontmatter; Bro cannot
-//                               pass an arbitrary one at spawn time. Choosing the agent IS
-//                               the grant.
+//   CAPABILITY (which tools)  — enforced, but only for a TIER. The app passes the three tier
+//                               definitions to the CLI itself via `--agents`, and the spawn
+//                               tool takes the subagent's tool list from there; Bro cannot pass
+//                               an arbitrary one at spawn time, so choosing the agent IS the
+//                               grant (`toolsSource: 'agent_definition'`). A pack role is
+//                               weaker: `--setting-sources ""` means its
+//                               `.claude/agents/<name>.md` is never loaded, so its `tools:`
+//                               line is a fact about the role that bounded nothing on this run
+//                               (`toolsSource: 'pack_role_file'`), and the card must not let
+//                               the two read the same.
 //   PATH (scope / prohibited) — NOT enforced on this path. `scope` and `prohibited_scope`
 //                               travel as prose inside the task prompt. `engine`'s
 //                               `bro_security.enforce_scope` is what actually contains a
@@ -90,8 +97,16 @@ export function isWorkPath(v: unknown): v is string {
 
 /** Where a rendered tool list came from. Never invented. */
 export type ToolsSource =
-  /** The backend read the spawned agent's `.claude/agents/<name>.md` frontmatter. */
+  /** The definition this app handed the CLI as `--agents` for that exact agent type. It IS what
+   *  bounds the run, so the card may call it enforced. (`ai.rs::ToolsSource::AgentDefinition`.) */
   | 'agent_definition'
+  /** The `tools:` line of a pack role's `.claude/agents/<name>.md`. The backend really read it,
+   *  so it is a fact about the role — but with `--setting-sources ""` that file is never loaded,
+   *  so it bounded NOTHING on this run. Kept as its own value rather than folded into
+   *  `agent_definition` (which would claim an enforcement that did not happen) or dropped
+   *  (which would hide capability the owner handed out — the dangerous direction).
+   *  (`ai.rs::ToolsSource::PackRoleFile`.) */
+  | 'pack_role_file'
   /** Derived from `TIER_TOOLS` because the backend reported none. A checked mirror of the
    *  definitions, but not a read of the live file — the card says so. */
   | 'tier_table'
@@ -123,7 +138,9 @@ export interface Delegation {
   conversationId: string | null;
   /** Who delegated. `Bro` in every path that exists today. */
   parent: string;
-  /** The `subagent_type` handed to the `Task` tool, verbatim — a tier name or a pack role. */
+  /** The `subagent_type` on the spawn block, verbatim — a tier name or a pack role. (The block
+   *  itself is named `Agent` on the live wire, `Task` in the CLI's grant list; `ai.rs` accepts
+   *  both. See `docs/BRO_DELEGATION_EVIDENCE.md` §3.) */
   subagentType: string;
   /** Non-null only when `subagentType` IS one of the three tiers. Derived here rather than
    *  read from the payload: a `tier` field that could disagree with the agent actually
@@ -152,14 +169,22 @@ export interface Delegation {
 }
 
 /**
- * The two events the backend must emit. Proposed names; the shape is what matters.
+ * The two events the backend emits, verified field-by-field against `commands.rs::delegation_frame`
+ * and the live capture in `docs/BRO_DELEGATION_EVIDENCE.md`.
  *
- * `delegationSpawned` — on the `{"type":"assistant"}` line, for each `tool_use` block whose
- *   `name` is `Task`. `id` = the block's `id`; `subagentType`/`description`/`prompt` = its
- *   `input`. `tools` = the `tools:` frontmatter of `.claude/agents/<subagentType>.md`, read
- *   by the backend at spawn time (omit the field rather than guess if the file is absent).
- * `delegationSettled` — on the `{"type":"user"}` line, for each `tool_result` block;
- *   `id` = `tool_use_id`, `outcome` from `is_error`, `summary` = the result content.
+ * `delegationSpawned` — one per delegation `tool_use` block on the `{"type":"assistant"}` line.
+ *   `delegation` carries `id`, `subagentType`, `conversationId` (**`null`** for a one-shot ask),
+ *   `parent`, `startedAt`, and OPTIONALLY `description` / `prompt` / `tools` + `toolsSource`.
+ *   `tools` and `toolsSource` are **omitted together** when capability could not be established
+ *   — never nulled, because `null` would read as an answer. `grant` is always present and is
+ *   **`null`** when the task stated no scope; otherwise `{scope, prohibitedScope, source,
+ *   enforcement}` with `enforcement` fixed at `"none"` on this route.
+ * `delegationSettled` — one per `tool_result` block on the `{"type":"user"}` line.
+ *   `id` = `tool_use_id`, `outcome` ∈ `ok` / `error` / `unknown`, `endedAt` always present,
+ *   `summary` omitted when the stream reported no result text.
+ *
+ * Every field above is OPTIONAL to this reader: it reads what is there and refuses to invent
+ * what is not. Nothing here may assume a field the backend does not send.
  */
 export type DelegationEvent =
   | { type: 'delegationSpawned'; delegation: unknown }
@@ -195,17 +220,25 @@ export function resolveTools(
   reported: unknown,
   reportedSource: unknown,
 ): { tools: string[]; toolsSource: ToolsSource; toolsConflict: boolean } {
-  const fromBackend = reportedSource === 'agent_definition' ? stringArray(reported) : null;
+  // Two reported sources are genuine backend reads and neither may be discarded: dropping a list
+  // the backend really read would draw "capability unknown" over a specialist that holds tools,
+  // which is the understating failure this module exists to prevent. They are kept APART, though
+  // — only `agent_definition` bounded the run — and the card says which of the two it has.
+  const reportedIsRead =
+    reportedSource === 'agent_definition' || reportedSource === 'pack_role_file';
+  const fromBackend = reportedIsRead ? stringArray(reported) : null;
+  const backendSource: ToolsSource =
+    reportedSource === 'pack_role_file' ? 'pack_role_file' : 'agent_definition';
   const fromTier = tier ? [...TIER_TOOLS[tier]] : null;
 
   if (fromBackend && fromBackend.length > 0) {
-    if (!fromTier) return { tools: orderTools(fromBackend), toolsSource: 'agent_definition', toolsConflict: false };
+    if (!fromTier) return { tools: orderTools(fromBackend), toolsSource: backendSource, toolsConflict: false };
     const same =
       fromBackend.length === fromTier.length && fromTier.every((t) => fromBackend.includes(t));
-    if (same) return { tools: orderTools(fromBackend), toolsSource: 'agent_definition', toolsConflict: false };
+    if (same) return { tools: orderTools(fromBackend), toolsSource: backendSource, toolsConflict: false };
     return {
       tools: orderTools([...new Set([...fromBackend, ...fromTier])]),
-      toolsSource: 'agent_definition',
+      toolsSource: backendSource,
       toolsConflict: true,
     };
   }
@@ -328,6 +361,62 @@ export function applyDelegationEvent(list: readonly Delegation[], ev: Delegation
   return list.map((d) =>
     d.id === id ? { ...d, outcome, summary: str(ev.summary), endedAt: str(ev.endedAt) } : d,
   );
+}
+
+/**
+ * Narrow one raw frame off the `StreamEvent` channel to a delegation event, or `null`.
+ *
+ * The channel is shared: `delta`, `done`, `error`, `blocked`, `ready` and anything a future
+ * backend adds ride the same wire. An unrecognised `type` must be IGNORED — never crashed on,
+ * and above all never coerced into a delegation. So this matches the two known tags exactly and
+ * returns `null` for everything else, including a frame with no `type` at all.
+ *
+ * The payload fields are passed through as `unknown` on purpose: this function decides only
+ * WHICH event arrived. Whether it establishes anything is `parseDelegation`'s job, and it is the
+ * one place allowed to say yes.
+ */
+export function asDelegationEvent(ev: unknown): DelegationEvent | null {
+  if (ev === null || typeof ev !== 'object') return null;
+  const e = ev as Record<string, unknown>;
+  if (e.type === 'delegationSpawned') {
+    return { type: 'delegationSpawned', delegation: e.delegation };
+  }
+  if (e.type === 'delegationSettled') {
+    return {
+      type: 'delegationSettled',
+      id: e.id,
+      outcome: e.outcome,
+      summary: e.summary,
+      endedAt: e.endedAt,
+    };
+  }
+  return null;
+}
+
+/**
+ * Fold one live event into a list that belongs to ONE conversation.
+ *
+ * A delegation filed under the wrong conversation is worse than one not shown: it tells the
+ * owner that a specialist was given tools inside a thread where that never happened. So a spawn
+ * is admitted only when the payload's own `conversationId` matches the conversation this list
+ * belongs to — exact equality, which also rejects the one-shot-ask frame (`conversationId:
+ * null`, emitted by `stream_ask`) rather than adopting it into whichever chat happened to be
+ * open. The channel carrying the frame is NOT accepted as proof of provenance; the payload is.
+ *
+ * Settlements need no filter of their own: `applyDelegationEvent` drops any id this list never
+ * saw spawned, which is also what keeps a nested specialist's own `Read`/`Bash` results — the
+ * backend emits a settlement for every tool return — off the delegation surface.
+ */
+export function applyDelegationEventForConversation(
+  list: readonly Delegation[],
+  ev: DelegationEvent,
+  conversationId: string,
+): Delegation[] {
+  if (ev.type === 'delegationSpawned') {
+    const parsed = parseDelegation(ev.delegation);
+    if (!parsed || parsed.conversationId !== conversationId) return [...list];
+  }
+  return applyDelegationEvent(list, ev);
 }
 
 /** Fold a whole batch (a reload of persisted delegations, or a replayed turn). */

@@ -289,16 +289,35 @@ listing `Everything` and `READ-ONLY` as granted paths is not showing the owner a
 
 ## 8. Summary of defects, in severity order
 
-1. **`delegation_spawns` filters on `name == "Task"`; the CLI emits `"Agent"`.** Delegation is
-   100% invisible in the app. Nothing else in the spawn path is wrong.
-2. **A successful delegation reports `outcome: "unknown"`** because `is_error` is absent; the real
-   status (`tool_use_result.status`) is at a nesting depth nothing reads.
-3. **Every nested specialist tool return is emitted as a settlement**, carrying up to
-   `MAX_DELEGATION_TEXT` characters of file/command output over the IPC. Currently dropped by the
-   frontend; `parent_tool_use_id` is the field that distinguishes them.
-4. **CLI built-in agent types (`general-purpose`, `Explore`, `Plan`, …) remain spawnable** and
-   resolve to no known capability, so they would render as "unknown grant".
-5. **`parse_task_grant` turns an inline prose sentence into a path list.**
+Status as of 2026-08-07, the same day the capture was taken. Four of the five were closed in
+`ai.rs` on the strength of this document; each fix is pinned by a test holding the captured line
+verbatim, so a regression fails against the real wire shape rather than against a fixture someone
+wrote from memory — which is how defect 1 happened in the first place.
+
+1. ✅ **`delegation_spawns` filtered on `name == "Task"`; the CLI emits `"Agent"`.** Delegation was
+   100% invisible in the app. Both names are now accepted: we do not control this wire format and
+   have observed exactly one CLI version, so accepting a name that never arrives costs nothing
+   while missing the one that does cost the whole feature.
+2. ✅ **A successful delegation reported `outcome: "unknown"`** because `is_error` is absent on a
+   delegation return, though ordinary tool results carry it. `tool_use_result.status` — a
+   top-level sibling of `message` — is now read, and only for values whose meaning is
+   unambiguous. Anything unrecognised stays `unknown`.
+3. ✅ **Every nested specialist tool return was emitted as a settlement**, one carrying 8_521
+   characters of file text across the IPC. Both the spawn and settle readers now skip a line whose
+   `parent_tool_use_id` is non-null. The frontend dropped them by unknown id, so nothing rendered
+   — but the text crossed the boundary anyway, and a surface that never asked for a file's
+   contents is the wrong place to first learn they are being sent.
+4. ◑ **CLI built-in agent types (`general-purpose`, `Explore`, `Plan`, …) remain spawnable** and
+   resolve to no known capability. OPEN, and the current behaviour is honest rather than fixed:
+   the card renders capability as unknown, which is exactly what we know. What it cannot do is
+   tell the owner that the agent nonetheless holds a broad grant. Closing it means either
+   refusing a spawn whose capability cannot be established, or resolving the built-ins' real tool
+   lists — and the first is a behaviour change the owner should choose.
+5. ✅ **`parse_task_grant` turned an inline prose sentence into a path list** — Bro's real
+   "SCOPE: `tools` (repo-relative). Everything outside that path is READ-ONLY" became eight granted
+   paths including `(repo-relative)` and `READ-ONLY`. The reader is now all-or-nothing per line:
+   one token that is not a path discards the line, because a precise validated list of places
+   nobody named is worse than saying no scope was stated.
 
 ---
 

@@ -18,6 +18,7 @@ import { ToastProvider } from '../components/toast';
 import { Chat } from './Chat';
 import { DelegationSurface } from './delegationView';
 import { STR } from './Chat.strings';
+import { SURFACE_STR } from './delegationView';
 import { classifyDelegationFailure, loadDelegations } from './delegationSource';
 
 vi.setConfig({ testTimeout: 30000 });
@@ -60,11 +61,14 @@ function mount(reply: () => Promise<unknown>) {
 }
 
 describe('Chat delegation surface — the absent state is the honest one today', () => {
-  it('says the backend does not report delegations, and quotes what it said', async () => {
+  it('says nothing STORES a delegation, and quotes what the backend said', async () => {
     mount(() => Promise.reject(new Error('Command list_delegations not found')));
 
-    await screen.findByText(STR.notEmittedTitle.en);
-    expect(screen.getByText(STR.notEmittedBody.en)).toBeInTheDocument();
+    // The live channel exists now, so the old "the backend does not report delegations"
+    // headline would be false. What is missing is storage, and that is what it must say.
+    await screen.findByText(SURFACE_STR.noLedgerTitle.en);
+    expect(screen.getByText(SURFACE_STR.noLedgerBody.en)).toBeInTheDocument();
+    expect(screen.queryByText(STR.notEmittedTitle.en)).not.toBeInTheDocument();
     // The backend's own words survive to the screen — a mapped headline never replaces them.
     expect(screen.getByText(/Command list_delegations not found/)).toBeInTheDocument();
     // And absolutely nothing that looks like a delegation was drawn.
@@ -74,7 +78,10 @@ describe('Chat delegation surface — the absent state is the honest one today',
   it('distinguishes a REFUSAL from an unimplemented command instead of flattening both', async () => {
     mount(() => Promise.reject(new Error('list_delegations not allowed by the window capability set')));
     await screen.findByText(STR.deniedTitle.en);
-    expect(screen.queryByText(STR.notEmittedTitle.en)).not.toBeInTheDocument();
+    expect(screen.queryByText(SURFACE_STR.noLedgerTitle.en)).not.toBeInTheDocument();
+    // …and it is explained as a failed read, not borrowed from "there is no such command".
+    expect(screen.getByText(SURFACE_STR.unreadableLedgerBody.en)).toBeInTheDocument();
+    expect(screen.queryByText(SURFACE_STR.noLedgerBody.en)).not.toBeInTheDocument();
   });
 
   it('does not report a genuinely broken backend as "not built yet"', async () => {
@@ -95,7 +102,7 @@ describe('Chat delegation surface — the absent state is the honest one today',
   it('shows an empty ledger for an empty list, not an absent-backend notice', async () => {
     mount(() => Promise.resolve([]));
     await screen.findByText(STR.noneYet.en);
-    expect(screen.queryByText(STR.notEmittedTitle.en)).not.toBeInTheDocument();
+    expect(screen.queryByText(SURFACE_STR.noLedgerTitle.en)).not.toBeInTheDocument();
   });
 
   it('asks nothing at all outside the desktop runtime, and says so', async () => {
@@ -230,9 +237,11 @@ describe('the Chat screen carries the surface', () => {
 
     await waitFor(() => expect(screen.getByLabelText(STR.sectionTitle.en)).toBeInTheDocument());
     expect(screen.getByText(STR.eyebrow.en)).toBeInTheDocument();
-    await screen.findByText(STR.notEmittedTitle.en);
+    await screen.findByText(SURFACE_STR.noLedgerTitle.en);
     expect(document.querySelector('.dg-card')).toBeNull();
-    // The surface asked the real command name — a probe, not a simulation.
-    expect(invokeMock).toHaveBeenCalledWith('list_delegations', { conversationId: null });
+    // The surface asked the real command name — a probe, not a simulation — and it asked for
+    // the conversation the screen actually has open, not for "everything".
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('list_delegations', { conversationId: 'c-1' }));
   });
 });

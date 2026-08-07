@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import {
+  useCallback, useEffect, useMemo, useRef, useState,
+  type ChangeEvent, type KeyboardEvent,
+} from 'react';
 import { useApp } from '../app/store';
 import type { RouteId } from '../app/nav';
 import {
@@ -12,6 +15,11 @@ import { Mark } from '../components/Ambient';
 import type { Conversation, Message, SearchResult } from '../domain/entities';
 import type { Tone } from '../domain/enums';
 import { STR } from './Conversations.strings';
+import {
+  asDelegationEvent, applyDelegationEventForConversation,
+  type Delegation, type DelegationEvent,
+} from './delegation';
+import { DelegationSurface } from './delegationView';
 
 export interface ReceiptBadge {
   tone: Tone;
@@ -164,7 +172,14 @@ function CopyButton({ text, label, doneLabel }: { text: string; label: string; d
   );
 }
 
-function MessageThread({ conversation, onActivity }: { conversation: Conversation; onActivity: () => void }) {
+function MessageThread({ conversation, onActivity, onDelegation }: {
+  conversation: Conversation;
+  onActivity: () => void;
+  /** Called once per delegation frame this thread's own stream reported, with the conversation
+   *  it belongs to. The thread does not keep the ledger — the workspace does, because the
+   *  surface that draws it sits outside this component and must not drift from what is open. */
+  onDelegation?: (ev: DelegationEvent, conversationId: string) => void;
+}) {
   const { t, lang, openEntity } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
@@ -360,6 +375,15 @@ function MessageThread({ conversation, onActivity }: { conversation: Conversatio
           // Governed turn Blocked by desktop receipt verification: a transient
           // turn-level notice, NO persisted agent message (Wave 3a Blocks every turn).
           else if (ev.type === 'blocked') setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`);
+          else {
+            // Bro handed work to a specialist mid-turn. `asDelegationEvent` matches the two
+            // delegation tags and returns null for everything else, so an unrecognised frame —
+            // a variant a future backend adds, or a malformed one — is simply ignored: it never
+            // throws inside the channel callback (which would abort the reply the user is
+            // reading) and it can never be mistaken for a delegation.
+            const delegation = asDelegationEvent(ev);
+            if (delegation) onDelegation?.(delegation, conversation.id);
+          }
         }, who);
         // #4 per-agent isolation: one agent's error/block no longer aborts the whole room —
         // its error is surfaced inline and the remaining agents still get their turn. Only a
@@ -853,6 +877,18 @@ export function Conversations({ kind }: { kind: Kind }) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const s = useAsync(() => desktop.listConversations(kind), [kind]);
 
+  // Delegations the OPEN thread's stream reported while this workspace has been mounted.
+  //
+  // It lives here rather than inside `MessageThread` because the surface that draws it sits
+  // below the whole workspace, and because `MessageThread` is keyed by conversation id — state
+  // held there would be discarded by the remount before anything could read it. The fold is the
+  // conversation-scoped one, so a frame whose payload names a different conversation (or none,
+  // as `stream_ask` emits) is dropped rather than filed under whatever thread happens to be open.
+  const [delegations, setDelegations] = useState<Delegation[]>([]);
+  const onDelegation = useCallback((ev: DelegationEvent, conversationId: string) => {
+    setDelegations((prev) => applyDelegationEventForConversation(prev, ev, conversationId));
+  }, []);
+
   // Consume a command-palette deep-link. The palette already routed to the
   // Conversations instance matching the picked conversation's kind, so only the
   // instance that actually owns the id selects it and clears the pending focus;
@@ -885,6 +921,11 @@ export function Conversations({ kind }: { kind: Kind }) {
   // Leaving the screen retracts the claim. A stale id left behind would have those surfaces
   // filtering by a conversation nothing is showing — worse than showing everything.
   useEffect(() => () => setSelectedConversation(kind, null), [kind, setSelectedConversation]);
+
+  // A different thread is a different ledger. The fold already refuses a frame belonging to
+  // another conversation, so this is not what keeps the two apart — it is what stops the
+  // previous thread's cards from lingering under the new one while it has reported nothing.
+  useEffect(() => { setDelegations((prev) => (prev.length === 0 ? prev : [])); }, [activeId]);
 
   const titleKey = kind === 'group' ? 'nav.groupChat' : 'nav.chat';
   const subtitleKey = kind === 'group' ? 'groupChat.subtitle' : 'chat.subtitle';
@@ -1028,10 +1069,25 @@ export function Conversations({ kind }: { kind: Kind }) {
             }
             // key on the conversation id so switching remounts the thread —
             // its streaming/error state never bleeds across conversations.
-            return <MessageThread key={active.id} conversation={active} onActivity={() => s.reload()} />;
+            return (
+              <MessageThread
+                key={active.id}
+                conversation={active}
+                onActivity={() => s.reload()}
+                onDelegation={onDelegation}
+              />
+            );
           })()}
         </div>
       </div>
+
+      {/* Who Bro put on this — beneath the workspace, bound to the thread actually on screen.
+          Direct chat only: that is where the surface has always lived, and `GroupChat.tsx` is
+          not this task's to change. A delegation Bro makes inside a group room is therefore
+          still not drawn anywhere, which is a gap, not a claim — nothing here says otherwise. */}
+      {kind === 'direct' && (
+        <DelegationSurface conversationId={activeId ?? undefined} live={delegations} />
+      )}
     </div>
   );
 }

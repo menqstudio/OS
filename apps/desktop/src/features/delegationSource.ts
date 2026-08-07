@@ -1,17 +1,26 @@
-// Where the chat's delegation surface gets its records — and, today, why it gets none.
+// Where the chat's delegation LEDGER gets its records -- and why, today, it still gets none.
 //
 // This module does not simulate a feed. It asks the backend for one and reports exactly what
-// came back, including "there is no such command". That is the honest state right now: no
-// Tauri command emits delegations (see `delegation.ts` for where they are dropped in
-// `ai.rs::claude_cli_stream`), so `loadDelegations` resolves to `unavailable` carrying the
-// backend's own words, and the surface prints them instead of drawing a card.
+// came back, including "there is no such command".
 //
-// The day `list_delegations` exists, this file needs no change — the probe succeeds and the
+// ---- What changed, and what did NOT ------------------------------------------------
+// The LIVE path now exists: a running turn reports each delegation on the `StreamEvent`
+// channel (`commands.rs::delegation_frame`), and `Conversations.tsx` folds those frames into
+// the surface as they happen. That is a feed, not a history.
+//
+// The READ path is still missing. No command persists or replays a delegation, so
+// `loadDelegations` resolves to `unavailable` carrying the backend's own words, and the
+// surface prints them. That honesty is load-bearing precisely BECAUSE live cards now appear
+// above it: without it, a list holding one turn's delegations looks like the complete record
+// of a conversation, and the owner would read an empty list after a reload as "Bro delegated
+// nothing" rather than "nothing was ever stored". Do not remove it because a live path exists.
+//
+// The day `list_delegations` exists, this file needs no change -- the probe succeeds and the
 // same fail-closed reader parses the reply.
 //
 // PLACEMENT NOTE (for the backend slice): `services/desktop.ts` is "the single typed boundary
 // between React and the Tauri backend", and this `invoke` belongs there beside `streamReply`.
-// It sits here only because `services/` was outside this task's edit scope. When the backend
+// It sits here only because `services/` was outside the originating task's edit scope. When the
 // command lands, move `probeDelegations` into `desktop.ts` and have this module call it.
 
 import { invoke } from '@tauri-apps/api/core';
@@ -59,10 +68,12 @@ export function classifyDelegationFailure(message: string): DelegationUnavailabl
 /**
  * Ask the backend for this conversation's delegations.
  *
- * `conversationId` is optional because the chat cannot supply one yet: `Conversations.tsx`
- * keeps its selected conversation in local state and exposes no way to read it, and that file
- * is not editable here. The backend contract therefore carries `conversationId` on every
- * record, so the surface can label and group by conversation without that lift.
+ * `Conversations.tsx` now renders the surface itself and passes the thread it is actually
+ * showing, so the probe is scoped to one conversation rather than asking for everything and
+ * sorting it out afterwards. It stays OPTIONAL for the case with no thread open (and for the
+ * direct unit tests below), where `null` goes out and the backend would decide what that means.
+ * Every record also carries its own `conversationId`, so a reply can still be checked rather
+ * than assumed to match what was asked for.
  */
 export async function loadDelegations(
   conversationId?: string,

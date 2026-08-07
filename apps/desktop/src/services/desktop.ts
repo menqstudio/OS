@@ -403,7 +403,21 @@ export type StreamEvent =
   // notice, never a persisted reply. `reason` is the machine verdict.
   | { type: 'blocked'; reason: string }
   // stream_ask only: the full answer is held server-side under this one-time id.
-  | { type: 'ready'; resultId: string };
+  | { type: 'ready'; resultId: string }
+  // Bro handed work to a specialist, mid-turn, on this same channel.
+  //
+  // `delegation` is typed `unknown` DELIBERATELY. The Rust side sends an already-shaped JSON
+  // object (`commands.rs::delegation_frame`) in which OMISSION carries meaning: `tools` is
+  // absent when capability could not be established, `grant` is `null` when the task stated no
+  // scope, and `conversationId` is `null` for a one-shot ask. Declaring an interface here would
+  // hand the renderer a promise about fields the backend may never send — this wave's recurring
+  // defect. Only the fail-closed reader in `features/delegation.ts` may decide what the payload
+  // establishes; everything else must treat it as untrusted JSON.
+  | { type: 'delegationSpawned'; delegation: unknown }
+  // …and that specialist returned. `outcome` is the backend's own word (`ok` / `error` /
+  // `unknown`); it is validated, never trusted, by `applyDelegationEvent`. `summary` is omitted
+  // (not nulled) when the stream reported no result text.
+  | { type: 'delegationSettled'; id: string; outcome: string; summary?: string; endedAt: string };
 
 export type RunStepEvent =
   | { type: 'delta'; text: string }
