@@ -1,6 +1,14 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE (2026-08-07): PR #64 MERGED to `main` (tip `09b4803`).** The active workflow is **PR #65 · branch `wave/phase-push-1`** (base `main`, task T-017) — a broad push across phases 1-10 driven by a fan-out of specialist agents. 29 commits, 28/28 CI checks green.
+> **⏭️ CURRENT ACTIVE (2026-08-08): PR #65 MERGED to `main` (tip `0efa99e`).** The active workflow is **PR #66 · branch `chore/staleness-sweep`** (base `main`, task T-017) — a repository staleness sweep and a duplication cleanup, asked for as *"nothing stale, crystal clean, this is the single source of truth"*.
+>
+> **Documentation.** Eighteen `.md` files were verified claim-by-claim against the code and corrected. The worst was carried by both `README.md` and `docs/ARCHITECTURE.md`: *"the OS-root `.claude/` hooks are the enforcement wall"*. They are not — the root wires ONE `Stop` guard for coordination-document consistency, and the directory's content is 262 generated specialist definitions. The wall is `engine/.claude/settings.json`, nine events. Also corrected: the roadmap showed phases 2–10 as *Blocked* on a dependency chain that was never how the work proceeded; `START_HERE.md` pointed at PR #31 as live work; `OPERATOR_GUIDE.md` listed three providers of four and called chat *"tool-free"* when `BROPS_PROJECT_DIR` grants file and shell access; `CLAUDE.md` §6 pointed at a branch that does not exist.
+>
+> **Deletions, and why they were not merely clutter.** `engine/CLAUDE.md`, `engine/AGENTS.md`, `engine/NEXT_CHAT.md` and `apps/desktop/docs/AGENTS.md` were **agent-instruction** files that tools load by directory proximity. `engine/CLAUDE.md` said *"you are operating inside the canonical menqstudio/Bro repository"* and `engine/NEXT_CHAT.md` said *"do not touch BroPS"* — an instruction to ignore the other half of this repository. Three files each claimed to be *the* agent contract. The rule applied: **documentation ABOUT a subsystem may be many; instructions TO an agent must be exactly one, at the root.** The 2026-07-19 BroPS audit set (13 tickets, its report and README) was removed too — every ticket was a read-only proposed patch, all landed, and `AUDIT_LEDGER.md` already carries each verdict.
+>
+> Repository hygiene: both stashes cleared (proven redundant by blob comparison, patches archived, SHAs recorded), stale PR #46 closed with evidence, **open PRs 0**, 14 merged-PR branches deleted. Evidence for every claim: [`docs/REPO_STALENESS_SWEEP_2026-08-08.md`](./docs/REPO_STALENESS_SWEEP_2026-08-08.md).
+>
+> **The gate is untouched.** `platform_governed_execution_supported()` stays false, `main()` keeps `UpstreamBlockedExecutor`, production `trusted_verified` remains unreachable. Earlier prose below is HISTORY.
 >
 > Every commit on it is one of two shapes. **Something was built and nothing could reach it, or something was displayed and nothing established it.** Both read as protection while doing nothing, which is worse than an absent check because nobody looks again.
 >
@@ -227,7 +235,7 @@ CI (`.github/workflows/ci.yml`) triggers on `push → main` and on `pull_request
 - No direct work on `main`; every task = branch + PR (PR template).
 - Never fabricate a commit SHA, test result, verdict, or file state. Do not write `Done`/`GREEN`/`approved`/`merge-ready` unless it is a verified fact in the repo.
 - Do **not** present slice-1-deferred items (below) as implemented.
-- Do not touch the engine's wall/leases/gates/signatures/control-plane casually — it is an audited security perimeter (CLAUDE.md §6). Engine-only work lives in [`engine/NEXT_CHAT.md`](./engine/NEXT_CHAT.md) and is a separate track ("do not touch BroPS" applies there in reverse here).
+- Do not touch the engine's wall/leases/gates/signatures/control-plane casually — it is an audited security perimeter (CLAUDE.md §6). Engine work is tracked in `engine/AUDIT/tickets/` and, for the five residual items, in [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md). **There is no separate engine handoff any more:** `engine/NEXT_CHAT.md` was removed on 2026-08-08 because it was a frozen 2026-07-19 handoff for the standalone repository that told whoever read it "do not touch BroPS" — the other half of this one. This file is the single handoff for both halves.
 
 ## 10. Deferred — NOT yet implemented (do not claim as done)
 
