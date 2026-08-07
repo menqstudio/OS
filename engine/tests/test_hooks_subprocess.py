@@ -223,6 +223,9 @@ class HookSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
+        # WHY, not merely THAT: a hook that refused because the deployment is broken
+        # would satisfy a bare `deny` and certify nothing about containment.
+        self.assertIn("workspace scope gate RED: path escapes workspace", result.stdout)
 
     def test_pre_tool_denies_unsigned_binding(self):
         # Unsigned BY DESIGN (H-1): a raw, signature-less binding payload is
@@ -275,6 +278,9 @@ class HookSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
+        # The point is that `-C` did not hide the push from the classifier: the refusal
+        # must come from the release-grant gate, i.e. the command WAS seen as a push.
+        self.assertIn("Release Grant V3 RED", result.stdout)
 
     def test_pre_tool_denies_unsigned_work_mode(self):
         result = self.run_hook(
@@ -293,6 +299,9 @@ class HookSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
+        # Specifically the identity/authority gate: env vars asserting a role are not
+        # an authority, and that is the refusal this test is named for.
+        self.assertIn("canonical identity/authority gate RED", result.stdout)
 
     def test_pre_tool_denies_glob_absolute_pattern(self):
         # Glob's pattern is a real path target and must be workspace-contained.
@@ -304,6 +313,7 @@ class HookSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
+        self.assertIn("workspace scope gate RED: path escapes workspace", result.stdout)
 
     def test_pre_tool_denies_glob_traversal_pattern(self):
         result = self.run_hook(
@@ -314,6 +324,7 @@ class HookSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
+        self.assertIn("workspace scope gate RED: path escapes workspace", result.stdout)
 
     def test_review_shell_deny_is_not_shadowable(self):
         # shadow is active (enabled + a usable external ledger), yet a review-mode
@@ -328,6 +339,12 @@ class HookSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
+        # Named, because the named refusal is NOT the one the test title implies: this
+        # command never reaches the review-mode rule — `find` with `-delete` is refused
+        # earlier, by the capability kernel, as an unknown tool/action. The shadowability
+        # property below still holds, and review-mode shell containment itself is covered
+        # by test_review_containment.test_reproduced_shell_bypasses_are_denied.
+        self.assertIn("tool capability gate RED", result.stdout)
         self.assertFalse(ledger.exists())  # a hard deny is not recorded as a would-block
 
     def test_post_tool_non_push_is_noop(self):
@@ -374,6 +391,9 @@ class HookSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
+        # A crash-turned-deny and a deliberate deny are indistinguishable without this.
+        self.assertIn("agent identity gate RED: agent profile must be a JSON object",
+                      result.stdout)
 
 
 if __name__ == "__main__":

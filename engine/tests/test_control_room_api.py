@@ -130,8 +130,32 @@ class ControlRoomAPITests(unittest.TestCase):
         self.assertEqual(approval["approvals"][0]["expiry_status"], "not-modeled-by-runtime-v1")
 
     def test_recovery_view_exposes_proof_without_inventing_effect(self) -> None:
+        # An in-flight cancellation is a privileged lifecycle decision, so the runtime
+        # now requires the actor to be PROVEN (O-4): this fixture drives it with a real
+        # operator-root-signed conductor-session rather than the owner string it used
+        # to type. The owner cannot be proven at all yet — see
+        # bro_orchestration_runtime.OWNER_ACTOR_UNPROVABLE.
+        now = int(time.time())
+        keys = {authority: generate_key(authority, f"dev-rec-{authority}", False)
+                for authority in ("operator-root", "builder")}
+        use_operator_pin(self, keys["operator-root"]["public_key"])
+        base = pathlib.Path(self.temp.name) / "recovery"
+        (base / "registry" / "config").mkdir(parents=True)
+        (base / "registry" / "config" / "trusted-keys.json").write_text(
+            json.dumps(build_registry(list(keys.values()), now - 3600, 86400)),
+            encoding="utf-8")
+        self.runtime = DurableOrchestrationRuntimeV1(
+            base / "state", ROOT, evidence_keys=load_trusted_keys(base / "registry"))
+        self.runtime.create_task(task_contract("task-api-1"), now_epoch=100)
+        self.api = ControlRoomAPIV1(self.runtime)
+        attestation = sign_payload(keys["operator-root"]["private_key"], {
+            "schema": 1, "artifact_type": CONTROL_ROOM_ACTOR_ARTIFACT,
+            "key_id": keys["operator-root"]["key_id"], "session_id": "s-recovery-view",
+            "agent_id": CANONICAL_CONDUCTOR_ID, "role": CONDUCTOR_ROLE,
+            "issued_at_epoch": now - 10, "expires_at_epoch": now + 3600,
+        })
         self.runtime.claim_next(AGENT, now_epoch=101)
-        self.runtime.cancel_task("task-api-1", actor_type="owner", actor_id="owner-gev", now_epoch=102, effect_in_flight=True, evidence_refs=["evidence/ambiguous-effect.json"])
+        self.runtime.cancel_task("task-api-1", actor_type=CONDUCTOR_ROLE, actor_id=CANONICAL_CONDUCTOR_ID, now_epoch=102, effect_in_flight=True, evidence_refs=["evidence/ambiguous-effect.json"], actor_attestation=attestation)
         view = self.api.recovery_quarantine(now_epoch=103)
         self.assertEqual(view["items"][0]["state"], "recovery-required")
         self.assertEqual(view["items"][0]["proof_refs"], ["evidence/ambiguous-effect.json"])

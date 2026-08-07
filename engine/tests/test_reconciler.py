@@ -162,36 +162,53 @@ class RecoveryHandsBackAuthorityTests(ReconcilerFixture):
     """recovery-required leads only to running, quarantined, failed or cancelled.
     There is no edge back to a claimable state, so a recovery that issues no
     lease lands the task in exactly the condition the reconciler exists to clear
-    and would strand it again on the next sweep, forever."""
+    and would strand it again on the next sweep, forever.
 
-    def test_recovery_issues_a_lease(self):
+    That lease hand-back is now UNREACHABLE, and deliberately so: clearing a recovery
+    quarantine is an owner authorisation, `owner-gev` was a string any caller could
+    type, and no owner-bound artifact type exists for this engine to verify one with
+    (`bro_orchestration_runtime.OWNER_ACTOR_UNPROVABLE`). A recovery anybody can sign
+    off is not a recovery. So the tests below assert the refusal and the stranding it
+    leaves behind; the hand-back behaviour returns — with its own tests — when the
+    owner mints the artifact that message names.
+    """
+
+    def test_recovery_is_refused_until_the_owner_actor_can_be_proven(self):
         self.running_task("task-rec", lease_seconds=10)
         self.runtime.reconcile(now_epoch=200)
-        snapshot = self.runtime.recover_task(
-            "task-rec", owner_id="owner-gev", now_epoch=201, evidence_refs=["proof"])
-        self.assertEqual(self.state("task-rec"), "running")
-        self.assertIn("lease_id", snapshot)
-        self.assertEqual(snapshot["lease_expires_at_epoch"], 201 + 300)
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
+            self.runtime.recover_task(
+                "task-rec", owner_id="owner-gev", now_epoch=201, evidence_refs=["proof"])
+        message = str(caught.exception)
+        self.assertIn("cannot be validated", message)
+        for named in ("ARTIFACT_AUTHORITY", "config/trusted-keys.json", "actor_attestation"):
+            self.assertIn(named, message)
+        self.assertEqual(self.state("task-rec"), "recovery-required")
 
-    def test_recovered_task_is_not_immediately_re_stranded(self):
+    def test_a_refused_recovery_leaves_the_task_quarantined_not_running(self):
+        """The refusal must not half-apply: no lease, no state change, and the
+        reconciler does not report the task as stranded (it is quarantined, which is
+        where a recovery it cannot authorise belongs)."""
         self.running_task("task-rec2", lease_seconds=10)
         self.runtime.reconcile(now_epoch=200)
-        self.runtime.recover_task("task-rec2", owner_id="owner-gev", now_epoch=201,
-                                  evidence_refs=["proof"])
+        with self.assertRaises(OrchestrationRuntimeError):
+            self.runtime.recover_task("task-rec2", owner_id="owner-gev", now_epoch=201,
+                                      evidence_refs=["proof"])
+        self.assertIsNone(self.runtime._active_lease("task-rec2", 202))
         self.assertEqual(self.runtime.reconcile(now_epoch=202)["stranded"], [])
-        self.assertEqual(self.state("task-rec2"), "running")
+        self.assertEqual(self.state("task-rec2"), "recovery-required")
 
-    def test_recovered_agent_can_actually_work(self):
+    def test_the_assignee_cannot_work_a_task_whose_recovery_was_refused(self):
         self.running_task("task-rec3", lease_seconds=10)
         self.runtime.reconcile(now_epoch=200)
-        lease = self.runtime.recover_task(
-            "task-rec3", owner_id="owner-gev", now_epoch=201,
-            evidence_refs=["proof"])["lease_id"]
+        with self.assertRaises(OrchestrationRuntimeError):
+            self.runtime.recover_task("task-rec3", owner_id="owner-gev", now_epoch=201,
+                                      evidence_refs=["proof"])
         refs = build_evidence(self.store, self.keys, "task-rec3", 2)
-        self.assertEqual(
-            self.runtime.complete_task("task-rec3", actor_id=AGENT, lease_id=lease,
-                                       now_epoch=202, evidence_refs=refs)["state"],
-            "completed")
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
+            self.runtime.complete_task("task-rec3", actor_id=AGENT, lease_id="lease-invented",
+                                       now_epoch=202, evidence_refs=refs)
+        self.assertIn("lease", str(caught.exception))
 
     def test_recovery_rejects_an_invalid_lease_duration(self):
         self.running_task("task-rec4", lease_seconds=10)

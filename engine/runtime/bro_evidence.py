@@ -36,6 +36,7 @@ import pathlib
 from dataclasses import dataclass
 from typing import Any
 
+from bro_receipt import REQUIRED_FIELDS as EXECUTION_RECEIPT_FIELDS
 from bro_signature import SignatureError, canonical_bytes, verify_artifact
 import hashlib
 
@@ -229,11 +230,27 @@ def _scan_events(store: pathlib.Path, keys: dict, wanted: set[str],
                  now: int | None) -> dict[str, list[tuple[int, dict[str, Any]]]]:
     """One pass over the store, collecting verified events for ``wanted`` tasks.
 
-    The store is a flat directory shared with other signed artifacts (heads, execution
-    receipts), so this cannot simply verify everything it finds. A file is treated as
-    part of a chain only when its payload *claims* to be an ``evidence-event``; a file
-    that claims that and then fails verification is a hard error, never a silently
-    skipped record — silent skipping is truncation with extra steps.
+    The store is a flat directory shared with other signed artifacts, so this cannot
+    simply verify everything it finds.
+
+    ``artifact_type`` alone does not identify a chain event. In this engine the
+    artifact type names the AUTHORITY that may sign a document, not its shape:
+    ``ARTIFACT_AUTHORITY`` maps ``evidence-event`` to the evidence-recorder, and the
+    recorder signs two different true statements under it — a chain event, and an
+    execution receipt (``tools/bro_run_receipt.run_and_sign``, verified by
+    ``bro_receipt.verify_receipt`` as an ``evidence-event`` on purpose). The durable
+    runtime keeps both in one store, so an enumerator that read the type as a shape
+    declared every receipt malformed and made the whole read surface unusable on any
+    real store. Chain events and receipts are therefore told apart by their exact
+    field sets — the same discrimination ``bro_completion._require_store_agrees_with_head``
+    already performs.
+
+    Everything else that claims to be an ``evidence-event`` is still a hard error:
+    neither a wrong shape nor a failed signature is silently skipped, because silent
+    skipping is truncation with extra steps. Rewriting a stored event into receipt
+    shape does make this pass step over it, but it cannot forge a shorter history:
+    ``validate_chain`` still has to reproduce the signed head's event count and final
+    hash, so the read fails loudly instead of returning a plausible prefix.
     """
     found: dict[str, list[tuple[int, dict[str, Any]]]] = {task: [] for task in wanted}
     for path in _store_files(store):
@@ -242,15 +259,20 @@ def _scan_events(store: pathlib.Path, keys: dict, wanted: set[str],
         document = _load(store, path.name)
         claimed = document.get("payload") if isinstance(document, dict) else None
         if not isinstance(claimed, dict) or claimed.get("artifact_type") != "evidence-event":
-            continue  # another signed artifact sharing the directory
+            continue  # another artifact type sharing the directory
         if claimed.get("task_id") not in wanted:
             continue
+        # Chain shape is decided FIRST: if the two field sets ever collided, a real
+        # event would still be collected and held against the head, rather than
+        # disappearing into the receipt branch.
+        if set(claimed) != EVENT_FIELDS:
+            if set(claimed) == EXECUTION_RECEIPT_FIELDS:
+                continue  # an execution receipt: same signer, same type, other statement
+            raise EvidenceError(f"evidence event in {path.name} has unexpected shape")
         try:
             payload = verify_artifact(document, "evidence-event", keys, now=now)
         except SignatureError as exc:
             raise EvidenceError(f"evidence event in {path.name} RED: {exc}") from exc
-        if set(payload) != EVENT_FIELDS:
-            raise EvidenceError(f"evidence event in {path.name} has unexpected shape")
         sequence = payload["sequence"]
         if not isinstance(sequence, int) or sequence < 1:
             raise EvidenceError(
