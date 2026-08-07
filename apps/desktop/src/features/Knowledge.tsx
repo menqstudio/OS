@@ -11,6 +11,10 @@ import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { KnowledgeNote } from '../domain/entities';
 import { STR, fmt } from './Knowledge.strings';
+import {
+  WRITE_RECORD_CSS, WriteRecordBadge, WriteRecordNotice, WriteRecordPanel,
+  useWriteRecordStates,
+} from './writeRecord';
 
 // ---------------------------------------------------------------------------
 // §D `knowledge` page — re-skinned to the brops-aios «Նեյրո-քարտեզ / Neural
@@ -227,6 +231,12 @@ export function Knowledge() {
     return list.filter((n) => parseTags(n).includes(activeCollection));
   }, [s.data, activeCollection]);
 
+  // One local-write-record read per listed article, each independent, so a single
+  // failing read is that row's fault and never speaks for the rest. Re-read after any
+  // accepted write: a write appends a NEW record, so a cached state would be stale.
+  const recordIds = useMemo(() => articles.map((n) => n.id), [articles]);
+  const records = useWriteRecordStates('knowledge', recordIds);
+
   const isFiltering = query.trim() !== '' || activeCollection !== COLLECTION_ALL;
 
   // Resolve the selected article: honour an explicit selection when it is still
@@ -284,7 +294,7 @@ export function Knowledge() {
     setAnnounce(fmt.articlesFound(lang, n));
   }, [articles.length, isFiltering, s.loading, lang]);
 
-  const reloadAll = () => { s.reload(); all.reload(); };
+  const reloadAll = () => { s.reload(); all.reload(); records.reload(); };
 
   const onCreated = (created: KnowledgeNote) => {
     setEditor(null);
@@ -391,12 +401,14 @@ export function Knowledge() {
               <span className="kb-row-main">
                 <span className="kb-row-title">{n.title}</span>
                 {n.body && <span className="kb-row-snippet">{snippet(n.body)}</span>}
-                {(n.source || tags.length > 0) && (
-                  <span className="kb-row-tags">
-                    {n.source && <span className="tag info">{n.source}</span>}
-                    {tags.map((tag) => <span key={tag} className="tag">#{tag}</span>)}
-                  </span>
-                )}
+                <span className="kb-row-tags">
+                  {/* Every row states its own record state — recorded / content
+                      diverged / deleted-yet-present / no record — and a read that
+                      faulted is shown as a fault, not as an absence. */}
+                  <WriteRecordBadge read={records.byId.get(n.id)} lang={lang} />
+                  {n.source && <span className="tag info">{n.source}</span>}
+                  {tags.map((tag) => <span key={tag} className="tag">#{tag}</span>)}
+                </span>
               </span>
             </div>
           );
@@ -514,6 +526,11 @@ export function Knowledge() {
             </section>
           )}
 
+          <section className="kb-section" aria-label={L('recordSection')}>
+            <h3>{L('recordSection')}</h3>
+            <WriteRecordPanel read={records.byId.get(selected.id)} lang={lang} fmtDate={fmtDate} />
+          </section>
+
           <section className="kb-section" aria-label={L('details')}>
             <div className="kb-meta">
               <span className="capsule">
@@ -533,7 +550,7 @@ export function Knowledge() {
 
   return (
     <div className="v-knowledge">
-      <style>{KNOWLEDGE_CSS}</style>
+      <style>{KNOWLEDGE_CSS + WRITE_RECORD_CSS}</style>
 
       <header className="pageHead">
         <div>
@@ -552,6 +569,11 @@ export function Knowledge() {
 
       {/* Polite live region — announces result counts and save/delete outcomes. */}
       <div className="kb-sr-live" role="status" aria-live="polite">{announce}</div>
+
+      {/* Standing record conditions across the listed articles: rows edited out of
+          band, rows present under a deleted id, and — kept separate — records this
+          page FAILED to read. A read fault must never read as an empty ledger. */}
+      <WriteRecordNotice reads={records.byId.values()} lang={lang} />
 
       {/* A REFUSED delete, stated plainly and left on screen until dismissed. */}
       {deleteError && (

@@ -59,8 +59,14 @@ describe('no page under features/ is unreachable', () => {
    *   registry       — the OLD route table, superseded by app/routes.tsx. It is dead code
    *                    and belongs to the features owner to delete; it is listed here so
    *                    this guard reports real defects rather than that known one.
+   *   writeRecord    — the shared local-write-record reader (badge + panel + notice)
+   *                    that Memory and Knowledge both render, so the two surfaces cannot
+   *                    drift into saying different things about the same records. Not a
+   *                    page: it has no route and mounts nothing on its own.
    */
-  const SUB_COMPONENTS = new Set(['Generic', 'Conversations', 'delegationView', 'Onboarding', 'registry']);
+  const SUB_COMPONENTS = new Set([
+    'Generic', 'Conversations', 'delegationView', 'Onboarding', 'registry', 'writeRecord',
+  ]);
 
   const stems = Object.keys(pages)
     .map((p) => p.slice(p.lastIndexOf('/') + 1).replace(/\.tsx$/, ''))

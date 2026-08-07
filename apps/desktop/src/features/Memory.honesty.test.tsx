@@ -95,9 +95,15 @@ describe('Memory — nothing claims the memory is verifiable', () => {
     expect(screen.queryByText(/verifiable/i)).not.toBeInTheDocument();
 
     // What is shown instead is a real fact: the outcome of the one `list_memory` read,
-    // plus an explicit statement that these rows carry no verification chain.
+    // plus a CURRENT statement of what backs the rows. That line used to read "no
+    // verification chain"; every write now appends a local record, so the old sentence
+    // became false — and a stale honest label is a dishonest one.
     expect(screen.getByText('Read from the store')).toBeInTheDocument();
-    expect(screen.getByText(/no verification chain/i)).toBeInTheDocument();
+    expect(screen.getByText(/each write appends a local record/i)).toBeInTheDocument();
+    // It still refuses the stronger claim: content, never the writer.
+    expect(screen.getByText(/never who wrote it/i)).toBeInTheDocument();
+    // And the sentence that is no longer true is gone.
+    expect(screen.queryByText(/no verification chain/i)).not.toBeInTheDocument();
   });
 
   it('never renders it when the store read FAILED either', async () => {
@@ -146,5 +152,104 @@ describe('Memory — an ACCEPTED delete reports the real outcome', () => {
 
     await waitFor(() => expect(screen.queryByText(/Rotate the API key monthly/)).not.toBeInTheDocument());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The equivalent of `Knowledge.honesty.test.tsx`'s vocabulary guard, for Memory —
+// now that this page renders the LOCAL WRITE RECORD.
+//
+// The record is real: every memory write appends it in the same transaction as the row,
+// hashing the content into a DB-enforced append-only chain. It is also UNSIGNED — no
+// key, no manifest, no authority, no containment — and it attests CONTENT, never the
+// writer. So the page may say "recorded" and it may say "content diverged", but it may
+// never borrow the production trust vocabulary or a badge a reader would file next to a
+// governed turn's.
+// ---------------------------------------------------------------------------
+
+const RECORD = {
+  id: 'wr-1',
+  seq: 1,
+  subjectKind: 'memory_entry',
+  subjectId: 'm-1',
+  operation: 'created',
+  contentSha256: 'a'.repeat(64),
+  prevRecordSha256: '0'.repeat(64),
+  recordSha256: 'b'.repeat(64),
+  recordedAt: '1700000000000',
+};
+
+/** Every rendered word — direct text nodes plus tooltips — with `<style>` excluded so
+ *  the assertion is about what a reader sees, not about CSS comments. */
+function renderedText(): string {
+  const parts: string[] = [];
+  for (const el of Array.from(document.body.querySelectorAll('*'))) {
+    if (el.tagName === 'STYLE' || el.tagName === 'SCRIPT') continue;
+    for (const n of Array.from(el.childNodes)) {
+      if (n.nodeType === 3) parts.push(n.textContent ?? '');
+    }
+    const title = el.getAttribute('title');
+    if (title) parts.push(title);
+  }
+  return parts.join(' ');
+}
+
+/** The vocabulary this page may never use — it belongs to the signed governed-receipt
+ *  path, and nothing on this page has custody of anything. */
+const FORBIDDEN = [
+  /verifiable/i,
+  /verified/i,
+  /trusted[ _-]?verified/i,
+  /trusted/i,
+  /signed/i,
+  /governed receipt/i,
+  /receipt/i,
+  /custody/i,
+  /tamper[ -]?proof/i,
+];
+
+function setupWithRecord(state: unknown) {
+  invokeMock.mockImplementation((cmd: string) => {
+    if (cmd === 'list_memory') return Promise.resolve([{ ...ENTRY }]);
+    if (cmd === 'memory_write_record_state') return Promise.resolve(state);
+    return Promise.resolve(null);
+  });
+  return render(
+    <AppProvider>
+      <ToastProvider>
+        <Memory />
+      </ToastProvider>
+    </AppProvider>,
+  );
+}
+
+describe('Memory — the write record never borrows the receipt vocabulary', () => {
+  it('says "recorded" and nothing stronger for a row that matches its record', async () => {
+    setupWithRecord({ state: 'recorded', record: RECORD });
+    await waitFor(() => expect(screen.getAllByText('Recorded').length).toBeGreaterThan(0));
+    // The full statement lives in the recall rail, so open the row it describes.
+    await selectTheEntry();
+
+    const text = renderedText();
+    for (const forbidden of FORBIDDEN) {
+      expect(text, `rendered text must not contain ${forbidden}`).not.toMatch(forbidden);
+    }
+    // The ceiling is stated on the surface itself, not just in a comment.
+    expect(screen.getAllByText(/nothing outside this machine vouches for it/i).length)
+      .toBeGreaterThan(0);
+  });
+
+  it('stays inside the vocabulary on the loudest state too', async () => {
+    setupWithRecord({
+      state: 'content_diverged',
+      record: RECORD,
+      actual_content_sha256: 'c'.repeat(64),
+    });
+    await waitFor(() => expect(screen.getAllByText('Content diverged').length).toBeGreaterThan(0));
+
+    const text = renderedText();
+    for (const forbidden of FORBIDDEN) {
+      expect(text, `rendered text must not contain ${forbidden}`).not.toMatch(forbidden);
+    }
   });
 });

@@ -13,6 +13,10 @@ import type { MemoryEntry } from '../domain/entities';
 import {
   STR, liveCount, refCount, deleteRefusedLive, pinRefusedLive,
 } from './Memory.strings';
+import {
+  WRITE_RECORD_CSS, WriteRecordBadge, WriteRecordNotice, WriteRecordPanel,
+  useWriteRecordStates, type WriteRecordRead,
+} from './writeRecord';
 
 // ---------------------------------------------------------------------------
 // §D `memory` page — re-skinned to the brops-aios «Ժամանակի հիշողություն /
@@ -166,11 +170,13 @@ function EditEntryForm({ entry, onClose }: { entry: MemoryEntry; onClose: () => 
 
 // --- Recall rail · detail of a selected memory ------------------------------
 function MemoryDetail(
-  { entry, links, blocked, fmtDate, onJump, onEdit, onPinToggle, onDelete }:
+  { entry, links, blocked, record, fmtDate, onJump, onEdit, onPinToggle, onDelete }:
   {
     entry: MemoryEntry;
     links: ResolvedLink[];
     blocked: boolean;
+    /** This row's local write record read — `undefined` while the read is in flight. */
+    record: WriteRecordRead | undefined;
     fmtDate: (raw: string) => string;
     onJump: (id: string) => void;
     onEdit: () => void;
@@ -238,6 +244,14 @@ function MemoryDetail(
         </span>
       </div>
 
+      {/* What the LOCAL WRITE RECORD actually says about this row — recorded /
+          content diverged / deleted-yet-present / no record — and, distinctly, a read
+          that faulted. Never a verification claim: the record is unsigned and pins
+          content, not the writer. */}
+      <div className="mem-record">
+        <WriteRecordPanel read={record} lang={lang} fmtDate={fmtDate} />
+      </div>
+
       {links.length > 0 && (
         <div className="mem-refs">
           <div className="micro">{L('references')}</div>
@@ -295,6 +309,12 @@ export function Memory() {
 
   const s = useAsync(() => desktop.listMemory(), []);
   const all = useMemo(() => s.data ?? [], [s.data]);
+
+  // One local-write-record read per loaded row, each independent, so a single failing
+  // read is that row's fault and never speaks for the rest. Re-read after any accepted
+  // write: a write appends a NEW record, so a cached state would describe the old row.
+  const recordIds = useMemo(() => all.map((m) => m.id), [all]);
+  const records = useWriteRecordStates('memory', recordIds);
 
   const dateFmt = useMemo(
     () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
@@ -411,7 +431,7 @@ export function Memory() {
     setWriteError(null);
     setAnnounce('');
     desktop.setMemoryPinned(id, pinned)
-      .then(() => { s.reload(); })
+      .then(() => { s.reload(); records.reload(); })
       .catch((e: unknown) => {
         const reason = e instanceof Error ? e.message : String(e);
         setWriteError({ kind: 'pin', reason });
@@ -432,6 +452,7 @@ export function Memory() {
         setPendingDelete(null);
         if (selectedId === id) setSelectedId(null);
         s.reload();
+        records.reload();
       })
       .catch((e: unknown) => {
         const reason = e instanceof Error ? e.message : String(e);
@@ -464,7 +485,7 @@ export function Memory() {
 
   return (
     <div className="v-memory">
-      <style>{MEMORY_CSS}</style>
+      <style>{MEMORY_CSS + WRITE_RECORD_CSS}</style>
 
       <header className="pageHead">
         <div>
@@ -474,21 +495,16 @@ export function Memory() {
         </div>
         <div className="right">
           {/* Was an unconditional "Verifiable memory" pill with no chain behind it.
-              Nothing verifies a memory row, so the pill now reports the one thing the
-              backend does prove: the outcome of the real `list_memory` read.
+              Nothing verifies a memory row, so the pill reports the one thing this read
+              does prove: the outcome of the real `list_memory` call.
 
-              Phase 5 update — the backend DOES now record every memory write in an
-              append-only LOCAL write record (`core/src/local_write_record.rs`, migration
-              0021): the row's content is hashed into a prev-hash chain in the same
-              transaction as the write, so a later out-of-band edit reads back as
-              `ContentDiverged`. Two reasons that is still NOT rendered here:
-                1. it is UNSIGNED and host-local — tamper-evidence, not custody — so it
-                   must never be shown as "verified"/"verifiable"; and
-                2. this page has no command to read it (`memory_write_record_state` /
-                   `memory_write_records` are not registered in src-tauri/src/lib.rs).
-              A claim the page cannot check is exactly the defect that removed the old
-              pill. Render the record only once its command exists, and label it with
-              what it proves: "recorded" / "content diverged" / "not recorded". */}
+              The header stays that narrow ON PURPOSE. The local write record now IS
+              readable (`memory_write_record_state`, registered and wrapped), but it is
+              a PER-ROW fact and an unsigned one — it pins content, never the writer — so
+              it is rendered per row and in the recall rail, in its own vocabulary
+              (recorded / content diverged / deleted-yet-present / no record). Rolling it
+              up into a single green header pill would recreate the removed defect in a
+              new shape. */}
           <span className={`pill ${loadingFirst ? 'off' : s.error ? 'warn' : 'info'}`}>
             {loadingFirst ? L('storeReading') : s.error ? L('storeUnavailable') : L('storeLoaded')}
           </span>
@@ -496,7 +512,12 @@ export function Memory() {
         </div>
       </header>
 
-      {creating && <NewEntryForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
+      {creating && (
+        <NewEntryForm
+          onClose={() => setCreating(false)}
+          onCreated={() => { s.reload(); records.reload(); }}
+        />
+      )}
 
       {editing && <EditEntryForm entry={editing} onClose={() => setEditing(null)} />}
 
@@ -526,6 +547,11 @@ export function Memory() {
           </Button>
         </div>
       )}
+
+      {/* Standing record conditions across the loaded rows: rows edited out of band,
+          rows present under a deleted id, and — kept separate — records this page
+          FAILED to read. A read fault must never be mistaken for an empty ledger. */}
+      <WriteRecordNotice reads={records.byId.values()} lang={lang} />
 
       <div className="mem-sr-only" aria-live="polite" role="status">{liveMessage}</div>
 
@@ -603,6 +629,7 @@ export function Memory() {
                             {L('sealed')}
                           </span>
                         )}
+                        <WriteRecordBadge read={records.byId.get(m.id)} lang={lang} />
                       </span>
                       <span className="mem-item-body">{contentPreview(m.content)}</span>
                     </button>
@@ -621,6 +648,7 @@ export function Memory() {
                 entry={selected}
                 links={linksByMemory.get(selected.id) ?? []}
                 blocked={blockedIds.has(selected.id)}
+                record={records.byId.get(selected.id)}
                 fmtDate={fmtDate}
                 onJump={(id) => setSelectedId(id)}
                 onEdit={() => setEditing(selected)}
@@ -691,7 +719,7 @@ export function Memory() {
         <section className="surface soft mem-metrics">
           <div className="sec-head">
             <h2>{L('memoryState')}</h2>
-            <span className="note">{L('countedStore')} · {L('noVerification')}</span>
+            <span className="note">{L('countedStore')} · {L('provenance')}</span>
           </div>
           <div className="mstats">
             {metrics.map((x, i) => (
@@ -773,6 +801,7 @@ const MEMORY_CSS = `
 .v-memory .mem-write-error b { color: var(--danger); }
 .v-memory .mem-write-reason { color: var(--ink-muted); font-size: 12px; word-break: break-word; }
 
+.v-memory .mem-record { margin-top: var(--s4); }
 .v-memory .mem-note { font-size: var(--t-small); color: var(--warning);
   background: rgb(var(--warning-rgb)/.1); border: 1px solid rgb(var(--warning-rgb)/.3);
   border-radius: var(--r); padding: 9px 12px; margin-bottom: var(--s4); }
