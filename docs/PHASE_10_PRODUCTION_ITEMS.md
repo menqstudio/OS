@@ -36,10 +36,16 @@ tested, never rushed*), on its own branch/PR with Owner approval.
 > **Provenance correction.** `CLAUDE.md` §6 and `docs/SECURITY_MODEL.md` §4 both state these items are
 > *"tracked on Bro's `fix/audit-followups`"*. **That ref does not exist** — not locally and not on
 > `origin` (~60 branches, none matching), and `grep -rn "O-1\|O-2\|O-3\|O-4\|O-5"` over `engine/` returns
-> **zero** hits: the O-numbering exists only in this outer repository. The engine tracks four of the five
-> under its own IDs in `engine/AUDIT/tickets/`; **O-2 has no engine-side ticket at all.** The tracking claim
-> in those two documents is currently unbacked and should be corrected by whoever owns them
-> (`CLAUDE.md`/`PROJECT_STATE.md` are Owner-synced files, so this note is the record, not an edit).
+> **zero** hits: the O-numbering exists only in this outer repository. The engine tracks the items under
+> its own IDs in `engine/AUDIT/tickets/`, and `SECURITY_MODEL.md` now points there instead of at the
+> missing branch. `CLAUDE.md` is Owner-synced, so its line is left for the Owner and recorded here.
+>
+> **Correction to this correction (2026-08-07).** An earlier revision of this paragraph said *"O-2 has no
+> engine-side ticket at all"*. It does: `engine/AUDIT/tickets/H-4-forgeable-audit-trail.md`, "The audit
+> trail is forgeable by its own writer", whose fix #1 is verbatim this item and whose fixes #2 and #3 were
+> already implemented. Only the `O-2` **label** is absent from `engine/`. The mistake came from grepping
+> for the outer repo's numbering rather than reading the tickets, which is the same shape as the defects
+> this inventory exists to catch — recorded rather than quietly edited away.
 
 ---
 
