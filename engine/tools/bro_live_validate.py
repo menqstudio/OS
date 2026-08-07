@@ -42,7 +42,9 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "runtime"))
 
 from bro_env_health import check_environment
-from bro_protected import bytecode_shadow_offenders, load_protected_manifest
+from bro_protected import (WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT,
+                           WRITABLE_CONTROL_PLANE_ENV,
+                           bytecode_shadow_offenders, load_protected_manifest)
 from bro_traceability import load_runtime_dependencies
 
 # The exact cause the anti-dead-wiring negative exists to demonstrate: the wall
@@ -102,6 +104,15 @@ def wired_hook_refusal(root: pathlib.Path, argv: list[str]) -> tuple[str, str]:
         # reaches the scope check it claims to prove. Hand it a real, empty one: the
         # ONLY thing missing from this environment must be the workspace binding.
         env["BRO_SESSION_STATE_DIR"] = str(pathlib.Path(state_dir).resolve())
+        # Same shape, one gate along. A CI checkout is writable by the account running it and
+        # cannot be otherwise, so the O-1 read-half gate fires first and the probe is refused for
+        # a writable control plane — never reaching the scope check it exists to prove. That is
+        # exactly the masking this file already guards against for bytecode, so it is handled the
+        # same way: acknowledge it HERE, for this one probe, and say so in the output. It is not a
+        # weakening — the acknowledgement is scoped to a subprocess whose only job is to observe
+        # which refusal the wired hook produces, and `assert_control_plane_not_writable` still
+        # governs every real enforcement path.
+        env[WRITABLE_CONTROL_PLANE_ENV] = WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT
         result = subprocess.run(
             argv,
             input=json.dumps({

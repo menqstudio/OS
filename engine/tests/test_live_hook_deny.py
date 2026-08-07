@@ -54,6 +54,10 @@ def wired_pretool_argv() -> list[str]:
     return [interpreter] + [t.replace("$CLAUDE_PROJECT_DIR", str(ROOT)) for t in tokens[1:]]
 
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
+from bro_protected import (WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT,  # noqa: E402
+                           WRITABLE_CONTROL_PLANE_ENV)
+
 class LiveHookWiringTests(unittest.TestCase):
     def test_wired_interpreter_resolves_on_path(self):
         interpreter = wired_pretool_command().split()[0]
@@ -75,6 +79,12 @@ class LiveHookWiringTests(unittest.TestCase):
             # would never reach the scope check it is named after. Exactly one thing is
             # missing from this environment: the workspace binding.
             env["BRO_SESSION_STATE_DIR"] = str(pathlib.Path(state_dir).resolve())
+            # Same trap, one gate along. A checkout is writable by whoever runs the tests
+            # and cannot be otherwise, so the O-1 read-half gate refuses first and this
+            # negative would observe "control plane is writable" instead of the scope cause
+            # it exists to demonstrate — passing for the wrong reason, which is precisely
+            # what this file was rewritten to stop. Acknowledged for this probe only.
+            env[WRITABLE_CONTROL_PLANE_ENV] = WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT
             result = subprocess.run(
                 argv,
                 input=json.dumps({

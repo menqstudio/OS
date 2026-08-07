@@ -134,6 +134,27 @@ their cause; the bare-deny ones keep passing on the shadow reason. The fix is al
 `verify.yml`. Flag retained: an accepted **HIGH** should not be carried to the end of Phase 10 —
 the independent audit's `D-09` recommends pulling it forward.
 
+
+**Read half hardened 2026-08-08.** `assert_control_plane_not_writable` refuses to trust a
+control plane the running account can still write into, wired beside the shadow check at both
+entry points. This does not detect a shadow — it removes the ability to plant one, which is the
+only thing that reaches the case a detector cannot: a `.pyc` loaded during import, before any
+check in the process exists.
+
+It answers by ATTEMPTING a create, not by asking `os.access`. A test applies a deny ACE and
+asserts `os.access` returns True while the real create is refused — the substitution would report
+a genuinely protected deployment as writable. Five checks were deleted one at a time and every one
+goes red; the pass also surfaced a real bug in the probe, where a leftover file made `O_EXCL`
+raise and the directory read as unwritable, turning the gate green on exactly the stale state it
+exists to catch.
+
+`PYTHONPYCACHEPREFIX` was considered and rejected as the weakest option: it MOVES the caches, so
+whoever can write the new location can still plant one.
+
+**Still OPEN.** This closes the class on a deployment that can make the tree read-only — on Debian
+a bind mount, see [`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md) — and cannot close it on a box
+that will not. Such a box may accept the residual risk by name:
+`BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED=accepted-o1-residual-risk`.
 ### O-2 · audit-head anchor (was dead code; now produced and required)
 
 - **Severity:** MEDIUM

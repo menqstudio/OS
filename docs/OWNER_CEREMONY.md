@@ -43,6 +43,18 @@ it with `broctl build-registry` rather than editing by hand.
 
 ---
 
+
+> **Do not hand-type these.** `engine/tools/mint_owner_payloads.py` writes the O-3 and
+> O-5 payloads with the epoch computed for you — a wrong `expires_at_epoch` pasted at a
+> terminal is invisible until a session refuses. It cannot sign: that needs the offline
+> key, and a tool offering both would invite running it on the box that serves.
+>
+> ```bash
+> python3 engine/tools/mint_owner_payloads.py \
+>     --key-id gev-operator-root-1 --session-id s-2026-08-08-a \
+>     --task-id t-example.1 --head-sequence 5 --hours 8 --out /media/usb/payloads
+> ```
+
 ## O-3 — conductor session token *(start here, it is the smallest)*
 
 **What it fixes.** Anything that could set an environment variable could claim to be the conductor

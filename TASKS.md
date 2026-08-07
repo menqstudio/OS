@@ -1,6 +1,16 @@
 # TASKS — the coordination board · координация board
 
-> **⏭️ CURRENT ACTIVE (2026-08-08): PR #66 MERGED to `main` (tip `57944e4`).** The active workflow is **PR #67 · branch `feat/close-o4-and-owner-ceremony`** (base `main`, task T-017).
+> **⏭️ CURRENT ACTIVE (2026-08-08): PR #67 MERGED to `main` (tip `4788535`).** The active workflow is **PR #68 · branch `feat/o1-readonly-control-plane`** (base `main`, task T-017).
+>
+> **O-1's read half is hardened.** `-B` stops bytecode being WRITTEN; nothing stops CPython READING a `.pyc` that is already there, and it reads it during import — before any check in the process exists. `assert_no_bytecode_shadow` catches a shadow already present; it never had a chance at one loaded before start. So the engine now REFUSES to trust a control plane the running account can write into: a cache file that cannot exist cannot be forged.
+>
+> It answers by ATTEMPTING a create, not by asking `os.access` — a test applies a deny ACE and asserts `os.access` says True while the real create is refused. `PYTHONPYCACHEPREFIX` was considered and rejected as the weakest option: it MOVES the caches, so whoever can write the new location can still plant one.
+>
+> The mutation pass found a real bug in the new probe: a leftover file made `O_EXCL` raise and the directory read as unwritable, turning the gate green on exactly the stale state it exists to catch. Five checks deleted one at a time, every one red — and the first `os.access` mutation came back GREEN because it ADDED the lookup rather than replacing the probe, which was the mutation being wrong rather than the check.
+>
+> **[`docs/DEBIAN_DEPLOYMENT.md`](./docs/DEBIAN_DEPLOYMENT.md)** is the other half: the Debian box plays both the offline signer and the second account, and closes O-1, O-2, O-3 and O-5. **All five items stay OPEN** — the code is ready, the artifacts are not minted.
+>
+> **The gate is untouched.** `platform_governed_execution_supported()` stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.
 >
 > **O-4 is closed in code.** An owner-issued control-room command was refused unconditionally, and the refusal listed three code changes that had **all already landed** — anyone following it would have gone off to build what existed. `_prove_command_actor` now routes by actor, and the difference is the design: the conductor keeps its `conductor-session` credential, which is a WINDOW authorising any command the caller could already reach, while the OWNER must present a `control-room-command` artifact bound to this exact `command_id`, `task_id` and `command`. `owner-gev` is the identity that can cancel, recover and retry, so a credential valid for the next hour is the wrong shape for it — a stolen owner artifact replays exactly the command that was already signed.
 >
