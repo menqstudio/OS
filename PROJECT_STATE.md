@@ -1,6 +1,14 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **⏭️ CURRENT ACTIVE (2026-08-08): PR #67 MERGED to `main` (tip `4788535`).** The active workflow is **PR #68 · branch `feat/o1-readonly-control-plane`** (base `main`, task T-017).
+> **⏭️ CURRENT ACTIVE (2026-08-08): PR #68 MERGED to `main` (tip `379e22c`).** The active workflow is **PR #69 · branch `fix/lockfile-python-313`** (base `main`, task T-017).
+>
+> A Debian box on **Python 3.13** hit `THESE PACKAGES DO NOT MATCH THE HASHES` on `rpds-py`, and would have hit it next on `cffi`. **Not tampering:** the lockfile pinned one wheel per package — the one CI's Python 3.12 resolves — and a 3.13 interpreter selects a different, equally genuine wheel. `pip` cannot tell *a wheel we never listed* from *a wheel somebody swapped*, so refusing was correct. Confirmed against PyPI: the digest downloaded is exactly the one PyPI publishes.
+>
+> The fix lists what we support, never relaxes the check. Every added hash is PyPI's published `digests.sha256`, not one computed from a downloaded file — a locally computed hash of a tampered download matches the tampered download. Kept narrow: 3.12 and 3.13, linux x86_64; each extra hash is another artifact the gate accepts.
+>
+> **The first pass reported "nothing to add" for `cffi` and was wrong** — its matcher required the platform tags in one order and `cffi`'s filename carries them reversed, so it answered confidently instead of admitting it could not tell. A verifier now walks every pin and asks PyPI what a cp313 install could select.
+>
+> **Deployment status.** O-1's read half is hardened and O-4 is closed in code; all five items stay OPEN pending the Owner's artifacts. `docs/DEBIAN_DEPLOYMENT.md` is the Debian runbook — that box plays both the offline signer and the second account. **The gate is untouched:** `platform_governed_execution_supported()` stays false. Earlier prose below is HISTORY.
 >
 > **O-1's read half is hardened.** `-B` stops bytecode being WRITTEN; nothing stops CPython READING a `.pyc` that is already there, and it reads it during import — before any check in the process exists. `assert_no_bytecode_shadow` catches a shadow already present; it never had a chance at one loaded before start. So the engine now REFUSES to trust a control plane the running account can write into: a cache file that cannot exist cannot be forged.
 >

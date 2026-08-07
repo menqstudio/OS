@@ -5,6 +5,19 @@
 # PUBLISHED BY PyPI (the `digests.sha256` field, not locally computed). --require-hashes
 # then refuses any wheel whose hash is not listed, so a compromised or substituted
 # package cannot enter the build. Binary packages carry both the manylinux x86_64 and
+# SUPPORTED INTERPRETERS: CPython 3.12 (what CI pins) and CPython 3.13, on linux x86_64 and the
+# platforms the pure-python and abi3 wheels already cover. A 3.13 box originally hit
+# "THESE PACKAGES DO NOT MATCH THE HASHES" on rpds-py and would have hit it on cffi: both ship a
+# wheel per Python version, only the 3.12 ones were listed, and pip cannot tell "a wheel we never
+# listed" from "a wheel somebody swapped". Refusing was correct — the fix is to list what we intend
+# to support, not to relax the check.
+#
+# Every added hash is PyPI's published `digests.sha256`, never a digest computed from a downloaded
+# file: a locally computed hash of a tampered download matches the tampered download.
+#
+# Kept deliberately narrow — not musl, not aarch64, not every wheel PyPI holds. Each extra hash is
+# another artifact this gate will accept.
+
 # the win_amd64 cp312 wheels so the one file installs on the ubuntu and windows runners.
 #
 # To refresh after a version bump: re-fetch each package's PyPI JSON and copy the
@@ -29,10 +42,12 @@ referencing==0.37.0 \
     --hash=sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231
 rpds-py==2026.6.3 \
     --hash=sha256:ecabd69db66de867690f9797f2f8fa27ba501bbc24540cbdbdc649cd15888ba6 \
-    --hash=sha256:2c958bf94822e9290a40aaf2a822d4bc5c88099093e3948ad6c571eca9272e5f
+    --hash=sha256:2c958bf94822e9290a40aaf2a822d4bc5c88099093e3948ad6c571eca9272e5f \
+    --hash=sha256:acac386b453c2516111b50985d60ce46e7fadb5ea71ae7b25f4c946935bf27cf
 cffi==2.1.0 \
     --hash=sha256:1e9f50d192a3e525b15a75ab5114e442d83d657b7ec29182a991bc9a88fd3a66 \
-    --hash=sha256:c97f080ea627e2863524c5af3836e2270b5f5dfff1f104392b959f8df0c5d384
+    --hash=sha256:c97f080ea627e2863524c5af3836e2270b5f5dfff1f104392b959f8df0c5d384 \
+    --hash=sha256:799416bae98336e400981ff6e532d67d5c709cfb30afb79865a1315f94b0e224
 pycparser==3.0 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
 typing-extensions==4.16.0 \
