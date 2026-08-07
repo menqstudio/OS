@@ -668,10 +668,18 @@ pub async fn governed_turn(prepared: &PreparedGovernedTurn) -> Result<GovernedRe
 /// as it arrives; the full text is returned at the end. Only the local `claude`
 /// CLI streams token-by-token today; the Anthropic and Ollama providers fall
 /// back to a single final chunk (still correct, just not incremental).
-pub async fn generate_stream<F: FnMut(&str)>(
+///
+/// `on_event` is the SECOND sink: everything a turn reports that is not text — today, Bro
+/// spawning a specialist and that specialist coming back ([`AgentEvent`]). It stays separate
+/// from `on_delta` because a delegation is not part of the reply body; it is a record of what
+/// the owner's turn actually set running. Only the `claude` CLI provider can produce one — the
+/// HTTP providers have no tool loop, so they simply never call it, and a caller must read that
+/// silence as "this provider cannot delegate", never as "nothing was delegated".
+pub async fn generate_stream<F: FnMut(&str), G: FnMut(AgentEvent)>(
     system: &str,
     messages: &[ChatMsg],
     mut on_delta: F,
+    mut on_event: G,
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, String> {
     validate_input(system, messages)?;
@@ -679,7 +687,9 @@ pub async fn generate_stream<F: FnMut(&str)>(
     let messages = trim_history(messages);
     let provider = resolve()?;
     match provider {
-        Provider::ClaudeCli { bin } => claude_cli_stream(&bin, system, messages, &mut on_delta, cancel).await,
+        Provider::ClaudeCli { bin } => {
+            claude_cli_stream(&bin, system, messages, &mut on_delta, &mut on_event, cancel).await
+        }
         Provider::Anthropic { key, model } => {
             let full = anthropic(&key, &model, system, messages).await?;
             on_delta(&full);
@@ -1136,10 +1146,14 @@ const BRO_BASH_DENY: &[&str] = &[
 ///
 /// Kept in lockstep with `tools/generate_agent_definitions.py` by
 /// `tier_definitions_match_the_generated_agent_files`.
+///
+/// The table itself is [`BRO_TIERS`]: ONE source, because the same three tool lists are also what
+/// a delegation card reports as the capability half of the grant, and two hand-kept copies of a
+/// capability list drift — a drifted one reads as enforcement.
 fn bro_agent_definitions_json() -> String {
-    let tier = |name: &str, blurb: &str, tools: &str| {
+    let tier = |name: &str, blurb: &str, tools: &[&str]| {
         let tools_json = tools
-            .split(", ")
+            .iter()
             .map(|t| format!("\"{t}\""))
             .collect::<Vec<_>>()
             .join(",");
@@ -1164,24 +1178,38 @@ You return your result to Bro. You do not delegate further."
         )
     };
     format!(
-        "{{{},{},{}}}",
-        tier(
-            "reader",
-            "Reads and reports. Cannot run anything and cannot change anything. Use for questions, reviews, investigations, and any answer that is about the code rather than to it.",
-            "Read, Grep, Glob"
-        ),
-        tier(
-            "runner",
-            "Reads and RUNS — builds, tests, git status/diff/log, any inspection — but cannot edit. Use to find out whether something actually works, and whenever the answer must not be produced by the same hand that could change the thing being measured.",
-            "Read, Grep, Glob, Bash"
-        ),
-        tier(
-            "builder",
-            "Full working capability: reads, runs, and changes files inside its scope. Use only when the task is genuinely to change something.",
-            "Read, Edit, Write, Grep, Glob, Bash"
-        ),
+        "{{{}}}",
+        BRO_TIERS
+            .iter()
+            .map(|(name, blurb, tools)| tier(name, blurb, tools))
+            .collect::<Vec<_>>()
+            .join(",")
     )
 }
+
+/// The three capability tiers Bro may spawn, as `(name, blurb, tools)`.
+///
+/// This is the app's whole spawnable roster: [`claude_args`] hands exactly these to the CLI as
+/// `--agents`, and `--setting-sources ""` means nothing else — no `.claude/agents/` pack role —
+/// is offered. So for a tier the tool list here IS the grant the run is bounded by, which is why
+/// [`delegation_tools`] may report it as an enforced capability.
+const BRO_TIERS: [(&str, &str, &[&str]); 3] = [
+    (
+        "reader",
+        "Reads and reports. Cannot run anything and cannot change anything. Use for questions, reviews, investigations, and any answer that is about the code rather than to it.",
+        &["Read", "Grep", "Glob"],
+    ),
+    (
+        "runner",
+        "Reads and RUNS — builds, tests, git status/diff/log, any inspection — but cannot edit. Use to find out whether something actually works, and whenever the answer must not be produced by the same hand that could change the thing being measured.",
+        &["Read", "Grep", "Glob", "Bash"],
+    ),
+    (
+        "builder",
+        "Full working capability: reads, runs, and changes files inside its scope. Use only when the task is genuinely to change something.",
+        &["Read", "Edit", "Write", "Grep", "Glob", "Bash"],
+    ),
+];
 
 /// Minimal JSON string encoder — enough for the tier definitions, which are ASCII prose. Avoids
 /// pulling serde into an argv-building path for three constants.
@@ -1283,11 +1311,330 @@ fn claude_args(
     a
 }
 
-async fn claude_cli_stream<F: FnMut(&str)>(
+// ── Delegation: seeing Bro hand work to a specialist ────────────────────────────────────
+//
+// Bro's whole job is to take a task and put it on the right specialist ([`tool_args`] grants
+// him `Task`). Until now that was invisible from the app: `claude_cli_stream` read the token
+// deltas and the final result and dropped every other stream-json line, so a spawn and its
+// return never reached the UI. These types carry the two facts the chat's delegation surface
+// needs — WHO was spawned with WHAT capability, and HOW it ended — and nothing more.
+//
+// The honesty rule this section encodes: a delegation card is a claim about what the owner
+// authorised. Every field below is either something the CLI told us or something this app
+// itself decided (the tier definitions it passed in argv). Nothing is inferred, and anything
+// unestablished is reported as unknown or omitted — never filled in with a plausible value.
+
+/// Chars of task prompt / result summary carried out of the stream. Bounds the IPC payload and
+/// the in-process ledger; anything longer is truncated with a visible marker, never silently.
+const MAX_DELEGATION_TEXT: usize = 8_000;
+
+/// Where a reported tool list came from — and therefore how much it may be trusted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolsSource {
+    /// The definition this app passed to the CLI as `--agents` for that exact agent type. It IS
+    /// what bounds the run, so the surface may render it as an enforced capability.
+    AgentDefinition,
+    /// The `tools:` line of `.claude/agents/<name>.md`. Recorded because it is the authority the
+    /// role was derived with — but it does NOT bound this run: with `--setting-sources ""` those
+    /// files are never loaded, so nothing here was enforced by it. Reported under its own name so
+    /// the reader cannot mistake it for the enforced kind.
+    PackRoleFile,
+}
+
+impl ToolsSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ToolsSource::AgentDefinition => "agent_definition",
+            ToolsSource::PackRoleFile => "pack_role_file",
+        }
+    }
+}
+
+/// A `Task` spawn seen on the CLI's `{"type":"assistant"}` line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DelegationSpawn {
+    /// The `tool_use` block's own id. Two events carrying it are one delegation.
+    pub id: String,
+    /// `input.subagent_type`, verbatim.
+    pub subagent_type: String,
+    pub description: Option<String>,
+    pub prompt: Option<String>,
+    /// `None` ⇒ capability could not be established. The field must then be OMITTED on the wire
+    /// so the surface says "unknown" instead of drawing a grant nobody can stand behind.
+    pub tools: Option<Vec<String>>,
+    pub tools_source: Option<ToolsSource>,
+    /// `scope:` / `prohibited_scope:` as parsed out of the task prompt text. Prose Bro wrote —
+    /// NOTHING enforces it on this route, so whoever puts it on the wire must say `enforcement:
+    /// "none"`. Empty when the task stated none.
+    pub scope: Vec<String>,
+    pub prohibited_scope: Vec<String>,
+}
+
+/// How a delegation ended, as reported on the `{"type":"user"}` line's `tool_result`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DelegationSettled {
+    /// `tool_use_id` — matches the spawn's `id`.
+    pub id: String,
+    /// `"ok"` / `"error"` only when `is_error` was actually present; `"unknown"` otherwise. An
+    /// absent flag is not a success report, and this must never round up to `"ok"`.
+    pub outcome: &'static str,
+    pub summary: Option<String>,
+}
+
+/// Everything a streaming turn can report BESIDES text.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AgentEvent {
+    Spawned(DelegationSpawn),
+    Settled(DelegationSettled),
+}
+
+/// Tools of a tier, from the same [`BRO_TIERS`] table `--agents` is built from.
+fn tier_tools(name: &str) -> Option<Vec<String>> {
+    BRO_TIERS
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, _, tools)| tools.iter().map(|t| (*t).to_string()).collect())
+}
+
+/// An agent name safe to turn into a `.claude/agents/<name>.md` path: the generated pack-role
+/// files are `pack--role`, all lowercase ASCII with hyphens. Anything else — a separator, a `..`,
+/// a drive letter, a dot — is refused rather than sanitized, because the name comes from model
+/// output and a "cleaned" path is still a path someone else chose.
+fn is_safe_agent_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The `tools:` line out of a `.claude/agents/<name>.md` frontmatter block.
+fn pack_role_tools(project_dir: &str, name: &str) -> Option<Vec<String>> {
+    if !is_safe_agent_name(name) {
+        return None;
+    }
+    let path = std::path::Path::new(project_dir).join(".claude").join("agents").join(format!("{name}.md"));
+    let text = std::fs::read_to_string(path).ok()?;
+    // Frontmatter only: the `tools:` key must sit inside the leading `---` block, not in prose
+    // further down the file that merely starts with the word.
+    let mut lines = text.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    for line in lines {
+        if line.trim() == "---" {
+            return None;
+        }
+        if let Some(rest) = line.strip_prefix("tools:") {
+            let tools: Vec<String> = rest
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+            return (!tools.is_empty()).then_some(tools);
+        }
+    }
+    None
+}
+
+/// Resolve the capability half of a grant at spawn time.
+///
+/// Two cases and no third: the name is one of the three tiers this app actually passes to the
+/// CLI (an enforced grant), or it is a pack role whose file records an authority that bounds
+/// nothing on this route (reported as such). If neither resolves, `None` — and the caller must
+/// then omit the field entirely. A guessed tool list is the one output here that could actively
+/// mislead the owner about what he just authorised.
+pub fn delegation_tools(subagent_type: &str) -> Option<(Vec<String>, ToolsSource)> {
+    if let Some(tools) = tier_tools(subagent_type) {
+        return Some((tools, ToolsSource::AgentDefinition));
+    }
+    let dir = bro_agent_dir()?;
+    pack_role_tools(&dir, subagent_type).map(|t| (t, ToolsSource::PackRoleFile))
+}
+
+/// Strip the decoration Bro writes around a path (backticks, quotes, trailing punctuation).
+fn clean_path_token(raw: &str) -> &str {
+    raw.trim().trim_matches(|c| c == '`' || c == '"' || c == '\'').trim_end_matches([',', '.', ';'])
+}
+
+/// Read `scope:` / `prohibited_scope:` out of a task prompt.
+///
+/// Bro is instructed (see [`bro_agent_system_suffix`]) to state both as concrete paths in every
+/// task. This is a deliberately narrow reader of that convention: a line whose first token is the
+/// label, and space/comma-separated paths after it — the task-contract grammar has no whitespace
+/// in a path, so splitting on it cannot cut one in half. Prose that does not match is simply not
+/// a grant here; the full prompt travels alongside and is what the surface shows.
+///
+/// What this can never do is make the scope enforced. It is text Bro wrote, read back by us.
+pub fn parse_task_grant(prompt: &str) -> (Vec<String>, Vec<String>) {
+    let mut scope = Vec::new();
+    let mut prohibited = Vec::new();
+    for line in prompt.lines() {
+        let line = line.trim().trim_start_matches(['-', '*', '#', '`', ' ']).trim();
+        let lower = line.to_ascii_lowercase();
+        let (target, rest) = if let Some(r) = lower.strip_prefix("prohibited_scope:") {
+            (&mut prohibited, &line[line.len() - r.len()..])
+        } else if let Some(r) = lower.strip_prefix("scope:") {
+            (&mut scope, &line[line.len() - r.len()..])
+        } else {
+            continue;
+        };
+        for token in rest.split([' ', '\t', ',']) {
+            let token = clean_path_token(token);
+            if !token.is_empty() && target.len() < 32 {
+                target.push(token.to_string());
+            }
+        }
+    }
+    (scope, prohibited)
+}
+
+/// Cap a carried string at [`MAX_DELEGATION_TEXT`] chars, marking the cut where it happened.
+fn cap_text(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().count() <= MAX_DELEGATION_TEXT {
+        return Some(trimmed.to_string());
+    }
+    let head: String = trimmed.chars().take(MAX_DELEGATION_TEXT).collect();
+    Some(format!("{head}\n… [truncated by the desktop at {MAX_DELEGATION_TEXT} characters]"))
+}
+
+/// The content blocks of an `assistant` / `user` stream-json line, wherever the CLI puts them.
+fn content_blocks(line: &serde_json::Value) -> &[serde_json::Value] {
+    line.get("message")
+        .and_then(|m| m.get("content"))
+        .or_else(|| line.get("content"))
+        .and_then(|c| c.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[])
+}
+
+/// `tool_result.content`: either a string, or blocks of which we keep the text.
+fn tool_result_text(content: &serde_json::Value) -> Option<String> {
+    if let Some(s) = content.as_str() {
+        return cap_text(s);
+    }
+    let joined = content
+        .as_array()?
+        .iter()
+        .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    cap_text(&joined)
+}
+
+/// Every `Task` spawn on one `{"type":"assistant"}` line.
+pub fn delegation_spawns(line: &serde_json::Value) -> Vec<DelegationSpawn> {
+    let mut out = Vec::new();
+    for block in content_blocks(line) {
+        if block.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+            continue;
+        }
+        // ONLY `Task`. Every other tool_use is Bro reading or running something himself, and its
+        // result is not a delegation — carrying those would put file contents and command output
+        // on a surface that claims to show handed-off work.
+        if block.get("name").and_then(|n| n.as_str()) != Some("Task") {
+            continue;
+        }
+        let Some(id) = block.get("id").and_then(|i| i.as_str()).filter(|i| !i.is_empty()) else {
+            continue;
+        };
+        let input = block.get("input");
+        let field = |key: &str| {
+            input.and_then(|i| i.get(key)).and_then(|v| v.as_str()).and_then(cap_text)
+        };
+        // No named specialist ⇒ no claim that a specific specialist was handed work.
+        let Some(subagent_type) = field("subagent_type") else { continue };
+        let prompt = field("prompt");
+        let (scope, prohibited_scope) =
+            prompt.as_deref().map(parse_task_grant).unwrap_or_default();
+        let (tools, tools_source) = match delegation_tools(&subagent_type) {
+            Some((t, s)) => (Some(t), Some(s)),
+            None => (None, None),
+        };
+        out.push(DelegationSpawn {
+            id: id.to_string(),
+            subagent_type,
+            description: field("description"),
+            prompt,
+            tools,
+            tools_source,
+            scope,
+            prohibited_scope,
+        });
+    }
+    out
+}
+
+/// Every `tool_result` on one `{"type":"user"}` line.
+///
+/// Emitted for EVERY tool, not only `Task`, because the id is what identifies a delegation and
+/// the receiver already knows which ids it spawned. The receiver must drop unknown ids — that is
+/// what keeps a `Bash` or `Read` result off the delegation surface.
+pub fn delegation_settlements(line: &serde_json::Value) -> Vec<DelegationSettled> {
+    let mut out = Vec::new();
+    for block in content_blocks(line) {
+        if block.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+            continue;
+        }
+        let Some(id) = block.get("tool_use_id").and_then(|i| i.as_str()).filter(|i| !i.is_empty())
+        else {
+            continue;
+        };
+        // `is_error` present ⇒ the CLI reported the outcome and we repeat it. Absent ⇒ we were
+        // told nothing, and "we were told nothing" is `unknown`, never `ok`.
+        let outcome = match block.get("is_error").and_then(|e| e.as_bool()) {
+            Some(true) => "error",
+            Some(false) => "ok",
+            None => "unknown",
+        };
+        out.push(DelegationSettled {
+            id: id.to_string(),
+            outcome,
+            summary: block.get("content").and_then(tool_result_text),
+        });
+    }
+    out
+}
+
+/// Milliseconds since the Unix epoch as RFC-3339 UTC (`2026-08-07T10:00:00.000Z`).
+///
+/// The delegation contract carries ISO-8601 timestamps (the renderer feeds them to `new Date`),
+/// while `brops_core::now()` is an epoch-millis string for lexicographic ordering in SQLite. This
+/// converts rather than mixing the two formats. Civil-from-days per Howard Hinnant's algorithm.
+pub fn iso_utc(ms: i64) -> String {
+    let days = ms.div_euclid(86_400_000);
+    let rem = ms.rem_euclid(86_400_000);
+    let (h, mi, s, milli) = (rem / 3_600_000, (rem / 60_000) % 60, (rem / 1_000) % 60, rem % 1_000);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{milli:03}Z")
+}
+
+/// Now, as RFC-3339 UTC.
+pub fn now_iso() -> String {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    iso_utc(ms)
+}
+
+async fn claude_cli_stream<F: FnMut(&str), G: FnMut(AgentEvent)>(
     bin: &str,
     system: &str,
     messages: &[ChatMsg],
     on_delta: &mut F,
+    on_event: &mut G,
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, String> {
     let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
@@ -1401,6 +1748,21 @@ async fn claude_cli_stream<F: FnMut(&str)>(
                             on_delta(text);
                         }
                     }
+                }
+            }
+            // Bro handing work to a specialist. The `Task` spawn arrives here as a complete
+            // `tool_use` block (the partial-message stream_events above carry the text of the
+            // reply, not the tool input), so this is the first line at which the delegation is
+            // fully known — who, with what capability, and under what stated scope.
+            Some("assistant") => {
+                for spawn in delegation_spawns(&v) {
+                    on_event(AgentEvent::Spawned(spawn));
+                }
+            }
+            // …and the specialist coming back. The CLI reports a tool return on a `user` line.
+            Some("user") => {
+                for settled in delegation_settlements(&v) {
+                    on_event(AgentEvent::Settled(settled));
                 }
             }
             Some("result") => {
@@ -1919,6 +2281,19 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TEMPORARY argv-capture harness (removed before hand-off). Dumps the REAL argv to
+    /// `BROPS_ARGV_DUMP` so a live CLI run uses exactly what the app builds.
+    #[test]
+    fn zz_dump_real_argv() {
+        let Some(out) = std::env::var("BROPS_ARGV_DUMP").ok() else { return };
+        let sys = std::path::Path::new("SYSTEM_PROMPT_FILE");
+        let args = claude_args(sys, true, None, true);
+        let json = serde_json::to_string_pretty(&args).unwrap();
+        std::fs::write(&out, json).unwrap();
+        let suffix = bro_agent_system_suffix(Some("PROJECT_DIR"));
+        std::fs::write(format!("{out}.suffix.txt"), suffix).unwrap();
+    }
 
     /// The `Task` grant is worthless if it can only reach the CLI's built-in agent types, which is
     /// exactly what `--setting-sources ""` causes: project `.claude/agents/` never loads. Verified

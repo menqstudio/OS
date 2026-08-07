@@ -922,6 +922,110 @@ pub enum StreamEvent {
     /// this opaque one-time id. The webview passes it to `save_ask_to_chat` to
     /// persist the pair — it never carries the agent body itself (P1-6).
     Ready { result_id: String },
+    /// Bro handed work to a specialist. Carries the delegation as an already-shaped JSON object
+    /// rather than a typed struct so the OMISSION of a field is expressible: an absent `tools`
+    /// means capability could not be established, and the renderer says "unknown" instead of
+    /// drawing a grant nobody can stand behind. A typed struct with `Option` would serialise
+    /// `null`, which reads as an answer.
+    DelegationSpawned { delegation: serde_json::Value },
+    /// That specialist returned. `outcome` is `"ok"`/`"error"` only when the stream actually
+    /// reported `is_error`; otherwise `"unknown"` — an absent flag is not a success report.
+    DelegationSettled {
+        id: String,
+        outcome: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+        ended_at: String,
+    },
+}
+
+/// UTC ISO-8601, seconds resolution — the shape the renderer's `str()` reader accepts.
+fn now_iso() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    // Civil-from-days (Howard Hinnant's algorithm). No chrono in this crate, and a delegation
+    // timestamp is not worth a dependency.
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, m, d, rem / 3600, (rem % 3600) / 60, rem % 60
+    )
+}
+
+/// Turn one [`crate::ai::AgentEvent`] into the frontend frame, or `None` when there is nothing
+/// honest to send.
+///
+/// `tools` is omitted entirely when the backend could not establish it — see
+/// [`StreamEvent::DelegationSpawned`]. `grant` is `null` unless the task prompt actually stated a
+/// scope, and even then it goes out as `enforcement: "none"`, because `scope`/`prohibited_scope`
+/// travel as PROSE inside a prompt on this route: `engine/runtime/bro_security.enforce_scope` is
+/// what actually contains a path, and a desktop `claude` spawn never reaches it. Claiming
+/// otherwise would be the same lie the surface was built to stop.
+fn delegation_frame(ev: crate::ai::AgentEvent, conversation_id: &str) -> StreamEvent {
+    use serde_json::json;
+    match ev {
+        crate::ai::AgentEvent::Spawned(d) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("id".into(), json!(d.id));
+            obj.insert("subagentType".into(), json!(d.subagent_type));
+            // Empty ⇒ this turn has no conversation (a one-shot ask). `null` says so; the empty
+            // string would read as a conversation whose id is blank.
+            obj.insert(
+                "conversationId".into(),
+                if conversation_id.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    json!(conversation_id)
+                },
+            );
+            obj.insert("parent".into(), json!("Bro"));
+            obj.insert("startedAt".into(), json!(now_iso()));
+            if let Some(x) = d.description {
+                obj.insert("description".into(), json!(x));
+            }
+            if let Some(x) = d.prompt {
+                obj.insert("prompt".into(), json!(x));
+            }
+            // Omitted, not nulled, when unresolved.
+            if let (Some(tools), Some(src)) = (d.tools, d.tools_source) {
+                obj.insert("tools".into(), json!(tools));
+                obj.insert("toolsSource".into(), json!(src.as_str()));
+            }
+            obj.insert(
+                "grant".into(),
+                if d.scope.is_empty() {
+                    // No scope stated is a fact, and `null` is how the reader is told it.
+                    serde_json::Value::Null
+                } else {
+                    json!({
+                        "scope": d.scope,
+                        "prohibitedScope": d.prohibited_scope,
+                        "source": "task_prompt_text",
+                        "enforcement": "none",
+                    })
+                },
+            );
+            StreamEvent::DelegationSpawned { delegation: serde_json::Value::Object(obj) }
+        }
+        crate::ai::AgentEvent::Settled(s) => StreamEvent::DelegationSettled {
+            id: s.id,
+            outcome: s.outcome.to_string(),
+            summary: s.summary,
+            ended_at: now_iso(),
+        },
+    }
 }
 
 // Wave 3a strict-3a identity/policy placeholders for the governed request envelope.
@@ -1288,11 +1392,16 @@ pub async fn stream_reply(
     // leaks and a second window on the same conversation can't clobber this turn's flag.
     let cancel_guard = crate::ai::arm_cancel(&conversation_id);
     let ch = on_event.clone();
+    let ch_ev = on_event.clone();
+    let conv_for_events = conversation_id.clone();
     let result = crate::ai::generate_stream(
         &system,
         &history,
         move |delta| {
             let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
+        },
+        move |ev| {
+            let _ = ch_ev.send(delegation_frame(ev, &conv_for_events));
         },
         Some(cancel_guard.flag()),
     )
@@ -1634,9 +1743,12 @@ pub async fn stream_run_step(
         Ok(false) => {
             // Ungoverned (dev-only, BROPS_ALLOW_UNGOVERNED): streamed as before.
             let ch = on_event.clone();
+            // No delegation surface on the run-step channel: `RunStepEvent` has no variant for
+            // one, and inventing a silent drop-through is how an event ends up "handled". Any
+            // delegation inside a run step is genuinely not reported yet.
             match crate::ai::generate_stream(&system, &history, move |delta| {
                 let _ = ch.send(RunStepEvent::Delta { text: delta.to_string() });
-            }, None)
+            }, |_ev| {}, None)
             .await
             {
                 Ok(full) => full,
@@ -1861,8 +1973,12 @@ pub async fn stream_ask(
 
     // --- Ungoverned (dev-only, BROPS_ALLOW_UNGOVERNED): streamed as before. ---
     let ch = on_event.clone();
+    let ch_ev = on_event.clone();
     match crate::ai::generate_stream(&system, &history, move |delta| {
         let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
+    }, move |ev| {
+        // A one-shot ask has no conversation to file the delegation under, and says so.
+        let _ = ch_ev.send(delegation_frame(ev, ""));
     }, None)
     .await
     {
