@@ -30,7 +30,10 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   return (
     <div className="page-header">
       <div>
-        <div className="page-title">{title}</div>
+        {/* A real <h1>, not a styled <div>: it is the page's accessible name, the
+            anchor a screen reader announces on arrival, and the element the shell
+            moves focus to on every route change (see app/routes.tsx). */}
+        <h1 className="page-title">{title}</h1>
         {subtitle && <div className="page-subtitle">{subtitle}</div>}
       </div>
       {actions}

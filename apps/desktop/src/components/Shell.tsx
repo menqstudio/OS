@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import './layout.css';
 import { useApp } from '../app/store';
-import { NAV } from '../app/nav';
+import { NAV, navLabel } from '../app/nav';
 import type { Lang } from '../domain/enums';
 import { languageNames } from '../i18n';
 import { desktop, hasBackend } from '../services/desktop';
@@ -141,7 +141,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   {group.items.map((item) => {
                     const active = route === item.id;
                     const badge = badgeFor(item.id);
-                    const label = badge > 0 ? `${t(item.labelKey)} (${badge})` : t(item.labelKey);
+                    // navLabel, not t(labelKey): a page may own its trilingual copy in its own
+                    // *.strings.ts catalog instead of the shared dictionaries.
+                    const name = navLabel(item, lang, t);
+                    const label = badge > 0 ? `${name} (${badge})` : name;
                     return (
                       <a
                         key={item.id}
@@ -160,7 +163,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                         <i aria-hidden="true">
                           <NavIcon id={item.id} />
                         </i>
-                        <span>{t(item.labelKey)}</span>
+                        <span>{name}</span>
                         {badge > 0 && (
                           <span className="nav-badge" aria-hidden="true">
                             {badge}

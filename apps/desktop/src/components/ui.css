@@ -9,7 +9,12 @@
 .panel-title { font-weight: 600; font-size: 15px; }
 
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--menq-space-4); margin-bottom: var(--menq-space-5); }
-.page-title { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+/* <h1> since the heading became a real heading element; the explicit margin keeps the
+   frame pixel-identical to the <div> it replaced. */
+.page-title { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+/* Programmatic focus lands here on every route change (app/routes.tsx). Keep the ring:
+   it is the only signal a sighted keyboard user gets that focus moved to the new page. */
+.page-title:focus-visible { outline: 2px solid var(--menq-color-accent, currentColor); outline-offset: 4px; border-radius: 4px; }
 .page-subtitle { color: var(--brops-muted); margin-top: 2px; }
 
 .btn {
@@ -454,4 +459,21 @@
   color: var(--menq-color-warning);
   background: color-mix(in srgb, var(--menq-color-warning) 12%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--menq-color-warning) 30%, transparent);
+}
+
+/* Route error state (app/routes.tsx) — shown when a page throws or its chunk fails.
+   The detail block carries the real error text verbatim; it must stay readable and
+   selectable, and must wrap rather than overflow the stage. */
+.screen-error { max-width: 72ch; }
+.route-error-detail {
+  margin: var(--menq-space-3, 12px) 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--menq-color-danger, rgba(220, 80, 80, 0.5));
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--menq-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  user-select: text;
 }
