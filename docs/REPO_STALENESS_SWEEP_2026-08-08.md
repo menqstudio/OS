@@ -175,15 +175,14 @@ reader trusts it.
 Nothing below is a failure of this sweep. Each is a real limit, and pretending otherwise would be
 the same defect this document is about.
 
-1. **Four documentation slices were not completed.** Root canonical docs, `docs/`, and the full
-   code-comment sweep were cut off by the session limit partway through. Claims in
-   `README.md`, `START_HERE.md`, `MASTER_EXECUTION_ROADMAP.md`, `docs/ARCHITECTURE.md`,
-   `docs/OPERATOR_GUIDE.md`, `docs/USER_GUIDE.md` and `docs/TROUBLESHOOTING.md` have **not** been
-   verified claim-by-claim against the code. Given the twelve found so far, assume there are more.
-2. **`CLAUDE.md` §6 still says the five residual items are "tracked on Bro's
-   `fix/audit-followups`".** That ref exists neither locally nor on any of ~49 remote branches.
-   `docs/SECURITY_MODEL.md` was corrected to point at `engine/AUDIT/tickets/`; `CLAUDE.md` is
-   Owner-synced and was deliberately left for you.
+1. **The documentation slices were finished by hand after the agents died** — see §8. What remains
+   unswept is the **full code-comment sweep**: `TODO`/`FIXME`/"for now"/"not yet" across
+   `apps/`, `engine/`, `bridge/` and `tools/` was only partially covered before the session limit
+   cut it off. Given fourteen false-because-outdated claims found so far, assume there are more.
+2. **`CLAUDE.md` §6 is corrected** — the unbacked `fix/audit-followups` pointer is gone, replaced
+   by `engine/AUDIT/tickets/` and the inventory, with the removed claim recorded rather than
+   silently swapped. All five item descriptions were rewritten to their post-fix state; all five
+   remain OPEN. It is your file, so review that section.
 3. **Two branches hold files `main` lacks that were not byte-verified as superseded** —
    `impl/wave-3b1b-execution-binding` and `proof/linux-isolation`. The successor files exist under
    different names; proving equivalence hunk by hunk was not done. **Do not delete these two on
@@ -199,6 +198,27 @@ the same defect this document is about.
    `platform_governed_execution_supported()` is false, `main()` keeps `UpstreamBlockedExecutor`,
    and production `trusted_verified` is unreachable — pending an independent audit and your
    approval.
+
+---
+
+## 8. The documentation, done by hand
+
+Five agents were auditing the `.md` surface when the session limit killed all five mid-run. Their
+partial work was salvaged, verified and committed; the rest was finished directly. What changed,
+and what made each claim false:
+
+| File | Was | Now |
+|---|---|---|
+| `README.md` (2 weeks stale) | "`.claude/` — the enforcement wall (hooks)"; "every AI action flows through the engine's wall"; CI "three legs"; `contracts/` = "shared schemas both sides agree on"; a 4-step roadmap contradicting the 11-phase one | The wall is `engine/.claude/`, nine events; the root holds 262 agent definitions and one `Stop` guard. The gate note sits under the flow sentence, not in another file. `contracts/` is a README. 7 workflows, 28 checks, 15 gates. Roadmap points at the canonical one. New section on Bro and who may do what. |
+| `START_HERE.md` (2 weeks) | `main = df3c0ac`; PR #31 live, PR #32 WIP; a design addendum "PENDING re-audit" | Current baseline, says to resolve the live HEAD yourself, states the gate is closed, and adds the four things that actually cost time here |
+| `QUEUE_MANIFEST.md` (2 weeks) | a `main` freeze for PR #31's audit, seven queued branches | Marked DISSOLVED, with each branch traced to where it went and PR #32's branch explicitly excluded from any delete list |
+| `MASTER_EXECUTION_ROADMAP.md` | phases 2–10 all "⏳ Blocked" on a dependency chain | Rewritten per phase against what exists, with "blocked" redefined as a named missing thing rather than an inferred chain |
+| `CLAUDE.md` §6 | five items in their pre-fix state, tracked on a branch that does not exist | Post-fix state, all five OPEN, three naming the Owner artifact they need |
+| `AGENTS.md`, `OWNERS.md` | pointer + roles | Plus the two rules that bind: a documented claim is not evidence, a green test is not a passing check. The gate is the Owner's alone. |
+| `docs/ARCHITECTURE.md` (3 weeks) | same false wall row; CI "one workflow, three legs"; flow headed "target — Phase 1" | Corrected; flow is "built, proven, and gated off"; the Phase-0 "not done" list replaced by the five things genuinely not done |
+| `docs/OPERATOR_GUIDE.md` | three providers; chat is "a tool-free text completion"; §6 says the isolated signer "is not merged" | Four providers; `BROPS_PROJECT_DIR` documented as the file-and-shell grant it is; six undocumented variables added; §6 separates a proven chain from a shipped guarantee |
+| `docs/USER_GUIDE.md`, `docs/TROUBLESHOOTING.md` | "tool-free"; "blocked until Wave 3b lands" | Tool-free *by default*, and one setting changes it; blocked is a decision that will not change by itself |
+| `engine/AUDIT/tickets/` ×5, `apps/desktop/AUDIT/AUDIT_LEDGER.md` | pre-fix ticket states | Rewritten with file and line; nothing promoted to ✅ |
 
 ---
 
