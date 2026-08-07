@@ -120,7 +120,10 @@ the independent audit's `D-09` recommends pulling it forward.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Owner secret needed:** no CI secret — but a **deploy-time signing custody the Owner must provide**
+- **Owner secret needed:** yes
+  Not a CI secret: a deploy-time signing custody. The anchor signer must run as a principal the
+  ledger's own writer cannot reach, so it is provisioned where the engine is deployed rather than
+  in a repository secret.
   (see *What the Owner must provide* below). Nothing here is closeable by inventing a key.
 - **Engine ticket:** `engine/AUDIT/tickets/H-4-forgeable-audit-trail.md` — fix #1 (*"sign the audit head with
   a recorder/operator Ed25519 authority … and verify that signature inside `verify()`"*) is exactly this
@@ -185,8 +188,8 @@ verified green).
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Owner secret needed:** yes — an operator-root-signed `conductor-session` artifact (not a CI secret; an
-  Owner deploy step)
+- **Owner secret needed:** yes
+  an operator-root-signed `conductor-session` artifact (not a CI secret; an Owner deploy step)
 - **Engine ticket:** `engine/AUDIT/tickets/MEDIUM-findings.md` § M-4
 - **Engine code:** `engine/runtime/bro_policy.py` — `CONDUCTOR_SESSION_TOKEN_ENV =
   "BRO_CONDUCTOR_SESSION_TOKEN"` (a *path* to a signed artifact), `verify_conductor_session_token`, and the
@@ -323,9 +326,8 @@ Every one of these checks was deleted once and the matching test went red.
 - **Severity:** LOW
 - **Status:** OPEN
 - **Progress:** the manifest-binding half is built and enforced; what remains needs an Owner key (below)
-- **Owner secret needed:** yes — an operator-root-signed `evidence-floor-anchor` artifact (an Owner
-  deploy step, not a CI secret). This corrects the earlier "no": the binding half needed no secret, the
-  floor-reset half cannot be closed without one.
+- **Owner secret needed:** yes
+  an operator-root-signed `evidence-floor-anchor` artifact (an Owner deploy step, not a CI secret). This corrects the earlier "no": the binding half needed no secret, the floor-reset half cannot be closed without one.
 - **Engine ticket:** `engine/AUDIT/tickets/LOW-findings.md` § L-4
 - **Engine code:** `engine/runtime/bro_evidence.py` (`min_head_sequence` / `EvidenceHead.head_sequence`,
   staleness rejection in `load_head`, propagation through `validate_chain`) and

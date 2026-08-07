@@ -154,14 +154,30 @@ class LiveRepositoryTests(unittest.TestCase):
             self.assertEqual(sections[item]["Status"].upper(), "OPEN", item)
 
     def test_the_inventory_records_which_items_need_the_owner(self):
-        sections = parse_inventory(
-            (REPO_ROOT / "docs" / "PHASE_10_PRODUCTION_ITEMS.md").read_text(encoding="utf-8")
-        )
-        answers = {i: sections[i]["Owner secret needed"].lower() for i in ITEMS}
-        # O-3 is the only residual item whose closure needs something only the Owner can mint.
-        self.assertTrue(answers["O-3"].startswith("yes"), answers)
-        for item in ("O-1", "O-2", "O-4", "O-5"):
-            self.assertTrue(answers[item].startswith("no"), answers)
+        """Every item answers yes-or-no, and every `yes` says WHAT the Owner must provide.
+
+        This used to assert the membership directly -- "O-3 is the only item needing an Owner
+        secret" -- which was true the day the inventory was written and false the day the O-2 and
+        O-5 work established that an audit-anchor signer and an evidence-floor anchor are also
+        things only the Owner can mint. A test that pins today's answer goes red when someone
+        LEARNS something, which trains people to edit the test rather than read it.
+
+        So the property, not the membership: the cell is a clean machine-readable verdict, and a
+        `yes` that does not name the artifact is the failure worth catching -- an unnamed Owner
+        dependency is one nobody can act on.
+        """
+        text = (REPO_ROOT / "docs" / "PHASE_10_PRODUCTION_ITEMS.md").read_text(encoding="utf-8")
+        sections = parse_inventory(text)
+        for item in ITEMS:
+            answer = sections[item]["Owner secret needed"].strip().lower()
+            self.assertIn(answer, ("yes", "no"), f"{item}: {answer!r} is not a verdict")
+            if answer == "yes":
+                body = text.split(f"### {item}", 1)[1]
+                head = body.split("- **Owner secret needed:**", 1)[1][:600].lower()
+                self.assertTrue(
+                    any(w in head for w in ("artifact", "key", "custody", "signer")),
+                    f"{item} needs an Owner secret but does not name what",
+                )
 
 
 if __name__ == "__main__":
