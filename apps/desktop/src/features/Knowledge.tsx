@@ -632,7 +632,10 @@ export function Knowledge() {
         <section className="surface soft kb-metrics">
           <div className="sec-head">
             <h2>{L('knowledgeBase')}</h2>
-            <span className="note">{L('countedFromStore')}</span>
+            {/* Counts AND provenance. The counts are real; the second half says what
+                backs the rows they count — a local store, nothing signed. See
+                `provenance` in Knowledge.strings.ts for why no receipt is claimed. */}
+            <span className="note">{L('countedFromStore')} · {L('provenance')}</span>
           </div>
           <div className="kstats">
             {metrics.map((x, i) => (

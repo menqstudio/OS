@@ -72,10 +72,10 @@ fn migrate_applies_all_versions_in_order_to_a_fresh_db() {
     c.pragma_update(None, "foreign_keys", "ON").unwrap();
     db::migrate(&c).unwrap();
 
-    assert_eq!(db::SCHEMA_VERSION, 20, "crate SCHEMA_VERSION must be 20");
-    assert_eq!(db::current_version(&c).unwrap(), 20);
-    // The ledger is contiguous 1..=20 — nothing skipped, nothing double-counted.
-    assert_eq!(applied_versions(&c), (1..=20).collect::<Vec<i64>>());
+    assert_eq!(db::SCHEMA_VERSION, 21, "crate SCHEMA_VERSION must be 21");
+    assert_eq!(db::current_version(&c).unwrap(), 21);
+    // The ledger is contiguous 1..=21 — nothing skipped, nothing double-counted.
+    assert_eq!(applied_versions(&c), (1..=21).collect::<Vec<i64>>());
     // 0017 created the group-chat participants roster table.
     let has_participants: i64 = c
         .query_row(
@@ -114,6 +114,81 @@ fn migrate_applies_all_versions_in_order_to_a_fresh_db() {
         )
         .unwrap();
     assert_eq!(has_runs, 1, "0020 must create automation_runs");
+    // 0021 created the append-only LOCAL write-record ledger for memory/knowledge writes,
+    // guarded so it can be appended to but never rewritten.
+    let has_records: i64 = c
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='store_write_records'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(has_records, 1, "0021 must create store_write_records");
+    let guards: i64 = c
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN \
+             ('trg_store_write_records_no_update','trg_store_write_records_no_delete',\
+              'trg_store_write_records_extends_head')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(guards, 3, "0021 must install all three append-only chain guards");
+}
+
+// --- 0021: the local write-record ledger is append-only in the DB itself ----
+
+#[test]
+fn store_write_records_rejects_update_delete_and_a_non_extending_insert() {
+    let c = conn();
+    let genesis = "0000000000000000000000000000000000000000000000000000000000000000";
+    let hex = |n: u8| std::iter::repeat_n(format!("{n:02x}"), 32).collect::<String>();
+
+    c.execute(
+        "INSERT INTO store_write_records
+           (seq, id, protocol, subject_kind, subject_id, operation, content_sha256,
+            prev_record_sha256, record_sha256, recorded_at)
+         VALUES (1, 'r-1', 'brops.local-write-record.v1', 'memory_entry', 'm-1', 'created',
+                 ?1, ?2, ?3, '1000')",
+        params![hex(0xaa), genesis, hex(0xbb)],
+    )
+    .unwrap();
+
+    assert!(
+        c.execute("UPDATE store_write_records SET content_sha256 = ?1 WHERE seq = 1", [hex(0xcc)])
+            .is_err(),
+        "a write record must never be rewritable"
+    );
+    assert!(
+        c.execute("DELETE FROM store_write_records WHERE seq = 1", []).is_err(),
+        "a write record must never be removable"
+    );
+    // A second record that does not link to the head is refused by the trigger.
+    assert!(
+        c.execute(
+            "INSERT INTO store_write_records
+               (seq, id, protocol, subject_kind, subject_id, operation, content_sha256,
+                prev_record_sha256, record_sha256, recorded_at)
+             VALUES (2, 'r-2', 'brops.local-write-record.v1', 'memory_entry', 'm-2', 'created',
+                     ?1, ?2, ?3, '1001')",
+            params![hex(0xaa), genesis, hex(0xdd)],
+        )
+        .is_err(),
+        "an appended record must extend the current head"
+    );
+    // A foreign subject_kind / operation is outside the CHECK domain.
+    assert!(
+        c.execute(
+            "INSERT INTO store_write_records
+               (seq, id, protocol, subject_kind, subject_id, operation, content_sha256,
+                prev_record_sha256, record_sha256, recorded_at)
+             VALUES (2, 'r-3', 'brops.local-write-record.v1', 'chat_message', 'x', 'created',
+                     ?1, ?2, ?3, '1001')",
+            params![hex(0xaa), hex(0xbb), hex(0xee)],
+        )
+        .is_err(),
+        "subject_kind is a closed domain"
+    );
 }
 
 #[test]
@@ -420,7 +495,7 @@ fn migrate_is_idempotent_in_process() {
     db::migrate(&c).unwrap();
     assert_eq!(db::current_version(&c).unwrap(), db::SCHEMA_VERSION);
     assert_eq!(applied_versions(&c), before, "re-running migrate must not add ledger rows");
-    assert_eq!(before.len(), 20);
+    assert_eq!(before.len(), 21);
 }
 
 #[test]
@@ -435,10 +510,10 @@ fn migrate_is_idempotent_across_a_real_file_reopen() {
 
     {
         let c1 = db::open(path).unwrap();
-        assert_eq!(db::current_version(&c1).unwrap(), 20);
+        assert_eq!(db::current_version(&c1).unwrap(), 21);
     } // c1 dropped
 
     let c2 = db::open(path).unwrap(); // reopen re-runs migrate() (idempotent)
-    assert_eq!(db::current_version(&c2).unwrap(), 20);
-    assert_eq!(applied_versions(&c2), (1..=20).collect::<Vec<i64>>());
+    assert_eq!(db::current_version(&c2).unwrap(), 21);
+    assert_eq!(applied_versions(&c2), (1..=21).collect::<Vec<i64>>());
 }

@@ -475,7 +475,20 @@ export function Memory() {
         <div className="right">
           {/* Was an unconditional "Verifiable memory" pill with no chain behind it.
               Nothing verifies a memory row, so the pill now reports the one thing the
-              backend does prove: the outcome of the real `list_memory` read. */}
+              backend does prove: the outcome of the real `list_memory` read.
+
+              Phase 5 update — the backend DOES now record every memory write in an
+              append-only LOCAL write record (`core/src/local_write_record.rs`, migration
+              0021): the row's content is hashed into a prev-hash chain in the same
+              transaction as the write, so a later out-of-band edit reads back as
+              `ContentDiverged`. Two reasons that is still NOT rendered here:
+                1. it is UNSIGNED and host-local — tamper-evidence, not custody — so it
+                   must never be shown as "verified"/"verifiable"; and
+                2. this page has no command to read it (`memory_write_record_state` /
+                   `memory_write_records` are not registered in src-tauri/src/lib.rs).
+              A claim the page cannot check is exactly the defect that removed the old
+              pill. Render the record only once its command exists, and label it with
+              what it proves: "recorded" / "content diverged" / "not recorded". */}
           <span className={`pill ${loadingFirst ? 'off' : s.error ? 'warn' : 'info'}`}>
             {loadingFirst ? L('storeReading') : s.error ? L('storeUnavailable') : L('storeLoaded')}
           </span>

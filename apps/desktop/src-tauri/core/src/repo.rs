@@ -1191,8 +1191,19 @@ pub mod chat {
     }
 }
 
+/// Phase 5: every knowledge/memory write appends a LOCAL write record in the same
+/// transaction as the write (see `crate::local_write_record`). It is unsigned and
+/// host-local — tamper-EVIDENCE against a later out-of-band edit of the database file,
+/// **not** a governed receipt and never to be labelled "verified".
+use crate::local_write_record::{self as lwr, SubjectKind, WriteOp};
+
 pub mod knowledge {
     use super::*;
+
+    /// Digest of this note's recorded fields.
+    fn digest(n: &KnowledgeNote) -> String {
+        lwr::knowledge_content_sha256(&n.title, &n.body, &n.source, &n.tags)
+    }
 
     fn map(r: &Row) -> rusqlite::Result<KnowledgeNote> {
         Ok(KnowledgeNote {
@@ -1215,10 +1226,36 @@ pub mod knowledge {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
                 rusqlite::params![id, input.title, input.body, input.source, input.tags, now],
             )?;
+            // Same transaction as the INSERT: the note and its write record land
+            // together or not at all, so a stored note can never lack its record.
+            lwr::append(
+                tx,
+                SubjectKind::KnowledgeNote,
+                &id,
+                WriteOp::Created,
+                &lwr::knowledge_content_sha256(&input.title, &input.body, &input.source, &input.tags),
+                &now,
+            )?;
             super::audit::record(tx, "knowledge.created", "user", "gev", "knowledge_note", &id)?;
             Ok(())
         })?;
         get(conn, &id)
+    }
+
+    /// Where this note stands against its own write record: `Recorded`,
+    /// `ContentDiverged` (edited out of band), or `Unrecorded` (written before the
+    /// ledger existed — never back-filled).
+    pub fn write_record_state(
+        conn: &Connection,
+        id: &str,
+    ) -> CoreResult<lwr::SubjectState> {
+        let note = get(conn, id)?;
+        lwr::state_of(conn, SubjectKind::KnowledgeNote, id, &digest(&note))
+    }
+
+    /// Every write record for this note, oldest first (kept after deletion).
+    pub fn write_records(conn: &Connection, id: &str) -> CoreResult<Vec<lwr::WriteRecord>> {
+        lwr::records_for(conn, SubjectKind::KnowledgeNote, id)
     }
 
     pub fn get(conn: &Connection, id: &str) -> CoreResult<KnowledgeNote> {
@@ -1254,10 +1291,22 @@ pub mod knowledge {
 
     pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
         super::atomic(conn, |tx| {
+            // Read first so the `deleted` record can pin WHAT was removed. The record
+            // carries no FK to the note precisely so it outlives it — the one write
+            // that most needs evidence must not erase its own.
+            let note = get(tx, id)?;
             let changed = tx.execute("DELETE FROM knowledge_notes WHERE id = ?1", [id])?;
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
+            lwr::append(
+                tx,
+                SubjectKind::KnowledgeNote,
+                id,
+                WriteOp::Deleted,
+                &digest(&note),
+                &now(),
+            )?;
             super::audit::record(tx, "knowledge.deleted", "user", "gev", "knowledge_note", id)?;
             Ok(())
         })
@@ -1266,6 +1315,11 @@ pub mod knowledge {
 
 pub mod memory {
     use super::*;
+
+    /// Digest of this entry's recorded fields.
+    fn digest(e: &MemoryEntry) -> String {
+        lwr::memory_content_sha256(&e.scope, &e.kind, &e.content, e.pinned)
+    }
 
     fn map(r: &Row) -> rusqlite::Result<MemoryEntry> {
         Ok(MemoryEntry {
@@ -1291,10 +1345,33 @@ pub mod memory {
                  VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)",
                 rusqlite::params![id, input.scope, input.kind, input.content, now],
             )?;
+            // Same transaction as the INSERT (see the module note above).
+            lwr::append(
+                tx,
+                SubjectKind::MemoryEntry,
+                &id,
+                WriteOp::Created,
+                // `pinned` is 0 in the INSERT above; the digest must mirror the row.
+                &lwr::memory_content_sha256(&input.scope, &input.kind, &input.content, false),
+                &now,
+            )?;
             super::audit::record(tx, "memory.created", "user", "gev", "memory_entry", &id)?;
             Ok(())
         })?;
         get(conn, &id)
+    }
+
+    /// Where this entry stands against its own write record: `Recorded`,
+    /// `ContentDiverged` (edited out of band), or `Unrecorded` (written before the
+    /// ledger existed — never back-filled).
+    pub fn write_record_state(conn: &Connection, id: &str) -> CoreResult<lwr::SubjectState> {
+        let entry = get(conn, id)?;
+        lwr::state_of(conn, SubjectKind::MemoryEntry, id, &digest(&entry))
+    }
+
+    /// Every write record for this entry, oldest first (kept after deletion).
+    pub fn write_records(conn: &Connection, id: &str) -> CoreResult<Vec<lwr::WriteRecord>> {
+        lwr::records_for(conn, SubjectKind::MemoryEntry, id)
     }
 
     pub fn get(conn: &Connection, id: &str) -> CoreResult<MemoryEntry> {
@@ -1323,23 +1400,52 @@ pub mod memory {
         }
     }
 
+    /// Pinning is a real content change (`pinned` is part of the recorded digest), so
+    /// it is now atomic and records an `updated` write record — otherwise a pin toggle
+    /// would silently leave every entry looking diverged.
     pub fn set_pinned(conn: &Connection, id: &str, pinned: bool) -> CoreResult<MemoryEntry> {
-        let changed = conn.execute(
-            "UPDATE memory_entries SET pinned = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![pinned as i64, now(), id],
-        )?;
-        if changed == 0 {
-            return Err(CoreError::NotFound(id.to_string()));
-        }
+        super::atomic(conn, |tx| {
+            let now = now();
+            let changed = tx.execute(
+                "UPDATE memory_entries SET pinned = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![pinned as i64, now, id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            // Re-read INSIDE the transaction so the digest is of the row as stored,
+            // never of what the caller believed it wrote.
+            let entry = get(tx, id)?;
+            lwr::append(
+                tx,
+                SubjectKind::MemoryEntry,
+                id,
+                WriteOp::Updated,
+                &digest(&entry),
+                &now,
+            )?;
+            Ok(())
+        })?;
         get(conn, id)
     }
 
     pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
         super::atomic(conn, |tx| {
+            // Read first so the `deleted` record pins WHAT was removed (see
+            // `knowledge::delete` for why the record carries no FK to the row).
+            let entry = get(tx, id)?;
             let changed = tx.execute("DELETE FROM memory_entries WHERE id = ?1", [id])?;
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
+            lwr::append(
+                tx,
+                SubjectKind::MemoryEntry,
+                id,
+                WriteOp::Deleted,
+                &digest(&entry),
+                &now(),
+            )?;
             super::audit::record(tx, "memory.deleted", "user", "gev", "memory_entry", id)?;
             Ok(())
         })

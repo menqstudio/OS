@@ -249,6 +249,19 @@ export const STR = {
     hy: 'պահոցից հաշված',
     ru: 'посчитано из хранилища',
   },
+  // Provenance stated plainly, exactly as the Memory page does. `list_knowledge` /
+  // `search_knowledge` return plain rows from the local SQLite store: nothing on this
+  // page is signed and nothing here carries a governed receipt, so no badge may imply
+  // one. The backend now appends an append-only LOCAL write record for every knowledge
+  // write (`core/src/local_write_record.rs`), but that record is unsigned AND this page
+  // still has no command to read it — so it is not claimed here either. When the read
+  // command exists, render the record's real state (recorded / content diverged /
+  // unrecorded); never the word "verified".
+  provenance: {
+    en: 'Local store · no verification chain',
+    hy: 'Տեղական պահոց · ստուգման շղթա չկա',
+    ru: 'Локальное хранилище · нет цепочки проверки',
+  },
 } as const;
 
 // ── Interpolated strings — authored per language, args filled at the call
