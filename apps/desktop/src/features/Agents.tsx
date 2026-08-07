@@ -6,6 +6,12 @@ import { ringPositions } from '../components/charts/Chart';
 import { Mark } from '../components/Ambient';
 import type { Agent } from '../domain/entities';
 import { STR } from './Agents.strings';
+import {
+  AGENT_DEFINITION_DIR, AUTHORITY_POLICY_SOURCE, CAPABILITY_TIERS, DEFAULT_AUTHORITY,
+  DISPATCH_REQUIREMENT, TIER_TOOLS,
+  isContractId, probeDispatchChannel, slug, tauriDispatchTransport, uuid,
+  type ChannelState,
+} from '../services/agentsDispatch';
 
 // Page-local string sourcing lives in Agents.strings.ts (en/hy/ru). `L` resolves a
 // key against the active language with an English fallback — see the effect below.
@@ -74,6 +80,100 @@ const PHASE_MARK: Record<Phase, string> = {
 
 const PHASE_ORDER: Phase[] = ['flowing', 'throttled', 'idle', 'completed', 'blocked'];
 
+// ── The grant block (Phase 6) ────────────────────────────────────────────────
+// What a governed dispatch to THIS agent would carry, and — just as importantly —
+// what the desktop cannot know about it.
+//
+// Real, checkable facts: the contract-form `agent_id` derived from the agent's real
+// slug and whether it is even writable into a task contract; the DEFAULT authority
+// record; the three capability tiers with the exact tool lists their generated
+// definitions declare; and a live probe of whether a dispatch channel exists at all.
+//
+// Deliberately absent: this agent's actual tier and its actual authority record. Both
+// are engine state, the desktop has no IPC that reads them, and a plausible-looking
+// guess in the one place a person goes to check a grant is the worst possible lie.
+function Grant({ agent, L }: { agent: Agent; L: LFn }) {
+  const agentId = slug(agent.slug);
+  const idOk = isContractId(agentId);
+  const [channel, setChannel] = useState<ChannelState | null>(null);
+  const [probing, setProbing] = useState(false);
+
+  const probe = () => {
+    if (probing) return;
+    setProbing(true);
+    probeDispatchChannel(tauriDispatchTransport(), uuid)
+      .then((c) => { setChannel(c); setProbing(false); })
+      // probeDispatchChannel already maps a rejection to `absent`; a throw here would be
+      // a fault in the probe itself, and it still must not read as a working channel.
+      .catch((e: unknown) => {
+        setChannel({ state: 'absent', reason: e instanceof Error ? e.message : String(e) });
+        setProbing(false);
+      });
+  };
+
+  return (
+    <div className="dos-block">
+      <span className="micro">{L('grantTitle')}</span>
+
+      <div className="ag-facts">
+        <div className="ag-fact ag-fact--wide">
+          <span className="ag-fk">{L('contractAgentId')}</span>
+          <span className="ag-mono">{agentId || '—'}</span>
+          <span className={`pill ${idOk ? 'info' : 'bad'}`}>{idOk ? L('idValid') : L('idInvalid')}</span>
+        </div>
+      </div>
+      {!idOk && <p className="muted ag-grant-note">{L('idInvalidNote')}</p>}
+
+      <div className="ag-grant-sec">
+        <span className="ag-fk">{L('authorityTitle')}</span>
+        <div className="ag-grant-row">
+          <span className="micro">{L('modesWord')}</span>
+          {DEFAULT_AUTHORITY.allowed_modes.map((m) => <span key={m} className="pill off">{m}</span>)}
+          <span className="micro">{L('ceilingWord')}</span>
+          <span className="pill warn">{DEFAULT_AUTHORITY.risk_ceiling}</span>
+        </div>
+        <p className="muted ag-grant-note">{L('authorityNote')}</p>
+        <p className="ag-mono ag-grant-src">{AUTHORITY_POLICY_SOURCE}</p>
+      </div>
+
+      <div className="ag-grant-sec">
+        <span className="ag-fk">{L('tiersTitle')}</span>
+        {CAPABILITY_TIERS.map((tier) => (
+          <div key={tier} className="ag-tier">
+            <b className="ag-tier-nm">{tier}</b>
+            <span className="ag-mono">{TIER_TOOLS[tier].join(' · ')}</span>
+            <span className="ag-mono ag-grant-src">{AGENT_DEFINITION_DIR}/{tier}.md</span>
+          </div>
+        ))}
+        <p className="muted ag-grant-note">{L('tiersNote')}</p>
+      </div>
+
+      <div className="ag-grant-sec">
+        <span className="ag-fk">{L('channelTitle')}</span>
+        {channel === null ? (
+          <p className="muted ag-grant-note">{L('channelUnknown')}</p>
+        ) : channel.state === 'present' ? (
+          <>
+            <span className="pill live">{L('channelPresent')}</span>
+            <p className="muted ag-grant-note">{L('channelPresentNote')}</p>
+            <p className="ag-mono ag-grant-src">{channel.detail}</p>
+          </>
+        ) : (
+          <>
+            <span className="pill bad">{L('channelAbsent')}</span>
+            <p className="muted ag-grant-note">{L('channelAbsentNote')}</p>
+            <p className="ag-mono ag-grant-src">{DISPATCH_REQUIREMENT}</p>
+            <p className="ag-mono ag-grant-src">{channel.reason}</p>
+          </>
+        )}
+        <button type="button" className="ag-btn" onClick={probe} disabled={probing}>
+          {probing ? L('channelChecking') : L('channelCheck')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── The re-forging dossier rail — fills for the selected node ─────────────────
 function Dossier({
   agent,
@@ -115,6 +215,8 @@ function Dossier({
           <div className="ag-fact ag-fact--wide"><span className="ag-fk">{L('agentId')}</span><span className="ag-mono">{agent.id}</span></div>
         </div>
       </div>
+
+      <Grant agent={agent} L={L} />
 
       {/* Honest omission: the real Agent entity carries no live telemetry / skills /
           guild-mates, so the mockup's sparkline + skill grades + mate stack are not
@@ -560,6 +662,16 @@ const AG_CSS = `
   text-transform:uppercase;color:var(--ink-muted)}
 .v-agents .ag-mono{font-family:var(--f-mono);font-size:11px;word-break:break-all;color:var(--ink)}
 .v-agents .ag-telemetry{font-size:12px;line-height:1.5;margin:0}
+/* grant block — the capability/path half of a dispatch, plus the honest gaps */
+.v-agents .ag-grant-sec{display:grid;gap:6px;margin-top:var(--s3);padding-top:var(--s3);
+  border-top:1px solid rgb(var(--line-rgb)/.7)}
+.v-agents .ag-grant-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.v-agents .ag-grant-note{margin:0;font-size:11.5px;line-height:1.5}
+.v-agents .ag-grant-src{margin:0;font-size:10px;color:var(--ink-muted);word-break:break-word}
+.v-agents .ag-tier{display:grid;gap:2px;padding:6px 8px;border-radius:8px;
+  background:rgb(var(--raised-rgb)/.45);border:1px solid rgb(var(--line-rgb)/.6)}
+.v-agents .ag-tier-nm{font-family:var(--f-mono);font-size:11px;letter-spacing:.04em}
+.v-agents .ag-grant-sec .ag-btn{justify-self:start;margin-top:4px}
 .v-agents .ag-blocked{padding:var(--s3) var(--s4);border-radius:12px;
   border:1px solid rgb(var(--danger-rgb)/.35);background:rgb(var(--danger-rgb)/.08)}
 .v-agents .ag-blocked .micro{color:var(--danger)}

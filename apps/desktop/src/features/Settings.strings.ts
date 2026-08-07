@@ -3,7 +3,9 @@
 // page inlines its own strings for surfaces not yet in the shared i18n dictionaries — it never edits
 // the shared i18n files. Keys already present in i18n/en.ts + hy.ts + ru.ts are used through `t()`.
 // Formerly-bilingual "ARM · ENGLISH" eyebrows/pills are collapsed to a single localized string per
-// language. Technical identifiers and brand names (MENQ OS, v0.9, MenQ, Bro/ԲՐՈ/БРО) are preserved.
+// language. Technical identifiers and runtime names (Bro/ԲՐՈ/БРО, BroPS) are preserved.
+// NOTE: the product name and version are NOT strings here — they are read from the running build
+// (settingsIdentity.ts). They were literals ("MENQ OS", "v0.9") that contradicted the actual build.
 // -------------------------------------------------------------------------------------------------
 export const STR = {
   // — decorative eyebrows (were bilingual, now one localized string each) —
@@ -32,11 +34,40 @@ export const STR = {
   capRuntime: { en: 'RUNTIME · BRO', hy: 'ԳՈՐԾԱՐԿՈՒՄ · ԲՐՈ', ru: 'СРЕДА · БРО' },
 
   // — appearance / language panel —
+  // The old copy asserted "Preferences are saved to this device" unconditionally. The
+  // store writes them through a try/catch that swallows a failed write, so when storage
+  // is unwritable the claim was false and the setting silently reverted on reload. The
+  // sentence is now split: what these controls are (here) and whether they are actually
+  // stored (probed at runtime — prefsPersistedNote / prefsNotPersistedNote).
   appearanceDesc: {
-    en: 'Visual theme and interface language. Preferences are saved to this device.',
-    hy: 'Տեսքի ոճ և ինտերֆեյսի լեզու։ Նախապատվությունները պահվում են այս սարքում։',
-    ru: 'Визуальная тема и язык интерфейса. Настройки сохраняются на этом устройстве.',
+    en: 'Visual theme and interface language.',
+    hy: 'Տեսքի ոճ և ինտերֆեյսի լեզու։',
+    ru: 'Визуальная тема и язык интерфейса.',
   },
+  prefsPersistedNote: {
+    en: 'Checked just now: this window can write to local storage, so the theme and language '
+      + 'you pick are kept on this device and restored next launch. They are stored only here — '
+      + 'no backend holds them, so another device or a fresh profile starts from the defaults.',
+    hy: 'Հենց նոր ստուգվեց՝ այս պատուհանը կարող է գրել լոկալ պահոցում, ուստի ընտրած ոճն ու լեզուն '
+      + 'պահվում են այս սարքում և վերականգնվում են հաջորդ գործարկման ժամանակ։ Պահվում են միայն այստեղ — '
+      + 'backend դրանք չի պահում, ուստի այլ սարքը կամ նոր պրոֆիլը սկսում է լռելյայն արժեքներից։',
+    ru: 'Только что проверено: это окно может писать в локальное хранилище, поэтому выбранные тема '
+      + 'и язык сохраняются на этом устройстве и восстанавливаются при следующем запуске. Они хранятся '
+      + 'только здесь — серверная часть их не хранит, поэтому другое устройство или новый профиль '
+      + 'начинает со значений по умолчанию.',
+  },
+  prefsNotPersistedNote: {
+    en: 'NOT SAVED: local storage is not writable in this window, so the theme and language you '
+      + 'pick apply only until this window reloads, and then revert to the defaults. Nothing else '
+      + 'stores them — there is no backend setting behind these controls.',
+    hy: 'ՉԻ ՊԱՀՎՈՒՄ․ այս պատուհանում լոկալ պահոցը գրելի չէ, ուստի ընտրած ոճն ու լեզուն գործում են '
+      + 'միայն մինչև պատուհանի վերաբեռնումը, հետո վերադառնում են լռելյայն արժեքներին։ Ուրիշ ոչինչ '
+      + 'դրանք չի պահում — այս կարգավորումների հետևում backend-ի պահոց չկա։',
+    ru: 'НЕ СОХРАНЯЕТСЯ: в этом окне локальное хранилище недоступно для записи, поэтому выбранные '
+      + 'тема и язык действуют только до перезагрузки окна, а затем возвращаются к значениям по '
+      + 'умолчанию. Больше их ничто не хранит — за этими элементами нет серверной настройки.',
+  },
+  reasonPrefix: { en: 'Reason: ', hy: 'Պատճառ՝ ', ru: 'Причина: ' },
   themeDesc: {
     en: 'Choose a light or dark interface. Motion is reduced automatically when your system asks for it.',
     hy: 'Ընտրեք բաց կամ մուգ ինտերֆեյս։ Շարժումը նվազում է ինքնաշխատ, երբ համակարգը դա պահանջում է։',
@@ -48,7 +79,10 @@ export const STR = {
     ru: 'Язык интерфейса BroPS.',
   },
   accentLabel: { en: 'ACCENT', hy: 'ՇԵՇՏ', ru: 'АКЦЕНТ' },
-  accentNote: { en: 'verified · MenQ', hy: 'հաստատված · MenQ', ru: 'подтверждено · MenQ' },
+  // Was "verified · MenQ". Nothing verifies a colour swatch, and "verified" on a
+  // Settings page reads as a trust claim. The rail is decorative and unchangeable —
+  // which is all it may now say.
+  accentNote: { en: 'fixed · not a setting', hy: 'ֆիքսված · կարգավորում չէ', ru: 'фиксированный · не настройка' },
 
   // — governed-provider toggle —
   governedToggleLabel: { en: 'Governed provider', hy: 'Կառավարվող մատակարար', ru: 'Управляемый провайдер' },
@@ -105,6 +139,38 @@ export const STR = {
   aboutProductLabel: { en: 'Product', hy: 'Արտադրանք', ru: 'Продукт' },
   aboutVersionLabel: { en: 'Version', hy: 'Տարբերակ', ru: 'Версия' },
   aboutGovernanceLabel: { en: 'Governance', hy: 'Կառավարում', ru: 'Управление' },
+
+  // — system identity (finding: the panel printed the literals "MENQ OS" and "v0.9"
+  //   under a row labelled Version, while the running build is BroPS 0.1.0. A literal
+  //   cannot notice a release, so the row was both unestablished and wrong. It now
+  //   reports what the running build says about itself, or nothing at all.) —
+  identityChecking: { en: 'Reading…', hy: 'Կարդում ենք…', ru: 'Чтение…' },
+  identityUnreported: {
+    en: 'Not reported by this build',
+    hy: 'Այս build-ը չի հաղորդում',
+    ru: 'Эта сборка не сообщает',
+  },
+  identityNote: {
+    en: 'Product name and version are read from the running application build. Nothing is shown '
+      + 'here that the build did not report.',
+    hy: 'Արտադրանքի անունը և տարբերակը կարդացվում են գործող build-ից։ Այստեղ ցույց չի տրվում ոչինչ, '
+      + 'ինչ build-ը չի հաղորդել։',
+    ru: 'Название продукта и версия читаются из работающей сборки приложения. Здесь не показывается '
+      + 'ничего, о чём сборка не сообщила.',
+  },
+  identityUnreportedNote: {
+    en: 'This window could not read the application name and version from the running build, so '
+      + 'neither is shown. A fixed label here would be a guess about the build, not its identity.',
+    hy: 'Այս պատուհանը չկարողացավ գործող build-ից կարդալ ծրագրի անունն ու տարբերակը, ուստի ոչ մեկը '
+      + 'ցույց չի տրվում։ Ֆիքսված պիտակն այստեղ կլիներ ենթադրություն build-ի մասին, ոչ թե նրա ինքնությունը։',
+    ru: 'Это окно не смогло прочитать название и версию приложения из работающей сборки, поэтому не '
+      + 'показывается ни то, ни другое. Фиксированная надпись здесь была бы догадкой о сборке, а не её '
+      + 'идентичностью.',
+  },
+  /** The System panel's own status pill used `ready ? live : off`, which printed
+   *  "Not ready" while the status was still loading, had errored, or had no backend
+   *  to ask — three states in which readiness is unknown, not false. */
+  statusUnknown: { en: 'Unknown', hy: 'Անհայտ', ru: 'Неизвестно' },
 
   // — governance posture (finding: this row used to state "Fail-closed, verified-
   //   receipt-mandatory" UNCONDITIONALLY, while the shipped default resolves an

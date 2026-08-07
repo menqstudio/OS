@@ -176,4 +176,82 @@ export const STR = {
     hy: 'Ֆայլերի աշխատասեղան',
     ru: 'Стенд файлов',
   },
+
+  // ── modified time ─────────────────────────────────────────────────────────
+  // `list_dir` has always returned a `modified` timestamp per entry and the page
+  // threw it away. These label the real value, and the honest absence of one.
+  modified: {
+    en: 'Modified',
+    hy: 'Փոփոխված',
+    ru: 'Изменён',
+  },
+  modifiedNone: {
+    en: 'no modified time reported',
+    hy: 'փոփոխման ժամանակ չի հաղորդվել',
+    ru: 'время изменения не сообщено',
+  },
+
+  // ── ordering (a pure reordering of the real listing) ──────────────────────
+  sort: {
+    en: 'Sort',
+    hy: 'Դասավորել',
+    ru: 'Сортировка',
+  },
+  sortName: {
+    en: 'Name',
+    hy: 'Անուն',
+    ru: 'Имя',
+  },
+  sortSize: {
+    en: 'Size',
+    hy: 'Չափ',
+    ru: 'Размер',
+  },
+  sortModified: {
+    en: 'Modified',
+    hy: 'Փոփոխված',
+    ru: 'Изменён',
+  },
+  sortAsc: {
+    en: 'Ascending — click for descending',
+    hy: 'Աճող — սեղմիր՝ նվազողի համար',
+    ru: 'По возрастанию — нажмите для убывания',
+  },
+  sortDesc: {
+    en: 'Descending — click for ascending',
+    hy: 'Նվազող — սեղմիր՝ աճողի համար',
+    ru: 'По убыванию — нажмите для возрастания',
+  },
+
+  // ── why a file came back read-only ────────────────────────────────────────
+  // `read_file` collapses three situations into one `readonly` flag; the page
+  // used to print one flat line for all of them. These say which one it was,
+  // derived from the size the backend reported (see filesModel.readonlyReason).
+  roNotRegular: {
+    en: 'Not a regular file (a folder, link or device), so there is no text to show.',
+    hy: 'Սովորական ֆայլ չէ (թղթապանակ, հղում կամ սարք) — ցուցադրելու տեքստ չկա։',
+    ru: 'Не обычный файл (папка, ссылка или устройство) — текста для показа нет.',
+  },
+  roTooLarge: {
+    en: 'Too large to open here — it is over the 2 MB edit limit, so it was not loaded.',
+    hy: 'Չափազանց մեծ է այստեղ բացելու համար — անցնում է 2 ՄԲ սահմանը, ուստի չի բեռնվել։',
+    ru: 'Слишком велик, чтобы открыть здесь — больше лимита в 2 МБ, поэтому не загружен.',
+  },
+  roBinary: {
+    en: 'Not text — the bytes are not valid UTF-8, so this cannot be shown or edited here.',
+    hy: 'Տեքստ չէ — բայթերը վավեր UTF-8 չեն, ուստի սա չի կարող ցուցադրվել կամ խմբագրվել այստեղ։',
+    ru: 'Не текст — байты не являются корректным UTF-8, показать или изменить нельзя.',
+  },
+
+  // ── selection tray ────────────────────────────────────────────────────────
+  selFilesTotal: {
+    en: 'files, totalling',
+    hy: 'ֆայլ՝ ընդհանուր',
+    ru: 'файлов, всего',
+  },
+  selFolders: {
+    en: 'folders (size not measured)',
+    hy: 'թղթապանակ (չափը չի չափվել)',
+    ru: 'папок (размер не измерялся)',
+  },
 } as const;

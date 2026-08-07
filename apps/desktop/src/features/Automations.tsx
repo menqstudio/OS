@@ -7,8 +7,16 @@ import { Modal, FormRow, Input, Button, ConfirmDialog } from '../components/ui';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Mark } from '../components/Ambient';
+import { riskLabel } from '../domain/statusLabels';
+import type { Lang } from '../domain/enums';
 import type { Automation } from '../domain/entities';
 import { STR } from './Automations.strings';
+import {
+  assessAction, assessRun, bindReceipt, buildLedger, isContractEnforced, isEngineVerified,
+  parseTrigger, summarise,
+  type EvidenceItem, type LedgerEntry, type RefusalReason,
+  type RiskFactor, type RunContract, type SessionRefusal, type TriggerParse,
+} from './automationsGovernance';
 
 // ── `automations` ⇶ Ավտոմատներ — the WORKFLOW ENERGY MANIFOLD, dressed as the AI-OS
 // mockup (views/automations.js). Every automation is a horizontal energy conduit:
@@ -22,12 +30,12 @@ import { STR } from './Automations.strings';
 // invented.
 //
 // HONEST STATE. The real `Automation` entity carries only { name, trigger, action,
-// enabled, createdAt, updatedAt } — there is NO run history, throughput, success
-// rate, gate ledger, owner or schedule. So the mockup's `flowing`/`throttled`/
-// `completed` runtime states and its per-conduit rate/log/sparkline are NEVER
-// fabricated: a conduit is `idle` (armed, enabled), `off` (disabled), or `blocked`
-// (a live wall/guard denial). Throughput reads and the run log show an honest "—"
-// and a "backend pending" note rather than invented numbers.
+// enabled, createdAt, updatedAt } — no throughput, success rate, gate ledger or owner.
+// So the mockup's `flowing`/`throttled`/`completed` runtime states and its per-conduit
+// rate/sparkline are NEVER fabricated: a conduit is `idle` (armed, enabled), `off`
+// (disabled), or `blocked` — a live wall/guard denial, or a rule the run contract
+// permanently refuses (see `sealReason`). Throughput reads stay "—": the run log is real
+// but records no rate, and the page says so instead of computing one.
 //
 // LIVE FIELD, NOT A RATE. The manifold's signature motion — flowing packets along a
 // conduit, the schematic's traveling pulse — is driven purely by whether a conduit
@@ -36,14 +44,89 @@ import { STR } from './Automations.strings';
 // disabled and sealed conduits are still. Readouts stay "—" throughout. The
 // SCHEDULER SWEEP likewise walks only armed intake valves. Reduced motion stills all.
 //
-// GOVERNANCE GUARANTEE (honest). "Run now" executes an automation's action: local,
-// reversible, non-AI actions (notify, create task) run DIRECTLY; any action that would
-// reach the model/engine routes through the governed, fail-closed chain (a lease + a
-// verified receipt) and is refused if it can't be verified. The note lives in the
-// authoring form AND is surfaced as the schematic's governed guard gate + guarantee line.
+// GOVERNED RUN (Phase 8). A fire now carries a CONTRACT, and the history says what is
+// actually known about each one. `automationsGovernance.ts` holds the whole rule set; this
+// page is its surface:
+//
+//   · Authoring refuses a rule whose action has no governed path (the roadmap's Phase-8 rule),
+//     so an ungoverned automation cannot be created at all — `create_automation` is not called.
+//   · "Run now" is gated by `assessRun` BEFORE the invoke. A refusal never reaches the backend,
+//     and it is recorded with its reason instead of vanishing.
+//   · The selected conduit shows the contract it runs under: authority, role, command + tier,
+//     scope, risk (with the facts the level came from) and the evidence a run must produce.
+//   · The history merges the real `automation_runs` log with this session's refusals, and
+//     labels each row with what is genuinely known: a run this session contracted, a stored run
+//     whose authority the table never recorded, or a refusal (and by whom).
+//
+// WHAT IS NEVER CLAIMED. No automation path produces a signed engine receipt in this build, so
+// nothing here is ever shown as verified — the strongest label is "contract enforced here".
+// The scheduler fires unattended runs inside the Rust backend, which this page cannot gate;
+// those rows say "authority not recorded", because that is exactly what the store knows.
 
 // The three states honestly derivable from the entity + a live denial.
 type RuntimeState = 'idle' | 'off' | 'blocked';
+
+// ── enum → string-table maps. Every governance value the module produces is a closed id,
+//    so the copy for it is looked up, never composed. TypeScript checks exhaustiveness. ──
+const REFUSAL_STR: Record<RefusalReason, keyof typeof STR> = {
+  action_empty: 'refuseActionEmpty',
+  action_malformed: 'refuseActionMalformed',
+  action_argument_missing: 'refuseActionArgumentMissing',
+  action_verb_unknown: 'refuseActionVerbUnknown',
+  action_reaches_model: 'refuseActionReachesModel',
+  automation_disabled: 'refuseAutomationDisabled',
+  command_denied: 'refuseCommandDenied',
+  risk_above_local_ceiling: 'refuseRiskAboveCeiling',
+};
+
+const REFUSAL_FIX: Record<RefusalReason, keyof typeof STR> = {
+  action_empty: 'fixVocabulary',
+  action_malformed: 'fixVocabulary',
+  action_argument_missing: 'fixVocabulary',
+  action_verb_unknown: 'fixVocabulary',
+  action_reaches_model: 'fixNoGovernedPath',
+  automation_disabled: 'fixEnable',
+  command_denied: 'guardFix',
+  risk_above_local_ceiling: 'fixNoGovernedPath',
+};
+
+const FACTOR_STR: Record<RiskFactor, keyof typeof STR> = {
+  local_effect_only: 'factorLocalEffectOnly',
+  not_removable_in_app: 'factorNotRemovable',
+  unattended_schedule: 'factorUnattended',
+  reaches_model: 'factorReachesModel',
+};
+
+const EVIDENCE_STR: Record<EvidenceItem['id'], keyof typeof STR> = {
+  run_row: 'evRunRow',
+  audit_event: 'evAuditEvent',
+  engine_receipt: 'evEngineReceipt',
+};
+
+const ACTOR_STR: Record<RunContract['actor'], keyof typeof STR> = {
+  owner: 'actorOwner',
+  scheduler: 'actorScheduler',
+  unrecorded: 'actorUnrecorded',
+};
+
+const ROLE_STR: Record<RunContract['roleId'], keyof typeof STR> = {
+  'desktop-owner': 'roleDesktopOwner',
+  'local-scheduler': 'roleLocalScheduler',
+  none: 'roleNone',
+};
+
+const KIND_STR: Record<LedgerEntry['kind'], keyof typeof STR> = {
+  executed: 'kindExecuted',
+  refused: 'kindRefused',
+  failed: 'kindFailed',
+};
+
+const PROVENANCE_STR: Record<LedgerEntry['provenance'], keyof typeof STR> = {
+  contracted_this_session: 'provContracted',
+  authority_not_recorded: 'provUnrecorded',
+  refused_preflight: 'provRefusedPreflight',
+  refused_by_store: 'provRefusedStore',
+};
 
 // state → shared aios state class (drives the `--st`/`--st-rgb` colour token used by
 // the lane, valve, pipe, diagram rail, index dot and readout).
@@ -67,7 +150,94 @@ function reduced(): boolean {
 // centralised, so the inline styles stay type-clean.
 const cssVars = (v: Record<string, string>): CSSProperties => v as unknown as CSSProperties;
 
-// ── the authoring form (governance guarantee preserved verbatim) ──────────────
+type Localise = (k: keyof typeof STR) => string;
+
+/** The interval in the trigger's own vocabulary (`every: 5m`), rebuilt from the parsed
+ *  milliseconds so the readout can never disagree with what the scheduler will do. */
+function intervalText(intervalMs: number): string {
+  if (intervalMs % 86_400_000 === 0) return `${intervalMs / 86_400_000}d`;
+  if (intervalMs % 3_600_000 === 0) return `${intervalMs / 3_600_000}h`;
+  return `${intervalMs / 60_000}m`;
+}
+
+/** What the SCHEDULER will really do with this trigger. `unrecognised` is the one that used to
+ *  be invisible: a rule with trigger `cron` reads as armed and is never fired by anything. */
+function describeTrigger(trigger: string, L: Localise): { parsed: TriggerParse; text: string } {
+  const parsed = parseTrigger(trigger);
+  if (parsed.kind === 'interval' && parsed.intervalMs !== null) {
+    return { parsed, text: `${L('everyLabel')} ${intervalText(parsed.intervalMs)} — ${L('triggerScheduled')}` };
+  }
+  return { parsed, text: parsed.kind === 'manual' ? L('triggerManualOnly') : L('triggerUnrecognised') };
+}
+
+/** One labelled row of the contract panel. */
+function Fact({ k, children }: { k: string; children: ReactNode }) {
+  return (
+    <div className="au-fact">
+      <span className="au-fk">{k}</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+/**
+ * The contract a run of this automation carries: who, under which role, through which command at
+ * which tier, over what scope, at what risk (and from which facts), and what evidence it owes.
+ * Rendered for the selected conduit and previewed while a rule is being written, so the shape is
+ * the same thing in both places.
+ */
+function ContractPanel(
+  { contract, lang, L, compact }:
+  { contract: RunContract; lang: Lang; L: Localise; compact?: boolean },
+) {
+  const trigger = describeTrigger(contract.trigger.raw, L);
+  return (
+    <div className="au-contract" role="group" aria-label={L('runContract')}>
+      <span className="micro au-ct-h">{L('runContract')}</span>
+      <div className="au-facts">
+        <Fact k={L('contractAuthority')}>{L(ACTOR_STR[contract.actor])}</Fact>
+        <Fact k={L('contractRole')}><code className="mono">{L(ROLE_STR[contract.roleId])}</code></Fact>
+        <Fact k={L('contractCommand')}>
+          <code className="mono">{contract.command}</code>
+          <span className="au-ct-tags">
+            <span className={`tier tier-${contract.tier}`}>{L('tierLabel')} {contract.tier}</span>
+            <span className={`pill ${contract.grant === 'allow' ? 'info' : 'warn'}`}>
+              {L(contract.grant === 'allow' ? 'grantAllow' : 'grantDeny')}
+            </span>
+          </span>
+        </Fact>
+        <Fact k={L('contractScope')}>
+          <ul className="au-list">
+            {contract.scope.map((sc) => <li key={sc}><code className="mono">{sc}</code></li>)}
+          </ul>
+        </Fact>
+        <Fact k={L('contractRisk')}>
+          <b>{riskLabel(contract.risk, lang)}</b>
+          <ul className="au-list">
+            {contract.riskFactors.map((f) => <li key={f}>{L(FACTOR_STR[f])}</li>)}
+          </ul>
+        </Fact>
+        <Fact k={L('contractEvidence')}>
+          {/* An item is only ever `held` when this page genuinely has it. `engine_receipt` is
+              never produced in this build, and says so instead of reading as merely missing. */}
+          <ul className="au-list au-ev">
+            {contract.evidence.map((e) => (
+              <li key={e.id} className={e.observed ? 'is-held' : 'is-open'}>
+                {L(EVIDENCE_STR[e.id])} — <i className="micro">
+                  {e.id === 'engine_receipt' ? L('evNever') : e.observed ? L('evObserved') : L('evNotObserved')}
+                </i>
+              </li>
+            ))}
+          </ul>
+        </Fact>
+        {!compact && <Fact k={L('contractSchedule')}>{trigger.text}</Fact>}
+      </div>
+      {!compact && <p className="au-note muted">{L('contractNote')}</p>}
+    </div>
+  );
+}
+
+// ── the authoring form — the Phase-8 authoring-time gate lives here ───────────
 function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { t, lang } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
@@ -75,10 +245,32 @@ function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const [trigger, setTrigger] = useState('');
   const [action, setAction] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // OUR refusal, kept apart from the backend `error` because the call is never made.
+  const [refused, setRefused] = useState<RefusalReason | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // The contract this rule WOULD run under, previewed live from what is typed. Built through the
+  // same `assessRun` the run path uses, over a draft automation, so the preview cannot drift
+  // from the gate that will actually judge it.
+  const draft: Automation = {
+    id: 'draft', name: name.trim(), trigger: trigger.trim(), action: action.trim(),
+    enabled: true, createdAt: '', updatedAt: '',
+  };
+  const assessment = assessRun(draft, 'owner');
+  const triggerRead = describeTrigger(trigger, L);
 
   const submit = () => {
     if (!name.trim() || busy) return;
+    // FAIL-CLOSED GATE (roadmap Phase 8: refuse an ungoverned automation at AUTHORING time).
+    // An action with no governed path never becomes a stored automation — `create_automation`
+    // is not invoked at all, and the reason is shown instead of a rule that can only ever fail.
+    const gate = assessAction(action);
+    if (!gate.ok) {
+      setRefused(gate.reason);
+      setError(null);
+      return;
+    }
+    setRefused(null);
     setBusy(true);
     setError(null);
     desktop
@@ -108,9 +300,31 @@ function NewRuleForm({ onClose, onCreated }: { onClose: () => void; onCreated: (
       <FormRow label={t('field.trigger')}>
         <Input value={trigger} onChange={(e) => setTrigger(e.target.value)} placeholder={L('triggerHint')} />
       </FormRow>
+      {trigger.trim() !== '' && (
+        <p className={`au-note micro${triggerRead.parsed.kind === 'unrecognised' ? ' au-warn' : ' muted'}`}>
+          {triggerRead.text}
+        </p>
+      )}
       <FormRow label={t('field.action')}>
         <Input value={action} onChange={(e) => setAction(e.target.value)} placeholder={L('actionHint')} />
       </FormRow>
+      {/* The refusal, if the owner already pressed Create. Assertive: it is the answer to an
+          action they took, and it means nothing was written. */}
+      {refused && (
+        <div className="au-blocked" role="alert">
+          <div className="au-blocked-title"><span aria-hidden="true">⛔</span>{L('authoringRefused')}</div>
+          <div className="au-blocked-reason">{L(REFUSAL_STR[refused])}</div>
+          <div className="au-blocked-fix">{L(REFUSAL_FIX[refused])}</div>
+        </div>
+      )}
+      {/* The contract preview — shown once the action parses, so the owner sees the authority,
+          scope, risk and evidence the rule will carry BEFORE it exists. */}
+      {assessment.refusal === null && (
+        <div className="au-preview">
+          <span className="micro">{L('contractPreview')}</span>
+          <ContractPanel contract={assessment.contract} lang={lang} L={L} compact />
+        </div>
+      )}
       <div className="form-actions">
         <Button type="button" variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
         <Button type="button" variant="primary" disabled={busy} onClick={submit}>{t('action.create')}</Button>
@@ -128,9 +342,18 @@ export function Automations() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [stateFilter, setStateFilter] = useState<'all' | RuntimeState>('all');
   // A wall/guard denial captured from an enable/disable attempt; drives the
-  // per-automation `blocked` runtime state and the inline reason + fix.
-  const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null);
+  // per-automation `blocked` runtime state and the inline reason + fix. `reason` is set only
+  // when OUR contract refused (no call was made), which gets a different title and fix.
+  const [actionError, setActionError] =
+    useState<{ id: string; message: string; reason?: RefusalReason } | null>(null);
   const [announce, setAnnounce] = useState('');
+
+  // ── the governed-run session record ────────────────────────────────────────────────
+  // `receipts` binds a returned run row to the contract this session enforced before the call —
+  // the ONLY basis on which a history row may be attributed to anyone. `refusals` holds the runs
+  // that were refused; the store has no table for them, so they live here and say so.
+  const [receipts, setReceipts] = useState<Record<string, RunContract>>({});
+  const [refusals, setRefusals] = useState<SessionRefusal[]>([]);
 
   const manifoldRef = useRef<HTMLDivElement | null>(null);
   const laneRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -151,9 +374,22 @@ export function Automations() {
     blocked: L('sealedState'),
   }[st]);
 
+  /**
+   * A contract refusal that is about the RULE itself — not merely that it is switched off. Such
+   * a conduit is SEALED: no fire of it can ever take effect, whether from this page or from the
+   * scheduler, so the page says so up front instead of only when the owner presses Run.
+   * `automation_disabled` is excluded because "off" is already its own honest state.
+   */
+  const sealReason = (a: Automation): RefusalReason | null => {
+    const { refusal } = assessRun(a, 'owner');
+    return refusal !== null && refusal !== 'automation_disabled' ? refusal : null;
+  };
+
   // Honest state derivation — never fabricates a run it cannot observe.
   const runtimeState = (a: Automation): RuntimeState => {
-    if (actionError && actionError.id === a.id && isDenial(actionError.message)) return 'blocked';
+    if (actionError && actionError.id === a.id
+      && (actionError.reason !== undefined || isDenial(actionError.message))) return 'blocked';
+    if (sealReason(a) !== null) return 'blocked';
     return a.enabled ? 'idle' : 'off';
   };
 
@@ -185,6 +421,25 @@ export function Automations() {
 
   const selected = items.find((a) => a.id === selectedId)
     ?? filtered[0] ?? items[0] ?? null;
+
+  // The selected conduit's governed history: the durable run log merged with this session's
+  // refusals for THIS automation, each row carrying only the authority that is genuinely known.
+  const ledger = useMemo(
+    () => buildLedger(
+      runs.data ?? [],
+      refusals.filter((r) => r.contract.automationId === selected?.id),
+      receipts,
+    ),
+    [runs.data, refusals, receipts, selected?.id],
+  );
+  const ledgerSummary = useMemo(() => summarise(ledger), [ledger]);
+
+  // Does the SCHEDULER actually fire anything here? True only when a real row carries an
+  // interval trigger — the unattended path this page cannot gate.
+  const hasScheduled = useMemo(
+    () => items.some((a) => a.enabled && parseTrigger(a.trigger).kind === 'interval'),
+    [items],
+  );
 
   // Default-select the first conduit once data arrives (mockup init select(DEFAULT)).
   useEffect(() => {
@@ -235,19 +490,52 @@ export function Automations() {
       });
   };
 
-  // Run an automation NOW: its local (no-AI) action fires and the honest outcome (ok/failed + detail)
-  // is announced. A disabled automation refuses server-side; the button is also disabled for it.
+  /** Record a refusal so it survives in the history instead of vanishing. Never persisted —
+   *  `automation_runs` only has room for runs that executed. */
+  const recordRefusal = (
+    contract: RunContract, reason: RefusalReason | null, origin: 'preflight' | 'store', detail: string,
+  ) => {
+    const at = Date.now();
+    setRefusals((prev) => [
+      ...prev,
+      { key: `refusal:${contract.automationId}:${at}:${prev.length}`, at: String(at), reason, detail, contract, origin },
+    ]);
+  };
+
+  /**
+   * Run an automation NOW, GOVERNED.
+   *
+   * The contract is assessed FIRST. A refusal ends here: `run_automation` is never invoked, so
+   * nothing is written, and the reason + fix are shown and recorded. Only an allowed contract
+   * reaches the backend, and the row it returns is bound to that contract — which is the only
+   * thing that lets the history say, truthfully, under whose authority that run happened.
+   */
   const runNow = (a: Automation) => {
+    const assessment = assessRun(a, 'owner');
+    if (assessment.refusal !== null) {
+      const reason = assessment.refusal;
+      const message = L(REFUSAL_STR[reason]);
+      recordRefusal(assessment.contract, reason, 'preflight', message);
+      setActionError({ id: a.id, message, reason });
+      setAnnounce(`${a.name}: ${L('refusalTitle')} — ${message}`);
+      return;
+    }
     desktop
       .runAutomation(a.id)
       .then((r) => {
         setActionError(null);
+        // The returned row is the run-row evidence. Binding it here is the ONLY way an entry
+        // becomes attributable; nothing else in the page can set it.
+        setReceipts((prev) => ({ ...prev, [r.id]: bindReceipt(assessment.contract, r) }));
         setAnnounce(`${a.name}: ${r.outcome === 'ok' ? '✓' : '⚠'} ${r.detail}`);
         s.reload();
         runs.reload();
       })
       .catch((e: unknown) => {
         const message = e instanceof Error ? e.message : String(e);
+        // The backend refused a run our contract allowed: recorded as a refusal BY THE STORE, so
+        // the two kinds of "no" stay distinguishable in the history.
+        recordRefusal(assessment.contract, null, 'store', message);
         setActionError({ id: a.id, message });
         setAnnounce(isDenial(message) ? `${a.name}: ${stateLabel('blocked')}` : message);
       });
@@ -331,6 +619,11 @@ export function Automations() {
         {items.length > 0 && (
           <span className="pill info" id="auSched">{L('schedSweep')}</span>
         )}
+        {/* Earned, not decorative: shown only when a real enabled row has an interval trigger,
+            i.e. when the backend scheduler genuinely fires runs this page cannot contract. */}
+        {hasScheduled && (
+          <span className="pill warn" title={L('contractNote')}>{L('schedulerUngoverned')}</span>
+        )}
         <Button variant="primary" onClick={() => setCreating(true)} title={L('newN')}>
           {t('action.new')}
         </Button>
@@ -413,7 +706,11 @@ export function Automations() {
     const a = selected;
     const st = runtimeState(a);
     const sealed = st === 'blocked';
-    const denial = actionError && actionError.id === a.id ? actionError.message : null;
+    const err = actionError && actionError.id === a.id ? actionError : null;
+    const denial = err ? err.message : null;
+    // The contract this conduit runs under, and the standing refusal (if any) that seals it.
+    const assessment = assessRun(a, 'owner');
+    const seal = sealReason(a);
 
     return (
       <div className="schem" role="region" aria-label={`${L('schematic')} — ${a.name}`}>
@@ -428,23 +725,43 @@ export function Automations() {
         </div>
 
         <div className="sc-actions">
-          <Button variant="ghost" onClick={() => runNow(a)} disabled={!a.enabled} title={L('runNowTitle')}>
+          {/* Disabled for a sealed conduit as well as an off one — but `runNow` re-assesses the
+              contract itself, so the guarantee does not rest on the button being disabled. */}
+          <Button
+            variant="ghost"
+            onClick={() => runNow(a)}
+            disabled={!a.enabled || seal !== null}
+            title={L('runNowTitle')}
+          >
             {L('runNow')}
           </Button>
           <Button variant="ghost" onClick={() => toggle(a)}>
             {t(a.enabled ? 'automations.disable' : 'automations.enable')}
           </Button>
+          {/* `delete_automation` is a GRANTED command (tier X) — unlike the hard-deletes on the
+              neighbouring pages, which the window capability set denies. It stays offered here. */}
           <Button variant="ghost" onClick={() => setPendingDelete(a.id)}>{t('action.delete')}</Button>
         </div>
 
         {/* governance guarantee, surfaced on the selected conduit */}
         <p className="sc-desc">{governLine}</p>
 
-        {denial && isDenial(denial) && renderBlocked(
+        {/* Three distinct "no"s, never blurred into one: OUR contract refused (nothing was
+            called), the backend denied, or an ordinary failure. */}
+        {err?.reason !== undefined && renderBlocked(
+          `${L('refusalTitle')}: ${err.message}`,
+          L(REFUSAL_FIX[err.reason]),
+        )}
+        {err?.reason === undefined && denial && isDenial(denial) && renderBlocked(
           denial,
           L('guardFix'),
         )}
-        {denial && !isDenial(denial) && <div className="form-error">{denial}</div>}
+        {err?.reason === undefined && denial && !isDenial(denial) && <div className="form-error">{denial}</div>}
+        {/* A standing seal is shown even before anything is pressed: this rule cannot run. */}
+        {err === null && seal !== null && renderBlocked(
+          `${L('refusalTitle')}: ${L(REFUSAL_STR[seal])}`,
+          L(REFUSAL_FIX[seal]),
+        )}
 
         <div className="sc-grid">
           {/* the diagram — trigger ▸ governed guard ▸ action ▸ outlet. No run data,
@@ -496,9 +813,19 @@ export function Automations() {
               </div>
               <div className="au-fact">
                 <span className="au-fk">{L('ownerFact')}</span>
-                <span>—</span>
+                {/* The entity carries no owner column, and inventing one would be the exact
+                    defect this page is fixing. The CONTRACT below names the authority a run
+                    acts under, which is a different and knowable thing. */}
+                <span>{L('actorUnrecorded')}</span>
               </div>
             </div>
+
+            {/* The run contract — who, which role, which command at which tier, what scope,
+                what risk and from which facts, and what evidence a run owes. */}
+            <div className="au-block">
+              <ContractPanel contract={assessment.contract} lang={lang} L={L} />
+            </div>
+
             <div className="au-block">
               <span className="micro">{L('governedTelemetry')}</span>
               <p className="au-note muted">{telemetryPending}</p>
@@ -508,20 +835,37 @@ export function Automations() {
 
         <div className="sc-foot">
           <span className="micro sc-foot-h">{L('recentFires')}</span>
-          {/* REAL run history (Phase 8): the automation_runs log, newest first. Honest empty state
-              for a never-run conduit; no fabricated telemetry. */}
-          {runs.data && runs.data.length > 0 ? (
-            <ul className="au-runs" role="list">
-              {runs.data.slice(0, 6).map((r) => (
-                <li key={r.id} className="au-run">
-                  <span className={`pill ${r.outcome === 'ok' ? 'mint' : 'warn'}`}>
-                    {r.outcome === 'ok' ? '✓' : '⚠'}
-                  </span>
-                  <span className="au-run-detail">{r.detail}</span>
-                  <span className="micro mono au-run-time">{fmtDate(r.ranAt)}</span>
-                </li>
-              ))}
-            </ul>
+          {/* THE GOVERNED HISTORY. The real `automation_runs` log merged with the refusals this
+              session recorded, newest first. Every row states what is genuinely known about it:
+              a run this session contracted, a stored run whose authority the table never
+              recorded, or a refusal — and, for a refusal, whether it was refused here (nothing
+              was written) or by the store. Nothing is shown as verified: no automation run
+              produces a signed receipt in this build (`isEngineVerified` is never true). */}
+          {ledger.length > 0 ? (
+            <>
+              <ul className="au-runs" role="list">
+                {ledger.slice(0, 8).map((e) => (
+                  <li key={e.key} className={`au-run au-k-${e.kind}${e.persisted ? '' : ' au-volatile'}`}>
+                    <span className={`pill ${e.kind === 'executed' ? 'mint' : 'warn'}`}>
+                      {e.kind === 'executed' ? '✓' : e.kind === 'refused' ? '⊘' : '⚠'} {L(KIND_STR[e.kind])}
+                    </span>
+                    <span className="au-run-detail">{e.detail}</span>
+                    <span
+                      className={`micro au-run-prov${isContractEnforced(e) ? ' is-bound' : ''}`}
+                      title={isEngineVerified(e) ? undefined : L('contractNote')}
+                    >
+                      {L(PROVENANCE_STR[e.provenance])}
+                    </span>
+                    {!e.persisted && <span className="micro au-run-vol">{L('notPersisted')}</span>}
+                    <span className="micro mono au-run-time">{fmtDate(e.at)}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="au-note muted">
+                {L('historyLegend')} — <b className="mono">{ledgerSummary.attributed}</b> {L('ledgerAttributed')}
+                {' · '}<b className="mono">{ledgerSummary.unattributed}</b> {L('ledgerUnattributed')}
+              </p>
+            </>
           ) : (
             <p className="au-note muted">{L('noRuns')}</p>
           )}
@@ -761,9 +1105,43 @@ const CSS = `
 .v-automations .au-block .micro{display:block;margin-bottom:6px}
 .v-automations .au-note{font-size:12px;line-height:1.55;margin:0;max-width:52ch}
 .v-automations .au-runs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-.v-automations .au-run{display:flex;align-items:center;gap:10px;font-size:12px}
+.v-automations .au-run{display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap}
 .v-automations .au-run-detail{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .v-automations .au-run-time{flex:0 0 auto;color:var(--ink-muted)}
+
+/* history provenance — what is genuinely known about a row's authority. .is-bound is the
+   ONLY affordance that reads as governed, and it is set from isContractEnforced(), never
+   from a literal. Nothing here ever reads as verified: no receipt exists to verify. */
+.v-automations .au-run-prov{flex:0 0 auto;color:var(--ink-muted);border:1px solid rgb(var(--line-rgb)/.9);
+  border-radius:var(--r-pill);padding:1px 8px}
+.v-automations .au-run-prov.is-bound{color:var(--cyan);border-color:rgb(var(--cyan-rgb)/.4);background:rgb(var(--cyan-rgb)/.08)}
+.v-automations .au-run-vol{flex:0 0 auto;color:var(--ink-muted);font-style:italic}
+.v-automations .au-run.au-volatile{opacity:.86}
+.v-automations .au-run.au-k-refused .au-run-detail{color:var(--ink-muted)}
+
+/* The run contract panel. Unscoped on purpose — like .au-gov it also renders inside the
+   authoring modal, which portals out of .v-automations, so the fact/blocked grammar it uses
+   is repeated here rather than inherited from the page-scoped rules above. */
+.au-contract{display:block}
+.au-contract .au-facts{display:grid;gap:12px}
+.au-contract .au-fact{display:flex;flex-direction:column;gap:3px;min-width:0}
+.au-contract .au-fk{font-family:var(--f-mono);font-size:8.5px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-muted)}
+.au-contract .au-fact>span:not(.au-fk){font-size:12px;color:var(--ink);word-break:break-word}
+.au-contract .au-note{font-size:12px;line-height:1.55;margin:10px 0 0;max-width:52ch;color:var(--ink-muted)}
+.au-blocked{border:1px solid rgb(var(--danger-rgb)/.4);background:rgb(var(--danger-rgb)/.09);
+  border-radius:12px;padding:var(--s4);margin:4px 0 12px}
+.au-blocked-title{font-weight:700;color:var(--danger);display:flex;align-items:center;gap:8px}
+.au-blocked-reason{margin-top:6px;word-break:break-word}
+.au-blocked-fix{margin-top:8px;font-size:13px;color:var(--ink-muted);max-width:60ch}
+.au-contract .au-ct-h{display:block;margin-bottom:8px;font-weight:700}
+.au-contract .au-ct-tags{display:inline-flex;gap:6px;align-items:center;margin-left:8px;flex-wrap:wrap}
+.au-contract .au-list{list-style:none;margin:3px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;
+  font-size:11.5px;color:var(--ink-muted);line-height:1.45}
+.au-contract .au-ev li.is-held{color:var(--ink)}
+.au-preview{margin:12px 0 4px;border-top:1px solid rgb(var(--line-rgb)/.9);padding-top:10px}
+.au-preview>.micro{display:block;margin-bottom:8px;color:var(--ink-muted)}
+.au-warn{color:var(--warn,var(--danger))}
 
 .v-automations .astat.au-danger b{color:var(--danger)}
 

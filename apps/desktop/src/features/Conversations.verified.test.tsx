@@ -104,4 +104,40 @@ describe('Chat — nothing renders as Verified without a trusted_verified receip
     expect(screen.queryByText('Verified')).not.toBeInTheDocument();
     expect(document.querySelector('.turn .badge--success')).toBeNull();
   });
+
+  // `demonstration_custody` is the label a COMMITTED governed row carries when every chain and
+  // manifest check passed but the anchor that vouched for the signing key is kit-generated or the
+  // compiled-in demonstration key (production_trust.rs). The turn is real; the custody claim is
+  // not. Both ways of getting this wrong are asserted below.
+  it('renders a committed demonstration_custody row with the demo badge, not the production green', async () => {
+    setup([msg('m-1', 'demonstration_custody')]);
+    await openTheRoom('reply m-1');
+
+    expect(screen.getByText('Verified · demo')).toBeInTheDocument();
+    expect(screen.queryByText('Verified')).not.toBeInTheDocument();
+    expect(document.querySelector('.turn .badge--success')).toBeNull();
+  });
+
+  it('does NOT render a demonstration_custody turn as nothing (the chain really ran)', async () => {
+    setup([msg('m-1', 'demonstration_custody')]);
+    await openTheRoom('reply m-1');
+
+    // A badge is present on the turn — silence would erase the evidence that a governed
+    // chain produced this body.
+    expect(document.querySelector('.turn .badge')).not.toBeNull();
+    expect(document.querySelector('.turn .badge--info')).not.toBeNull();
+  });
+
+  // Both committed trust states on screen at once: the ONLY row wearing the production green is
+  // the one whose committed row genuinely says `trusted_verified`.
+  it('separates the two committed trust states side by side', async () => {
+    setup([msg('m-1', 'trusted_verified'), msg('m-2', 'demonstration_custody')]);
+    await openTheRoom('reply m-1');
+    await waitFor(() => expect(screen.getByText('reply m-2')).toBeInTheDocument());
+
+    expect(document.querySelectorAll('.turn .badge--success')).toHaveLength(1);
+    expect(document.querySelectorAll('.turn .badge--info')).toHaveLength(1);
+    expect(screen.getByText('Verified')).toBeInTheDocument();
+    expect(screen.getByText('Verified · demo')).toBeInTheDocument();
+  });
 });

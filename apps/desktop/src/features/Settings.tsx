@@ -7,6 +7,7 @@ import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { Lang, Theme } from '../domain/enums';
 import { STR } from './Settings.strings';
+import { readAppIdentity, probePreferenceStorage } from './settingsIdentity';
 
 // A read-only, accessible on/off indicator. Rendered as a disabled <button role="switch"> so the
 // state is exposed non-visually through aria-checked (the governed provider is backend-owned and
@@ -53,6 +54,20 @@ export function Settings() {
   // toggle that could re-seat the engine or route turns through the wall. Theme/language are the only
   // writable settings (localStorage-backed store owned by app/store.tsx via useApp).
   const ai = useAsync(() => desktop.aiStatus(), []);
+
+  // The running build's own name + version (see settingsIdentity.ts). Previously both
+  // were literals in this file and disagreed with the build they described.
+  const identity = useAsync(() => readAppIdentity(), []);
+  const reported = identity.data?.state === 'reported' ? identity.data : null;
+  const identityReason = identity.data?.state === 'unreported'
+    ? identity.data.reason
+    : identity.error ?? null;
+
+  // Does a preference written here actually survive? Probed once, for real, on mount —
+  // the store swallows a failed write, so without this the page cannot tell "saved" from
+  // "silently discarded, reverts on reload".
+  const [prefStorage] = useState(probePreferenceStorage);
+  const prefsPersisted = prefStorage.state === 'persisted';
 
   const data = ai.data;
   const isNone = data?.provider === 'none';
@@ -105,6 +120,20 @@ export function Settings() {
           : ready
             ? { tone: 'info', label: L('bayRunning') }
             : { tone: 'warn', label: L('bayOffline') };
+
+  // The System panel's readiness pill. It was `data?.ready ? 'live' : 'off'`, so it
+  // printed "Not ready" while the status was still loading, after a failed read, and
+  // with no backend at all — three states in which readiness is UNKNOWN, not false.
+  // Unknown now says unknown; only a real `ready` from the backend turns it live.
+  const sysPill: { tone: string; label: string } = !hasBackend()
+    ? { tone: 'off', label: L('statusUnknown') }
+    : ai.loading && data === null
+      ? { tone: 'info', label: L('bayChecking') }
+      : ai.error || !data
+        ? { tone: 'off', label: L('statusUnknown') }
+        : ready
+          ? { tone: 'live', label: t('settings.aiProviderReady') }
+          : { tone: 'warn', label: t('settings.aiProviderNotReady') };
 
   return (
     <div className={`v-settings${engineDown ? ' engine-down' : ''}`}>
@@ -255,8 +284,12 @@ export function Settings() {
                   <div className="rt-core">
                     <span className="rt-halo" aria-hidden="true" />
                     <span className="rt-mark"><Mark state={markState} size={30} /></span>
+                    {/* The runtime's identity, not a claim about it: this printed
+                        "No model loaded" whenever the engine was not ready, which is
+                        false when a model IS resolved and merely offline. The readiness
+                        claim belongs to the mark + provider status, which report it. */}
                     <span className="rt-name micro">
-                      {ready ? data.model || data.provider : L('noModel')}
+                      {data.model || data.provider}
                     </span>
                   </div>
 

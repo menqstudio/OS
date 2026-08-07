@@ -13,18 +13,55 @@ import type { Conversation, Message, SearchResult } from '../domain/entities';
 import type { Tone } from '../domain/enums';
 import { STR } from './Conversations.strings';
 
-/** Map a message's server-derived receipt outcome to its trust badge, or `null` for
- *  no badge. `development_untrusted` → amber dev badge; `trusted_verified` → green
- *  "Verified" (Wave 3b only); anything else → no badge. A blocked governed turn
- *  produces no message, so it never reaches here. Pure — unit-tested. */
-export function receiptBadge(
-  receipt: Message['receipt'],
-): { tone: Tone; key: 'chat.receiptVerified' | 'chat.receiptDev' | 'chat.receiptDemo' } | null {
-  if (receipt === 'trusted_verified') return { tone: 'success', key: 'chat.receiptVerified' };
-  // Real crypto verification, but DEMONSTRATION custody — a distinct badge, never the production green.
-  if (receipt === 'demonstration_verified') return { tone: 'info', key: 'chat.receiptDemo' };
-  if (receipt === 'development_untrusted') return { tone: 'warning', key: 'chat.receiptDev' };
-  return null;
+export interface ReceiptBadge {
+  tone: Tone;
+  key: 'chat.receiptVerified' | 'chat.receiptDev' | 'chat.receiptDemo';
+}
+
+/**
+ * Map a message's server-derived receipt string to its trust badge, or `null` for no badge.
+ *
+ * The vocabulary is the BACKEND's, and the two labels that matter are the two a committed
+ * governed row can carry (`production_trust::TrustState::committed_label`, enforced by the
+ * `governed_messages.trust_state` CHECK constraint in `governed_message_store.rs`):
+ *
+ *  - `trusted_verified` — `TrustState::Production`: a production-class signing key resolved out
+ *    of a manifest whose root signature verified under an anchor whose custody is EXTERNAL to
+ *    this build. The ONLY string that earns the green production badge.
+ *  - `demonstration_custody` — `TrustState::DemonstrationCustody`: every chain and manifest check
+ *    passed and the body is genuinely bound, but the anchor that vouched for the signing key is
+ *    kit-generated or the compiled-in demonstration key — whose private half ships in this
+ *    repository. So the run is REAL and the custody claim is not. It gets its own badge: showing
+ *    the production green would be the lie the Rust side exists to prevent, and showing nothing
+ *    would erase the evidence that a governed chain ran at all.
+ *  - `demonstration_verified` — the in-process demo-verify reply path. Same trust class as
+ *    `demonstration_custody` (real ed25519 crypto, demonstration custody, never production), so
+ *    it carries the same badge rather than a second demo vocabulary on screen.
+ *  - `development_untrusted` — amber dev badge.
+ *
+ * Everything else — null, undefined, and any string a future backend invents — gets NO badge.
+ * Fail closed: an unrecognised value is never promoted, least of all to the green. A blocked
+ * governed turn persists no message, so it never reaches here.
+ *
+ * The parameter is a plain string rather than `Message['receipt']` on purpose: the value crosses
+ * the IPC boundary untouched (`normalizeMessage` only fixes `role`), so the declared union is a
+ * hope about the backend, not a guarantee — the `default` arm is what actually holds. Pure —
+ * unit-tested.
+ */
+export function receiptBadge(receipt: string | null | undefined): ReceiptBadge | null {
+  switch (receipt) {
+    case 'trusted_verified':
+      return { tone: 'success', key: 'chat.receiptVerified' };
+    // Real governed run, custody that proves nothing about who holds the root: a badge of its
+    // own — never the production green, never silence.
+    case 'demonstration_custody':
+    case 'demonstration_verified':
+      return { tone: 'info', key: 'chat.receiptDemo' };
+    case 'development_untrusted':
+      return { tone: 'warning', key: 'chat.receiptDev' };
+    default:
+      return null;
+  }
 }
 
 type Kind = 'direct' | 'group';
@@ -804,7 +841,7 @@ function RenameConversationForm({ conversation, onClose, onRenamed }:
 /** Two-pane conversation workspace shared by the Chat (direct) and Group Chat
  *  (group) screens. Both are backed by the same conversations/messages tables. */
 export function Conversations({ kind }: { kind: Kind }) {
-  const { t, lang, focus, clearFocus } = useApp();
+  const { t, lang, focus, clearFocus, setSelectedConversation } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -828,6 +865,26 @@ export function Conversations({ kind }: { kind: Kind }) {
       clearFocus();
     }
   }, [focus, s.data, s.loading, clearFocus]);
+
+  // The thread ACTUALLY on screen: the explicit pick when there is one, the first row when there
+  // is not, and null when neither resolves (still loading, empty list, or a selected id that is
+  // not in this kind's list — all of which render the "pick a conversation" state). Derived once
+  // here so the rail's active highlight, the main pane and the published selection cannot drift.
+  const loadedConversations = s.data ?? [];
+  const activeConversation =
+    loadedConversations.find((c) => c.id === (selectedId ?? loadedConversations[0]?.id)) ?? null;
+  const activeId = activeConversation?.id ?? null;
+
+  // Lift the selection out of this component's private state. `selectedId` is still owned here —
+  // this only PUBLISHES the resolved thread, keyed by kind, so surfaces that cannot reach into
+  // this component (the delegation ledger beside the direct chat, the consensus deck under the
+  // group rooms) can follow what the owner is looking at instead of guessing or asking again.
+  useEffect(() => {
+    setSelectedConversation(kind, activeId);
+  }, [kind, activeId, setSelectedConversation]);
+  // Leaving the screen retracts the claim. A stale id left behind would have those surfaces
+  // filtering by a conversation nothing is showing — worse than showing everything.
+  useEffect(() => () => setSelectedConversation(kind, null), [kind, setSelectedConversation]);
 
   const titleKey = kind === 'group' ? 'nav.groupChat' : 'nav.chat';
   const subtitleKey = kind === 'group' ? 'groupChat.subtitle' : 'chat.subtitle';
@@ -921,7 +978,7 @@ export function Conversations({ kind }: { kind: Kind }) {
         <Rail variant="panel" label={t('chat.conversations')}>
           <Async state={s} emptyTitle={t('state.empty')} emptyHint={t('state.emptyHint')}>
             {(conversations) => {
-              const active = selectedId ?? conversations[0]?.id ?? null;
+              const active = activeId;
               return (
                 <div className="stack">
                   {conversations.map((c) => (
@@ -961,8 +1018,7 @@ export function Conversations({ kind }: { kind: Kind }) {
 
         <div className="chat-main">
           {(() => {
-            const conversations = s.data ?? [];
-            const active = conversations.find((c) => c.id === (selectedId ?? conversations[0]?.id)) ?? null;
+            const active = activeConversation;
             if (!active) {
               return (
                 <section className="chat-canvas surface soft lg" aria-label={t('chat.pickHint')}>

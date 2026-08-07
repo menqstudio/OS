@@ -14,59 +14,19 @@ import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { DirEntry } from '../domain/entities';
 import { STR } from './Files.strings';
+import {
+  crumbSegments, formatSize, isGuardDenied, parseModified, readonlyReason,
+  establishedContentSize, selectionSummary, sortEntries, NOT_ESTABLISHED,
+  type Guard, type ReadonlyReason, type SortDir, type SortKey,
+} from './filesModel';
 
-// Reconstruct clickable breadcrumb segments from the REAL current path string
-// (from `listDir`). Ancestor segments become navigable to their reconstructed
-// path; the last segment is the current directory. No fabrication — every label
-// and target is derived from the real path the backend resolved.
-function crumbSegments(path?: string): { label: string; nav?: string }[] {
-  if (!path) return [];
-  const sep = path.includes('\\') ? '\\' : '/';
-  const segs: { label: string; nav?: string }[] = [];
-  let acc = '';
-  path.split(sep).forEach((part, i) => {
-    if (part === '') { if (i === 0) acc = sep; return; }
-    acc = acc === '' || acc === sep ? acc + part : acc + sep + part;
-    segs.push({ label: part, nav: acc });
-  });
-  if (segs.length) segs[segs.length - 1].nav = undefined; // current dir — not a link
-  return segs;
-}
-
-// Per-file guard state, per the §D file guard vocabulary (open / read / sealed).
-// It is DERIVED from real engine responses, never fabricated: 'open' is the lawful
-// default; a file that reads back `readonly` becomes 'read'; a denied open becomes
-// 'sealed' (the blocked state). Directories are always 'open'.
-type Guard = 'open' | 'read' | 'sealed';
-
-function formatSize(bytes: number | undefined | null): string {
-  // entry sizes can be absent/non-numeric from the backend — never render "NaN KB".
-  if (bytes == null || !Number.isFinite(bytes)) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let n = bytes / 1024;
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) {
-    n /= 1024;
-    i += 1;
-  }
-  return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
-}
-
-// A guard denial reads like a permission / scope refusal from the backend or the
-// engine wall. Distinguishing it from a plain transport failure lets us render the
-// honest `blocked` (sealed) state only when the open was actually refused.
-// The specific phrases are the EXACT strings the Rust backend (`src-tauri/src/files.rs`)
-// returns on a wall/scope refusal — "...root is not allowed", "path is outside the
-// allowed workspace", "access to this path is blocked". The prior generic-token regex
-// matched NONE of them, so a refused file was mislabelled `open` (audit F-44). Availability
-// / not-found strings ("workspace is unavailable", "not found or not accessible", "cannot
-// read file") are deliberately NOT matched — those are transport failures, not guard denials.
-function isGuardDenied(message: string): boolean {
-  return /denied|not permitted|not allowed|permission|sealed|forbidden|scope|guard|outside the allowed workspace|access to this path is blocked|is blocked/i.test(
-    message,
-  );
-}
+// The read-only explanation, in the active language. `readonlyReason` derives
+// WHICH of the three it is from what `read_file` actually reported.
+const RO_KEY: Record<ReadonlyReason, keyof typeof STR> = {
+  notRegular: 'roNotRegular',
+  tooLarge: 'roTooLarge',
+  binary: 'roBinary',
+};
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -78,7 +38,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
  *  the read happens on open and unmounts (discarding edits) on close. This keeps
  *  the original read/write wiring (`readFile`/`writeFile`) intact. */
 function FileEditor({ entry, onClose }: { entry: DirEntry; onClose: () => void }) {
-  const { t } = useApp();
+  const { t, lang } = useApp();
+  const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const toast = useToast();
   const s = useAsync(() => desktop.readFile(entry.path), [entry.path]);
   const [content, setContent] = useState('');
@@ -117,8 +78,12 @@ function FileEditor({ entry, onClose }: { entry: DirEntry; onClose: () => void }
     <Modal title={entry.name} onClose={onClose}>
       {s.loading && s.data === null && <Skeleton rows={6} />}
       {s.error && <ErrorState message={s.error} onRetry={s.reload} />}
+      {/* Not "can't preview this" for all three cases — say which one the backend
+          reported, so a 40 MB log and a device node don't read the same. */}
       {s.data && !editable && (
-        <div className="muted" style={{ marginBottom: 16 }}>{t('files.cantPreview')}</div>
+        <div className="muted" style={{ marginBottom: 16 }}>
+          {L(RO_KEY[readonlyReason(s.data.sizeBytes)])}
+        </div>
       )}
       {editable && (
         <>
@@ -160,8 +125,12 @@ function PreviewPlane({ entry, onGuard, onEdit }: {
   onGuard: (path: string, guard: Guard) => void;
   onEdit: (entry: DirEntry) => void;
 }) {
-  const { t, lang } = useApp();
+  const { lang } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
+  const dateTime = useMemo(
+    () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
+    [lang],
+  );
   const s = useAsync(() => desktop.readFile(entry.path), [entry.path]);
 
   const denied = s.error != null && isGuardDenied(s.error);
@@ -198,6 +167,11 @@ function PreviewPlane({ entry, onGuard, onEdit }: {
   const data = s.data;
   if (!data) return null;
 
+  // A non-regular target comes back with `sizeBytes: 0` — a placeholder, not a
+  // measurement — so it is rendered as "not established" rather than "0 B".
+  const size = establishedContentSize(data);
+  const modified = parseModified(entry.modified);
+
   return (
     <div className="fx-fade">
       <div className="row between" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
@@ -205,14 +179,23 @@ function PreviewPlane({ entry, onGuard, onEdit }: {
           <Badge tone={data.readonly ? 'info' : 'success'}>
             {data.readonly ? L('guardRead') : L('guardOpen')}
           </Badge>
-          <span className="muted">{formatSize(data.sizeBytes)}</span>
+          <span className="muted">{size == null ? NOT_ESTABLISHED : formatSize(size)}</span>
+          {/* The mtime `list_dir` already reported for this entry. Absent is said
+              plainly rather than filled in with "now" or a dash that could be read
+              as a date. */}
+          <span className="muted">
+            {L('modified')}:{' '}
+            {modified ? dateTime.format(modified) : L('modifiedNone')}
+          </span>
         </div>
         {!data.readonly && (
           <Button small onClick={() => onEdit(entry)}>{L('edit')}</Button>
         )}
       </div>
       {data.readonly ? (
-        <div className="muted" style={{ marginBottom: 8 }}>{t('files.cantPreview')}</div>
+        <div className="muted" style={{ marginBottom: 8 }}>
+          {L(RO_KEY[readonlyReason(data.sizeBytes)])}
+        </div>
       ) : (
         <div className="fx-preview-body">
           <pre className="fx-pre">{data.content}</pre>
@@ -234,6 +217,10 @@ export function Files() {
   const [preview, setPreview] = useState<DirEntry | null>(null);
   const [editing, setEditing] = useState<DirEntry | null>(null);
   const [guards, setGuards] = useState<Record<string, Guard>>({});
+  // Ordering. 'name' asc reproduces exactly what `list_dir` returned, so the
+  // default changes nothing; the other keys reorder the SAME real rows.
+  const [sortKey, setSortKey] = useState<SortKey>('name');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   const s = useAsync(() => desktop.listDir(path), [path]);
   // First read of this path still in flight — drives the honest header posture.
@@ -245,15 +232,18 @@ export function Files() {
   const folderCount = useMemo(() => entries.filter((e) => e.isDir).length, [entries]);
   const fileCount = entries.length - folderCount;
 
-  // fHits: filter the real, already-loaded index by chip (folders/files) and query.
+  // fHits: filter the real, already-loaded index by chip (folders/files) and
+  // query, then reorder it. Both steps are pure functions of the listing the
+  // backend returned — no row is added, hidden or invented.
   const hits = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return entries.filter((e) => {
+    const kept = entries.filter((e) => {
       if (kindFilter === 'folder' && !e.isDir) return false;
       if (kindFilter === 'file' && e.isDir) return false;
       return q === '' || e.name.toLowerCase().includes(q);
     });
-  }, [entries, kindFilter, query]);
+    return sortEntries(kept, sortKey, sortDir);
+  }, [entries, kindFilter, query, sortKey, sortDir]);
 
   const safeCursor = hits.length === 0 ? 0 : Math.min(cursor, hits.length - 1);
 
@@ -266,16 +256,20 @@ export function Files() {
     setCursor(0);
   }, []);
 
-  // Filtering can shrink the list under the cursor — keep it in range.
-  useEffect(() => { setCursor(0); }, [kindFilter, query]);
+  // Filtering or reordering can move the row under the cursor — keep it in range.
+  useEffect(() => { setCursor(0); }, [kindFilter, query, sortKey, sortDir]);
 
   const reportGuard = useCallback((p: string, g: Guard) => {
     setGuards((prev) => (prev[p] === g ? prev : { ...prev, [p]: g }));
   }, []);
 
+  // A file's guard state is established only by actually opening it. A file this
+  // page has never read is 'unknown' — the old default was 'open', so every row
+  // announced "open" to assistive tech on the strength of nothing. `list_dir` DID
+  // establish that a directory is navigable, so directories stay 'open'.
   const guardOf = useCallback((e: DirEntry): Guard => {
     if (e.isDir) return 'open';
-    return guards[e.path] ?? 'open';
+    return guards[e.path] ?? 'unknown';
   }, [guards]);
 
   const openEntry = useCallback((e: DirEntry) => {
