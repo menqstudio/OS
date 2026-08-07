@@ -152,11 +152,14 @@ cd engine && BRO_ENV=ci python -m unittest discover -s tests   # ~615 tests, ~16
 
 Both halves were audited (multi-agent) and fixed before landing here.
 
-- **Engine (Bro):** 1 Critical (`find`/read-only-shell scope bypass → RCE), 6 High, 9 Medium, 13 Low — all fixed; PR merged. The crypto core (leases, contracts, protected-authority, evidence) was verified sound. **Still residual-exploitable / deferred** (tracked on Bro's `fix/audit-followups`; do **not** rush — wall / owner-env coupled):
-  - **O-1 (HIGH)** bytecode-shadow — `assert_no_bytecode_shadow` has no caller and the wall isn't run with `-B`; a forged `.pyc` can shadow the control-plane digest.
-  - **O-2 (MED)** audit-head anchor is dead code (no producer; `verify()` gets no keys) → `.head` forgery still open.
-  - **O-3 (MED)** conductor session token is wired but off by default (an owner-env deploy step enables it).
-  - **O-4 / O-5 (LOW)** control-room actor self-asserted; evidence high-water not bound into the signed manifest.
+- **Engine (Bro):** 1 Critical (`find`/read-only-shell scope bypass → RCE), 6 High, 9 Medium, 13 Low — all fixed; PR merged. The crypto core (leases, contracts, protected-authority, evidence) was verified sound. **Still residual-exploitable / deferred** — do **not** rush; these are wall / owner-env coupled. The full inventory, with what each requires and which engine path it lives in, is [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md), and the engine tracks them under its own IDs in `engine/AUDIT/tickets/` — the `O-n` numbering is this repository's and appears nowhere in `engine/`.
+  *(An earlier revision of this line said these are "tracked on Bro's `fix/audit-followups`". That ref exists neither locally nor on any remote branch, so the pointer was unbacked; corrected 2026-08-08.)*
+  **All five remain OPEN.** Code landed against each on 2026-08-07 and none of them is shut:
+  - **O-1 (HIGH)** bytecode-shadow — `assert_no_bytecode_shadow` now has real callers and every hook interpreter runs `-B`. **The read half is not closeable from inside Python:** `-B` stops bytecode being *written*, nothing stops CPython *reading* an existing `.pyc`, and a cache forged before the process starts shadows the very module that would detect it.
+  - **O-2 (MED)** audit-head anchor — `append()` now attaches a signed head anchor and keyed `verify()` requires one. **Needs an Owner-provided signer** running as a principal the ledger's own writer cannot reach; without `keys` the check is structural only.
+  - **O-3 (MED)** conductor session token — now fail-closed: an absent key, a wrong type or an unreadable policy all mean REQUIRED. **Needs an Owner-minted `conductor-session` artifact**, and until it exists every conductor stop refuses.
+  - **O-4 (LOW)** control-room actor — a `bro` command must now present a verified operator-root-signed attestation. An `owner` command is still refused **by name**: closing it needs a key entry and a signature field the command schema does not yet have.
+  - **O-5 (LOW)** evidence high-water — the head digest and sequence are required and travel into a hash-chained record in a different store, so a rollback is visible from signed bytes after the evidence store is wiped. **Needs an Owner-minted `evidence-floor-anchor`** to survive a wipe-and-re-provision.
 - **Cockpit (BroPS):** 1 High (non-atomic migration could brick the DB), 8 Medium, 18 Low — all fixed; verified (core `cargo test` 29/29, `cargo check` clean, `npm run build` green); PR merged.
 
 **Golden rule:** the engine is a *security perimeter*. Any change to its wall, leases, gates, signatures, control-plane, or root model is **deliberate, tested, and never rushed.** When two paths exist, prefer the one that leaves audited security code untouched.
