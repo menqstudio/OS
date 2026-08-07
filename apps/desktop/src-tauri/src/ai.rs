@@ -1002,11 +1002,16 @@ Two things decide what a specialist may do, and you set both.\n\
 three capability tiers: `reader` (Read/Grep/Glob — cannot run, cannot change), `runner` (adds Bash — \
 can build and test but not edit), `builder` (adds Edit/Write — can change files). Grant the NARROWEST \
 tier that lets the job finish; a question about the code gets `reader`, finding out whether something \
-works gets `runner`, and only work that genuinely changes files gets `builder`. Beside those sit the \
-pack-role agents (generated from `engine/packs/registry.json` + `engine/agents/authority-policy.json`) \
-for work that belongs to a declared specialism — there an Independent Verifier deliberately cannot \
-write, because it must not be able to edit what it is judging. Never hand verification to whoever built \
-the thing.\n\
+works gets `runner`, and only work that genuinely changes files gets `builder`. The tier is the ONLY \
+thing that actually bounds a specialist's tools, so choosing it IS the capability decision.\n\
+`.claude/agents/` also holds 262 pack-role files (generated from `engine/packs/registry.json` + \
+`engine/agents/authority-policy.json`). You cannot spawn those by name from here — read them. Each one \
+records the authority its role was derived with, so when work belongs to a declared specialism: read \
+that file, spawn the TIER whose tools match its `tools:` line, and name the pack and role in the task \
+prompt. An Independent Verifier's file grants no Write on purpose — it must not be able to edit what it \
+is judging — so it gets `runner`, never `builder`. That mapping is your decision and nothing enforces \
+it for you; get it wrong and the specialist has more reach than its role allows. Never hand \
+verification to whoever built the thing.\n\
 2. WHERE — state `scope` and `prohibited_scope` in EVERY task you hand out, as concrete paths. Scope \
 may be repo-relative (`apps/desktop/src/features`) or absolute when the work genuinely lives elsewhere \
 (`C:/Users/Admin/Desktop/some-project`). No `..`, no backslashes. The scope is the entire grant: it is \
@@ -1108,6 +1113,96 @@ const BRO_BASH_DENY: &[&str] = &[
     "Bash(sh:*)", "Bash(bash:*)", "Bash(zsh:*)", "Bash(pwsh:*)", "Bash(powershell:*)", "Bash(cmd:*)", "Bash(env:*)",
 ];
 
+/// The capability tiers Bro may spawn a specialist at, as the CLI's `--agents` JSON.
+///
+/// `.claude/agents/` holds 262 generated definitions, and the app could reach NONE of them: we pass
+/// `--setting-sources ""` so no user OR project settings load, which is what keeps the repo's own
+/// `Stop` hook from wedging a headless turn — and agent definitions are a project setting. Verified
+/// against the real CLI: with `--setting-sources ""` the only subagent types offered are the
+/// built-ins. Every specialist Bro spawned would have inherited the default, so the whole
+/// capability grant was decorative from inside the app.
+///
+/// `--agents` takes the definitions inline instead, which needs no settings and so costs nothing in
+/// hook exposure. Only the three TIERS go in. That is a size limit with a real reason behind it:
+/// a Windows command line caps at 32767 characters and 262 definitions are hundreds of kilobytes,
+/// and this module deliberately keeps bulk out of argv (see [`claude_args`]).
+///
+/// So the split is: the TIER is the enforceable grant, and it is what Bro chooses; the pack ROLE is
+/// which specialism the work belongs to, which Bro states in the task prompt after reading the
+/// role's file — he has Read and Grep, and `.claude/agents/<pack>--<role>.md` records the authority
+/// that role was derived with. Stated plainly because it matters: a pack role spawned from the app
+/// is bounded by the tier Bro granted it, NOT by the `tools:` line in its own file. Bro is told to
+/// read that line and pick the matching tier, and that is a decision, not an enforcement.
+///
+/// Kept in lockstep with `tools/generate_agent_definitions.py` by
+/// `tier_definitions_match_the_generated_agent_files`.
+fn bro_agent_definitions_json() -> String {
+    let tier = |name: &str, blurb: &str, tools: &str| {
+        let tools_json = tools
+            .split(", ")
+            .map(|t| format!("\"{t}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "\"{name}\":{{\"description\":{desc},\"tools\":[{tools_json}],\"prompt\":{prompt}}}",
+            desc = json_str(&format!(
+                "{blurb} Bro picks the tier per task — grant the narrowest one that lets the job finish."
+            )),
+            prompt = json_str(&format!(
+                "You are a **{name}** specialist, spawned by Bro for one task.
+
+{blurb}
+
+Your tools are the capability half of your grant, and Bro chose this tier deliberately — a narrower one than you might want is a decision, not an oversight. If the task cannot be done at this level, say exactly what you would need and stop. Do not work around the limit.
+
+The PATH half arrives in your task prompt as `scope` and `prohibited_scope`. Outside `scope` is read-only; `prohibited_scope` is untouchable. Scope may point outside this repository when the work genuinely lives elsewhere. If the task cannot be done inside its scope, say so and stop — do not widen it yourself.
+
+Read `CLAUDE.md` before you act. Report evidence, not assurances: what you changed, what you ran, what it printed. If something cannot be made genuinely true, leave it failing and say so. Never weaken a check to make a test pass, and never claim you ran something you did not.
+
+You return your result to Bro. You do not delegate further."
+            ))
+        )
+    };
+    format!(
+        "{{{},{},{}}}",
+        tier(
+            "reader",
+            "Reads and reports. Cannot run anything and cannot change anything. Use for questions, reviews, investigations, and any answer that is about the code rather than to it.",
+            "Read, Grep, Glob"
+        ),
+        tier(
+            "runner",
+            "Reads and RUNS — builds, tests, git status/diff/log, any inspection — but cannot edit. Use to find out whether something actually works, and whenever the answer must not be produced by the same hand that could change the thing being measured.",
+            "Read, Grep, Glob, Bash"
+        ),
+        tier(
+            "builder",
+            "Full working capability: reads, runs, and changes files inside its scope. Use only when the task is genuinely to change something.",
+            "Read, Edit, Write, Grep, Glob, Bash"
+        ),
+    )
+}
+
+/// Minimal JSON string encoder — enough for the tier definitions, which are ASCII prose. Avoids
+/// pulling serde into an argv-building path for three constants.
+fn json_str(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 2);
+    out.push('"');
+    for c in raw.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// The `--tools` (+ permission-mode / disallow) argv fragment.
 ///
 /// With `BROPS_PROJECT_DIR` set, Bro gets the file tools, Bash, AND `Task` — the tool that spawns
@@ -1167,6 +1262,12 @@ fn claude_args(
     a.push("--append-system-prompt-file".into());
     a.push(system_file.to_string_lossy().into_owned());
     a.extend(tool_args(agent));
+    if agent {
+        // Without this the `Task` tool granted above can only reach the CLI's built-in agent types,
+        // because `--setting-sources ""` (below) excludes the project's `.claude/agents/`.
+        a.push("--agents".into());
+        a.push(bro_agent_definitions_json());
+    }
     a.push("--strict-mcp-config".into()); // ignore every MCP config (we pass none)
     a.push("--setting-sources".into());
     // "" → load NO setting sources: excludes user AND project hooks/plugins/MCP. Critical for the coding
@@ -1818,6 +1919,65 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `Task` grant is worthless if it can only reach the CLI's built-in agent types, which is
+    /// exactly what `--setting-sources ""` causes: project `.claude/agents/` never loads. Verified
+    /// against the real CLI before this was written — it offered only the built-ins.
+    #[test]
+    fn agent_mode_passes_the_capability_tiers_inline_so_task_can_reach_them() {
+        let sys = std::path::Path::new("/tmp/brops-ai-sandbox/system-1.txt");
+        let chat = claude_args(sys, false, None, false);
+        assert!(!chat.iter().any(|a| a == "--agents"), "sandboxed chat has no Task and needs none");
+
+        let agent = claude_args(sys, true, None, true);
+        let pos = agent.iter().position(|a| a == "--agents").expect("--agents present in agent mode");
+        let json: serde_json::Value =
+            serde_json::from_str(&agent[pos + 1]).expect("the inline definitions must be valid JSON");
+        for (tier, tools) in [
+            ("reader", vec!["Read", "Grep", "Glob"]),
+            ("runner", vec!["Read", "Grep", "Glob", "Bash"]),
+            ("builder", vec!["Read", "Edit", "Write", "Grep", "Glob", "Bash"]),
+        ] {
+            let d = json.get(tier).unwrap_or_else(|| panic!("{tier} must be offered"));
+            let got: Vec<&str> =
+                d["tools"].as_array().unwrap().iter().map(|t| t.as_str().unwrap()).collect();
+            assert_eq!(got, tools, "{tier} tools");
+            assert!(d["prompt"].as_str().unwrap().contains("prohibited_scope"), "{tier} path half");
+        }
+        // A narrower tier must be genuinely narrower, or "grant the narrowest one" means nothing.
+        assert!(!json["reader"]["tools"].as_array().unwrap().iter().any(|t| t == "Bash"));
+        assert!(!json["runner"]["tools"].as_array().unwrap().iter().any(|t| t == "Write"));
+
+        // Windows caps a command line at 32767 chars, and this module keeps bulk out of argv. That
+        // is the reason only the three tiers go inline and the 262 pack roles stay on disk.
+        assert!(agent[pos + 1].len() < 8_000, "the inline definitions must stay small");
+    }
+
+    /// The Rust tiers and `tools/generate_agent_definitions.py` describe the SAME three grants. Two
+    /// hand-maintained copies of a capability list drift, and a drifted one is worse than none
+    /// because it reads as enforcement.
+    #[test]
+    fn tier_definitions_match_the_generated_agent_files() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("..");
+        let json: serde_json::Value = serde_json::from_str(&bro_agent_definitions_json()).unwrap();
+        for tier in ["reader", "runner", "builder"] {
+            let md = repo.join(".claude").join("agents").join(format!("{tier}.md"));
+            let text = match std::fs::read_to_string(&md) {
+                Ok(t) => t,
+                // A packaged build has no repo checkout beside it. Skipping is honest here: the
+                // check is about the repo's two copies agreeing, and CI runs it from the checkout.
+                Err(_) => return,
+            };
+            let line = text
+                .lines()
+                .find(|l| l.starts_with("tools:"))
+                .unwrap_or_else(|| panic!("{tier}.md declares no tools"));
+            let from_file: Vec<&str> = line["tools:".len()..].trim().split(", ").collect();
+            let from_rust: Vec<&str> =
+                json[tier]["tools"].as_array().unwrap().iter().map(|t| t.as_str().unwrap()).collect();
+            assert_eq!(from_rust, from_file, "{tier}: ai.rs and .claude/agents/{tier}.md disagree");
+        }
+    }
 
     // Security regression: chat calls must disable ALL Claude tools so a
     // prompt-injection can't read/write files or run commands via the agent.
