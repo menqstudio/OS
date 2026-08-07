@@ -46,9 +46,12 @@ def main() -> int:
     # proximity, and they told an agent working in `engine/` that it was "inside the canonical
     # menqstudio/Bro repository" and must "not touch BroPS" -- the other half of the same
     # repository. They were removed on 2026-08-08; the monorepo has exactly one of each, at the
-    # root. `README.md` and `ROADMAP.md` stay: those describe the engine rather than instruct.
+    # root. `README.md` stays: it describes the engine rather than instructing an agent.
+    # `ROADMAP.md` went with them on 2026-08-08 for a related reason -- it was a "Post-Merge"
+    # roadmap frozen at 2026-07-19, naming PR #52 of the standalone repository as current. A
+    # monorepo has ONE plan, and it is MASTER_EXECUTION_ROADMAP.md at the root.
     required = [
-        "README.md", "ROADMAP.md",
+        "README.md",
         ".bro/policy.json", ".claude/settings.json", "config/canonical-read-manifest.json",
         "config/documentation-manifest.json", "config/sst-registry.json",
         "laws/LAW_INDEX.md", "laws/registry.json", "packs/registry.json",

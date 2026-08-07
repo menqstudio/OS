@@ -1,9 +1,9 @@
 # BroPS Success Criteria / BroPS հաջողության չափանիշներ
 
 - **Purpose:** Define the MVP definition of done — the criteria that must be GREEN to ship.
-- **Scope:** Acceptance criteria only. Future work is in [ROADMAP.md](ROADMAP.md).
+- **Scope:** Acceptance criteria only. Future work is in [MASTER_EXECUTION_ROADMAP.md](../../../MASTER_EXECUTION_ROADMAP.md).
 - **Owner:** Gev.
-- **Related:** [ROADMAP.md](ROADMAP.md), [PRINCIPLES.md](PRINCIPLES.md), [DESIGN_SYSTEM.md](architecture/DESIGN_SYSTEM.md), [product/USER_FLOWS.md](product/USER_FLOWS.md).
+- **Related:** [MASTER_EXECUTION_ROADMAP.md](../../../MASTER_EXECUTION_ROADMAP.md), [PRINCIPLES.md](PRINCIPLES.md), [DESIGN_SYSTEM.md](architecture/DESIGN_SYSTEM.md), [product/USER_FLOWS.md](product/USER_FLOWS.md).
 - **Last updated:** 2026-07-19.
 
 ## Հայերեն

@@ -130,6 +130,21 @@ _BASIS_UNPROVEN = frozenset({ACTOR_RUNTIME_ORIGINATED, ACTOR_ASSIGNEE_LEASE,
 # --------------------------------------------------------------------------- #
 CONTROL_ROOM_ACTORS = {("owner", "owner-gev"), (CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID)}
 
+#: The artifact an OWNER-issued command must present: a `control-room-command` signed by the
+#: operator root and bound to this exact command. Registered in
+#: `bro_signature.ARTIFACT_AUTHORITY` against `operator-root`.
+CONTROL_ROOM_COMMAND_ARTIFACT = "control-room-command"
+
+#: The command fields an owner attestation must reproduce. Chosen as the smallest set that makes a
+#: replay useless: WHICH command (`command_id`), on WHAT (`task_id`), and doing WHICH THING
+#: (`command`). Binding `command_id` alone would let a signed id be reused against another task if
+#: an id ever collided; binding the verb as well means a signed `cancel` cannot become a `retry`.
+COMMAND_BOUND_FIELDS = ("command_id", "task_id", "command")
+
+#: How an actor identity was established, published on the governance mirror. `ACTOR_PROVEN_BY_SESSION`
+#: is a window; this one is a single command and is therefore the stronger of the two.
+ACTOR_PROVEN_PER_COMMAND = "operator-signed-control-room-command"
+
 #: The credential a conductor-issued command must present. Reusing the artifact the
 #: operator already signs for M-4/O-3 is deliberate: one owner-minted credential, one
 #: authority binding, and no new artifact type invented by the code that consumes it.
@@ -147,17 +162,20 @@ ACTOR_ATTESTATION_MISSING = (
     "artifact described in engine/runtime/bro_policy.py "
     "(CONDUCTOR_SESSION_PROVISIONING)")
 
+#: Kept for the one case that is still unprovable: an owner command presented with NO attestation.
+#: The three changes it used to list are done — `control-room-command` is registered in
+#: `bro_signature.ARTIFACT_AUTHORITY`, this module consumes it, and the schema carries the
+#: signature fields. What remains is not a code gap: the Owner must mint the artifact offline and
+#: pin its key. Saying so precisely is the difference between "we have not built it" and "you have
+#: not signed it", and only one of those is actionable by whoever reads the refusal.
 OWNER_ACTOR_UNPROVABLE = (
-    "an owner-issued control-room command cannot be validated: nothing in this "
-    "engine can verify that a caller is the owner. Of the three changes it needs, "
-    "(1) is DONE — `control-room-command` is registered in "
-    "bro_signature.ARTIFACT_AUTHORITY against operator-root — and two remain, both "
-    "outside this module: (2) a key entry for it in the operator-signed "
-    "config/trusted-keys.json, and (3) `artifact_type`, `key_id` and a detached "
-    "signature added to schemas/control-room-command.schema.json. Registration is "
-    "not closure: this module still consumes no such artifact, so even a flawless "
-    "operator-signed one is refused here. Until all three land the owner's identity "
-    "is a claim, and a claim is refused")
+    "an owner-issued control-room command must present a `control-room-command` artifact signed "
+    "by the operator root and bound to this exact command (command_id, task_id, command). The "
+    "engine can verify one: the artifact type is registered, this module consumes it, and the "
+    "schema carries `artifact_type`/`key_id`/`signature`. What is missing is the artifact itself "
+    "— mint it offline with `broctl sign --artifact control-room-command` and list its key "
+    "`active` in config/trusted-keys.json. Until then the owner's identity is a claim, and a "
+    "claim is refused")
 
 
 class ControlRoomAPIError(ValueError):
@@ -777,7 +795,8 @@ class ControlRoomAPIV1:
                 reason, _HASH_CHAIN)
 
     def _prove_command_actor(self, actor: tuple[str, str],
-                             attestation: Any) -> dict[str, Any]:
+                             attestation: Any,
+                             command: dict[str, Any] | None = None) -> dict[str, Any]:
         """Discharge the actor claim with a signature, or refuse.
 
         Returns the proof to be recorded in the reply. There is no return path
@@ -797,17 +816,27 @@ class ControlRoomAPIV1:
         if attestation is None:
             raise ControlRoomAPIError(f"{ACTOR_ATTESTATION_MISSING}; actor claimed: "
                                       f"{actor[0]}/{actor[1]}")
-        if actor[0] != CONDUCTOR_ROLE:
-            raise ControlRoomAPIError(OWNER_ACTOR_UNPROVABLE)
         keys = self.runtime.evidence_keys
         if keys is None:
             raise ControlRoomAPIError(
                 "this runtime holds no trusted keys, so it cannot tell a signed actor "
                 "attestation from a forged one; refusing to validate a command rather "
                 "than accepting the identity claim unverified")
+        # The two actors are proven by DIFFERENT artifacts, and the difference is the point.
+        #
+        # A `conductor-session` says "the holder is the conductor until T". Within that window it
+        # authorises any command the caller could already reach — that is what a session credential
+        # means, and it is a strictly smaller claim than "anyone who can spell bro-000".
+        #
+        # The OWNER gets no session. `owner-gev` is the identity that can cancel, recover and
+        # retry, so a credential that authorises "any command for the next hour" is the wrong
+        # shape for it. The owner presents a `control-room-command` artifact bound to THIS command
+        # — per-command non-repudiation. A stolen one replays exactly one command that was already
+        # signed, rather than a window.
+        artifact_type = (CONTROL_ROOM_ACTOR_ARTIFACT if actor[0] == CONDUCTOR_ROLE
+                         else CONTROL_ROOM_COMMAND_ARTIFACT)
         try:
-            payload = verify_artifact(attestation, CONTROL_ROOM_ACTOR_ARTIFACT, keys,
-                                      now=moment)
+            payload = verify_artifact(attestation, artifact_type, keys, now=moment)
         except (SignatureError, AttributeError, TypeError) as exc:
             raise ControlRoomAPIError(
                 f"control-room actor attestation is RED: {exc}") from exc
@@ -816,6 +845,21 @@ class ControlRoomAPIV1:
                 raise ControlRoomAPIError(
                     f"actor attestation does not speak for this actor: it binds "
                     f"{field}={payload.get(field)!r}, the command claims {claimed!r}")
+        if artifact_type == CONTROL_ROOM_COMMAND_ARTIFACT:
+            # Bind the attestation to the command in hand. Without this the owner's artifact would
+            # be a session credential wearing a different name: sign one cancellation, replay it
+            # against any task. `command` is required here rather than optional-with-a-default,
+            # because a caller that forgot to pass it would silently get the weaker check.
+            if command is None:
+                raise ControlRoomAPIError(
+                    "an owner command must be proven against the command itself; no command was "
+                    "supplied to bind the attestation to")
+            for field in COMMAND_BOUND_FIELDS:
+                if payload.get(field) != command.get(field):
+                    raise ControlRoomAPIError(
+                        f"owner attestation is for a different command: it binds "
+                        f"{field}={payload.get(field)!r}, this command carries "
+                        f"{command.get(field)!r}")
         expires = payload.get("expires_at_epoch")
         if isinstance(expires, bool) or not isinstance(expires, int) or expires <= moment:
             raise ControlRoomAPIError(
@@ -824,7 +868,8 @@ class ControlRoomAPIV1:
         if not isinstance(session_id, str) or not session_id.strip():
             raise ControlRoomAPIError("actor attestation carries no session_id")
         return {
-            "identity_basis": ACTOR_PROVEN_BY_SESSION,
+            "identity_basis": (ACTOR_PROVEN_BY_SESSION if artifact_type == CONTROL_ROOM_ACTOR_ARTIFACT
+                               else ACTOR_PROVEN_PER_COMMAND),
             "key_id": payload["key_id"],
             "session_id": session_id,
             "expires_at_epoch": expires,
@@ -850,7 +895,7 @@ class ControlRoomAPIV1:
         if any({x for x in re.split(r"[^a-z0-9]+", item.lower()) if x} & FORBIDDEN_SCOPE for item in scope):
             raise ControlRoomAPIError("command scope crosses a forbidden mutation boundary")
         actor = (command["requested_by_type"], command["requested_by"])
-        proof = self._prove_command_actor(actor, actor_attestation)
+        proof = self._prove_command_actor(actor, actor_attestation, command)
         if command["scope"] != scope or command["evidence_refs"] != evidence:
             raise ControlRoomAPIError("command list values must already be normalized")
         snap = self._snapshot(command["task_id"], now)

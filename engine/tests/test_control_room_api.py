@@ -12,7 +12,9 @@ sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from bro_control_room_api import (ACTOR_PROVEN_BY_SESSION, CONTROL_ROOM_ACTOR_ARTIFACT,
+from bro_control_room_api import (ACTOR_ATTESTATION_MISSING, ACTOR_PROVEN_BY_SESSION,
+                                  ACTOR_PROVEN_PER_COMMAND, CONTROL_ROOM_ACTOR_ARTIFACT,
+                                  CONTROL_ROOM_COMMAND_ARTIFACT,
                                   ControlRoomAPIError, ControlRoomAPIV1)
 from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1
 from bro_policy import CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE
@@ -267,6 +269,31 @@ class ControlRoomActorProofTests(unittest.TestCase):
         payload.update(overrides)
         return sign_payload(self.keys[authority]["private_key"], payload)
 
+    def owner_attestation(self, authority: str = "operator-root", command: dict | None = None,
+                          **overrides) -> dict:
+        """A `control-room-command` artifact bound to one command.
+
+        Deliberately built from the command it authorises rather than from constants: a fixture
+        that hard-codes the ids would keep passing if the binding check were deleted, which is the
+        one thing this artifact exists to do.
+        """
+        cmd = command or self.command(requested_by_type="owner", requested_by="owner-gev")
+        payload = {
+            "schema": 1,
+            "artifact_type": CONTROL_ROOM_COMMAND_ARTIFACT,
+            "key_id": self.keys[authority]["key_id"],
+            "session_id": "s-owner-ceremony",
+            "agent_id": "owner-gev",
+            "role": "owner",
+            "command_id": cmd["command_id"],
+            "task_id": cmd["task_id"],
+            "command": cmd["command"],
+            "issued_at_epoch": self.now - 10,
+            "expires_at_epoch": self.now + 3600,
+        }
+        payload.update(overrides)
+        return sign_payload(self.keys[authority]["private_key"], payload)
+
     def refuse(self, contains: str, **kwargs) -> str:
         with self.assertRaises(ControlRoomAPIError) as caught:
             self.api.validate_command_intent(self.command(), now_epoch=self.now + 1, **kwargs)
@@ -295,16 +322,75 @@ class ControlRoomActorProofTests(unittest.TestCase):
         message = self.refuse("self-asserted")
         self.assertIn("conductor-session", message)
 
-    def test_an_owner_command_is_refused_by_name_and_says_what_would_close_it(self) -> None:
+    def test_an_owner_command_with_no_attestation_says_what_to_mint(self) -> None:
+        """The refusal must name the missing ARTIFACT, not a missing feature.
+
+        It used to list three code changes that would close O-4. All three landed, so a reader
+        following that message would have gone off to build what already existed. What is missing
+        now is the Owner's signature, and only one of those two is actionable by whoever hits it.
+        """
+        owner = self.command(requested_by_type="owner", requested_by="owner-gev")
+        with self.assertRaises(ControlRoomAPIError) as caught:
+            self.api.validate_command_intent(owner, now_epoch=self.now + 1,
+                                             actor_attestation=None)
+        message = str(caught.exception)
+        self.assertIn(ACTOR_ATTESTATION_MISSING, message)
+
+    def test_an_owner_command_bound_to_this_command_is_proven(self) -> None:
+        owner = self.command(requested_by_type="owner", requested_by="owner-gev")
+        reply = self.api.validate_command_intent(
+            owner, now_epoch=self.now + 1,
+            actor_attestation=self.owner_attestation(command=owner))
+        self.assertTrue(reply["valid"])
+        self.assertEqual(reply["actor_identity"], ACTOR_PROVEN_PER_COMMAND)
+        self.assertNotEqual(reply["actor_identity"], ACTOR_PROVEN_BY_SESSION,
+                            "a per-command proof must not report itself as a session")
+
+    def test_an_owner_attestation_for_a_different_command_is_refused(self) -> None:
+        """The whole point of the artifact: signing one command must not authorise another.
+
+        Each field is varied on its own, so deleting any single comparison leaves a red test.
+        """
+        owner = self.command(requested_by_type="owner", requested_by="owner-gev")
+        for field, other in (("command_id", "cmd-somebody-elses"),
+                             ("task_id", "t-999.1"),
+                             ("command", "retry")):
+            with self.subTest(field=field):
+                elsewhere = dict(owner)
+                elsewhere[field] = other
+                with self.assertRaises(ControlRoomAPIError) as caught:
+                    self.api.validate_command_intent(
+                        owner, now_epoch=self.now + 1,
+                        actor_attestation=self.owner_attestation(command=elsewhere))
+                self.assertIn("different command", str(caught.exception))
+
+    def test_proving_an_owner_without_the_command_refuses_rather_than_weakening(self) -> None:
+        """Defence in depth, and it needed its own test to be a check at all.
+
+        `validate_command_intent` always passes the command, so every other test exercises the
+        bound path and this guard stayed green when deleted — i.e. it was untested. It exists for
+        a FUTURE caller that reaches `_prove_command_actor` directly: without it, `command=None`
+        would skip the binding loop entirely and an owner artifact would silently become a session
+        credential. Reached here by calling the method directly, which is the only way to get the
+        argument wrong.
+        """
+        owner = self.command(requested_by_type="owner", requested_by="owner-gev")
+        with self.assertRaises(ControlRoomAPIError) as caught:
+            self.api._prove_command_actor(
+                ("owner", "owner-gev"), self.owner_attestation(command=owner), None)
+        self.assertIn("no command was supplied", str(caught.exception))
+
+    def test_an_owner_cannot_present_a_conductor_session(self) -> None:
+        """A session credential authorises a window; the owner's identity is not a window.
+
+        `self.attestation()` is a valid `conductor-session`. Offered for an owner command it must
+        fail on the artifact type, not be quietly accepted as good enough.
+        """
         owner = self.command(requested_by_type="owner", requested_by="owner-gev")
         with self.assertRaises(ControlRoomAPIError) as caught:
             self.api.validate_command_intent(owner, now_epoch=self.now + 1,
                                              actor_attestation=self.attestation())
-        message = str(caught.exception)
-        self.assertIn("cannot be validated", message)
-        for named in ("ARTIFACT_AUTHORITY", "config/trusted-keys.json",
-                      "control-room-command.schema.json"):
-            self.assertIn(named, message)
+        self.assertIn("RED", str(caught.exception))
 
     def test_an_attestation_signed_by_the_wrong_authority_is_refused(self) -> None:
         self.refuse("RED", actor_attestation=self.attestation("builder"))

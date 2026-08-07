@@ -320,20 +320,26 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
 
 # Imported after the signature assertions so a failure there is not masked by an
 # unrelated import error in the control-room stack.
-from bro_control_room_api import ControlRoomAPIError, ControlRoomAPIV1  # noqa: E402
+from bro_control_room_api import (ACTOR_PROVEN_PER_COMMAND, ControlRoomAPIError,  # noqa: E402
+                                  ControlRoomAPIV1)
 from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1  # noqa: E402
 from bro_policy import CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE  # noqa: E402
 from test_control_room_api import cancel_command, task_contract  # noqa: E402
 
 
 class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
-    """O-4: the type now exists, and `validate_command_intent` is exactly as strict.
+    """O-4: the owner path is closed in code, and what remains is the Owner's signature.
 
-    Registering `control-room-command` is a prerequisite for the owner half, not the
-    closure. Nothing verifies a `control-room-command` document yet — the schema carries
-    no `artifact_type` / `key_id` / signature field and `_prove_command_actor` does not
-    consume one — so an owner-issued command must still be refused BY NAME, even when the
-    caller can produce a flawless one.
+    These tests were written when registering `control-room-command` was a prerequisite and
+    nothing consumed one, so they asserted that even a flawless artifact was refused. That was
+    true then. `_prove_command_actor` now verifies the artifact and binds it to this exact
+    command, and the schema carries `artifact_type` / `key_id` / `signature`, so the assertions
+    were rewritten to the new truth rather than deleted — a test that pins a state which changed
+    deliberately is how the old state survives in everyone's head.
+
+    What is NOT closed: no `control-room-command` key is pinned in the shipped
+    `config/trusted-keys.json`, so on a real deployment an owner command still refuses. That is
+    the Owner's ceremony, not a code gap, and `test_an_unpinned_key_still_refuses` holds it.
     """
 
     def setUp(self) -> None:
@@ -375,6 +381,8 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
             "agent_id": "owner-gev",
             "session_id": "s-owner",
             "command_id": command["command_id"],
+            "task_id": command["task_id"],
+            "command": command["command"],
             "issued_at_epoch": self.now - 10,
             "expires_at_epoch": self.now + 3600,
         }
@@ -388,17 +396,52 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
                                   CONTROL_ROOM_COMMAND, self.trusted, now=self.now)
         self.assertEqual(payload["command_id"], command["command_id"])
 
-    def test_an_owner_command_is_still_refused_by_name(self) -> None:
+    def test_a_bound_owner_command_is_now_proven(self) -> None:
+        """The closure. A flawless artifact bound to this command is accepted, and reports its
+        own basis — a per-command proof, not the conductor's session."""
         command = self.owner_command()
+        reply = self.api.validate_command_intent(
+            command, now_epoch=self.now + 1,
+            actor_attestation=self.signed_command_artifact(command))
+        self.assertTrue(reply["valid"])
+        self.assertEqual(reply["actor_identity"], ACTOR_PROVEN_PER_COMMAND)
+
+    def test_the_same_artifact_cannot_be_replayed_against_another_command(self) -> None:
+        """What makes it per-command rather than a session under another name."""
+        signed_for = self.owner_command()
+        artifact = self.signed_command_artifact(signed_for)
+        other = self.owner_command()
+        other["command_id"] = "cmd-a-different-one"
         with self.assertRaises(ControlRoomAPIError) as caught:
-            self.api.validate_command_intent(
-                command, now_epoch=self.now + 1,
-                actor_attestation=self.signed_command_artifact(command))
-        message = str(caught.exception)
-        self.assertIn("cannot be validated", message)
-        for named in ("ARTIFACT_AUTHORITY", "config/trusted-keys.json",
-                      "control-room-command.schema.json"):
-            self.assertIn(named, message)
+            self.api.validate_command_intent(other, now_epoch=self.now + 1,
+                                             actor_attestation=artifact)
+        self.assertIn("different command", str(caught.exception))
+
+    def test_an_unpinned_key_still_refuses(self) -> None:
+        """The part that is the OWNER's, not the code's.
+
+        Same artifact, same signature, same everything — but signed by a key the operator-signed
+        registry does not grant `control-room-command`. It refuses. Registering the artifact type
+        did not open a path; pinning a key is what opens it, and only the Owner can do that.
+        """
+        command = self.owner_command()
+        payload = {
+            "artifact_type": CONTROL_ROOM_COMMAND,
+            "key_id": self.keys["builder"]["key_id"],
+            "role": "owner",
+            "agent_id": "owner-gev",
+            "session_id": "s-owner",
+            "command_id": command["command_id"],
+            "task_id": command["task_id"],
+            "command": command["command"],
+            "issued_at_epoch": self.now - 10,
+            "expires_at_epoch": self.now + 3600,
+        }
+        forged = sign_payload(self.keys["builder"]["private_key"], payload)
+        with self.assertRaises(ControlRoomAPIError) as caught:
+            self.api.validate_command_intent(command, now_epoch=self.now + 1,
+                                             actor_attestation=forged)
+        self.assertIn("RED", str(caught.exception))
 
     def test_an_owner_command_with_no_attestation_at_all_is_refused(self) -> None:
         with self.assertRaises(ControlRoomAPIError) as caught:
@@ -422,16 +465,20 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
                 actor_attestation=self.signed_command_artifact(conductor))
         self.assertIn("RED", str(caught.exception))
 
-    def test_the_control_room_command_schema_still_carries_no_signature_field(self) -> None:
-        """The remaining half of O-4, pinned so nobody reads the registration as closure:
-        the command schema has no `artifact_type`, no `key_id` and no signature, so there
-        is nothing for a verifier to check even though a key could now sign one."""
-        schema = json.loads((ROOT / "schemas" / "control-room-command.schema.json")
-                            .read_text(encoding="utf-8"))
+    def test_the_control_room_command_schema_carries_the_signature_fields(self) -> None:
+        """It asserted their ABSENCE, which was the honest state until they were added.
+
+        `signature` is optional on purpose: a conductor-issued command carries none — it is proven
+        by a separate `conductor-session` credential — so requiring it here would have made the
+        schema describe only half the documents it governs. The strictness lives where it can see
+        who is asking: `bro_control_room_api` refuses an OWNER command without one.
+        """
+        schema = json.loads(
+            (ROOT / "schemas" / "control-room-command.schema.json").read_text(encoding="utf-8"))
         for field in ("artifact_type", "key_id", "signature"):
-            with self.subTest(field=field):
-                self.assertNotIn(field, schema["properties"])
+            self.assertIn(field, schema["properties"], field)
+        self.assertNotIn("signature", schema["required"],
+                         "a conductor command is proven by a session credential and carries none")
+        self.assertEqual(schema["properties"]["artifact_type"]["const"], CONTROL_ROOM_COMMAND)
+        self.assertEqual(schema["properties"]["signature"]["pattern"], "^[0-9a-f]{128}$")
 
-
-if __name__ == "__main__":
-    unittest.main()

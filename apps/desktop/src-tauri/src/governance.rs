@@ -463,7 +463,12 @@ const RECORDS_ARE_AUTHENTICATED: bool = false;
 /// credential and the secret scanner says so. The VALUES are the engine's own
 /// (`bro_control_room_api._ED25519`) and are not changed to suit a scanner -- a fixture that
 /// stops matching production stops testing it.
+// Test-only: both are read exclusively from fixtures below. Marked as such rather than left to
+// warn — an `unused` warning on a security-vocabulary constant is the kind of noise people learn
+// to scroll past, and the next real one scrolls past with it.
+#[cfg(test)]
 const ENGINE_CLAIM_SIGNED: &str = "ed25519-signature-verified";
+#[cfg(test)]
 const ENGINE_CLAIM_HASH_CHAIN: &str = "runtime-hash-chain-verified";
 
 /// Pull the `records` array out of a successful (`ok:true`) sidecar reply and validate
