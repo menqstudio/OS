@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/menqstudio/Bro/schemas/task-contract.schema.json",
   "title": "Bro Task Contract",
+  "$comment": "The path patterns in $defs are the SAME language that bro_contracts.safe_repo_path / safe_work_path enforce procedurally. This schema is not decorative and not advisory: ContractSchemaAgreementTests in tests/test_bro_contracts.py runs one corpus of path strings through both this schema and those functions and fails if either accepts something the other rejects, and RealContractValidatesAgainstSchemaTests validates a runtime-accepted contract against this document. A change on one side must be mirrored on the other. Segment rule, used by every path form: no empty segment, no '.' or '..' segment, no leading/trailing whitespace in a segment, no backslash (refused outright rather than folded to '/', because a backslash is the classic way to smuggle a separator past a '..' rule), no ':' (drive letter, drive-relative 'C:x', Windows alternate data stream), no glob metacharacter '*?[' (M-6: a scope must be provably literal or the two enforcement layers disagree about what it covers), no NUL.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,8 +20,8 @@
     "pack_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"},
     "agent_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"},
     "assignee_role": {"type": "string", "minLength": 1},
-    "scope": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/repoPath"}},
-    "prohibited_scope": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/repoPath"}},
+    "scope": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/workPath"}},
+    "prohibited_scope": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/workPath"}},
     "inputs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/repoPath"}},
     "core_skills": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
     "additional_skills": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
@@ -61,6 +62,21 @@
   },
   "$defs": {
     "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"},
-    "repoPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z]:)[^\\\\]+$"}
+    "repoPath": {
+      "$comment": "A path relative to this checkout. '.' alone is the repository root entry itself and grants nothing beneath it. A leading '~' is refused: home-relative is not repo-relative.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:\\.|(?!~)(?!\\.\\.?(?:/|$))[^\\s\\\\/:*?\\[\\x00](?:[^\\\\/:*?\\[\\x00]*[^\\s\\\\/:*?\\[\\x00])?(?:/(?!\\.\\.?(?:/|$))[^\\s\\\\/:*?\\[\\x00](?:[^\\\\/:*?\\[\\x00]*[^\\s\\\\/:*?\\[\\x00])?)*)$"
+    },
+    "absolutePath": {
+      "$comment": "A location named absolutely rather than relative to this checkout — the owner asked for specialists that can work in ordinary folders (a UI agent writing into a Desktop project), not only inside this repository. POSIX '/x' or Windows 'C:/x'; forward slashes only, so one pattern serves both. A bare filesystem root ('/' or 'C:/') is refused: that is not a scope, it is the absence of one. UNC and device namespaces ('//host/share', '\\\\?\\C:\\x') are refused because they bypass normal path resolution.",
+      "type": "string",
+      "minLength": 2,
+      "pattern": "^(?:/|[A-Za-z]:/)(?!\\.\\.?(?:/|$))[^\\s\\\\/:*?\\[\\x00](?:[^\\\\/:*?\\[\\x00]*[^\\s\\\\/:*?\\[\\x00])?(?:/(?!\\.\\.?(?:/|$))[^\\s\\\\/:*?\\[\\x00](?:[^\\\\/:*?\\[\\x00]*[^\\s\\\\/:*?\\[\\x00])?)*$"
+    },
+    "workPath": {
+      "$comment": "Where a task may act: a repo-relative path, or an absolute one. A scope entry is the ONLY place a specialist's reach is stated, so it is also the only place to read to know what one was allowed to touch. Syntax is all this can prove; real containment is decided at use time by bro_security.enforce_scope (which resolves symlinks and '..' before comparing) and by the operator-signed workspace binding, which remains the outer boundary an absolute scope entry cannot widen.",
+      "anyOf": [{"$ref": "#/$defs/repoPath"}, {"$ref": "#/$defs/absolutePath"}]
+    }
   }
 }

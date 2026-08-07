@@ -70,6 +70,24 @@ class DurableOrchestrationRuntimeV1(DurableOrchestrationRuntime):
                     handle.flush()
                     os.fsync(handle.fileno())
                 break
+            except PermissionError:
+                # Windows: a lock file that another claimant is unlinking (release)
+                # or os.replace-ing (stale break) is briefly delete-pending, and an
+                # O_EXCL open against it fails with EACCES instead of EEXIST. That
+                # is the same "someone else has it right now" answer as
+                # FileExistsError, so it must be retried — otherwise an ordinary
+                # contended claim reports a hard failure and the caller believes
+                # the claim path is broken.
+                #
+                # A real permission problem is NOT retried away: it keeps failing
+                # and runs out the same bounded deadline, which is why the message
+                # names both possibilities rather than asserting one.
+                if time.monotonic() >= deadline:
+                    raise OrchestrationRuntimeError(
+                        "claim lock could not be created: permission denied "
+                        "(a delete-pending race that never cleared, or a state "
+                        "directory this process may not write)") from None
+                time.sleep(0.01)
             except FileExistsError:
                 try:
                     age = time.time() - self.claim_lock.stat().st_mtime

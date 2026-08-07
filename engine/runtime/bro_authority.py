@@ -80,13 +80,19 @@ def _authority_from(selected: dict[str, Any], *, agent_id: str, pack_id: str, ro
     return AgentAuthority(agent_id, pack_id, role, selected["can_build"], selected["can_verify"], selected["can_release"], tuple(modes), risk)
 
 
-def resolve_agent_authority(agent_id: str, pack_id: str, role: str, root: pathlib.Path = ROOT) -> AgentAuthority:
+def resolve_role_authority(pack_id: str, role: str, root: pathlib.Path = ROOT) -> AgentAuthority:
+    """Authority carried by a pack/role, addressed by the role itself.
+
+    Split out of resolve_agent_authority so a caller that is validating an
+    ASSIGNMENT (which agent_id has not been presented yet, or is being checked
+    separately) can still read the same policy the runtime enforces. The returned
+    authority carries the canonical agent_id for that role, so there is still
+    exactly one answer to "who is this".
+    """
     try:
         expected = expected_agent_id(pack_id, role, root)
     except IdentityError as exc:
         raise AuthorityError(str(exc)) from exc
-    if agent_id != expected:
-        raise AuthorityError(f"non-canonical agent_id: expected {expected} for {pack_id} / {role}")
     policy = _load_policy(root)
     selected = policy.get("default")
     if not isinstance(selected, dict):
@@ -102,7 +108,35 @@ def resolve_agent_authority(agent_id: str, pack_id: str, role: str, root: pathli
         if item.get("pack_id") == pack_id and item.get("role") == role:
             selected = item
             break
-    return _authority_from(selected, agent_id=agent_id, pack_id=pack_id, role=role)
+    return _authority_from(selected, agent_id=expected, pack_id=pack_id, role=role)
+
+
+def resolve_agent_authority(agent_id: str, pack_id: str, role: str, root: pathlib.Path = ROOT) -> AgentAuthority:
+    authority = resolve_role_authority(pack_id, role, root)
+    if agent_id != authority.agent_id:
+        raise AuthorityError(f"non-canonical agent_id: expected {authority.agent_id} for {pack_id} / {role}")
+    return authority
+
+
+def enforce_risk_ceiling(pack_id: str, role: str, risk: str, root: pathlib.Path = ROOT) -> str:
+    """Refuse a task whose risk sits above the assignee role's ceiling.
+
+    authority-policy.json gives every role a risk_ceiling, and until now only the
+    VERIFIER half of an assignment was ever compared against it
+    (validate_verifier_assignment). The builder half was not, so a role capped at
+    "high" could be handed a "critical" task and nothing objected — the ceiling
+    existed as data and was never a ceiling. A ceiling is only a ceiling where the
+    assignment is made, so this is called from task-contract validation.
+    """
+    authority = resolve_role_authority(pack_id, role, root)
+    order = _load_policy(root).get("risk_order")
+    if not isinstance(order, list) or risk not in order or authority.risk_ceiling not in order:
+        raise AuthorityError("risk policy invalid")
+    if order.index(risk) > order.index(authority.risk_ceiling):
+        raise AuthorityError(
+            f"task risk {risk!r} exceeds the {authority.risk_ceiling!r} risk ceiling "
+            f"of {pack_id} / {role}")
+    return authority.risk_ceiling
 
 
 def validate_verifier_assignment(*, builder_agent_id: str, verifier_agent_id: str, verifier_role: str, risk: str, root: pathlib.Path = ROOT) -> AgentAuthority:

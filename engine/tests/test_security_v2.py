@@ -17,6 +17,7 @@ from bro_security import (
     canonical_bytes,
     consume_nonce,
     enforce_scope,
+    enforce_scope_within_binding,
     finalize_nonce,
     quarantine_nonce,
     release_nonce_reservation,
@@ -160,6 +161,92 @@ class SecurityV2Tests(unittest.TestCase):
                     enforce_scope(root, [bad], ["ok"], [])
             with self.assertRaises(SecurityError):
                 enforce_scope(root, ["ok/no/x"], ["ok"], ["ok/no"])
+
+    def test_absolute_target_needs_an_absolute_scope_entry(self):
+        # An absolute path is not silently reinterpreted as repo-relative, and an
+        # absolute spelling of an in-repo path does not inherit a repo grant.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            (root / "ok").mkdir()
+            with self.assertRaises(SecurityError) as caught:
+                enforce_scope(root, [str(root / "ok" / "a.txt")], ["ok"], [])
+            self.assertIn("no absolute scope entry", str(caught.exception))
+
+    def test_absolute_scope_entry_grants_an_absolute_target(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outside = pathlib.Path(temp_dir) / "desktop-project"
+            (outside / "src").mkdir(parents=True)
+            grant = outside.as_posix()
+            enforce_scope(pathlib.Path(temp_dir), [str(outside / "src" / "a.ts")], [grant], [])
+            with self.assertRaises(SecurityError):
+                enforce_scope(pathlib.Path(temp_dir),
+                              [str(outside.parent / "elsewhere" / "a.ts")], [grant], [])
+
+    def test_absolute_prohibition_beats_an_absolute_grant(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outside = pathlib.Path(temp_dir) / "desktop-project"
+            (outside / "secrets").mkdir(parents=True)
+            with self.assertRaises(SecurityError):
+                enforce_scope(pathlib.Path(temp_dir),
+                              [str(outside / "secrets" / "k.pem")],
+                              [outside.as_posix()],
+                              [(outside / "secrets").as_posix()])
+
+    def test_absolute_target_cannot_walk_out_of_its_grant(self):
+        # Containment is decided on resolved paths, so '..' is spent before the
+        # comparison. A textual prefix test would accept this.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = pathlib.Path(temp_dir)
+            (base / "granted").mkdir()
+            (base / "secret").mkdir()
+            with self.assertRaises(SecurityError):
+                enforce_scope(base, [str(base / "granted" / ".." / "secret" / "k.pem")],
+                              [(base / "granted").as_posix()], [])
+
+    def test_absolute_target_cannot_follow_a_symlink_out_of_its_grant(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = pathlib.Path(temp_dir)
+            (base / "granted").mkdir()
+            (base / "secret").mkdir()
+            try:
+                os.symlink(base / "secret", base / "granted" / "link",
+                           target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                # Windows needs Developer Mode or SeCreateSymbolicLink for this.
+                self.skipTest(f"symlinks unavailable on this host: {exc}")
+            with self.assertRaises(SecurityError):
+                enforce_scope(base, [str(base / "granted" / "link" / "k.pem")],
+                              [(base / "granted").as_posix()], [])
+
+    def test_repository_prohibition_survives_an_absolute_spelling(self):
+        # An absolute grant covering the repository must not become a way around a
+        # repo-relative prohibition just by spelling the target differently.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            (root / "release").mkdir()
+            with self.assertRaises(SecurityError):
+                enforce_scope(root, [str(root / "release" / "sign.py")],
+                              [root.as_posix()], ["release"])
+
+    def test_device_and_network_targets_are_denied(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            for target in ("\\\\host\\share\\x", "\\\\?\\C:\\x"):
+                with self.assertRaises(SecurityError, msg=target):
+                    enforce_scope(root, [target], [root.as_posix()], [])
+
+    def test_scope_outside_the_bound_workspace_is_refused_by_name(self):
+        # The operator-signed binding is the outer boundary; a task contract cannot
+        # widen it. Refused once, naming the cause, rather than denying every
+        # target with a message about the target.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir) / "workspace"
+            root.mkdir()
+            enforce_scope_within_binding(root, ["docs", (root / "sub").as_posix()])
+            with self.assertRaises(SecurityError) as caught:
+                enforce_scope_within_binding(
+                    root, ["docs", (root.parent / "elsewhere").as_posix()])
+            self.assertIn("outside the bound workspace root", str(caught.exception))
 
     def test_signature_and_tamper(self):
         key = "k" * 32

@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 from bro_authorization import ActionClassification
 from bro_contracts import ContractError, load_contract_bundle_from_env, load_mode_grant_from_env
-from bro_security import SecurityError, enforce_scope
+from bro_security import SecurityError, enforce_scope, enforce_scope_within_binding
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / ".bro" / "policy.json"
@@ -321,6 +321,14 @@ def authorize_classified_action(
     bound, reason = enforce_grant_bindings(mode_grant, bundle.task, state.mode)
     if not bound:
         return False, reason
+    # Checked before any target is looked at, and for reads as well as mutations:
+    # a scope the operator-signed binding cannot cover is a defect in the contract,
+    # not in the tool call, and saying so once is clearer than denying every target
+    # with a message about the target.
+    try:
+        enforce_scope_within_binding(ROOT, list(bundle.task["scope"]))
+    except SecurityError as exc:
+        return False, f"scope gate RED: {exc}"
     if classification.mutating:
         try:
             enforce_scope(ROOT, list(classification.targets), bundle.task["scope"], bundle.task["prohibited_scope"])
