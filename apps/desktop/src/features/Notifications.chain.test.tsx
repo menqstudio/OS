@@ -171,3 +171,53 @@ describe('Notifications — UNAUTHENTICATED mirrored records are not verified re
     expect(screen.queryByText(/carry no signature/i)).not.toBeInTheDocument();
   });
 });
+
+describe("Notifications — the ENGINE's reason for an empty stream reaches the owner", () => {
+  it('quotes the engine sentence, attributed, without lighting the mirror node', async () => {
+    mountWithChain({
+      reply: {
+        state: 'ok',
+        surface: 'evidenceChain',
+        records: [],
+        authenticated: false,
+        engine: {
+          emptyReason: 'the orchestration runtime holds no tasks, so nothing has been recorded',
+          recordCount: 0,
+          sourceKind: 'signed-evidence-store',
+        },
+      },
+    });
+    await settled();
+
+    // The honest empty wording stays...
+    expect(screen.getByText(/empty stream is not a verified one/i)).toBeInTheDocument();
+    // ...and the engine's own explanation now sits beside it, attributed and quoted.
+    expect(screen.getByText('The engine’s own account:')).toBeInTheDocument();
+    const quote = screen.getByText(
+      'the orchestration runtime holds no tasks, so nothing has been recorded',
+    );
+    expect(quote.tagName).toBe('Q');
+    expect(screen.getByText('signed-evidence-store')).toBeInTheDocument();
+
+    // An explanation is not a stream: the mirror node stays un-lit.
+    const nodes = chainNodes();
+    expect(nodes[2][0]).toBe('MIRROR · no events');
+    expect(nodes[2][1]).not.toContain('done');
+  });
+
+  it("shows a refusal's own reason and no explanation of emptiness", async () => {
+    mountWithChain({
+      reply: {
+        state: 'blocked',
+        surface: 'evidenceChain',
+        reason: 'BROPS_GOVERNANCE_STATE_DIR is unset',
+        engine: { emptyReason: 'the orchestration runtime holds no tasks' },
+      },
+    });
+    await settled();
+
+    expect(screen.getByText(/BROPS_GOVERNANCE_STATE_DIR is unset/)).toBeInTheDocument();
+    expect(screen.queryByText('The engine’s own account:')).not.toBeInTheDocument();
+    expect(screen.queryByText(/holds no tasks/)).not.toBeInTheDocument();
+  });
+});

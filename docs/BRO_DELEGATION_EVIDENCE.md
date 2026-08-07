@@ -307,12 +307,52 @@ wrote from memory — which is how defect 1 happened in the first place.
    `parent_tool_use_id` is non-null. The frontend dropped them by unknown id, so nothing rendered
    — but the text crossed the boundary anyway, and a surface that never asked for a file's
    contents is the wrong place to first learn they are being sent.
-4. ◑ **CLI built-in agent types (`general-purpose`, `Explore`, `Plan`, …) remain spawnable** and
-   resolve to no known capability. OPEN, and the current behaviour is honest rather than fixed:
-   the card renders capability as unknown, which is exactly what we know. What it cannot do is
-   tell the owner that the agent nonetheless holds a broad grant. Closing it means either
-   refusing a spawn whose capability cannot be established, or resolving the built-ins' real tool
-   lists — and the first is a behaviour change the owner should choose.
+4. ✅ **CLI built-in agent types (`general-purpose`, `Explore`, `Plan`, …) were spawnable and
+   resolved to no known capability.** Closed by an actual refusal plus an honest residue, both
+   re-verified against the live CLI on 2026-08-07 (§10).
+
+   The roster was re-captured first, because the list above was a session old. It had not moved:
+   CLI 2.1.220 still offers the same nine names, six of them the CLI's own.
+
+   Neither of the two candidates was taken as stated. **Reporting a spawn as REFUSED would have
+   been a second untruth**: by the time an `Agent` block reaches the stream the specialist has
+   already started, so this parser can only describe, never refuse — a card reading REFUSED over
+   an agent that ran for forty seconds is the same class of error as the blank it replaced. And
+   **resolving the built-ins' real tool lists is not available to us**: we have never read them,
+   and a tool list nobody read is the one output that could actively mislead. So:
+
+   - **The refusal moved to where refusing is possible — argv.** `tool_args` now passes
+     `Task(<name>)` **and** `Agent(<name>)` to `--disallowedTools` for all six built-ins. Verified
+     live, not inferred from a flag reference: the CLI returned, on the delegation's own
+     `tool_result` with `is_error: true`,
+     `Agent type 'general-purpose' has been denied by permission rule 'Agent(general-purpose)' from cliArg.`
+     Both name forms are passed because a `Task(…)` pattern came back named as an `Agent(…)`
+     rule — the same `Task`/`Agent` split as §3, and not a coin worth flipping on a boundary.
+     In the same turn a `reader` still spawned, ran and answered, so this costs the tiers nothing;
+     `denying_the_builtins_leaves_task_and_the_three_tiers_working` pins that both statically and
+     against the captured init frame.
+   - **What a deny list cannot cover is now named rather than blank.** `DelegationSpawn` carries
+     `origin` — `Tier` / `PackRole` / `CliBuiltin` / `Unrecognized` — answering a question about
+     the NAME, which is always knowable, instead of about the tool list, which usually is not.
+     `AgentOrigin::Tier` is the only value meaning Bro's choice bounded the specialist. No tool
+     list is invented for a built-in anywhere: `tools`/`tools_source` stay absent, exactly as
+     before. `delegation_tools` also now refuses to let a built-in borrow a `.claude/agents/
+     <name>.md` that merely shares its filename — no such file exists today, and one added
+     tomorrow would have dressed a built-in in a narrow grant.
+   - **Bro is told.** His system prompt said "grant the narrowest tier" while silently assuming
+     every name on offer was a tier. It now names all six built-ins, says that spawning one
+     leaves the capability decision unmade rather than granting something wide or narrow, and
+     says the app refuses them.
+
+   **Still open, and it is the reporting half.** `commands.rs::delegation_frame` does not carry
+   `origin` onto the wire, and `commands.rs` was out of scope here — so today the origin is
+   established and tested but does not reach the screen. What the surface needs is one
+   `obj.insert("agentOrigin", json!(d.origin.as_str()))` beside the existing `tools`/`toolsSource`
+   pair, and a reader in `features/delegation.ts` that renders any value other than `app_tier` as
+   a warning rather than as the blank `toolsSource: 'unresolved'` currently produces. Until then
+   a denied built-in is still visible to the owner — the spawn is parsed and the settlement
+   reports `error` with the CLI's refusal text as its summary — but it is visible as a failure,
+   not as an attempt to reach outside the capability model.
 5. ✅ **`parse_task_grant` turned an inline prose sentence into a path list** — Bro's real
    "SCOPE: `tools` (repo-relative). Everything outside that path is READ-ONLY" became eight granted
    paths including `(repo-relative)` and `READ-ONLY`. The reader is now all-or-nothing per line:
@@ -341,3 +381,33 @@ The permanent, capture-derived assertions are in `ai.rs`'s `mod tests`; run them
 ```powershell
 cargo test --manifest-path apps\desktop\src-tauri\Cargo.toml -p brops --lib
 ```
+
+---
+
+## 10. Re-capture of 2026-08-07 (defect 4)
+
+Same method as §1, same CLI (`2.1.220`), same throwaway cwd. Five runs. Every argv was dumped out
+of the crate by the temporary `zz_dump_real_argv` test of §9 — none was retyped, and the two that
+carry deny patterns were dumped **after** the change, so what was probed is what ships.
+
+| run | argv | what it established |
+|---|---|---|
+| A | 71 args (pre-change) | The roster had not moved in a session: `agents` = `["builder","claude","claude-code-guide","Explore","general-purpose","Plan","reader","runner","statusline-setup"]`, `tools` = `["Task","Bash","Edit","Glob","Grep","Read","Write"]`. |
+| B | 71 args (pre-change) | Asked for `general-purpose` by name, Bro **spawned it** — an `Agent` block with `subagent_type: "general-purpose"` — and the specialist then ran `Bash` under it. A built-in was genuinely reachable, and `delegation_tools` resolved nothing for it. |
+| C | 71 + 6 `Task(<name>)` | The CLI **refused**: `is_error: true`, text `Agent type 'general-purpose' has been denied by permission rule 'Agent(general-purpose)' from cliArg.` Note it answered a `Task(…)` pattern by naming an `Agent(…)` rule. |
+| D | 71 + 12 (both forms) | Same refusal, and in the SAME turn a `reader` spawned 11 s later, ran, and returned its count. The deny costs the tiers nothing. |
+| E | 83 args, **as shipped** | Asked to spawn `Explore`, Bro declined to attempt it at all, giving the system prompt's own reason — and said he could not quote a refusal text because he never made the call rather than inventing one. He then delegated the real work to a `reader`, which ran and answered. |
+
+Sessions: `b1847222-63c0-4ccf-ad8d-08a7faeaa550` (A + B, one run),
+`e8409224-dbaa-4934-b2a4-4f08214dd659` (D). The four new `CAPTURED_*` constants in `ai.rs`'s
+`mod tests` are verbatim lines from those two runs, abridged only by dropping `usage` /
+`diagnostics` / roster-irrelevant init fields.
+
+Run E is why the prompt fix is not merely belt-and-braces: the wall in argv stops a spawn, but a
+Bro who keeps walking into it burns a turn and lands a failed delegation on the owner's screen
+each time. Told what the built-ins are, he stops before the wall.
+
+Two things run B established that are worth keeping separate from the fix: a built-in spawn
+carries the **same** `Agent` block shape as a tier, so nothing on the wire distinguishes them —
+only the name does; and `is_error` **is** present on a refused delegation, though §4 records it as
+absent on one that completes. The CLI reports the refusal and not the success.

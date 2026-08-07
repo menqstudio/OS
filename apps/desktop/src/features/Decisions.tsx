@@ -6,7 +6,10 @@ import {
 import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
-import { hasRecords, recordCount, type GovernanceRead } from '../services/governance';
+import {
+  hasRecords, recordCount, engineEmptyReason, engineSourceKind, engineDoesNotKnowTask,
+  type GovernanceRead,
+} from '../services/governance';
 import type { Decision } from '../domain/entities';
 import { STR } from './Decisions.strings';
 import { BridgePanel } from './Bridge';
@@ -34,6 +37,12 @@ const styles = `
 .v-decisions .dec-chain-strip { margin: var(--s4, 14px) 0 var(--s2, 8px); }
 .v-decisions .dec-chain-lbl { display: block; color: var(--cyan-soft); letter-spacing: .1em; margin-bottom: 8px; }
 .v-decisions .dec-chain-strip .wire { margin: 10px 0 0; }
+/* The engine's own account of an empty surface. Set apart from the desktop's copy by a
+   quiet rule, because it is a QUOTATION, not the page speaking. */
+.v-decisions .dec-engine-said { margin-top: 10px; padding-left: 10px; border-left: 2px solid var(--brops-border); }
+.v-decisions .dec-engine-said p { margin: 0 0 4px; color: var(--ink-muted); }
+.v-decisions .dec-engine-said p:last-child { margin-bottom: 0; }
+.v-decisions .dec-engine-attr { letter-spacing: .06em; }
 @keyframes dec-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes dec-stamp { 0% { opacity: 0; transform: scale(1.12); } 60% { opacity: 1; transform: scale(0.98); } 100% { transform: none; } }
 @media (prefers-reduced-motion: reduce) {
@@ -256,6 +265,43 @@ export function Decisions() {
     );
   };
 
+  // What the ENGINE said about its own store, quoted and attributed.
+  //
+  // The three-valued read used to arrive stripped of its reason, so an empty surface
+  // rendered as a blank panel: the owner could not tell "there is nothing to show" from
+  // "there is nothing to show BECAUSE the orchestration runtime holds no tasks". The
+  // sentence is the engine's claim, so it is shown as a quotation under an explicit
+  // attribution and is never paraphrased into the page's own voice. It sits BESIDE the
+  // honest ok/empty/blocked state, never in place of it — `engineEmptyReason` answers
+  // only for an `ok` read that carried nothing, so an explanation of emptiness can
+  // reach neither a list of records nor a refusal.
+  const renderEngineAccount = (r: GovernanceRead) => {
+    const said = engineEmptyReason(r);
+    const source = engineSourceKind(r);
+    // Only where it answers the question being asked. The engine can legitimately hold
+    // a chain for a task its runtime no longer lists, so "it has never heard of this id"
+    // is a fact about an EMPTY surface — printed over records it would read as a
+    // contradiction rather than the explanation it is.
+    const unknownTask = engineDoesNotKnowTask(r) && recordCount(r) === 0;
+    if (!said && !source && !unknownTask) return null;
+    return (
+      <div className="dec-engine-said">
+        {said ? (
+          <p className="micro">
+            <b className="dec-engine-attr">{L('engineSaysLabel')}</b>{' '}
+            <q>{said}</q>
+          </p>
+        ) : null}
+        {unknownTask ? <p className="micro">{L('engineUnknownTask')}</p> : null}
+        {source ? (
+          <p className="micro">
+            {L('engineSourceLabel')}<span className="mono">{source}</span>
+          </p>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderEvidence = () => {
     if (!evidenceOpen) {
       return (
@@ -282,6 +328,8 @@ export function Decisions() {
           <div role="note">
             <span className="ev-tag micro">{L('evidenceNone')}</span>
             <p>{L('evidenceNoneBody')}</p>
+            {/* ...and the engine's own reason for the emptiness, in its words. */}
+            {renderEngineAccount(evidenceRead)}
           </div>
         );
       }
@@ -301,6 +349,10 @@ export function Decisions() {
           {!evidenceRead.authenticated && (
             <p className="micro" style={{ marginTop: 6 }}>{L('unauthenticatedBody')}</p>
           )}
+          {/* Which store the engine says these came from. Provenance, not proof — the
+              desktop opened nothing and verified nothing, so the line stays attributed
+              and the unauthenticated notice above still applies to every record. */}
+          {renderEngineAccount(evidenceRead)}
         </div>
       );
     }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../app/store';
 import {
   Badge, Button, EmptyState, ErrorState, FormRow, Input, Select, Skeleton,
@@ -14,9 +14,18 @@ import {
   type ConsensusVerdict, type Position,
 } from './consensus';
 import {
-  formatConsensusOpening, isAskableName, readConsensusTranscript,
+  formatConsensusOpening, isAskableName, readConsensusTranscript, sanitizeQuestion,
   type ConsensusRound, type MalformedProblem,
 } from './groupChatConsensus';
+// The delegation reader and the surface the direct chat already uses, reused verbatim: the
+// binding rule, the fail-closed parse and every honesty property of the card are theirs, not
+// re-implemented here. See `groupChatDelegation.ts` for why the fold lives beside the deck.
+import { asDelegationEvent } from './delegation';
+import { DelegationSurface } from './delegationView';
+import {
+  applyGroupDelegationEvent, askTrail, NO_GROUP_DELEGATIONS,
+  type AskContext, type GroupDelegations,
+} from './groupChatDelegation';
 
 type Key = keyof typeof STR;
 
@@ -89,6 +98,10 @@ const VIEW_CSS = `
 .v-group .cs-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
 .v-group .cs-error{margin:10px 0 0;font-size:12.5px;line-height:1.5;color:var(--danger)}
 .v-group .cs-error ul{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:3px}
+.v-group .dl-block{border-top:1px solid var(--line);padding-top:14px;margin-top:18px}
+.v-group .dl-note{margin:6px 0 0;font-size:12px;color:var(--ink-muted);line-height:1.55;max-width:78ch}
+.v-group .dl-type{font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;padding:1px 7px;
+  border-radius:999px;border:1px solid var(--line);flex:0 0 auto}
 `;
 
 /** One recorded position, rendered with its participant, stance and stated reason.
@@ -233,6 +246,62 @@ function RoundCard({ round, verdict, old }: {
   );
 }
 
+/**
+ * Who Bro put on this room's asks — the delegation surface, bound to the room the deck has open.
+ *
+ * It sits at the bottom of the deck rather than as a free-floating panel because the deck is what
+ * OWNS the binding: the room selector above chose the room, and the asks the deck sent are the
+ * only turns that report a delegation to this window. Nothing here re-derives which room a
+ * delegation belongs to — `applyGroupDelegationEvent` already refused anything whose payload names
+ * a different conversation, using the direct path's own equality.
+ *
+ * The cards themselves are `DelegationSurface`, unchanged: the tier/tool distinction, the
+ * `enforcement: "none"` scope warning, the stored-ledger probe and its live-only note all come
+ * from the finished direct path. The one thing that surface cannot know is that in a group room
+ * it is NOT the whole story, so `delegationScopeNote` above it says exactly which turns reach it.
+ */
+function RoomDelegations({ roomId, state }: { roomId: string; state: GroupDelegations }) {
+  const { lang } = useApp();
+  const L = (k: Key) => STR[k][lang] ?? STR[k].en;
+  const trail = askTrail(state);
+
+  return (
+    <div className="dl-block">
+      <span className="micro cs-lbl">{L('delegationLabel')}</span>
+      <p className="dl-note">{L('delegationScopeNote')}</p>
+
+      {/* The provenance this window can actually vouch for, and only that. Rendered only when
+          there is something to attribute — an empty trail states nothing rather than implying
+          that nothing was asked. */}
+      {trail.length > 0 && (
+        <div className="cs-block">
+          <span className="micro cs-lbl">{L('delegationTrailLabel')}</span>
+          <p className="dl-note">{L('delegationTrailNote')}</p>
+          <ul className="cs-list" aria-label={L('delegationTrailLabel')}>
+            {trail.map(({ delegation, ask }) => (
+              <li className="cs-row" key={`dl-${delegation.id}`}>
+                <b className="cs-who">{L('delegationAskPrefix')} {ask.who}</b>
+                <span className="dl-type">{delegation.subagentType}</span>
+                <span className="cs-reason">
+                  {ask.question
+                    ? `${L('delegationRoundPrefix')} ${ask.question}`
+                    : L('delegationNoRound')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* A SECOND surface, deliberately named for its narrower scope. The thread below renders
+          its own for the room's chat turns; this one covers only the asks the consensus deck
+          sends, which arrive on a channel the thread never sees. One name across both would
+          make each read as the room's whole record. */}
+      <DelegationSurface conversationId={roomId} live={state.list} label={L('deckDelegationsLabel')} />
+    </div>
+  );
+}
+
 /** The consensus deck for one group room: every round the transcript records, plus
  *  the form that opens a new one and actually asks the participants. */
 function ConsensusDeck() {
@@ -284,6 +353,16 @@ function ConsensusDeck() {
   const [formError, setFormError] = useState<string | null>(null);
   const [askErrors, setAskErrors] = useState<{ who: string; detail: string }[]>([]);
 
+  // Delegations reported by the asks this deck has sent while it has been mounted, plus the ask
+  // each one arrived on. Live only — nothing stores a delegation, and the surface says so.
+  const [delegations, setDelegations] = useState<GroupDelegations>(NO_GROUP_DELEGATIONS);
+  // A different room is a different record. The fold already refuses a frame belonging to another
+  // conversation, so this is not what keeps the rooms apart — it is what stops the previous room's
+  // cards from lingering under a room that has reported nothing.
+  useEffect(() => {
+    setDelegations((prev) => (prev === NO_GROUP_DELEGATIONS ? prev : NO_GROUP_DELEGATIONS));
+  }, [roomId]);
+
   /**
    * Ask each participant, in turn, through the ordinary reply path. Their answer is
    * persisted server-side under their own author, which is the only reason a position
@@ -294,14 +373,38 @@ function ConsensusDeck() {
    * unanswered and the round stays open. The renderer never writes a position on an
    * agent's behalf.
    */
-  const collect = async (conversationId: string, who: string[]): Promise<{ who: string; detail: string }[]> => {
+  const collect = async (
+    conversationId: string,
+    who: string[],
+    round: { id: string; question: string } | null,
+  ): Promise<{ who: string; detail: string }[]> => {
     const errors: { who: string; detail: string }[] = [];
     for (const name of who) {
+      // The one provenance fact this window owns: THIS ask was the turn running when a frame
+      // arrived, because `streamReply` is awaited one participant at a time and each call has its
+      // own channel. The round is the one this ask belongs to — the opening message just posted,
+      // or the round whose silent participants are being chased — never a round matched to the
+      // delegation afterwards.
+      const ask: AskContext = {
+        who: name,
+        roundId: round?.id ?? null,
+        question: round?.question ?? null,
+      };
       try {
         await desktop.streamReply(conversationId, (ev) => {
           if (ev.type === 'error') errors.push({ who: name, detail: ev.message });
           else if (ev.type === 'blocked') {
             errors.push({ who: name, detail: `${t('chat.governedBlocked')}: ${ev.reason}` });
+          } else {
+            // Bro handed work to a specialist inside this room. `asDelegationEvent` matches the
+            // two delegation tags and returns null for everything else, so a delta, a done, or a
+            // frame a future backend adds is simply ignored — it never throws inside the channel
+            // callback, and it can never be mistaken for a delegation.
+            const delegation = asDelegationEvent(ev);
+            if (delegation) {
+              setDelegations((prev) =>
+                applyGroupDelegationEvent(prev, delegation, conversationId, ask));
+            }
           }
         }, name);
       } catch (e: unknown) {
@@ -321,8 +424,12 @@ function ConsensusDeck() {
     setBusy(true);
     setFormError(null);
     setAskErrors([]);
+    // The persisted opening message IS the round — `readConsensusTranscript` identifies a round by
+    // that message's id and nothing else. Keeping it here is what lets an ask name its round
+    // without guessing which round a delegation "probably" belonged to.
+    let opening: { id: string } | null = null;
     try {
-      await desktop.postMessage({
+      opening = await desktop.postMessage({
         conversationId: roomId,
         author: t('chat.you'),
         body: formatConsensusOpening(q, rule, asked),
@@ -335,7 +442,11 @@ function ConsensusDeck() {
       return;
     }
     setQuestion('');
-    const errors = await collect(roomId, asked);
+    const errors = await collect(
+      roomId,
+      asked,
+      opening ? { id: opening.id, question: sanitizeQuestion(q) } : null,
+    );
     setAskErrors(errors);
     setBusy(false);
     messages.reload();
@@ -345,7 +456,11 @@ function ConsensusDeck() {
     if (!roomId || busy || !latestVerdict || latestVerdict.tally.missing.length === 0) return;
     setBusy(true);
     setAskErrors([]);
-    const errors = await collect(roomId, latestVerdict.tally.missing);
+    const errors = await collect(
+      roomId,
+      latestVerdict.tally.missing,
+      latest ? { id: latest.id, question: latest.question } : null,
+    );
     setAskErrors(errors);
     setBusy(false);
     messages.reload();
@@ -474,6 +589,10 @@ function ConsensusDeck() {
               </div>
             )}
           </div>
+
+          {/* Who Bro put on those asks. Bound to `room.id` — the same room every ask above was
+              sent to, and the same id the fold requires a delegation's payload to carry. */}
+          <RoomDelegations roomId={room.id} state={delegations} />
         </>
       )}
     </section>

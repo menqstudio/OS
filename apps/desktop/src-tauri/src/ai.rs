@@ -1014,6 +1014,15 @@ can build and test but not edit), `builder` (adds Edit/Write — can change file
 tier that lets the job finish; a question about the code gets `reader`, finding out whether something \
 works gets `runner`, and only work that genuinely changes files gets `builder`. The tier is the ONLY \
 thing that actually bounds a specialist's tools, so choosing it IS the capability decision.\n\
+The spawn tool ALSO offers you agent types this app never defined — `general-purpose`, `Explore`, \
+`Plan`, `claude`, `claude-code-guide`, `statusline-setup`. Those are the CLI's own, not tiers. This app \
+passed no tool list for any of them, so spawning one grants neither a narrow capability nor a wide one: \
+it leaves the capability decision UNMADE, and shows Gev a specialist that nothing he authorised bounds. \
+`general-purpose` is the one that will tempt you — it reads like the safe default and is the broadest \
+name on that list. Never spawn it, or any of the other five. Every specialist you spawn is `reader`, \
+`runner`, or `builder` — those three names and nothing else. The app refuses the rest outright, and \
+that refusal is a boundary rather than an obstacle to route around: if a task genuinely needs more than \
+`builder` has, say exactly what it needs and stop.\n\
 `.claude/agents/` also holds 262 pack-role files (generated from `engine/packs/registry.json` + \
 `engine/agents/authority-policy.json`). You cannot spawn those by name from here — read them. Each one \
 records the authority its role was derived with, so when work belongs to a declared specialism: read \
@@ -1211,6 +1220,77 @@ const BRO_TIERS: [(&str, &str, &[&str]); 3] = [
     ),
 ];
 
+/// Agent types the CLI offers that this app never defined — **observed, not assumed**.
+///
+/// `--agents` (above) hands the CLI our three tiers, and `--setting-sources ""` keeps every
+/// `.claude/agents/` pack role out. Neither of those suppresses the CLI's OWN built-in agent
+/// types, and the `Task` grant reaches them: the live `system` `init` frame lists them beside
+/// our tiers, and a spawn of one goes through.
+///
+/// Verbatim from a real init frame (CLI 2.1.220, session `b1847222-63c0-4ccf-ad8d-08a7faeaa550`,
+/// 2026-08-07 — the same list a capture a session earlier reported, so it is stable across at
+/// least two runs):
+///
+/// ```text
+/// "agents": ["builder","claude","claude-code-guide","Explore","general-purpose","Plan",
+///            "reader","runner","statusline-setup"]
+/// ```
+///
+/// `builder`/`reader`/`runner` are ours; the six below are the CLI's. What matters about them is
+/// exactly one fact, and it is a fact rather than an estimate: **this app passed no definition
+/// for any of them, so nothing this app chose bounds what one can do.** Their real tool lists are
+/// NOT recorded here, because we have never read them — `general-purpose` is documented by the
+/// CLI as holding `*`, but a doc string is not an observation and this module does not put
+/// unobserved capability on a card. Recording the NAMES is different: the names were observed,
+/// and knowing a name is the CLI's is what lets [`agent_origin`] say "not ours" instead of
+/// leaving the owner a blank where a broad grant belongs.
+///
+/// A newer CLI may add or rename these. That is why an unlisted, non-tier name is not silently
+/// treated as fine — see [`AgentOrigin::Unrecognized`], which draws the same conclusion.
+/// `--disallowedTools` patterns that make a CLI built-in genuinely UNSPAWNABLE.
+///
+/// This is the half of the fix that is not a report. The delegation surface can only ever say
+/// what already happened, and by the time a spawn block reaches the stream the specialist is
+/// running -- so a card reading "REFUSED" over an agent that ran for forty seconds would be a
+/// second lie told to fix the first. The place to refuse a spawn is before it starts, and the CLI
+/// turns out to have one.
+///
+/// **Verified against the live CLI, not inferred from a flag reference.** With these patterns
+/// added to the existing `--disallowedTools` list, CLI 2.1.220 returned, on the delegation's own
+/// `tool_result` and with `is_error: true`:
+///
+/// ```text
+/// Agent type 'general-purpose' has been denied by permission rule 'Agent(general-purpose)' from cliArg.
+/// ```
+///
+/// and in the SAME turn a `reader` still spawned, ran, and returned its answer -- so this denies
+/// the six built-ins without costing the three tiers anything. Both forms are passed because the
+/// CLI answered a `Task(...)` pattern by naming the rule `Agent(...)`: the same `Task`/`Agent`
+/// split the stream parser already has to live with (see [`DELEGATION_BLOCK_NAMES`]), and passing
+/// only the name we happened to type would be betting the whole boundary on which side of that
+/// split the permission matcher lives.
+///
+/// What this does NOT do is make the capability model complete. It denies names we have OBSERVED;
+/// a CLI version that adds a seventh built-in ships it unspawnable-by-nobody, and Bro's system
+/// prompt is not a wall. That residue is why [`AgentOrigin`] still exists and still reports
+/// `Unrecognized` -- the deny list closes what we know about, and the origin field is what tells
+/// the owner about what we do not.
+fn builtin_agent_deny_patterns() -> Vec<String> {
+    OBSERVED_CLI_BUILTIN_AGENTS
+        .iter()
+        .flat_map(|n| [format!("Task({n})"), format!("Agent({n})")])
+        .collect()
+}
+
+const OBSERVED_CLI_BUILTIN_AGENTS: [&str; 6] = [
+    "claude",
+    "claude-code-guide",
+    "Explore",
+    "general-purpose",
+    "Plan",
+    "statusline-setup",
+];
+
 /// Minimal JSON string encoder — enough for the tier definitions, which are ASCII prose. Avoids
 /// pulling serde into an argv-building path for three constants.
 fn json_str(raw: &str) -> String {
@@ -1257,6 +1337,11 @@ fn tool_args(agent: bool) -> Vec<String> {
         a.push("--disallowedTools".into());
         for pat in BRO_BASH_DENY {
             a.push((*pat).into());
+        }
+        // ...and the CLI's own agent types, which `--agents` does not displace and
+        // `--setting-sources ""` does not hide. See `BRO_BUILTIN_AGENT_DENY`.
+        for pat in builtin_agent_deny_patterns() {
+            a.push(pat);
         }
     } else {
         a.push(String::new()); // "" → disable ALL built-in tools
@@ -1350,6 +1435,75 @@ impl ToolsSource {
     }
 }
 
+/// Where the spawned agent TYPE came from — a separate question from what tools it holds.
+///
+/// This exists because the two questions have different answers and only one of them was being
+/// reported. `tools`/`tools_source` answer "what capability did this app establish?", and their
+/// honest answer for a CLI built-in is *nothing* — so both are omitted and the card reads
+/// "capability unknown". That is true, and it is the wrong impression: it looks like a small
+/// agent whose details we happen not to have, when in fact it is an agent **this app never
+/// bounded at all**. Under-reading an authorisation is the direction that hurts, and a blank
+/// under-reads it.
+///
+/// So the origin of the name is reported separately and always. It never claims a tool list; it
+/// says which of four situations produced this specialist, and three of the four are things we
+/// checked rather than inferred.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentOrigin {
+    /// One of this app's own [`BRO_TIERS`], passed to the CLI inline via `--agents`. The tool
+    /// list IS the grant, and Bro choosing the tier IS the capability decision.
+    Tier,
+    /// Resolved to a `.claude/agents/<name>.md` pack role. Its `tools:` line is the authority the
+    /// role was derived with — it bounded nothing on this route (`--setting-sources ""`), and the
+    /// tier it was spawned under is what actually applied.
+    PackRole,
+    /// A name on [`OBSERVED_CLI_BUILTIN_AGENTS`]: the CLI offered it, this app did not define it,
+    /// and no tier Bro chose applies to it. We do not know what it can do — we know we did not
+    /// decide it. That is the fact the surface must render as a WARNING, not as a blank.
+    ///
+    /// Since [`builtin_agent_deny_patterns`], a spawn of one of these is REFUSED by the CLI
+    /// before the specialist starts — but the spawn block still reaches this parser (the denial
+    /// arrives later, on the `tool_result`, as `is_error: true`). So this value now marks an
+    /// *attempt*: Bro reached for an agent nothing bounds, and the settlement says it was
+    /// stopped. Both halves are worth showing; the attempt is the part a deny list cannot make
+    /// go away.
+    CliBuiltin,
+    /// Neither a tier, nor a pack role we could read, nor a built-in we have observed. Could be a
+    /// built-in from a CLI version newer than our capture, or a name that resolved to nothing.
+    /// Either way the conclusion is identical to [`AgentOrigin::CliBuiltin`] — this app did not
+    /// establish or bound this agent — and it is stated separately only because we know strictly
+    /// less about it, and pretending otherwise would be the same error in miniature.
+    Unrecognized,
+}
+
+impl AgentOrigin {
+    // Not read outside this module YET. `commands.rs::delegation_frame` is what turns a
+    // `DelegationSpawn` into the IPC frame, and it does not carry this field, so today the origin
+    // is established and pinned here but does not reach the screen. That is a real gap and it is
+    // named rather than hidden: what the surface needs is one `obj.insert("agentOrigin", ...)`
+    // beside the existing `tools`/`toolsSource` pair, and a reader in `features/delegation.ts`
+    // that renders anything other than `app_tier` as a warning rather than a blank.
+    #[allow(dead_code)]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentOrigin::Tier => "app_tier",
+            AgentOrigin::PackRole => "pack_role_file",
+            AgentOrigin::CliBuiltin => "cli_builtin",
+            AgentOrigin::Unrecognized => "unrecognized",
+        }
+    }
+
+    /// Did anything this app chose bound the specialist's capability?
+    ///
+    /// TRUE for a tier and nothing else. A pack role is included in the false side deliberately:
+    /// its file records an authority, but the tier it was spawned under is what applied, and this
+    /// flag is about what BOUNDED the run, not about what was written down somewhere.
+    #[allow(dead_code)]
+    pub fn bounded_by_a_tier_this_app_chose(self) -> bool {
+        matches!(self, AgentOrigin::Tier)
+    }
+}
+
 /// A `Task` spawn seen on the CLI's `{"type":"assistant"}` line.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DelegationSpawn {
@@ -1363,6 +1517,11 @@ pub struct DelegationSpawn {
     /// so the surface says "unknown" instead of drawing a grant nobody can stand behind.
     pub tools: Option<Vec<String>>,
     pub tools_source: Option<ToolsSource>,
+    /// Where the agent TYPE came from. Never `None`: a name always has an origin even when its
+    /// capability is unknowable, and this is the field that keeps "unknown capability" from
+    /// reading as "small agent". `AgentOrigin::Tier` is the ONLY value that means Bro's choice
+    /// bounded this specialist.
+    pub origin: AgentOrigin,
     /// `scope:` / `prohibited_scope:` as parsed out of the task prompt text. Prose Bro wrote —
     /// NOTHING enforces it on this route, so whoever puts it on the wire must say `enforcement:
     /// "none"`. Empty when the task stated none.
@@ -1446,8 +1605,40 @@ pub fn delegation_tools(subagent_type: &str) -> Option<(Vec<String>, ToolsSource
     if let Some(tools) = tier_tools(subagent_type) {
         return Some((tools, ToolsSource::AgentDefinition));
     }
+    // A CLI built-in is NOT ours, and `.claude/agents/<name>.md` is not a description of it. The
+    // lookup below matches on filename alone, so a pack role that happened to be called `Plan.md`
+    // or `claude.md` would hand its `tools:` line to a built-in it has nothing to do with -- and
+    // that list would be narrower than what the built-in holds, which is the understating failure
+    // this module exists to prevent. No such file exists in this repo today; the guard is here so
+    // one added tomorrow cannot quietly dress a built-in in a narrow grant.
+    if is_observed_cli_builtin(subagent_type) {
+        return None;
+    }
     let dir = bro_agent_dir()?;
     pack_role_tools(&dir, subagent_type).map(|t| (t, ToolsSource::PackRoleFile))
+}
+
+/// Is this one of the agent types the live CLI offered that we never defined?
+///
+/// Compared verbatim, including case: the init frame reported `Explore` and `Plan` capitalised
+/// and `general-purpose` lower, and the CLI obeys the string it was given.
+pub fn is_observed_cli_builtin(subagent_type: &str) -> bool {
+    OBSERVED_CLI_BUILTIN_AGENTS.contains(&subagent_type)
+}
+
+/// Where the spawned agent type came from. Always answerable -- unlike the tool list, which is
+/// often unknowable -- because it is a question about a NAME, and the name is always present.
+pub fn agent_origin(subagent_type: &str) -> AgentOrigin {
+    if tier_tools(subagent_type).is_some() {
+        return AgentOrigin::Tier;
+    }
+    if is_observed_cli_builtin(subagent_type) {
+        return AgentOrigin::CliBuiltin;
+    }
+    match bro_agent_dir().and_then(|d| pack_role_tools(&d, subagent_type)) {
+        Some(_) => AgentOrigin::PackRole,
+        None => AgentOrigin::Unrecognized,
+    }
 }
 
 /// Strip the decoration Bro writes around a path (backticks, quotes, trailing punctuation).
@@ -1626,8 +1817,10 @@ pub fn delegation_spawns(line: &serde_json::Value) -> Vec<DelegationSpawn> {
             Some((t, s)) => (Some(t), Some(s)),
             None => (None, None),
         };
+        let origin = agent_origin(&subagent_type);
         out.push(DelegationSpawn {
             id: id.to_string(),
+            origin,
             subagent_type,
             description: field("description"),
             prompt,
@@ -2637,6 +2830,295 @@ mod tests {
         }
     }
 
+    // ── Defect 4: the CLI's own agent types ────────────────────────────────────────────
+    //
+    // Same method as above, re-run on 2026-08-07 against the same CLI (2.1.220) with the app's
+    // real 71-argument argv, because the capture the earlier tests were built from was already a
+    // session old and this defect is entirely about what the CLI offers.
+
+    /// The `system` `init` frame, verbatim from session `b1847222-63c0-4ccf-ad8d-08a7faeaa550`
+    /// (fields unrelated to the roster — `slash_commands`, `skills`, `cwd`, `output_style` —
+    /// dropped; nothing renamed or re-nested).
+    const CAPTURED_INIT_LINE: &str = r###"{
+      "type": "system",
+      "subtype": "init",
+      "session_id": "b1847222-63c0-4ccf-ad8d-08a7faeaa550",
+      "tools": ["Task","Bash","Edit","Glob","Grep","Read","Write"],
+      "model": "claude-opus-5[1m]",
+      "permissionMode": "acceptEdits",
+      "apiKeySource": "none",
+      "claude_code_version": "2.1.220",
+      "agents": ["builder","claude","claude-code-guide","Explore","general-purpose","Plan","reader","runner","statusline-setup"]
+    }"###;
+
+    /// Bro reaching for a CLI built-in, verbatim from session
+    /// `e8409224-dbaa-4934-b2a4-4f08214dd659` (`usage`/`diagnostics` dropped). Asked for
+    /// `general-purpose` by name, he spawned it — the same `Agent` block shape as a tier.
+    const CAPTURED_BUILTIN_SPAWN_LINE: &str = r###"{
+      "type": "assistant",
+      "message": {
+        "model": "claude-opus-5",
+        "id": "msg_011CdognRRL9aRPUmEbuDJWZ",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_018M3uqnoz4bt7yW7JyXZ6NM",
+            "name": "Agent",
+            "input": {
+              "subagent_type": "general-purpose",
+              "description": "Count files in tools/",
+              "prompt": "Count the files in tools/ and report the exact number.",
+              "run_in_background": false
+            },
+            "caller": { "type": "direct" }
+          }
+        ],
+        "stop_reason": null
+      },
+      "parent_tool_use_id": null,
+      "session_id": "e8409224-dbaa-4934-b2a4-4f08214dd659",
+      "uuid": "e95c45eb-41e7-43cd-9dee-9c0238e917bc",
+      "timestamp": "2026-08-07T16:15:38.217Z",
+      "request_id": "req_011CdognQYVv9DQiXRrzpCD7"
+    }"###;
+
+    /// What came back for that spawn once `builtin_agent_deny_patterns` was in argv. Verbatim,
+    /// nothing dropped. Note `tool_use_result` is a STRING here, not the object a completed
+    /// delegation returns.
+    const CAPTURED_BUILTIN_REFUSAL_LINE: &str = r###"{
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "content": "Agent type 'general-purpose' has been denied by permission rule 'Agent(general-purpose)' from cliArg.",
+            "is_error": true,
+            "tool_use_id": "toolu_018M3uqnoz4bt7yW7JyXZ6NM"
+          }
+        ]
+      },
+      "parent_tool_use_id": null,
+      "session_id": "e8409224-dbaa-4934-b2a4-4f08214dd659",
+      "uuid": "2ae04bfa-6b15-4f8c-84f0-9cd7626b3b11",
+      "timestamp": "2026-08-07T16:15:38.225Z",
+      "tool_use_result": "Error: Agent type 'general-purpose' has been denied by permission rule 'Agent(general-purpose)' from cliArg."
+    }"###;
+
+    /// A `reader` spawn from that SAME turn, seconds after the refusal above — the evidence that
+    /// the deny list costs the tiers nothing. Verbatim (prompt truncated at 96 chars).
+    const CAPTURED_TIER_SPAWN_UNDER_DENY_LINE: &str = r###"{
+      "type": "assistant",
+      "message": {
+        "model": "claude-opus-5",
+        "id": "msg_011CdognppzuCcTwDLwQLZuZ",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_01SnGn67TtzsvQYC1ZBoACVo",
+            "name": "Agent",
+            "input": {
+              "subagent_type": "reader",
+              "description": "Count files in tools/",
+              "prompt": "Objective: report EXACTLY how many files are in the tools/ directory.\n\nscope: tools\nprohibited_scope: .claude\n",
+              "run_in_background": false
+            },
+            "caller": { "type": "direct" }
+          }
+        ],
+        "stop_reason": null
+      },
+      "parent_tool_use_id": null,
+      "session_id": "e8409224-dbaa-4934-b2a4-4f08214dd659",
+      "uuid": "7c1bb80a-0da4-44f0-937d-a624db01a505",
+      "timestamp": "2026-08-07T16:15:49.761Z",
+      "request_id": "req_011CdognoLwwVzoVJaWxdEkF"
+    }"###;
+
+    /// The roster the app is actually offered, read off the real init frame.
+    ///
+    /// `--agents` puts our three tiers in and `--setting-sources ""` keeps all 262 pack roles out
+    /// — both confirmed here — but neither suppresses the CLI's own six. This test exists so
+    /// [`OBSERVED_CLI_BUILTIN_AGENTS`] is a transcript of that line rather than a list someone
+    /// remembered, and so a CLI that changes the roster fails here instead of silently widening
+    /// what Bro can reach.
+    #[test]
+    fn the_real_init_frame_offers_six_cli_builtins_beside_our_three_tiers() {
+        let line = captured(CAPTURED_INIT_LINE);
+        assert_eq!(line["claude_code_version"], "2.1.220");
+        let agents: Vec<&str> =
+            line["agents"].as_array().unwrap().iter().map(|a| a.as_str().unwrap()).collect();
+        assert_eq!(
+            agents,
+            vec![
+                "builder", "claude", "claude-code-guide", "Explore", "general-purpose", "Plan",
+                "reader", "runner", "statusline-setup"
+            ],
+            "verbatim from the live init frame"
+        );
+        // Not one `pack--role` name, though `.claude/agents/` held 262 of them in the run's cwd.
+        assert!(!agents.iter().any(|a| a.contains("--")), "--setting-sources \"\" hides pack roles");
+
+        // Split that list the way this module does, and the split must be exhaustive: every name
+        // on the wire is either one of ours or one we have recorded as theirs.
+        for name in &agents {
+            let origin = agent_origin(name);
+            assert!(
+                matches!(origin, AgentOrigin::Tier | AgentOrigin::CliBuiltin),
+                "{name} is neither a tier nor a recorded built-in — the roster moved"
+            );
+        }
+        for tier in ["reader", "runner", "builder"] {
+            assert_eq!(agent_origin(tier), AgentOrigin::Tier);
+            assert!(agent_origin(tier).bounded_by_a_tier_this_app_chose());
+        }
+        for builtin in OBSERVED_CLI_BUILTIN_AGENTS {
+            assert!(agents.contains(&builtin), "{builtin} must be on the observed init frame");
+            assert_eq!(agent_origin(builtin), AgentOrigin::CliBuiltin);
+            // The whole point: nothing this app chose bounds it.
+            assert!(!agent_origin(builtin).bounded_by_a_tier_this_app_chose());
+            // And its capability stays UNKNOWN. A built-in must never borrow a tool list — not
+            // from a tier, and not from a `.claude/agents/<name>.md` that shares its filename.
+            assert_eq!(delegation_tools(builtin), None, "{builtin} capability is not ours to state");
+        }
+    }
+
+    /// **Defect 4.** Bro really can spawn a built-in, and the parser really does report its
+    /// capability as nothing.
+    ///
+    /// That much was already honest. What it could not say is the part that matters: this is not
+    /// a small agent whose tool list we happen to lack, it is an agent NOTHING this app chose
+    /// bounds — and a blank next to `general-purpose` under-reads the authorisation, which is the
+    /// direction that hurts. `origin` is what says it, and it says only what was established: the
+    /// name was on the CLI's roster and not on ours. No tool list is invented for it here or
+    /// anywhere else.
+    #[test]
+    fn a_real_builtin_spawn_is_named_and_marked_as_bounded_by_no_tier() {
+        let line = captured(CAPTURED_BUILTIN_SPAWN_LINE);
+        assert_eq!(line["message"]["content"][0]["input"]["subagent_type"], "general-purpose");
+
+        let spawns = delegation_spawns(&line);
+        assert_eq!(spawns.len(), 1, "the attempt must be visible, not swallowed");
+        let s = &spawns[0];
+        assert_eq!(s.id, "toolu_018M3uqnoz4bt7yW7JyXZ6NM");
+        assert_eq!(s.subagent_type, "general-purpose");
+
+        // Unknown stays unknown. Both fields absent ⇒ `commands.rs` omits them ⇒ the card says
+        // "capability unknown" rather than drawing a grant nobody read.
+        assert_eq!(s.tools, None, "we have never read what a built-in holds");
+        assert_eq!(s.tools_source, None, "and must not imply that we did");
+
+        // The fact we DID establish, and the one the owner is owed.
+        assert_eq!(s.origin, AgentOrigin::CliBuiltin);
+        assert!(!s.origin.bounded_by_a_tier_this_app_chose(), "no tier Bro chose applies to it");
+        assert_eq!(s.origin.as_str(), "cli_builtin");
+
+        // A tier spawned in the same turn is the other side of the same field.
+        let tier_line = captured(CAPTURED_TIER_SPAWN_UNDER_DENY_LINE);
+        let t = &delegation_spawns(&tier_line)[0];
+        assert_eq!(t.subagent_type, "reader");
+        assert_eq!(t.origin, AgentOrigin::Tier);
+        assert!(t.origin.bounded_by_a_tier_this_app_chose());
+        assert_eq!(t.tools_source, Some(ToolsSource::AgentDefinition));
+    }
+
+    /// The refusal is real, and it is the CLI's, not a label this app paints on afterwards.
+    ///
+    /// A card reading "REFUSED" would have been the wrong fix on its own: by the time a spawn
+    /// block reaches the stream the specialist has already started, so nothing in this parser can
+    /// refuse anything — it can only describe. The refusal therefore had to move into argv, where
+    /// it happens before the agent runs, and the line below is what CLI 2.1.220 sent back when it
+    /// did. `is_error: true` is present here (a delegation that COMPLETES omits it, per
+    /// `CAPTURED_SETTLE_LINE`), so the settlement reports `error` from the wire itself.
+    #[test]
+    fn the_cli_really_refuses_a_denied_builtin_and_names_the_rule_that_did_it() {
+        let line = captured(CAPTURED_BUILTIN_REFUSAL_LINE);
+        let settled = delegation_settlements(&line);
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0].id, "toolu_018M3uqnoz4bt7yW7JyXZ6NM", "matches the spawn");
+        assert_eq!(settled[0].outcome, "error");
+        let text = settled[0].summary.as_deref().unwrap();
+        assert_eq!(
+            text,
+            "Agent type 'general-purpose' has been denied by permission rule \
+             'Agent(general-purpose)' from cliArg."
+        );
+
+        // The rule the CLI names must be one this app actually passes, or the refusal above is
+        // evidence about somebody else's configuration.
+        let argv = tool_args(true);
+        assert!(
+            argv.iter().any(|a| a == "Agent(general-purpose)"),
+            "the rule named in the refusal must be in our --disallowedTools"
+        );
+        // The CLI answered a `Task(...)` pattern by naming the rule `Agent(...)`. We pass both,
+        // because which of the two the matcher canonicalises to is not ours to assume.
+        assert!(argv.iter().any(|a| a == "Task(general-purpose)"));
+        let pos = argv.iter().position(|a| a == "--disallowedTools").expect("--disallowedTools");
+        for builtin in OBSERVED_CLI_BUILTIN_AGENTS {
+            for form in [format!("Task({builtin})"), format!("Agent({builtin})")] {
+                assert!(argv[pos..].contains(&form), "{form} must be denied");
+            }
+        }
+    }
+
+    /// The deny list must not cost the tiers anything — verified twice over.
+    ///
+    /// Statically: no pattern names a tier, so no prefix of one can match. Behaviourally: in the
+    /// live turn that produced `CAPTURED_BUILTIN_REFUSAL_LINE`, a `reader` was spawned eleven
+    /// seconds later, ran, and returned its answer. `--disallowedTools` is prefix-matching, and a
+    /// pattern that accidentally swallowed the `Task` tool itself would silently end delegation
+    /// altogether — the failure this pins.
+    #[test]
+    fn denying_the_builtins_leaves_task_and_the_three_tiers_working() {
+        let argv = tool_args(true);
+        let pos = argv.iter().position(|a| a == "--disallowedTools").expect("--disallowedTools");
+        for pat in &argv[pos + 1..] {
+            for tier in ["reader", "runner", "builder"] {
+                assert!(!pat.contains(tier), "{pat} would deny the {tier} tier");
+            }
+            // A bare `Task`/`Agent` pattern would prefix-match every delegation.
+            assert!(pat != "Task" && pat != "Agent", "{pat} would deny ALL delegation");
+        }
+        // `Task` is still granted, and the CLI still listed it: `CAPTURED_INIT_LINE`'s `tools`.
+        let tools_pos = argv.iter().position(|a| a == "--tools").expect("--tools");
+        assert!(argv[tools_pos + 1].split(' ').any(|t| t == "Task"));
+        let init = captured(CAPTURED_INIT_LINE);
+        let granted: Vec<&str> =
+            init["tools"].as_array().unwrap().iter().map(|t| t.as_str().unwrap()).collect();
+        assert!(granted.contains(&"Task"), "the live CLI kept Task despite the agent denies");
+    }
+
+    /// Bro is told the built-ins exist and told not to reach for them.
+    ///
+    /// The deny list is the wall, but a wall Bro keeps walking into wastes a turn and lands a
+    /// failed delegation on the owner's screen every time. The system prompt used to say only
+    /// "grant the narrowest tier", which silently assumes the only names on offer are tiers —
+    /// and the init frame says otherwise. This pins the cheap half: every built-in the CLI
+    /// actually offered is named to him, with what spawning one would mean.
+    #[test]
+    fn bros_system_prompt_names_the_builtins_and_forbids_them() {
+        let suffix = bro_agent_system_suffix(Some("C:/repo"));
+        for builtin in OBSERVED_CLI_BUILTIN_AGENTS {
+            assert!(suffix.contains(builtin), "Bro is never told `{builtin}` exists");
+        }
+        // Named is not enough — the consequence has to be stated, not left to be inferred from a
+        // list of names that reads like a menu.
+        assert!(suffix.contains("this app never defined"));
+        assert!(suffix.contains("Never spawn"));
+        assert!(suffix.contains("The app refuses the rest"));
+        // And the three tiers stay the affirmative instruction.
+        for tier in ["reader", "runner", "builder"] {
+            assert!(suffix.contains(tier));
+        }
+        // The sandboxed-chat shape has no Task tool and must stay empty.
+        assert_eq!(bro_agent_system_suffix(None), "");
+    }
+
     /// `parse_task_grant` against the two REAL prompts Bro wrote in the captures.
     ///
     /// The `label:` on its own line (first capture) reads back exactly. The second capture is why
@@ -3309,3 +3791,5 @@ mod tests {
         assert!(resolve_provider(&env).is_err());
     }
 }
+
+

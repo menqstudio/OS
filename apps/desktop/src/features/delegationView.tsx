@@ -334,6 +334,7 @@ export function DelegationSurface({
   live,
   invokeFn,
   backend,
+  label,
 }: {
   conversationId?: string;
   /** Delegations this conversation's running turn reported, folded by the caller. Live truth,
@@ -342,6 +343,11 @@ export function DelegationSurface({
   /** Test seams. Production passes neither and goes through the real Tauri `invoke`. */
   invokeFn?: InvokeFn;
   backend?: () => boolean;
+  /** Overrides the section's accessible name. Two surfaces can appear on one page — the room's
+   *  chat turns and, in a group room, the consensus deck's own asks — and they cover DIFFERENT
+   *  streams. Sharing one name made them indistinguishable to a screen reader and to a test, and
+   *  a panel that cannot say which turns it saw is one that reads as the whole room's record. */
+  label?: string;
 }) {
   const L = useL();
   // Only `conversationId` is a dependency: `invokeFn`/`backend` are test seams, and putting a
@@ -356,7 +362,7 @@ export function DelegationSurface({
   const count = shown.length;
 
   return (
-    <section className="v-deleg" aria-label={L('sectionTitle')}>
+    <section className="v-deleg" aria-label={label ?? L('sectionTitle')}>
       <style>{VIEW_CSS}</style>
       <div className="dg-head">
         <div>

@@ -8,6 +8,14 @@
 // someone said NO is the failure this deck exists to prevent.
 
 export const STR = {
+  // The room shows TWO delegation panels covering different streams: the one the chat thread
+  // renders for its own turns, and this one for the asks the consensus deck sends. They need
+  // different accessible names, or neither can say which turns it actually saw.
+  deckDelegationsLabel: {
+    en: 'Specialists the consensus deck put on this',
+    hy: 'Մասնագետներ, որոնց կոնսենսուսի վահանակը գործ է տվել',
+    ru: 'Специалисты, которых панель консенсуса привлекла',
+  },
   consensusEyebrow: {
     en: 'CONSENSUS',
     hy: 'ԿՈՆՍԵՆՍՈՒՍ',
@@ -280,5 +288,69 @@ export const STR = {
     en: 'Earlier rounds',
     hy: 'Նախորդ փուլերը',
     ru: 'Предыдущие раунды',
+  },
+
+  // ── delegation inside the room ────────────────────────────────────────────
+  // Everything below is written so a partial list can never read as the room's whole
+  // record. The section shows delegations reported by the turns THIS deck starts (the
+  // asks it sends for a round); the room's ordinary chat turns report to the workspace
+  // above, which draws them nowhere. That is a gap, and the copy names it rather than
+  // letting silence imply completeness.
+  delegationLabel: {
+    en: 'DELEGATION IN THIS ROOM',
+    hy: 'ՊԱՏՎԻՐԱԿՈՒՄ ԱՅՍ ՍԵՆՅԱԿՈՒՄ',
+    ru: 'ДЕЛЕГИРОВАНИЕ В ЭТОЙ КОМНАТЕ',
+  },
+  delegationScopeNote: {
+    en: 'Bound to the room selected above. This window is told about a delegation only by a turn '
+      + 'it started itself — the asks this deck sends for a round. A delegation made in the room’s '
+      + 'ordinary chat above is reported to that workspace, which draws it nowhere, and will not '
+      + 'appear here. So the section below covers this deck’s asks, not everything Bro did in the '
+      + 'room, whatever its own wording says.',
+    hy: 'Կապված է վերևում ընտրված սենյակի հետ։ Այս պատուհանին պատվիրակման մասին ասում է միայն այն turn-ը, '
+      + 'որը ինքն է սկսել — այս deck-ի ուղարկած հարցումները փուլի համար։ Սենյակի սովորական զրույցում արված '
+      + 'պատվիրակումը հաղորդվում է վերևի workspace-ին, որը այն ոչ մի տեղ չի նկարում, ու այստեղ չի հայտնվի։ '
+      + 'Ուրեմն ներքևի բաժինը ցույց է տալիս այս deck-ի հարցումները, ոչ թե այն ամենը, ինչ Bro-ն արել է սենյակում՝ '
+      + 'անկախ նրանից, թե ինքն ինչ է գրում։',
+    ru: 'Привязано к комнате, выбранной выше. Об одном делегировании этому окну сообщает только ход, '
+      + 'который оно само и начало, — запросы, которые эта панель отправляет для раунда. Делегирование, '
+      + 'сделанное в обычном чате комнаты выше, сообщается той рабочей области, которая его нигде не '
+      + 'рисует, и здесь не появится. Поэтому раздел ниже охватывает запросы этой панели, а не всё, что '
+      + 'Bro сделал в комнате, что бы ни говорил его собственный текст.',
+  },
+  delegationTrailLabel: {
+    en: 'WHICH ASK REPORTED IT',
+    hy: 'ՈՐ ՀԱՐՑՈՒՄՆ Է ՀԱՂՈՐԴԵԼ',
+    ru: 'КАКОЙ ЗАПРОС ЭТО СООБЩИЛ',
+  },
+  delegationTrailNote: {
+    en: 'Each row is the ask this window had running when the frame arrived — the turn that '
+      + 'reported it. The frame itself names no consensus round, and no requester either (the '
+      + 'backend labels every delegation “Bro”), so this is this window’s record of what it '
+      + 'started. It is not evidence that the specialist was told about the decision, and not a '
+      + 'link the specialist reported.',
+    hy: 'Ամեն տող այն հարցումն է, որ այս պատուհանը կատարում էր, երբ frame-ը հասավ — այն turn-ը, որը '
+      + 'հաղորդեց այն։ Frame-ը ինքը ոչ կոնսենսուսի փուլ է նշում, ոչ էլ հարցնողին (backend-ը ամեն '
+      + 'պատվիրակում պիտակում է «Bro»), ուրեմն սա այս պատուհանի գրանցումն է իր սկսածի մասին։ Սա ապացույց '
+      + 'չէ, որ մասնագետին ասել են որոշման մասին, ու կապ չէ, որ մասնագետը հաղորդել է։',
+    ru: 'Каждая строка — это запрос, который выполняло это окно, когда пришёл кадр: ход, который о нём '
+      + 'сообщил. Сам кадр не называет ни раунда консенсуса, ни запрашивающего (бэкенд помечает каждое '
+      + 'делегирование как «Bro»), так что это запись самого окна о том, что оно начало. Это не '
+      + 'доказательство, что специалисту рассказали о решении, и не связь, о которой сообщил специалист.',
+  },
+  delegationAskPrefix: {
+    en: 'ask to',
+    hy: 'հարցում՝',
+    ru: 'запрос к',
+  },
+  delegationRoundPrefix: {
+    en: 'round:',
+    hy: 'փուլ՝',
+    ru: 'раунд:',
+  },
+  delegationNoRound: {
+    en: 'no round context recorded',
+    hy: 'փուլի կոնտեքստ գրանցված չէ',
+    ru: 'контекст раунда не записан',
   },
 } as const;

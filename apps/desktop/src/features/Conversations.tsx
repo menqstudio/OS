@@ -1081,13 +1081,13 @@ export function Conversations({ kind }: { kind: Kind }) {
         </div>
       </div>
 
-      {/* Who Bro put on this — beneath the workspace, bound to the thread actually on screen.
-          Direct chat only: that is where the surface has always lived, and `GroupChat.tsx` is
-          not this task's to change. A delegation Bro makes inside a group room is therefore
-          still not drawn anywhere, which is a gap, not a claim — nothing here says otherwise. */}
-      {kind === 'direct' && (
-        <DelegationSurface conversationId={activeId ?? undefined} live={delegations} />
-      )}
+      {/* Who was put on this — beneath the workspace, bound to the thread actually on screen.
+          Rendered for BOTH kinds. It was direct-only because that is where the surface was
+          first built, which meant a delegation handed out inside a group room was drawn
+          nowhere at all — and a group room is where handing work to a named specialist
+          matters most. The events already arrive here for both kinds; only this guard
+          discarded half of them. */}
+      <DelegationSurface conversationId={activeId ?? undefined} live={delegations} />
     </div>
   );
 }

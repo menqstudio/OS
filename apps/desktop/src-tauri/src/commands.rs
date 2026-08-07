@@ -1010,7 +1010,11 @@ pub enum StreamEvent {
 /// travel as PROSE inside a prompt on this route: `engine/runtime/bro_security.enforce_scope` is
 /// what actually contains a path, and a desktop `claude` spawn never reaches it. Claiming
 /// otherwise would be the same lie the surface was built to stop.
-fn delegation_frame(ev: crate::ai::AgentEvent, conversation_id: &str) -> StreamEvent {
+fn delegation_frame(
+    ev: crate::ai::AgentEvent,
+    conversation_id: &str,
+    parent: &str,
+) -> StreamEvent {
     use serde_json::json;
     match ev {
         crate::ai::AgentEvent::Spawned(d) => {
@@ -1027,7 +1031,12 @@ fn delegation_frame(ev: crate::ai::AgentEvent, conversation_id: &str) -> StreamE
                     json!(conversation_id)
                 },
             );
-            obj.insert("parent".into(), json!("Bro"));
+            // The turn's validated author, not the literal "Bro". In a group room a
+            // specialist can hold the turn, and hard-coding Bro made the card say
+            // "Bro -> reader" for work Scout handed out -- a wrong attribution on the one
+            // surface whose whole job is saying WHO put work on whom. `author` has already
+            // been checked against the agent roster upstream, so a renderer cannot mint one.
+            obj.insert("parent".into(), json!(parent));
             obj.insert("startedAt".into(), json!(crate::ai::now_iso()));
             if let Some(x) = d.description {
                 obj.insert("description".into(), json!(x));
@@ -1431,6 +1440,7 @@ pub async fn stream_reply(
     let ch = on_event.clone();
     let ch_ev = on_event.clone();
     let conv_for_events = conversation_id.clone();
+    let author_for_events = author.clone();
     let result = crate::ai::generate_stream(
         &system,
         &history,
@@ -1438,7 +1448,7 @@ pub async fn stream_reply(
             let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
         },
         move |ev| {
-            let _ = ch_ev.send(delegation_frame(ev, &conv_for_events));
+            let _ = ch_ev.send(delegation_frame(ev, &conv_for_events, &author_for_events));
         },
         Some(cancel_guard.flag()),
     )
@@ -2011,11 +2021,14 @@ pub async fn stream_ask(
     // --- Ungoverned (dev-only, BROPS_ALLOW_UNGOVERNED): streamed as before. ---
     let ch = on_event.clone();
     let ch_ev = on_event.clone();
+    // Genuinely Bro here, not a placeholder: `stream_ask` is a one-shot with no conversation and
+    // no selectable agent -- its system prompt names Bro, so no other identity can hold this turn.
+    let ask_author = "Bro".to_string();
     match crate::ai::generate_stream(&system, &history, move |delta| {
         let _ = ch.send(StreamEvent::Delta { text: delta.to_string() });
     }, move |ev| {
         // A one-shot ask has no conversation to file the delegation under, and says so.
-        let _ = ch_ev.send(delegation_frame(ev, ""));
+        let _ = ch_ev.send(delegation_frame(ev, "", &ask_author));
     }, None)
     .await
     {

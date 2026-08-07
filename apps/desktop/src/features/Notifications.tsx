@@ -8,7 +8,9 @@ import {
 import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
-import { hasRecords, recordCount, isUnauthenticatedMirror } from '../services/governance';
+import {
+  hasRecords, recordCount, isUnauthenticatedMirror, engineEmptyReason, engineSourceKind,
+} from '../services/governance';
 import type { Notification } from '../domain/entities';
 import { statusTone } from '../domain/enums';
 import { severityLabel } from '../domain/statusLabels';
@@ -368,6 +370,26 @@ export function Notifications() {
                   ? `${recordCount(gov.data)} ${L('gateMirrored')}`
                   : L('gateEmpty')}
           </div>
+          {/* The engine's own account of the surface, quoted and attributed. An empty
+              stream used to render as a bare "nothing here": the engine had said WHY
+              ("the orchestration runtime holds no tasks, so nothing has been recorded")
+              and the mirror threw the sentence away, leaving the owner unable to tell
+              "there is nothing to show" from "there is nothing to show BECAUSE ...".
+              It sits beside the ok/empty/blocked state, never instead of it —
+              `engineEmptyReason` answers only for an `ok` read that carried nothing, so
+              this can reach neither a mirrored stream nor a refusal (a refusal's own
+              words are the `reason` line below). It is the ENGINE speaking about its
+              own store: quoted, never restated as something the desktop established. */}
+          {gov.data && engineEmptyReason(gov.data) ? (
+            <div className="micro nsig-gate-reason">
+              {L('gateEngineSays')}{' '}<q>{engineEmptyReason(gov.data)}</q>
+            </div>
+          ) : null}
+          {gov.data && engineSourceKind(gov.data) ? (
+            <div className="micro nsig-gate-reason">
+              {L('gateEngineSource')}<span className="mono">{engineSourceKind(gov.data)}</span>
+            </div>
+          ) : null}
           {/* Records shown here are schema-checked only, from a source the desktop does
               not authenticate — never let the panel imply verified engine truth. */}
           {gov.data && hasRecords(gov.data) && isUnauthenticatedMirror(gov.data) ? (

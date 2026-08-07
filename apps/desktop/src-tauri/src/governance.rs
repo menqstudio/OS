@@ -43,6 +43,19 @@
 //! renderer MUST surface — a GREEN verdict or a satisfied evidence node resting on
 //! this data without saying it is unauthenticated is a false claim.
 //!
+//! # The engine's own explanation travels with the read
+//!
+//! A three-valued read collapses to a blank page unless the REASON travels with it.
+//! The engine answers an empty surface with a sentence about its own store ("the
+//! orchestration runtime holds no tasks, so nothing has been recorded"), plus its
+//! record count, whether it has ever heard of the filtered task, and which store it
+//! read. Those used to be parsed and thrown away here, leaving the owner an empty page
+//! with no way to tell "there is nothing to show" from "there is nothing to show
+//! BECAUSE …". They are now relayed in [`GovernanceRead::Ok::engine`] as the ENGINE's
+//! claims, attributed — the desktop verified none of them and must not restate them as
+//! its own findings. The three values (records / empty / blocked) stay exactly as
+//! distinct as they were; the explanation sits beside them, never in place of them.
+//!
 //! Because the Phase-2 engine read endpoints do not answer yet, in practice every
 //! command below returns `Unreachable`/`Blocked` today — that is expected and is the
 //! point: a real read-IPC surface plus an honest blocked state, with zero fabrication.
@@ -86,7 +99,11 @@ pub enum GovernanceRead {
     /// trusted key is reachable here, so nothing on this path is authenticated (see
     /// the module docs). It exists as a field rather than a comment precisely so a
     /// future signature check can flip it and the UI follows.
-    Ok { surface: String, records: Vec<Value>, authenticated: bool },
+    ///
+    /// `engine` relays what the ENGINE said about its own store alongside the records
+    /// — above all the sentence explaining WHY a surface is empty. It is the engine's
+    /// claim, attributed, never a desktop finding (see [`EngineAccount`]).
+    Ok { surface: String, records: Vec<Value>, authenticated: bool, engine: EngineAccount },
     /// The engine was reached but explicitly refused the read, returned a
     /// malformed/`ok:false` result, or returned a record that fails its schema
     /// (fail-closed). Honest "blocked", never fabricated data.
@@ -94,6 +111,91 @@ pub enum GovernanceRead {
     /// The engine sidecar could not be reached / is not configured / did not
     /// respond (fail-closed). Honest "unreachable", never fabricated data.
     Unreachable { surface: String, reason: String },
+}
+
+/// What the ENGINE said about its own store, relayed beside the records it sent.
+///
+/// Every field here is the engine SPEAKING ABOUT ITSELF. The desktop did not open the
+/// engine's state directory, count anything, or check any signature, so it can only
+/// attribute — the renderer must present these as the engine's words, never restate
+/// them in the app's own voice as if the desktop had established them.
+///
+/// This exists because the three-valued read was arriving stripped of its reason. The
+/// engine distinguishes "the orchestration runtime holds no tasks, so nothing has been
+/// recorded" from "the orchestration runtime has no task 't-7'" from "no task is
+/// waiting on an owner approval" — three very different empty pages. Dropping the
+/// sentence left the owner with a blank surface and no way to tell which one it was,
+/// which is the difference between "there is nothing to show" and "there is nothing to
+/// show BECAUSE …".
+///
+/// # What is deliberately NOT here: `record_authentication`
+///
+/// The engine's reply also carries `record_authentication` (`ed25519-signature-verified`
+/// / `runtime-hash-chain-verified`). That is the engine's claim about how ITS store
+/// establishes records — it is NOT a desktop-performed check, and it is NOT read here.
+/// [`RECORDS_ARE_AUTHENTICATED`] stays `false` regardless of what that field says: the
+/// desktop authenticates neither the records (the schemas define no signature field)
+/// nor the process on the pipe. Wiring the engine's word into `authenticated` would
+/// launder a self-assertion into a verified badge, so the field is dropped on purpose
+/// and a test below pins that.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineAccount {
+    /// The engine's own sentence for why this surface came back empty. Carried ONLY
+    /// when the mirrored record set is genuinely empty, so an explanation of emptiness
+    /// can never appear beside records.
+    pub empty_reason: Option<String>,
+    /// The engine's own count of the records it read. Kept as the engine's claim; the
+    /// number a page shows is always the length of the list the desktop validated.
+    pub record_count: Option<u64>,
+    /// Only present when the read was filtered to one task: whether the engine's
+    /// orchestration runtime has ever heard of that id. Lets a page tell "this task
+    /// recorded nothing" from "the engine does not know this task" instead of guessing
+    /// from an empty list.
+    pub known_task: Option<bool>,
+    /// `source.kind` — the engine's name for the store it actually read (e.g.
+    /// `orchestration-runtime-transitions`, `signed-evidence-store`). The rest of
+    /// `source` (state-dir path, integrity root hash) is deliberately not surfaced: a
+    /// hash the desktop never verified reads as proof, and this mirror proves nothing.
+    pub source_kind: Option<String>,
+}
+
+/// Read the engine's account of a successful (`ok:true`) reply.
+///
+/// Fail-quiet per field, never fail-open: a missing or wrongly-typed field yields
+/// `None` (the explanation is simply absent), and no field here can turn a read into
+/// `ok` or upgrade its trust — the account is descriptive only. Strings are bounded
+/// like every other engine-supplied text this module echoes.
+fn engine_account(doc: &Value, mirrored: usize) -> EngineAccount {
+    let text = |v: Option<&Value>| -> Option<String> {
+        v.and_then(|v| v.as_str()).map(bounded).filter(|s| !s.is_empty())
+    };
+    EngineAccount {
+        // Only when the surface really is empty. An engine that sent both records and
+        // an "it is empty because…" sentence is contradicting itself; the records are
+        // what the page shows, so the sentence is dropped rather than displayed under
+        // them.
+        empty_reason: if mirrored == 0 { text(doc.get("empty_reason")) } else { None },
+        record_count: doc.get("record_count").and_then(|v| v.as_u64()),
+        known_task: doc.get("known_task").and_then(|v| v.as_bool()),
+        source_kind: text(doc.get("source").and_then(|s| s.get("kind"))),
+    }
+}
+
+/// Refuse a reply whose own record count contradicts the records it sent.
+///
+/// Nothing on this path filters the list — a validated record is kept or the WHOLE read
+/// fails — so the engine's count and the mirrored list must agree. If they do not, the
+/// reply is not internally consistent, and relaying that count as the engine's own claim
+/// beside a different list would publish the inconsistency as fact. Fail closed instead.
+fn count_disagreement(doc: &Value, sent: usize) -> Option<String> {
+    let claimed = doc.get("record_count").and_then(|v| v.as_u64())?;
+    if claimed == sent as u64 {
+        return None;
+    }
+    Some(format!(
+        "inconsistent engine reply: it reports record_count {claimed} but sent {sent} records"
+    ))
 }
 
 /// A verifier verdict receipt — the read shape of
@@ -346,6 +448,11 @@ fn parse_identified_record(o: &Value) -> Result<Value, String> {
 /// trusted key is reachable from the read path, so there is nothing to verify and
 /// the sidecar's identity is not established. Emitted on every `Ok` so the UI can
 /// state it. Flip this only together with a real signature check.
+///
+/// In particular it is NOT the engine's `record_authentication` field. That field is
+/// the engine describing its own store ("ed25519-signature-verified"); binding it here
+/// would turn a claim the desktop cannot check into a verified badge the UI lights up.
+/// The engine's word travels as an attributed claim or not at all.
 const RECORDS_ARE_AUTHENTICATED: bool = false;
 
 /// Pull the `records` array out of a successful (`ok:true`) sidecar reply and validate
@@ -402,12 +509,21 @@ where
                 };
             }
             match validate(&doc) {
-                Ok(records) => GovernanceRead::Ok {
-                    surface: surface.to_string(),
-                    records,
-                    // Schema-shape only. Never claim more than that (module docs).
-                    authenticated: RECORDS_ARE_AUTHENTICATED,
-                },
+                Ok(records) => {
+                    if let Some(reason) = count_disagreement(&doc, records.len()) {
+                        return GovernanceRead::Blocked { surface: surface.to_string(), reason };
+                    }
+                    let engine = engine_account(&doc, records.len());
+                    GovernanceRead::Ok {
+                        surface: surface.to_string(),
+                        records,
+                        // Schema-shape only. Never claim more than that (module docs).
+                        // NOT derived from the engine's `record_authentication` — that is
+                        // the engine's word about its own store, not a desktop check.
+                        authenticated: RECORDS_ARE_AUTHENTICATED,
+                        engine,
+                    }
+                }
                 Err(e) => GovernanceRead::Blocked {
                     surface: surface.to_string(),
                     reason: format!("schema-invalid engine reply: {}", bounded(&e)),
@@ -622,7 +738,7 @@ mod tests {
         let doc = json!({ "ok": true, "records": [ valid_receipt() ] });
         let got = classify("verdicts", Ok(doc), |d| validate_records(d, parse_verifier_receipt));
         match got {
-            GovernanceRead::Ok { records, surface, authenticated } => {
+            GovernanceRead::Ok { records, surface, authenticated, .. } => {
                 assert_eq!(surface, "verdicts");
                 assert_eq!(records.len(), 1);
                 // Schema-valid is NOT authenticated: no signature exists to check.
@@ -670,11 +786,22 @@ mod tests {
             surface: "evidenceChain".into(),
             records: vec![],
             authenticated: RECORDS_ARE_AUTHENTICATED,
+            engine: EngineAccount {
+                empty_reason: Some("the orchestration runtime holds no tasks".into()),
+                record_count: Some(0),
+                known_task: Some(false),
+                source_kind: Some("signed-evidence-store".into()),
+            },
         };
         let v = serde_json::to_value(&got).expect("serializes");
         assert_eq!(v["state"], json!("ok"));
         assert_eq!(v["authenticated"], json!(false));
         assert_eq!(v["records"], json!([]));
+        // camelCase, because the renderer reads this JSON directly.
+        assert_eq!(v["engine"]["emptyReason"], json!("the orchestration runtime holds no tasks"));
+        assert_eq!(v["engine"]["recordCount"], json!(0));
+        assert_eq!(v["engine"]["knownTask"], json!(false));
+        assert_eq!(v["engine"]["sourceKind"], json!("signed-evidence-store"));
     }
 
     #[test]
@@ -701,6 +828,171 @@ mod tests {
                 assert!(reason.chars().count() <= MAX_REASON_CHARS + 1);
             }
             other => panic!("expected Unreachable, got {other:?}"),
+        }
+    }
+
+    // --- the engine's own explanation survives the read -------------------------------
+
+    /// The empty reply the engine actually sends: three-valued `ok:true` + `empty:true`
+    /// + the sentence saying why, plus the count, the task it knows about, and the store
+    /// it read.
+    fn empty_engine_reply() -> Value {
+        json!({
+            "protocol": "brops.governance-read.v1",
+            "schema": 1,
+            "ok": true,
+            "surface": "evidenceChain",
+            "task_id": "t-abc.1",
+            "read_at_epoch": 1000,
+            "records": [],
+            "record_count": 0,
+            "empty": true,
+            "empty_reason": "the orchestration runtime holds no tasks, so nothing has been recorded",
+            "record_authentication": "ed25519-signature-verified",
+            "known_task": false,
+            "source": {
+                "kind": "signed-evidence-store",
+                "evidence_store": "/var/lib/bro/evidence",
+                "chain_task_ids": []
+            }
+        })
+    }
+
+    #[test]
+    fn an_empty_read_carries_the_engine_reason_it_used_to_drop() {
+        // The whole point: "there is nothing to show" and "there is nothing to show
+        // BECAUSE the runtime holds no tasks" are different answers to the owner.
+        let got = classify("evidenceChain", Ok(empty_engine_reply()), |d| {
+            validate_records(d, parse_evidence_event)
+        });
+        match got {
+            GovernanceRead::Ok { records, engine, .. } => {
+                assert!(records.is_empty());
+                assert_eq!(
+                    engine.empty_reason.as_deref(),
+                    Some("the orchestration runtime holds no tasks, so nothing has been recorded")
+                );
+                assert_eq!(engine.record_count, Some(0));
+                assert_eq!(engine.known_task, Some(false));
+                assert_eq!(engine.source_kind.as_deref(), Some("signed-evidence-store"));
+            }
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_engine_reason_never_appears_beside_records() {
+        // An engine that sends records AND an "it is empty because..." sentence is
+        // contradicting itself. The records are what the page shows, so the
+        // explanation-of-emptiness is dropped rather than printed under them.
+        let doc = json!({
+            "ok": true,
+            "records": [ valid_receipt() ],
+            "record_count": 1,
+            "empty_reason": "no task has completed under independent verification",
+            "source": { "kind": "persisted-verifier-receipts" }
+        });
+        match classify("verdicts", Ok(doc), |d| validate_records(d, parse_verifier_receipt)) {
+            GovernanceRead::Ok { engine, .. } => {
+                assert_eq!(engine.empty_reason, None);
+                // The rest of the account still travels.
+                assert_eq!(engine.record_count, Some(1));
+                assert_eq!(engine.source_kind.as_deref(), Some("persisted-verifier-receipts"));
+            }
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_engines_record_authentication_claim_never_becomes_authenticated() {
+        // The engine's `record_authentication` is the ENGINE's claim about its own
+        // store. The desktop checked no signature and does not authenticate the process
+        // on the pipe, so this must not flip `authenticated` -- the flag the UI uses to
+        // decide whether it may paint a verified affordance.
+        for claim in ["ed25519-signature-verified", "runtime-hash-chain-verified"] {
+            let doc = json!({
+                "ok": true,
+                "records": [ valid_receipt() ],
+                "record_count": 1,
+                "record_authentication": claim
+            });
+            match classify("verdicts", Ok(doc), |d| validate_records(d, parse_verifier_receipt)) {
+                GovernanceRead::Ok { authenticated, engine, .. } => {
+                    assert!(!authenticated, "the engine's word is not a desktop check");
+                    // And it is not smuggled in under another name either.
+                    let v = serde_json::to_value(&engine).expect("serializes");
+                    let text = v.to_string();
+                    assert!(!text.contains(claim), "engine account leaked the claim: {text}");
+                }
+                other => panic!("expected Ok, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_reply_whose_own_count_disagrees_with_its_records_is_blocked() {
+        // Nothing here filters records -- a validated record is kept or the whole read
+        // fails -- so the engine's count must match what it sent. If it does not, the
+        // reply is not internally consistent and is refused rather than half-relayed.
+        let doc = json!({ "ok": true, "records": [ valid_receipt() ], "record_count": 7 });
+        match classify("verdicts", Ok(doc), |d| validate_records(d, parse_verifier_receipt)) {
+            GovernanceRead::Blocked { reason, .. } => assert!(reason.contains("record_count")),
+            other => panic!("expected Blocked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_missing_or_malformed_account_is_simply_absent_never_fabricated() {
+        // Fail-quiet, not fail-open: the read is still `ok`, there is just no
+        // explanation to attribute, and nothing is invented to fill the gap.
+        let doc = json!({
+            "ok": true,
+            "records": [],
+            "empty_reason": 42,
+            "known_task": "yes",
+            "source": "not an object"
+        });
+        match classify("approvalQueue", Ok(doc), |d| validate_records(d, parse_identified_record)) {
+            GovernanceRead::Ok { engine, .. } => assert_eq!(engine, EngineAccount::default()),
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_refusal_carries_no_engine_account_at_all() {
+        // A refusal has no `records` key by contract, and it must not grow an
+        // explanation-of-emptiness either: "I could not look" is not "I looked and
+        // found nothing", and the reason it already carries is the engine's refusal.
+        let doc = json!({ "ok": false, "error": "BROPS_GOVERNANCE_STATE_DIR is unset" });
+        match classify("decisionLedger", Ok(doc), |d| validate_records(d, parse_identified_record)) {
+            GovernanceRead::Blocked { reason, .. } => {
+                assert!(reason.contains("BROPS_GOVERNANCE_STATE_DIR"));
+            }
+            other => panic!("expected Blocked, got {other:?}"),
+        }
+        let v = serde_json::to_value(GovernanceRead::Blocked {
+            surface: "decisionLedger".into(),
+            reason: "refused".into(),
+        })
+        .expect("serializes");
+        assert!(v.get("engine").is_none());
+        assert!(v.get("records").is_none());
+    }
+
+    #[test]
+    fn a_hostile_engine_reason_is_bounded_like_every_other_echoed_string() {
+        let doc = json!({
+            "ok": true,
+            "records": [],
+            "empty_reason": "z".repeat(5000),
+            "source": { "kind": "y".repeat(5000) }
+        });
+        match classify("approvalQueue", Ok(doc), |d| validate_records(d, parse_identified_record)) {
+            GovernanceRead::Ok { engine, .. } => {
+                assert!(engine.empty_reason.unwrap().chars().count() <= MAX_REASON_CHARS + 1);
+                assert!(engine.source_kind.unwrap().chars().count() <= MAX_REASON_CHARS + 1);
+            }
+            other => panic!("expected Ok, got {other:?}"),
         }
     }
 }

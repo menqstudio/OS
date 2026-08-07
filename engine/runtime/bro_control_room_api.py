@@ -10,7 +10,11 @@ from typing import Any
 from bro_evidence import EvidenceError, list_chain_task_ids, read_chains
 from bro_identity import IdentityError, all_agent_identities
 from bro_orchestration import OrchestrationError, validate_control_room_command
-from bro_orchestration_runtime import DurableOrchestrationRuntime, OrchestrationRuntimeError
+from bro_orchestration_runtime import (ACTOR_ASSIGNEE_LEASE,
+                                       ACTOR_PROVEN_BY_SESSION as RUNTIME_ACTOR_PROVEN,
+                                       ACTOR_RUNTIME_ORIGINATED, ACTOR_UNPROVEN,
+                                       DurableOrchestrationRuntime,
+                                       OrchestrationRuntimeError)
 from bro_policy import (CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE,
                         CONDUCTOR_SESSION_ARTIFACT)
 from bro_signature import SignatureError, verify_artifact
@@ -48,6 +52,53 @@ _GOVERNANCE_REQUEST_FIELDS = frozenset({"protocol", "op", "surface", "task_id", 
 # letting a consumer assume the stronger one.
 _ED25519 = "ed25519-signature-verified"
 _HASH_CHAIN = "runtime-hash-chain-verified"
+
+# --------------------------------------------------------------------------- #
+# The actor identity on a decision record is published with HOW it was established.
+#
+# The runtime persists `actor_identity_basis` inside every hash-chained transition,
+# because `actor_type` / `actor_id` say only who was NAMED, never who proved it. This
+# mirror still published those two names alone, so a consumer saw an identity and had
+# no way to tell an operator-signed conductor from a caller that can spell `bro-000`
+# — the same defect `_prove_command_actor` and `_prove_actor` closed, one layer
+# downstream, at the surface a cockpit actually renders.
+#
+# So the basis travels, in the WRITER's vocabulary: the four values below are imported
+# from `bro_orchestration_runtime`, never re-spelled here, so no second name for the
+# same fact can drift into existence. This module mints no basis of its own — a record
+# whose payload carries none is published with `actor_identity_basis: null`, which is
+# exactly what the record says: nothing.
+#
+# `actor_identity_established` is the derived reading, and it is THREE-valued on
+# purpose:
+#
+#   "proven"    a signature this engine verified established the identity — the
+#               operator-root-signed conductor-session artifact, and nothing else.
+#   "unproven"  the runtime recorded a basis and it is not a verified signature.
+#               `actor_identity_basis` says which: its own bookkeeping, a claim lease
+#               it minted, or a bare caller claim. None of the three is a signature,
+#               and none may borrow the word "proven".
+#   "unknown"   the record does not establish a basis — it predates the field, or
+#               carries a value this build cannot read. NOT "unproven": "we never
+#               recorded it" is a third fact, and demoting it to either pole tells a
+#               reader something the record never said.
+#
+# Fail-closed both ways: an unrecognised basis is never "proven", and an absent one is
+# never quietly ranked as though it had been judged and found wanting. It is a string
+# rather than a nullable boolean for the same reason — `if (record.actor_proven)`
+# reads null as false, which is precisely the collapse this field exists to prevent.
+# --------------------------------------------------------------------------- #
+ACTOR_IDENTITY_PROVEN = "proven"
+ACTOR_IDENTITY_UNPROVEN = "unproven"
+ACTOR_IDENTITY_UNKNOWN = "unknown"
+
+#: The writer's basis vocabulary, imported rather than restated. A basis outside these
+#: two sets is not a weaker basis — it is one this build cannot read, and it reads as
+#: unknown. `engine/tests/test_governance_read.py` holds these sets against every basis
+#: constant the runtime declares, so a fifth one cannot appear unclassified.
+_BASIS_PROVEN = frozenset({RUNTIME_ACTOR_PROVEN})
+_BASIS_UNPROVEN = frozenset({ACTOR_RUNTIME_ORIGINATED, ACTOR_ASSIGNEE_LEASE,
+                             ACTOR_UNPROVEN})
 
 # --------------------------------------------------------------------------- #
 # O-4: the control-room command actor is PROVEN, never claimed.
@@ -181,6 +232,24 @@ def _evidence_wire(payload: dict[str, Any]) -> dict[str, Any]:
         "issued_at_epoch": payload["issued_at_epoch"],
         "key_id": payload["key_id"],
     }
+
+
+def _actor_identity(payload: dict[str, Any]) -> tuple[str | None, str]:
+    """Read a transition's persisted actor basis, and how it should be read.
+
+    Returns `(basis, established)`: the value the runtime actually wrote (or None
+    when it wrote none), and the three-valued reading of it. It never raises and
+    never guesses — an absent, non-string or unrecognised basis is `unknown`, which
+    is a different answer from `unproven` and must stay one.
+    """
+    basis = payload.get("actor_identity_basis")
+    if not isinstance(basis, str) or not basis.strip():
+        return None, ACTOR_IDENTITY_UNKNOWN
+    if basis in _BASIS_PROVEN:
+        return basis, ACTOR_IDENTITY_PROVEN
+    if basis in _BASIS_UNPROVEN:
+        return basis, ACTOR_IDENTITY_UNPROVEN
+    return basis, ACTOR_IDENTITY_UNKNOWN
 
 
 def _sha(value: Any) -> str:
@@ -559,6 +628,12 @@ class ControlRoomAPIV1:
         on what evidence, and each is bound into the per-task record chain that
         `_records` re-derives on every read. That is the engine's decision history —
         there is no second, tidier ledger it is holding back.
+
+        It also names how that decider was ESTABLISHED. `actor_type`/`actor_id` are
+        the runtime's record of who acted; `actor_identity_basis` /
+        `actor_identity_established` are its record of what discharged that identity,
+        so a mirror consumer can tell a verified signature from a caller's claim
+        instead of reading both as the same fact. See the vocabulary block above.
         """
         known, targets = self._governance_tasks(task_id)
         records: list[dict[str, Any]] = []
@@ -567,6 +642,7 @@ class ControlRoomAPIV1:
                 if record["kind"] != "transition":
                     continue
                 payload = record["payload"]
+                basis, established = _actor_identity(payload)
                 records.append({
                     "id": record["record_id"],
                     "task_id": identifier,
@@ -576,6 +652,12 @@ class ControlRoomAPIV1:
                     "next_state": payload.get("next_state"),
                     "actor_type": payload.get("actor_type"),
                     "actor_id": payload.get("actor_id"),
+                    # Not who was named — how that name was established. Without these
+                    # two a consumer cannot tell a verified signature from a caller's
+                    # claim, and a mirror that cannot tell them apart reads every
+                    # identity as the stronger one.
+                    "actor_identity_basis": basis,
+                    "actor_identity_established": established,
                     "reason_code": payload.get("reason_code"),
                     "evidence_refs": list(payload.get("evidence_refs") or []),
                     "record_sha256": record["record_sha256"],

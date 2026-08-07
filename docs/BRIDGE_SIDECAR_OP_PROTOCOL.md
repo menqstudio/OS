@@ -69,6 +69,58 @@ Two rules keep them apart:
    In particular the sidecar refuses to create a state directory and then report it
    as empty.
 
+## A decision record says how its actor was established
+
+The runtime proves a privileged lifecycle actor with an operator-root-signed
+`conductor-session` artifact and persists the outcome as `actor_identity_basis`
+inside the hash-chained transition (`bro_orchestration_runtime._prove_actor`;
+`bro_control_room_api._prove_command_actor` does the same for control-room
+commands). That basis was durable but invisible: the `decisionLedger` wire record
+published `actor_type` and `actor_id` and nothing about how — or whether — the
+identity behind them was established, so a mirror consumer read a signed conductor
+decision and a bare caller claim as the same fact.
+
+Each `decisionLedger` record now carries two more fields:
+
+| field | value |
+| --- | --- |
+| `actor_identity_basis` | the string the runtime persisted, verbatim — `operator-signed-conductor-session`, `runtime-originated`, `contract-assignee-under-runtime-issued-claim-lease`, `unproven-caller-claim` — or `null` when the record carries none. The mirror mints no basis of its own. |
+| `actor_identity_established` | the derived reading: `"proven"`, `"unproven"`, or `"unknown"`. |
+
+Three values, not two. `proven` means a signature this engine verified — the
+conductor-session artifact, and nothing else. `unproven` means a basis was recorded
+and it is not a verified signature (the runtime's own bookkeeping, a claim lease it
+minted, or a bare caller claim; `actor_identity_basis` says which). `unknown` means
+the record does not establish one — it predates the field, or carries a value this
+build cannot read. `unknown` is deliberately **not** `unproven`: "we never recorded
+it" is a third fact, and demoting it to either pole tells a reader something the
+record never said. It is a string rather than a nullable boolean for the same
+reason — `if (record.actor_proven)` reads `null` as `false`.
+
+Fail-closed both ways: an unrecognised basis is never `proven`, and an absent one is
+never ranked as though it had been judged. The vocabulary is imported from the
+writer, and `engine/tests/test_governance_read.py` holds the mirror's two classified
+sets against every basis constant `bro_orchestration_runtime` declares, so a fifth
+one cannot appear unclassified.
+
+**The field-set equality rule does not refuse it.** `_governance_request` checks
+`set(request) == _GOVERNANCE_REQUEST_FIELDS` on the **request** only — an unknown
+request field is a question this build does not understand. There is no equality
+rule on the reply: `_op_governance_read` forwards the request unmodified and relays
+the reply verbatim, and the single reply-shape rule it enforces is that an
+`ok:false` reply must not carry `records`. A new field inside a record therefore
+travels on its own, and nothing in `bridge/engine_sidecar.py` needs to change.
+
+**What the desktop reader would need.** Nothing, to receive it:
+`governance.rs::parse_identified_record` validates only that a decision record is an
+object with a non-empty string `id` and passes the whole record through verbatim, so
+both fields already reach the frontend. To *show* it, the reader must render three
+states — and must not collapse `unknown` into either pole, which is the one way to
+reintroduce the defect at the last hop. Note also that `RECORDS_ARE_AUTHENTICATED`
+stays `false` and `record_authentication` for this surface stays
+`runtime-hash-chain-verified`: a record may say its actor was proven by a signature
+the ENGINE verified, and that is still not a signature the DESKTOP verified.
+
 ## Provisioning (operator, not desktop)
 
 Read provisioning is deliberately disjoint from the governed turn's `_PROVISION_ENV`:

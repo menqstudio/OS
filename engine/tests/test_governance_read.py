@@ -34,9 +34,17 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from bro_contracts import canonical_json_sha256
-from bro_control_room_api import GOVERNANCE_OP, GOVERNANCE_PROTOCOL, ControlRoomAPIV1
+import bro_control_room_api
+import bro_orchestration_runtime
+from bro_control_room_api import (ACTOR_IDENTITY_PROVEN, ACTOR_IDENTITY_UNKNOWN,
+                                  ACTOR_IDENTITY_UNPROVEN, GOVERNANCE_OP,
+                                  GOVERNANCE_PROTOCOL, ControlRoomAPIV1)
 from bro_evidence import EvidenceError, list_chain_task_ids, read_chain, read_chains
-from bro_orchestration_runtime import DurableOrchestrationRuntime
+from bro_orchestration_runtime import (ACTOR_ASSIGNEE_LEASE, ACTOR_PROVEN_BY_SESSION,
+                                       ACTOR_RUNTIME_ORIGINATED, ACTOR_UNPROVEN,
+                                       DurableOrchestrationRuntime)
+from bro_policy import (CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE,
+                        CONDUCTOR_SESSION_ARTIFACT)
 from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1
 from bro_run_receipt import candidate_state, run_and_sign
 from bro_signature import load_trusted_keys
@@ -190,6 +198,154 @@ class GovernanceMirrorTests(unittest.TestCase):
         self.assertTrue(reply["ok"], reply)
         self.assertTrue(reply["known_task"])
         self.assertEqual({record["task_id"] for record in reply["records"]}, {"task-two"})
+
+    # --- the decision ledger's actor identity ---------------------------------------
+
+    def conductor_attestation(self, **overrides) -> dict:
+        """An operator-root-signed `conductor-session` — the one actor credential the
+        runtime can actually verify, and so the only thing that can make a decision
+        record read as proven."""
+        now = int(time.time())
+        payload = {
+            "schema": 1,
+            "artifact_type": CONDUCTOR_SESSION_ARTIFACT,
+            "key_id": self.keys["operator-root"]["key_id"],
+            "session_id": "s-conductor-mirror",
+            "agent_id": CANONICAL_CONDUCTOR_ID,
+            "role": CONDUCTOR_ROLE,
+            "issued_at_epoch": now - 10,
+            "expires_at_epoch": now + 3600,
+        }
+        payload.update(overrides)
+        return sign_payload(self.keys["operator-root"]["private_key"], payload)
+
+    def append_transition(self, task_id: str, payload: dict) -> None:
+        """Append a transition through the runtime's real chained writer.
+
+        Used to stage payload shapes the current writer never produces — a record
+        written before `actor_identity_basis` existed, and one carrying a basis a
+        later build might invent. Both are chain-valid records the mirror must read
+        without either crashing or over-claiming.
+        """
+        self.runtime._append(task_id, "transition", 150, payload)
+
+    def ledger(self, task_id: str | None = None) -> dict[str, dict]:
+        reply = self.read("decisionLedger", task_id)
+        self.assertTrue(reply["ok"], reply)
+        return {record["next_state"]: record for record in reply["records"]}
+
+    def test_the_decision_ledger_publishes_how_each_actor_identity_was_established(self) -> None:
+        """The mirror carries the basis the runtime persisted, in the runtime's words.
+
+        `actor_type`/`actor_id` say who was named. On their own a consumer reads the
+        conductor's operator-signed cancellation and the agent's bare claim as the
+        same kind of fact, which is the defect `_prove_actor` closed one layer up.
+        """
+        self.runtime.create_task(task_contract("task-basis"), now_epoch=100)
+        self.runtime.claim_next(AGENT, now_epoch=101)
+        self.runtime.cancel_task(
+            "task-basis", actor_type=CONDUCTOR_ROLE, actor_id=CANONICAL_CONDUCTOR_ID,
+            now_epoch=102, effect_in_flight=False, evidence_refs=[],
+            actor_attestation=self.conductor_attestation())
+        published = self.ledger("task-basis")
+        self.assertEqual(
+            {state: (r["actor_identity_basis"], r["actor_identity_established"])
+             for state, r in published.items()},
+            {"draft": (ACTOR_RUNTIME_ORIGINATED, ACTOR_IDENTITY_UNPROVEN),
+             "queued": (ACTOR_RUNTIME_ORIGINATED, ACTOR_IDENTITY_UNPROVEN),
+             "routing": (ACTOR_RUNTIME_ORIGINATED, ACTOR_IDENTITY_UNPROVEN),
+             "running": (ACTOR_UNPROVEN, ACTOR_IDENTITY_UNPROVEN),
+             "cancelled": (ACTOR_PROVEN_BY_SESSION, ACTOR_IDENTITY_PROVEN)})
+        # The published basis is the PERSISTED string, not a second name for it.
+        persisted = {record["payload"]["next_state"]: record["payload"]["actor_identity_basis"]
+                     for record in self.runtime._records("task-basis")
+                     if record["kind"] == "transition"}
+        self.assertEqual({state: r["actor_identity_basis"]
+                          for state, r in published.items()}, persisted)
+
+    def test_a_bare_caller_claim_can_never_render_as_proven(self) -> None:
+        """The load-bearing one: `unproven-caller-claim` in, never `proven` out.
+
+        The claiming agent's transition names an identity nothing discharged. It is
+        recorded, it is mirrored, and the one thing it must never do is arrive at a
+        consumer wearing the word a verified signature earns.
+        """
+        self.runtime.create_task(task_contract("task-claim"), now_epoch=100)
+        self.runtime.claim_next(AGENT, now_epoch=101)
+        reply = self.read("decisionLedger", "task-claim")
+        running = self.ledger("task-claim")["running"]
+        # The two fields that were published alone say nothing about proof.
+        self.assertEqual((running["actor_type"], running["actor_id"]), ("agent", AGENT))
+        self.assertEqual(running["actor_identity_basis"], ACTOR_UNPROVEN)
+        self.assertEqual(running["actor_identity_established"], ACTOR_IDENTITY_UNPROVEN)
+        self.assertNotEqual(running["actor_identity_established"], ACTOR_IDENTITY_PROVEN)
+        # Not just this record: nothing carrying an unproven basis reads as proven.
+        for record in reply["records"]:
+            if record["actor_identity_basis"] == ACTOR_UNPROVEN:
+                self.assertNotEqual(record["actor_identity_established"],
+                                    ACTOR_IDENTITY_PROVEN)
+
+    def test_a_record_predating_the_basis_reads_as_unknown_not_unproven(self) -> None:
+        """Not recorded is a THIRD fact, and must survive the wire as one.
+
+        A transition written before the runtime persisted a basis establishes nothing
+        about its actor. Publishing it as proven would launder it; publishing it as
+        unproven would claim the runtime judged an identity it never looked at.
+        """
+        self.runtime.create_task(task_contract("task-legacy"), now_epoch=100)
+        self.runtime.claim_next(AGENT, now_epoch=101)
+        legacy = {"previous_state": "running", "next_state": "verifying",
+                  "actor_type": "agent", "actor_id": AGENT,
+                  "reason_code": "submitted-for-verification", "evidence_refs": []}
+        self.assertNotIn("actor_identity_basis", legacy)
+        self.append_transition("task-legacy", legacy)
+        record = self.ledger("task-legacy")["verifying"]
+        # No basis is invented for it: the record says nothing, so the wire says nothing.
+        self.assertIsNone(record["actor_identity_basis"])
+        self.assertEqual(record["actor_identity_established"], ACTOR_IDENTITY_UNKNOWN)
+        self.assertNotEqual(record["actor_identity_established"], ACTOR_IDENTITY_PROVEN)
+        self.assertNotEqual(record["actor_identity_established"], ACTOR_IDENTITY_UNPROVEN)
+        # And the identity itself still crosses, so the record is not silently dropped.
+        self.assertEqual(record["actor_id"], AGENT)
+
+    def test_a_basis_this_build_cannot_read_is_unknown_rather_than_proven(self) -> None:
+        """Fail closed on vocabulary too. A basis string this build does not know may
+        be a stronger credential a later runtime writes — and until this build can
+        judge it, it is unknown, not trusted, and not dismissed either."""
+        cases = ("owner-signed-orchestration-actor", "", "   ", None, 7, True)
+        for index, basis in enumerate(cases):
+            with self.subTest(basis=basis):
+                task_id = f"task-future-{index}"
+                self.runtime.create_task(task_contract(task_id), now_epoch=100)
+                self.append_transition(task_id, {
+                    "previous_state": "queued", "next_state": "routing",
+                    "actor_type": "agent", "actor_id": AGENT,
+                    "reason_code": "future-basis", "evidence_refs": [],
+                    "actor_identity_basis": basis})
+                record = [r for r in self.read("decisionLedger", task_id)["records"]
+                          if r["reason_code"] == "future-basis"][0]
+                self.assertEqual(record["actor_identity_established"],
+                                 ACTOR_IDENTITY_UNKNOWN)
+                # A string is still shown verbatim; anything else is not a basis at all.
+                self.assertEqual(record["actor_identity_basis"],
+                                 basis if isinstance(basis, str) and basis.strip() else None)
+
+    def test_the_published_basis_vocabulary_is_the_runtimes_own(self) -> None:
+        """Drift guard. The mirror must classify every basis the WRITER declares — a
+        fifth constant appearing there must fail here rather than quietly mirror as
+        unknown, and the two modules must not grow two spellings of one fact."""
+        declared = {value for name, value in vars(bro_orchestration_runtime).items()
+                    if name.startswith("ACTOR_") and isinstance(value, str)
+                    and " " not in value}
+        self.assertEqual(declared, {ACTOR_PROVEN_BY_SESSION, ACTOR_RUNTIME_ORIGINATED,
+                                    ACTOR_ASSIGNEE_LEASE, ACTOR_UNPROVEN})
+        self.assertEqual(declared, set(bro_control_room_api._BASIS_PROVEN)
+                         | set(bro_control_room_api._BASIS_UNPROVEN))
+        self.assertEqual(set(bro_control_room_api._BASIS_PROVEN),
+                         {ACTOR_PROVEN_BY_SESSION})
+        # The command reply and the ledger must name the same credential.
+        self.assertEqual(bro_control_room_api.ACTOR_PROVEN_BY_SESSION,
+                         ACTOR_PROVEN_BY_SESSION)
 
     # --- evidence chain -------------------------------------------------------------
 
