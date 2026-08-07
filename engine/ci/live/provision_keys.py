@@ -209,8 +209,12 @@ def main() -> int:
     # supervisor ledger this is an authority, not a shared work area — run_live_turn.sh chowns it
     # to the recorder account at 0700.
     evidence_state_dir = os.path.join(root, "recorder-state")
+    # The broker's own writable state (audit IDX-82). $LIVE itself is root-owned 0755 — the §2.5
+    # floor requires that of every ancestor of a pinned artifact — so the broker cannot create its
+    # turn database there. It gets its own directory instead of the deployment root being loosened.
+    broker_state_dir = os.path.join(root, "broker-state")
     for d in (keys_dir, store_dir, sock_dir, report_dir, tcb_dir, bin_dir, supervisor_state_dir,
-              evidence_state_dir):
+              evidence_state_dir, broker_state_dir):
         os.makedirs(d, exist_ok=True)
 
     # ---- (1) generate the four keypairs; write private (owner-loaded) + public hex ----
@@ -347,7 +351,7 @@ def main() -> int:
         # an in-memory database, and a DURABLE replay ledger over a store that vanishes on exit is
         # not durable: the receipt-id and one-time-nonce defences would cover a single process and
         # no more. Naming a real file is what makes them survive a restart.
-        "db": {"path": os.path.join(root, "live.db")},
+        "db": {"path": os.path.join(broker_state_dir, "live.db")},
         "trust": {
             "manifest_path": manifest_path,
             "manifest_sig_path": manifest_sig_path,
