@@ -2299,12 +2299,111 @@ pub mod automations {
 pub mod integrations {
     use super::*;
 
+    /// Length bounds for an `auth_ref`, mirroring the schema-0022 CHECK exactly. Long
+    /// enough to name a vault path, far too short to hold a key blob.
+    const AUTH_REF_MIN_LEN: usize = 3;
+    const AUTH_REF_MAX_LEN: usize = 160;
+
+    /// The characters a reference may contain — mirroring the schema-0022 CHECK. Excludes
+    /// every whitespace character (so a multi-line PEM cannot be stored) and `=` (so
+    /// padded base64 material is refused).
+    fn is_auth_ref_char(c: char) -> bool {
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '@' | '+' | '-')
+    }
+
+    /// Prefixes that begin recognisable KEY MATERIAL. Checked against every
+    /// `:`-delimited segment after the scheme, case-sensitively, mirroring the
+    /// schema-0022 GLOBs.
+    ///
+    /// This list is a FLOOR, not a filter. It catches a careless paste of a token whose
+    /// vendor happens to be on it. It cannot catch a vendor that is not, and it cannot
+    /// catch a secret that simply looks like a word — see `normalize_auth_ref`.
+    const KEY_MATERIAL_PREFIXES: &[&str] = &[
+        "eyJ",                                                  // JWT
+        "sk-", "sk_", "pk_", "rk_",                             // OpenAI/Anthropic, Stripe
+        "ghp_", "gho_", "ghs_", "ghr_", "ghu_", "github_pat_",  // GitHub
+        "glpat-",                                               // GitLab
+        "xoxa-", "xoxb-", "xoxc-", "xoxe-", "xoxo-", "xoxp-", "xoxr-", "xoxs-", // Slack
+        "AKIA", "ASIA",                                         // AWS
+        "AIza", "ya29.",                                        // Google
+        "npm_", "shpat_",                                       // npm, Shopify
+        "-----BEGIN",                                           // PEM armor
+    ];
+
+    /// A rejection that NEVER echoes what was rejected.
+    ///
+    /// `CoreError::Invalid` renders its `value` into the message, and that message travels
+    /// out through the Tauri command layer to the renderer and into logs. If the caller
+    /// just handed us a password by mistake, repeating it back is the leak this column
+    /// exists to avoid — so the reason travels and the text does not.
+    fn refuse_auth_ref(reason: &'static str) -> CoreError {
+        CoreError::Invalid { field: "auth_ref", value: format!("<withheld> ({reason})") }
+    }
+
+    /// Turn caller input into the value that may be stored, or refuse it.
+    ///
+    /// `None`, empty, or whitespace-only all mean CLEAR — the record goes back to holding
+    /// no reference. Everything else must positively look like `scheme:locator` with a
+    /// scheme from `AUTH_REF_SCHEMES`, within the length bound, in the reference alphabet,
+    /// and carrying no segment that begins with recognisable key material. This is the
+    /// same rule the schema-0022 CHECK states in SQL, stated a second time here so a
+    /// refusal reaches the caller as an explanation rather than as a constraint violation.
+    ///
+    /// WHAT THIS CANNOT DO, stated plainly: it cannot tell a reference from a secret.
+    /// `engine:hunter2` is a well-formed reference and also a password; `engine:9f2c…`
+    /// is a well-formed reference and also forty characters of entropy. Shape is all that
+    /// is checkable here. What actually protects the boundary is this function refusing
+    /// anything not positively recognisable as a reference, plus the standing rule that a
+    /// credential must never arrive at this process at all.
+    fn normalize_auth_ref(raw: Option<&str>) -> CoreResult<Option<String>> {
+        let value = match raw.map(str::trim) {
+            None | Some("") => return Ok(None),
+            Some(v) => v,
+        };
+        if !value.chars().all(is_auth_ref_char) {
+            return Err(refuse_auth_ref("contains characters no reference uses"));
+        }
+        // ASCII-only by the check above, so byte length is character length.
+        if value.len() < AUTH_REF_MIN_LEN || value.len() > AUTH_REF_MAX_LEN {
+            return Err(refuse_auth_ref("length is outside 3..160"));
+        }
+        let (scheme, locator) = match value.split_once(':') {
+            Some(parts) => parts,
+            None => return Err(refuse_auth_ref("must be scheme:locator")),
+        };
+        if !is_valid(scheme, AUTH_REF_SCHEMES) {
+            return Err(refuse_auth_ref("unrecognised reference scheme"));
+        }
+        if locator.is_empty() {
+            return Err(refuse_auth_ref("locator after the scheme is empty"));
+        }
+        for segment in value.split(':').skip(1) {
+            if KEY_MATERIAL_PREFIXES.iter().any(|p| segment.starts_with(p)) {
+                return Err(refuse_auth_ref("looks like credential material, not a reference"));
+            }
+        }
+        Ok(Some(value.to_string()))
+    }
+
+    /// Read the stored reference as the record's honest state.
+    ///
+    /// SQL NULL and any string that is empty or whitespace-only both collapse to `None` —
+    /// "no reference recorded". The empty-string collapse matters because the database
+    /// file is not ours alone: something that opened it out of band could have written
+    /// `''`, and an empty string surfacing as a *present* reference would make the
+    /// Integrations page claim a custody fact it cannot support.
+    fn read_auth_ref(r: &Row) -> rusqlite::Result<Option<String>> {
+        let raw: Option<String> = r.get("auth_ref")?;
+        Ok(raw.filter(|v| !v.trim().is_empty()))
+    }
+
     fn map(r: &Row) -> rusqlite::Result<Integration> {
         Ok(Integration {
             id: r.get("id")?,
             name: r.get("name")?,
             provider: r.get("provider")?,
             status: r.get("status")?,
+            auth_ref: read_auth_ref(r)?,
             created_at: r.get("created_at")?,
             updated_at: r.get("updated_at")?,
         })
@@ -2346,6 +2445,50 @@ pub mod integrations {
                 return Err(CoreError::NotFound(id.to_string()));
             }
             super::audit::record(tx, "integration.status_changed", "user", "gev", "integration", id)?;
+            Ok(())
+        })?;
+        get(conn, id)
+    }
+
+    /// Record (or clear) the REFERENCE naming where this connector's credential lives.
+    ///
+    /// Exactly like `set_status`, this records the desired state; it does not itself reach
+    /// any external service, and it does not resolve, fetch, validate, or in any way touch
+    /// the secret the reference names — that secret belongs to the engine or the operator,
+    /// on the far side of the Phase-9 trust boundary, and must never arrive here.
+    ///
+    /// `auth_ref = None` (or an empty/whitespace string) clears the reference; the record
+    /// returns to "no reference", which is a truthful state and not an error. Anything
+    /// else is validated by `normalize_auth_ref` and refused unless it is positively
+    /// recognisable as a reference — where it is unclear whether a value is a reference or
+    /// a secret, it is treated as a secret and rejected.
+    ///
+    /// Setting a reference proves nothing about the connector: no probe has run, nothing
+    /// was contacted, and the composite verdict is untouched.
+    ///
+    /// The audit event records only THAT a reference was set or cleared, and for which
+    /// connector. The reference text is never written to the audit log, never logged, and
+    /// never included in an error.
+    pub fn set_auth_ref(
+        conn: &Connection,
+        id: &str,
+        auth_ref: Option<&str>,
+    ) -> CoreResult<Integration> {
+        let normalized = normalize_auth_ref(auth_ref)?;
+        let event = if normalized.is_some() {
+            "integration.auth_ref_set"
+        } else {
+            "integration.auth_ref_cleared"
+        };
+        super::atomic(conn, |tx| {
+            let changed = tx.execute(
+                "UPDATE integrations SET auth_ref = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![normalized, now(), id],
+            )?;
+            if changed == 0 {
+                return Err(CoreError::NotFound(id.to_string()));
+            }
+            super::audit::record(tx, event, "user", "gev", "integration", id)?;
             Ok(())
         })?;
         get(conn, id)

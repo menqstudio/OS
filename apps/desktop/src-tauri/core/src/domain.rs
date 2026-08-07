@@ -19,6 +19,13 @@ pub const RUN_STATUSES: &[&str] = &[
     "failed", "cancelled",
 ];
 pub const INTEGRATION_STATUSES: &[&str] = &["disconnected", "connected", "error"];
+/// The reference schemes an `Integration.auth_ref` may use. Each names a holder that
+/// lives OUTSIDE this process — the governed engine, the human operator, an OS keychain,
+/// the process environment, or an external secret manager. The desktop never resolves any
+/// of them; it only records which one was named. The set is closed on purpose: an
+/// unrecognised prefix is far more likely to be a pasted secret than a new scheme, so it
+/// is refused. Widening it is a NEW forward migration plus this list, never a quiet edit.
+pub const AUTH_REF_SCHEMES: &[&str] = &["engine", "operator", "keychain", "env", "vault"];
 pub const STEP_STATUSES: &[&str] = &["pending", "active", "done", "failed", "skipped"];
 
 pub fn is_valid(value: &str, allowed: &[&str]) -> bool {
@@ -265,6 +272,21 @@ camel! {
         pub name: String,
         pub provider: String,
         pub status: String,
+        /// A REFERENCE to a credential the engine or the operator holds — never the
+        /// credential. Serialized to the renderer as `authRef` (schema 0022).
+        ///
+        /// `None` means "no reference is recorded here", which is the honest state of
+        /// every connector until someone records one, and the state every row that
+        /// predates schema 0022 keeps. It is deliberately `Option<String>` rather than
+        /// `String`: an empty string would be indistinguishable from a configured-but-
+        /// blank reference, and `repo::integrations` normalizes any empty value found in
+        /// the database back to `None` for exactly that reason.
+        ///
+        /// Naming a reference proves NOTHING about the secret — not that it exists, not
+        /// that it is valid, not that anything is reachable. Like `status`, it records a
+        /// desired state; it does not itself reach any external service. It can never
+        /// make a connector `connected_verified`.
+        pub auth_ref: Option<String>,
         pub created_at: String,
         pub updated_at: String,
     }
