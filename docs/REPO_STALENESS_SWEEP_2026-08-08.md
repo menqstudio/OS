@@ -102,17 +102,55 @@ reopenable if a specific hunk turns out to be wanted.
 
 ---
 
-## 4. Branches
+## 4. Branches: 49 → 1
 
 `git branch -r --merged` is useless on this repository: every PR is **squash-merged**, so a merged
 branch shares no commit with `main` and reports as unmerged. All 49 looked stale by that measure
-and none of them were classifiable by it.
+and none of them was classifiable by it.
 
 The reliable signal is GitHub's own record — which PR carried the branch, and did that PR merge.
-`scratchpad/branch_audit.py` cross-references `gh pr list --state all` against every remote ref:
+`scratchpad/branch_audit.py` cross-references `gh pr list --state all` against every remote ref;
+**29 branches carried a merged PR** and were deleted on that evidence.
 
-| Bucket | Count |
+The other 20 were harder and are the interesting half. A closed-unmerged PR usually means the work
+was *consolidated* elsewhere — #47/#48 did that to a dozen branches here — so "never merged" proves
+nothing. `scratchpad/branch_content.py` compared each branch's files against `main`: **16 were
+fully absorbed** (every file present, only older content) and were deleted.
+
+### The last four, and why "just merge what's missing" was the wrong instinct
+
+Four branches held **46 files `main` does not have**, including 1 128 lines of governed supervisor
+and a 268-line distinct-principals check. The obvious move — merge them, then delete — would have
+been a mistake, and the reason is specific rather than cautious:
+
+- `manifest.rs` would land beside `key_manifest.rs`; `strict_json.rs` beside the strict serde shim
+  inside `governed_verification.rs`. **Two implementations of one thing** is the exact defect this
+  week was spent removing.
+- Migrations are **forward-only and numbered**. `main` is at `0022`; those branches carry `0012`
+  and `0015`. An old-numbered migration either collides or applies out of order — a real breakage,
+  not a style objection.
+
+So the question was not "is this file on `main`" — a rename answers *no* while losing nothing — but
+**does `main` do this job, somewhere?** `scratchpad/successors.py` extracted every public symbol
+from each unique file and searched `main` for it. Every one has a live successor:
+
+| Left on the branch | Doing that job on `main` today |
 |---|---|
+| `brops_governed_supervisor.py` (1 128L) | `engine/runtime/governed_supervisor_server.py` (813L) |
+| `brops_challenge_authority.py` | `engine/runtime/challenge_authority_server.py` |
+| `brops_governed_signer.py` | `engine/runtime/isolated_signer_server.py` |
+| `brops_executor_launcher.py` (Python, 54L) | the Rust `launcher/` crate (1 760L) |
+| `manifest.rs` | `key_manifest.rs` (599L) |
+| `strict_json.rs` | the strict serde shim in `governed_verification.rs` |
+| `distinct_principals.rs` | `verify_distinct_principals()` in `windows_broker.rs`, plus the seven real uids `engine/ci/live/run_live_turn.sh` provisions |
+| `governed_chain_proof.sh` | `engine/ci/live/run_live_turn.sh` (632L) |
+| `governed_v1b.py` + 8 test files | the current bridge and its 60 tests |
+| migrations `0012`, `0015` | superseded by the chain through `0022` |
+| `docs/TEAM_PROTOCOL.md` | `OWNERS.md` + `CLAUDE.md` |
+
+Deleted on that evidence. **`origin` now holds `main` and the branch this document is on.**
+
+---|---|
 | Carried a **merged** PR — safe to delete | 29 |
 | Carried a PR that **closed unmerged** — needs a decision | 16 |
 | **No PR ever opened** — needs a decision | 4 |
