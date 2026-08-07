@@ -32,14 +32,22 @@ Webview → Tauri cmd (Rust) → localhost auth IPC → engine sidecar (Python)
   per `bridge-result.schema.json`). Holds no keys — verification is an injected callback; engine core
   untouched (the adapter only *calls* `run_task`).
 - **`engine_sidecar.py`** (sidecar transport) — the process the desktop shells out to: reads one
-  task-request on **stdin**, writes one bridge-result on **stdout**, hosting `run_governed_turn`. Always
-  exits 0 (the verdict travels in `ok`); every error path is fail-closed.
+  request on **stdin**, writes one reply on **stdout**. Always exits 0 (the verdict travels in `ok`);
+  every error path is fail-closed. The request now carries an optional top-level **`op`**:
+  without one it is the original task-request and the reply is a bridge-result (`run_governed_turn`);
+  `op: "governance.read"` routes to the engine's `bro_control_room_api.governance_read` and relays its
+  `brops.governance-read.v1` reply **verbatim**, so the three-valued shape survives the hop
+  (`ok:true`+records / `ok:true`+`empty:true` / `ok:false`+error — a refusal never carries a `records`
+  key). An op this build does not implement is refused **by name**, never silently ignored. Ops are
+  READS: none reaches `_real_callables`, the supervisor socket, the signer or the builder.
+  Protocol note: [`docs/BRIDGE_SIDECAR_OP_PROTOCOL.md`](../docs/BRIDGE_SIDECAR_OP_PROTOCOL.md).
 - **`apps/desktop` `Provider::GovernedEngine`** (desktop provider, `src-tauri/src/ai.rs`) — **opt-in,
   default OFF**; spawns the sidecar (task-request via stdin, bounded reads, deadline, kill-on-drop) and
   **re-enforces** `ok` **and a desktop-verified signature** (recompute JCS + Ed25519 `verify_strict` over
   `envelope_jcs_b64` against a pinned key — never a wire `verified` flag), else fail-closed. Existing `claude-cli` /
   `anthropic` / `ollama` paths are byte-for-byte unchanged.
-- **`tests/`** — **18** unit tests (10 adapter + 8 sidecar). `cd bridge && python -m unittest discover -s tests`.
+- **`tests/`** — unit tests (adapter + sidecar + op dispatch). `cd bridge && python -m unittest discover -s tests`.
+  The governance route's engine-to-stdout join is covered by `engine/tests/test_governance_sidecar_route.py`.
   Plus 4 Rust tests for the desktop verify-gate + lease-free request shape.
 
 ## Activate (opt-in, default OFF)
@@ -64,6 +72,16 @@ Unprovisioned **real** mode is fail-closed (no result):
 echo '{"task_id":"t","task_class":"standard-builder","rationale":"hi"}' | python bridge/engine_sidecar.py
 # → {"ok": false, "result": null, "receipt": null, "error": "governed engine not provisioned: …"}
 ```
+
+The governance mirror (read-only, no execution reachable). Unprovisioned it refuses, and says so:
+```
+echo '{"protocol":"brops.governance-read.v1","op":"governance.read","surface":"decisionLedger","task_id":null,"read_only":true}' \
+  | python bridge/engine_sidecar.py
+# → {"protocol": "brops.governance-read.v1", "ok": false, …, "error": "governance mirror not provisioned: BROPS_GOVERNANCE_STATE_DIR …"}
+#   note: NO `records` key — "I could not look" can never be read as "I looked and found nothing".
+```
+With `BROPS_GOVERNANCE_STATE_DIR` pointing at the engine's runtime state directory the same request
+returns `ok:true` with `records` (or `records: []` + `empty: true` + an `empty_reason`).
 
 ## Real end-to-end (owner-provisioned) — pending
 A real governed turn needs operator-provisioned state on disk (none may come from the desktop), via env:

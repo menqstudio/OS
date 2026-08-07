@@ -2,13 +2,26 @@
 """bridge/engine_sidecar.py — the process the desktop cockpit shells out to.
 
 The desktop is a *conductor*: it never holds a lease, a key, or the engine. It
-writes ONE `bridge.task-request` JSON to this sidecar's **stdin** and reads ONE
-`bridge.result` JSON from **stdout**. The sidecar hosts
-`bridge.engine_adapter.run_governed_turn`, injecting the engine-side callables
-(`run_task` / `read_result`). The adapter makes NO trust decision: it carries the
-run's SIGNED receipt material (`envelope_jcs_b64` + `signature_b64`) for the DESKTOP,
-which is the final authority and verifies the signature (design §3). Every failure
-is still fail-closed (`result=null`); there is no self-asserted `verified` boolean.
+writes ONE request JSON to this sidecar's **stdin** and reads ONE reply JSON from
+**stdout**. Which request it is now depends on an explicit `op` (see "Op dispatch"
+below); without one it is the original `bridge.task-request`, and the reply is a
+`bridge.result`. That path hosts `bridge.engine_adapter.run_governed_turn`,
+injecting the engine-side callables (`run_task` / `read_result`). The adapter makes
+NO trust decision: it carries the run's SIGNED receipt material (`envelope_jcs_b64`
++ `signature_b64`) for the DESKTOP, which is the final authority and verifies the
+signature (design §3). Every failure is still fail-closed (`result=null`); there is
+no self-asserted `verified` boolean.
+
+Op dispatch
+-----------
+`governance.read` routes to the engine's own `bro_control_room_api.governance_read`
+and its reply is relayed VERBATIM, because that reply is three-valued and the middle
+value is the fragile one: `ok:true`+`records` (read, found these), `ok:true`+
+`empty:true` (read, found nothing), `ok:false`+`error` (could not read). A refusal
+never carries a `records` key at any hop, so no consumer can mistake a blind engine
+for a quiet one. Ops are READS: nothing dispatched here may reach `_real_callables`,
+the supervisor socket, the signer or the builder. An op this build does not
+implement is refused BY NAME — never ignored, never answered with an empty read.
 
 Modes
 -----
@@ -39,6 +52,7 @@ import json
 import os
 import pathlib
 import sys
+import time
 from typing import Any, Callable
 
 _HERE = pathlib.Path(__file__).resolve().parent
@@ -259,26 +273,191 @@ def _real_callables(
 
 
 # --------------------------------------------------------------------------- #
-# Entry
+# Op dispatch — one process, several QUESTIONS, one reply each.
+#
+# For a long time a stdin round trip could only mean one thing: run a governed turn.
+# So the Phase-2 governance mirror sent a perfectly well-formed read and got the
+# governed-turn path's fail-closed answer back, and the cockpit rendered its honest
+# blocked state forever — not because the engine had nothing to say, but because
+# nothing here was listening for a question. The envelope now carries an `op`.
+#
+#   no `op` key      -> the original bridge.task-request path, unchanged. A
+#                       task-request can never grow one by accident:
+#                       task-request.schema.json is additionalProperties:false.
+#   a registered op  -> that op's handler, which owns its own reply protocol and
+#                       its own refusal shape.
+#   anything else    -> a NAMED refusal saying which op was asked for and which ops
+#                       this build serves. Never a silent no-op, and never a reply
+#                       shaped like a satisfied read.
+#
+# Every op here is a READ. None may reach `_real_callables`, the supervisor socket,
+# the signer or the builder: that path stays exactly as fail-closed as it was, and a
+# read must not even be able to knock on it.
 # --------------------------------------------------------------------------- #
-def run(argv: list[str], stdin, stdout) -> int:
-    """Read one task-request from stdin, write one bridge-result to stdout.
 
-    Always exits 0 and always writes a schema-shaped bridge-result — the verdict
-    travels in the payload (`ok`), never in the exit status. Fail-closed on every
-    error path.
+#: Reply protocol for a refusal that belongs to no richer protocol of its own.
+BRIDGE_OP_PROTOCOL = "bridge.op.v1"
+
+#: The governance mirror's wire contract. Held as a LITERAL on purpose: the refusal
+#: below has to be emitable when `bro_control_room_api` cannot even be imported, which
+#: is precisely when its constant is out of reach. `bridge/tests/test_sidecar_ops.py`
+#: asserts this literal still equals the engine's `GOVERNANCE_PROTOCOL` / `GOVERNANCE_OP`,
+#: so the two cannot drift apart in silence.
+GOVERNANCE_PROTOCOL = "brops.governance-read.v1"
+GOVERNANCE_READ_OP = "governance.read"
+
+# Operator-provisioned state for the governance READ, deliberately disjoint from
+# _PROVISION_ENV: a read shares nothing with the execution path, so a half-provisioned
+# builder can neither enable nor disable the mirror, and provisioning the mirror grants
+# no step toward running anything. Only the state dir is required; the evidence store
+# and the trusted-key registry are optional, and when they are absent the ENGINE
+# refuses the surfaces that need them, by name, in its own words.
+_GOVERNANCE_STATE_DIR_ENV = "BROPS_GOVERNANCE_STATE_DIR"
+_GOVERNANCE_EVIDENCE_STORE_ENV = "BROPS_GOVERNANCE_EVIDENCE_STORE"
+_GOVERNANCE_REGISTRY_ROOT_ENV = "BROPS_GOVERNANCE_REGISTRY_ROOT"
+
+
+def _op_refusal(request: Any, error: Any) -> dict:
+    """A refusal for an op with no reply protocol of its own.
+
+    Note what is absent: no `records`, no `result`. There is no field a consumer
+    could read as "the call succeeded and produced nothing".
     """
-    task_id: Any = None
-    try:
-        raw = stdin.read()
-        request = json.loads(raw) if raw and raw.strip() else {}
-        if not isinstance(request, dict):
-            raise ValueError("task-request must be a JSON object")
-        task_id = request.get("task_id")
-    except Exception as exc:  # noqa: BLE001 — any parse failure is fail-closed
-        json.dump(_fail(task_id, f"invalid task-request on stdin: {exc}"), stdout)
-        return 0
+    op = request.get("op") if isinstance(request, dict) else None
+    return {
+        "protocol": BRIDGE_OP_PROTOCOL,
+        "schema": 1,
+        "ok": False,
+        "op": op if isinstance(op, str) else None,
+        "error": str(error),
+    }
 
+
+def _governance_refusal(request: Any, error: Any) -> dict:
+    """A governance-read refusal, in the ENGINE's own refusal shape.
+
+    Field-for-field what `bro_control_room_api._governance_refusal` emits, and for
+    exactly its reason: "I could not look" must not be mistakable for "I looked and
+    found nothing". So there is no `records` key here either — a consumer reaching
+    for `records` finds nothing to read, rather than an empty list to believe.
+
+    `surface` / `task_id` are echoed only when they are strings, so a refusal cannot
+    be used to bounce arbitrary caller-shaped JSON back into the reply document.
+    """
+    surface = request.get("surface") if isinstance(request, dict) else None
+    task_id = request.get("task_id") if isinstance(request, dict) else None
+    return {
+        "protocol": GOVERNANCE_PROTOCOL,
+        "schema": 1,
+        "ok": False,
+        "surface": surface if isinstance(surface, str) else None,
+        "task_id": task_id if isinstance(task_id, str) else None,
+        "read_at_epoch": int(time.time()),
+        "error": str(error),
+    }
+
+
+def _governance_runtime() -> Any:
+    """Open the operator-provisioned governance runtime for READING, or raise.
+
+    Every failure below is a refusal reason, never a degraded read. An unset state
+    directory, a state directory that does not exist, an evidence store that does
+    not exist, a key registry that will not load — each of them means "I could not
+    look", and answering any of them with an empty mirror would paint a calm page
+    over a blind engine. The one thing this function will not do is invent a store
+    and then report it as empty.
+    """
+    state_dir = os.environ.get(_GOVERNANCE_STATE_DIR_ENV, "").strip()
+    if not state_dir:
+        raise RuntimeError(
+            f"governance mirror not provisioned: {_GOVERNANCE_STATE_DIR_ENV} must name "
+            "the engine's orchestration runtime state directory. This is a refusal, not "
+            "an empty mirror — the engine was never asked")
+    path = pathlib.Path(state_dir)
+    if not path.is_dir():
+        raise RuntimeError(
+            f"{_GOVERNANCE_STATE_DIR_ENV}={state_dir!r} is not an existing directory; "
+            "refusing to create one and report it as empty — an absent store is not an "
+            "empty store")
+    store = os.environ.get(_GOVERNANCE_EVIDENCE_STORE_ENV, "").strip()
+    if store and not pathlib.Path(store).is_dir():
+        raise RuntimeError(
+            f"{_GOVERNANCE_EVIDENCE_STORE_ENV}={store!r} is not an existing directory; "
+            "refusing to read an evidence chain out of a store that is not there")
+    registry = os.environ.get(_GOVERNANCE_REGISTRY_ROOT_ENV, "").strip()
+    keys = None
+    if registry:
+        # Provisioned-but-unloadable is a refusal, never a quiet downgrade to "unkeyed":
+        # an unkeyed runtime refuses the signed surfaces with a reason that would blame
+        # the wrong thing, and the operator would be told the engine holds no keys when
+        # in fact the registry they provisioned was rejected.
+        from bro_signature import SignatureError, load_trusted_keys
+
+        try:
+            keys = load_trusted_keys(pathlib.Path(registry))
+        except SignatureError as exc:
+            raise RuntimeError(
+                f"{_GOVERNANCE_REGISTRY_ROOT_ENV} is set but its trusted-key registry "
+                f"could not be loaded: {exc}") from exc
+    from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1
+
+    return DurableOrchestrationRuntimeV1(
+        path,
+        evidence_keys=keys,
+        evidence_store=pathlib.Path(store) if store else None,
+    )
+
+
+def _governance_api(runtime: Any) -> Any:
+    """The engine's read-only control-room API over `runtime`. Its own seam so a test
+    can substitute a misbehaving engine and prove the relay below still fails closed."""
+    from bro_control_room_api import ControlRoomAPIV1
+
+    return ControlRoomAPIV1(runtime)
+
+
+def _op_governance_read(request: dict) -> dict:
+    """Serve one `brops.governance-read.v1` request from the engine's own stores.
+
+    The request is forwarded UNMODIFIED and the reply is relayed VERBATIM. Both
+    halves matter. The engine checks the request's field set for equality, so a
+    sidecar that helpfully stripped or added a field would answer a question nobody
+    asked; and the reply is three-valued, so any re-shaping here is a chance to
+    collapse "found nothing" into "could not look", or worse, the other way round.
+    This hop adds nothing and drops nothing.
+
+    READ ONLY: no `_real_callables`, no supervisor socket, no signer, no builder.
+    It opens a runtime for reading and asks it a question.
+    """
+    try:
+        runtime = _governance_runtime()
+        api = _governance_api(runtime)
+    except Exception as exc:  # noqa: BLE001 — provisioning/import failure is a refusal
+        return _governance_refusal(request, exc)
+    reply = api.governance_read(request)
+    if not isinstance(reply, dict) or "ok" not in reply:
+        return _governance_refusal(
+            request, "the engine governance API returned no usable reply document")
+    if reply["ok"] is not True and "records" in reply:
+        # Today's engine cannot produce this, and it is checked anyway: the single
+        # thing this hop must never forward is a refusal wearing a successful read's
+        # clothes. Re-issued as a proper refusal, carrying the engine's own reason.
+        return _governance_refusal(
+            request, reply.get("error") or "the engine refused the governance read")
+    return reply
+
+
+#: op -> (handler, refusal factory). Registering an op is adding a row; the dispatch
+#: needs no edit, and an op absent from this table is refused by name. The refusal
+#: factory is per-op so a refusal stays inside the protocol the caller was speaking.
+_OPS: dict[str, tuple[Callable[[dict], dict], Callable[[Any, Any], dict]]] = {
+    GOVERNANCE_READ_OP: (_op_governance_read, _governance_refusal),
+}
+
+
+def _governed_turn(request: dict, argv: list[str]) -> dict:
+    """The original bridge.task-request path — one governed turn, unchanged."""
+    task_id = request.get("task_id")
     # Self-test is a CLI-flag-only backdoor — deliberately NOT reachable via an
     # environment variable. A production desktop launch inherits its parent env; an
     # env-activated fake verifier there would fabricate a "verified" result. The
@@ -293,11 +472,62 @@ def run(argv: list[str], stdin, stdout) -> int:
             run_task, read_result = _fake_run_task, _fake_read
         else:
             run_task, read_result = _real_callables(request)
-        result = run_governed_turn(request, run_task=run_task, read_result=read_result)
+        return run_governed_turn(request, run_task=run_task, read_result=read_result)
     except Exception as exc:  # noqa: BLE001 — fail closed, never leak a partial result
-        result = _fail(task_id, exc)
+        return _fail(task_id, exc)
 
-    json.dump(result, stdout)
+
+def _dispatch(request: dict, argv: list[str]) -> dict:
+    """Route one parsed request to its op. Never raises; never returns None."""
+    if "op" not in request:
+        return _governed_turn(request, argv)
+    op = request["op"]
+    entry = _OPS.get(op) if isinstance(op, str) else None
+    if entry is None:
+        return _op_refusal(request, (
+            f"unsupported bridge op: {op!r}. This sidecar serves ops "
+            f"{sorted(_OPS)} plus the bridge.task-request envelope (no `op` key). An "
+            "op it does not implement is refused by name, never silently ignored"))
+    handler, refusal = entry
+    try:
+        return handler(request)
+    except Exception as exc:  # noqa: BLE001 — an op that fails is a refusal, not a result
+        return refusal(request, exc)
+
+
+# --------------------------------------------------------------------------- #
+# Entry
+# --------------------------------------------------------------------------- #
+def run(argv: list[str], stdin, stdout) -> int:
+    """Read one request from stdin, write one reply to stdout.
+
+    Always exits 0 and always writes a reply — the verdict travels in the payload
+    (`ok`), never in the exit status. Which reply document it is follows the request:
+    no `op` gives a `bridge.result` for the governed turn, an op gives that op's own
+    reply. Fail-closed on every error path.
+    """
+    request: Any = None
+    task_id: Any = None
+    try:
+        raw = stdin.read()
+        request = json.loads(raw) if raw and raw.strip() else {}
+        if not isinstance(request, dict):
+            raise ValueError("task-request must be a JSON object")
+        task_id = request.get("task_id")
+    except Exception as exc:  # noqa: BLE001 — any parse failure is fail-closed
+        json.dump(_fail(task_id, f"invalid task-request on stdin: {exc}"), stdout)
+        return 0
+
+    reply = _dispatch(request, argv)
+    # Serialize whole, THEN write. An op relays a much richer document than the four
+    # flat fields of a bridge-result, and a value that will not encode must not leave
+    # half a JSON object on the pipe for the desktop to parse as a truncated success.
+    try:
+        encoded = json.dumps(reply)
+    except (TypeError, ValueError) as exc:
+        encoded = json.dumps(
+            _op_refusal(request, f"bridge reply could not be serialized: {exc}"))
+    stdout.write(encoded)
     return 0
 
 
