@@ -98,14 +98,15 @@ ACTOR_ATTESTATION_MISSING = (
 
 OWNER_ACTOR_UNPROVABLE = (
     "an owner-issued control-room command cannot be validated: nothing in this "
-    "engine can verify that a caller is the owner. Closing it needs three changes "
-    "outside this module — (1) an owner-bound artifact type (e.g. "
-    "`control-room-command`) registered in bro_signature.ARTIFACT_AUTHORITY "
-    "against the operator-root or a new owner authority, (2) a key entry for it in "
-    "the operator-signed config/trusted-keys.json, and (3) `artifact_type`, "
-    "`key_id` and a detached signature added to "
-    "schemas/control-room-command.schema.json. Until then the owner's identity is "
-    "a claim, and a claim is refused")
+    "engine can verify that a caller is the owner. Of the three changes it needs, "
+    "(1) is DONE — `control-room-command` is registered in "
+    "bro_signature.ARTIFACT_AUTHORITY against operator-root — and two remain, both "
+    "outside this module: (2) a key entry for it in the operator-signed "
+    "config/trusted-keys.json, and (3) `artifact_type`, `key_id` and a detached "
+    "signature added to schemas/control-room-command.schema.json. Registration is "
+    "not closure: this module still consumes no such artifact, so even a flawless "
+    "operator-signed one is refused here. Until all three land the owner's identity "
+    "is a claim, and a claim is refused")
 
 
 class ControlRoomAPIError(ValueError):
