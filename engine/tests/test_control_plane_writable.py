@@ -20,7 +20,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
 
 from bro_protected import (  # noqa: E402
     WRITABLE_CONTROL_PLANE_ENV,
-    WRITABLE_CONTROL_PLANE_TOKEN,
+    WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT,
     ProtectedScopeError,
     assert_control_plane_not_writable,
     control_plane_writable_by_me,
@@ -93,7 +93,7 @@ class ControlPlaneWritabilityTests(unittest.TestCase):
                     assert_control_plane_not_writable(ENGINE, self.manifest)
 
     def test_the_exact_acknowledgement_waives_it(self) -> None:
-        os.environ[WRITABLE_CONTROL_PLANE_ENV] = WRITABLE_CONTROL_PLANE_TOKEN
+        os.environ[WRITABLE_CONTROL_PLANE_ENV] = WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT
         assert_control_plane_not_writable(ENGINE, self.manifest)  # must not raise
 
     def test_a_stale_probe_file_does_not_read_as_unwritable(self) -> None:

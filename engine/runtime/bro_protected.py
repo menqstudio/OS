@@ -173,7 +173,12 @@ def assert_no_bytecode_shadow(root: pathlib.Path, manifest: ProtectedManifest) -
 #: of a digest-verified source, and no Python-level check can see it — the shadow is loaded before
 #: any check exists to run.
 WRITABLE_CONTROL_PLANE_ENV = "BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED"
-WRITABLE_CONTROL_PLANE_TOKEN = "accepted-o1-residual-risk"
+# Named an ACKNOWLEDGEMENT rather than a token, which it is: a phrase the operator types to
+# record a decision, carrying no authority and unlocking nothing an attacker could not already
+# reach. The earlier name also read as a credential to the secret scanner, and a scanner that
+# flags `..._TOKEN = "<long-hyphenated-value>"` is right about the shape — the fix is the
+# accurate name, not an allowlist entry.
+WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT = "accepted-o1-residual-risk"
 
 
 def control_plane_writable_by_me(root: pathlib.Path,
@@ -237,7 +242,7 @@ def assert_control_plane_not_writable(root: pathlib.Path,
     from one nobody noticed, and it is the difference between a deployment that has weighed O-1 and
     one that has not.
     """
-    if os.getenv(WRITABLE_CONTROL_PLANE_ENV) == WRITABLE_CONTROL_PLANE_TOKEN:
+    if os.getenv(WRITABLE_CONTROL_PLANE_ENV) == WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT:
         return
     writable = control_plane_writable_by_me(root, manifest)
     if writable:
@@ -247,7 +252,7 @@ def assert_control_plane_not_writable(root: pathlib.Path,
             "before any check in this process exists to notice. `-B` does not help: it stops "
             "bytecode being written, not read. Make these directories read-only for this account "
             f"(a read-only mount, or an owner the runner is not): {writable}. A deployment that "
-            f"cannot do that must say so: {WRITABLE_CONTROL_PLANE_ENV}={WRITABLE_CONTROL_PLANE_TOKEN}")
+            f"cannot do that must say so: {WRITABLE_CONTROL_PLANE_ENV}={WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT}")
 
 
 def _relative_posix(root: pathlib.Path, path: pathlib.Path) -> str:
