@@ -114,6 +114,11 @@ UI for these; the Settings screen shows the resolved provider **read-only**.
 | `BROPS_ALLOW_REMOTE_OLLAMA` | off | Set `1`/`true` to allow a non-local Ollama host (**requires HTTPS**). Fail-closed. |
 | `BROPS_OLLAMA_MODEL` | `llama3.2` | Ollama model tag. |
 | `BROPS_ALLOW_UNGOVERNED` | off | Must be explicitly `1` to permit ungoverned execution paths that require it. |
+| `BROPS_ALLOW_GOVERNED_ENGINE` | off | Required alongside `BROPS_AI_PROVIDER=governed-engine`. |
+| `BROPS_PROJECT_DIR` | unset | **Grants Bro file and shell access to this directory** and turns on the conductor mode described in §5. Unset means a tool-free sandboxed chat. |
+| `BROPS_GOVERNANCE_STATE_DIR` | unset | Required for the governance mirror to read anything. Must be an **absolute** path to an existing directory — the sidecar refuses to create one and then report it as empty. Independent of the AI provider: a mirror read is not a governed turn. |
+| `BROPS_GOVERNANCE_EVIDENCE_STORE` | unset | Optional; must exist if set. |
+| `BROPS_GOVERNANCE_REGISTRY_ROOT` | unset | Optional; set-but-unloadable is a refusal, never a silent unkeyed downgrade. |
 
 Secrets (`ANTHROPIC_API_KEY`) are read **only** from the environment and are never written to
 SQLite. Set them in the user/session environment before launching BroPS.
@@ -156,14 +161,32 @@ implemented **and** its Windows CI isolation proof (`isolation_proof.ps1`, desig
 
 Three providers, selected by `BROPS_AI_PROVIDER` (or auto-detected):
 
-1. **`claude` (default)** — the local `claude` CLI, i.e. the operator's own Claude Code
+1. **`claude-cli` (default)** — the local `claude` CLI, i.e. the operator's own Claude Code
    subscription (no API key, streamed token-by-token). Ensure `claude` is on the app's `PATH`, or
-   set `BROPS_CLAUDE_BIN` to its absolute path. Chat runs the CLI as a **tool-free text completion**
-   in a per-process sandbox (`--tools ""`, `--strict-mcp-config`, `--no-session-persistence`).
+   set `BROPS_CLAUDE_BIN` to its absolute path.
+
+   **Two modes, and the difference is the whole security posture.** With `BROPS_PROJECT_DIR`
+   **unset** the turn is a tool-free text completion in a per-process sandbox — `--tools ""`,
+   `--strict-mcp-config`, `--setting-sources ""`, `--no-session-persistence` — so a
+   prompt-injection cannot read a file or run a command.
+
+   With `BROPS_PROJECT_DIR` **set to a real directory**, Bro becomes the conductor and receives
+   `Read Edit Write Grep Glob Bash Task` in `acceptEdits` mode, with `cwd` at that project. `Task`
+   is what lets him hand work to specialists. Bash is bounded by a deny list — no delete, no `git
+   push`, no dependency install, no nested shell — and those are blast-radius limits rather than
+   capability limits. The three capability tiers (`reader`, `runner`, `builder`) are passed inline
+   via `--agents`, and the CLI's own built-in agent types are denied at argv so a specialist cannot
+   be spawned outside the tier model. **Setting `BROPS_PROJECT_DIR` grants file and shell access to
+   that directory. Treat it as such.**
 2. **`anthropic`** — the metered Anthropic API. Requires `ANTHROPIC_API_KEY` in the environment;
    endpoint is a fixed constant (not env-controlled).
 3. **`ollama`** — a local model server. Loopback-only unless `BROPS_ALLOW_REMOTE_OLLAMA=1` **and**
    an HTTPS URL are both set.
+4. **`governed-engine`** — routes the turn through the bridge into the engine's governed chain.
+   Requires `BROPS_ALLOW_GOVERNED_ENGINE=1` as well as the provider name; without it the provider
+   is refused by name. **On the shipped build every governed turn is then refused anyway**, because
+   `platform_governed_execution_supported()` is false and `main()` keeps `UpstreamBlockedExecutor`
+   — see §6.
 
 Provider resolution is **fail-closed**: an unknown/misconfigured provider is a hard error, and an
 ambient `ANTHROPIC_API_KEY` never silently selects a provider for a governed turn.
@@ -175,14 +198,25 @@ command surface.
 
 ## 6. Governed vs. ungoverned execution (operational meaning)
 
-- **Ungoverned providers** (`claude` CLI / `anthropic` / `ollama`) produce normal streamed replies.
-  This is the working daily path.
+- **Ungoverned providers** (`claude-cli` / `anthropic` / `ollama`) produce normal streamed replies.
+  This is the working daily path. Note that `claude-cli` with `BROPS_PROJECT_DIR` set is
+  *contained* — a sandbox, a bounded shell, a tier-bounded specialist — but it is **not governed**:
+  no lease, no signed receipt, and path scope is stated rather than enforced. The UI does not call
+  it governed, and neither should you.
 - **Governed execution** (turns routed through the engine wall to earn a signed, desktop-verified
-  receipt) is **fail-closed and currently Blocks every turn.** The signed **Receipt Protocol v1**
-  verifier is merged (Waves 1–3a), but production "Verified" (`trusted_verified`) requires the
-  **isolated signer** (Wave 3b), which is **in progress and not merged**. Until the full
-  3b-1 → 3b-2 → 3b-3 chain is green, a governed turn yields a transient *"Governed reply blocked
-  (unverified)"* notice and **no persisted message** — by design, not a bug.
+  receipt) is **fail-closed and currently Blocks every turn.** A governed turn yields a transient
+  *"Governed reply blocked (unverified)"* notice and **no persisted message** — by design, not a bug.
+
+  What changed since this section was first written, and what did not: the isolated signer and the
+  full Wave 3b chain **are merged and machine-proven**, on Linux (7 services, real uids, a setuid
+  launcher) and on Windows (named pipes, cross-account, distinct service accounts), and CI runs
+  both on every PR. What still refuses is the **shipped application**, deliberately:
+  `platform_governed_execution_supported()` returns false and `main()` keeps
+  `UpstreamBlockedExecutor`.
+
+  **A proof kit that runs is not a shipped guarantee.** Opening the gate needs an independent audit
+  of the whole chain **and** the Owner's approval — a green CI run is neither. Five engine residual
+  items remain OPEN, three of them waiting on an artifact only the Owner can mint.
 
 Operationally: do not present governed mode as a working feature to users yet. Live status:
 [`NEXT_CHAT.md`](../NEXT_CHAT.md) and [`config/current_state.json`](../config/current_state.json).
