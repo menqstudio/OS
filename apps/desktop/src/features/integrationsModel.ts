@@ -7,8 +7,11 @@
 // credential and NOT an open connection. The Phase-9 security gate (MASTER_EXECUTION_
 // ROADMAP.md §Phase 9) says the desktop stores **no external secret**: the secret and
 // the actual external call boundary live with the engine/operator sidecar. The record
-// carries exactly six columns — id, name, provider, status, created_at, updated_at
-// (src-tauri/core/src/domain.rs) — and no credential/auth_ref column at all.
+// carries seven columns — id, name, provider, status, auth_ref, created_at, updated_at
+// (src-tauri/core/src/domain.rs; `auth_ref` added by schema 0022) — and still no column
+// that can hold a credential: `auth_ref` is a `scheme:locator` REFERENCE to a secret the
+// engine or the operator holds, never the secret itself, and naming one proves nothing
+// about it.
 //
 // WHY THIS MODULE EXISTS
 // ----------------------
