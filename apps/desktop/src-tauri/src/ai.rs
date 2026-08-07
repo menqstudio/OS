@@ -976,8 +976,13 @@ fn ai_cwd() -> Result<std::path::PathBuf, String> {
 }
 
 /// Project-context + boundaries appended to Bro's system prompt in agent mode.
-fn bro_agent_system_suffix() -> String {
-    match bro_agent_dir() {
+///
+/// Takes the project dir rather than reading `BROPS_PROJECT_DIR` itself. Agent mode IS having a
+/// project dir, so it is one value, not a flag plus a lookup that could disagree — and the caller's
+/// choice is what decides the content, so a test can assert both shapes without the ambient
+/// environment of whoever runs it deciding which one it gets.
+fn bro_agent_system_suffix(project_dir: Option<&str>) -> String {
+    match project_dir {
         None => String::new(),
         Some(dir) => format!(
             "\n\n--- WHO YOU ARE ---\n\
@@ -1026,15 +1031,18 @@ claim you ran something you did not.\n\
 
 /// Write the per-turn system prompt to its own file in the sandbox.
 ///
-/// `agent` is a parameter, not a read of `BROPS_PROJECT_DIR` inside this function, because that
-/// made the produced content depend on the ambient environment of whoever ran the process — so a
+/// `project_dir` is a parameter, not a read of `BROPS_PROJECT_DIR` inside this function, because
+/// that made the produced content depend on the ambient environment of whoever ran the process — a
 /// test asserting the sandboxed-chat shape passed on a CI box with the variable unset and failed on
 /// a developer machine that had it exported. The mode is now stated by the caller, and both shapes
 /// are assertable side by side.
-fn write_system_prompt_file(system: &str, agent: bool) -> Result<std::path::PathBuf, String> {
+fn write_system_prompt_file(
+    system: &str,
+    project_dir: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
     // In agent mode, append the project context + boundaries to whatever per-turn
     // system prompt the caller built, so Bro always knows the repo it works on.
-    let system = if agent { format!("{system}{}", bro_agent_system_suffix()) } else { system.to_string() };
+    let system = format!("{system}{}", bro_agent_system_suffix(project_dir));
     let system = system.as_str();
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1182,7 +1190,8 @@ async fn claude_cli_stream<F: FnMut(&str)>(
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, String> {
     let prompt = format!("{}\n\nReply to the latest User message.", transcript(messages));
-    let sys_file = TempFileGuard(write_system_prompt_file(system, bro_agent_dir().is_some())?);
+    let project_dir = bro_agent_dir();
+    let sys_file = TempFileGuard(write_system_prompt_file(system, project_dir.as_deref())?);
     // Absolute deadline for the WHOLE streaming lifecycle (stdout loop + child wait +
     // stderr drain). A conversational chat gets 180s; the coding agent (BROPS_PROJECT_DIR
     // set) does real multi-step work — reading files, running build/test — so it gets a
@@ -1354,13 +1363,14 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
         "{}\n\nReply to the latest User message.",
         transcript(messages)
     );
-    let sys_file = TempFileGuard(write_system_prompt_file(system, bro_agent_dir().is_some())?);
+    let project_dir = bro_agent_dir();
+    let sys_file = TempFileGuard(write_system_prompt_file(system, project_dir.as_deref())?);
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(claude_args(
         &sys_file.0,
         false,
         env_nonempty("BROPS_CLAUDE_MODEL").as_deref(),
-        bro_agent_dir().is_some(),
+        project_dir.is_some(),
     ))
         .current_dir(ai_cwd()?)
         .stdin(std::process::Stdio::piped())
@@ -2040,8 +2050,8 @@ mod tests {
     fn system_prompt_files_are_unique_and_isolated() {
         // Two concurrent-ish requests must get distinct files with exactly their
         // own content — no truncation/overwrite of one another (round-6 race).
-        let a = write_system_prompt_file("persona A", false).expect("write a");
-        let b = write_system_prompt_file("persona B", false).expect("write b");
+        let a = write_system_prompt_file("persona A", None).expect("write a");
+        let b = write_system_prompt_file("persona B", None).expect("write b");
         assert_ne!(a, b, "each request gets its own system prompt file");
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "persona A");
         assert_eq!(std::fs::read_to_string(&b).unwrap(), "persona B");
@@ -2054,11 +2064,15 @@ mod tests {
     /// point: the old version read the variable and silently asserted whichever mode it found.
     #[test]
     fn system_prompt_carries_the_conductor_contract_only_in_agent_mode() {
-        let chat = write_system_prompt_file("persona", false).expect("write chat");
+        let chat = write_system_prompt_file("persona", None).expect("write chat");
         let chat_text = std::fs::read_to_string(&chat).unwrap();
         assert_eq!(chat_text, "persona", "sandboxed chat gets NO repo context and no tool grant");
 
-        let agent = write_system_prompt_file("persona", true).expect("write agent");
+        // A literal path, not `bro_agent_dir()`: the point of the parameter is that this assertion
+        // says the same thing wherever it runs. The directory need not exist — the suffix only names
+        // it, and requiring a real one would put the ambient filesystem back in the decision.
+        let agent =
+            write_system_prompt_file("persona", Some("/some/project")).expect("write agent");
         let agent_text = std::fs::read_to_string(&agent).unwrap();
         assert!(agent_text.starts_with("persona"), "the caller's prompt stays first and intact");
         assert!(agent_text.contains("WHO YOU ARE"), "conductor identity");
