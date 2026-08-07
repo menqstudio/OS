@@ -1,40 +1,58 @@
 # Dependency-safe queue manifest — OS v1
 
-**Purpose.** `main` is temporarily frozen for **PR #31**'s exact-head Architect design re-audit (moving
-`main` would invalidate the rev-28 audit candidate `c9680f5`). Dependency-safe work therefore proceeds on
-isolated branches and is **queued** here — built, tested, reviewed, pushed, but **NOT merged** until PR #31
-lands and `main` is re-synced. This file records each branch: base, owner, tests, conflict surface, and the
-merge order. Nothing queued alters the PR #31 audit candidate or prejudges the disputed 3b-1B design.
+> **DISSOLVED 2026-07-27. Kept as the record of what the queue was and where each branch went.**
+>
+> This file described a freeze that no longer exists. `main` was held still so that PR #31's
+> exact-head Architect design re-audit would stay valid, and independent work was parked here
+> rather than merged. **PR #31 merged on 2026-07-27T22:19:39Z**, and PR #47 —
+> *"integrate: dependency-safe quality/CI gates + UI refreshes + post-#31-merge state sync"* —
+> merged 28 minutes later, absorbing the queue. Nothing is queued today.
+>
+> Current state lives in [`NEXT_CHAT.md`](./NEXT_CHAT.md) and
+> [`config/current_state.json`](./config/current_state.json). **Open pull requests: 0.**
 
-**Critical path (gated, not stopped):** Architect design re-audit of **PR #31 / rev-28 @ `c9680f5`**
-(CI run 30280738223, 9/9 GREEN — CI ≠ design GREEN). Only PR #31's merge + architecture-dependent 3b-1B
-implementation are blocked; everything below is independent.
+---
 
-## Merge order (after PR #31 is design-GREEN, merged, and `main` re-synced)
-1. `ci/ai-surface-inventory-gate` — no product deps; merge first.
-2. `ci/supply-chain-gate` — `.github/` only; independent.
-3. `ui/design-system` — theme tokens + contrast gate; base for UI work.
-4. `ui/modal-a11y` — depends on nothing but pairs with the design system.
-5. `docs/windows-broker-design`, `docs/windows-broker-impl-plan`, `docs/pr32-rebase-map` — docs only; any time.
-6. Product-UI page branches — after the design-system + a11y foundations land (correct dependency order).
+## Where each queued branch went
 
-## Queued branches
-| Branch | Base | Area | Owner | Tests / verification | Conflict surface | State |
-|---|---|---|---|---|---|---|
-| `ci/ai-surface-inventory-gate` | main (b6c6712) | security CI | Claude | 9 unit tests + gate GREEN locally | `tools/`, `apps/desktop/src-tauri/ai-surface-policy.json` | ✅ verified, queued |
-| `docs/windows-broker-design` | main (b6c6712) | security design | Claude | adversarial review (6 findings closed) | `docs/design/` only | ✅ verified, queued |
-| `backup/pr31-pre-rebase-6ebeca8` | — | safety backup of PR #31 pre-rebase head | Claude | n/a | none | 🔒 backup ref |
-| `ci/supply-chain-gate` | main | supply-chain CI | Claude | YAML parses + npm filter compiles (verified locally) | `.github/` only | ✅ verified, queued |
-| `ui/design-system` | main | theme/tokens/contrast | Claude | contrast gate + unittest pass; shipped tokens pass AA (verified) | `apps/desktop/src/theme/`, `tools/` | ✅ verified, queued |
-| `ui/modal-a11y` | main | accessibility | Claude | vitest + axe | `apps/desktop/src/components/ui.tsx` (full-file replace) | ⏸ HELD — full ui.tsx replace needs careful manual merge (preserve all exports) |
-| `docs/pr32-rebase-map` | main | analysis + Windows impl plan | Claude | completeness check | `docs/design/` only | ✅ queued (PR32 map + Windows impl plan) |
-| (folded into `docs/pr32-rebase-map`) | — | Windows broker impl plan | Claude | — | — | ✅ queued |
+Traced rather than assumed. "Absorbed" means every file the branch touched is present on `main`
+today; where a branch still holds something `main` does not have, that is said instead of glossed.
 
-## Admission rule
-A branch is admitted to the queue only after: it builds, its tests/self-verification pass, and an
-independent adversarial review returns CLEAN. Flawed/incomplete artifacts are held (not queued) — see the
-session log. No branch may modify files that would collide with PR #31 (`config/current_state.json`, the
-3b-1B addendum, the coordination checkers) — those move only through PR #31.
+| Branch | Then | Now |
+|---|---|---|
+| `ci/ai-surface-inventory-gate` | ✅ verified, queued | **Absorbed via PR #47.** No PR was ever opened for the branch itself. The gate ships as `tools/check_ai_surfaces.py` and is GREEN. |
+| `ci/supply-chain-gate` | ✅ verified, queued | **Absorbed.** Its own PR #35 was closed unmerged; the work landed through #47. `.github/workflows/supply-chain.yml` now carries eleven jobs, four added since. |
+| `ui/design-system` | ✅ verified, queued | **Absorbed.** PR #36 closed unmerged; tokens and the contrast gate landed via #47. `check_contrast` and `check_token_parity` are GREEN. |
+| `ui/modal-a11y` | ⏸ HELD — full `ui.tsx` replace | **Gone from origin.** The a11y work landed as `ui/shell-a11y` (PR #44, also closed unmerged) and through #47; the a11y gate runs on every PR. The "held for manual merge" note is what a careful hold looks like when it works. |
+| `docs/windows-broker-design` | ✅ verified, queued | **Fully absorbed** — one file, byte-identical to `main`. The branch still exists on origin and can be deleted. |
+| `docs/pr32-rebase-map` | ✅ queued | **Absorbed.** PR #37 closed unmerged. |
+| `backup/pr31-pre-rebase-6ebeca8` | 🔒 backup ref | **Still on origin.** PR #31 merged, so the thing it insured against did not happen. Deletable at the Owner's discretion. |
 
-## In flight
-- **Product-UI page wave** (21 pages, one agent each, build+review) is running; verified pages will be queued to `ui/pages-*` branches after a frontend typecheck. Modal a11y held for manual merge.
+PR #32 (`impl/wave-3b1b-execution-binding`) was **closed unmerged**. Its branch still holds 40
+files `main` does not have — `governed_receipt.rs`, `manifest.rs`, `strict_json.rs`, migration
+`0015` and others. The successors exist under different names (`key_manifest.rs`, the strict serde
+shim inside `governed_verification.rs`), but **equivalence was never verified hunk by hunk**, so
+that branch is not on any delete list.
+
+---
+
+## What replaced the queue
+
+The freeze existed because a moving `main` invalidated an exact-head audit. Two mechanisms now do
+that job continuously, so no freeze is needed:
+
+- **`config/current_state.json` + `tools/check_repo_state.py`** — the state file records the exact
+  candidate head, and CI verifies it against **live GitHub** on every run. A stale claim fails the
+  build instead of silently outliving its audit.
+- **The `AUDIT_CANDIDATE_HEAD` marker** in a PR body, kept in lockstep with every push. An audit is
+  anchored to a commit rather than to a promise that nobody moved anything.
+
+## The admission rule was right, and outlived the queue
+
+> A branch is admitted only after it builds, its tests pass, and an independent adversarial review
+> returns CLEAN.
+
+That rule is now the merge rule: 28 required checks, 15 repository gates, and — for security work —
+the discipline that every added check is **deleted once to confirm its test goes red**. In the last
+wave about ninety checks were verified that way, and four came back *green*, meaning four tests
+were testing nothing. That is exactly the failure the admission rule was written against.
