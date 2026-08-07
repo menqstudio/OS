@@ -168,6 +168,10 @@ export function Library() {
   const [creating, setCreating] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<LibraryItem | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  // The backend's own reason for REFUSING a delete. There was no `.catch` here at all,
+  // so a denied `delete_library_item` closed the dialog and reloaded the same row back
+  // with nothing said. Now the refusal is stated and stays until dismissed.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -247,12 +251,17 @@ export function Library() {
   const confirmDelete = () => {
     if (!pendingDelete || deleteBusy) return;
     setDeleteBusy(true);
+    setDeleteError(null);
     desktop
       .deleteLibraryItem(pendingDelete.id)
       .then(() => { setSelected(0); })
+      .catch((e: unknown) => {
+        setDeleteError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => {
         setPendingDelete(null);
         setDeleteBusy(false);
+        // Re-read either way: on success the row is gone, on refusal it provably is not.
         s.reload();
       });
   };
@@ -356,11 +365,23 @@ export function Library() {
           <p className="sub">{L('subtitle')}</p>
         </div>
         <div className="right">
-          {toolbarVisible && <span className="pill info" aria-hidden="true">{L('watching')}</span>}
+          {toolbarVisible && <span className="pill info">{L('archiveRead')}</span>}
           <Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>
-          <Mark state="live" size={30} />
+          {/* Posture from the REAL read: alert on failure, idle otherwise. `live`
+              would assert a running process this page does not have. */}
+          <Mark state={s.error ? 'alert' : 'idle'} size={30} />
         </div>
       </header>
+
+      {/* A REFUSED delete, stated plainly and left on screen until dismissed. */}
+      {deleteError && (
+        <div className="lib-delete-error" role="alert">
+          <b>{L('deleteRefusedTitle')}</b>
+          <span>{L('deleteRefusedBody')}</span>
+          <span className="mono lib-delete-reason">{deleteError}</span>
+          <Button small variant="ghost" onClick={() => setDeleteError(null)}>{t('action.close')}</Button>
+        </div>
+      )}
 
       {/* ── HERO · the archive surface ─────────────────────────────────────── */}
       <section className="lib-archive surface soft lg hud reveal" style={{ '--i': 1 } as StyleVars}>
@@ -418,7 +439,10 @@ export function Library() {
           </div>
         )}
 
-        <div className="wire live" aria-hidden="true" />
+        {/* A plain divider. The `live` modifier animates a travelling pulse, which reads
+            as a running stream; this page has one read and no stream, so the claim is
+            dropped rather than faked. */}
+        <div className="wire" aria-hidden="true" />
 
         {renderResults()}
       </section>
@@ -428,7 +452,7 @@ export function Library() {
         <ConfirmDialog
           title={L('deleteTitle')}
           message={`${pendingDelete.title} — ${L('deleteConfirm')}`}
-          confirmLabel={deleteBusy ? L('saving') : t('action.delete')}
+          confirmLabel={deleteBusy ? L('deleting') : t('action.delete')}
           cancelLabel={t('action.cancel')}
           onConfirm={confirmDelete}
           onCancel={() => { if (!deleteBusy) setPendingDelete(null); }}
@@ -442,6 +466,13 @@ export function Library() {
 // shared brops-aios tokens (colors/radii/spacing/motion) — no hard-coded
 // palette. Motion is disabled under prefers-reduced-motion.
 const LIBRARY_CSS = `
+.v-library .lib-delete-error { display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  margin-bottom: var(--s4); padding: 10px 12px;
+  border: 1px solid rgb(var(--danger-rgb)/.4); border-radius: var(--r);
+  background: rgb(var(--danger-rgb)/.08); font-size: var(--t-small); }
+.v-library .lib-delete-error b { color: var(--danger); }
+.v-library .lib-delete-reason { color: var(--ink-muted); font-size: 12px; word-break: break-word; }
+
 .v-library .lib-archive { padding: var(--s6); }
 .v-library .lib-totals { display: flex; flex-wrap: wrap; gap: var(--s3); margin-bottom: var(--s5); }
 .v-library .lib-totals .capsule b { color: var(--ink); }

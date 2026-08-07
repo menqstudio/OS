@@ -309,6 +309,14 @@ def validate_exact_push(command: str, branch: str) -> None:
 
 
 def normalize_target(root: pathlib.Path, raw: str) -> str:
+    """Normalize a REPOSITORY-RELATIVE target to a repo-relative POSIX path.
+
+    Absolute targets are refused here and handled by _enforce_absolute_target
+    instead: this function's whole contract is "produce a path inside the
+    repository", and an absolute path has no such answer. enforce_scope routes on
+    the spelling before calling either, so the refusal below is the answer to a
+    caller that asked this function specifically.
+    """
     raw = raw.strip().strip("\"'")
     if not raw or raw in {".", "./"}:
         return "."
@@ -321,6 +329,85 @@ def normalize_target(root: pathlib.Path, raw: str) -> str:
     except ValueError as exc:
         raise SecurityError("path escapes repository") from exc
     return rel.as_posix()
+
+
+_ABSOLUTE_TARGET = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/)")
+
+
+def _is_absolute_target(raw: str) -> bool:
+    return bool(_ABSOLUTE_TARGET.match(raw))
+
+
+def _realpath(value: str) -> pathlib.Path:
+    """Resolve a path against the real filesystem WITHOUT requiring it to exist.
+
+    Symlinks and '..' are resolved here, before any containment comparison, so a
+    containment test cannot be defeated by a link that points out of the granted
+    directory or by a segment that walks out of it. A textual prefix test would
+    let both through.
+    """
+    try:
+        return pathlib.Path(os.path.realpath(value))
+    except (OSError, ValueError) as exc:
+        raise SecurityError(f"cannot resolve path: {value!r}") from exc
+
+
+def _within(entry: pathlib.Path, target: pathlib.Path) -> bool:
+    """True when target IS entry or lives beneath it, both already realpath'd.
+
+    normcase because NTFS is case-insensitive: a scope of C:/Work must cover
+    C:/WORK/x, or the grant means something different depending on how the agent
+    happened to type it.
+    """
+    normalized_entry = pathlib.Path(os.path.normcase(str(entry)))
+    normalized_target = pathlib.Path(os.path.normcase(str(target)))
+    return normalized_target == normalized_entry or normalized_entry in normalized_target.parents
+
+
+def _enforce_absolute_target(root: pathlib.Path, raw: str, allowed: list[str],
+                             prohibited: list[str], repo_prohibited: list[str]) -> None:
+    """Authorize a target the agent named by absolute path.
+
+    An absolute target is granted ONLY by an absolute scope entry. With no such
+    entry the answer is the same denial as before this existed — an absolute path
+    is not silently reinterpreted as repo-relative, and an absolute spelling of an
+    in-repo path does not inherit the repo-relative grant.
+    """
+    if "\x00" in raw:
+        raise SecurityError("target contains a NUL byte")
+    if raw.startswith("\\\\"):
+        # UNC shares and the \\.\ / \\?\ device namespaces bypass normal path
+        # resolution, so realpath containment cannot be trusted about them.
+        raise SecurityError(f"device or network path denied: {raw}")
+    if not allowed:
+        raise SecurityError(f"absolute path denied; no absolute scope entry grants it: {raw}")
+    target = _realpath(raw)
+    if any(_within(_realpath(entry), target) for entry in prohibited):
+        raise SecurityError(f"target inside prohibited scope: {raw}")
+    if not any(_within(_realpath(entry), target) for entry in allowed):
+        raise SecurityError(f"target outside task scope: {raw}")
+    # An absolute grant must not become a way around a repository-relative
+    # prohibition. If the target resolves back inside the repository, the
+    # repo-relative prohibitions still apply to it, whichever way it was spelled.
+    try:
+        relative = target.relative_to(_realpath(str(root))).as_posix()
+    except ValueError:
+        return
+    if any(_pattern_match(relative, item, granting=False) for item in repo_prohibited):
+        raise SecurityError(f"target inside prohibited scope: {relative}")
+
+
+def _pattern_match(path: str, pattern: str, *, granting: bool) -> bool:
+    # Deferred import: bro_workspace is stdlib-only and imports nothing from this
+    # module, so there is no cycle; deferring keeps this module's import surface flat.
+    from bro_workspace import matches_pattern
+
+    pattern = pattern.rstrip("/")
+    if not pattern or pattern == ".":
+        return path == "."
+    if granting and set(pattern) <= {"*", "/"}:
+        return False
+    return path == pattern or matches_pattern(path, pattern)
 
 
 def path_allowed(path: str, allowed: list[str], prohibited: list[str]) -> bool:
@@ -337,29 +424,76 @@ def path_allowed(path: str, allowed: list[str], prohibited: list[str]) -> bool:
     Contract-supplied scopes are provably literal (safe_repo_path rejects glob
     metacharacters); the glob path here covers every other caller consistently.
     """
-    # Deferred import: bro_workspace is stdlib-only and imports nothing from this
-    # module, so there is no cycle; deferring keeps this module's import surface flat.
-    from bro_workspace import matches_pattern
-
-    def match(pattern: str, *, granting: bool) -> bool:
-        pattern = pattern.rstrip("/")
-        if not pattern or pattern == ".":
-            return path == "."
-        if granting and set(pattern) <= {"*", "/"}:
-            return False
-        return path == pattern or matches_pattern(path, pattern)
-
-    return (any(match(item, granting=True) for item in allowed)
-            and not any(match(item, granting=False) for item in prohibited))
+    return (any(_pattern_match(path, item, granting=True) for item in allowed)
+            and not any(_pattern_match(path, item, granting=False) for item in prohibited))
 
 
 def enforce_scope(root: pathlib.Path, targets: list[str], allowed: list[str], prohibited: list[str]) -> None:
+    """Confine every target to the task's scope.
+
+    A scope entry is either repo-relative or absolute (bro_contracts.safe_work_path
+    defines the two forms), and the two are kept apart on purpose. A repo-relative
+    target is normalized against the repository and can never leave it, so only
+    repo-relative entries can grant it; an absolute target is granted only by an
+    absolute entry, resolved against the real filesystem. Mixing the forms would
+    mean a scope entry covered paths its text does not name.
+    """
     if not targets:
         raise SecurityError("mutation targets could not be determined")
+    # Deferred import: bro_contracts owns what "absolute" means for a scope entry,
+    # so the enforcement layer asks it rather than keeping a second opinion.
+    from bro_contracts import is_absolute_scope
+
+    absolute_allowed = [item for item in allowed if is_absolute_scope(item)]
+    absolute_prohibited = [item for item in prohibited if is_absolute_scope(item)]
+    repo_allowed = [item for item in allowed if not is_absolute_scope(item)]
+    repo_prohibited = [item for item in prohibited if not is_absolute_scope(item)]
     for raw in targets:
+        cleaned = raw.strip().strip("\"'")
+        if _is_absolute_target(cleaned):
+            _enforce_absolute_target(root, cleaned, absolute_allowed,
+                                     absolute_prohibited, repo_prohibited)
+            continue
         path = normalize_target(root, raw)
-        if not path_allowed(path, allowed, prohibited):
+        if not path_allowed(path, repo_allowed, repo_prohibited):
             raise SecurityError(f"target outside task scope: {path}")
+
+
+def enforce_scope_within_binding(root: pathlib.Path, scope: list[str]) -> None:
+    """Refuse a task scope the bound workspace cannot cover, saying why.
+
+    An absolute scope entry is how Bro states that a specialist may work outside
+    this checkout. It is NOT how that permission is granted: the operator-signed
+    workspace binding is. bro_control_plane._bind_workspace pins the workspace root
+    to the control-plane root (M-7) and bro_workspace.authorize_path contains every
+    target beneath it, so an entry resolving outside that root can never be
+    honoured however well-formed it is.
+
+    Refused HERE, once, with the cause named — instead of surfacing later as a
+    per-target "path escapes workspace", which reads like the agent did something
+    wrong when in fact the contract asked for something the binding never granted.
+
+    LIMITATION, stated plainly: this means an out-of-checkout grant is only usable
+    when the operator's signed binding is rooted at or above that location. Today a
+    binding must equal the control-plane root, so a scope naming (for example) a
+    Desktop folder is well-formed at the contract layer and refused here. Making it
+    usable needs a workspace binding that can carry more than one root — an
+    operator/owner decision about the trust boundary, not something a task contract
+    may decide for itself.
+    """
+    # Deferred import: bro_contracts owns what "absolute" means for a scope entry.
+    from bro_contracts import is_absolute_scope
+
+    boundary = _realpath(str(root))
+    for entry in scope:
+        if not is_absolute_scope(entry):
+            continue
+        resolved = _realpath(entry)
+        if not _within(boundary, resolved):
+            raise SecurityError(
+                f"task scope entry {entry!r} lies outside the bound workspace root "
+                f"({boundary}); only an operator-signed workspace binding rooted "
+                f"there can grant it, and a task contract cannot widen the binding")
 
 
 def _nonce_paths(payload: dict[str, Any], ledger_dir: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:

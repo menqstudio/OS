@@ -184,6 +184,17 @@ export function Analytics() {
   const totalShown = useCountUp(total, reduced);
   const denied = s.error ? /denied|not permitted|permission|blocked|forbidden/i.test(s.error) : false;
 
+  // Header posture from the REAL read state. `live`/green is unreachable: the page has
+  // one aggregate read and no stream, so the best it can ever claim is "snapshot".
+  const readPill: { tone: string; mark: string; key: 'readReading' | 'readBlocked' | 'readUnavailable' | 'readSnapshot' } =
+    s.loading && s.data === null
+      ? { tone: 'off', mark: 'thinking', key: 'readReading' }
+      : denied
+        ? { tone: 'warn', mark: 'alert', key: 'readBlocked' }
+        : s.error
+          ? { tone: 'warn', mark: 'alert', key: 'readUnavailable' }
+          : { tone: 'info', mark: 'idle', key: 'readSnapshot' };
+
   // aria-live announcement: current data state (node count from real metrics).
   const liveMsg = useMemo(() => {
     if (s.loading && s.data === null) return Lz('loadingAnalytics');
@@ -240,12 +251,16 @@ export function Analytics() {
 
           <div className="an-deck-top">
             <span className="eyebrow">{Lz('distByNode')}</span>
-            <span className="pill live">{Lz('streamLive')}</span>
+            {/* This branch only renders after a successful read, so the pill states what
+                that read actually is: a one-shot all-time snapshot, not a live stream. */}
+            <span className="pill info">{Lz('readSnapshot')}</span>
           </div>
 
           <AnPlot metrics={metrics} hidden={hidden} onToggle={toggle} tr={Lz} lang={lang} />
 
-          <div className="wire live" aria-hidden="true" />
+          {/* Plain divider — `wire.live` animates a travelling pulse that reads as a
+              running feed. There is no feed behind this deck, so the claim is dropped. */}
+          <div className="wire" aria-hidden="true" />
 
           <div className="an-deck-foot">
             <span className="capsule">
@@ -315,8 +330,11 @@ export function Analytics() {
           <p className="sub">{t('analytics.subtitle')}</p>
         </div>
         <div className="right">
-          <span className="pill live">{Lz('streamLive')}</span>
-          <Mark state="live" size={30} />
+          {/* Bound to the REAL `get_analytics` read. It used to render "STREAM · LIVE"
+              green even while the read was in flight, had failed, or was refused at the
+              governed wall — a live indicator that is always on is not telemetry. */}
+          <span className={`pill ${readPill.tone}`}>{Lz(readPill.key)}</span>
+          <Mark state={readPill.mark} size={30} />
         </div>
       </header>
 

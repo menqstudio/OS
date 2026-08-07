@@ -288,7 +288,8 @@ export function Projects() {
       <div className="right">
         {projects.length > 0 && (
           <>
-            <span className="pill live">{`${counts.active} ${L('activeWord')}`}</span>
+            {/* Green/`live` is earned by a real active count, never painted over a 0. */}
+            <span className={`pill ${counts.active > 0 ? 'live' : 'off'}`}>{`${counts.active} ${L('activeWord')}`}</span>
             {counts.blocked > 0 && <span className="pill bad">{`${counts.blocked} ${L('blockedWord')}`}</span>}
             <span className="pill info">{`${projects.length} ${L('totalWord')}`}</span>
           </>

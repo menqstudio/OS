@@ -189,10 +189,40 @@ export const STR = {
     hy: 'ԳԻՏԵԼԻՔԻ ԲԱԶԱ · ՆԵՅՐՈ-ՔԱՐՏԵԶ',
     ru: 'БАЗА ЗНАНИЙ · НЕЙРОКАРТА',
   },
-  recallActive: {
-    en: 'Bro recall · active',
-    hy: 'Bro վերհիշում · ակտիվ',
-    ru: 'Bro память · активна',
+  // Header pill — bound to the REAL `search_knowledge` / `list_knowledge` read state.
+  // There is no background recall process to be "active": the page issues one read
+  // and shows what came back, so the pill names that outcome and nothing more.
+  recallReading: {
+    en: 'Reading the store…',
+    hy: 'Կարդում ենք պահոցը…',
+    ru: 'Читаем хранилище…',
+  },
+  recallUnavailable: {
+    en: 'Store unavailable',
+    hy: 'Պահոցն անհասանելի է',
+    ru: 'Хранилище недоступно',
+  },
+  recallLoaded: {
+    en: 'Read from the store',
+    hy: 'Կարդացված է պահոցից',
+    ru: 'Прочитано из хранилища',
+  },
+
+  // ── Delete refusal (the delete command may be denied by the capability set) ──
+  deleteRefusedTitle: {
+    en: 'Delete refused — nothing was removed',
+    hy: 'Ջնջումը մերժվեց — ոչինչ չհեռացվեց',
+    ru: 'Удаление отклонено — ничего не удалено',
+  },
+  deleteRefusedBody: {
+    en: 'The backend rejected this delete, so the article is still in the store and still listed below.',
+    hy: 'Backend-ը մերժեց այս ջնջումը, ուստի հոդվածը դեռ պահոցում է և դեռ ցուցակում է ստորև։',
+    ru: 'Бэкенд отклонил это удаление, поэтому статья всё ещё в хранилище и всё ещё в списке ниже.',
+  },
+  deleting: {
+    en: 'Deleting…',
+    hy: 'Ջնջվում է…',
+    ru: 'Удаление…',
   },
   searchIndex: {
     en: 'Search index',
@@ -243,5 +273,11 @@ export const fmt = {
     en: `Filter to #${tag}`,
     hy: `Զտել #${tag}`,
     ru: `Фильтровать по #${tag}`,
+  }[lang]),
+  // Announced ONLY on a real backend rejection — the article was not deleted.
+  articleDeleteRefused: (lang: Lang, title: string, reason: string): string => ({
+    en: `Delete refused: article “${title}” was not removed. ${reason}`,
+    hy: `Ջնջումը մերժվեց. «${title}» հոդվածը չհեռացվեց։ ${reason}`,
+    ru: `Удаление отклонено: статья «${title}» не удалена. ${reason}`,
   }[lang]),
 } as const;

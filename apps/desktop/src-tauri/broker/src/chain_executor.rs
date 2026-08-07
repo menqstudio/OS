@@ -40,6 +40,7 @@ use serde_json::{json, Value};
 
 use brops_core::broker_orchestrator::GovernedExecutor;
 use brops_core::governed_message_store::AcceptedOutput;
+use brops_core::production_trust::TrustState;
 use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};
 use brops_core::governed_verification::{
     verify_and_accept, AcceptanceLedger, BrokerContext, PinnedKeys, ReceiptEnvelope,
@@ -62,16 +63,59 @@ pub trait GovernedTurnChain {
     ) -> Result<AcceptedOutput, TurnReason>;
 }
 
+/// Who answers "whose keys were these?" for the deployment this broker is running in.
+///
+/// Separate from [`GovernedTurnChain`] because it is a different question with different evidence.
+/// The chain proves a specific body came out of a contained execution and was signed by the
+/// isolated signer. It cannot prove anything about the CUSTODY of the root that vouched for that
+/// signer — that evidence is the pinned anchor file and the manifest, which live outside the chain
+/// and are resolved by whoever starts the broker.
+///
+/// It takes no per-turn arguments on purpose: custody is a property of the deployment and of the
+/// clock (a manifest token has a validity window), not of the message. An implementation reads the
+/// clock itself and re-derives the verdict per turn, so an expired token stops producing
+/// `Production` without anything having to invalidate a cache.
+///
+/// Every implementation MUST end at [`brops_core::production_trust::resolve_trust_state`] rather
+/// than constructing a [`TrustState`] directly. That function is where the custody gate lives —
+/// building the enum by hand is how a demonstration root gets to call itself production.
+pub trait CustodyResolver {
+    fn resolve(&self) -> TrustState;
+}
+
+/// The fail-closed default: no manifest, no anchor, no claim.
+///
+/// `ChainExecutor::new` uses this, so an executor built without being told about the deployment's
+/// key custody says it does not know — and `persist_committed` refuses the turn rather than
+/// committing a row nobody vouched for. Wiring custody is therefore something a deployment does
+/// DELIBERATELY, and forgetting it fails loudly instead of defaulting to trust.
+pub struct UnresolvedCustody;
+impl CustodyResolver for UnresolvedCustody {
+    fn resolve(&self) -> TrustState {
+        TrustState::NoTrustedManifest("no custody resolver wired into the broker")
+    }
+}
+
 /// The broker's real [`GovernedExecutor`]: it delegates the whole trusted chain to a [`GovernedTurnChain`]
 /// and returns exactly what that chain verified. It NEVER fabricates an accepted output — it only relays a
 /// chain-verified one or the chain's closed refusal.
 pub struct ChainExecutor<C: GovernedTurnChain> {
     chain: C,
+    custody: Box<dyn CustodyResolver>,
 }
 
 impl<C: GovernedTurnChain> ChainExecutor<C> {
+    /// Build with NO custody resolver — every turn resolves to `NoTrustedManifest` and the commit
+    /// refuses. Correct for tests of the chain itself, and correct for any deployment that has not
+    /// yet been told where its trust anchor is.
     pub fn new(chain: C) -> Self {
-        ChainExecutor { chain }
+        ChainExecutor { chain, custody: Box::new(UnresolvedCustody) }
+    }
+
+    /// Build with the deployment's real custody resolver. The caller has read the pinned anchor and
+    /// the manifest and can answer the question; this is the only way a turn ever commits.
+    pub fn with_custody(chain: C, custody: Box<dyn CustodyResolver>) -> Self {
+        ChainExecutor { chain, custody }
     }
 }
 
@@ -81,8 +125,11 @@ impl<C: GovernedTurnChain> GovernedExecutor for ChainExecutor<C> {
         req: &ValidatedRequest,
         broker_turn_id: &str,
         request_nonce: &str,
-    ) -> Result<AcceptedOutput, TurnReason> {
-        self.chain.run_verified(req, broker_turn_id, request_nonce)
+    ) -> Result<(AcceptedOutput, TrustState), TurnReason> {
+        // Chain first. Custody is only asked about a turn that actually produced a verified output —
+        // resolving it for a refused turn would be answering a question about nothing.
+        let accepted = self.chain.run_verified(req, broker_turn_id, request_nonce)?;
+        Ok((accepted, self.custody.resolve()))
     }
 }
 
@@ -1080,16 +1127,54 @@ mod tests {
         )
     }
 
+    /// A resolver that answers "production". Tests that want to reach the COMMIT need one, because
+    /// `ChainExecutor::new` deliberately resolves to `NoTrustedManifest` and the commit refuses —
+    /// that is the fail-closed default, not an oversight to work around. Stating custody here is
+    /// what makes the two behaviours separately testable.
+    struct TestCustody;
+    impl CustodyResolver for TestCustody {
+        fn resolve(&self) -> TrustState {
+            TrustState::Production {
+                key_id: "test-signer".into(),
+                key_epoch: 1,
+                root_key_id: "test-root".into(),
+            }
+        }
+    }
+
     #[test]
     fn chain_executor_relays_a_verified_chain_result() {
         let c = conn();
-        let exec = ChainExecutor::new(FakeChain { body: "the governed reply".into() });
+        let exec = ChainExecutor::with_custody(
+            FakeChain { body: "the governed reply".into() },
+            Box::new(TestCustody),
+        );
         let r = run_governed_turn(&c, &raw(), &FixedIds, &exec, 1);
         assert_eq!(r.status, "committed");
         let m = r.message.unwrap();
         assert_eq!(m.body, "the governed reply");
         assert_eq!(m.trust_state, TRUSTED_VERIFIED);
         assert_eq!(r.broker_turn_id, "bt-1");
+    }
+
+    /// The default is a refusal, and it is a refusal for the RIGHT reason: the chain succeeded and
+    /// the turn still did not commit, because nobody told this broker whose keys it was using.
+    /// Swap `UnresolvedCustody` for anything that returns `Production` and this goes red.
+    #[test]
+    fn without_a_custody_resolver_a_verified_chain_still_does_not_commit() {
+        let c = conn();
+        let exec = ChainExecutor::new(FakeChain { body: "the governed reply".into() });
+        // The chain itself is fine — it hands back a verified output.
+        let req = ValidatedRequest::decode(&raw()).expect("valid request");
+        assert!(exec.execute_and_verify(&req, "bt-1", "n-1").is_ok(), "the chain verified");
+        // The TURN is not, because no custody was resolved for it.
+        let r = run_governed_turn(&c, &raw(), &FixedIds, &exec, 1);
+        assert_eq!(r.status, "blocked");
+        assert!(r.message.is_none(), "a blocked turn carries no message");
+        let rows: i64 = c
+            .query_row("SELECT COUNT(*) FROM governed_messages", [], |x| x.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "and no durable row");
     }
 
     #[test]
@@ -1339,7 +1424,7 @@ mod tests {
     #[test]
     fn happy_path_produces_a_committed_trusted_verified_message() {
         let c = conn();
-        let exec = ChainExecutor::new(chain(happy_connector(), false));
+        let exec = ChainExecutor::with_custody(chain(happy_connector(), false), Box::new(TestCustody));
         let r = run_governed_turn(&c, &raw(), &FixedIds, &exec, 1);
         assert_eq!(r.status, "committed", "reason={:?}", r.reason);
         let m = r.message.expect("committed message present");

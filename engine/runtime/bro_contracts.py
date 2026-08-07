@@ -105,21 +105,132 @@ def _require_string_list(value: Any, field: str, *, allow_empty: bool = True) ->
     return output
 
 
+# --- the contract path language ----------------------------------------------
+# This language is stated twice on purpose: procedurally below, and as a regex in
+# schemas/task-contract.schema.json. Either one alone would be decorative — the
+# schema was never what actually validated, and it had already drifted into
+# accepting strings this module rejects. ContractSchemaAgreementTests in
+# tests/test_bro_contracts.py runs one corpus through BOTH and fails when they
+# disagree, so a change here that is not mirrored there goes red.
+_GLOB_METACHARACTERS = "*?["
+_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _require_path_string(value: Any, label: str) -> str:
+    """Like _require_string, but the value is NOT stripped.
+
+    A path is compared and stored as literal text, so silently trimming it would
+    make this validator accept an input the schema rejects — the exact class of
+    drift being reconciled. Surrounding whitespace is refused instead.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ContractError(f"{label} must be a non-empty string")
+    if value != value.strip():
+        raise ContractError(f"{label} has leading or trailing whitespace: {value!r}")
+    return value
+
+
+def _require_path_list(value: Any, field: str, *, allow_empty: bool = True) -> list[str]:
+    """Like _require_string_list, but entries reach the path gate unstripped.
+
+    _require_string_list trims each entry, which would let a contract carry
+    " docs" and be validated as "docs" — accepted here, rejected by the schema,
+    and stored as the padded original. Paths are the one list where trimming is a
+    correctness bug rather than a convenience.
+    """
+    if not isinstance(value, list) or (not allow_empty and not value):
+        raise ContractError(f"{field} must be a {'non-empty ' if not allow_empty else ''}list")
+    output = [_require_path_string(item, f"{field}[{index}]") for index, item in enumerate(value)]
+    if len(output) != len(set(output)):
+        raise ContractError(f"{field} contains duplicates")
+    return output
+
+
+def _path_segments(body: str, value: str, label: str) -> list[str]:
+    """Split a '/'-separated path body, refusing every form that makes an entry
+    mean something other than what it reads as."""
+    if "\x00" in body:
+        raise ContractError(f"{label} contains a NUL byte: {value!r}")
+    if "\\" in body:
+        # Refused outright rather than folded to '/'. Folding is why this
+        # validator used to accept strings the schema rejects, and a backslash is
+        # the classic way to smuggle a separator past a '..' rule on a platform
+        # that treats it as one.
+        raise ContractError(f"backslashes are not allowed in {label}: {value!r}")
+    if any(ch in body for ch in _GLOB_METACHARACTERS):
+        # Scopes must be provably literal (M-6): the enforcement layers historically
+        # disagreed on glob semantics (prefix matching vs fnmatch), and a bare "*"
+        # scope silently disabled confinement entirely. Rejecting glob
+        # metacharacters here means a contract scope always names a real path or
+        # directory prefix, and both enforcement layers agree on what it covers.
+        raise ContractError(f"glob metacharacters are not allowed in {label}: {value!r}")
+    segments = body.split("/")
+    for segment in segments:
+        if not segment:
+            raise ContractError(f"{label} has an empty path segment: {value!r}")
+        if segment != segment.strip():
+            raise ContractError(f"{label} segment has leading or trailing whitespace: {value!r}")
+        if segment in {".", ".."}:
+            raise ContractError(f"{label} has a '.' or '..' segment: {value!r}")
+        if ":" in segment:
+            # A drive letter, a drive-relative "C:x", or a Windows alternate data
+            # stream — none of which mean what the text appears to say.
+            raise ContractError(f"{label} carries a drive or stream marker: {value!r}")
+    return segments
+
+
 def safe_repo_path(value: str) -> str:
-    raw = _require_string(value, "repository path").replace("\\", "/")
-    # Scopes must be provably literal (M-6): the enforcement layers historically
-    # disagreed on glob semantics (prefix matching vs fnmatch), and a bare "*"
-    # scope silently disabled confinement entirely. Rejecting glob
-    # metacharacters here means a contract scope always names a real path or
-    # directory prefix, and both enforcement layers agree on what it covers.
-    if any(ch in raw for ch in "*?["):
-        raise ContractError(f"glob metacharacters are not allowed in repository paths: {value!r}")
-    path = pathlib.PurePosixPath(raw)
-    if path.is_absolute() or raw.startswith("~") or any(part in {"", ".", ".."} for part in path.parts):
+    raw = _require_path_string(value, "repository path")
+    if raw == ".":
+        # The repository root itself. path_allowed matches "." literally and
+        # nothing beneath it, so this names the root entry and grants no more.
+        return "."
+    if raw.startswith("/") or raw.startswith("~") or _DRIVE_PREFIX.match(raw):
         raise ContractError(f"unsafe repository-relative path: {value!r}")
-    if ":" in path.parts[0]:
-        raise ContractError(f"unsafe drive-qualified path: {value!r}")
-    return path.as_posix()
+    return "/".join(_path_segments(raw, value, "repository path"))
+
+
+def is_absolute_scope(value: str) -> bool:
+    """True when a scope entry names a location by absolute path rather than
+    relative to this checkout. Shared with the enforcement layer so that "what
+    counts as absolute" is decided in exactly one place."""
+    if not isinstance(value, str):
+        return False
+    return value.startswith("/") or bool(_DRIVE_PREFIX.match(value))
+
+
+def safe_work_path(value: str) -> str:
+    """A task-scope entry: repo-relative, or an ABSOLUTE location.
+
+    Bro must be able to hand a specialist a folder that is not part of this
+    checkout (a UI specialist writing into a Desktop project), so a scope entry is
+    allowed to be absolute. POSIX "/x" and Windows "C:/x" share one rule set:
+    forward slashes only, no glob metacharacters, no "." or ".." segment, no empty
+    segment, no drive or stream marker inside a segment. A bare filesystem root
+    ("/" or "C:/") is refused — that is not a scope, it is the absence of one.
+    UNC and device namespaces ("//host/share", "\\\\?\\C:\\x") are refused because
+    they bypass normal path resolution.
+
+    LIMITATION, stated rather than implied away: this is a syntactic gate. It
+    cannot prove the named directory is not itself a symlink into somewhere else,
+    because a scope may name a path that does not exist yet. Real containment is
+    decided at use time against the real filesystem — bro_security.enforce_scope
+    resolves both the target and the scope entry before comparing them, and
+    bro_workspace.authorize_path re-checks every target against the
+    operator-signed workspace root.
+    """
+    raw = _require_path_string(value, "task scope path")
+    if not is_absolute_scope(raw):
+        return safe_repo_path(raw)
+    if raw.startswith("/"):
+        prefix, body = "/", raw[1:]
+    elif raw[2] != "/":
+        raise ContractError(f"backslashes are not allowed in task scope path: {value!r}")
+    else:
+        prefix, body = raw[:3], raw[3:]
+    if not body:
+        raise ContractError(f"a filesystem root is not a scope: {value!r}")
+    return prefix + "/".join(_path_segments(body, value, "absolute scope path"))
 
 
 def _registered_skills(root: pathlib.Path) -> set[str]:
@@ -131,20 +242,22 @@ def _registered_skills(root: pathlib.Path) -> set[str]:
 
 
 def _registered_pack_roles(root: pathlib.Path) -> dict[str, set[str]]:
-    registry = load_json(root / "packs" / "registry.json")
-    packs = registry.get("packs")
-    if not isinstance(packs, list):
-        raise ContractError("packs/registry.json has invalid packs list")
-    output: dict[str, set[str]] = {}
-    for pack in packs:
-        if not isinstance(pack, dict):
-            raise ContractError("pack registry entry must be an object")
-        pack_id = _require_string(pack.get("id"), "pack.id", pattern=ID_RE)
-        roles = pack.get("roles")
-        if not isinstance(roles, list) or not all(isinstance(role, str) and role.strip() for role in roles):
-            raise ContractError(f"pack {pack_id} has invalid roles")
-        output[pack_id] = {role.strip() for role in roles}
-    return output
+    """Pack -> roles, derived exactly as the identity ordinals are derived.
+
+    This used to read packs/registry.json["packs"][*]["roles"] directly, which
+    omits the mandatory "Automation & Flow Engineer" role that bro_identity
+    appends to every pack before assigning ordinals. The result was that all 52
+    of those canonical, addressable identities failed contract validation as "not
+    registered in pack" and could never be handed a task at all. Asking
+    bro_identity for the map keeps one derivation instead of two that disagree.
+    """
+    # Deferred import: bro_identity is stdlib-only and imports nothing from this
+    # module, so there is no cycle; deferring keeps this module's import surface flat.
+    from bro_identity import IdentityError, pack_roles
+    try:
+        return {pack_id: set(roles) for pack_id, roles in pack_roles(root).items()}
+    except IdentityError as exc:
+        raise ContractError(f"pack/role registry is invalid: {exc}") from exc
 
 
 def validate_task_contract(value: dict[str, Any], root: pathlib.Path = ROOT) -> dict[str, Any]:
@@ -175,11 +288,24 @@ def validate_task_contract(value: dict[str, Any], root: pathlib.Path = ROOT) -> 
     if role not in pack_roles[pack_id]:
         raise ContractError(f"role {role!r} is not registered in pack {pack_id!r}")
 
-    scope = [safe_repo_path(item) for item in _require_string_list(value["scope"], "scope", allow_empty=False)]
-    prohibited = [safe_repo_path(item) for item in _require_string_list(value["prohibited_scope"], "prohibited_scope")]
+    # The assignee's risk ceiling is policy, and policy that is never compared
+    # against anything is decoration. This is the point where a task and a role
+    # are bound together, so it is the point where the ceiling has to hold.
+    # Deferred import: bro_authority imports bro_identity and nothing from this
+    # module, so there is no cycle; deferring keeps the import surface flat.
+    from bro_authority import AuthorityError, enforce_risk_ceiling
+    try:
+        enforce_risk_ceiling(pack_id, role, risk, root)
+    except AuthorityError as exc:
+        raise ContractError(str(exc)) from exc
+
+    scope = [safe_work_path(item) for item in _require_path_list(value["scope"], "scope", allow_empty=False)]
+    prohibited = [safe_work_path(item) for item in _require_path_list(value["prohibited_scope"], "prohibited_scope")]
     if set(scope) & set(prohibited):
         raise ContractError("scope and prohibited_scope overlap")
-    [safe_repo_path(item) for item in _require_string_list(value["inputs"], "inputs")]
+    # inputs are files read from THIS checkout, so they stay repo-relative — the
+    # schema types them as repoPath and the validator must not quietly widen them.
+    [safe_repo_path(item) for item in _require_path_list(value["inputs"], "inputs")]
 
     skills = _registered_skills(root)
     core = _require_string_list(value["core_skills"], "core_skills", allow_empty=False)

@@ -32,7 +32,51 @@ mod win {
         resolve_production_key, verify_manifest_anchored, KeyManifest, PinnedRoot, RootAnchor,
         RootProvenance,
     };
+    use brops_broker::chain_executor::CustodyResolver;
     use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
+
+    /// This deployment's custody answer, wired into the broker. See the construction site for why it
+    /// is an input to the turn rather than a comment on it.
+    struct WinCustody {
+        manifest: KeyManifest,
+        verified_root: brops_core::key_manifest::VerifiedManifestRoot,
+        signer_key_id: String,
+        resolver: std::sync::Arc<ManifestResolver>,
+    }
+
+    impl CustodyResolver for WinCustody {
+        fn resolve(&self) -> TrustState {
+            // No key recorded ⇒ the chain never bound one ⇒ there is nothing to vouch for. Refuse
+            // rather than fall back to the manifest, which would be answering with the key we HOPED
+            // was used instead of the one that was.
+            let verified_under = match self.resolver.last_verifying_key() {
+                Some(k) => verifying_key_hex(&k),
+                None => {
+                    return TrustState::NoTrustedManifest("chain bound no envelope verifying key")
+                }
+            };
+            resolve_trust_state(
+                Some(&self.manifest),
+                Some(&self.verified_root),
+                &self.signer_key_id,
+                RECEIPT_ENVELOPE_ARTIFACT_TYPE,
+                now_ms(),
+                &verified_under,
+            )
+        }
+    }
+
+    /// A handle the driver keeps while the broker owns one too. `Arc` alone cannot carry the impl —
+    /// both `Arc` and the trait are foreign here — so the shared handle is a local newtype, which is
+    /// also the clearer statement: exactly one resolver exists, and the RESULT line and the committed
+    /// row are answers from that same object.
+    struct SharedCustody(std::sync::Arc<WinCustody>);
+
+    impl CustodyResolver for SharedCustody {
+        fn resolve(&self) -> TrustState {
+            self.0.resolve()
+        }
+    }
 
     use brops_win_live::config::Config;
     use brops_win_live::execution::{ExecutionParams, GovernedExecutionCore};
@@ -249,7 +293,22 @@ mod win {
         // and the same one-time nonce were accepted again after a restart. This is the
         // Windows PRODUCTION trusted_verified path, so it was the worst place for that.
         let chain = GovernedChain::new(connector, SharedResolver(resolver_handle.clone()), exec, ledger);
-        let executor = ChainExecutor::new(chain);
+        // Custody goes IN, not on afterwards. This driver used to call `resolve_trust_state` only
+        // after `run_governed_turn` returned, so the verdict was a line it printed while the row the
+        // broker had already committed said `trusted_verified` regardless. The resolver below is the
+        // one the broker consults to decide what to store, so the RESULT line and the durable row
+        // are the same answer rather than two.
+        //
+        // F-29 survives the move: the key comes from `resolver_handle.last_verifying_key()` — what
+        // the chain actually verified envelopes under — read lazily at resolve time, which is after
+        // the chain has run and recorded it.
+        let custody = std::sync::Arc::new(WinCustody {
+            manifest: manifest_for_trust.clone(),
+            verified_root: verified_root.clone(),
+            signer_key_id: cfg.trust.signer_key_id.clone(),
+            resolver: resolver_handle.clone(),
+        });
+        let executor = ChainExecutor::with_custody(chain, Box::new(SharedCustody(custody.clone())));
 
         let conn = match Connection::open(&db_path) {
             Ok(c) => c,
@@ -275,21 +334,18 @@ mod win {
             Some(m) => m,
             None => return blocked("committed_without_message"),
         };
-        let bound = message.trust_state == TRUSTED_VERIFIED;
+        // `bound` used to be `message.trust_state == TRUSTED_VERIFIED`, which could not be false:
+        // the projection hardcoded that string. It now re-reads the durable row and recomputes the
+        // body digest against what the envelope committed to — false for a rolled-back turn, a
+        // projection no commit produced, or bytes substituted after `persist_committed`.
+        let bound = brops_core::governed_message_store::verify_committed_binding(&conn, &message).is_ok();
 
-        // F-29: the key the CHAIN verified under, recorded by the resolver.
-        let verified_under = match resolver_handle.last_verifying_key() {
-            Some(k) => verifying_key_hex(&k),
-            None => return blocked("resolver_never_bound_a_verifying_key"),
-        };
-        let ts = resolve_trust_state(
-            Some(&manifest_for_trust),
-            Some(&verified_root),
-            &cfg.trust.signer_key_id,
-            RECEIPT_ENVELOPE_ARTIFACT_TYPE,
-            now,
-            &verified_under,
-        );
+        let ts = custody.resolve();
+        // The printed verdict and the committed row must agree. If they do not, something between
+        // the commit and here is not what it claims, and no chain result makes that acceptable.
+        if Some(message.trust_state.as_str()) != ts.committed_label() {
+            return blocked("custody_row_mismatch");
+        }
         let production_verified = ts.is_production_verified();
         let ts_str = match &ts {
             TrustState::Production { key_id, key_epoch, root_key_id } => {

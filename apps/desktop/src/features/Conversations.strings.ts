@@ -150,4 +150,21 @@ export const STR = {
     hy: 'Կենդանի գրելու տեմպ չի չափվում։',
     ru: 'Живой темп набора не отслеживается.',
   },
+  // `delete_conversation` is denied by the window capability set today; the refusal used
+  // to close the dialog silently and the conversation simply stayed in the rail.
+  deleteRefusedTitle: {
+    en: 'Delete refused — nothing was removed',
+    hy: 'Ջնջումը մերժվեց — ոչինչ չհեռացվեց',
+    ru: 'Удаление отклонено — ничего не удалено',
+  },
+  deleteRefusedBody: {
+    en: 'The backend rejected this delete, so the conversation and its messages are still here.',
+    hy: 'Backend-ը մերժեց այս ջնջումը, ուստի զրույցը և իր հաղորդագրությունները դեռ այստեղ են։',
+    ru: 'Бэкенд отклонил это удаление, поэтому беседа и её сообщения всё ещё здесь.',
+  },
+  deleting: {
+    en: 'Deleting…',
+    hy: 'Ջնջվում է…',
+    ru: 'Удаление…',
+  },
 } as const;

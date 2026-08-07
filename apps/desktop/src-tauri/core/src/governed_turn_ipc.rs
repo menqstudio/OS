@@ -227,16 +227,29 @@ pub struct CommittedMessage {
 }
 
 impl CommittedMessage {
-    /// Build the projection from the exact committed row. `role` and `trust_state` are fixed constants —
-    /// there is no way to mint a committed message with any other trust state.
-    pub fn new(message_id: String, author: String, body: String, created_at_ms: i64) -> CommittedMessage {
+    /// Build the projection from the exact committed row.
+    ///
+    /// `trust_state` used to be the constant `TRUSTED_VERIFIED`, which made this field
+    /// unfalsifiable: every projection ever constructed carried it, so anything downstream that
+    /// compared against it — the live driver's `bound`, the renderer's badge — was comparing a
+    /// value with itself and could not come out false. It is now the label the committing
+    /// transaction actually stored, so a demonstration-custody row projects as what it is.
+    ///
+    /// `role` stays constant: a committed governed message is always the assistant's.
+    pub fn new(
+        message_id: String,
+        author: String,
+        body: String,
+        created_at_ms: i64,
+        trust_state: String,
+    ) -> CommittedMessage {
         CommittedMessage {
             message_id,
             role: ASSISTANT_ROLE.to_string(),
             author,
             body,
             created_at_ms,
-            trust_state: TRUSTED_VERIFIED.to_string(),
+            trust_state,
         }
     }
 }
@@ -399,14 +412,14 @@ mod tests {
 
     #[test]
     fn committed_message_is_always_assistant_and_trusted_verified() {
-        let m = CommittedMessage::new("m-1".into(), "Bro".into(), "hello".into(), 1234);
+        let m = CommittedMessage::new("m-1".into(), "Bro".into(), "hello".into(), 1234, TRUSTED_VERIFIED.into());
         assert_eq!(m.role, ASSISTANT_ROLE);
         assert_eq!(m.trust_state, TRUSTED_VERIFIED);
     }
 
     #[test]
     fn committed_reply_carries_message_and_no_reason() {
-        let m = CommittedMessage::new("m-1".into(), "Bro".into(), "hi".into(), 7);
+        let m = CommittedMessage::new("m-1".into(), "Bro".into(), "hi".into(), 7, TRUSTED_VERIFIED.into());
         let r = RendererGovernedTurnResult::committed(CRID.into(), "bt-1".into(), "conv-1".into(), m);
         let json = r.to_json();
         assert!(json.contains(r#""status":"committed""#));

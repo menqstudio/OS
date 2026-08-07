@@ -39,7 +39,7 @@ export const en = {
   'state.loading': 'Loading…',
   'state.empty': 'Nothing here yet',
   'state.emptyHint': 'Items will appear here as work is created.',
-  'state.prototype': 'Prototype — mock data, no backend connected.',
+  'state.prototype': 'No desktop backend is connected. There is no mock data — every panel will show its own error state until this runs inside the BroPS desktop app.',
 
   'action.new': 'New',
   'action.approve': 'Approve',

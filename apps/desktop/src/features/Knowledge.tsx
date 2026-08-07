@@ -167,6 +167,11 @@ export function Knowledge() {
   // (opened read-only into the honest blocked edit state).
   const [editor, setEditor] = useState<'new' | KnowledgeNote | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // A delete is in flight / was REFUSED by the backend. `delete_knowledge` is denied by
+  // the window capability set today, so the refusal path is the common one — it must be
+  // readable on screen, never swallowed.
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
 
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -290,13 +295,33 @@ export function Knowledge() {
     reloadAll();
   };
 
+  // Delete is NOT optimistic. Nothing is announced as deleted and no selection is
+  // dropped until `delete_knowledge` actually resolves; a rejection keeps the article
+  // exactly where it is and surfaces the backend's own reason in a readable alert.
   const removeArticle = (id: string) => {
-    const gone = articles.find((a) => a.id === id);
-    setPendingDelete(null);
-    setEditor(null);
-    if (selectedId === id) setSelectedId(null);
-    setAnnounce(gone ? fmt.articleDeleted(lang, gone.title) : '');
-    desktop.deleteKnowledge(id).then(reloadAll).catch(reloadAll);
+    if (deleteBusy) return;
+    const target = articles.find((a) => a.id === id);
+    const title = target?.title ?? id;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    desktop
+      .deleteKnowledge(id)
+      .then(() => {
+        setPendingDelete(null);
+        setEditor(null);
+        if (selectedId === id) setSelectedId(null);
+        setAnnounce(fmt.articleDeleted(lang, title));
+        reloadAll();
+      })
+      .catch((e: unknown) => {
+        const reason = e instanceof Error ? e.message : String(e);
+        setPendingDelete(null);
+        setDeleteError(reason);
+        setAnnounce(fmt.articleDeleteRefused(lang, title, reason));
+        // Re-read so the list provably reflects the store, which still holds the row.
+        reloadAll();
+      })
+      .finally(() => setDeleteBusy(false));
   };
 
   // Arrow / Home / End navigation across the article list; Enter opens (selects).
@@ -517,7 +542,10 @@ export function Knowledge() {
           <p className="sub">{t('knowledge.subtitle')}</p>
         </div>
         <div className="right">
-          <span className="pill info">{L('recallActive')}</span>
+          {/* Bound to the REAL read state — never a standing "recall · active" claim. */}
+          <span className={`pill ${loading ? 'off' : s.error ? 'warn' : 'info'}`}>
+            {loading ? L('recallReading') : s.error ? L('recallUnavailable') : L('recallLoaded')}
+          </span>
           <Button variant="primary" onClick={() => { setEditor('new'); }}>{t('action.new')}</Button>
         </div>
       </header>
@@ -525,14 +553,24 @@ export function Knowledge() {
       {/* Polite live region — announces result counts and save/delete outcomes. */}
       <div className="kb-sr-live" role="status" aria-live="polite">{announce}</div>
 
+      {/* A REFUSED delete, stated plainly and left on screen until dismissed. */}
+      {deleteError && (
+        <div className="kb-delete-error" role="alert">
+          <b>{L('deleteRefusedTitle')}</b>
+          <span>{L('deleteRefusedBody')}</span>
+          <span className="mono kb-delete-reason">{deleteError}</span>
+          <Button small variant="ghost" onClick={() => setDeleteError(null)}>{t('action.close')}</Button>
+        </div>
+      )}
+
       {pendingDelete && (
         <ConfirmDialog
           title={t('confirm.deleteTitle')}
           message={t('confirm.deleteBody')}
-          confirmLabel={t('action.delete')}
+          confirmLabel={deleteBusy ? L('deleting') : t('action.delete')}
           cancelLabel={t('action.cancel')}
           onConfirm={() => removeArticle(pendingDelete)}
-          onCancel={() => setPendingDelete(null)}
+          onCancel={() => { if (!deleteBusy) setPendingDelete(null); }}
         />
       )}
 
@@ -608,7 +646,10 @@ export function Knowledge() {
               </div>
             ))}
           </div>
-          <div className="wire live" aria-hidden="true" />
+          {/* A plain divider. The `live` modifier animates a travelling pulse, which
+              would read as a running stream — this page issues one read and has no
+              stream to show, so the claim is dropped rather than faked. */}
+          <div className="wire" aria-hidden="true" />
         </section>
       )}
     </div>
@@ -702,6 +743,13 @@ const KNOWLEDGE_CSS = `
 .v-knowledge .kb-blocked-glyph { font-size: 24px; color: var(--warning); }
 .v-knowledge .kb-blocked-title { font-weight: 700; color: var(--ink); }
 .v-knowledge .kb-blocked-body { max-width: 460px; color: var(--ink-muted); font-size: 13px; }
+
+.v-knowledge .kb-delete-error { display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  margin-bottom: var(--s4); padding: 10px 12px;
+  border: 1px solid rgb(var(--danger-rgb)/.4); border-radius: var(--r);
+  background: rgb(var(--danger-rgb)/.08); font-size: 13px; }
+.v-knowledge .kb-delete-error b { color: var(--danger); }
+.v-knowledge .kb-delete-reason { color: var(--ink-muted); font-size: 12px; word-break: break-word; }
 
 .v-knowledge .kstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: var(--s4); margin-top: var(--s4); }

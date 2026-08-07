@@ -8,10 +8,12 @@ export const STR = {
     hy: 'ԴԱՐԱՆ · ԱՐԽԻՎ',
     ru: 'БИБЛИОТЕКА · АРХИВ',
   },
-  watching: {
-    en: 'Bro · watching the library',
-    hy: 'Bro · դարանը դիտում է',
-    ru: 'Bro · наблюдает за библиотекой',
+  // Was "Bro · watching the library" — nothing watches the library. The page issues
+  // one `list_library` read, so the pill reports that read and nothing more.
+  archiveRead: {
+    en: 'Read from the archive store',
+    hy: 'Կարդացված է արխիվի պահոցից',
+    ru: 'Прочитано из хранилища архива',
   },
   subtitle: {
     en: 'Component, prompt & pattern catalog with live previews',
@@ -162,6 +164,23 @@ export const STR = {
     en: 'Delete this item? This can’t be undone.',
     hy: 'Ջնջե՞լ այս տարրը։ Սա հնարավոր չէ հետարկել։',
     ru: 'Удалить этот элемент? Это действие необратимо.',
+  },
+  deleting: {
+    en: 'Deleting…',
+    hy: 'Ջնջվում է…',
+    ru: 'Удаление…',
+  },
+  // `delete_library_item` is denied by the window capability set today, so a rejection
+  // is an expected outcome and has to be readable rather than swallowed.
+  deleteRefusedTitle: {
+    en: 'Delete refused — nothing was removed',
+    hy: 'Ջնջումը մերժվեց — ոչինչ չհեռացվեց',
+    ru: 'Удаление отклонено — ничего не удалено',
+  },
+  deleteRefusedBody: {
+    en: 'The backend rejected this delete, so the item is still in the archive and still listed below.',
+    hy: 'Backend-ը մերժեց այս ջնջումը, ուստի տարրը դեռ արխիվում է և դեռ ցուցակում է ստորև։',
+    ru: 'Бэкенд отклонил это удаление, поэтому элемент всё ещё в архиве и в списке ниже.',
   },
   previewPrefix: {
     en: 'Preview: ',

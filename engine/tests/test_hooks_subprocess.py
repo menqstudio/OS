@@ -23,6 +23,85 @@ from broctl import build_registry, generate_key
 _ENGINE_IS_GIT_ROOT = (pathlib.Path(__file__).resolve().parents[1] / ".git").exists()
 
 
+ENFORCEMENT_EVENTS = (
+    "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+    "PostToolUseFailure", "SubagentStart", "SubagentStop", "Stop",
+)
+
+
+class HookWiringTests(unittest.TestCase):
+    """The wall is only a wall where it is wired.
+
+    These assertions read settings files and nothing else, so unlike
+    HookSubprocessTests below they are NOT skipped in the monorepo — which
+    matters, because "the enforcement code is fine, nothing invokes it" is
+    precisely the failure this file exists to catch.
+    """
+
+    def _settings(self, path):
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _commands(self, hooks_block):
+        for group in hooks_block:
+            for entry in group.get("hooks", []):
+                yield str(entry.get("command", ""))
+
+    def test_engine_settings_wire_every_enforcement_event(self):
+        hooks = self._settings(ROOT / ".claude" / "settings.json")["hooks"]
+        for event in ENFORCEMENT_EVENTS:
+            self.assertIn(event, hooks, f"{event} is not wired; that gate never runs")
+            self.assertTrue(any("bro_hook.py" in c for c in self._commands(hooks[event])),
+                            f"{event} is wired to something other than the wall")
+
+    def test_pre_tool_wires_both_the_wall_and_the_identity_hook(self):
+        hooks = self._settings(ROOT / ".claude" / "settings.json")["hooks"]
+        commands = list(self._commands(hooks["PreToolUse"]))
+        self.assertTrue(any("bro_hook.py" in c and "pre-tool" in c for c in commands))
+        self.assertTrue(any("bro_identity_hook.py" in c for c in commands))
+
+    def test_hook_settings_wire_success_and_failure_settlement(self):
+        hooks = self._settings(ROOT / ".claude" / "settings.json")["hooks"]
+        self.assertIn("PostToolUse", hooks)
+        self.assertIn("PostToolUseFailure", hooks)
+        self.assertIn("post-tool", hooks["PostToolUse"][0]["hooks"][0]["command"])
+        self.assertIn("post-tool-failure", hooks["PostToolUseFailure"][0]["hooks"][0]["command"])
+
+    def test_every_hook_command_tries_a_windows_resolvable_interpreter_first(self):
+        """H-3: a hook whose interpreter fails to launch is a NON-blocking error,
+        so the tool call proceeds. On Windows `python3` is routinely absent, so a
+        command that only tries `python3` is a wall that silently is not there."""
+        hooks = self._settings(ROOT / ".claude" / "settings.json")["hooks"]
+        for event, block in hooks.items():
+            for command in self._commands(block):
+                self.assertTrue(command.startswith("python "),
+                                f"{event} hook does not try `python` first: {command}")
+                self.assertIn("python3 ", command, f"{event} hook has no POSIX fallback")
+                self.assertIn("py -3 ", command, f"{event} hook has no py-launcher fallback")
+
+    def test_a_repository_root_that_wires_the_wall_must_wire_all_of_it(self):
+        """Dormant on purpose, and the dormancy is the open finding.
+
+        The engine hooks resolve their own root from __file__, so wiring them from
+        the repository root is a path change and nothing more. What is NOT merely a
+        path change is that the wall then runs: it denies every tool call until an
+        operator-signed workspace binding exists AND engine/ is a git checkout root
+        (bro_workspace.git_config_path raises here today), which the repository's
+        CLAUDE.md defers as a standing owner decision. So the repository root
+        deliberately does not wire it yet, and this guard only has an opinion once
+        someone does — at which point a half-wired wall is worse than none.
+        """
+        path = ROOT.parent / ".claude" / "settings.json"
+        if not path.is_file():
+            self.skipTest("no repository-root settings file above engine/")
+        hooks = self._settings(path).get("hooks", {})
+        wired = {event: block for event, block in hooks.items()
+                 if any("bro_hook.py" in c for c in self._commands(block))}
+        if not wired:
+            self.skipTest("repository root does not wire the enforcement wall (open finding)")
+        for event in ENFORCEMENT_EVENTS:
+            self.assertIn(event, wired, f"{event} missing from a root-wired wall")
+
+
 @unittest.skipUnless(
     _ENGINE_IS_GIT_ROOT,
     "requires engine/ to be its own git worktree root; deferred in the OS monorepo — see CLAUDE.md",
@@ -265,22 +344,6 @@ class HookSubprocessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "")
-
-    def test_hook_settings_wire_success_and_failure_settlement(self):
-        settings = json.loads(
-            (ROOT / ".claude" / "settings.json").read_text(encoding="utf-8")
-        )
-        hooks = settings["hooks"]
-        self.assertIn("PostToolUse", hooks)
-        self.assertIn("PostToolUseFailure", hooks)
-        self.assertIn(
-            "post-tool",
-            hooks["PostToolUse"][0]["hooks"][0]["command"],
-        )
-        self.assertIn(
-            "post-tool-failure",
-            hooks["PostToolUseFailure"][0]["hooks"][0]["command"],
-        )
 
     def test_identity_hook_parses_stdin(self):
         result = subprocess.run(

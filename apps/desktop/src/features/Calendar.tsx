@@ -67,6 +67,11 @@ const viewStyles = `
 .v-calendar .dg-empty{padding:var(--s5) 0}
 .v-calendar .cm-nav{display:flex;align-items:center;gap:6px}
 .v-calendar .ag-side .btn{white-space:nowrap}
+.v-calendar .cal-delete-error{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-bottom:14px;
+  padding:10px 12px;border:1px solid rgb(var(--danger-rgb)/.4);border-radius:var(--r);
+  background:rgb(var(--danger-rgb)/.08);font-size:13px}
+.v-calendar .cal-delete-error b{color:var(--danger)}
+.v-calendar .cal-delete-reason{color:var(--ink-muted);font-size:12px;word-break:break-word}
 `;
 
 function NewEventForm(
@@ -137,6 +142,9 @@ export function Calendar() {
   // `creating` holds the datetime-local prefill (empty string = no prefill).
   const [creating, setCreating] = useState<{ when: string } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  // The backend's own reason for REFUSING a delete — surfaced, never swallowed.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [viewDate, setViewDate] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -177,9 +185,20 @@ export function Calendar() {
     }
   };
 
+  // Not optimistic: the event leaves the calendar only when `delete_event` resolves.
+  // A rejection keeps it and states the backend's reason.
   const remove = (id: string) => {
-    setPendingDelete(null);
-    desktop.deleteEvent(id).then(() => s.reload()).catch(() => s.reload());
+    if (deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    desktop.deleteEvent(id)
+      .then(() => { setPendingDelete(null); s.reload(); })
+      .catch((e: unknown) => {
+        setPendingDelete(null);
+        setDeleteError(e instanceof Error ? e.message : String(e));
+        s.reload();
+      })
+      .finally(() => setDeleteBusy(false));
   };
 
   // Split loaded events into dated (sorted ascending) and undated buckets.
@@ -310,11 +329,21 @@ export function Calendar() {
         <ConfirmDialog
           title={t('confirm.deleteTitle')}
           message={t('confirm.deleteBody')}
-          confirmLabel={t('action.delete')}
+          confirmLabel={deleteBusy ? L('deleting') : t('action.delete')}
           cancelLabel={t('action.cancel')}
           onConfirm={() => remove(pendingDelete)}
-          onCancel={() => setPendingDelete(null)}
+          onCancel={() => { if (!deleteBusy) setPendingDelete(null); }}
         />
+      )}
+
+      {/* A REFUSED delete, stated plainly and left on screen until dismissed. */}
+      {deleteError && (
+        <div className="cal-delete-error" role="alert">
+          <b>{L('deleteRefusedTitle')}</b>
+          <span>{L('deleteRefusedBody')}</span>
+          <span className="mono cal-delete-reason">{deleteError}</span>
+          <Button small variant="ghost" onClick={() => setDeleteError(null)}>{t('action.close')}</Button>
+        </div>
       )}
 
       {s.loading && s.data === null ? (

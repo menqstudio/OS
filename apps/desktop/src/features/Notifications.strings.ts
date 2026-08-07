@@ -105,4 +105,30 @@ export const STR = {
   gateChainReading: { en: 'READING', hy: 'ԸՆԹԵՐՑՈՒՄ', ru: 'ЧТЕНИЕ' },
   gateChainMirror: { en: 'MIRROR', hy: 'ԱՐՏԱՑՈԼՈՒՄ', ru: 'ЗЕРКАЛО' },
   gateChainEngine: { en: 'ENGINE', hy: 'ՇԱՐԺԻՉ', ru: 'ДВИЖОК' },
+
+  // ── Read-path chain node labels ────────────────────────────────────────────
+  // The strip used to hard-code the ENGINE node lit (`done`) whatever came back, so a
+  // blocked or unreachable read still painted a satisfied first node. Every node now
+  // maps to a fact from the actual GovernanceRead, and says which honest case it is.
+  gateChainRead: { en: 'READ', hy: 'ԸՆԹԵՐՑՈՒՄ', ru: 'ЧТЕНИЕ' },
+  gateChainEngineSealed: {
+    en: 'ENGINE · sealed',
+    hy: 'ՇԱՐԺԻՉ · կնքված',
+    ru: 'ДВИЖОК · запечатан',
+  },
+  gateChainEngineUnreachable: {
+    en: 'ENGINE · unreachable',
+    hy: 'ՇԱՐԺԻՉ · անհասանելի',
+    ru: 'ДВИЖОК · недоступен',
+  },
+  gateChainMirrorNone: {
+    en: 'MIRROR · no events',
+    hy: 'ԱՐՏԱՑՈԼՈՒՄ · իրադարձություններ չկան',
+    ru: 'ЗЕРКАЛО · нет событий',
+  },
+  gateChainMirrorUnverified: {
+    en: 'MIRROR · unverified',
+    hy: 'ԱՐՏԱՑՈԼՈՒՄ · չստուգված',
+    ru: 'ЗЕРКАЛО · не проверено',
+  },
 } as const;

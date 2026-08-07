@@ -101,7 +101,7 @@ impl GovernedExecutor for UpstreamBlockedExecutor {
         _req: &ValidatedRequest,
         _broker_turn_id: &str,
         _request_nonce: &str,
-    ) -> Result<AcceptedOutput, TurnReason> {
+    ) -> Result<(AcceptedOutput, brops_core::production_trust::TrustState), TurnReason> {
         Err(TurnReason::UpstreamBlocked)
     }
 }
@@ -539,8 +539,8 @@ mod tests {
             req: &ValidatedRequest,
             bt: &str,
             _n: &str,
-        ) -> Result<AcceptedOutput, TurnReason> {
-            Ok(AcceptedOutput {
+        ) -> Result<(AcceptedOutput, brops_core::production_trust::TrustState), TurnReason> {
+            Ok((AcceptedOutput {
                 broker_turn_id: bt.to_string(),
                 message_id: format!("m-{bt}"),
                 conversation_id: req.conversation_id.clone(),
@@ -548,7 +548,11 @@ mod tests {
                 accepted_body: self.body.clone(),
                 envelope_body_sha256: sha256_hex(self.body.as_bytes()),
                 created_at_ms: 42,
-            })
+            }, brops_core::production_trust::TrustState::Production {
+                key_id: "test-signer".into(),
+                key_epoch: 1,
+                root_key_id: "test-root".into(),
+            }))
         }
     }
 

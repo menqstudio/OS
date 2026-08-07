@@ -54,4 +54,21 @@ export const STR = {
     hy: 'Այս օրվա համար պլանավորված գործողություն չկա։',
     ru: 'На этот день не запланировано ни одной операции.',
   },
+  // `delete_event` is denied by the window capability set today; the refusal used to be
+  // swallowed and the event simply reappeared on the next read with nothing said.
+  deleteRefusedTitle: {
+    en: 'Delete refused — nothing was removed',
+    hy: 'Ջնջումը մերժվեց — ոչինչ չհեռացվեց',
+    ru: 'Удаление отклонено — ничего не удалено',
+  },
+  deleteRefusedBody: {
+    en: 'The backend rejected this delete, so the event is still on the calendar.',
+    hy: 'Backend-ը մերժեց այս ջնջումը, ուստի իրադարձությունը դեռ օրացույցում է։',
+    ru: 'Бэкенд отклонил это удаление, поэтому событие всё ещё в календаре.',
+  },
+  deleting: {
+    en: 'Deleting…',
+    hy: 'Ջնջվում է…',
+    ru: 'Удаление…',
+  },
 } as const;

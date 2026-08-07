@@ -72,6 +72,26 @@ class PolicyTests(unittest.TestCase):
         enforce.assert_called_once_with(ROOT, ["runtime/x.py"], ["runtime/"], ["runtime/secret/"])
         binding.assert_called_once()
 
+    @patch("bro_policy.enforce_grant_bindings", return_value=(True, "bound"))
+    @patch("bro_policy.load_mode_grant_from_env")
+    @patch("bro_policy.load_contract_bundle_from_env")
+    def test_scope_outside_the_binding_is_denied_by_the_live_gate(self, load_bundle, load_mode, binding):
+        """The finding this whole round is about is authority logic that nothing
+        calls, so this exercises the real code path: enforce_scope_within_binding
+        is NOT patched, and the contract carries an absolute scope entry the
+        operator-signed binding cannot cover. Deleting the call in bro_policy makes
+        this pass a task the workspace layer would then have to deny per target."""
+        out_of_binding = bundle()
+        out_of_binding.task["scope"] = [(ROOT.parent / "not-the-workspace").as_posix()]
+        load_bundle.return_value = out_of_binding
+        load_mode.return_value = {"mode": "work"}
+        classification = self.classified("Write", {"file_path": "runtime/x.py"})
+        ok, reason = authorize_classified_action(
+            State("work", "specialist", "s", "agent-1"), classification, {})
+        self.assertFalse(ok)
+        self.assertIn("outside the bound workspace root", reason)
+        binding.assert_called_once()
+
     @patch("bro_policy.load_contract_bundle_from_env", side_effect=Exception("must not load"))
     def test_review_read_needs_no_contract(self, load_bundle):
         classification = self.classified("Read", {"file_path": "README.md"})

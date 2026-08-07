@@ -7,7 +7,9 @@ sys.path.insert(0, str(ROOT / "runtime"))
 
 from bro_authority import (
     AuthorityError,
+    enforce_risk_ceiling,
     resolve_agent_authority,
+    resolve_role_authority,
     validate_authority_policy,
     validate_verifier_assignment,
 )
@@ -73,6 +75,40 @@ class AuthorityIdentityTests(unittest.TestCase):
         authority = validate_verifier_assignment(builder_agent_id=builder, verifier_agent_id=verifier, verifier_role="Quality Verifier", risk="critical", root=ROOT)
         self.assertTrue(authority.can_verify)
         self.assertFalse(authority.can_build)
+
+
+class RiskCeilingTests(unittest.TestCase):
+    """authority-policy.json caps every role at a risk_ceiling. Until it is
+    compared against a task's risk it is data, not a ceiling."""
+
+    def test_default_builder_is_capped_at_high(self):
+        authority = resolve_role_authority("ai-agent-builders", "Agent Architect", ROOT)
+        self.assertEqual(authority.risk_ceiling, "high")
+        for risk in ("low", "medium", "high"):
+            self.assertEqual(
+                enforce_risk_ceiling("ai-agent-builders", "Agent Architect", risk, ROOT),
+                "high")
+        with self.assertRaises(AuthorityError) as caught:
+            enforce_risk_ceiling("ai-agent-builders", "Agent Architect", "critical", ROOT)
+        self.assertIn("risk ceiling", str(caught.exception))
+
+    def test_designated_verifier_reaches_critical(self):
+        self.assertEqual(
+            enforce_risk_ceiling("ai-agent-builders", "Independent Verifier", "critical", ROOT),
+            "critical")
+
+    def test_the_mandatory_flow_role_resolves_authority(self):
+        # These 52 identities are derived, not declared, so a consumer that reads
+        # the pack registry directly does not know they exist.
+        authority = resolve_role_authority(
+            "control-room-portfolio-status", "Automation & Flow Engineer", ROOT)
+        self.assertEqual(authority.agent_id, "agt-p52-r06")
+        self.assertTrue(authority.can_build)
+        self.assertFalse(authority.can_verify)
+
+    def test_ceiling_check_refuses_an_unregistered_role(self):
+        with self.assertRaises(AuthorityError):
+            enforce_risk_ceiling("ai-agent-builders", "Chief Of Everything", "low", ROOT)
 
 
 if __name__ == "__main__":

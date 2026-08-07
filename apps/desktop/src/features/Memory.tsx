@@ -10,7 +10,9 @@ import { useAsync } from '../hooks/useAsync';
 import { MEMORY_KINDS } from '../domain/enums';
 import { kindLabel } from '../domain/statusLabels';
 import type { MemoryEntry } from '../domain/entities';
-import { STR, liveCount, refCount } from './Memory.strings';
+import {
+  STR, liveCount, refCount, deleteRefusedLive, pinRefusedLive,
+} from './Memory.strings';
 
 // ---------------------------------------------------------------------------
 // §D `memory` page — re-skinned to the brops-aios «Ժամանակի հիշողություն /
@@ -280,6 +282,12 @@ export function Memory() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<MemoryEntry | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // A write (delete / pin) is in flight, or the backend REFUSED it. `delete_memory` is
+  // denied by the window capability set today, so the refusal path is the common one —
+  // it must be readable on screen, never swallowed into a silent reload.
+  const [writeBusy, setWriteBusy] = useState(false);
+  const [writeError, setWriteError] = useState<{ kind: 'delete' | 'pin'; reason: string } | null>(null);
+  const [announce, setAnnounce] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [kindFilter, setKindFilter] = useState<string>('all');
@@ -395,22 +403,58 @@ export function Memory() {
     return () => window.removeEventListener('keydown', onKey);
   }, [modalOpen, selected]);
 
+  // Neither write is optimistic: the UI states the outcome the backend actually
+  // produced. A rejection leaves the entry exactly as it was and says so.
   const togglePin = (id: string, pinned: boolean) => {
-    desktop.setMemoryPinned(id, pinned).then(() => s.reload()).catch(() => s.reload());
-  };
-  const remove = (id: string) => {
-    setPendingDelete(null);
-    desktop.deleteMemory(id).then(() => s.reload()).catch(() => s.reload());
+    if (writeBusy) return;
+    setWriteBusy(true);
+    setWriteError(null);
+    setAnnounce('');
+    desktop.setMemoryPinned(id, pinned)
+      .then(() => { s.reload(); })
+      .catch((e: unknown) => {
+        const reason = e instanceof Error ? e.message : String(e);
+        setWriteError({ kind: 'pin', reason });
+        setAnnounce(pinRefusedLive(lang, reason));
+        // Re-read so the list provably reflects the store, which is unchanged.
+        s.reload();
+      })
+      .finally(() => setWriteBusy(false));
   };
 
-  // Live-region announcement of load state / result count.
-  const liveMessage = s.loading && s.data === null
-    ? L('loading')
-    : s.error
-      ? L('loadError')
-      : all.length === 0
-        ? L('noMemoriesLive')
-        : liveCount(lang, filtered.length, all.length);
+  const remove = (id: string) => {
+    if (writeBusy) return;
+    setWriteBusy(true);
+    setWriteError(null);
+    setAnnounce('');
+    desktop.deleteMemory(id)
+      .then(() => {
+        setPendingDelete(null);
+        if (selectedId === id) setSelectedId(null);
+        s.reload();
+      })
+      .catch((e: unknown) => {
+        const reason = e instanceof Error ? e.message : String(e);
+        setPendingDelete(null);
+        setWriteError({ kind: 'delete', reason });
+        setAnnounce(deleteRefusedLive(lang, reason));
+        s.reload();
+      })
+      .finally(() => setWriteBusy(false));
+  };
+
+  // Live-region announcement. A refused write outranks the count: the user must hear
+  // that nothing happened before they hear how many rows are on screen.
+  const loadingFirst = s.loading && s.data === null;
+  const liveMessage = announce !== ''
+    ? announce
+    : loadingFirst
+      ? L('loading')
+      : s.error
+        ? L('loadError')
+        : all.length === 0
+          ? L('noMemoriesLive')
+          : liveCount(lang, filtered.length, all.length);
 
   const openFirst = () => {
     if (filtered.length > 0) setSelectedId(filtered[0].id);
@@ -429,7 +473,12 @@ export function Memory() {
           <p className="sub">{t('memory.subtitle')}</p>
         </div>
         <div className="right">
-          <span className="pill info">{L('verifiable')}</span>
+          {/* Was an unconditional "Verifiable memory" pill with no chain behind it.
+              Nothing verifies a memory row, so the pill now reports the one thing the
+              backend does prove: the outcome of the real `list_memory` read. */}
+          <span className={`pill ${loadingFirst ? 'off' : s.error ? 'warn' : 'info'}`}>
+            {loadingFirst ? L('storeReading') : s.error ? L('storeUnavailable') : L('storeLoaded')}
+          </span>
           <Button variant="primary" onClick={() => setCreating(true)}>{t('action.new')}</Button>
         </div>
       </header>
@@ -442,11 +491,27 @@ export function Memory() {
         <ConfirmDialog
           title={t('confirm.deleteTitle')}
           message={t('confirm.deleteBody')}
-          confirmLabel={t('action.delete')}
+          confirmLabel={writeBusy ? L('deleting') : t('action.delete')}
           cancelLabel={t('action.cancel')}
           onConfirm={() => remove(pendingDelete)}
-          onCancel={() => setPendingDelete(null)}
+          onCancel={() => { if (!writeBusy) setPendingDelete(null); }}
         />
+      )}
+
+      {/* A REFUSED write, stated plainly and left on screen until dismissed. */}
+      {writeError && (
+        <div className="mem-write-error" role="alert">
+          <b>{writeError.kind === 'delete' ? L('deleteRefusedTitle') : L('pinRefusedTitle')}</b>
+          <span>{writeError.kind === 'delete' ? L('deleteRefusedBody') : L('pinRefusedBody')}</span>
+          <span className="mono mem-write-reason">{writeError.reason}</span>
+          <Button
+            small
+            variant="ghost"
+            onClick={() => { setWriteError(null); setAnnounce(''); }}
+          >
+            {t('action.close')}
+          </Button>
+        </div>
       )}
 
       <div className="mem-sr-only" aria-live="polite" role="status">{liveMessage}</div>
@@ -613,7 +678,7 @@ export function Memory() {
         <section className="surface soft mem-metrics">
           <div className="sec-head">
             <h2>{L('memoryState')}</h2>
-            <span className="note">{L('countedStore')}</span>
+            <span className="note">{L('countedStore')} · {L('noVerification')}</span>
           </div>
           <div className="mstats">
             {metrics.map((x, i) => (
@@ -687,6 +752,13 @@ const MEMORY_CSS = `
 .v-memory .mem-link--resolved:hover { border-color: rgb(var(--cyan-rgb)/.5); box-shadow: 0 0 14px rgb(var(--cyan-rgb)/.12); }
 .v-memory .mem-link--sealed { color: var(--warning); background: rgb(var(--warning-rgb)/.08);
   border-color: rgb(var(--warning-rgb)/.28); }
+
+.v-memory .mem-write-error { display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  margin-bottom: var(--s4); padding: 10px 12px;
+  border: 1px solid rgb(var(--danger-rgb)/.4); border-radius: var(--r);
+  background: rgb(var(--danger-rgb)/.08); font-size: var(--t-small); }
+.v-memory .mem-write-error b { color: var(--danger); }
+.v-memory .mem-write-reason { color: var(--ink-muted); font-size: 12px; word-break: break-word; }
 
 .v-memory .mem-note { font-size: var(--t-small); color: var(--warning);
   background: rgb(var(--warning-rgb)/.1); border: 1px solid rgb(var(--warning-rgb)/.3);

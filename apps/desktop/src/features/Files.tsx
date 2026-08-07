@@ -236,6 +236,8 @@ export function Files() {
   const [guards, setGuards] = useState<Record<string, Guard>>({});
 
   const s = useAsync(() => desktop.listDir(path), [path]);
+  // First read of this path still in flight — drives the honest header posture.
+  const dirReading = s.loading && s.data === null;
   const queryRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -387,8 +389,13 @@ export function Files() {
           <p className="sub">{t('files.subtitle')}</p>
         </div>
         <div className="right">
-          <span className="pill info">{L('indexing')}</span>
-          <Mark state="live" size={30} />
+          {/* Bound to the REAL `list_dir` read. The old pair asserted "Bro · indexing"
+              with a green live mark on every render, including while the read was in
+              flight and after it had failed. */}
+          <span className={`pill ${dirReading ? 'off' : s.error ? 'warn' : 'info'}`}>
+            {dirReading ? L('dirReading') : s.error ? L('dirUnavailable') : L('dirListed')}
+          </span>
+          <Mark state={s.error ? 'alert' : dirReading ? 'thinking' : 'idle'} size={30} />
         </div>
       </header>
 

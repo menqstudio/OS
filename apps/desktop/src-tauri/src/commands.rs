@@ -44,6 +44,52 @@ fn sanitize_author(name: Option<String>) -> String {
     sanitize_author_or(name, "Bro")
 }
 
+// --- L2 hard-delete: a registered command that is genuinely forbidden ---------------
+//
+// AUDIT FINDING. Six L2 hard-delete commands (`delete_conversation`, `delete_knowledge`,
+// `delete_library_item`, `delete_research_item`, `delete_memory`, `delete_event`) were
+// registered in `generate_handler!`, declared in the app manifest (build.rs), and each
+// carried a working `repo::*::delete` body — while `capabilities/default.json` grants
+// `deny-delete-*` for all six. So the command LOOKED available and quietly was not: the
+// renderer invoked it, the Tauri ACL refused before the body ran, and the row reappeared.
+//
+// THE HONEST RESOLUTION IS "FORBIDDEN", NOT "GRANT IT". `command-policy.json` classifies
+// all six as tier L2 with `"protection": "none"`, and `tools/check_capabilities.py`
+// enforces the design invariant that an L2 hard-delete may be granted ONLY with a
+// declared `soft-delete` or `native-confirm` protection. Neither exists yet (T-011), so
+// granting the capability would be enabling a governance gate that nothing has earned.
+//
+// What this module CAN fix is the third state — "looks available, quietly is not". The
+// six handlers no longer contain a delete at all: they take no `State`, so they hold no
+// database handle and are structurally incapable of removing a row, and they return a
+// refusal string carrying a stable machine prefix the UI can match on and render. Two
+// consequences worth stating plainly:
+//   * the capability `deny-*` remains the primary wall (unchanged, still the thing that
+//     stops the invoke); this is defence in depth, so that a future mis-grant re-enables
+//     an unprotected hard delete by accident;
+//   * because the ACL still refuses first, today's renderer sees Tauri's own ACL error,
+//     not this string. Making this refusal the *reachable* one would require granting the
+//     capability — i.e. exactly the gate flip the policy forbids.
+/// Stable machine prefix of a capability-forbidden command's refusal. The renderer can
+/// match on it to show "not available" rather than a generic failure.
+pub const FORBIDDEN_COMMAND_PREFIX: &str = "forbidden_command";
+
+/// The refusal returned by every L2 hard-delete handler. It names the command, says the
+/// delete did NOT happen, says why it is forbidden, and names the condition under which
+/// it could become allowed — so nothing about it reads as a transient error.
+fn forbidden_hard_delete(command: &'static str) -> String {
+    format!(
+        "{FORBIDDEN_COMMAND_PREFIX}:{command}: nothing was deleted. `{command}` is an \
+         irreversible (tier L2) hard delete with no undo and no renderer-independent \
+         confirmation, so it is DENIED to this window by capability policy \
+         (capabilities/default.json `deny-{kebab}`, command-policy.json `\"protection\": \
+         \"none\"`) and this handler performs no delete of its own. It stays forbidden \
+         until it gains soft-delete+undo or native confirmation (T-011); this is a \
+         permanent policy refusal, not a transient failure, so retrying cannot succeed.",
+        kebab = command.replace('_', "-"),
+    )
+}
+
 // Maximum lengths accepted at write time for run fields that are later
 // formatted into an AI prompt (M-4). Bounding them here bounds the prompt: an
 // oversized intent/plan/title is rejected, never silently truncated.
@@ -638,10 +684,13 @@ pub fn post_user_message(
     .map_err(|e| e.to_string())
 }
 
+/// FORBIDDEN (tier L2, `deny-delete-conversation`) — see [`forbidden_hard_delete`]. Takes no
+/// `State`, so it holds no database handle and cannot delete anything even if the capability
+/// were mis-granted.
 #[tauri::command]
-pub fn delete_conversation(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = locked(&state)?;
-    repo::chat::delete_conversation(&conn, &id).map_err(|e| e.to_string())
+pub fn delete_conversation(id: String) -> Result<(), String> {
+    let _ = id;
+    Err(forbidden_hard_delete("delete_conversation"))
 }
 
 #[tauri::command]
@@ -693,10 +742,11 @@ pub fn create_knowledge(state: State<AppState>, input: NewKnowledgeNote) -> Resu
     repo::knowledge::create(&conn, input).map_err(|e| e.to_string())
 }
 
+/// FORBIDDEN (tier L2, `deny-delete-knowledge`) — see [`forbidden_hard_delete`].
 #[tauri::command]
-pub fn delete_knowledge(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = locked(&state)?;
-    repo::knowledge::delete(&conn, &id).map_err(|e| e.to_string())
+pub fn delete_knowledge(id: String) -> Result<(), String> {
+    let _ = id;
+    Err(forbidden_hard_delete("delete_knowledge"))
 }
 
 // --- library ---
@@ -713,10 +763,11 @@ pub fn create_library_item(state: State<AppState>, input: NewLibraryItem) -> Res
     repo::library::create(&conn, input).map_err(|e| e.to_string())
 }
 
+/// FORBIDDEN (tier L2, `deny-delete-library-item`) — see [`forbidden_hard_delete`].
 #[tauri::command]
-pub fn delete_library_item(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = locked(&state)?;
-    repo::library::delete(&conn, &id).map_err(|e| e.to_string())
+pub fn delete_library_item(id: String) -> Result<(), String> {
+    let _ = id;
+    Err(forbidden_hard_delete("delete_library_item"))
 }
 
 // --- research ---
@@ -733,10 +784,11 @@ pub fn create_research_item(state: State<AppState>, input: NewResearchItem) -> R
     repo::research::create(&conn, input).map_err(|e| e.to_string())
 }
 
+/// FORBIDDEN (tier L2, `deny-delete-research-item`) — see [`forbidden_hard_delete`].
 #[tauri::command]
-pub fn delete_research_item(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = locked(&state)?;
-    repo::research::delete(&conn, &id).map_err(|e| e.to_string())
+pub fn delete_research_item(id: String) -> Result<(), String> {
+    let _ = id;
+    Err(forbidden_hard_delete("delete_research_item"))
 }
 
 // --- memory ---
@@ -759,10 +811,11 @@ pub fn set_memory_pinned(state: State<AppState>, id: String, pinned: bool) -> Re
     repo::memory::set_pinned(&conn, &id, pinned).map_err(|e| e.to_string())
 }
 
+/// FORBIDDEN (tier L2, `deny-delete-memory`) — see [`forbidden_hard_delete`].
 #[tauri::command]
-pub fn delete_memory(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = locked(&state)?;
-    repo::memory::delete(&conn, &id).map_err(|e| e.to_string())
+pub fn delete_memory(id: String) -> Result<(), String> {
+    let _ = id;
+    Err(forbidden_hard_delete("delete_memory"))
 }
 
 // --- runs (command) ---
@@ -881,8 +934,86 @@ const GOVERNED_SUPERVISOR_ID: &str = "brops-local-supervisor";
 const GOVERNED_POLICY_ID: &str = "brops.governed.v1";
 const GOVERNED_POLICY_VERSION: &str = "1";
 const GOVERNED_GENERATION_CONFIG: &str = "brops.governed-engine.sidecar.v1";
-const GOVERNED_PLACEHOLDER_HASH: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+
+// --- The §3 bindings this install does NOT provision ---------------------------------
+//
+// AUDIT FINDING (a). These two `Expected` fields used to be `"0" * 64` — a *well-formed*
+// lowercase 64-hex SHA-256, i.e. exactly the shape `receipt::parse_strict` accepts for a
+// HASH_FIELD. `Verified::bind` compares them by string equality, so a receipt that simply
+// declared `policy_bundle_sha256: "000...0"` would have MATCHED the desktop's "placeholder"
+// and passed those two bindings. A placeholder that a counterparty can satisfy is not a
+// placeholder; it is a forgeable binding wearing the costume of a real one, which is worse
+// than an absent field because it reads as evidence.
+//
+// The replacement is deliberately NOT a digest. It cannot pass `is_lower_hex64`, so no
+// wire-legal receipt can carry it, so the binding can never be satisfied — the absence is
+// explicit in the value itself and fails closed by construction. When Wave 3b provisions a
+// real policy bundle and containment evidence, these become computed digests and the
+// pre-flight below stops firing; until then nothing here can be mistaken for a binding.
+const GOVERNED_POLICY_BUNDLE_ABSENT: &str = "absent:no-policy-bundle-digest-provisioned";
+const GOVERNED_CONTAINMENT_ABSENT: &str = "absent:no-containment-evidence-digest-provisioned";
+
+/// The executor identities a receipt may name (§3.8). EMPTY on this install: no executor
+/// roster is provisioned, and `allowed_executors.contains(..)` over an empty slice admits
+/// nothing. That is fail-closed and correct, but on its own it is also indistinguishable
+/// from "we checked the roster and this executor was not on it" — see the pre-flight below,
+/// which is what makes the difference legible.
+const GOVERNED_ALLOWED_EXECUTORS: &[&str] = &[];
+/// Builder counterpart of [`GOVERNED_ALLOWED_EXECUTORS`]; empty for the same reason.
+const GOVERNED_ALLOWED_BUILDERS: &[&str] = &[];
+
+/// The machine reason recorded when desktop governed verification is not PROVISIONED on
+/// this install. It is deliberately not phrased as a verification failure: nothing about
+/// the receipt was judged.
+pub const GOVERNED_VERIFICATION_UNCONFIGURED: &str = concat!(
+    "governed_verification_unconfigured: this install provisions NONE of the inputs desktop ",
+    "receipt verification needs — no trusted key manifest (the authority is NoTrustedManifest, ",
+    "so every key_id resolves Unavailable), no policy-bundle digest, no containment-evidence ",
+    "digest, and an EMPTY allowed executor/builder roster. A governed turn therefore cannot be ",
+    "accepted here BY CONSTRUCTION, for any receipt whatsoever. This is missing configuration, ",
+    "NOT a receipt that was checked and failed: no signature was examined, no binding was ",
+    "compared, and no executor was rejected. The turn is blocked before the model is called, so ",
+    "no prompt is sent for a result that could only be discarded. Provisioning lands in Wave 3b."
+);
+
+/// AUDIT FINDING (b). Wave-3a desktop verification cannot succeed for ANY receipt: the key
+/// authority is [`brops_core::receipt_store::NoTrustedManifest`], the two policy digests are
+/// unprovisioned, and both executor/builder rosters are empty. Running the model, building an
+/// `Expected` out of absent values and then reporting "Blocked" presented a check that had run
+/// and failed — when in truth no check was possible.
+///
+/// This is the honest pre-flight. `Some(reason)` means the install is not provisioned; the
+/// caller must block, and the reason says so in those words. `None` means verification is
+/// provisioned and the turn may proceed to the model. It returns an `Option` rather than being
+/// a `const` on purpose: the callers stay ordinary reachable code, so the whole verify path is
+/// still compiled and type-checked against the day Wave 3b flips this to `None`.
+fn governed_verification_unconfigured() -> Option<&'static str> {
+    // Wave 3a: nothing is provisioned. Wave 3b replaces this with the real provisioning probe.
+    Some(GOVERNED_VERIFICATION_UNCONFIGURED)
+}
+
+/// Fail-closed pre-flight for the three governed surfaces (chat reply, Ask Bro, run step).
+///
+/// Call it AFTER the one-time challenge has been issued and BEFORE the model is invoked. When
+/// verification is unprovisioned it terminally consumes that challenge and records a durable
+/// `blocked` attempt whose `error` is [`GOVERNED_VERIFICATION_UNCONFIGURED`], then hands back
+/// the resulting [`brops_core::receipt_store::ReceiptOutcome`] for the caller to deliver its
+/// own way. `None` means the turn may proceed.
+///
+/// The nonce is still spent on the blocked path — a governed turn gets exactly one shot at its
+/// challenge, whether or not a receipt ever existed — which is the same rule
+/// [`brops_core::receipt_store::record_pre_verification_block`] applies to a transport failure.
+fn governed_unconfigured_block(
+    conn: &rusqlite::Connection,
+    request_nonce: &str,
+    now_ms: u64,
+) -> Option<Result<brops_core::receipt_store::ReceiptOutcome, String>> {
+    let reason = governed_verification_unconfigured()?;
+    Some(
+        brops_core::receipt_store::record_pre_verification_block(conn, request_nonce, reason, now_ms)
+            .map_err(|e| e.to_string()),
+    )
+}
 
 /// Run ONE governed conversation turn end-to-end and return its verified receipt outcome (or a
 /// fail-closed error string). This is the single source of the challenge→turn→verify wiring shared
@@ -932,6 +1063,17 @@ pub async fn run_governed_conversation_turn(
         brops_core::receipt_store::issue_challenge(&conn, conversation_id, &issued, started_ms)
             .map_err(|e| e.to_string())?;
     }
+    // Honest fail-closed pre-flight (audit): if this install provisions no trusted key, no policy
+    // digests and no executor/builder roster, verification cannot succeed for ANY receipt — so say
+    // that, spend the challenge, and stop here rather than calling the model and then reporting a
+    // "failed check" that never ran.
+    let unconfigured = {
+        let conn = locked(state)?;
+        governed_unconfigured_block(&conn, &ctx.request_nonce, started_ms)
+    };
+    if let Some(outcome) = unconfigured {
+        return outcome;
+    }
     // Run buffered (no DB lock held across the async sidecar call).
     let governed = crate::ai::governed_turn(&prepared).await;
     // Freshness / verified_at use a FRESH clock taken AFTER the turn.
@@ -956,10 +1098,10 @@ pub async fn run_governed_conversation_turn(
                 supervisor_id: GOVERNED_SUPERVISOR_ID,
                 policy_id: GOVERNED_POLICY_ID,
                 policy_version: GOVERNED_POLICY_VERSION,
-                policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
-                containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
-                allowed_executors: &[],
-                allowed_builders: &[],
+                policy_bundle_sha256: GOVERNED_POLICY_BUNDLE_ABSENT,
+                containment_evidence_sha256: GOVERNED_CONTAINMENT_ABSENT,
+                allowed_executors: GOVERNED_ALLOWED_EXECUTORS,
+                allowed_builders: GOVERNED_ALLOWED_BUILDERS,
             };
             let turn = brops_core::receipt_store::GovernedTurn {
                 wire: brops_core::receipt_store::ReceiptWire {
@@ -1423,6 +1565,22 @@ pub async fn stream_run_step(
                     fail_attempt!(e.to_string());
                 }
             }
+            // Honest fail-closed pre-flight (audit) — see `governed_unconfigured_block`. An install
+            // that provisions no verification inputs fails the attempt HERE, with a reason that says
+            // the check could not run, instead of burning a model turn to report a check that did.
+            let unconfigured = {
+                let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
+                governed_unconfigured_block(&conn, &ctx.request_nonce, started_ms)
+            };
+            if let Some(outcome) = unconfigured {
+                match outcome {
+                    Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => fail_attempt!(error),
+                    Ok(_) => fail_attempt!(
+                        "unconfigured governed pre-flight returned an accept; refusing".to_string()
+                    ),
+                    Err(e) => fail_attempt!(e),
+                }
+            }
             let governed = crate::ai::governed_turn(&prepared).await;
             let verify_ms: u64 = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1441,10 +1599,10 @@ pub async fn stream_run_step(
                         supervisor_id: GOVERNED_SUPERVISOR_ID,
                         policy_id: GOVERNED_POLICY_ID,
                         policy_version: GOVERNED_POLICY_VERSION,
-                        policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        allowed_executors: &[],
-                        allowed_builders: &[],
+                        policy_bundle_sha256: GOVERNED_POLICY_BUNDLE_ABSENT,
+                        containment_evidence_sha256: GOVERNED_CONTAINMENT_ABSENT,
+                        allowed_executors: GOVERNED_ALLOWED_EXECUTORS,
+                        allowed_builders: GOVERNED_ALLOWED_BUILDERS,
                     };
                     let turn = brops_core::receipt_store::GovernedTurn {
                         wire: brops_core::receipt_store::ReceiptWire {
@@ -1608,6 +1766,30 @@ pub async fn stream_ask(
                     return Ok(());
                 }
             }
+            // Honest fail-closed pre-flight (audit) — see `governed_unconfigured_block`. Blocked here,
+            // before the model runs, with a reason that says verification is unprovisioned rather than
+            // presenting an unrunnable check as one that ran and failed.
+            let unconfigured = {
+                let conn = match locked(&state) {
+                    Ok(c) => c,
+                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
+                };
+                governed_unconfigured_block(&conn, &ctx.request_nonce, started_ms)
+            };
+            if let Some(outcome) = unconfigured {
+                match outcome {
+                    Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => {
+                        let _ = on_event.send(StreamEvent::Blocked { reason: error });
+                    }
+                    Ok(_) => {
+                        let _ = on_event.send(StreamEvent::Error {
+                            message: "unconfigured governed pre-flight returned an accept; refusing".into(),
+                        });
+                    }
+                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); }
+                }
+                return Ok(());
+            }
             let governed = crate::ai::governed_turn(&prepared).await;
             let verify_ms: u64 = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1631,10 +1813,10 @@ pub async fn stream_ask(
                         supervisor_id: GOVERNED_SUPERVISOR_ID,
                         policy_id: GOVERNED_POLICY_ID,
                         policy_version: GOVERNED_POLICY_VERSION,
-                        policy_bundle_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        containment_evidence_sha256: GOVERNED_PLACEHOLDER_HASH,
-                        allowed_executors: &[],
-                        allowed_builders: &[],
+                        policy_bundle_sha256: GOVERNED_POLICY_BUNDLE_ABSENT,
+                        containment_evidence_sha256: GOVERNED_CONTAINMENT_ABSENT,
+                        allowed_executors: GOVERNED_ALLOWED_EXECUTORS,
+                        allowed_builders: GOVERNED_ALLOWED_BUILDERS,
                     };
                     let turn = brops_core::receipt_store::GovernedTurn {
                         wire: brops_core::receipt_store::ReceiptWire {
@@ -1805,10 +1987,11 @@ pub fn create_event(state: State<AppState>, input: NewEvent) -> Result<Event, St
     repo::events::create(&conn, input).map_err(|e| e.to_string())
 }
 
+/// FORBIDDEN (tier L2, `deny-delete-event`) — see [`forbidden_hard_delete`].
 #[tauri::command]
-pub fn delete_event(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = locked(&state)?;
-    repo::events::delete(&conn, &id).map_err(|e| e.to_string())
+pub fn delete_event(id: String) -> Result<(), String> {
+    let _ = id;
+    Err(forbidden_hard_delete("delete_event"))
 }
 
 // --- automations ---
@@ -2124,5 +2307,218 @@ mod tests {
             "the {}-th reject in the window must be refused",
             MAX_REJECTS_PER_WINDOW + 1
         );
+    }
+
+    // ---- L2 hard-delete: registered, callable, and genuinely forbidden ----------------
+
+    // AUDIT REGRESSION GUARD. All six L2 hard-delete commands are denied to the window by
+    // capability policy, yet each carried a working `repo::*::delete` body — so the command
+    // looked available and quietly was not. Every one of them must now REFUSE, with the
+    // stable `forbidden_command:<name>` prefix a UI can match on, and must say that nothing
+    // was deleted.
+    //
+    // This test also pins the structural half of the fix: these handlers take no
+    // `State<AppState>`, so they can be called with nothing but an id. Restoring a
+    // database-backed delete body would require the `State` parameter back and this test
+    // would stop compiling.
+    #[test]
+    fn every_l2_hard_delete_command_refuses_and_deletes_nothing() {
+        let calls: Vec<(&str, Result<(), String>)> = vec![
+            ("delete_conversation", delete_conversation("row-1".to_string())),
+            ("delete_knowledge", delete_knowledge("row-1".to_string())),
+            ("delete_library_item", delete_library_item("row-1".to_string())),
+            ("delete_research_item", delete_research_item("row-1".to_string())),
+            ("delete_memory", delete_memory("row-1".to_string())),
+            ("delete_event", delete_event("row-1".to_string())),
+        ];
+        assert_eq!(calls.len(), 6, "all six denied hard-deletes must be covered");
+        for (name, result) in calls {
+            let err = result.unwrap_err();
+            assert!(
+                err.starts_with(&format!("{FORBIDDEN_COMMAND_PREFIX}:{name}:")),
+                "{name} must refuse with the stable `{FORBIDDEN_COMMAND_PREFIX}:{name}:` prefix, got: {err}"
+            );
+            assert!(err.contains("nothing was deleted"), "{name}: {err}");
+        }
+    }
+
+    // The refusal text itself: machine-matchable prefix, names the command, states that
+    // nothing was deleted, and says the refusal is permanent rather than transient.
+    #[test]
+    fn hard_delete_refusal_is_machine_matchable_and_names_the_command() {
+        let msg = forbidden_hard_delete("delete_memory");
+        assert!(
+            msg.starts_with(&format!("{FORBIDDEN_COMMAND_PREFIX}:delete_memory:")),
+            "refusal must carry the stable `{FORBIDDEN_COMMAND_PREFIX}:<command>:` prefix: {msg}"
+        );
+        assert!(msg.contains("nothing was deleted"), "refusal must say the delete did not happen: {msg}");
+        assert!(msg.contains("deny-delete-memory"), "refusal must name the capability grant: {msg}");
+        assert!(
+            msg.contains("permanent policy refusal"),
+            "refusal must be distinguishable from a transient failure: {msg}"
+        );
+    }
+
+    // ---- Governed verification: absent bindings, not fake ones -----------------------
+
+    // AUDIT REGRESSION GUARD (a). The two policy digests in the governed `Expected` used to be
+    // `"0" * 64` — a WIRE-LEGAL lowercase 64-hex sha256. `Verified::bind` compares them by
+    // string equality, so a receipt declaring `policy_bundle_sha256: "000...0"` would have
+    // matched the desktop's "placeholder" and passed those bindings.
+    //
+    // This test drives the real `receipt::parse_strict` (the same wire validator every receipt
+    // goes through) over a canonical envelope carrying each value, and asserts the asymmetry:
+    // the old zero-hash is ACCEPTED as a legal field value (hence matchable, hence forgeable),
+    // while the values the desktop actually expects today are REJECTED as `NotHex` — no
+    // wire-legal receipt can ever carry them, so the binding cannot be satisfied by anything.
+    // Reverting the constants to a zero-hash makes the second half of this test fail.
+    #[test]
+    fn absent_governed_bindings_are_not_wire_legal_digests() {
+        use brops_core::receipt::{parse_strict, ReceiptError};
+
+        // A zero-hash is a perfectly legal wire value — which is exactly the problem.
+        assert!(
+            matches!(parse_strict(&envelope_with("policy_bundle_sha256", &"0".repeat(64))), Ok(_)),
+            "a 64-zero digest IS wire-legal, so it could never have been a safe placeholder"
+        );
+
+        for (field, expected_value) in [
+            ("policy_bundle_sha256", GOVERNED_POLICY_BUNDLE_ABSENT),
+            ("containment_evidence_sha256", GOVERNED_CONTAINMENT_ABSENT),
+        ] {
+            let err = parse_strict(&envelope_with(field, expected_value))
+                .expect_err("the absent-binding marker must not be a legal receipt field value");
+            assert!(
+                matches!(err, ReceiptError::NotHex(f) if f == field),
+                "`{field}` = {expected_value:?} must be rejected as NotHex, got {err:?}"
+            );
+        }
+    }
+
+    // The executor/builder rosters admit nothing on this install; an empty allow-list is what
+    // makes §3.8 fail closed rather than defaulting open.
+    #[test]
+    fn governed_executor_and_builder_rosters_admit_nothing() {
+        assert!(GOVERNED_ALLOWED_EXECUTORS.is_empty());
+        assert!(GOVERNED_ALLOWED_BUILDERS.is_empty());
+    }
+
+    // AUDIT REGRESSION GUARD (b). Wave-3a desktop verification cannot succeed for any receipt,
+    // so it must SAY it could not run rather than presenting as a check that ran and failed.
+    // This exercises the real mechanism on a real database: the pre-flight fires, terminally
+    // consumes the one-time challenge, and commits a `blocked` evidence row whose durable
+    // reason is the "unconfigured" one — with no message persisted and, in the callers, before
+    // the model is ever invoked.
+    #[test]
+    fn unconfigured_governed_verification_blocks_and_says_it_could_not_run() {
+        use brops_core::receipt::{sha256_hex, IssuedRequest};
+        use brops_core::receipt_store::{issue_challenge, ReceiptOutcome};
+
+        let conn = brops_core::db::open_in_memory().unwrap();
+        let conv = brops_core::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        let now_ms = 1_700_000_000_000u64;
+        let requested_at = now_ms.to_string();
+        let (sys_h, hist_h, gen_h) = (sha256_hex(b"sys"), sha256_hex(b"hist"), sha256_hex(b"gen"));
+        let issued = IssuedRequest {
+            workspace_id: GOVERNED_WORKSPACE_ID,
+            install_id: GOVERNED_INSTALL_ID,
+            request_nonce: "nonce-unconfigured",
+            system_sha256: &sys_h,
+            history_sha256: &hist_h,
+            generation_config_sha256: &gen_h,
+            requested_at: &requested_at,
+        };
+        issue_challenge(&conn, &conv.id, &issued, now_ms).unwrap();
+
+        let outcome = governed_unconfigured_block(&conn, "nonce-unconfigured", now_ms)
+            .expect("Wave 3a provisions nothing, so the pre-flight must fire")
+            .expect("recording the block is a plain DB write");
+
+        let ReceiptOutcome::Blocked { error, .. } = outcome else {
+            panic!("an unprovisioned install must never accept a governed turn");
+        };
+        assert_eq!(error, GOVERNED_VERIFICATION_UNCONFIGURED);
+        // The reason must read as "the check could not run", not "the check ran and failed".
+        assert!(error.contains("NOT a receipt that was checked and failed"), "{error}");
+        assert!(error.contains("no signature was examined"), "{error}");
+        assert!(error.contains("blocked before the model is called"), "{error}");
+
+        // The one-time challenge is terminally spent, so it can never be replayed.
+        let consumed: Option<String> = conn
+            .query_row(
+                "SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-unconfigured'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(consumed.is_some(), "the pre-flight block must consume the challenge");
+
+        // The durable evidence row carries that same reason, and no reply was persisted.
+        let recorded: String = conn
+            .query_row(
+                "SELECT verification_error FROM receipt_verification_attempts WHERE nonce = 'nonce-unconfigured'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(recorded, GOVERNED_VERIFICATION_UNCONFIGURED);
+        let msgs: i64 = conn.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0)).unwrap();
+        assert_eq!(msgs, 0, "a blocked governed turn persists no agent message");
+    }
+
+    // ---- test helpers ----------------------------------------------------------------
+
+    /// Build the base64url (no pad) canonical-JCS receipt envelope used by the wire-legality
+    /// test, with one field overridden. All values are strings and `BTreeMap` serialises keys
+    /// in lexicographic order with no whitespace, which for this flat all-string object IS
+    /// its JCS form — so `parse_strict`'s canonicality check passes and the per-field shape
+    /// checks are what decide the outcome.
+    fn envelope_with(field: &str, value: &str) -> String {
+        let h = |s: &str| brops_core::receipt::sha256_hex(s.as_bytes());
+        let mut m: std::collections::BTreeMap<&str, String> = [
+            ("builder_id", "b".to_string()),
+            ("completed_at", "1700000000001".to_string()),
+            ("containment_evidence_sha256", h("containment")),
+            ("decision", "completed".to_string()),
+            ("executor_id", "e".to_string()),
+            ("generation_config_sha256", h("gen")),
+            ("history_sha256", h("hist")),
+            ("install_id", "i".to_string()),
+            ("key_id", "k".to_string()),
+            ("output_sha256", h("out")),
+            ("policy_bundle_sha256", h("bundle")),
+            ("policy_id", "p".to_string()),
+            ("policy_version", "1".to_string()),
+            ("protocol", brops_core::receipt::RECEIPT_PROTOCOL.to_string()),
+            ("receipt_id", "r".to_string()),
+            ("request_nonce", "n".to_string()),
+            ("request_sha256", h("req")),
+            ("requested_at", "1700000000000".to_string()),
+            ("supervisor_id", "s".to_string()),
+            ("system_sha256", h("sys")),
+            ("workspace_id", "w".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        m.insert(field, value.to_string());
+        base64url_nopad(serde_json::to_vec(&m).unwrap().as_slice())
+    }
+
+    /// Minimal base64url-no-pad encoder (the crate has no base64 dependency of its own, and
+    /// this is test-only wire construction).
+    fn base64url_nopad(bytes: &[u8]) -> String {
+        const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            let idx = [(n >> 18) & 63, (n >> 12) & 63, (n >> 6) & 63, n & 63];
+            for (i, v) in idx.iter().enumerate() {
+                if i <= chunk.len() {
+                    out.push(A[*v as usize] as char);
+                }
+            }
+        }
+        out
     }
 }

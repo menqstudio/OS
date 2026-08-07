@@ -532,7 +532,9 @@ export function Approvals() {
             </div>
           ))}
         </div>
-        <div className="wire live" aria-hidden="true" />
+        {/* The travelling `live` pulse is earned only while something is genuinely
+            waiting on a human. An empty queue is a still divider, not a running feed. */}
+        <div className={`wire${pendingCount > 0 ? ' live' : ''}`} aria-hidden="true" />
       </section>
 
       {/* deny / escalate go through a confirm dialog (grant uses press-and-hold). */}

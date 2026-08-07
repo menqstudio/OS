@@ -36,6 +36,18 @@ def _identity_source(root: pathlib.Path=ROOT):
         raise IdentityError("canonical pack count changed")
     return source
 
+def pack_roles(root: pathlib.Path=ROOT):
+    """The canonical pack -> roles map, including the mandatory flow role.
+
+    _identity_source appends "Automation & Flow Engineer" to every pack, and every
+    agent ordinal is derived from that appended list. Any consumer that instead
+    reads packs/registry.json["packs"][*]["roles"] directly sees a DIFFERENT role
+    set — one short in each of the 52 packs — and then treats 52 canonical,
+    addressable identities as unregistered. There is one derivation; ask for it
+    here rather than re-deriving it.
+    """
+    return {pack["pack_id"]: tuple(pack["roles"]) for pack in _identity_source(root)}
+
 def identity_fingerprint(root: pathlib.Path=ROOT):
     return hashlib.sha256(json.dumps(_identity_source(root),sort_keys=True,separators=(",",":")).encode()).hexdigest()
 

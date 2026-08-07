@@ -358,7 +358,10 @@ export function Command() {
             onSubmit={(e) => { e.preventDefault(); dockCreate(); }}
           >
             <div className="dock">
-              <Mark state="live" className="dock-mark" style={{ width: 26, height: 26 }} />
+              {/* Decoration on a text input — it reflects no backend state, so it must
+                  not render as `live`. The dock's real posture is the `executing` pill,
+                  which is bound to an actual run. */}
+              <Mark state="idle" className="dock-mark" style={{ width: 26, height: 26 }} />
               <input
                 className="dock-input"
                 value={dockIntent}

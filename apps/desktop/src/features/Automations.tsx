@@ -216,10 +216,23 @@ export function Automations() {
       });
   };
 
+  // Not optimistic: the conduit leaves the selection only once the backend confirms.
+  // A refusal keeps it selected and reports the reason through the same denial channel
+  // every other refused action already uses, instead of a silent reload.
   const remove = (id: string) => {
     setPendingDelete(null);
-    if (selectedId === id) setSelectedId(null);
-    desktop.deleteAutomation(id).then(() => s.reload()).catch(() => s.reload());
+    setActionError(null);
+    desktop.deleteAutomation(id)
+      .then(() => {
+        if (selectedId === id) setSelectedId(null);
+        s.reload();
+      })
+      .catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        setActionError({ id, message });
+        setAnnounce(isDenial(message) ? `${stateLabel('blocked')}: ${message}` : message);
+        s.reload();
+      });
   };
 
   // Run an automation NOW: its local (no-AI) action fires and the honest outcome (ok/failed + detail)
@@ -646,7 +659,10 @@ export function Automations() {
             <span className="micro">{L('valveGate')}</span>
           </div>
 
-          <div className="wire live" />
+          {/* The travelling `live` pulse is the manifold's energised signature — it is
+              earned only when at least one conduit is genuinely ARMED. With every lane
+              off or blocked it is a still divider, not a running feed. */}
+          <div className={`wire${counts.idle > 0 ? ' live' : ''}`} />
 
           {renderSchematic()}
         </section>

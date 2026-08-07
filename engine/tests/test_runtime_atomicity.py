@@ -144,6 +144,43 @@ class ClaimLockOwnershipTests(unittest.TestCase):
         self.assertTrue(self.runtime.claim_lock.exists())
         self.runtime.claim_lock.unlink()
 
+    def test_delete_pending_lock_is_retried_not_reported_as_failure(self):
+        """A contended claim must not surface a transient EACCES.
+
+        On Windows a lock file another claimant is unlinking or replacing is
+        briefly delete-pending: O_EXCL open fails with PermissionError instead of
+        FileExistsError. Only FileExistsError was retried, so eight threads racing
+        for one task intermittently produced PermissionError(13) out of
+        claim_next. Simulated here rather than raced, so it fails every run
+        instead of one in eight.
+        """
+        real_open = os.open
+        calls = []
+
+        def flaky_open(path, flags, *args, **kwargs):
+            if str(path).endswith(".claim.lock") and not calls:
+                calls.append(path)
+                raise PermissionError(13, "Permission denied")
+            return real_open(path, flags, *args, **kwargs)
+
+        with unittest.mock.patch("bro_orchestration_runtime_v1.os.open", flaky_open):
+            with self.runtime._claim_guard():
+                self.assertTrue(self.runtime.claim_lock.exists())
+        self.assertEqual(len(calls), 1, "the delete-pending open was never attempted")
+        self.assertFalse(self.runtime.claim_lock.exists())
+
+    def test_a_persistent_permission_error_still_fails_closed(self):
+        """The retry above must not swallow a genuinely unwritable state directory."""
+        def always_denied(path, flags, *args, **kwargs):
+            raise PermissionError(13, "Permission denied")
+
+        with unittest.mock.patch("bro_orchestration_runtime_v1.os.open", always_denied), \
+                unittest.mock.patch("bro_orchestration_runtime_v1.LOCK_TIMEOUT_SECONDS", 0.05):
+            with self.assertRaises(OrchestrationRuntimeError) as caught:
+                with self.runtime._claim_guard():
+                    pass
+        self.assertIn("permission denied", str(caught.exception))
+
     def test_fresh_lock_blocks_and_times_out(self):
         self.runtime.claim_lock.write_text(
             json.dumps({"owner_token": "live", "pid": 1, "created_at_epoch": 0}),
