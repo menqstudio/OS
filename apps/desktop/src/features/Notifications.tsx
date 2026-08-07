@@ -8,6 +8,7 @@ import {
 import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { desktop } from '../services/desktop';
+import { hasRecords, recordCount, isUnauthenticatedMirror } from '../services/governance';
 import type { Notification } from '../domain/entities';
 import { statusTone } from '../domain/enums';
 import { severityLabel } from '../domain/statusLabels';
@@ -354,26 +355,34 @@ export function Notifications() {
         />
         <div className="nsig-gate-txt">
           <div className="nsig-gate-title">
-            {gov.data?.state === 'ok' ? L('gateTitleOk') : L('gateTitle')}
+            {/* "mirrored" is claimed only when events ACTUALLY arrived. An `ok` read
+                carrying zero records is the absence of a stream, not a mirrored one. */}
+            {gov.data && hasRecords(gov.data) ? L('gateTitleOk') : L('gateTitle')}
           </div>
           <div className="muted nsig-gate-body">
             {gov.data === null
               ? L('gateReading')
-              : gov.data.state === 'ok'
-                ? `${gov.data.records?.length ?? 0} ${L('gateMirrored')}`
-                : L('gateBody')}
+              : gov.data.state !== 'ok'
+                ? L('gateBody')
+                : hasRecords(gov.data)
+                  ? `${recordCount(gov.data)} ${L('gateMirrored')}`
+                  : L('gateEmpty')}
           </div>
+          {/* Records shown here are schema-checked only, from a source the desktop does
+              not authenticate — never let the panel imply verified engine truth. */}
+          {gov.data && hasRecords(gov.data) && isUnauthenticatedMirror(gov.data) ? (
+            <div className="micro nsig-gate-reason">{L('gateUnauthenticated')}</div>
+          ) : null}
           {gov.data && gov.data.state !== 'ok' && gov.data.reason ? (
             <div className="micro nsig-gate-reason">
               {L('gateReasonLabel')}{gov.data.reason}
             </div>
           ) : null}
-          {/* Honest read-path chain: engine → mirror. The middle node is `now`
-              only when the read genuinely resolved `ok`; otherwise the mirror
-              hop stays un-lit (sealed). */}
+          {/* Honest read-path chain: engine → mirror. The middle node lights only when
+              events genuinely arrived; an empty or sealed read leaves it un-lit. */}
           <div className="chain nsig-gate-chain" aria-hidden="true">
             <b className="done">{L('gateChainEngine')}</b>
-            <b className={gov.data?.state === 'ok' ? 'now' : ''}>{L('gateChainMirror')}</b>
+            <b className={gov.data && hasRecords(gov.data) ? 'now' : ''}>{L('gateChainMirror')}</b>
             <b>{gov.data === null ? L('gateChainReading') : L('gateChainMirror')}</b>
           </div>
         </div>

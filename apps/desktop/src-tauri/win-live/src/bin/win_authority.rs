@@ -25,6 +25,12 @@ mod win {
     pub fn main() {
         let cfg_path = arg("--config").expect("--config required");
         let cfg = Config::load(&cfg_path).expect("config");
+        // §2.5 TCB integrity floor (audit R2) BEFORE the signing seed is touched: an unmeasured binary
+        // must not be handed a production key. Refusal exits the process.
+        brops_win_live::tcb_floor::enforce_or_exit(
+            "challenge-authority",
+            cfg.tcb_pin_manifest_path().as_deref(),
+        );
         let seed = read_seed(&cfg.keys.challenge_seed).expect("challenge seed");
         let core = Authority::new(AuthorityConfig {
             challenge_key_id: cfg.key_ids.challenge.clone(),

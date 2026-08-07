@@ -25,8 +25,23 @@ export interface GovernanceRead {
   surface: string;
   /** Present for `blocked`/`unreachable`: the honest machine reason. */
   reason?: string;
-  /** Present only for `ok`: the engine-mirrored, schema-valid records (read-only). */
+  /** Present only for `ok`: the engine-mirrored, schema-valid records (read-only).
+   *  MAY be an empty array — an `ok` read with zero records means the sidecar had
+   *  nothing to mirror. That is an EMPTY chain, never a satisfied one. */
   records?: unknown[];
+  /**
+   * Whether the records' ORIGIN was cryptographically verified. `false` in this build
+   * and defaulted to `false` whenever the backend does not explicitly say otherwise.
+   *
+   * Schema validation (which the Rust mirror does) checks shape, not authorship: the
+   * engine schemas declare `additionalProperties: false` and define no signature
+   * field, so a conforming record cannot even carry one, and the reply comes from
+   * whatever process `BROPS_GOVERNED_SIDECAR` names. So `state: 'ok'` means
+   * "well-formed records arrived", not "these are genuine engine truth". A page that
+   * paints a GREEN/verified affordance from this data without saying it is
+   * unauthenticated is claiming more than the backend can prove.
+   */
+  authenticated: boolean;
 }
 
 /** A page is showing engine truth only when the mirror is `ok`. */
@@ -37,6 +52,25 @@ export function isMirrored(r: GovernanceRead): boolean {
 /** `true` for any honest non-fabricated blocked state (engine refused OR unreachable). */
 export function isBlockedOrUnreachable(r: GovernanceRead): boolean {
   return r.state === 'blocked' || r.state === 'unreachable';
+}
+
+/** How many records the mirror actually carries (0 for any non-`ok` state). */
+export function recordCount(r: GovernanceRead): number {
+  return r.state === 'ok' ? (r.records?.length ?? 0) : 0;
+}
+
+/** `true` only when the mirror really carries records. An `ok` read with an empty
+ *  record set is NOT evidence — it is the honest absence of evidence, and pages must
+ *  render it as "no evidence" rather than as a satisfied node. */
+export function hasRecords(r: GovernanceRead): boolean {
+  return recordCount(r) > 0;
+}
+
+/** `true` when the page is showing records whose origin was NOT verified — the state
+ *  every `ok` mirror is in today. Pages must say so next to anything that reads as a
+ *  verdict. */
+export function isUnauthenticatedMirror(r: GovernanceRead): boolean {
+  return r.state === 'ok' && r.authenticated !== true;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -51,21 +85,33 @@ function isRecord(v: unknown): v is Record<string, unknown> {
  */
 export function parseGovernanceRead(surface: GovernanceSurface, raw: unknown): GovernanceRead {
   if (!isRecord(raw)) {
-    return { state: 'unreachable', surface, reason: 'engine reply was not an object' };
+    return { state: 'unreachable', surface, reason: 'engine reply was not an object', authenticated: false };
   }
   const state = raw.state;
   const replySurface = typeof raw.surface === 'string' ? raw.surface : surface;
   if (state === 'ok') {
     if (!Array.isArray(raw.records)) {
       // An `ok` reply with no records array is malformed — refuse to treat it as mirrored.
-      return { state: 'blocked', surface: replySurface, reason: 'engine ok reply had no records array' };
+      return { state: 'blocked', surface: replySurface, reason: 'engine ok reply had no records array', authenticated: false };
     }
-    return { state: 'ok', surface: replySurface, records: raw.records };
+    return {
+      state: 'ok',
+      surface: replySurface,
+      records: raw.records,
+      // Fail-closed: only a literal `true` from the backend counts as authenticated.
+      // A missing/odd value must never be read as "verified".
+      authenticated: raw.authenticated === true,
+    };
   }
   if (state === 'blocked' || state === 'unreachable') {
     const reason = typeof raw.reason === 'string' && raw.reason ? raw.reason : undefined;
-    return { state, surface: replySurface, reason };
+    return { state, surface: replySurface, reason, authenticated: false };
   }
   // Unknown state → fail closed as unreachable (never `ok`).
-  return { state: 'unreachable', surface, reason: `unrecognized engine reply state ${String(state)}` };
+  return {
+    state: 'unreachable',
+    surface,
+    reason: `unrecognized engine reply state ${String(state)}`,
+    authenticated: false,
+  };
 }

@@ -154,6 +154,19 @@ jobs:
         run: cargo test -p brops-core windows_broker --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Real named-pipe peer-SID authentication on Windows
         run: cargo test -p brops-win-broker --manifest-path apps/desktop/src-tauri/Cargo.toml
+      # (remediation audit) `brops-win-live` — the crate that holds the Windows governed chain, the
+      # pipe DACL and the §2.5 floor — ran in NO workflow at all. Its Windows-only code is
+      # `#![cfg(windows)]`, so the Linux `governed-crates` job compiles past most of it; only here
+      # do the real security-descriptor and DACL-walk paths execute. A kit with no CI coverage is
+      # how F-02's defect survived on this platform after being marked closed on the Linux fix.
+      - name: Windows governed-turn kit (real DACL + security-descriptor paths)
+        run: cargo test -p brops-win-live --manifest-path apps/desktop/src-tauri/Cargo.toml
+      # The shipped Tauri host crate is never COMPILED on Windows by CI, so the only code that can
+      # produce a user-visible trust badge is checked by nothing on the platform it ships to.
+      # `cargo check` rather than `test`: the GUI host needs a display for some tests, and a
+      # compile-check on the shipping platform is the property that was missing.
+      - name: Shipped desktop host compiles on Windows
+        run: cargo check -p brops --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml
 
   engine:
     name: Engine · governance runtime (python)

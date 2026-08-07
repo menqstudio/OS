@@ -18,12 +18,19 @@ pub mod config;
 pub mod execution;
 #[cfg(windows)]
 pub mod pipe;
+/// The named-pipe DACL decision — pure, so the Linux runner covers it even though the pipe is not there.
+pub mod pipe_acl;
 pub mod proof;
+/// Custody of what `win_provision` writes: the deployment root it is allowed to adopt, and the explicit
+/// security descriptor every secret-bearing file is CREATED with. Pure decisions + a Windows effect.
+pub mod provision_custody;
 pub mod resolver;
 #[cfg(windows)]
 pub mod seedstore;
 pub mod servers;
 pub mod tcb;
+/// The §2.5 TCB binary/config integrity floor for this kit — pure decision + a Windows probe.
+pub mod tcb_floor;
 
 /// Ed25519 + JCS + SHA-256 primitives, byte-compatible with the Python `live_crypto.py` and with
 /// `brops_core`'s verifiers (the whole point: what these sign, `verify_and_accept` verifies).

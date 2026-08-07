@@ -140,6 +140,63 @@ generation_config_sha256=$GENCFG_SHA
 LEASE
 chown 0:0 "$TCB/executor.lease"; chmod 0644 "$TCB/executor.lease"
 
+# ----- the recorder's ROOT-OWNED steering policy (round-3 P0: argv must not steer the recorder) ----
+# The recorder is the TRUSTED identity of this chain: the supervisor reads each run's evidence chain
+# out of $RECSTATE precisely BECAUSE the broker cannot write there, and refuses a completion whose
+# output_handle disagrees with it. That wall was bypassable, because the broker also chose the
+# recorder's `--launcher`, `--executor`, `--store`, `--lease` and `--evidence-state` on the command
+# line and the recorder `execve`d whatever `--launcher` named — so the broker could have the RECORDER
+# write an authentic chain for an execution the BROKER authored.
+#
+# The recorder now reads every one of those from THIS file, at a path compiled into the binary
+# (`guard::POLICY_PATH`), and refuses any argv value that disagrees with it. Root-owned and
+# non-writable, with root-owned non-writable ancestors, which the recorder re-checks itself.
+#
+# Generated FROM $CONFIG rather than from a second copy of the same literals: the broker's argv comes
+# out of that config, so deriving the pin from it is what makes "argv agrees with the policy" a
+# property of the deployment instead of a coincidence between two hand-written lists.
+RECORDER_POLICY="$TCB/recorder-policy.json"
+# The binary does not take this path as an argument — that is the whole point — so the deployment
+# has to put the file exactly where `guard::POLICY_PATH` says. Assert the coupling here, where the
+# message is about provisioning, instead of discovering it as "cannot open the recorder policy"
+# halfway through a turn.
+[ "$RECORDER_POLICY" = "/opt/brops-live/tcb/recorder-policy.json" ] || {
+  echo "FAIL: \$LIVE moved; the recorder policy must live at guard::POLICY_PATH"; exit 1; }
+python3 - "$CONFIG" "$LAUNCHER_SHA" "$EXECUTOR_SHA" "$(id -u "$RECORDER_USER")" "$RECORDER_POLICY" \
+  <<'PYPOLICY' || { echo "FAIL: could not provision the recorder policy"; exit 1; }
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+ex = cfg["execution"]
+policy = {
+    "protocol": "brops.recorder-policy.v1",
+    "recorder_uid": int(sys.argv[4]),
+    "store_dir": ex["recorder_store_dir"],
+    "launcher_path": ex["launcher_path"],
+    "launcher_sha256": sys.argv[2],
+    "executor_path": ex["executor_path"],
+    "executor_sha256": sys.argv[3],
+    "lease_path": ex["lease_file"],
+    "cgroup": ex["cgroup_arg"],
+    "report_dir": ex["report_dir"],
+    "evidence_state_dir": ex["evidence_state_dir"],
+}
+# The recorder refuses a relative/traversing/trailing-slash path, so a config that carries one has to
+# fail HERE — loudly, at provisioning — rather than as a puzzling refusal in the middle of a turn.
+for key in ("store_dir", "launcher_path", "executor_path", "lease_path", "report_dir",
+            "evidence_state_dir"):
+    value = policy[key]
+    if not value.startswith("/") or "//" in value or value.rstrip("/") != value \
+            or any(c in (".", "..") for c in value.split("/")[1:]):
+        print("policy %s is not an absolute normalised path: %r" % (key, value), file=sys.stderr)
+        sys.exit(1)
+if policy["recorder_uid"] == 0:
+    print("the recorder account must not be root", file=sys.stderr)
+    sys.exit(1)
+with open(sys.argv[5], "w", encoding="utf-8") as fh:
+    json.dump(policy, fh, separators=(",", ":"), sort_keys=True)
+PYPOLICY
+chown 0:0 "$RECORDER_POLICY"; chmod 0644 "$RECORDER_POLICY"
+
 # Each private key readable ONLY by the owning service; public hex + manifest + config world-readable.
 chown "$CHALLENGE_USER":  "$KEYS/challenge.priv";          chmod 0400 "$KEYS/challenge.priv"
 chown "$SUPERVISOR_USER": "$KEYS/supervisor_attest.priv";  chmod 0400 "$KEYS/supervisor_attest.priv"
@@ -198,10 +255,74 @@ chown -R "$SUPERVISOR_USER": "$SUPSTATE"; chmod 0700 "$SUPSTATE"
 # it cannot write what the supervisor is about to believe — that is the whole property.
 chown -R "$RECORDER_USER":"$SUPERVISOR_USER" "$RECSTATE"; chmod 0750 "$RECSTATE"
 
-# ----- sudoers: the broker may spawn ONLY the recorder helper as the recorder account (invoker gate) ----
+# ----- sudoers: the broker may spawn the recorder helper with ONE argument vector (invoker gate) ----
+# This used to be a bare command with NO restriction on the arguments, which meant the broker uid
+# could invoke the trusted recorder identity with a `--launcher` of its own and have the recorder
+# write a genuine evidence chain for an execution the broker authored. The supervisor would then
+# believe it, correctly, because the chain really was written by the recorder.
+#
+# The vector is now pinned. The five deployment-static arguments are exact; only the three per-run
+# output FILE NAMES are wildcarded, and only because they carry the broker turn / attempt ids.
+#
+# The wildcards are NOT the wall. `sudo` does not apply `FNM_PATHNAME` when matching command
+# arguments, so `*` there matches `/` — `…/report/*` would happily match `…/report/../../etc/x`.
+# The wall is the recorder's own root-owned policy (`$TCB/recorder-policy.json`), which pins every
+# path and requires the three output names to resolve DIRECTLY inside its own directories. This rule
+# is the outer layer: it stops a hostile vector before the trusted binary is even entered.
+#
+# Built from $CONFIG, which is where the broker's argv comes from, so the two cannot drift apart.
 SUDOERS=/etc/sudoers.d/brops-live-recorder
-echo "$BROKER_USER ALL=($RECORDER_USER) NOPASSWD: $BIN/governed_recorder" > "$SUDOERS"
+python3 - "$CONFIG" "$BROKER_USER" "$RECORDER_USER" "$SUDOERS" \
+  <<'PYSUDO' || { echo "FAIL: could not build the recorder sudoers vector"; exit 1; }
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+ex = cfg["execution"]
+broker_user, recorder_user, out_path = sys.argv[2], sys.argv[3], sys.argv[4]
+# The invoker prefix has to be exactly `sudo -n -u <recorder> <bin>`; anything else means the argv
+# this rule pins is not the argv the broker will actually send.
+command = ex["recorder_command"]
+if command[:1] != ["sudo"] or command[1:4] != ["-n", "-u", recorder_user] or len(command) != 5:
+    print("unexpected recorder_command %r" % (command,), file=sys.stderr)
+    sys.exit(1)
+recorder_bin = command[4]
+report_dir = ex["report_dir"]
+state_dir = ex["evidence_state_dir"]
+# Joined with an explicit "/" rather than os.path.join: this rule describes a POSIX path on the
+# deployment host, and it must not depend on the separator of whatever host generated it.
+for name, d in (("report_dir", report_dir), ("evidence_state_dir", state_dir)):
+    if not d.startswith("/") or d.endswith("/") or "//" in d:
+        print("%s is not an absolute normalised directory: %r" % (name, d), file=sys.stderr)
+        sys.exit(1)
+args = [
+    "--store", ex["recorder_store_dir"],
+    "--launcher", ex["launcher_path"],
+    "--executor", ex["executor_path"],
+    "--lease", ex["lease_file"],
+    "--cgroup", ex["cgroup_arg"],
+    # chain_executor.rs builds these as `<report_dir>/live-<turn>-<attempt>.out`,
+    # `<that>.containment.json` and `<state_dir>/<attempt>.evidence.json`.
+    "--out", report_dir + "/live-*.out",
+    "--containment-out", report_dir + "/live-*.out.containment.json",
+    "--evidence-out", state_dir + "/*.evidence.json",
+    "--evidence-state", state_dir,
+]
+# sudoers needs ',', ':', '=' and '\' escaped inside a command argument. None of these paths should
+# contain one; refuse rather than emit a rule whose meaning depends on that assumption.
+for a in [recorder_bin] + args:
+    if any(c in a for c in ",:=\\ \t"):
+        print("sudoers argument needs escaping: %r" % a, file=sys.stderr)
+        sys.exit(1)
+with open(out_path, "w", encoding="utf-8") as fh:
+    fh.write("%s ALL=(%s) NOPASSWD: %s %s\n"
+             % (broker_user, recorder_user, recorder_bin, " ".join(args)))
+PYSUDO
 chmod 0440 "$SUDOERS"
+# A syntactically invalid file in /etc/sudoers.d makes sudo refuse EVERY command, which would surface
+# as a baffling failure three steps later. Check it here, where the message is about sudoers.
+if command -v visudo >/dev/null 2>&1; then
+  visudo -cf "$SUDOERS" >/dev/null || { echo "FAIL: the recorder sudoers vector is not valid sudoers"; exit 1; }
+fi
+echo "== recorder sudo vector =="; cat "$SUDOERS"
 
 # ----- the §2.5 TCB pin manifest (audit F-10) -----------------------------------------------------
 # Built LAST, because the pin is a start-time measurement: the lease, the root anchor, the IPC
@@ -305,15 +426,134 @@ else
   exit 1
 fi
 
+# ----- NEGATIVE: argv must not steer the recorder (round-3 P0) -------------------------------------
+# The recorder is the identity the supervisor trusts. Until this round the broker uid could invoke it
+# through `sudo` with arguments of its own choosing — including `--launcher` — so the broker could
+# have the RECORDER write an authentic evidence chain for an execution the BROKER authored, and the
+# supervisor would believe it because the chain really was recorder-written.
+#
+# Two walls, tested separately, because either alone is one deletion away from nothing:
+#   P0-A  the sudoers vector, tested AS THE BROKER (the only principal it constrains);
+#   P0-B  the recorder's own root-owned policy, tested by invoking it as the recorder DIRECTLY —
+#         i.e. with the sudoers wall bypassed, which is the only way to prove the binary refuses on
+#         its own rather than being protected by the rule in front of it.
+CGROUP_ARG=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["execution"]["cgroup_arg"])' "$CONFIG") \
+  || { echo "FAIL: cannot read cgroup_arg"; exit 1; }
+
+# A launcher the ATTACKER wrote: it produces bytes on the §2.7 output descriptor and exits clean, so
+# an unguarded recorder would capture them, call the run a success, and evidence it. `echo` is a
+# shell builtin, which matters because the recorder execs with an EMPTY environment (no PATH).
+EVIL_LAUNCHER=/tmp/brops-attacker-launcher
+cat > "$EVIL_LAUNCHER" <<'EVIL'
+#!/bin/sh
+echo ATTACKER-AUTHORED-OUTPUT >&6
+exit 0
+EVIL
+chmod 0755 "$EVIL_LAUNCHER"
+
+# The exact argument vector `chain_executor.rs` builds, with the launcher and the three per-run file
+# names as the only variables — so each case below differs from the honest one in ONE way.
+set_recorder_argv() {  # <launcher> <out-basename> <evidence-basename>
+  ARGV=(--store "$STORE" --launcher "$1" --executor "$TCB/contained-executor.bin"
+        --lease "$TCB/executor.lease" --cgroup "$CGROUP_ARG"
+        --out "$REPORT/$2" --containment-out "$REPORT/$2.containment.json"
+        --evidence-out "$RECSTATE/$3" --evidence-state "$RECSTATE")
+}
+clear_case() { rm -f "$REPORT/$1" "$REPORT/$1.containment.json" "$RECSTATE/$2"; }
+
+echo
+echo "== NEGATIVE (P0-A): the sudoers vector must refuse a broker-chosen --launcher =="
+set_recorder_argv "$EVIL_LAUNCHER" live-attack-a.out attack-a.evidence.json
+STEER_OUT=$(sudo -u "$BROKER_USER" sudo -n -u "$RECORDER_USER" "$BIN/governed_recorder" "${ARGV[@]}" 2>&1) \
+  && STEER_RC=0 || STEER_RC=$?
+echo "  sudo exit=$STEER_RC: $(echo "$STEER_OUT" | tail -1)"
+# `RESULT:` is printed by the recorder itself, on every path it takes. Its ABSENCE is the evidence
+# that sudo refused the vector before the trusted binary was entered — which is what this rule is
+# for. Loosen the sudoers rule back to a bare command and this line goes RED.
+if [ "$STEER_RC" != "0" ] && ! echo "$STEER_OUT" | grep -q 'RESULT:'; then
+  echo "P0-A NEGATIVE: GREEN — sudo refused the broker's argument vector"
+else
+  echo "P0-A NEGATIVE: RED — the broker reached the recorder with arguments of its own choosing"
+  exit 1
+fi
+
+echo
+echo "== POSITIVE CONTROL: the honest, policy-pinned vector still records a run =="
+# Without this, every refusal below could be a refusal for some unrelated reason and the negatives
+# would pass green on a broken recorder. This proves the standalone recorder path WORKS under the new
+# policy — so a refusal in P0-B/P0-C is attributable to the single thing that case changed.
+set_recorder_argv "$TCB/privileged-launcher.bin" live-attack-ok.out attack-ok.evidence.json
+clear_case live-attack-ok.out attack-ok.evidence.json
+OK_OUT=$(sudo -u "$RECORDER_USER" "$BIN/governed_recorder" "${ARGV[@]}" 2>&1) && OK_RC=0 || OK_RC=$?
+echo "  recorder exit=$OK_RC: $(echo "$OK_OUT" | grep -E '^RESULT:' | tail -1)"
+if [ "$OK_RC" = "0" ] && [ -s "$RECSTATE/attack-ok.evidence.json" ] && [ -s "$REPORT/live-attack-ok.out" ]; then
+  echo "CONTROL: GREEN — the recorder runs the pinned launcher and writes its own evidence"
+else
+  echo "CONTROL: RED — the recorder cannot complete an HONEST run; the negatives below prove nothing"
+  echo "$OK_OUT"
+  exit 1
+fi
+clear_case live-attack-ok.out attack-ok.evidence.json
+
+echo
+echo "== NEGATIVE (P0-B): the recorder must refuse a --launcher its root-owned policy does not pin =="
+set_recorder_argv "$EVIL_LAUNCHER" live-attack-b.out attack-b.evidence.json
+clear_case live-attack-b.out attack-b.evidence.json
+ATTACK_OUT=$(sudo -u "$RECORDER_USER" "$BIN/governed_recorder" "${ARGV[@]}" 2>&1) \
+  && ATTACK_RC=0 || ATTACK_RC=$?
+echo "  recorder exit=$ATTACK_RC: $(echo "$ATTACK_OUT" | grep -E '^RESULT:' | tail -1)"
+if [ "$ATTACK_RC" != "0" ] && [ ! -e "$RECSTATE/attack-b.evidence.json" ] \
+   && [ ! -s "$REPORT/live-attack-b.out" ] \
+   && echo "$ATTACK_OUT" | grep -q 'argv does not steer the recorder'; then
+  echo "P0-B NEGATIVE: GREEN — the recorder refused, and evidenced nothing"
+else
+  echo "P0-B NEGATIVE: RED — the recorder ran an attacker-named launcher and evidenced it as its own."
+  echo "  That evidence chain is authentic recorder output for an execution the caller authored,"
+  echo "  which is exactly what the supervisor's output_handle check is trusting."
+  echo "$ATTACK_OUT"
+  exit 1
+fi
+clear_case live-attack-b.out attack-b.evidence.json
+
+echo
+echo "== NEGATIVE (P0-C): a rewindable evidence-state directory must refuse the recorder =="
+# The head sequence is what makes the evidence head monotonic across runs, so it is what the
+# supervisor's anti-rollback floor compares. `next_head_sequence` used to read-increment-write it
+# with no check on who owns the directory — so a state directory another principal could write would
+# have supplied the "monotonic" number. Make $RECSTATE group-writable and the recorder must refuse
+# the very vector the control above just accepted.
+set_recorder_argv "$TCB/privileged-launcher.bin" live-attack-c.out attack-c.evidence.json
+clear_case live-attack-c.out attack-c.evidence.json
+chmod 0770 "$RECSTATE"
+STATE_OUT=$(sudo -u "$RECORDER_USER" "$BIN/governed_recorder" "${ARGV[@]}" 2>&1) \
+  && STATE_RC=0 || STATE_RC=$?
+chmod 0750 "$RECSTATE"
+echo "  recorder exit=$STATE_RC: $(echo "$STATE_OUT" | grep -E '^RESULT:' | tail -1)"
+if [ "$STATE_RC" != "0" ] && [ ! -e "$RECSTATE/attack-c.evidence.json" ] \
+   && echo "$STATE_OUT" | grep -q 'evidence state directory'; then
+  echo "P0-C NEGATIVE: GREEN — the recorder refused to advance a counter another principal can write"
+else
+  echo "P0-C NEGATIVE: RED — the recorder advanced a head sequence in a directory it does not own alone"
+  echo "$STATE_OUT"
+  exit 1
+fi
+clear_case live-attack-c.out attack-c.evidence.json
+
+rm -f "$EVIL_LAUNCHER"
+
 echo
 echo "================================ live governed turn ================================"
 echo "$RESULT_LINE"
 if echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*production_verified=true bound=true root_anchor=external'; then
   echo "LIVE GOVERNED TURN: GREEN — genuine production trusted_verified (externally-anchored root)"
   exit 0
-elif echo "$RESULT_LINE" | grep -qE 'trusted_verified\(production .*bound=true root_anchor=kit_generated'; then
-  echo "LIVE GOVERNED TURN: GREEN — chain bound a trusted_verified turn"
-  echo "  NOT a production claim: the root anchor is kit-generated, so custody is unproven (F-17)."
+elif echo "$RESULT_LINE" | grep -qE 'demonstration_custody.*bound=true'; then
+  # The kit-anchored branch no longer contains the word "production" ANYWHERE, and that is the
+  # fix rather than a regression to work around (remediation audit): the trust state a
+  # kit/demonstration root can reach is now a distinct value, `demonstration_custody`, instead
+  # of `production` with a caveat printed beside it. A caveat is something a reader can skip.
+  echo "LIVE GOVERNED TURN: GREEN — the chain bound a verified turn"
+  echo "  NOT a production claim: the root anchor is kit-generated, so custody is unproven."
   exit 0
 else
   echo "LIVE GOVERNED TURN: RED / BLOCKED (fail-closed — no fabricated acceptance)"

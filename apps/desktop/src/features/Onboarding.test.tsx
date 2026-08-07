@@ -28,6 +28,11 @@ describe('Onboarding — first-run intro (shown once, honest)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByText('How it works')).toBeInTheDocument();
+    // This step must NOT promise that every model call runs through a lease and a
+    // verified receipt: that only holds when the backend resolves the governed engine,
+    // and the default configuration streams replies on the ungoverned path.
+    expect(screen.getByText(/only governed when this install is configured/i)).toBeInTheDocument();
+    expect(screen.getByText(/That is NOT the default/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     // The honesty step must be present — the intro never overstates the trust state.

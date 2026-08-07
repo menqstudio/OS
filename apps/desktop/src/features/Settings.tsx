@@ -70,6 +70,29 @@ export function Settings() {
   // (fail-closed), idle otherwise.
   const provSt = ready ? 'live' : isGoverned ? 'locked' : 'idle';
 
+  // ── Governance posture, derived from the REAL ai_status ───────────────────────────
+  // This row used to print "Fail-closed, verified-receipt-mandatory" unconditionally,
+  // which the shipped default contradicts: when the resolved provider is not the
+  // governed engine, the command layer falls through to the ungoverned streaming path
+  // and NOTHING about the reply is leased, receipted or verified. So the row now
+  // reports what the backend actually resolved — including an explicit "unknown" when
+  // there is no signal to read, which is honest, rather than a reassuring constant.
+  const governance: { value: string; note: string; tone: string } =
+    !hasBackend()
+      ? { value: L('govUnknown'), note: L('govUnknownNote'), tone: 'off' }
+      : ai.loading && data === null
+        ? { value: L('govChecking'), note: L('govCheckingNote'), tone: 'info' }
+        : ai.error || !data
+          ? { value: L('govUnknown'), note: L('govUnavailableNote'), tone: 'warn' }
+          : isNone
+            ? { value: L('govNoProvider'), note: L('govNoProviderNote'), tone: 'warn' }
+            : !isGoverned
+              // The default shipped configuration lands here.
+              ? { value: L('govUngoverned'), note: L('govUngovernedNote'), tone: 'warn' }
+              : ready
+                ? { value: L('govGoverned'), note: L('govGovernedNote'), tone: 'live' }
+                : { value: L('govGovernedBlocked'), note: L('govGovernedBlockedNote'), tone: 'warn' };
+
   // Honest bay-state pill computed from the real request lifecycle + status.
   const bayPill: { tone: string; label: string } = !hasBackend()
     ? { tone: 'off', label: L('bayUnavailable') }
@@ -119,6 +142,7 @@ export function Settings() {
         .v-settings .set-blocked ol { margin:10px 0 0; padding-left:20px; color:var(--ink); font-size:13px; }
         .v-settings .set-blocked li { margin:4px 0; }
         .v-settings .rt-state-row { display:flex; align-items:center; gap:8px; margin-top:var(--s3); }
+        .v-settings .sys-gov-note { margin-top:var(--s3); }
         @media (prefers-reduced-motion: reduce) { .v-settings .set-sw, .v-settings .set-sw-knob { transition:none; } }
       `}</style>
 
@@ -358,8 +382,15 @@ export function Settings() {
           <div className="sys-rows">
             <div className="sys-row"><span className="sys-k">{L('aboutProductLabel')}</span><b>MENQ OS</b></div>
             <div className="sys-row"><span className="sys-k">{L('aboutVersionLabel')}</span><b className="mono">v0.9</b></div>
-            <div className="sys-row"><span className="sys-k">{L('aboutGovernanceLabel')}</span><b>{L('aboutGovernanceValue')}</b></div>
+            {/* Governance: the ACTUAL resolved runtime posture, never a product claim. */}
+            <div className="sys-row">
+              <span className="sys-k">{L('aboutGovernanceLabel')}</span>
+              <b>
+                <span className={`pill ${governance.tone}`}>{governance.value}</span>
+              </b>
+            </div>
           </div>
+          <p className="set-note sys-gov-note">{governance.note}</p>
         </section>
 
       </div>

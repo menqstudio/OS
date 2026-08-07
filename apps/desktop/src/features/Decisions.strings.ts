@@ -77,6 +77,40 @@ export const STR = {
     hy: 'Արտացոլված է շարժիչի շղթայից միայն ընթերցմամբ։ Desktop-ը ցուցադրում է, բայց երբեք չի որոշում։',
     ru: 'Отзеркалено только для чтения из цепочки движка. Десктоп показывает её, но никогда не решает по ней.',
   },
+  // Shown whenever mirrored records ARE displayed: they are schema-checked only, and
+  // their origin is not authenticated — so nothing here may read as a verdict.
+  unauthenticatedTag: {
+    en: 'UNAUTHENTICATED MIRROR',
+    hy: 'ՉՀԱՍՏԱՏՎԱԾ ԱՐՏԱՑՈԼՈՒՄ',
+    ru: 'НЕПОДТВЕРЖДЁННОЕ ЗЕРКАЛО',
+  },
+  unauthenticatedBody: {
+    en: 'These records are checked for shape only. They carry no signature, and the desktop '
+      + 'does not authenticate the process that supplied them, so it cannot confirm they came '
+      + 'from the engine. Read them as unverified mirror data — not as proof.',
+    hy: 'Այս գրառումները ստուգվում են միայն ձևով։ Դրանք ստորագրություն չեն կրում, և desktop-ը '
+      + 'չի հաստատում դրանք տրամադրող գործընթացը, ուստի չի կարող հաստատել, որ դրանք եկել են '
+      + 'շարժիչից։ Կարդացեք դրանք որպես չստուգված արտացոլման տվյալ, ոչ որպես ապացույց։',
+    ru: 'Эти записи проверены только по форме. Они не содержат подписи, и десктоп не '
+      + 'аутентифицирует процесс, который их выдал, поэтому не может подтвердить, что они '
+      + 'пришли из движка. Читайте их как непроверенные зеркальные данные, а не как доказательство.',
+  },
+  // An `ok` read that carried ZERO records: honest absence of evidence, never a
+  // satisfied evidence chain.
+  evidenceNone: { en: 'No evidence', hy: 'Ապացույց չկա', ru: 'Нет доказательств' },
+  evidenceNoneBody: {
+    en: 'The engine chain answered for this decision and returned no records at all. '
+      + 'There is no evidence to show — an empty chain is not a verified chain.',
+    hy: 'Շարժիչի շղթան պատասխանեց այս որոշման համար և ոչ մի գրառում չվերադարձրեց։ '
+      + 'Ցուցադրելու ապացույց չկա — դատարկ շղթան ստուգված շղթա չէ։',
+    ru: 'Цепочка движка ответила по этому решению и не вернула ни одной записи. '
+      + 'Показывать нечего — пустая цепочка не является проверенной цепочкой.',
+  },
+  chainEmptyAnnounce: {
+    en: 'Engine evidence chain answered with no records — there is no evidence.',
+    hy: 'Շարժիչի ապացույցների շղթան պատասխանեց առանց գրառումների — ապացույց չկա։',
+    ru: 'Цепочка доказательств движка ответила без записей — доказательств нет.',
+  },
   evidenceUnreachable: {
     en: 'Evidence chain unreachable',
     hy: 'Ապացույցների շղթան անհասանելի է',
@@ -95,6 +129,14 @@ export const STR = {
   nodeRecorded: { en: 'recorded', hy: 'Գրանցված', ru: 'записано' },
   nodeDeliberation: { en: 'deliberation', hy: 'Դատում', ru: 'обсуждение' },
   nodeEvidence: { en: 'evidence', hy: 'Ապացույց', ru: 'доказательство' },
+  // The evidence node never goes green on today's data. These two labels say WHY:
+  // the chain came back empty, or it came back unauthenticated.
+  nodeEvidenceNone: { en: 'no evidence', hy: 'ապացույց չկա', ru: 'нет доказательств' },
+  nodeEvidenceUnauthenticated: {
+    en: 'evidence · unverified',
+    hy: 'ապացույց · չստուգված',
+    ru: 'доказательство · непроверено',
+  },
   chainAria: {
     en: 'Decision evidence chain',
     hy: 'Որոշման ապացույցների շղթա',

@@ -28,15 +28,30 @@ export const STR = {
     ru: 'Запустить сейчас',
   },
   runNowTitle: {
-    en: "Run this automation's action now. Local actions (notify, create task) run directly; anything that reaches the model/engine routes through the governed, fail-closed chain.",
-    hy: 'Գործարկել այս ավտոմատի գործողությունը հիմա։ Տեղական գործողությունները (notify, task) աշխատում են ուղղակի; մոդելին/շարժիչին հասնողը անցնում է կառավարվող, fail-closed շղթայով։',
-    ru: 'Запустить действие этой автоматизации сейчас. Локальные действия (notify, task) выполняются напрямую; всё, что доходит до модели/движка, идёт через управляемую, отказоустойчивую цепочку.',
+    en: "Run this automation's action now. Local actions (notify, create task) run directly; an action that reaches the model/engine routes through the governed, fail-closed chain only when this install runs the governed engine.",
+    hy: 'Գործարկել այս ավտոմատի գործողությունը հիմա։ Տեղական գործողությունները (notify, task) աշխատում են ուղղակի; մոդելին/շարժիչին հասնողն անցնում է կառավարվող, fail-closed շղթայով միայն այն դեպքում, երբ այս տեղակայումն աշխատում է կառավարվող շարժիչով։',
+    ru: 'Запустить действие этой автоматизации сейчас. Локальные действия (notify, task) выполняются напрямую; действие, доходящее до модели/движка, идёт через управляемую, отказоустойчивую цепочку, только когда эта установка работает на управляемом движке.',
   },
-  // ── governance guarantee (authoring modal + selected conduit) ────────────────
+  // ── governance posture (authoring modal + selected conduit) ─────────────────
+  // Same defect as the onboarding copy: this asserted that ANY action reaching the
+  // model routes through a lease + verified receipt. That holds only when the backend
+  // resolved the governed engine; otherwise the command layer takes the ungoverned
+  // path. The copy now names the condition and points at the row that reports the truth.
   govern: {
-    en: 'Local actions (notify, create task) run directly and reversibly. Any action that reaches the model or engine routes through the governed chain — a lease and a verified receipt — and is refused if it cannot be verified (fail-closed today).',
-    hy: 'Տեղական գործողությունները (notify, task ստեղծել) աշխատում են ուղղակի և հետշրջելի։ Մոդելին կամ շարժիչին հասնող ցանկացած գործողություն անցնում է կառավարվող շղթայով՝ լիզինգ և հաստատված ստացական, և մերժվում է, եթե չի հաստատվում (այսօր fail-closed)։',
-    ru: 'Локальные действия (notify, создать задачу) выполняются напрямую и обратимо. Любое действие, доходящее до модели или движка, идёт через управляемую цепочку — аренда и проверенная квитанция — и отклоняется, если не может быть проверено (сегодня fail-closed).',
+    en: 'Local actions (notify, create task) run directly and reversibly. An action that reaches '
+      + 'the model routes through the governed chain — a lease and a verified receipt, refused if '
+      + 'it cannot be verified — only when this install runs the governed engine. With any other '
+      + 'provider it runs ungoverned and unverified. Settings → Governance reports which applies.',
+    hy: 'Տեղական գործողությունները (notify, task ստեղծել) աշխատում են ուղղակի և հետշրջելի։ Մոդելին '
+      + 'հասնող գործողությունն անցնում է կառավարվող շղթայով՝ lease և ստուգված անդորրագիր, մերժվում '
+      + 'է, եթե չի ստուգվում — միայն այն դեպքում, երբ այս տեղակայումն աշխատում է կառավարվող '
+      + 'շարժիչով։ Ցանկացած այլ մատակարարի դեպքում այն աշխատում է չկառավարվող և չստուգված։ '
+      + 'Կարգավորումներ → Կառավարում-ը ցույց է տալիս, թե որն է գործում։',
+    ru: 'Локальные действия (notify, создать задачу) выполняются напрямую и обратимо. Действие, '
+      + 'доходящее до модели, идёт через управляемую цепочку — аренда и проверенная квитанция, '
+      + 'отклоняется, если не может быть проверено — только когда эта установка работает на '
+      + 'управляемом движке. С любым другим провайдером оно выполняется неуправляемо и без '
+      + 'проверки. Настройки → Управление показывают, что действует.',
   },
   telemetry: {
     en: 'Run counts, success rate and the recent-fire log appear once the runs backend is connected — none are shown until then.',

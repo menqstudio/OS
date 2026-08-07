@@ -9,8 +9,14 @@
 //! It NEVER fabricates a `trusted_verified`: the only path to a committed message is
 //! `governed_verification::verify_and_accept` (driven inside `run_governed_turn`), and the production trust
 //! verdict is `production_trust::resolve_trust_state` bound to the isolated-signer key the root-signed
-//! manifest resolved AND that the envelope was cryptographically verified under. Any hop refusal, launcher/
-//! executor refusal, signature/binding mismatch, manifest failure, or anti-rollback failure ⇒ `blocked`.
+//! manifest resolved AND that the envelope was cryptographically verified under AND the custody provenance
+//! of the root anchor that verified the manifest. Any hop refusal, launcher/executor refusal,
+//! signature/binding mismatch, manifest failure, or anti-rollback failure ⇒ `blocked`.
+//!
+//! The two printed booleans mean different things and neither is decoration. `production_verified` is the
+//! core `TrustState::Production` verdict, which a demonstration- or kit-anchored root cannot reach at all.
+//! `bound` is a delivery check: the committed row backing the reported projection was re-read here and its
+//! body re-hashed against the envelope digest the row stores.
 //!
 //! Trust anchors (pinned root public key, the root-signed production key manifest, the anti-rollback floor,
 //! and the broker's OWN `Expected` request facts) are read from `/opt/brops-live` — the broker's own side —
@@ -50,11 +56,12 @@ mod linux {
     use brops_broker::chain_executor::{ChainExecutor, ResolvedTurn, TurnResolver};
 
     use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
-    use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest, REQUEST_PROTOCOL, TRUSTED_VERIFIED};
+    use brops_core::governed_message_store::verify_committed_binding;
+    use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest, REQUEST_PROTOCOL};
     use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
     use brops_core::key_manifest::{
-        check_and_advance, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest,
-        PinnedRoot,
+        check_and_advance, resolve_production_key, verify_manifest_anchored, AntiRollbackFloor,
+        KeyManifest, PinnedRoot, RootAnchor, RootProvenance,
     };
     use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
 
@@ -276,19 +283,40 @@ mod linux {
             Some(v) => v,
             None => return blocked("root_anchor_unreadable"),
         };
-        let anchor_provenance =
-            anchor.get("provenance").and_then(Value::as_str).unwrap_or_default().to_string();
-        let pinned_root = PinnedRoot {
-            root_key_id: anchor.get("root_key_id").and_then(Value::as_str).unwrap_or_default().to_string(),
-            public_key_hex: anchor
-                .get("public_key_hex")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
+        // Provenance is now a TYPED, closed value, not a string the driver compares late. An unknown,
+        // misspelled or absent `provenance` is refused outright rather than defaulting to "not
+        // external": a deployment whose anchor file cannot say what its custody is has not answered the
+        // question, and silently continuing would mean the answer never gets fixed.
+        let anchor_provenance = match anchor
+            .get("provenance")
+            .and_then(Value::as_str)
+            .and_then(RootProvenance::parse)
+        {
+            Some(p) => p,
+            None => return blocked("root_anchor_provenance_unknown"),
         };
-        if verify_manifest(&manifest, &root_sig_b64, &pinned_root).is_err() {
-            return blocked("manifest_root_signature_invalid");
-        }
+        let root_anchor = RootAnchor {
+            pinned: PinnedRoot {
+                root_key_id: anchor
+                    .get("root_key_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                public_key_hex: anchor
+                    .get("public_key_hex")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            },
+            provenance: anchor_provenance,
+        };
+        // `verify_manifest_anchored` (not `verify_manifest`) — it returns evidence of WHICH anchor the
+        // signature verified under, and that evidence is what `resolve_trust_state` requires before it
+        // will render production. The driver no longer decides the custody question itself.
+        let verified_root = match verify_manifest_anchored(&manifest, &root_sig_b64, &root_anchor) {
+            Ok(v) => v,
+            Err(_) => return blocked("manifest_root_signature_invalid"),
+        };
 
         // Anti-rollback: accept only an epoch at/above the durable floor (same-epoch requires the same hash).
         let floor_path = s(&cfg, &["trust", "floor_path"]).unwrap_or_default();
@@ -422,40 +450,58 @@ mod linux {
             Some(m) => m,
             None => return blocked("committed_without_message"),
         };
-        // The committed body's trust_state is `trusted_verified` ONLY because verify_and_accept accepted the
-        // isolated-signer envelope over this exact output — that IS the binding.
-        let bound = message.trust_state == TRUSTED_VERIFIED;
+        // `bound` used to be `message.trust_state == TRUSTED_VERIFIED`. That could not be false:
+        // `CommittedMessage::new` hardcodes `trust_state`, so every projection ever built carries
+        // `trusted_verified` and the comparison was decoration printed next to a real verdict — the
+        // most dangerous kind of decoration, because it reads like a check.
+        //
+        // What the driver can still genuinely ask, holding a projection, is whether that projection is
+        // backed by the durable committed row and whether the body it is about to REPORT hashes to the
+        // envelope digest that row stores. `verify_committed_binding` re-reads the row and recomputes
+        // the digest; it is false for a rolled-back turn, a projection no commit produced, or bytes
+        // substituted between `persist_committed` and here. It does NOT re-do the envelope signature or
+        // the §7 output gates — those are `verify_and_accept`'s and are not repeatable from here.
+        let bound = verify_committed_binding(&conn, &message).is_ok();
 
         // F-29: pass the key the CHAIN actually verified under — the exact bytes handed to
         // `verify_and_accept` as `PinnedKeys::isolated_signer_public_key` — not a second lookup of the
         // manifest, which made this guard compare a value against itself and never fail.
+        //
+        // F-17, moved into the type. The anchor's provenance used to be a string this driver compared
+        // AFTER the core had already returned `TrustState::Production` — so the core type still said
+        // "production" for a demonstration-rooted manifest, and every other consumer of that type had
+        // to remember to re-apply the same string check. Now the anchor evidence goes IN and the
+        // custody verdict comes OUT: a non-external anchor cannot produce a `Production` value at all.
         let ts = resolve_trust_state(
             Some(&manifest),
+            Some(&verified_root),
             &signer_key_id,
             RECEIPT_ENVELOPE_ARTIFACT_TYPE,
             now,
             &verifying_key_hex(&resolved.isolated_signer_public_key),
         );
-        // F-17: production is a claim about CUSTODY, not just about signature arithmetic. A manifest
-        // signed by a root this very kit generated verifies perfectly and proves nothing about who
-        // controls the anchor, so the anchor's provenance gates the claim. The chain result itself is
-        // reported unchanged — `trusted_verified` and `bound` are still exactly what the chain decided.
-        let anchor_is_external = anchor_provenance == "external";
-        let production_verified = ts.is_production_verified() && anchor_is_external;
+        let production_verified = ts.is_production_verified();
         let ts_str = match &ts {
-            TrustState::Production { key_id, key_epoch } => {
-                format!("trusted_verified(production key={key_id} epoch={key_epoch})")
+            TrustState::Production { key_id, key_epoch, root_key_id } => {
+                format!("trusted_verified(production key={key_id} epoch={key_epoch} root={root_key_id})")
+            }
+            TrustState::DemonstrationCustody { key_id, key_epoch, root_key_id, root_provenance } => {
+                format!(
+                    "trusted_verified(demonstration_custody key={key_id} epoch={key_epoch} root={root_key_id} root_provenance={})",
+                    root_provenance.as_str()
+                )
             }
             TrustState::NoTrustedManifest(r) => format!("no_trusted_manifest({r})"),
         };
         println!(
-            "RESULT: {ts_str} production_verified={production_verified} bound={bound} root_anchor={anchor_provenance}"
+            "RESULT: {ts_str} production_verified={production_verified} bound={bound} root_anchor={}",
+            anchor_provenance.as_str()
         );
         // The RUN succeeded if the chain bound a trusted_verified turn under a manifest-resolved
         // production key. Whether that amounts to a PRODUCTION claim is the separate custody question
         // reported above — a kit-anchored run is a real, complete, honestly-labelled chain run, not a
         // failure, and conflating the two would either fail every CI run or relabel it as production.
-        if bound && ts.is_production_verified() {
+        if bound && ts.is_chain_bound() {
             0
         } else {
             1
