@@ -1,6 +1,16 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE (2026-08-08): PR #65 MERGED to `main` (tip `0efa99e`).** The active workflow is **PR #66 · branch `chore/staleness-sweep`** (base `main`, task T-017) — a repository staleness sweep and a duplication cleanup, asked for as *"nothing stale, crystal clean, this is the single source of truth"*.
+> **⏭️ CURRENT ACTIVE (2026-08-08): PR #66 MERGED to `main` (tip `57944e4`).** The active workflow is **PR #67 · branch `feat/close-o4-and-owner-ceremony`** (base `main`, task T-017).
+>
+> **O-4 is closed in code.** An owner-issued control-room command was refused unconditionally, and the refusal listed three code changes that had **all already landed** — anyone following it would have gone off to build what existed. `_prove_command_actor` now routes by actor, and the difference is the design: the conductor keeps its `conductor-session` credential, which is a WINDOW authorising any command the caller could already reach, while the OWNER must present a `control-room-command` artifact bound to this exact `command_id`, `task_id` and `command`. `owner-gev` is the identity that can cancel, recover and retry, so a credential valid for the next hour is the wrong shape for it — a stolen owner artifact replays exactly the command that was already signed.
+>
+> Four checks were deleted one at a time to confirm their tests go red. **One stayed GREEN** — the guard refusing to prove an owner without a command to bind against, untested because every caller passes one — and now has its own test. **O-4 stays OPEN:** the shipped registry pins no key for the type, and a test holds that a flawless artifact signed by an ungranted key still refuses. Registering a type opens no path.
+>
+> **[`docs/OWNER_CEREMONY.md`](./docs/OWNER_CEREMONY.md)** is the other half: exactly what Gev signs for O-2, O-3 and O-5, in what order, with the payload for each. O-3 first — conductor stops refuse today until it exists. O-2 is different in kind, a signing COMMAND rather than a file, and worth nothing unless it runs as a principal the ledger's own writer cannot reach. It also says which two are not his: O-4 needs the same ceremony, and **O-1 is not closeable from inside Python at all**.
+>
+> Also: three roadmaps cut to one. `engine/ROADMAP.md` claimed *Canonical branch `main`, Merged PR `#52`* — of the STANDALONE repository, frozen 2026-07-19, with nothing marking it as history. `engine/AUDIT/` stays, deliberately: five of its tickets carry live status, and a closed audit is history while an open one is a work item.
+>
+> **The gate is untouched.** `platform_governed_execution_supported()` stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.
 >
 > **Documentation.** Eighteen `.md` files were verified claim-by-claim against the code and corrected. The worst was carried by both `README.md` and `docs/ARCHITECTURE.md`: *"the OS-root `.claude/` hooks are the enforcement wall"*. They are not — the root wires ONE `Stop` guard for coordination-document consistency, and the directory's content is 262 generated specialist definitions. The wall is `engine/.claude/settings.json`, nine events. Also corrected: the roadmap showed phases 2–10 as *Blocked* on a dependency chain that was never how the work proceeded; `START_HERE.md` pointed at PR #31 as live work; `OPERATOR_GUIDE.md` listed three providers of four and called chat *"tool-free"* when `BROPS_PROJECT_DIR` grants file and shell access; `CLAUDE.md` §6 pointed at a branch that does not exist.
 >

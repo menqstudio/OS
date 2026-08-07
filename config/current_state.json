@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "0efa99e25c14604e787c455adf7d9a94a61cf98a",
-    "snapshot_branch": "chore/staleness-sweep",
+    "baseline_main_head_at_sync": "57944e41d786668c3673de58cdab4c4b5e17bbe3",
+    "snapshot_branch": "feat/close-o4-and-owner-ceremony",
     "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 0efa99e (PR #65 merged). The active branch chore/staleness-sweep is a direct child of it.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #66). PR #66's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #67). PR #67's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "chore/staleness-sweep"
+    "branch": "feat/close-o4-and-owner-ceremony"
   },
   "prs": [],
   "status_tokens": {
@@ -212,11 +212,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 66,
-    "branch": "chore/staleness-sweep",
+    "number": 67,
+    "branch": "feat/close-o4-and-owner-ceremony",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #66 body.",
-    "note": "PR #66 is a repository staleness sweep and duplication cleanup. Eighteen .md files were verified claim-by-claim against the code; the worst error, carried by both README.md and docs/ARCHITECTURE.md, said the OS-root .claude/ hooks are the enforcement wall. They are not: the root wires one Stop guard for coordination-document consistency and holds 262 generated agent definitions, while the wall is engine/.claude/settings.json with nine events. Deleted: engine/CLAUDE.md, engine/AGENTS.md, engine/NEXT_CHAT.md and apps/desktop/docs/AGENTS.md, which were agent-INSTRUCTION files loaded by directory proximity and told an agent in engine/ that it was inside the standalone menqstudio/Bro repository and must not touch BroPS -- the other half of this repository. Also deleted: the 2026-07-19 BroPS audit set (13 read-only proposed-patch tickets, its report and README), all of whose fixes landed and whose verdicts AUDIT_LEDGER.md already carries. engine/config/documentation-manifest.json, canonical-read-manifest.json, bro_validate.py and bro_docs_freshness.py were updated to match, each with the reason recorded in place. Both stashes cleared after proving redundancy by blob comparison; stale PR #46 closed with evidence; open PRs 0; 14 merged-PR branches deleted. Evidence: docs/REPO_STALENESS_SWEEP_2026-08-08.md. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #67 body.",
+    "note": "PR #67 closes O-4 in code and writes docs/OWNER_CEREMONY.md. _prove_command_actor now routes by actor: the conductor keeps its conductor-session credential (a window, authorising any command the caller could already reach) while the OWNER must present a control-room-command artifact bound to this exact command_id, task_id and command -- per-command non-repudiation, so a stolen artifact replays exactly the command that was already signed. The schema carries artifact_type/key_id/signature, optional because a conductor command is proven by a separate credential and carries none. Four checks were deleted one at a time; one stayed GREEN (the guard refusing to prove an owner without a command to bind against, untested because every caller passes one) and now has its own test. O-4 stays OPEN: the shipped registry pins no key for the type and a test holds that a flawless artifact signed by an ungranted key still refuses. Two tests that pinned the old state were rewritten rather than deleted. Also: three roadmaps cut to one -- engine/ROADMAP.md claimed Canonical branch main / Merged PR #52 of the STANDALONE repo, frozen 2026-07-19, with nothing marking it history; apps/desktop/docs/ROADMAP.md admitted the master wins and its eight inbound links now go there. engine/AUDIT/ stays because five of its tickets carry live status. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",
