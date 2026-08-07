@@ -1464,6 +1464,46 @@ fn clean_path_token(raw: &str) -> &str {
 /// a grant here; the full prompt travels alongside and is what the surface shows.
 ///
 /// What this can never do is make the scope enforced. It is text Bro wrote, read back by us.
+/// Does this token look like a path a task contract could carry?
+///
+/// Mirrors `engine/schemas/task-contract.schema.json`: repo-relative or absolute, forward slashes
+/// only, no `..`, no backslash. Deliberately strict about everything else -- a bracket, a quote,
+/// sentence punctuation or a bare capitalised word is prose, and prose is not a grant. Being
+/// permissive here paints a confident grant over a sentence.
+fn is_grant_path(token: &str) -> bool {
+    if token.is_empty() || token.len() > 512 || token.contains('\\') || token.contains("..") {
+        return false;
+    }
+    if !token
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '-' | '_' | '*' | ':'))
+    {
+        return false;
+    }
+    // A `:` is legal only as a Windows drive letter (`C:/...`).
+    if let Some(i) = token.find(':') {
+        if i != 1 || !token.as_bytes()[0].is_ascii_alphabetic() || token.get(2..3) != Some("/") {
+            return false;
+        }
+    }
+    // A path has at least one alphanumeric character. A run of punctuation ("--") is prose, and
+    // it is the token that gives away a sentence: a real capture had Bro write
+    // "PROHIBITED_SCOPE: `.claude` -- do not read, write, or touch anything under it", whose every
+    // word is individually path-shaped. One non-path token discards the whole line, so this single
+    // giveaway is enough to reject all eleven.
+    if !token.chars().any(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    // A bare capitalised word with no separator is prose ("Everything", "READ-ONLY").
+    if !token.contains('/')
+        && !token.contains('.')
+        && token.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+    {
+        return false;
+    }
+    true
+}
+
 pub fn parse_task_grant(prompt: &str) -> (Vec<String>, Vec<String>) {
     let mut scope = Vec::new();
     let mut prohibited = Vec::new();
@@ -1479,7 +1519,19 @@ pub fn parse_task_grant(prompt: &str) -> (Vec<String>, Vec<String>) {
         };
         for token in rest.split([' ', '\t', ',']) {
             let token = clean_path_token(token);
-            if !token.is_empty() && target.len() < 32 {
+            if token.is_empty() {
+                continue;
+            }
+            // Every token on the line must look like a path, or NONE of them are taken. A real
+            // capture had Bro write "SCOPE: `tools` (repo-relative). Everything outside that path
+            // is READ-ONLY", which this reader turned into eight "paths" including
+            // "(repo-relative)" and "READ-ONLY". A grant assembled out of English words is worse
+            // than no grant: it renders as a precise, validated list of places nobody named.
+            if !is_grant_path(token) {
+                target.clear();
+                break;
+            }
+            if target.len() < 32 {
                 target.push(token.to_string());
             }
         }
@@ -1524,17 +1576,38 @@ fn tool_result_text(content: &serde_json::Value) -> Option<String> {
     cap_text(&joined)
 }
 
-/// Every `Task` spawn on one `{"type":"assistant"}` line.
+/// The `tool_use` block names that carry a delegation.
+///
+/// The tool is granted as `Task` on the `--tools` line and the CLI's init frame lists it as
+/// `Task`, but the block it emits on the wire is named **`Agent`**. This parser was first written
+/// from a DESCRIPTION of the stream and filtered on `"Task"`, which appears ZERO times in a real
+/// capture -- so it read every delegation as nothing, and the surface stayed empty on a turn where
+/// a specialist genuinely ran for 44 seconds and returned an answer Bro then used. Confirmed
+/// against `docs/BRO_DELEGATION_EVIDENCE.md`.
+///
+/// Both names are accepted because we do not control this wire format and have observed exactly
+/// one CLI version. Accepting a name that never arrives costs nothing; missing the one that does
+/// cost us the entire feature.
+const DELEGATION_BLOCK_NAMES: [&str; 2] = ["Agent", "Task"];
+
+/// Every delegation spawn on one `{"type":"assistant"}` line.
 pub fn delegation_spawns(line: &serde_json::Value) -> Vec<DelegationSpawn> {
     let mut out = Vec::new();
+    // A nested line -- one the SPECIALIST produced -- carries a non-null `parent_tool_use_id`.
+    // Its tool calls are the specialist working, not Bro delegating, and hoisting them onto this
+    // surface would claim Bro handed out work he never handed out.
+    if line.get("parent_tool_use_id").map(|v| !v.is_null()).unwrap_or(false) {
+        return out;
+    }
     for block in content_blocks(line) {
         if block.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
             continue;
         }
-        // ONLY `Task`. Every other tool_use is Bro reading or running something himself, and its
-        // result is not a delegation — carrying those would put file contents and command output
-        // on a surface that claims to show handed-off work.
-        if block.get("name").and_then(|n| n.as_str()) != Some("Task") {
+        // Only a delegation block. Every other tool_use is Bro reading or running something
+        // himself, and its result is not a delegation -- carrying those would put file contents
+        // and command output on a surface that claims to show handed-off work.
+        let name = block.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+        if !DELEGATION_BLOCK_NAMES.contains(&name) {
             continue;
         }
         let Some(id) = block.get("id").and_then(|i| i.as_str()).filter(|i| !i.is_empty()) else {
@@ -1574,6 +1647,16 @@ pub fn delegation_spawns(line: &serde_json::Value) -> Vec<DelegationSpawn> {
 /// what keeps a `Bash` or `Read` result off the delegation surface.
 pub fn delegation_settlements(line: &serde_json::Value) -> Vec<DelegationSettled> {
     let mut out = Vec::new();
+    if line.get("parent_tool_use_id").map(|v| !v.is_null()).unwrap_or(false) {
+        return out;
+    }
+    // The authoritative completion status of a delegation is NOT in the content block: it sits in
+    // a `tool_use_result` object that is a TOP-LEVEL sibling of `message`, and the delegation
+    // return is specifically the one that omits `is_error` (ordinary tool results carry it).
+    let line_status = line
+        .get("tool_use_result")
+        .and_then(|r| r.get("status"))
+        .and_then(|v| v.as_str());
     for block in content_blocks(line) {
         if block.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
             continue;
@@ -1584,10 +1667,19 @@ pub fn delegation_settlements(line: &serde_json::Value) -> Vec<DelegationSettled
         };
         // `is_error` present ⇒ the CLI reported the outcome and we repeat it. Absent ⇒ we were
         // told nothing, and "we were told nothing" is `unknown`, never `ok`.
+        // `is_error` present => the CLI reported the outcome and we repeat it. Absent => fall
+        // back to the line's status, and only for values whose meaning is unambiguous. Anything
+        // else -- absent, unrecognised, or a status we have not observed -- is `unknown`, never
+        // `ok`. A delegation that completed successfully used to land here as `unknown`; the fix
+        // is to read the real answer, not to assume one when none was given.
         let outcome = match block.get("is_error").and_then(|e| e.as_bool()) {
             Some(true) => "error",
             Some(false) => "ok",
-            None => "unknown",
+            None => match line_status {
+                Some("completed") => "ok",
+                Some("failed") | Some("error") => "error",
+                _ => "unknown",
+            },
         };
         out.push(DelegationSettled {
             id: id.to_string(),
@@ -2282,17 +2374,253 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
 mod tests {
     use super::*;
 
-    /// TEMPORARY argv-capture harness (removed before hand-off). Dumps the REAL argv to
-    /// `BROPS_ARGV_DUMP` so a live CLI run uses exactly what the app builds.
+    // ── Live-capture evidence: what the real CLI emits when Bro delegates ───────────────
+    //
+    // Everything asserted below was OBSERVED, not designed. Method (reproducible, and written
+    // up in `docs/BRO_DELEGATION_EVIDENCE.md`):
+    //   1. `claude_args(<system file>, true, None, true)` was dumped from this crate — the real
+    //      argv, not a retyped one.
+    //   2. `C:\Users\Admin\.local\bin\claude.exe` was run with exactly that argv, cwd = a
+    //      throwaway project dir, the transcript on stdin, asking Bro to have a `reader`
+    //      specialist count the files in `tools/`.
+    //   3. The raw stream-json was captured and `delegation_spawns` / `delegation_settlements`
+    //      were run over every line of it.
+    // Result: Bro DID delegate — and `delegation_spawns` returned ZERO spawns.
+    //
+    // The JSON below is abridged (usage/diagnostics entries dropped) but NOTHING is renamed or
+    // re-nested: every key and every nesting level is verbatim from the capture.
+
+    /// One `{"type":"assistant"}` line, exactly as CLI 2.1.220 emitted the delegation.
+    /// The `tool_use` block's `name` is **`Agent`** — not `Task`.
+    const CAPTURED_SPAWN_LINE: &str = r###"{
+      "type": "assistant",
+      "message": {
+        "model": "claude-opus-5",
+        "id": "msg_011CdoZkSEptkagQsguUhJZ1",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_018eiZUCt21zUYTGZ5C8Esau",
+            "name": "Agent",
+            "input": {
+              "subagent_type": "reader",
+              "description": "Count files in tools/",
+              "run_in_background": false,
+              "prompt": "Objective: report EXACTLY how many files exist in the tools/ directory of this project.\n\nscope: tools\nprohibited_scope: .claude\n"
+            },
+            "caller": { "type": "direct" }
+          }
+        ],
+        "stop_reason": null
+      },
+      "parent_tool_use_id": null,
+      "session_id": "921a5614-9ef4-4536-98bb-7291ec66442b",
+      "uuid": "05a10517-01ff-4391-9a8e-c7d668791820",
+      "timestamp": "2026-08-07T14:43:26.767Z",
+      "request_id": "req_011CdoZkR67odePgEmS5x3GD"
+    }"###;
+
+    /// The `{"type":"user"}` line that returned that delegation. Note `is_error` is ABSENT, and
+    /// the real completion status sits in a TOP-LEVEL `tool_use_result` object the parser never
+    /// looks at.
+    const CAPTURED_SETTLE_LINE: &str = r###"{
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "tool_use_id": "toolu_018eiZUCt21zUYTGZ5C8Esau",
+            "type": "tool_result",
+            "content": [
+              { "type": "text", "text": "## Answer: 28 files" },
+              { "type": "text", "text": "agentId: ad6ea6bdb26047adf\n<usage>subagent_tokens: 25800\ntool_uses: 13\nduration_ms: 44384</usage>" }
+            ]
+          }
+        ]
+      },
+      "parent_tool_use_id": null,
+      "session_id": "921a5614-9ef4-4536-98bb-7291ec66442b",
+      "uuid": "dda30f55-3a4b-4782-8d3f-f470a8cb873f",
+      "timestamp": "2026-08-07T14:44:11.166Z",
+      "tool_use_result": {
+        "status": "completed",
+        "agentId": "ad6ea6bdb26047adf",
+        "agentType": "reader",
+        "totalDurationMs": 44384
+      }
+    }"###;
+
+    /// A `{"type":"user"}` line from INSIDE the running specialist — one of its own `Glob`
+    /// returns. It is distinguished from the delegation's return only by a non-null
+    /// `parent_tool_use_id`, which nothing in this module reads.
+    const CAPTURED_NESTED_RESULT_LINE: &str = r###"{
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "tool_use_id": "toolu_01WsxkSWa9opWoM8VZGM3Erd",
+            "type": "tool_result",
+            "content": "CLAUDE.md"
+          }
+        ]
+      },
+      "parent_tool_use_id": "toolu_018eiZUCt21zUYTGZ5C8Esau",
+      "session_id": "921a5614-9ef4-4536-98bb-7291ec66442b",
+      "subagent_type": "reader",
+      "task_description": "Finding CLAUDE.md",
+      "uuid": "5f390ccf-02d5-49af-9b6d-7d97e4496e2b",
+      "timestamp": "2026-08-07T14:43:31.000Z"
+    }"###;
+
+    fn captured(raw: &str) -> serde_json::Value {
+        serde_json::from_str(raw).expect("captured line must be valid JSON")
+    }
+
+    /// **The finding, now closed.** Bro really does delegate, and the parser saw none of it.
+    ///
+    /// In the live capture the CLI named the delegation `tool_use` block `Agent`. The parser was
+    /// written from a description of the stream and filtered on `name == "Task"` -- a string that
+    /// appears ZERO times in the whole capture -- so `delegation_spawns` returned nothing, no
+    /// `delegationSpawned` frame was produced, and because the frontend drops a `settled` whose id
+    /// it never saw spawned, the surface stayed empty for a turn in which a `reader` genuinely ran
+    /// for 44 seconds and returned the answer Bro then used.
+    ///
+    /// This test holds the real captured line and requires the real block to parse.
     #[test]
-    fn zz_dump_real_argv() {
-        let Some(out) = std::env::var("BROPS_ARGV_DUMP").ok() else { return };
-        let sys = std::path::Path::new("SYSTEM_PROMPT_FILE");
-        let args = claude_args(sys, true, None, true);
-        let json = serde_json::to_string_pretty(&args).unwrap();
-        std::fs::write(&out, json).unwrap();
-        let suffix = bro_agent_system_suffix(Some("PROJECT_DIR"));
-        std::fs::write(format!("{out}.suffix.txt"), suffix).unwrap();
+    fn the_real_cli_names_the_delegation_block_agent_and_it_now_parses() {
+        let line = captured(CAPTURED_SPAWN_LINE);
+        let block = &line["message"]["content"][0];
+        assert_eq!(block["type"], "tool_use");
+        assert_eq!(block["name"], "Agent", "CLI 2.1.220 emits `Agent`, never `Task`");
+        assert_eq!(block["input"]["subagent_type"], "reader");
+
+        let spawns = delegation_spawns(&line);
+        assert_eq!(spawns.len(), 1, "the real delegation block must be seen");
+        assert_eq!(spawns[0].id, "toolu_018eiZUCt21zUYTGZ5C8Esau");
+        assert_eq!(spawns[0].subagent_type, "reader");
+        assert_eq!(spawns[0].tools.as_deref(), Some(&["Read".to_string(), "Grep".to_string(), "Glob".to_string()][..]));
+        assert_eq!(spawns[0].scope, vec!["tools".to_string()]);
+        assert_eq!(spawns[0].prohibited_scope, vec![".claude".to_string()]);
+    }
+
+    /// The rest of `delegation_spawns` is sound — only the NAME is wrong. Renaming the captured
+    /// block to `Task` (changing nothing else) makes the same line parse completely, which is
+    /// what pins the defect to that one comparison.
+    #[test]
+    fn the_same_captured_block_parses_completely_once_it_is_called_task() {
+        let mut line = captured(CAPTURED_SPAWN_LINE);
+        line["message"]["content"][0]["name"] = serde_json::json!("Task");
+        let spawns = delegation_spawns(&line);
+        assert_eq!(spawns.len(), 1);
+        let s = &spawns[0];
+        assert_eq!(s.id, "toolu_018eiZUCt21zUYTGZ5C8Esau");
+        assert_eq!(s.subagent_type, "reader");
+        assert_eq!(s.description.as_deref(), Some("Count files in tools/"));
+        assert!(s.prompt.as_deref().unwrap().starts_with("Objective: report EXACTLY"));
+        // `reader` is one of this app's own tiers, so the capability half is the enforced kind.
+        assert_eq!(s.tools, Some(vec!["Read".into(), "Grep".into(), "Glob".into()]));
+        assert_eq!(s.tools_source, Some(ToolsSource::AgentDefinition));
+        // The scope half, read back out of the prompt Bro actually wrote.
+        assert_eq!(s.scope, vec!["tools".to_string()]);
+        assert_eq!(s.prohibited_scope, vec![".claude".to_string()]);
+    }
+
+    /// The settlement arm DOES match the real return line — but reports `unknown`, because the
+    /// live CLI sent no `is_error` on a delegation that completed successfully. The authoritative
+    /// `"status": "completed"` sits in the top-level `tool_use_result`, which nothing reads.
+    #[test]
+    fn the_real_delegation_return_settles_ok_from_the_line_level_status() {
+        let line = captured(CAPTURED_SETTLE_LINE);
+        // What the CLI actually reported, at the nesting depth it reported it.
+        assert!(line["message"]["content"][0].get("is_error").is_none(), "no is_error on the wire");
+        assert_eq!(line["tool_use_result"]["status"], "completed");
+
+        let settled = delegation_settlements(&line);
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0].id, "toolu_018eiZUCt21zUYTGZ5C8Esau", "matches the spawn's id");
+        // `is_error` is ABSENT on a delegation return (ordinary tool results carry it), so this
+        // used to report `unknown` for a delegation that plainly succeeded. The authoritative
+        // answer is `tool_use_result.status`, a top-level sibling of `message`, which nothing read.
+        assert!(line["message"]["content"][0].get("is_error").is_none(), "the CLI sends no is_error here");
+        assert_eq!(line["tool_use_result"]["status"], "completed", "the real answer, one level up");
+        assert_eq!(settled[0].outcome, "ok");
+        // Both text blocks are joined — including the CLI's `agentId`/`<usage>` footer.
+        let summary = settled[0].summary.as_deref().unwrap();
+        assert!(summary.starts_with("## Answer: 28 files"));
+        assert!(summary.contains("subagent_tokens: 25800"), "the usage footer rides along");
+    }
+
+    /// A tool return from INSIDE the specialist must NOT settle.
+    ///
+    /// Thirteen of the fourteen `tool_result` blocks in the live capture were the `reader`'s own
+    /// `Glob`/`Read`/`Grep` returns -- one carrying 8_521 characters of file text -- and each
+    /// produced a `delegationSettled` frame across the IPC. Their ids are unknown to the frontend
+    /// so nothing rendered, but the text crossed the boundary anyway, and a surface that never
+    /// asked for a file's contents is the wrong place to first learn they are being sent. They
+    /// are distinguishable by a non-null `parent_tool_use_id`, which this module now reads.
+    #[test]
+    fn a_specialists_own_tool_returns_do_not_settle() {
+        let line = captured(CAPTURED_NESTED_RESULT_LINE);
+        assert!(!line["parent_tool_use_id"].is_null(), "the marker that says `this is nested`");
+        assert_eq!(
+            delegation_settlements(&line),
+            vec![],
+            "a nested return is the specialist working, not a delegation ending"
+        );
+    }
+
+    /// `--tools` names the delegation tool `Task` and the CLI accepted it — the live `system`
+    /// init line reported `"tools": ["Task","Bash","Edit","Glob","Grep","Read","Write"]` and the
+    /// spawn then went through. So the grant name and the wire name genuinely differ, and only
+    /// the wire name is what the stream parser sees.
+    #[test]
+    fn the_grant_name_task_is_correct_even_though_the_wire_name_is_agent() {
+        let agent = tool_args(true);
+        let pos = agent.iter().position(|a| a == "--tools").expect("--tools present");
+        assert!(agent[pos + 1].split(' ').any(|t| t == "Task"), "the CLI's tool name IS `Task`");
+    }
+
+    /// The three tiers were all offered by the live CLI (`agents` on the init line listed
+    /// `builder`, `reader`, `runner`) and `reader` was spawned for real. The same list also
+    /// carried CLI built-ins the app never defined; `tier_tools` has no entry for those, so a
+    /// spawn of one resolves to no enforced grant at all.
+    #[test]
+    fn tiers_resolve_but_the_builtin_agent_types_the_cli_also_offers_do_not() {
+        for tier in ["reader", "runner", "builder"] {
+            assert!(tier_tools(tier).is_some(), "{tier} must resolve to an enforced grant");
+        }
+        // Observed on the live init line beside the three tiers.
+        for builtin in ["general-purpose", "Explore", "Plan", "claude", "statusline-setup"] {
+            assert!(tier_tools(builtin).is_none(), "{builtin} is not one of this app's tiers");
+        }
+    }
+
+    /// `parse_task_grant` against the two REAL prompts Bro wrote in the captures.
+    ///
+    /// The `label:` on its own line (first capture) reads back exactly. The second capture is why
+    /// the reader is now all-or-nothing: Bro wrote the label inline with a prose sentence, and
+    /// every word of that sentence came back as a "path" -- the card would have listed
+    /// `Everything`, `outside`, `that` and `READ-ONLY` as granted locations. Nothing enforces
+    /// these strings, so it was never a containment defect, but a precise validated list of
+    /// places nobody named is worse than saying no scope was stated. One token that is not a path
+    /// now discards the whole line.
+    #[test]
+    fn the_grant_reader_takes_a_clean_line_and_refuses_a_prose_one() {
+        let clean = "scope: tools\nprohibited_scope: .claude\n";
+        assert_eq!(
+            parse_task_grant(clean),
+            (vec!["tools".to_string()], vec![".claude".to_string()])
+        );
+
+        // Verbatim from the second live capture.
+        let inline = "SCOPE: `tools` (repo-relative). Everything outside that path is READ-ONLY.\n\
+                      PROHIBITED_SCOPE: `.claude` -- do not read, write, or touch anything under it.";
+        let (scope, prohibited) = parse_task_grant(inline);
+        assert_eq!(scope, Vec::<String>::new(), "prose is not a grant");
+        assert_eq!(prohibited, Vec::<String>::new(), "and neither half is kept partially");
     }
 
     /// The `Task` grant is worthless if it can only reach the CLI's built-in agent types, which is
