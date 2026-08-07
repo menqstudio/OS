@@ -2198,15 +2198,40 @@ async fn governed_engine(
 /// governed engine not being configured is likewise a fail-closed `Err` (never a silent
 /// ungoverned fallback). This never runs a turn and never mutates state.
 pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_json::Value, String> {
-    let _permit = GenerationPermit::acquire()?;
-    match resolve()? {
-        Provider::GovernedEngine { python, sidecar } => {
-            governed_sidecar_call(&python, &sidecar, request_json).await
-        }
-        _ => Err(
-            "governed engine is not configured; the governance mirror is fail-closed".to_string(),
-        ),
+    // Gated on the MIRROR's own provisioning, not on which AI provider is selected.
+    //
+    // This used to require `Provider::GovernedEngine`, i.e. `BROPS_AI_PROVIDER=governed-engine`
+    // plus `BROPS_ALLOW_GOVERNED_ENGINE=1`. So a user chatting through `claude-cli` saw
+    // "unreachable" on every governance surface even with a fully provisioned engine sitting
+    // right there — and "unreachable" is a claim about the ENGINE, which was false. Reading a
+    // mirror is not generating a turn, and the two decisions were never the same decision.
+    //
+    // What replaces it is a narrower gate that is actually about this read: the sidecar's
+    // `governance.read` op requires `BROPS_GOVERNANCE_STATE_DIR`, so without it there is nothing
+    // to ask and we refuse BY NAME without spawning anything. That keeps the fail-closed property
+    // — an unprovisioned deployment still reads nothing — while making the refusal describe the
+    // thing that is actually missing.
+    let state_dir = env_nonempty("BROPS_GOVERNANCE_STATE_DIR").ok_or_else(|| {
+        "the governance mirror is not provisioned: BROPS_GOVERNANCE_STATE_DIR is unset, so there \
+         is no state directory to read. This is separate from the AI provider — a mirror read \
+         does not run a governed turn."
+            .to_string()
+    })?;
+    if !std::path::Path::new(&state_dir).is_dir() {
+        return Err(format!(
+            "the governance mirror is not provisioned: BROPS_GOVERNANCE_STATE_DIR points at \
+             `{state_dir}`, which is not a directory. Nothing was created — a read that makes its \
+             own empty store and then reports it as empty is not a read."
+        ));
     }
+    // No `GenerationPermit`. The permit bounds concurrent MODEL generation; a read-only mirror
+    // refresh has no model in it, and taking one made a governance page load contend with a reply
+    // the owner was waiting for.
+    let python = env_nonempty("BROPS_GOVERNED_PYTHON")
+        .unwrap_or_else(|| DEFAULT_GOVERNED_PYTHON.to_string());
+    let sidecar = env_nonempty("BROPS_GOVERNED_SIDECAR")
+        .unwrap_or_else(|| DEFAULT_GOVERNED_SIDECAR.to_string());
+    governed_sidecar_call(&python, &sidecar, request_json).await
 }
 
 /// Shell out to the bridge sidecar with `request` on stdin and return its parsed JSON
@@ -2233,6 +2258,20 @@ async fn governed_sidecar_call(
             std::env::current_dir().map(|c| c.join(p)).unwrap_or_else(|_| p.to_path_buf())
         }
     };
+    // Same trap as the sidecar path, one level along: the child's cwd is the empty AI sandbox, so a
+    // RELATIVE `BROPS_GOVERNANCE_*` path would resolve against that sandbox and the sidecar would
+    // refuse a directory the owner can see perfectly well from the repo. Absolutized against the
+    // process's real working directory before the cwd override, exactly as the script path is.
+    for var in ["BROPS_GOVERNANCE_STATE_DIR", "BROPS_GOVERNANCE_EVIDENCE_STORE", "BROPS_GOVERNANCE_REGISTRY_ROOT"] {
+        if let Some(v) = env_nonempty(var) {
+            let path = std::path::Path::new(&v);
+            if !path.is_absolute() {
+                if let Ok(abs) = std::env::current_dir().map(|c| c.join(path)) {
+                    cmd.env(var, abs);
+                }
+            }
+        }
+    }
     cmd.arg(&sidecar_path)
         // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
         // reach the production sidecar via inherited env. The sidecar honors self-test
