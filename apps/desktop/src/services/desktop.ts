@@ -313,6 +313,20 @@ export const desktop = {
   setIntegrationStatus: (id: string, status: string) =>
     invoke<Integration>('set_integration_status', { id, status }),
 
+  /**
+   * Point a connector at where its secret lives; `null` clears the reference.
+   *
+   * `authRef` is a REFERENCE (`scheme:locator`) and never the secret. The backend bounds its
+   * shape and refuses known key-material prefixes, and both it and the migration say the same
+   * thing about that limit: it constrains SHAPE, not meaning. `engine:hunter2` is a well-formed
+   * reference and also a password, and nothing on either side can tell which.
+   *
+   * A refusal deliberately does not echo what was rejected, so do not expect the offending value
+   * back in the error and do not log the argument yourself.
+   */
+  setIntegrationAuthRef: (id: string, authRef: string | null) =>
+    invoke<Integration>('set_integration_auth_ref', { id, authRef }),
+
   // global search (across projects, tasks, knowledge, decisions, agents, chats, memory)
   searchAll: (query: string) => invoke<SearchResult[]>('search_all', { query }),
 

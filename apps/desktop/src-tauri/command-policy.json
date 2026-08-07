@@ -276,6 +276,10 @@
       "tier": "X",
       "grant": "allow"
     },
+    "set_integration_auth_ref": {
+      "tier": "X",
+      "grant": "allow"
+    },
     "set_memory_pinned": {
       "tier": "L1",
       "grant": "allow"

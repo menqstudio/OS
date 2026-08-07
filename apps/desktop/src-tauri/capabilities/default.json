@@ -81,6 +81,7 @@
     "allow-list-integrations",
     "allow-create-integration",
     "allow-set-integration-status",
+    "allow-set-integration-auth-ref",
     "allow-search-all",
     "allow-get-analytics",
     "allow-get-security-summary",

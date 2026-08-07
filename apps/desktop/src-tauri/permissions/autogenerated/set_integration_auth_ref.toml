@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-integration-auth-ref"
+description = "Enables the set_integration_auth_ref command without any pre-configured scope."
+commands.allow = ["set_integration_auth_ref"]
+
+[[permission]]
+identifier = "deny-set-integration-auth-ref"
+description = "Denies the set_integration_auth_ref command without any pre-configured scope."
+commands.deny = ["set_integration_auth_ref"]

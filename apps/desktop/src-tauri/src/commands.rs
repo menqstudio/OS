@@ -2219,6 +2219,27 @@ pub fn set_integration_status(state: State<AppState>, id: String, status: String
     repo::integrations::set_status(&conn, &id, &status).map_err(|e| e.to_string())
 }
 
+/// Point a connector at where its secret lives. `None` clears the reference.
+///
+/// The argument is a REFERENCE (`scheme:locator`), never the secret itself, and the desktop is on
+/// the wrong side of the Phase-9 trust boundary to hold one. `repo::integrations::set_auth_ref`
+/// enforces the shape and refuses known key-material prefixes; both it and the migration state the
+/// limit in the same words, because it bounds SHAPE and not meaning -- `engine:hunter2` is a
+/// well-formed reference and also a password, and nothing here can tell which.
+///
+/// The refusal deliberately does not echo what was rejected: this `String` reaches the renderer
+/// and the logs, so repeating a value that might be a credential would defeat the point of
+/// refusing it.
+#[tauri::command]
+pub fn set_integration_auth_ref(
+    state: State<AppState>,
+    id: String,
+    auth_ref: Option<String>,
+) -> Result<Integration, String> {
+    let conn = locked(&state)?;
+    repo::integrations::set_auth_ref(&conn, &id, auth_ref.as_deref()).map_err(|e| e.to_string())
+}
+
 // --- global search ---
 
 #[tauri::command]

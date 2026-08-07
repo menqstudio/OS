@@ -203,6 +203,7 @@ pub fn run() {
             commands::list_integrations,
             commands::create_integration,
             commands::set_integration_status,
+            commands::set_integration_auth_ref,
             commands::search_all,
             commands::get_analytics,
             commands::get_security_summary,

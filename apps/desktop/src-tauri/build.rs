@@ -104,6 +104,7 @@ fn main() {
         "list_integrations",
         "create_integration",
         "set_integration_status",
+    "set_integration_auth_ref",
         // search / analytics / security / ai status
         "search_all",
         "get_analytics",
