@@ -9,6 +9,7 @@ import { desktop } from '../services/desktop';
 import { hasRecords, recordCount, type GovernanceRead } from '../services/governance';
 import type { Decision } from '../domain/entities';
 import { STR } from './Decisions.strings';
+import { BridgePanel } from './Bridge';
 
 // Scoped supplements to the global `aios.css` decision-chamber design. The page is
 // re-skinned to the "VERDICT CHAMBER" mockup, but every value it shows is REAL:
@@ -517,6 +518,12 @@ export function Decisions() {
       {renderLedger()}
 
       {!loading && !s.error && ledger.length > 0 ? renderStats() : null}
+
+      {/* The governed bridge. The ledger above is the desktop's LOCAL decision table; the panel below
+          is the only place the engine's own ledger mirror, the independent-verifier verdicts, and the
+          renderer→broker governed turn are reachable at all. `taskId` scopes the verdict mirror to the
+          decision currently selected here, so the two halves of the page are about the same thing. */}
+      <BridgePanel taskId={selected?.id} />
     </div>
   );
 }

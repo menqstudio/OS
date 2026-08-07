@@ -255,6 +255,16 @@ export const desktop = {
   readEvidenceChain: (taskId?: string) =>
     governanceRead('evidenceChain', 'read_evidence_chain', { taskId: taskId ?? null }),
   readEngineApprovalQueue: () => governanceRead('approvalQueue', 'read_engine_approval_queue'),
+  // The engine's own append-only decision LEDGER. This is NOT `listDecisions()`: that reads the
+  // desktop's local SQLite table, while this mirrors the engine surface through the sidecar. The
+  // Rust command has been registered since Phase-2 but had no renderer wrapper, so the surface was
+  // unreachable from the UI — the ledger a page showed was always the local one.
+  readDecisionLedger: () => governanceRead('decisionLedger', 'read_decision_ledger'),
+  // The engine's independent-verifier VERDICTS (verifier-receipt records; the Rust mirror rejects any
+  // record whose verdict is not GREEN). Optionally filtered to one task/decision id. Same story as the
+  // ledger above: registered in Rust, previously unreachable from the renderer.
+  readVerifierVerdicts: (taskId?: string) =>
+    governanceRead('verdicts', 'read_verifier_verdicts', { taskId: taskId ?? null }),
 
   // Governed trust-chain self-test: runs the REAL in-process challenge→sign→verify→
   // trusted_verified chain (Windows) and returns the honest outcome + custody posture.
@@ -320,7 +330,8 @@ export type RunStepEvent =
 // forge a `trusted_verified` result — see services/governedTurn.ts.
 import {
   runGovernedTurn as runGovernedTurnCore,
-  type GovernedTurnRequest, type GovernedTurnResult,
+  attemptGovernedTurn as attemptGovernedTurnCore,
+  type GovernedTurnRequest, type GovernedTurnResult, type GovernedTurnAttempt,
 } from './governedTurn';
 
 /** Real broker transport: invoke the thin-proxy `governed_turn_execute` Tauri command. */
@@ -328,8 +339,38 @@ async function brokerTransport(request: GovernedTurnRequest): Promise<unknown> {
   return invoke('governed_turn_execute', { request });
 }
 
+/** A UUIDv4 from the platform CSPRNG. Isolated so a runtime without `crypto.randomUUID` fails as a
+ *  `malformed_request` non-decision rather than an unhandled rejection. */
+function requestId(): string {
+  return crypto.randomUUID();
+}
+
 /** Run a governed turn through the trusted broker service. `agent` is an optional authorized identifier;
- *  the broker resolves system/history/config/IDs itself — the renderer supplies none of them. */
+ *  the broker resolves system/history/config/IDs itself — the renderer supplies none of them.
+ *
+ *  REJECTS on any non-decision (no transport, connect failure, malformed reply). Prefer
+ *  {@link governedTurnAttempt} in UI code: it keeps "the broker refused" and "the broker was never
+ *  reached" apart, which a rejected promise cannot. */
 export function governedTurn(conversationId: string, agent?: string): Promise<GovernedTurnResult> {
-  return runGovernedTurnCore(conversationId, agent, brokerTransport, () => crypto.randomUUID());
+  return runGovernedTurnCore(conversationId, agent, brokerTransport, requestId);
+}
+
+/**
+ * The UI-facing governed turn: resolves with the broker's decision (`committed`/`blocked`) OR with an
+ * honest `unavailable` non-decision, and never rejects.
+ *
+ * Outside a Tauri runtime the proxy command does not exist at all, so this short-circuits to
+ * `no_desktop_backend` instead of letting a plain-browser invoke failure be classified as a broker
+ * problem — the broker was not merely unreachable there, it was never even addressable.
+ */
+export function governedTurnAttempt(conversationId: string, agent?: string): Promise<GovernedTurnAttempt> {
+  if (!hasBackend()) {
+    return Promise.resolve({
+      status: 'unavailable',
+      kind: 'no_desktop_backend',
+      detail: 'no_desktop_backend: there is no Tauri runtime here, so the governed_turn_execute proxy '
+        + 'does not exist and no broker was contacted.',
+    });
+  }
+  return attemptGovernedTurnCore(conversationId, agent, brokerTransport, requestId);
 }
