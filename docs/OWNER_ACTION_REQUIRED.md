@@ -48,8 +48,15 @@ private halves out of `--keydir`.
 | 4 | publish the keys — **a signing step** | waiting on you |
 | 5 | **O-2**, the audit signer | waiting on you |
 
-Steps 0, 6 and 7 are agent-runnable and have been run on the Debian box. Step 6 and Step 7 both
-had to be rewritten afterwards; see PR #71 and PR #72.
+**Steps 0, 6 and 7 are agent-runnable and now pass, verbatim, in a single run** on the Debian box
+at `506ecea` — no deviations, no repository edits. That took four rounds: Step 6 was rewritten
+twice (#71, #73) and Step 7 three times (#72, #75, #76), every defect found by somebody running
+the document rather than reading it. What is green is the half that does not need you; nothing
+below it is closed.
+
+The one check inside Step 7 that is **not** runnable is the wrong-key negative, because its pin
+comes from Step 4 and its positive control from Step 3. Its prerequisites were verified absent
+rather than assumed.
 
 Everything you produce here is anchored to a development root until item 1 is decided.
 
