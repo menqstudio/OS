@@ -11,6 +11,20 @@ import time
 from typing import Any
 
 from bro_authority import AuthorityError, validate_verifier_assignment
+# R-06's custody rule is the same rule the operator-root pin enforces (audit F-06), and it
+# had the same defect: it asked whether the owner was literally this account, and on Windows
+# it did not run at all. Both questions now come from one place, so the floor cannot drift
+# away from the pin again. See `bro_custody` for why ownership is the wrong question.
+from bro_custody import (
+    ENV_PIN_SELF_OWNED_ACK,
+    PIN_SELF_OWNED_ACK_VALUE,
+    WINDOWS_DIRECTORY_REWRITE_RIGHTS,
+    WINDOWS_DIRECTORY_WRITE_MASK,
+    platform_name,
+    posix_rewrite_verdict,
+    refuse_windows_writable,
+    self_owned_acknowledged,
+)
 from bro_contracts import (
     ContractError,
     canonical_json_sha256,
@@ -469,31 +483,94 @@ def _head_floor_dir(store: pathlib.Path) -> pathlib.Path:
 
 
 def _refuse_self_owned_floor(directory: pathlib.Path) -> None:
-    """A floor the reading account owns or can write is not a floor (**R-06**).
+    """A floor the policed account owns or can write is not a floor (**R-06**).
 
     The original F-13/F-14 attack needed exactly one capability: write access to the evidence
     store. Leaving the mark writable by that same principal means the fix costs the attacker
     nothing — they delete or rewind the mark instead of swapping the head. Same escape hatch as
     the operator pin, and for the same honest reason: some deployments have no second principal,
     and they must SAY so rather than be silently exempted.
-    """
-    if not directory.exists() or os.name != "posix":
-        return
-    from bro_signature import PIN_SELF_OWNED_ACK_VALUE, ENV_PIN_SELF_OWNED_ACK
 
-    if os.environ.get(ENV_PIN_SELF_OWNED_ACK, "").strip() == PIN_SELF_OWNED_ACK_VALUE:
+    This used to read ``if not directory.exists() or os.name != "posix": return``, which made
+    the entire rule a **no-op on Windows** — it handed the attack its one required capability
+    for free on the platform the desktop app ships on. And on POSIX it asked
+    ``st_uid == os.geteuid()``, the same proxy the operator pin was carrying, which answers no
+    for root (rewrites anything) and for a floor sitting in a directory this process can write
+    (rename the floor away, put an empty one back). Both questions are now asked of the
+    operating system through ``bro_custody``, on every platform; a platform with neither branch
+    REFUSES, because "no check here" is what produced this finding.
+    """
+    if not directory.exists():
+        # Not an exemption: a floor that is not there is refused a moment later by
+        # `_load_floor_index`, with the message that says how to bootstrap one deliberately.
+        # Refusing here instead would only replace that explanation with a worse one — and the
+        # account cannot escape by pre-creating the directory, because the checks below then
+        # apply to what it created.
         return
-    info = directory.stat()
-    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+    if self_owned_acknowledged():
+        return
+    if platform_name() == "posix":
+        info = directory.stat()
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise CompletionError(
+                f"the evidence head floor {directory} is group/other-writable; an anti-rollback mark "
+                "anyone can rewind is not an anti-rollback mark")
+        verdict = posix_rewrite_verdict(directory, info, "the evidence head floor",
+                                        CompletionError)
+        if verdict is not None:
+            if verdict.kind == "owner":
+                raise CompletionError(
+                    f"the evidence head floor {directory} is owned by the very account it polices, which "
+                    f"can delete or rewind it at will; place it under another principal or set "
+                    f"{ENV_PIN_SELF_OWNED_ACK}=acknowledged to acknowledge that this deployment has no "
+                    "principal separation")
+            if verdict.kind == "permission":
+                raise CompletionError(
+                    f"the evidence head floor {directory} is owned by uid {verdict.st_uid}, but the "
+                    f"account it polices (euid {verdict.euid}) has write permission on it anyway"
+                    + (" — running as root, which can write any directory, so no filesystem mark "
+                       "polices this process" if verdict.euid == 0 else "") +
+                    f", so it can delete or rewind the mark; place the floor under a principal this "
+                    f"process cannot write as, or set "
+                    f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge that this "
+                    "deployment has no principal separation")
+            raise CompletionError(
+                f"the evidence head floor {directory} itself is owned by uid {verdict.st_uid}, but its "
+                f"parent {verdict.parent} (uid {verdict.parent_uid}, mode {verdict.parent_mode:04o}) is "
+                f"writable by the account it polices, which can therefore rename the whole floor away "
+                f"and put an empty one in its place regardless of the floor's own mode; put the floor "
+                f"in a directory this process cannot write, or set "
+                f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge that this "
+                "deployment has no principal separation")
+    elif platform_name() == "nt":
+        # The directory right list, not the file one: FILE_DELETE_CHILD lets its holder delete
+        # the marks inside without holding DELETE on any of them, and deleting the mark IS the
+        # attack. Third-party write is refused by the same DACL walk the pin uses.
+        refuse_windows_writable(
+            directory, "the evidence head floor", CompletionError,
+            rights=WINDOWS_DIRECTORY_REWRITE_RIGHTS,
+            write_mask=WINDOWS_DIRECTORY_WRITE_MASK,
+            on_rewrite=lambda right, principal: (
+                f"the evidence head floor {directory} can be rewritten by the very account it "
+                f"polices: this process's token is granted {right} on it through {principal}. A "
+                f"mark its subject can delete or rewind is not an anti-rollback mark; place the "
+                f"floor under a principal this process cannot impersonate, or set "
+                f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge that this "
+                f"deployment has no principal separation"),
+            on_privilege=lambda privilege: (
+                f"the evidence head floor {directory} can be rewritten by the very account it "
+                f"polices: this process's token holds {privilege}, which lets it take ownership "
+                f"of the directory and rewrite the DACL, so no ACL on it can keep this process "
+                f"out. Run the policed process under an account without that privilege (an "
+                f"elevated administrator always holds it), or set "
+                f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge that this "
+                f"deployment has no principal separation"))
+    else:
         raise CompletionError(
-            f"the evidence head floor {directory} is group/other-writable; an anti-rollback mark "
-            "anyone can rewind is not an anti-rollback mark")
-    if info.st_uid == os.geteuid():
-        raise CompletionError(
-            f"the evidence head floor {directory} is owned by the very account it polices, which "
-            f"can delete or rewind it at will; place it under another principal or set "
-            f"{ENV_PIN_SELF_OWNED_ACK}=acknowledged to acknowledge that this deployment has no "
-            "principal separation")
+            f"the evidence head floor {directory} cannot be checked on {platform_name()}: this "
+            f"runtime has no way to ask who may rewrite it there, and an unchecked floor is not a "
+            f"floor. Set {ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} only if this deployment "
+            "genuinely has no principal separation to offer")
 
 
 def _load_floor_index(directory: pathlib.Path) -> set[str]:

@@ -60,6 +60,24 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+# The custody machinery — "can the account reading this rewrite it?" — is shared with
+# the evidence anti-rollback floor (audit R-06) and the protected evidence store
+# (design §4.0), both of which had the same defect this module's F-06 fix closed and
+# neither of which ran any check at all on Windows. It lives in `bro_custody` so the
+# three sites cannot drift. Nothing about THIS module's rules changed in the move: the
+# shared code raises the caller's error type and the caller keeps the prose, so every
+# refusal below is the one that shipped. The acknowledgement constants are re-exported
+# from here because callers and tests import them from this module.
+from bro_custody import (
+    ENV_PIN_SELF_OWNED_ACK,
+    PIN_SELF_OWNED_ACK_VALUE,
+    posix_rewrite_verdict,
+    refuse_windows_writable,
+    self_owned_acknowledged as _self_owned_pin_acknowledged,
+    windows_rewrite_grant,
+    windows_token_override_privilege,
+)
+
 try:
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -85,8 +103,11 @@ ENV_PIN_FILE = "BRO_OPERATOR_ROOT_PUBKEY_FILE"
 # no principal separation to offer — a single-user laptop, a CI container that runs
 # everything as one uid. Those may set this to `acknowledged`, which does not make the
 # anchor stronger; it makes the weakness explicit and reportable instead of silent.
-ENV_PIN_SELF_OWNED_ACK = "BRO_OPERATOR_ROOT_PIN_SELF_OWNED"
-PIN_SELF_OWNED_ACK_VALUE = "acknowledged"
+# (ENV_PIN_SELF_OWNED_ACK / PIN_SELF_OWNED_ACK_VALUE are imported from `bro_custody`
+# above. One acknowledgement covers the pin, the evidence floor and the evidence store:
+# a deployment either has a second principal to offer or it does not, and splitting the
+# variable per site would let a deployment acknowledge one and be silently exempted
+# from the others.)
 
 ENV_CI_FLAG = "BRO_ENV"
 CI_FLAG_VALUE = "ci"
@@ -264,554 +285,50 @@ def _parse_key(entry: Any) -> TrustedKey:
     )
 
 
-# Access mask bits that allow modifying a pin file, its ACL, or its owner.
-_WINDOWS_WRITE_MASK = (
-    0x00000002      # FILE_WRITE_DATA
-    | 0x00000004    # FILE_APPEND_DATA
-    | 0x00000010    # FILE_WRITE_EA
-    | 0x00000100    # FILE_WRITE_ATTRIBUTES
-    | 0x00010000    # DELETE
-    | 0x00040000    # WRITE_DAC
-    | 0x00080000    # WRITE_OWNER
-    | 0x10000000    # GENERIC_ALL
-    | 0x40000000    # GENERIC_WRITE
-)
-
-# The individual rights that let their holder change what the pin file says, ordered
-# from the most direct rewrite to the indirect routes (delete and recreate, rewrite
-# the DACL, take ownership and then rewrite the DACL). Named one by one so a refusal
-# can report WHICH right the reading process holds instead of "write access".
-_WINDOWS_REWRITE_RIGHTS = (
-    ("FILE_WRITE_DATA", 0x00000002),
-    ("FILE_APPEND_DATA", 0x00000004),
-    ("DELETE", 0x00010000),
-    ("WRITE_DAC", 0x00040000),
-    ("WRITE_OWNER", 0x00080000),
-)
-
-# Privileges that make the DACL irrelevant: their holder can take ownership of any
-# object, or restore over it, and then rewrite it at will. `AccessCheck` deliberately
-# does not consider privileges, so they are asked for separately — otherwise this
-# refusal would once again fail to apply to the account that most obviously CAN
-# rewrite the anchor. Presence, not enabled state, disqualifies it: a token may enable
-# any privilege it holds without asking anyone.
-_WINDOWS_OVERRIDE_PRIVILEGES = ("SeTakeOwnershipPrivilege", "SeRestorePrivilege")
-
-# `os.access` answers with the REAL uid/gid unless the platform can be asked for the
-# effective ones. A process that dropped privileges only in its effective ids is
-# exactly the case where the difference decides whether it can rewrite the anchor, so
-# ask for effective ids wherever the platform offers them.
-_POSIX_EFFECTIVE_IDS = os.access in getattr(os, "supports_effective_ids", frozenset())
-
-
-def _self_owned_pin_acknowledged() -> bool:
-    """True when the deployment has explicitly accepted a self-owned trust anchor (F-06).
-
-    Read from the live environment rather than a passed-in mapping so the same answer
-    holds for every pin-file read on this process, including the registry floor.
-    """
-    return os.environ.get(ENV_PIN_SELF_OWNED_ACK, "").strip() == PIN_SELF_OWNED_ACK_VALUE
-
-
-def _windows_process_user_sid(env_name: str, path: pathlib.Path):
-    """The SID of the account this process runs as, for the F-06 self-ownership refusal.
-
-    The SID bytes are COPIED into a buffer the caller owns; returning a pointer into
-    the token-information block would dangle the moment that block is collected, and a
-    dangling comparison is one that silently never matches. Any failure raises rather
-    than returning a value that would quietly disable the check.
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    advapi32.OpenProcessToken.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
-    advapi32.OpenProcessToken.restype = wintypes.BOOL
-    advapi32.GetTokenInformation.argtypes = [
-        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
-        ctypes.POINTER(wintypes.DWORD)]
-    advapi32.GetTokenInformation.restype = wintypes.BOOL
-    advapi32.GetLengthSid.argtypes = [ctypes.c_void_p]
-    advapi32.GetLengthSid.restype = wintypes.DWORD
-
-    token = wintypes.HANDLE()
-    if not advapi32.OpenProcessToken(
-            kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
-        raise SignatureError(
-            f"cannot open this process's token to check {env_name} ownership: {path}")
-    try:
-        size = wintypes.DWORD(0)
-        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))  # TokenUser
-        if size.value == 0:
-            raise SignatureError(
-                f"cannot size this process's token user for the {env_name} check: {path}")
-        buf = ctypes.create_string_buffer(size.value)
-        if not advapi32.GetTokenInformation(token, 1, buf, size, ctypes.byref(size)):
-            raise SignatureError(
-                f"cannot read this process's token user for the {env_name} check: {path}")
-        # TOKEN_USER is { SID_AND_ATTRIBUTES { PSID Sid; DWORD Attributes; } } — the
-        # first pointer-sized field is the SID pointer, into this same buffer.
-        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p)).contents
-        if not sid_ptr.value:
-            raise SignatureError(
-                f"this process's token carries no user SID for the {env_name} check: {path}")
-        length = advapi32.GetLengthSid(sid_ptr)
-        if length == 0:
-            raise SignatureError(
-                f"cannot size this process's user SID for the {env_name} check: {path}")
-        copy = ctypes.create_string_buffer(length)
-        ctypes.memmove(copy, sid_ptr, length)
-        return copy
-    finally:
-        kernel32.CloseHandle(token)
-
-
-def _windows_account_label(sid_ptr) -> str:
-    """``DOMAIN\\name (S-1-5-…)`` for a SID, or the SID text alone if it does not resolve.
-
-    Used only to make a refusal readable — a reader who sees "granted through
-    BUILTIN\\Administrators" can act on it, one who sees "granted" cannot. A lookup
-    failure must never change a decision, so it degrades to the SID string instead of
-    raising; the decision is taken before this is ever called.
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    advapi32.ConvertSidToStringSidW.argtypes = [
-        ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
-    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
-    advapi32.LookupAccountSidW.argtypes = [
-        wintypes.LPCWSTR, ctypes.c_void_p, wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD)]
-    advapi32.LookupAccountSidW.restype = wintypes.BOOL
-    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
-    kernel32.LocalFree.restype = ctypes.c_void_p
-
-    text = "<unprintable SID>"
-    printed = wintypes.LPWSTR()
-    if advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(printed)):
-        text = printed.value
-        kernel32.LocalFree(ctypes.cast(printed, ctypes.c_void_p))
-    name = ctypes.create_unicode_buffer(256)
-    name_len = wintypes.DWORD(256)
-    domain = ctypes.create_unicode_buffer(256)
-    domain_len = wintypes.DWORD(256)
-    use = wintypes.DWORD()
-    if advapi32.LookupAccountSidW(None, sid_ptr, name, ctypes.byref(name_len),
-                                  domain, ctypes.byref(domain_len), ctypes.byref(use)):
-        prefix = f"{domain.value}\\" if domain.value else ""
-        return f"{prefix}{name.value} ({text})"
-    return text
-
-
 def _windows_pin_rewrite_grant(path: pathlib.Path, env_name: str,
                                descriptor, owner, dacl):
-    """Can the process reading this pin rewrite it? Returns (right, principal) or None.
+    """The pin's spelling of ``bro_custody.windows_rewrite_grant``: (right, principal) or None.
 
-    (audit F-06, Windows) The question this must answer is NOT "is the file's owner
-    literally my user SID?". That was a proxy, and it fails open in exactly the
-    configuration where the danger is real: a process running as an administrator
-    stamps BUILTIN\\Administrators — not its user SID — as the owner of every file it
-    creates, so the proxy compares unequal and the refusal silently does not apply to
-    the account that most obviously can rewrite the anchor.
-
-    `AccessCheck` asks the real question. It evaluates the file's whole security
-    descriptor against this process's whole token — user SID, every group SID, their
-    deny-only flags, and the rights an owner holds implicitly whether or not any ACE
-    grants them — which is precisely the evaluation the kernel performs when the file
-    is opened for writing. `GetEffectiveRightsFromAclW` was the alternative and was
-    rejected: it answers per trustee, so it cannot see "granted to me through a group
-    I am in" unless the caller re-derives group membership itself and re-implements the
-    union; it reads only the DACL, so it misses the owner's implicit WRITE_DAC; and its
-    own documentation warns the result is wrong when deny ACEs and group grants
-    interact. Reimplementing the access algorithm to make an access decision is how the
-    first version of this check went wrong.
-
-    Fail closed: an `AccessCheck` that cannot be performed raises rather than reporting
-    "no write".
+    Kept as a name on this module because the F-06 tests drive it directly against
+    descriptors they build themselves, and because a pin is a FILE — the default right list
+    is the file one, not the directory one the evidence floor has to ask about.
     """
-    import ctypes
-    from ctypes import wintypes
-
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    advapi32.OpenProcessToken.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
-    advapi32.OpenProcessToken.restype = wintypes.BOOL
-    advapi32.DuplicateTokenEx.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, ctypes.c_int,
-        ctypes.c_int, ctypes.POINTER(wintypes.HANDLE)]
-    advapi32.DuplicateTokenEx.restype = wintypes.BOOL
-    advapi32.AccessCheck.argtypes = [
-        ctypes.c_void_p, wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p,
-        ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD),
-        ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.BOOL)]
-    advapi32.AccessCheck.restype = wintypes.BOOL
-    advapi32.GetTokenInformation.argtypes = [
-        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
-        ctypes.POINTER(wintypes.DWORD)]
-    advapi32.GetTokenInformation.restype = wintypes.BOOL
-    advapi32.GetAce.argtypes = [
-        ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
-    advapi32.GetAce.restype = wintypes.BOOL
-    advapi32.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    advapi32.EqualSid.restype = wintypes.BOOL
-
-    class GenericMapping(ctypes.Structure):
-        _fields_ = [("GenericRead", wintypes.DWORD), ("GenericWrite", wintypes.DWORD),
-                    ("GenericExecute", wintypes.DWORD), ("GenericAll", wintypes.DWORD)]
-
-    class Luid(ctypes.Structure):
-        _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", ctypes.c_long)]
-
-    class LuidAndAttributes(ctypes.Structure):
-        _fields_ = [("Luid", Luid), ("Attributes", wintypes.DWORD)]
-
-    class PrivilegeSet(ctypes.Structure):
-        _fields_ = [("PrivilegeCount", wintypes.DWORD), ("Control", wintypes.DWORD),
-                    ("Privilege", LuidAndAttributes * 16)]
-
-    class SidAndAttributes(ctypes.Structure):
-        _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", wintypes.DWORD)]
-
-    class AceHeader(ctypes.Structure):
-        _fields_ = [("AceType", ctypes.c_ubyte), ("AceFlags", ctypes.c_ubyte),
-                    ("AceSize", ctypes.c_ushort)]
-
-    class AccessAllowedAce(ctypes.Structure):
-        _fields_ = [("Header", AceHeader), ("Mask", ctypes.c_uint32),
-                    ("SidStart", ctypes.c_uint32)]
-
-    class Acl(ctypes.Structure):
-        _fields_ = [("AclRevision", ctypes.c_ubyte), ("Sbz1", ctypes.c_ubyte),
-                    ("AclSize", ctypes.c_ushort), ("AceCount", ctypes.c_ushort),
-                    ("Sbz2", ctypes.c_ushort)]
-
-    # FILE_GENERIC_READ / _WRITE / _EXECUTE / FILE_ALL_ACCESS, so AccessCheck can
-    # resolve any GENERIC_* bits an ACE carries into the file-specific rights asked for.
-    mapping = GenericMapping(0x00120089, 0x00120116, 0x001200A0, 0x001F01FF)
-
-    token = wintypes.HANDLE()
-    if not advapi32.OpenProcessToken(
-            kernel32.GetCurrentProcess(),
-            0x0008 | 0x0002,  # TOKEN_QUERY | TOKEN_DUPLICATE
-            ctypes.byref(token)):
-        raise SignatureError(
-            f"cannot open this process's token to check who can rewrite "
-            f"{env_name}: {path}")
-    try:
-        impersonation = wintypes.HANDLE()
-        if not advapi32.DuplicateTokenEx(
-                token, 0x0008 | 0x0002, None,
-                2,   # SecurityImpersonation — AccessCheck requires an impersonation token
-                2,   # TokenImpersonation
-                ctypes.byref(impersonation)):
-            raise SignatureError(
-                f"cannot impersonate this process's own token to check who can "
-                f"rewrite {env_name} (error {ctypes.get_last_error()}): {path}")
-        try:
-            granted_right = None
-            for right_name, right_mask in _WINDOWS_REWRITE_RIGHTS:
-                granted = wintypes.DWORD()
-                allowed = wintypes.BOOL()
-                privileges = PrivilegeSet()
-                privileges_size = wintypes.DWORD(ctypes.sizeof(privileges))
-                if not advapi32.AccessCheck(
-                        descriptor, impersonation, right_mask, ctypes.byref(mapping),
-                        ctypes.byref(privileges), ctypes.byref(privileges_size),
-                        ctypes.byref(granted), ctypes.byref(allowed)):
-                    raise SignatureError(
-                        f"cannot evaluate this process's {right_name} access to "
-                        f"{env_name} (error {ctypes.get_last_error()}): {path}")
-                if allowed:
-                    granted_right = (right_name, right_mask)
-                    break
-            if granted_right is None:
-                return None
-            right_name, right_mask = granted_right
-        finally:
-            kernel32.CloseHandle(impersonation)
-
-        # The decision is made. Everything below only NAMES the principal the grant
-        # arrives through, so the refusal tells its reader what to change.
-        user = _windows_process_user_sid(env_name, path)
-        if advapi32.EqualSid(owner, user):
-            return right_name, (f"its owner, which is the very account reading it "
-                                f"({_windows_account_label(owner)})")
-        held = [user]
-        size = wintypes.DWORD(0)
-        advapi32.GetTokenInformation(token, 2, None, 0, ctypes.byref(size))  # TokenGroups
-        groups = ctypes.create_string_buffer(max(size.value, 8))
-        if advapi32.GetTokenInformation(token, 2, groups, size, ctypes.byref(size)):
-            count = ctypes.cast(groups, ctypes.POINTER(wintypes.DWORD)).contents.value
-            entries = ctypes.cast(
-                ctypes.addressof(groups) + ctypes.sizeof(ctypes.c_void_p),
-                ctypes.POINTER(SidAndAttributes))
-            for index in range(count):
-                entry = entries[index]
-                if entry.Attributes & 0x10:  # SE_GROUP_USE_FOR_DENY_ONLY grants nothing
-                    continue
-                held.append(ctypes.c_void_p(entry.Sid))
-        if dacl:
-            ace_count = ctypes.cast(dacl, ctypes.POINTER(Acl)).contents.AceCount
-            for index in range(ace_count):
-                ace_ptr = ctypes.c_void_p()
-                if not advapi32.GetAce(dacl, index, ctypes.byref(ace_ptr)):
-                    continue
-                header = ctypes.cast(ace_ptr, ctypes.POINTER(AceHeader)).contents
-                if header.AceType != 0 or header.AceFlags & 0x08:
-                    continue
-                ace = ctypes.cast(ace_ptr, ctypes.POINTER(AccessAllowedAce)).contents
-                if not ace.Mask & right_mask:
-                    continue
-                sid = ctypes.c_void_p(ace_ptr.value + AccessAllowedAce.SidStart.offset)
-                for principal in held:
-                    if advapi32.EqualSid(sid, principal):
-                        return right_name, (
-                            f"an access-allowed ACE for {_windows_account_label(sid)}, "
-                            f"a principal this process's token carries")
-        # groups is kept alive until here: `held` holds pointers INTO it.
-        del groups
-        return right_name, ("this process's token (no single access-allowed ACE "
-                            "accounts for it, so it arrives through an implicit or "
-                            "inherited grant)")
-    finally:
-        kernel32.CloseHandle(token)
+    return windows_rewrite_grant(path, env_name, descriptor, owner, dacl, SignatureError)
 
 
 def _windows_token_override_privilege(env_name: str, path: pathlib.Path):
-    """The first ownership-override privilege this process's token holds, or None.
-
-    `AccessCheck` answers "does the DACL let me in", and deliberately ignores
-    privileges. A token holding SeTakeOwnershipPrivilege or SeRestorePrivilege does not
-    need the DACL to let it in: it takes ownership, rewrites the DACL, and then writes.
-    Asking only the DACL would leave the refusal not applying to precisely the account
-    that can rewrite ANY pin — the Windows counterpart of the POSIX branch's "running
-    as root fails this too, and correctly so".
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    advapi32.OpenProcessToken.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
-    advapi32.OpenProcessToken.restype = wintypes.BOOL
-    advapi32.GetTokenInformation.argtypes = [
-        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
-        ctypes.POINTER(wintypes.DWORD)]
-    advapi32.GetTokenInformation.restype = wintypes.BOOL
-
-    class Luid(ctypes.Structure):
-        _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", ctypes.c_long)]
-
-    class LuidAndAttributes(ctypes.Structure):
-        _fields_ = [("Luid", Luid), ("Attributes", wintypes.DWORD)]
-
-    advapi32.LookupPrivilegeValueW.argtypes = [
-        wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.POINTER(Luid)]
-    advapi32.LookupPrivilegeValueW.restype = wintypes.BOOL
-
-    wanted = []
-    for name in _WINDOWS_OVERRIDE_PRIVILEGES:
-        luid = Luid()
-        if not advapi32.LookupPrivilegeValueW(None, name, ctypes.byref(luid)):
-            raise SignatureError(
-                f"cannot resolve {name} while checking who can rewrite "
-                f"{env_name}: {path}")
-        wanted.append((name, luid.LowPart, luid.HighPart))
-
-    token = wintypes.HANDLE()
-    if not advapi32.OpenProcessToken(
-            kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
-        raise SignatureError(
-            f"cannot open this process's token to check its privileges over "
-            f"{env_name}: {path}")
-    try:
-        size = wintypes.DWORD(0)
-        advapi32.GetTokenInformation(token, 3, None, 0, ctypes.byref(size))  # TokenPrivileges
-        buf = ctypes.create_string_buffer(max(size.value, 8))
-        if not advapi32.GetTokenInformation(token, 3, buf, size, ctypes.byref(size)):
-            raise SignatureError(
-                f"cannot read this process's privileges for the {env_name} "
-                f"check: {path}")
-        count = ctypes.cast(buf, ctypes.POINTER(wintypes.DWORD)).contents.value
-        entries = ctypes.cast(ctypes.addressof(buf) + ctypes.sizeof(wintypes.DWORD),
-                              ctypes.POINTER(LuidAndAttributes))
-        for index in range(count):
-            luid = entries[index].Luid
-            for name, low, high in wanted:
-                if luid.LowPart == low and luid.HighPart == high:
-                    return name
-        return None
-    finally:
-        kernel32.CloseHandle(token)
+    """The pin's spelling of ``bro_custody.windows_token_override_privilege``."""
+    return windows_token_override_privilege(env_name, path, SignatureError)
 
 
 def _refuse_non_owner_writable_windows(path: pathlib.Path, env_name: str) -> None:
     """Windows analogue of the POSIX group/other-writable and self-owned refusals.
 
-    Two separate questions, in this order:
-
-    1. Can THIS process rewrite the pin? Answered against the real security descriptor
-       with the real process token (`_windows_pin_rewrite_grant`), plus the privileges
-       that override any descriptor (`_windows_token_override_privilege`). A yes is
-       refused unless the deployment has acknowledged having no principal separation.
-    2. Can anyone ELSE rewrite it? Answered by walking the DACL and rejecting any
-       access-allowed ACE that grants a write-capable right (data, attributes, delete,
-       DACL or owner change) to a principal other than the file's owner, SYSTEM, or the
-       built-in Administrators group.
-
-    Question 2 skips the owner, OWNER RIGHTS, SYSTEM and Administrators as
-    owner-equivalent or already-trusted — which is exactly why question 1 cannot be
-    folded into it, and why question 1 must not be asked as "is the owner me": under an
-    administrator token the owner is BUILTIN\\Administrators and every route by which
-    this process can rewrite the file runs through an ACE question 2 deliberately
-    ignores.
-
-    Fail closed throughout: an unreadable DACL, a NULL DACL (everyone writes), a
-    missing owner, an access check that cannot be performed, or an ACE shape this check
-    cannot reason about all refuse the pin rather than assume it is protected.
+    The decision — an ``AccessCheck`` of the real descriptor against the real token, and
+    separately the privileges ``AccessCheck`` ignores, then a DACL walk for third-party
+    write — lives in ``bro_custody.refuse_windows_writable``; read it there for why
+    ownership is the wrong question. What stays here is the wording, because "an anchor its
+    reader can rewrite is not an anchor" is a sentence about a trust anchor and not about
+    every protected path, and a reader who hits it must be told what to change.
     """
-    import ctypes
-    from ctypes import wintypes
-
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    advapi32.GetNamedSecurityInfoW.argtypes = [
-        wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
-        ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
-        ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_void_p)]
-    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
-    advapi32.GetAce.argtypes = [
-        ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
-    advapi32.GetAce.restype = wintypes.BOOL
-    advapi32.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    advapi32.EqualSid.restype = wintypes.BOOL
-    advapi32.CreateWellKnownSid.argtypes = [
-        wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p,
-        ctypes.POINTER(wintypes.DWORD)]
-    advapi32.CreateWellKnownSid.restype = wintypes.BOOL
-    advapi32.ConvertStringSidToSidW.argtypes = [
-        wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p)]
-    advapi32.ConvertStringSidToSidW.restype = wintypes.BOOL
-    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
-    kernel32.LocalFree.restype = ctypes.c_void_p
-
-    def well_known_sid(kind: int) -> ctypes.Array:
-        size = wintypes.DWORD(68)  # SECURITY_MAX_SID_SIZE
-        sid = ctypes.create_string_buffer(size.value)
-        if not advapi32.CreateWellKnownSid(kind, None, sid, ctypes.byref(size)):
-            raise SignatureError(
-                f"cannot build a well-known SID for the {env_name} ACL check: {path}")
-        return sid
-
-    class AceHeader(ctypes.Structure):
-        _fields_ = [("AceType", ctypes.c_ubyte), ("AceFlags", ctypes.c_ubyte),
-                    ("AceSize", ctypes.c_ushort)]
-
-    class AccessAllowedAce(ctypes.Structure):
-        _fields_ = [("Header", AceHeader), ("Mask", ctypes.c_uint32),
-                    ("SidStart", ctypes.c_uint32)]
-
-    class Acl(ctypes.Structure):
-        _fields_ = [("AclRevision", ctypes.c_ubyte), ("Sbz1", ctypes.c_ubyte),
-                    ("AclSize", ctypes.c_ushort), ("AceCount", ctypes.c_ushort),
-                    ("Sbz2", ctypes.c_ushort)]
-
-    owner = ctypes.c_void_p()
-    group = ctypes.c_void_p()
-    dacl = ctypes.c_void_p()
-    descriptor = ctypes.c_void_p()
-    owner_rights = ctypes.c_void_p()
-    status = advapi32.GetNamedSecurityInfoW(
-        str(path), 1,  # SE_FILE_OBJECT
-        # OWNER | GROUP | DACL. The group is not consulted by any rule here; it is
-        # requested because AccessCheck refuses a descriptor that lacks an owner or a
-        # primary group, and the effective-rights question below is asked with it.
-        0x1 | 0x2 | 0x4,
-        ctypes.byref(owner), ctypes.byref(group), ctypes.byref(dacl), None,
-        ctypes.byref(descriptor))
-    if status != 0:
-        raise SignatureError(f"cannot read the {env_name} ACL (error {status}): {path}")
-    try:
-        if not owner.value:
-            raise SignatureError(f"{env_name} has no owner: {path}")
-        if not dacl.value:
-            raise SignatureError(
-                f"{env_name} has a NULL DACL, so it is writable by everyone: {path}")
-        # (audit F-06) The pin exists to survive an attacker who can write the repository
-        # tree. If the account READING the pin can also WRITE it, this whole check proves
-        # nothing about that attacker: the anchor is one write away from being whatever
-        # that account wants. "Is the owner literally my user SID?" was the question asked
-        # here before, and it is only a proxy for that — it answers NO for an
-        # administrator, whose files are owned by BUILTIN\Administrators rather than by
-        # the user SID, and for anyone granted write through a group or an explicit ACE.
-        # In every one of those cases the account can still rewrite the anchor, so the
-        # proxy made the refusal silently not apply where the danger is real. Ask the
-        # real question of the real security descriptor instead.
-        if not _self_owned_pin_acknowledged():
-            grant = _windows_pin_rewrite_grant(path, env_name, descriptor, owner, dacl)
-            if grant is not None:
-                right, principal = grant
-                raise SignatureError(
-                    f"{env_name} can be rewritten by the very account reading it: this "
-                    f"process's token is granted {right} on it through {principal}. An "
-                    f"anchor its reader can rewrite is not an anchor; it must belong to a "
-                    f"principal this process cannot impersonate, or the deployment must "
-                    f"set {ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to "
-                    f"acknowledge that it has no principal separation: {path}")
-            privilege = _windows_token_override_privilege(env_name, path)
-            if privilege is not None:
-                raise SignatureError(
-                    f"{env_name} can be rewritten by the very account reading it: this "
-                    f"process's token holds {privilege}, which lets it take ownership of "
-                    f"the file and rewrite the DACL, so no ACL on it can keep this "
-                    f"process out. Run the verifier under an account without that "
-                    f"privilege (an elevated administrator always holds it), or set "
-                    f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge "
-                    f"that this deployment has no principal separation: {path}")
-        system = well_known_sid(22)  # WinLocalSystemSid
-        admins = well_known_sid(26)  # WinBuiltinAdministratorsSid
-        # OWNER RIGHTS (S-1-3-4): an ACE that by definition applies to the file's
-        # current owner, so it is owner-equivalent, not a third-party grant.
-        if not advapi32.ConvertStringSidToSidW("S-1-3-4", ctypes.byref(owner_rights)):
-            raise SignatureError(
-                f"cannot build the OWNER RIGHTS SID for the {env_name} ACL check: {path}")
-        count = ctypes.cast(dacl, ctypes.POINTER(Acl)).contents.AceCount
-        for index in range(count):
-            ace_ptr = ctypes.c_void_p()
-            if not advapi32.GetAce(dacl, index, ctypes.byref(ace_ptr)):
-                raise SignatureError(
-                    f"cannot read ACE {index} of the {env_name} ACL: {path}")
-            header = ctypes.cast(ace_ptr, ctypes.POINTER(AceHeader)).contents
-            if header.AceFlags & 0x08:  # INHERIT_ONLY_ACE: not effective here
-                continue
-            if header.AceType in (1, 2, 3):  # deny/audit/alarm ACEs grant nothing
-                continue
-            if header.AceType != 0:  # not a plain ACCESS_ALLOWED_ACE
-                raise SignatureError(
-                    f"{env_name} carries ACE type {header.AceType}, which this "
-                    f"check cannot prove harmless: {path}")
-            ace = ctypes.cast(ace_ptr, ctypes.POINTER(AccessAllowedAce)).contents
-            if not ace.Mask & _WINDOWS_WRITE_MASK:
-                continue
-            sid = ctypes.c_void_p(ace_ptr.value + AccessAllowedAce.SidStart.offset)
-            if (advapi32.EqualSid(sid, owner) or advapi32.EqualSid(sid, system)
-                    or advapi32.EqualSid(sid, admins)
-                    or advapi32.EqualSid(sid, owner_rights)):
-                continue
-            raise SignatureError(
-                f"{env_name} must not be writable by non-owner principals: {path}")
-    finally:
-        kernel32.LocalFree(owner_rights)
-        kernel32.LocalFree(descriptor)
+    refuse_windows_writable(
+        path, env_name, SignatureError,
+        ask_self=not _self_owned_pin_acknowledged(),
+        on_rewrite=lambda right, principal: (
+            f"{env_name} can be rewritten by the very account reading it: this "
+            f"process's token is granted {right} on it through {principal}. An "
+            f"anchor its reader can rewrite is not an anchor; it must belong to a "
+            f"principal this process cannot impersonate, or the deployment must "
+            f"set {ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to "
+            f"acknowledge that it has no principal separation: {path}"),
+        on_privilege=lambda privilege: (
+            f"{env_name} can be rewritten by the very account reading it: this "
+            f"process's token holds {privilege}, which lets it take ownership of "
+            f"the file and rewrite the DACL, so no ACL on it can keep this "
+            f"process out. Run the verifier under an account without that "
+            f"privilege (an elevated administrator always holds it), or set "
+            f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge "
+            f"that this deployment has no principal separation: {path}"))
 
 
 def _pin_from_file(raw_path: str, root: pathlib.Path,
@@ -870,49 +387,34 @@ def _pin_from_file(raw_path: str, root: pathlib.Path,
         # to a principal this process cannot impersonate. Running as root fails this too,
         # and correctly so: root can rewrite any file, so no file pin is an anchor for it.
         if not _self_owned_pin_acknowledged():
-            if info.st_uid == os.geteuid():
-                raise SignatureError(
-                    f"{env_name} is owned by the very account reading it (uid {info.st_uid}), "
-                    f"which can rewrite it at will; the anchor must belong to another "
-                    f"principal (e.g. root, or a dedicated operator account), or the "
-                    f"deployment must set {ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} "
-                    f"to acknowledge that it has no principal separation: {path}")
-            # The owner comparison above is a PROXY for the real question — "can the
+            # "Is the owner literally me?" is only a PROXY for the real question — "can the
             # account reading this pin rewrite it?" — and the same blind spot the Windows
-            # branch had (audit F-06) exists here in two forms the proxy answers no to
-            # while the real answer is yes. Ask the kernel directly.
-            #
-            # (a) Write permission that does not come from ownership: root, which can
-            #     write any file regardless of uid or mode; a POSIX ACL entry; a setuid
-            #     context. `os.access` evaluates the same rule the kernel does, with the
-            #     effective ids where the platform supports asking for them.
-            if os.access(path, os.W_OK, effective_ids=_POSIX_EFFECTIVE_IDS):
-                raise SignatureError(
-                    f"{env_name} is owned by uid {info.st_uid}, but the account reading it "
-                    f"(euid {os.geteuid()}) has write permission on it anyway"
-                    + (" — running as root, which can rewrite any file, so no file pin is "
-                       "an anchor for this process" if os.geteuid() == 0 else "") +
-                    f"; the anchor must belong to a principal this process cannot write as, "
-                    f"or the deployment must set "
-                    f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge "
-                    f"that it has no principal separation: {path}")
-            # (b) The file's own mode is irrelevant if its DIRECTORY is writable: the pin
-            #     is then one unlink-and-recreate away from saying anything, no matter who
-            #     owns it or how tightly it is chmod'ed. A sticky directory is exempt
-            #     UNLESS this process owns it, because sticky is exactly the rule that
-            #     stops a non-owner unlinking another account's file.
-            parent = path.parent
-            try:
-                parent_info = parent.stat()
-            except OSError as exc:
-                raise SignatureError(
-                    f"cannot stat the directory holding {env_name}: {exc}") from exc
-            sticky = bool(parent_info.st_mode & stat.S_ISVTX)
-            if (os.access(parent, os.W_OK | os.X_OK, effective_ids=_POSIX_EFFECTIVE_IDS)
-                    and (not sticky or parent_info.st_uid == os.geteuid())):
+            # branch had (audit F-06) exists here in two further forms the proxy answers no
+            # to while the real answer is yes: running as root, and a writable containing
+            # directory. All three are asked by `bro_custody.posix_rewrite_verdict`; the
+            # wording stays here, because a reader has to be told WHICH one applies to them.
+            verdict = posix_rewrite_verdict(path, info, env_name, SignatureError)
+            if verdict is not None:
+                if verdict.kind == "owner":
+                    raise SignatureError(
+                        f"{env_name} is owned by the very account reading it (uid {info.st_uid}), "
+                        f"which can rewrite it at will; the anchor must belong to another "
+                        f"principal (e.g. root, or a dedicated operator account), or the "
+                        f"deployment must set {ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} "
+                        f"to acknowledge that it has no principal separation: {path}")
+                if verdict.kind == "permission":
+                    raise SignatureError(
+                        f"{env_name} is owned by uid {info.st_uid}, but the account reading it "
+                        f"(euid {os.geteuid()}) has write permission on it anyway"
+                        + (" — running as root, which can rewrite any file, so no file pin is "
+                           "an anchor for this process" if os.geteuid() == 0 else "") +
+                        f"; the anchor must belong to a principal this process cannot write as, "
+                        f"or the deployment must set "
+                        f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge "
+                        f"that it has no principal separation: {path}")
                 raise SignatureError(
                     f"{env_name} itself is owned by uid {info.st_uid}, but its directory "
-                    f"{parent} (uid {parent_info.st_uid}, mode {parent_info.st_mode & 0o7777:04o}) "
+                    f"{verdict.parent} (uid {verdict.parent_uid}, mode {verdict.parent_mode:04o}) "
                     f"is writable by the account reading it, which can therefore unlink the "
                     f"pin and put its own in its place regardless of the file's mode; put "
                     f"the anchor in a directory this process cannot write, or set "

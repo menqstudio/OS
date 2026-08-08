@@ -21,6 +21,7 @@ import os
 import pathlib
 import shutil
 import sys
+import tempfile
 import time
 import unittest
 import unittest.mock
@@ -73,7 +74,9 @@ class HeadBindingFixture(EvidenceFixture):
         self.provision_floor()
         # A test process is a deployment with no principal separation: it owns the floor that
         # polices it, which the R-06 custody rule refuses by default. Say so rather than
-        # weaken the rule. (POSIX-only refusal, so this is a no-op on Windows.)
+        # weaken the rule. This is load-bearing on EVERY platform now: the rule used to
+        # return early unless `os.name == "posix"`, so on Windows it refused nothing and
+        # this acknowledgement was decorative. `FloorCustodyTests` below pins that.
         ack = unittest.mock.patch.dict(
             os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"})
         ack.start()
@@ -359,6 +362,205 @@ class RollbackTests(HeadBindingFixture):
         document = json.loads(
             (self.store / f"{task_id}-e{position}.json").read_text(encoding="utf-8"))
         return event_hash(document["payload"])
+
+
+class FloorCustodyTests(unittest.TestCase):
+    """R-06 custody: a floor the policed account can rewrite is not a floor.
+
+    This lives here rather than in ``test_completion_gate`` because the floor is head-binding
+    machinery — ``_head_floor_dir`` is reached only through ``_load_head_floor`` /
+    ``_advance_head_floor``, which this module already drives, and because the fixture above
+    depends on the acknowledgement escape these tests pin. A reader who changes one sees the
+    other in the same file.
+
+    Every test here gives the SAME verdict on Windows and POSIX. That is the whole point: the
+    rule used to open with ``if not directory.exists() or os.name != "posix": return``, so on
+    Windows the entire R-06 custody rule was a no-op and handed the F-13/F-14 attack its one
+    required capability — write access to the evidence store — for free. Where a configuration
+    genuinely cannot be built without elevation, the test SKIPS with that reason instead of
+    passing on whatever the ambient account happens to be, because "it passed on my box" is
+    the same defect one level up.
+    """
+
+    def setUp(self):
+        import bro_completion
+        self.completion = bro_completion
+        self.base = pathlib.Path(
+            tempfile.mkdtemp(prefix="bro-floor-custody-")).resolve()
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
+        self.floor = self.base / "head-floor"
+        self.floor.mkdir()
+        # The ambient environment must not decide this. `test_orchestration_runtime` sets the
+        # acknowledgement at IMPORT time, so in a single discovery process it leaks in here
+        # and turns every refusal below into a silent pass — which is precisely the failure
+        # mode under test, one level up. Remove it explicitly and restore on cleanup.
+        env = unittest.mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", None)
+
+    def refusal(self, directory=None):
+        with self.assertRaises(self.completion.CompletionError) as caught:
+            self.completion._refuse_self_owned_floor(
+                self.floor if directory is None else directory)
+        return str(caught.exception)
+
+    def test_a_floor_this_process_can_write_is_refused_on_every_platform(self):
+        """The universal configuration: a directory this very process just created.
+
+        No elevation, no second principal, nothing platform-specific to construct — which is
+        exactly why the Windows early return was so expensive. The refusal must name the right
+        and the principal, because a reader who hits it on their own box has to know what to
+        change; asserting only "it raised" would pass against a refusal that says nothing.
+        """
+        message = self.refusal()
+        self.assertIn(str(self.floor), message)
+        self.assertIn("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", message)
+        self.assertIn("polices", message)
+        if os.name == "nt":
+            # WHICH right and WHICH principal varies with the account (a workstation user
+            # owns what it creates; an administrator's directories are owned by
+            # BUILTIN\\Administrators and the grant arrives through a group ACE or a
+            # privilege). Assert that a route is named, not that one particular route is.
+            self.assertRegex(
+                message,
+                r"(granted (FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY|FILE_DELETE_CHILD|DELETE|"
+                r"WRITE_DAC|WRITE_OWNER) on it through .+|holds Se\w+Privilege)")
+        else:
+            self.assertIn("owned by the very account it polices", message)
+
+    def test_the_acknowledgement_still_admits_a_self_owned_floor(self):
+        """The escape is a deployment posture, not a test knob — and it must still work.
+
+        Broadening WHAT counts as "the policed account can rewrite it", and extending the rule
+        to a platform where it never ran, must not narrow what a site with genuinely no second
+        principal can declare. Same verdict on both platforms: admitted, silently.
+        """
+        with unittest.mock.patch.dict(
+                os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"}):
+            self.completion._refuse_self_owned_floor(self.floor)  # must NOT raise
+
+    def test_a_floor_that_does_not_exist_is_left_to_the_index_to_refuse(self):
+        """Not an exemption — the refusal simply belongs to `_load_floor_index`, with the
+        message that says how to bootstrap a floor deliberately. Pinned so the early return
+        cannot quietly grow into "and also skip the check when convenient": the very next call
+        still refuses, and it refuses for the missing floor."""
+        missing = self.base / "never-provisioned"
+        self.completion._refuse_self_owned_floor(missing)  # must NOT raise
+        with self.assertRaises(self.completion.CompletionError) as caught:
+            self.completion._load_floor_index(missing)
+        self.assertIn("not provisioned", str(caught.exception))
+
+    def test_no_platform_is_exempt_from_the_rule(self):
+        """A platform this runtime cannot interrogate must REFUSE, not return.
+
+        The defect was not "the Windows branch was wrong", it was "there was no Windows
+        branch". A third platform arriving later must fail closed rather than inherit the
+        same silence, so the else-branch is asserted rather than assumed.
+        """
+        # Patched at `bro_completion.platform_name` rather than at `os.name`, which would
+        # also re-point `pathlib.Path` at the wrong flavour and fail for the wrong reason.
+        with unittest.mock.patch.object(self.completion, "platform_name",
+                                        lambda: "themythicalos"):
+            message = self.refusal()
+        self.assertIn("cannot be checked on themythicalos", message)
+        self.assertIn("an unchecked floor is not a floor", message)
+
+    # ---- Windows: the rights a DIRECTORY needs asked about ---------------------------
+
+    @unittest.skipUnless(os.name == "nt", "Windows ACL model")
+    def test_deleting_the_marks_is_a_right_the_file_list_would_have_missed(self):
+        """FILE_DELETE_CHILD is the cheapest rollback and has no file analogue.
+
+        A directory ACE carrying only FILE_DELETE_CHILD lets its holder delete every mark
+        inside the floor without holding DELETE or write on any of them — the mark is not
+        rewritten, it is removed, and the floor restarts at zero. Reusing the pin's FILE right
+        list here would have looked correct and missed it, so both lists are asked and the
+        difference is asserted.
+
+        The descriptor is built from SDDL rather than stamped on a real directory: assigning
+        BUILTIN\\Administrators as owner needs elevation, and a test that can only run
+        elevated is a test that does not run.
+        """
+        import bro_custody
+        from test_signature_authority import _descriptor_from_sddl
+
+        # Owner BUILTIN\Administrators, so the old "is the owner literally me?" proxy answers
+        # NO; FILE_DELETE_CHILD granted to Authenticated Users, which every token carries.
+        held = _descriptor_from_sddl("O:BAG:BAD:(A;;0x00000040;;;AU)")
+        directory = pathlib.Path(r"C:\nowhere\head-floor")
+        grant = bro_custody.windows_rewrite_grant(
+            directory, "the evidence head floor", held.descriptor, held.owner, held.dacl,
+            self.completion.CompletionError,
+            rights=bro_custody.WINDOWS_DIRECTORY_REWRITE_RIGHTS)
+        self.assertIsNotNone(grant, "a descriptor letting this token delete the marks was "
+                                    "read as un-rewritable — the refusal would not apply")
+        self.assertEqual(grant[0], "FILE_DELETE_CHILD")
+        self.assertIn("S-1-5-11", grant[1])  # asserted as the SID: the name is localised
+        # ...and the reason the directory list exists: the file list cannot see this at all.
+        self.assertIsNone(bro_custody.windows_rewrite_grant(
+            directory, "the evidence head floor", held.descriptor, held.owner, held.dacl,
+            self.completion.CompletionError,
+            rights=bro_custody.WINDOWS_REWRITE_RIGHTS))
+
+    @unittest.skipUnless(os.name == "nt", "Windows ACL model")
+    def test_a_floor_this_token_cannot_touch_is_not_refused(self):
+        """The rule must be a check, not a blanket ban.
+
+        A floor held by a principal this process cannot impersonate is exactly the deployment
+        posture R-06 asks for; if the answer were always "rewritable" the refusal would carry
+        no information and every site would be pushed into the acknowledgement.
+        """
+        import bro_custody
+        from test_signature_authority import _descriptor_from_sddl
+
+        held = _descriptor_from_sddl("O:SYG:SYD:(A;;FA;;;SY)")
+        self.assertIsNone(bro_custody.windows_rewrite_grant(
+            pathlib.Path(r"C:\nowhere\head-floor"), "the evidence head floor",
+            held.descriptor, held.owner, held.dacl, self.completion.CompletionError,
+            rights=bro_custody.WINDOWS_DIRECTORY_REWRITE_RIGHTS))
+
+    # ---- POSIX: the two cases the ownership proxy answered "no" to -------------------
+
+    @unittest.skipUnless(os.name == "posix",
+                         "POSIX ownership model (os.geteuid); the Windows counterpart of "
+                         "both cases is the AccessCheck grant asserted above, which asks "
+                         "the kernel the same question without reference to ownership")
+    def test_write_permission_that_does_not_come_from_ownership_is_caught(self):
+        """The root case, in the only form a test can construct without being root.
+
+        `os.geteuid` is patched so the floor's owner is NOT this account — which is all that
+        running as root changes about the first question. Everything after that is answered by
+        the real kernel against the real directory: `os.access` says this process may write it
+        anyway. Under the old `st_uid == os.geteuid()` proxy this configuration was silently
+        exempt, and root is precisely the account for which no filesystem mark polices
+        anything.
+        """
+        with unittest.mock.patch.object(os, "geteuid", lambda: os.stat(self.floor).st_uid + 1):
+            message = self.refusal()
+        self.assertIn("has write permission on it anyway", message)
+        self.assertIn("delete or rewind the mark", message)
+        self.assertIn("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", message)
+
+    @unittest.skipUnless(os.name == "posix",
+                         "POSIX ownership model (os.geteuid); on Windows renaming the floor "
+                         "away requires DELETE on it, which the AccessCheck grant already "
+                         "asks about by name")
+    def test_a_floor_inside_a_writable_directory_is_caught(self):
+        """The floor's own mode is irrelevant if its PARENT can be written.
+
+        A read-only floor is one `mv` away from being an empty floor: rename it, put a fresh
+        directory with an empty index in its place, and the anti-rollback mark restarts at
+        zero without a single write to the floor itself. The proxy answered "not mine, and not
+        writable" and let it through.
+        """
+        os.chmod(self.floor, 0o500)
+        self.addCleanup(os.chmod, self.floor, 0o700)
+        with unittest.mock.patch.object(os, "geteuid", lambda: os.stat(self.floor).st_uid + 1):
+            message = self.refusal()
+        self.assertIn("rename the whole floor away", message)
+        self.assertIn(str(self.base), message)
+        self.assertIn("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", message)
 
 
 if __name__ == "__main__":

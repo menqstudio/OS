@@ -16,18 +16,28 @@ narrow. These tests hold the reader to that.
 The receipts here are produced by the REAL producer against a real git worktree, not by
 a hand-written dict: a fixture that invents the shape would keep passing on the day the
 producer changed it.
+
+`StoreCustodyTests` at the foot of this file covers the other thing the store has to get
+right about being shared: WHO may reach it. `brops_evidence_store._harden_dir` kept both
+halves of that — the 0700 creation and the world-accessible refusal — inside
+`if os.name == "posix"`, so on Windows the store was created with whatever it inherited from
+its parent and nothing checked it afterwards. Those tests give the same verdict on both
+platforms, because a rule that is enforced on one is not a rule.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
@@ -35,6 +45,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from bro_evidence import EvidenceError, read_chain, read_chains
+import brops_evidence_store as store_module
+from brops_evidence_store import EvidenceStore, EvidenceStoreError
 from bro_run_receipt import run_and_sign
 from bro_signature import load_trusted_keys
 from broctl import build_registry, generate_key, sign_payload
@@ -164,6 +176,238 @@ class SharedEvidenceStoreTests(unittest.TestCase):
         (self.store / "rcpt-unsigned.json").write_text(json.dumps(document), encoding="utf-8")
         chain = read_chain(self.store, "task-unsigned", self.trusted)
         self.assertEqual([event["event_id"] for event in chain], ids)
+
+
+class StoreCustodyTests(unittest.TestCase):
+    """Design §4.0: shared with a second dedicated principal, never with a login identity.
+
+    Every test here asserts the SAME property on Windows and POSIX. That is the finding: the
+    creation mode and the world-accessible refusal both sat inside `if os.name == "posix"`, so
+    on Windows the store inherited its parent's ACL — under a volume root or `C:\\ProgramData`
+    that includes `BUILTIN\\Users` — and no later check ever looked. A check that returns early
+    on a platform is indistinguishable from no check.
+
+    Where a configuration cannot be built on this host, the test SKIPS with the reason. None of
+    them may pass because the ambient account happens to be configured favourably: the Windows
+    cases stamp the descriptor they need onto a directory this process owns, and report the
+    Win32 error if that is refused.
+    """
+
+    def setUp(self) -> None:
+        self.base = pathlib.Path(tempfile.mkdtemp(prefix="bro-store-custody-")).resolve()
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
+
+    # ---- creation ---------------------------------------------------------------------
+
+    def test_a_created_store_is_private_to_its_owner(self) -> None:
+        """`mkdir` states who may reach the store, on both platforms.
+
+        POSIX has always said 0700. Windows said nothing at all: `mkdir` there takes no mode
+        and the new directory simply inherits its parent's ACL. The Windows assertion is made
+        by reading the descriptor back as SDDL — a different route than the ACE walk in the
+        code under test, so the test cannot be fooled by the same mistake twice.
+        """
+        store = EvidenceStore(self.base / "created")
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(os.stat(store.root).st_mode), 0o700)
+            return
+        sddl = _dacl_sddl(self, store.root)
+        self.assertTrue(sddl.startswith("D:P"),
+                        f"the store DACL is not protected from inheritance: {sddl}")
+        for text, name in _WORLD_SIDS:
+            self.assertNotIn(f";;;{_SDDL_ALIASES[text]})", sddl,
+                             f"the created store grants access to {name}: {sddl}")
+
+    # ---- validation of a store that already exists --------------------------------------
+
+    def test_a_store_reachable_by_every_login_identity_is_refused(self) -> None:
+        """READ access is enough to refuse — the contents are the evidence.
+
+        POSIX asks `mode & S_IRWXO`, so 0704 (other: read+execute, no write) must refuse.
+        Windows is given the same thing: FILE_GENERIC_READ for Everyone. Same verdict, and
+        for the same stated reason, on both.
+        """
+        directory = self.base / "worldly"
+        directory.mkdir()
+        if os.name == "posix":
+            os.chmod(directory, 0o704)
+        else:
+            _apply_dacl(self, directory,
+                        "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"
+                        "(A;OICI;0x1200a9;;;WD)")
+        with self.assertRaises(EvidenceStoreError) as caught:
+            EvidenceStore(directory)
+        message = str(caught.exception)
+        self.assertIn(str(directory), message)
+        if os.name == "nt":
+            self.assertIn("Everyone", message)
+            self.assertIn("S-1-1-0", message)
+        else:
+            self.assertIn("world-accessible", message)
+
+    def test_a_store_shared_with_a_second_named_principal_is_still_admitted(self) -> None:
+        """The store is SUPPOSED to be shared — the supervisor writes it, the signer reads it.
+
+        A refusal that fired on any second principal would be a different rule from the one
+        design §4.0 asks for, and would push every real deployment back to one identity. POSIX
+        says that with a group (0770); Windows says it with an ACE for a named principal. The
+        SID used here is a real, well-formed, non-well-known account SID that resolves to
+        nothing on this host — which is the point: it stands for "some named account", and the
+        rule must let it through without the test depending on which accounts exist.
+        """
+        directory = self.base / "shared"
+        directory.mkdir()
+        if os.name == "posix":
+            os.chmod(directory, 0o770)
+        else:
+            _apply_dacl(self, directory,
+                        "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"
+                        "(A;OICI;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1099)")
+        EvidenceStore(directory)  # must NOT raise
+
+    def test_a_store_private_to_this_account_is_admitted(self) -> None:
+        """...and the rule must not be a blanket ban either.
+
+        An ordinary directory this process just created is the common case; if it refused,
+        the check would be noise rather than a custody statement.
+        """
+        directory = self.base / "private"
+        directory.mkdir()
+        if os.name == "posix":
+            os.chmod(directory, 0o700)
+        EvidenceStore(directory)  # must NOT raise
+
+    # ---- no platform is exempt ----------------------------------------------------------
+
+    def test_an_uninterrogable_platform_refuses_on_creation(self) -> None:
+        """The dispatch is patched at `brops_evidence_store.platform_name`, not at `os.name`:
+        patching the latter also re-points `pathlib.Path` at the wrong flavour, so the test
+        would fail for a reason that is not the one under test."""
+        with unittest.mock.patch.object(store_module, "platform_name",
+                                        lambda: "themythicalos"):
+            with self.assertRaises(EvidenceStoreError) as caught:
+                EvidenceStore(self.base / "elsewhere")
+        self.assertIn("custody cannot be established on themythicalos",
+                      str(caught.exception))
+
+    def test_an_uninterrogable_platform_refuses_on_validation(self) -> None:
+        """The defect was a silent return, so both arms of the branch are pinned.
+
+        Fixing only the creation arm would leave an existing store — the case a deployment is
+        actually in after its first run — validated by nothing at all.
+        """
+        directory = self.base / "already-there"
+        directory.mkdir()
+        with unittest.mock.patch.object(store_module, "platform_name",
+                                        lambda: "themythicalos"):
+            with self.assertRaises(EvidenceStoreError) as caught:
+                EvidenceStore(directory)
+        self.assertIn("an unchecked store is not a protected store", str(caught.exception))
+
+
+# --- Windows helpers, written against the Win32 API directly -----------------------------
+# Deliberately NOT routed through `bro_custody`: a test that establishes and reads back its
+# premise using the code under test cannot detect that code answering the wrong question.
+
+#: The SDDL alias each world SID is printed as, so the created-store assertion can look for
+#: it in the descriptor string. Keyed by SID text to stay aligned with `bro_custody`.
+_SDDL_ALIASES = {
+    "S-1-1-0": "WD",
+    "S-1-5-11": "AU",
+    "S-1-5-4": "IU",
+    "S-1-5-2": "NU",
+    "S-1-5-7": "AN",
+    "S-1-5-32-545": "BU",
+    "S-1-5-32-546": "BG",
+    "S-1-5-32-547": "PU",
+}
+_WORLD_SIDS = (
+    ("S-1-1-0", "Everyone"),
+    ("S-1-5-11", "Authenticated Users"),
+    ("S-1-5-4", "INTERACTIVE"),
+    ("S-1-5-2", "NETWORK"),
+    ("S-1-5-7", "ANONYMOUS LOGON"),
+    ("S-1-5-32-545", "BUILTIN\\Users"),
+    ("S-1-5-32-546", "BUILTIN\\Guests"),
+    ("S-1-5-32-547", "BUILTIN\\Power Users"),
+)
+
+
+def _advapi():
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    advapi32.GetNamedSecurityInfoW.argtypes = [
+        wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [
+        ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+        ctypes.POINTER(wintypes.LPWSTR), ctypes.POINTER(wintypes.ULONG)]
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.ULONG)]
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    advapi32.GetSecurityDescriptorDacl.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL), ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.BOOL)]
+    advapi32.GetSecurityDescriptorDacl.restype = wintypes.BOOL
+    advapi32.SetNamedSecurityInfoW.argtypes = [
+        wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    advapi32.SetNamedSecurityInfoW.restype = wintypes.DWORD
+    return advapi32
+
+
+def _dacl_sddl(test_case, path) -> str:
+    """The directory's DACL as an SDDL string, read independently of `bro_custody`."""
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = _advapi()
+    descriptor = ctypes.c_void_p()
+    status = advapi32.GetNamedSecurityInfoW(
+        str(path), 1, 0x4, None, None, None, None, ctypes.byref(descriptor))
+    if status != 0:
+        test_case.skipTest(
+            f"cannot read the DACL of {path} (GetNamedSecurityInfo error {status}), so the "
+            "Windows custody of a created store is NOT covered on this host")
+    printed = wintypes.LPWSTR()
+    if not advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor, 1, 0x4, ctypes.byref(printed), None):
+        test_case.skipTest(
+            f"cannot render the DACL of {path} as SDDL (error {ctypes.get_last_error()}), so "
+            "the Windows custody of a created store is NOT covered on this host")
+    return printed.value
+
+
+def _apply_dacl(test_case, path, sddl: str) -> None:
+    """Stamp an explicit protected DACL on a directory this process owns, or skip saying why."""
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = _advapi()
+    descriptor = ctypes.c_void_p()
+    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, 1, ctypes.byref(descriptor), None):
+        raise AssertionError(
+            f"cannot build a descriptor from {sddl!r} (error {ctypes.get_last_error()})")
+    dacl = ctypes.c_void_p()
+    present = wintypes.BOOL()
+    defaulted = wintypes.BOOL()
+    if not advapi32.GetSecurityDescriptorDacl(
+            descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)):
+        raise AssertionError(f"no DACL in the descriptor built from {sddl!r}")
+    status = advapi32.SetNamedSecurityInfoW(
+        str(path), 1, 0x4 | 0x80000000, None, None, dacl, None)
+    if status != 0:
+        test_case.skipTest(
+            f"cannot set the DACL of {path} to {sddl!r} (SetNamedSecurityInfo error "
+            f"{status}); this host cannot construct the configuration under test, so it is "
+            "NOT covered here")
 
 
 if __name__ == "__main__":
