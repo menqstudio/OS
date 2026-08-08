@@ -189,7 +189,13 @@ class GovernanceMirrorTests(unittest.TestCase):
             self.assertEqual(record["task_id"], "task-ledger")
             self.assertRegex(record["record_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(reply["record_authentication"], "runtime-hash-chain-verified")
-        self.assertEqual(reply["source"]["runtime_state_dir"], str(self.state_dir))
+        # The runtime resolves its state dir on the way in, so compare resolved paths rather
+        # than the strings handed to it. On the Windows CI runner tempfile returns the 8.3
+        # short form (a RUNNER~1 component) and the runtime reports the long one, so a string
+        # comparison failed on two paths naming the same directory. Caught the first time the
+        # engine suite ran on windows-latest.
+        self.assertEqual(pathlib.Path(reply["source"]["runtime_state_dir"]),
+                         self.state_dir.resolve())
 
     def test_the_decision_ledger_honours_a_task_filter(self) -> None:
         self.runtime.create_task(task_contract("task-one"), now_epoch=100)
