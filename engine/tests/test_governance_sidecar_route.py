@@ -32,6 +32,17 @@ for _path in (ROOT / "runtime", ROOT / "tools", pathlib.Path(__file__).resolve()
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+from _prerequisites import BRIDGE_SIDECAR, require  # noqa: E402
+
+# Stated before the import it would otherwise break on, and stated for the whole module:
+# every test here drives the real sidecar entry point, which lives in bridge/. The JOIN
+# between the two trees is the thing under test, so no fixture inside engine/ could
+# stand in for it -- this is an assertion about the source repository. Deployment Step 6
+# copies engine/ alone, where the missing tree used to surface as a bare
+# "ModuleNotFoundError: No module named 'engine_sidecar'" from the loader. Under CI,
+# where bridge/ is always checked out, `require` FAILS rather than skipping.
+require(BRIDGE_SIDECAR)
+
 import engine_sidecar  # noqa: E402  (bridge/ placed on the path above)
 from bro_control_room_api import GOVERNANCE_OP, GOVERNANCE_PROTOCOL, ControlRoomAPIV1  # noqa: E402
 from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1  # noqa: E402

@@ -25,9 +25,12 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "runtime"))
+for _path in (ROOT / "runtime", pathlib.Path(__file__).resolve().parent):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-from bro_protected import bytecode_shadow_offenders, load_protected_manifest
+from _prerequisites import GIT_WORKTREE, requires  # noqa: E402
+from bro_protected import bytecode_shadow_offenders, load_protected_manifest  # noqa: E402
 
 # The refusal this negative exists to demonstrate.
 SCOPE_CAUSE = "missing BRO_WORKSPACE_BINDING"
@@ -100,8 +103,19 @@ class LiveHookWiringTests(unittest.TestCase):
         payload = json.loads(result.stdout.strip().splitlines()[-1])
         return payload["hookSpecificOutput"]
 
+    @requires(GIT_WORKTREE)
     def test_wired_command_denies_out_of_scope(self):
         """The refusal must NAME the missing binding.
+
+        Prerequisite, stated rather than assumed: the engine tree must sit inside a git
+        worktree. The wall reads its tree identity through `git ls-files`, so on a tree
+        copied without .git the very first gate raises and `fail_closed` answers "deny:
+        hook failed closed: CalledProcessError ... 128". That is a THIRD refusal, ahead
+        of both the scope cause and the shadow cause, and it is exactly the trap this
+        file is built around -- a laxer negative would have gone green on it. Since no
+        fixture can conjure a repository, the test declines to run rather than report on
+        a proof it did not take; CI always has one, where `require` fails instead of
+        skipping.
 
         One documented exception, and it is the whole point of this file: when the
         tree carries compiled bytecode under a digest root, `assert_no_bytecode_shadow`
