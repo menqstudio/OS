@@ -49,6 +49,24 @@ tested, never rushed*), on its own branch/PR with Owner approval.
 
 ---
 
+> ## ⛔ A blocker that applies to O-2, O-3 and O-5 together
+>
+> **Nothing in this repository can mint a PRODUCTION trust root.** `broctl build-registry`
+> hardcodes `"production": false` and stamps *"DEVELOPMENT REGISTRY"*; `broctl keygen --production`
+> refuses; and `bro_signature` refuses a non-production registry whenever the operator pin comes
+> from the production file path (`BRO_OPERATOR_ROOT_PUBKEY_FILE`).
+>
+> So the ceremony in [`OWNER_CEREMONY.md`](./OWNER_CEREMONY.md) and
+> [`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md) runs honestly end to end and produces a
+> **development** root. That is enough to exercise every path and watch each refusal become an
+> acceptance. It is **not** enough to close these three items, and none of them may be recorded as
+> closed on the strength of it.
+>
+> Found on 2026-08-08 by following the runbook rather than reading it — the first real attempt
+> stopped at Step 0 and turned up four further defects in the document itself. Whoever closes this
+> needs to decide how a production registry is minted, which is an Owner/architecture decision
+> rather than a missing function.
+
 ## 1. The items
 
 ### O-1 · bytecode-shadow

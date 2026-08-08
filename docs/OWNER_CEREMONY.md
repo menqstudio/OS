@@ -15,6 +15,18 @@ the offline root that lives on your media and nowhere else.
 You already did the harder half: `apps/desktop/src-tauri/win-live/CUSTODY_CEREMONY.md` is the
 ceremony that produced your offline root, and these three reuse it.
 
+> ## ⛔ What this ceremony cannot yet produce
+>
+> **`broctl` mints a DEVELOPMENT trust root, and nothing in this repository mints a production
+> one.** `build-registry` hardcodes `"production": false`; `keygen --production` refuses; and
+> `bro_signature` refuses a non-production registry whenever the operator pin comes from the
+> production file path. So this ceremony exercises every path honestly and closes nothing for
+> production. Recording O-2, O-3 or O-5 as closed on the strength of a development root would be
+> the exact failure this repository has spent a week removing.
+>
+> Found by following the runbook rather than by reading it — see
+> [`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md).
+
 ---
 
 ## Before you start
