@@ -100,18 +100,29 @@ from you.
   now asks `AccessCheck` — what the kernel itself evaluates when a file is opened for writing —
   plus the two privileges that make any ACL irrelevant. POSIX gained the two cases its own proxy
   missed: running as root over someone else's file, and a writable containing directory.
-- **The same defect exists in two more places, found by auditing the first.** Being fixed now.
-  - `bro_completion._refuse_self_owned_floor` (**R-06**) begins `if ... or os.name != "posix":
-    return` — the entire anti-rollback custody rule is a **no-op on Windows**. Its own docstring
-    says the F-13/F-14 attack needed exactly one capability, write access to the evidence store;
-    on Windows it grants that for free.
-  - `brops_evidence_store._ensure_dir` keeps both its 0700 creation and its world-accessible
-    refusal inside `if os.name == "posix"`, so on Windows the store directory is created with
-    whatever it inherits and nothing checks it.
+- **The same defect existed in two more places, found by auditing the first. Closed in PR #73.**
+  - `bro_completion._refuse_self_owned_floor` (**R-06**) began `if ... or os.name != "posix":
+    return` — the entire anti-rollback custody rule was a **no-op on Windows**, on a rule whose own
+    docstring says the F-13/F-14 attack needed exactly one capability: write access to the evidence
+    store.
+  - `brops_evidence_store._harden_dir` kept both its 0700 creation and its world-accessible refusal
+    inside `if os.name == "posix"`, so on Windows the store was created with whatever it inherited
+    and nothing looked at it afterwards.
+  - Both now answer through `bro_custody`, one implementation shared by all three sites instead of
+    three that drift. A platform that is neither POSIX nor Windows refuses rather than returning.
+    Watched refusing, not merely observed green.
 
 *Three of these four are why `engine-windows` and the prerequisite guard were added in PR #72: a
 test that never runs and a check that never fires both read exactly like coverage. The job found
-its first two defects within minutes of existing, and the audit of one of those found two more.*
+its first two defects within minutes of existing, and auditing one of those found two more.*
+
+### One thing I could not explain
+
+A Windows custody test failed on one CI run and passed on the next with no change to its behaviour.
+The job's output could not settle whether the second run proved the rule or merely declined to test
+it, so the Windows job now runs `-v` and names every skip. The current run shows that test
+executing and passing — it is not in the skip list — but the flip itself is unexplained and is
+written down here rather than treated as resolved by a green.
 
 ---
 

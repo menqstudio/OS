@@ -1,6 +1,10 @@
 # TASKS — the coordination board · координация board
 
-> **⏭️ CURRENT ACTIVE: PR #73 · branch `fix/floor-and-store-custody`** (base `main`, tip `a018ea7`, task T-017).
+> **⏭️ CURRENT ACTIVE: PR #74 · branch `docs/owner-page-current`** (base `main`, tip `1d623ad`, task T-017).
+>
+> PR #74 is housekeeping on docs/OWNER_ACTION_REQUIRED.md after #73 merged (1d623ad): the two custody sites move from being-fixed to closed, and a short section records the one thing the night could not explain -- a Windows custody test that failed on one CI run and passed on the next with no change to its behaviour. The Windows job now runs -v and names every skip; the current run shows that test executing and passing rather than skipping, but the flip is unexplained and is written down rather than treated as resolved by a green. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor.
+>
+> **The gate is untouched.** `platform_governed_execution_supported()` stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.
 >
 > PR #73 follows #72 (merged, a018ea7). Auditing the operator-pin fix found two more sites asking the same custody question the same broken way: bro_completion._refuse_self_owned_floor (R-06) returns before checking anything when os.name is not posix, so the entire anti-rollback custody rule is a no-op on Windows -- on a rule whose own docstring says the F-13/F-14 attack needed exactly one capability, write access to the evidence store; and brops_evidence_store._ensure_dir keeps both its 0700 creation and its world-accessible refusal inside a posix branch, so on Windows the store directory is created with whatever it inherits and nothing checks it. A check that returns early on a platform is indistinguishable from no check. Also corrects the audit LEDGER, which described F-06 as the owner-SID comparison #72 removed and claimed the Windows tests were all skipped; the audit REPORTS are untouched because they record what an auditor found on a date. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor.
 >
