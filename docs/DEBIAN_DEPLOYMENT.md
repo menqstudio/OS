@@ -387,6 +387,11 @@ print('deployed tree: bytecode shadow clean, control plane not writable')
 Both of these pass only on a tree that is genuinely mounted read-only. They are the two properties
 Step 6 exists to establish, asked of the deployment rather than of the source.
 
+**Run this after Step 6, not before.** Step 6 rebuilds `/opt/brops/engine` from the checkout, so a
+green from before it describes a tree that no longer exists. Obvious when written down, easy to
+miss when you are re-running one step to check a fix — which is exactly when it matters, because
+that is when you most want to believe the green.
+
 ### Then the honest test of each
 
 **Remove the artifact and confirm it refuses.** An item you cannot break is an item you have not
