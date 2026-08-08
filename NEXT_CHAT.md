@@ -1,6 +1,10 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE (2026-08-08): PR #69 MERGED to `main` (tip `a179d5e`).** The active workflow is **PR #70 · branch `fix/ceremony-runbook-defects`** (base `main`, task T-017).
+> **⏭️ CURRENT ACTIVE: PR #71 · branch `fix/step6-readonly-deadlock`** (base `main`, tip `06e6046`, task T-017).
+>
+> PR #71 fixes Step 6 of the Debian runbook, which shipped a tree the engine refuses and then made it unfixable. cp -a copies __pycache__ along with everything else; the next two lines mount that tree read-only; assert_no_bytecode_shadow then refuses to run over caches the mount has just made impossible to delete. The order is now copy, clear the caches, ask the engine's OWN detector while the answer is still fixable, and only then mount -- plus the way out for anyone already stuck (remount rw, clear, remount ro). The verification also gained the check that matters: it asked only whether brops could write, and now asks whether ROOT can, because if root can write the tree is protected by file modes rather than by a read-only mount, and a root-level compromise is exactly the case this defends against. Found by running it: the read-only mount was the one part of the runbook that could not be checked from a Windows box, and it is the part that broke. tools/sync_active_pr.py is added in the same commit so this state anchor stops being the step that is forgotten.
+>
+> **The gate is untouched.** `platform_governed_execution_supported()` stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.
 >
 > **A deployment runbook was written and never executed.** The first real attempt to follow it stopped at Step 0 and found four defects; checking those found a fifth that is worse than all of them.
 >

@@ -217,17 +217,48 @@ head.
 This is the one where Debian genuinely beats Windows, and it is why the strongest option is
 available to you at all.
 
+**Order matters here, and getting it wrong deadlocks the box.** `cp -a` copies `__pycache__`
+along with everything else. Once the tree is mounted read-only, `assert_no_bytecode_shadow` refuses
+to run — and you cannot delete the caches it is refusing over, because the mount you just made
+forbids it. Clear them, and check the result, *before* mounting:
+
 ```bash
-sudo cp -a /path/to/OS/engine /opt/brops/engine
+sudo rm -rf /opt/brops/engine
+sudo cp -a ~/OS/engine /opt/brops/engine
+
+# The caches came along for the ride. Remove them while the tree is still writable.
+sudo find /opt/brops/engine -type d -name '__pycache__' -prune -exec rm -rf {} +
+sudo find /opt/brops/engine \( -name '*.pyc' -o -name '*.pyo' \) -delete
+
 sudo chown -R root:root /opt/brops/engine
+
+# Ask the engine's own detector, while the answer is still fixable.
+cd ~/OS && sudo BRO_ENV=ci python3 -B -c "
+import pathlib, sys
+sys.path.insert(0, 'engine/runtime')
+from bro_protected import bytecode_shadow_offenders, load_protected_manifest
+root = pathlib.Path('/opt/brops/engine')
+offenders = bytecode_shadow_offenders(root, load_protected_manifest(root))
+print('bytecode offenders:', offenders or 'none')
+raise SystemExit(1 if offenders else 0)
+" || { echo 'STOP: clear these before mounting, or the mount makes them permanent'; exit 1; }
+
 sudo mount --bind /opt/brops/engine /opt/brops/engine
 sudo mount -o remount,ro,bind /opt/brops/engine
 ```
+
+If you have already mounted a tree that refuses, the way out is
+`sudo mount -o remount,rw,bind /opt/brops/engine`, clear the caches, then remount read-only.
 
 Verify by trying, which is what the gate itself does:
 
 ```bash
 sudo -u brops touch /opt/brops/engine/runtime/probe   # expect: Read-only file system
+sudo touch /opt/brops/engine/runtime/probe            # expect the SAME — the mount is doing the
+                                                      # work, not the permissions. If root can
+                                                      # write, you have file modes and not a
+                                                      # read-only mount, and a root-level compromise
+                                                      # is exactly the case this defends against.
 ```
 
 Make it survive a reboot in `/etc/fstab`:
