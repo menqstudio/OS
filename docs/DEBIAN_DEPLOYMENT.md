@@ -346,10 +346,17 @@ and no CI job runs the engine suite on Windows. Fixed in the tests, not here.)*
 ### What the deployed tree is actually checked with
 
 The check has to run **as `brops`**, because the question it asks is what *that* account can
-write. So `brops` needs the engine's dependencies, and `pip install` as your login user does not
-give it them: `bro_protected` imports `bro_workspace`, which imports `bro_signature`, which
-imports `cryptography`. Run as `brops` against your own site-packages this dies with
-`ModuleNotFoundError` before it checks anything.
+write. That imposes two separate requirements, and getting only the first is the state this
+document was in for a round.
+
+**It must import the engine from the DEPLOYED tree**, `/opt/brops/engine/runtime` — not from your
+checkout. Your home is `0700`, so `brops` cannot traverse it at all, and a relative
+`sys.path.insert(0, 'engine/runtime')` resolves there and fails with `ModuleNotFoundError` before
+any dependency matters. It is also the wrong tree on principle: importing the checker out of the
+source while pointing it at the deployment is exactly the coupling this step exists to remove.
+
+**And `brops` needs the engine's dependencies**, which `pip install` as your login user does not
+give it: `bro_protected` imports `bro_workspace`, imports `bro_signature`, imports `cryptography`.
 
 A root-owned virtualenv, readable by everyone and writable by nobody but root, is the smallest
 thing that fixes it:
@@ -365,9 +372,9 @@ dependency set is pinned by hash for a reason, and merging it into the OS python
 unpinned upgrade one `apt` away from changing what the verifier runs.
 
 ```bash
-cd ~/OS && sudo -u brops BRO_ENV=ci /opt/brops/venv/bin/python3 -B -c "
+sudo -u brops BRO_ENV=ci /opt/brops/venv/bin/python3 -B -c "
 import pathlib, sys
-sys.path.insert(0, 'engine/runtime')
+sys.path.insert(0, '/opt/brops/engine/runtime')   # the DEPLOYED tree, not your checkout
 import bro_protected as bp
 root = pathlib.Path('/opt/brops/engine')
 manifest = bp.load_protected_manifest(root)      # both asserts need it; load it once

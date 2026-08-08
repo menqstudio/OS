@@ -21,6 +21,7 @@ import os
 import pathlib
 import shutil
 import sys
+import stat
 import tempfile
 import time
 import unittest
@@ -390,6 +391,21 @@ class FloorCustodyTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
         self.floor = self.base / "head-floor"
         self.floor.mkdir()
+        if os.name == "posix":
+            # `mkdir` takes 0o777 masked by the AMBIENT UMASK. On Debian's stock 0002 — the
+            # default for an account whose primary group is its own — the floor comes out 0775,
+            # `_refuse_self_owned_floor` refuses at its FIRST branch (group/other-writable), and
+            # the branch each test below exists to pin never executes. The tests still passed on
+            # a 0022 box, so this was coverage that depended on whose machine ran it.
+            #
+            # chmod, not a mode= argument: umask masks the argument too.
+            os.chmod(self.floor, 0o700)
+            mode = stat.S_IMODE(os.stat(self.floor).st_mode)
+            self.assertFalse(
+                mode & (stat.S_IWGRP | stat.S_IWOTH),
+                f"the fixture floor is {mode:04o}; while it is group/other-writable the "
+                "group-writable refusal pre-empts every branch these tests assert, and they "
+                "would pass on the wrong refusal")
         # The ambient environment must not decide this. `test_orchestration_runtime` sets the
         # acknowledgement at IMPORT time, so in a single discovery process it leaks in here
         # and turns every refusal below into a silent pass — which is precisely the failure
