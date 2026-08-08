@@ -305,6 +305,29 @@ jobs:
         working-directory: tools
         run: python -m unittest test_check_reachability
 
+  runbook-snippets:
+    name: Runbooks - pasted Python matches the code it calls
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # Stdlib only, no network. docs/DEBIAN_DEPLOYMENT.md tells an operator to paste Python at a
+      # root shell on a box that is mid-deployment. One of those snippets called
+      # assert_control_plane_not_writable with one argument when it takes two, and it was found by
+      # a person running it - after the step had already mounted something - rather than by anyone
+      # reading it. Prose about code drifts silently; pasted code that drifts fails in the reader's
+      # hands. This parses every snippet and checks each call against the real signature, so a
+      # renamed or re-signatured engine function turns THIS red instead of the operator's terminal.
+      # It is arity and syntax only, and says so on every run: it cannot tell you a snippet does
+      # the right thing, only that it will not die on the first line.
+      - name: Runbook snippet gate
+        run: python tools/check_runbook_snippets.py
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_runbook_snippets
+
   gitleaks:
     name: Secrets - gitleaks
     runs-on: ubuntu-latest

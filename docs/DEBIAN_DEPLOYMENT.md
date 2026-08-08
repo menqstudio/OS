@@ -223,8 +223,23 @@ to run — and you cannot delete the caches it is refusing over, because the mou
 forbids it. Clear them, and check the result, *before* mounting:
 
 ```bash
+# A bind mount left over from an earlier attempt makes the next line fail halfway: rm deletes the
+# CONTENTS through the mount and then dies on the mountpoint itself with "Device or resource busy",
+# leaving an empty directory that is still mounted. Unmount first. It is harmless when nothing is
+# mounted, which is why it is unconditional.
+sudo umount /opt/brops/engine 2>/dev/null || true
+
 sudo rm -rf /opt/brops/engine
 sudo cp -a ~/OS/engine /opt/brops/engine
+
+# `cp -a src dest` creates dest when it is absent and copies INTO it when it exists — so a surviving
+# mountpoint silently gets you /opt/brops/engine/engine/runtime, exit 0, no warning, and every line
+# below quietly addressing a path that is not there. Check the layout, not the exit code.
+test -d /opt/brops/engine/runtime || {
+  echo "STOP: engine/runtime is not where it should be. Look for /opt/brops/engine/engine —"
+  echo "      cp copied into a surviving mountpoint. Run the umount above and start this step over."
+  exit 1
+}
 
 # The caches came along for the ride. Remove them while the tree is still writable.
 sudo find /opt/brops/engine -type d -name '__pycache__' -prune -exec rm -rf {} +
@@ -236,19 +251,35 @@ sudo chown -R root:root /opt/brops/engine
 cd ~/OS && sudo BRO_ENV=ci python3 -B -c "
 import pathlib, sys
 sys.path.insert(0, 'engine/runtime')
-from bro_protected import bytecode_shadow_offenders, load_protected_manifest
+from bro_protected import bytecode_shadow_offenders, load_protected_manifest, ProtectedScopeError
 root = pathlib.Path('/opt/brops/engine')
-offenders = bytecode_shadow_offenders(root, load_protected_manifest(root))
+try:
+    manifest = load_protected_manifest(root)
+except ProtectedScopeError as exc:
+    # Say which failure this is. An earlier version reported every non-zero exit as leftover
+    # bytecode, so a nested tree — no manifest at that path at all — was blamed on caches that were
+    # also present and made the wrong reading look right.
+    print('LAYOUT, not caches:', exc)
+    print('the tree at /opt/brops/engine is not an engine tree; look for engine/engine')
+    raise SystemExit(2)
+offenders = bytecode_shadow_offenders(root, manifest)
 print('bytecode offenders:', offenders or 'none')
 raise SystemExit(1 if offenders else 0)
-" || { echo 'STOP: clear these before mounting, or the mount makes them permanent'; exit 1; }
+"
+case $? in
+  0) echo 'clean: safe to mount' ;;
+  1) echo 'STOP: clear the caches above before mounting, or the mount makes them permanent'; exit 1 ;;
+  *) echo 'STOP: the tree is wrong, not merely dirty. Re-read the layout check above.'; exit 1 ;;
+esac
 
 sudo mount --bind /opt/brops/engine /opt/brops/engine
 sudo mount -o remount,ro,bind /opt/brops/engine
 ```
 
-If you have already mounted a tree that refuses, the way out is
-`sudo mount -o remount,rw,bind /opt/brops/engine`, clear the caches, then remount read-only.
+If you have already mounted a tree that refuses, `sudo mount -o remount,rw,bind
+/opt/brops/engine` is enough only when you intend to *edit in place*. It leaves the mount up, so a
+subsequent `rm -rf` still cannot remove the mountpoint. To lay down a fresh tree, `umount` — which
+the block above now does for you.
 
 Verify by trying, which is what the gate itself does:
 
@@ -286,19 +317,72 @@ that is the point of it.
 
 ## Step 7 — check what you actually closed
 
+### The suite runs where the source is
+
 ```bash
-cd /opt/brops
+cd ~/OS
 BRO_ENV=ci python3 -m unittest discover -s engine/tests -t engine/tests -q
 python3 tools/check_residual_items.py
 ```
 
-Then the honest test of each: **remove the artifact and confirm it refuses.** An item you cannot
-break is an item you have not verified. Specifically —
+**Not from `/opt/brops`.** An earlier version of this step said to, and it produced fourteen
+failures on a *correctly* deployed box: five because the deployed tree is not a git repository,
+two because Step 6 deploys `engine/` and the tests reach into `apps/` and `bridge/`, and seven
+because a read-only tree gives the O-1 writability tests nothing to refuse. None of the fourteen
+was a real defect in the deployment. All fourteen looked exactly like one.
+
+That is worse than useless: a step whose red is routine teaches you to skim past red. The test
+suite asserts things about the **source repository**; the deployed tree is checked by the
+deployment checks below, which is what they are for.
+
+*(Those fourteen did expose one genuine hole, in the other direction — the O-1 refusal path never
+executes in CI, because a CI checkout is writable. That is being fixed in the tests themselves,
+not here.)*
+
+### What the deployed tree is actually checked with
+
+```bash
+cd ~/OS && sudo -u brops BRO_ENV=ci python3 -B -c "
+import pathlib, sys
+sys.path.insert(0, 'engine/runtime')
+import bro_protected as bp
+root = pathlib.Path('/opt/brops/engine')
+manifest = bp.load_protected_manifest(root)      # both asserts need it; load it once
+bp.assert_no_bytecode_shadow(root, manifest)
+bp.assert_control_plane_not_writable(root, manifest)
+print('deployed tree: bytecode shadow clean, control plane not writable')
+"
+```
+
+Both of these pass only on a tree that is genuinely mounted read-only. They are the two properties
+Step 6 exists to establish, asked of the deployment rather than of the source.
+
+### Then the honest test of each
+
+**Remove the artifact and confirm it refuses.** An item you cannot break is an item you have not
+verified.
 
 - unset `BRO_CONDUCTOR_SESSION_TOKEN` → a conductor stop must refuse
-- point `BRO_EVIDENCE_FLOOR_ANCHOR` at a file signed by the wrong key → refused
 - unset `BRO_AUDIT_ANCHOR_KEY_ID` but keep the signer → refused, loudly
 - remount read-write → the engine must refuse to start
+- point `BRO_EVIDENCE_FLOOR_ANCHOR` at a file signed by the wrong key → refused — **but only if you
+  pin first.** With no operator-root pin in the environment, the anchor is refused with
+  *"no operator-root pin: set `BRO_OPERATOR_ROOT_PUBKEY_FILE` …"*, which matches the word "refused"
+  in this list while testing nothing about the key you swapped. Set `BRO_ENV=ci` and the pin, run
+  it, and read the refusal:
+
+  ```bash
+  export BRO_ENV=ci
+  export BRO_OPERATOR_ROOT_PUBKEY=$(python3 -c "import json; print(json.load(open('/media/usb/bro-root/operator-root.json'))['public_key'])")
+  # expect: unknown signing key: 'wrong-key-…'   — the KEY is what was rejected
+  ```
+
+  Then run the **positive control**: the same command with the correctly signed anchor must be
+  *accepted*. A negative test with no positive control cannot tell "the check works" from
+  "everything is refused".
+
+Every one of these applies to the last: a refusal is only evidence when you know which refusal it
+is. Read the message, not the exit code.
 
 ---
 
