@@ -1,6 +1,16 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **⏭️ CURRENT ACTIVE (2026-08-08): PR #68 MERGED to `main` (tip `379e22c`).** The active workflow is **PR #69 · branch `fix/lockfile-python-313`** (base `main`, task T-017).
+> **⏭️ CURRENT ACTIVE (2026-08-08): PR #69 MERGED to `main` (tip `a179d5e`).** The active workflow is **PR #70 · branch `fix/ceremony-runbook-defects`** (base `main`, task T-017).
+>
+> **A deployment runbook was written and never executed.** The first real attempt to follow it stopped at Step 0 and found four defects; checking those found a fifth that is worse than all of them.
+>
+> **The fifth: nothing in this repository can mint a PRODUCTION trust root.** `broctl build-registry` hardcodes `"production": false` and stamps "DEVELOPMENT REGISTRY"; `keygen --production` refuses; and `bro_signature` refuses a non-production registry whenever the operator pin comes from the production file path. So the ceremony runs honestly end to end and produces a **development** root — enough to exercise every path, **not** enough to close O-2, O-3 or O-5. The runbook would have reached the last hop before failing, or been mistaken for closure. Recorded at the top of both runbooks and the O-1..O-5 inventory; how a production registry is minted is an Owner/architecture decision, not a missing function.
+>
+> **Step 0 tested the wrong thing.** It required `ls` to say Permission denied, but on the 0755 home `adduser --system` creates, `brops` can ENUMERATE the signer's directory while a 0600 key inside stays UNREADABLE — so the gate failed a deployment whose keys were not exposed, and would have passed one with a world-readable key in a private directory. It now writes a real 0600 probe and requires `cat` to be refused, and gained the `chmod 700` it never had.
+>
+> Also: **Step 4 was listed as agent-runnable and is a signing step** — `build_registry` reads every private half and signs with the operator root, so the old text would have put an agent next to the key. The `--key` paths did not resolve (`keygen` writes `{authority_type}.json`). And `audit-head` cannot be granted in the registry — it is in `OUT_OF_REGISTRY_ARTIFACTS` so a compromised registry cannot hand somebody the right to sign the audit log's own head.
+>
+> All five were found by RUNNING it. **The gate is untouched:** `platform_governed_execution_supported()` stays false. Earlier prose below is HISTORY.
 >
 > A Debian box on **Python 3.13** hit `THESE PACKAGES DO NOT MATCH THE HASHES` on `rpds-py`, and would have hit it next on `cffi`. **Not tampering:** the lockfile pinned one wheel per package — the one CI's Python 3.12 resolves — and a 3.13 interpreter selects a different, equally genuine wheel. `pip` cannot tell *a wheel we never listed* from *a wheel somebody swapped*, so refusing was correct. Confirmed against PyPI: the digest downloaded is exactly the one PyPI publishes.
 >
