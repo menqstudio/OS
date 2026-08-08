@@ -1,3 +1,26 @@
+"""The enforcement wall: where it is wired (HookWiringTests) and what it actually
+does when run (HookSubprocessTests).
+
+WHAT THESE TESTS DO NOT PROVE
+-----------------------------
+HookSubprocessTests runs against a fixture checkout built by `_engine_git_root`,
+and hands the hook `BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED`. That is a real
+security acknowledgement, not a test knob: it waives O-1, the gate that refuses to
+trust a control plane the running account can still write into. A temporary
+checkout is writable by definition, so without the acknowledgement the O-1 refusal
+arrives first and displaces every refusal asserted below -- each negative would
+then be observing a gate it is not named after.
+
+So the trade is explicit: with it set, everything below is evidence about the OTHER
+gates and NO evidence whatsoever about O-1. Nothing here may be cited as showing
+the control plane is unwritable or unshadowed; `tests/test_control_plane_writable.py`
+owns that property and pops this variable so nothing can waive it there. Any test
+added here that comes to claim something about control-plane writability or
+bytecode shadowing must be run WITHOUT `hook_env()` -- it would otherwise waive the
+very thing it claims. As of today no test in this module makes such a claim
+(`test_review_shell_deny_is_not_shadowable` is about shadow ENFORCEMENT MODE, not
+about a bytecode shadow).
+"""
 import json
 import os
 import pathlib
@@ -9,18 +32,13 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools"))
+for _path in (ROOT / "tools", pathlib.Path(__file__).resolve().parent):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
+from _engine_git_root import engine_git_root, fixture_environment
 from bro_bind_workspace import build_binding, sign_binding
 from broctl import build_registry, generate_key
-
-
-# Monorepo note: this spawns the real hook subprocess against the runtime root and
-# requires engine/ to BE a git worktree root. In the OS monorepo engine/ is a
-# subdirectory (git top-level is OS/), so the worktree check cannot pass. The hook code
-# is unchanged and audited; only this harness assumption does not hold in a subtree.
-# Re-enabled automatically once engine/ is a checkout root (Phase 1 — see CLAUDE.md).
-_ENGINE_IS_GIT_ROOT = (pathlib.Path(__file__).resolve().parents[1] / ".git").exists()
 
 
 ENFORCEMENT_EVENTS = (
@@ -32,10 +50,12 @@ ENFORCEMENT_EVENTS = (
 class HookWiringTests(unittest.TestCase):
     """The wall is only a wall where it is wired.
 
-    These assertions read settings files and nothing else, so unlike
-    HookSubprocessTests below they are NOT skipped in the monorepo — which
-    matters, because "the enforcement code is fine, nothing invokes it" is
-    precisely the failure this file exists to catch.
+    These assertions read the REAL checkout's settings files and nothing else, so
+    they address the module-level ROOT rather than the git-root fixture the
+    subprocess drills below run against: the wiring of the tree someone actually
+    runs is the subject here, and a fixture copy of it would prove nothing about
+    the original. "The enforcement code is fine, nothing invokes it" is precisely
+    the failure this class exists to catch.
     """
 
     def _settings(self, path):
@@ -102,17 +122,32 @@ class HookWiringTests(unittest.TestCase):
             self.assertIn(event, wired, f"{event} missing from a root-wired wall")
 
 
-@unittest.skipUnless(
-    _ENGINE_IS_GIT_ROOT,
-    "requires engine/ to be its own git worktree root; deferred in the OS monorepo — see CLAUDE.md",
-)
 class HookSubprocessTests(unittest.TestCase):
+    """The wall, run for real, and asked WHY it refused.
+
+    Addresses `cls.root` rather than the module-level ROOT. These drills spawn the
+    real hook against a *repository*: `bro_workspace.git_config_path` reads
+    `<root>/.git`, so the engine directory has to be a checkout root. It is not one
+    in the OS monorepo, and this class used to answer that with
+
+        @unittest.skipUnless(_ENGINE_IS_GIT_ROOT, "deferred in the OS monorepo")
+
+    which meant every proof below skipped in every CI run. `.git` at the engine root
+    is not a prerequisite a test has to be handed, though -- it is one a test can
+    build, so `_engine_git_root` builds it (once per class, ~1s) and the drills run
+    against that. Where engine/ already IS a checkout root the ambient tree is used
+    and nothing is built. Same verdict either way.
+
+    A second, quieter gain: the registry swap below now happens inside the fixture
+    copy, so these tests no longer write into the checkout they are run from.
+    """
+
     @classmethod
     def setUpClass(cls):
         """Every local action now requires an OPERATOR-SIGNED workspace binding
         (H-1), so the hook subprocess needs one it can actually verify. The
         subprocess anchors trust in the on-disk registry at
-        ROOT/config/trusted-keys.json plus the external operator pin, and the
+        <fixture root>/config/trusted-keys.json plus the external operator pin, and the
         committed dev registry's private key is (correctly) not in the repo —
         so this fixture stands in for the offline operator: it generates a test
         operator-root key, swaps in a registry signed by that key for the
@@ -124,10 +159,16 @@ class HookSubprocessTests(unittest.TestCase):
         control-plane digest matches the live tree, and it is written to a
         temporary directory because the issuer refuses to place a binding
         inside the tree it authorises."""
+        cls.root = engine_git_root()
+        # Two environment requirements the fixture tree imposes, each of which
+        # otherwise displaces every refusal asserted below; `_engine_git_root`
+        # documents what they prevent and, for the O-1 acknowledgement, what
+        # accepting it subtracts from these proofs.
+        cls.fixture_env = fixture_environment()
         cls.state_dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-hook-"))
         now = int(time.time())
         cls.operator = generate_key("operator-root", "test-operator-root", False)
-        registry_path = ROOT / "config" / "trusted-keys.json"
+        registry_path = cls.root / "config" / "trusted-keys.json"
         original_registry = registry_path.read_bytes()
         registry_path.write_text(
             json.dumps(build_registry([cls.operator], now, 100_000),
@@ -135,7 +176,7 @@ class HookSubprocessTests(unittest.TestCase):
             encoding="utf-8")
         cls.addClassCleanup(registry_path.write_bytes, original_registry)
         binding_path = cls.state_dir / "binding.json"
-        binding = build_binding(ROOT, "bro-test", "test-operator", 3600, now)
+        binding = build_binding(cls.root, "bro-test", "test-operator", 3600, now)
         binding_path.write_text(json.dumps(sign_binding(binding, cls.operator)),
                                 encoding="utf-8")
         cls.binding_env = {
@@ -151,18 +192,38 @@ class HookSubprocessTests(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.state_dir, ignore_errors=True)
 
-    def run_hook(self, event, payload, env=None):
-        process_env = os.environ.copy()
+    def hook_argv(self, script, *arguments):
+        """`-B`, always: the wired command in .claude/settings.json carries it (O-1),
+        and a probe that dropped it would mint bytecode under a digest root and so
+        manufacture the very shadow whose refusal masks the refusal under test."""
+        return [sys.executable, "-B", str(self.root / "runtime" / script), *arguments]
+
+    def hook_env(self, *, drop=(), **overrides):
+        """The ambient environment, plus what the fixture tree requires.
+
+        Every subprocess below goes through here so no drill can forget the fixture
+        requirements and land on a displaced refusal instead of its own.
+
+        `drop` is absolute: it removes the name from the ambient environment AND from
+        the overrides, so a negative that exists to prove "the wall refuses when X is
+        missing" cannot have X handed back to it by the shared binding environment.
+        """
+        process_env = {k: v for k, v in os.environ.items() if k not in drop}
         # An ambient production file pin would conflict with the test env pin.
         process_env.pop("BRO_OPERATOR_ROOT_PUBKEY_FILE", None)
-        process_env.update(self.binding_env)
+        process_env.update(self.fixture_env)
+        process_env.update({k: v for k, v in overrides.items() if k not in drop})
+        return process_env
+
+    def run_hook(self, event, payload, env=None):
+        process_env = self.hook_env(**self.binding_env)
         process_env.update(env or {})
         return subprocess.run(
-            [sys.executable, str(ROOT / "runtime" / "bro_hook.py"), event],
+            self.hook_argv("bro_hook.py", event),
             input=json.dumps(payload),
             text=True,
             capture_output=True,
-            cwd=ROOT,
+            cwd=self.root,
             env=process_env,
         )
 
@@ -170,19 +231,18 @@ class HookSubprocessTests(unittest.TestCase):
         # Session state stays configured so this isolates the workspace gate.
         # Dropping it too would deny at the freeze gate, which cannot tell a
         # clean session from a frozen one without it and so refuses as well.
-        process_env = {k: v for k, v in os.environ.items()
-                       if k != "BRO_WORKSPACE_BINDING"}
-        process_env["BRO_MODE"] = "review"
-        process_env["BRO_SESSION_STATE_DIR"] = self.binding_env["BRO_SESSION_STATE_DIR"]
+        process_env = self.hook_env(
+            drop=("BRO_WORKSPACE_BINDING",), BRO_MODE="review",
+            BRO_SESSION_STATE_DIR=self.binding_env["BRO_SESSION_STATE_DIR"])
         result = subprocess.run(
-            [sys.executable, str(ROOT / "runtime" / "bro_hook.py"), "pre-tool"],
+            self.hook_argv("bro_hook.py", "pre-tool"),
             input=json.dumps({
                 "session_id": "hook-nobinding",
                 "tool_name": "Read",
                 "tool_input": {"file_path": "README.md"},
                 "tool_use_id": "toolu_nobinding",
             }),
-            text=True, capture_output=True, cwd=ROOT, env=process_env,
+            text=True, capture_output=True, cwd=self.root, env=process_env,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
@@ -191,20 +251,17 @@ class HookSubprocessTests(unittest.TestCase):
     def test_pre_tool_denies_without_session_state_dir(self):
         # Without a state directory the freeze gate cannot prove the session is
         # not already frozen, so it must refuse rather than assume it is clean.
-        process_env = {k: v for k, v in os.environ.items()
-                       if k != "BRO_SESSION_STATE_DIR"}
-        process_env.update(self.binding_env)
-        del process_env["BRO_SESSION_STATE_DIR"]
-        process_env["BRO_MODE"] = "review"
+        process_env = self.hook_env(drop=("BRO_SESSION_STATE_DIR",),
+                                    **{**self.binding_env, "BRO_MODE": "review"})
         result = subprocess.run(
-            [sys.executable, str(ROOT / "runtime" / "bro_hook.py"), "pre-tool"],
+            self.hook_argv("bro_hook.py", "pre-tool"),
             input=json.dumps({
                 "session_id": "hook-nostate",
                 "tool_name": "Read",
                 "tool_input": {"file_path": "README.md"},
                 "tool_use_id": "toolu_nostate",
             }),
-            text=True, capture_output=True, cwd=ROOT, env=process_env,
+            text=True, capture_output=True, cwd=self.root, env=process_env,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
@@ -234,7 +291,7 @@ class HookSubprocessTests(unittest.TestCase):
         # is otherwise well-formed and in-date.
         unsigned_path = self.state_dir / "unsigned-binding.json"
         unsigned_path.write_text(
-            json.dumps(build_binding(ROOT, "bro-unsigned", "test-operator",
+            json.dumps(build_binding(self.root, "bro-unsigned", "test-operator",
                                      3600, int(time.time()))),
             encoding="utf-8")
         result = self.run_hook(
@@ -364,11 +421,12 @@ class HookSubprocessTests(unittest.TestCase):
 
     def test_identity_hook_parses_stdin(self):
         result = subprocess.run(
-            [sys.executable, str(ROOT / "runtime" / "bro_identity_hook.py")],
+            self.hook_argv("bro_identity_hook.py"),
             input=json.dumps({"tool_name": "Read", "tool_input": {}}),
             text=True,
             capture_output=True,
-            cwd=ROOT,
+            cwd=self.root,
+            env=self.hook_env(),
         )
         self.assertEqual(result.returncode, 0)
 
@@ -382,12 +440,11 @@ class HookSubprocessTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         profile = tmp / "profile.json"
         profile.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
-        env = os.environ.copy()
-        env.update({"BRO_MODE": "work", "BRO_AGENT_PROFILE": str(profile)})
+        env = self.hook_env(BRO_MODE="work", BRO_AGENT_PROFILE=str(profile))
         result = subprocess.run(
-            [sys.executable, str(ROOT / "runtime" / "bro_identity_hook.py")],
+            self.hook_argv("bro_identity_hook.py"),
             input=json.dumps({"tool_name": "Write", "tool_input": {"file_path": "x.py"}}),
-            text=True, capture_output=True, cwd=ROOT, env=env,
+            text=True, capture_output=True, cwd=self.root, env=env,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
