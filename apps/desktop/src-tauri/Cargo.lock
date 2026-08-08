@@ -238,11 +238,13 @@ dependencies = [
 name = "brops-provision"
 version = "0.1.0"
 dependencies = [
+ "brops-win-live",
  "ed25519-dalek",
  "getrandom 0.2.17",
  "serde_json",
  "sha2",
  "tempfile",
+ "windows 0.58.0",
 ]
 
 [[package]]
