@@ -120,3 +120,32 @@ class SnippetGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CitedPaths(unittest.TestCase):
+    """The path half of the gate. Three wrong paths shipped in one week."""
+
+    def paths(self, body: str) -> list[str]:
+        return gate.check_paths(doc(body))
+
+    def test_a_path_that_exists_passes(self):
+        self.assertEqual([], self.paths("python3 engine/tools/broctl.py keygen"))
+
+    def test_a_path_that_does_not_exist_is_reported(self):
+        problems = self.paths("python3 engine/tools/brocotl.py keygen")
+        self.assertTrue(any("does not exist" in p for p in problems), problems)
+
+    def test_a_path_is_found_outside_backticks(self):
+        """The first matcher required backticks and found ONE path in a document citing a
+        dozen, then printed GREEN. Under-reporting confidently is the defect being caught."""
+        problems = self.paths("```bash\ncd ~/OS && python3 engine/tools/nope.py\n```")
+        self.assertTrue(any("nope.py" in p for p in problems), problems)
+
+    def test_runtime_paths_are_not_claimed_to_be_checked(self):
+        """/etc, /opt and /media cannot be checked from a repository, and the gate must not
+        imply that it did. Two of this week's three wrong paths were of exactly this kind."""
+        self.assertEqual([], self.paths("cat /etc/brops/trusted-keys.json"))
+        self.assertEqual([], self.paths("ls /media/usb/bro-root/operator-root.json"))
+
+    def test_a_directory_without_an_extension_is_not_treated_as_a_file(self):
+        self.assertEqual([], self.paths("discover -s engine/tests -t engine/tests"))

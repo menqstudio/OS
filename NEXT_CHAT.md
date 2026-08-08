@@ -1,6 +1,10 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #74 · branch `docs/owner-page-current`** (base `main`, tip `1d623ad`, task T-017).
+> **⏭️ CURRENT ACTIVE: PR #75 · branch `fix/step7-defects-round2`** (base `main`, tip `69a69c4`, task T-017).
+>
+> PR #75 fixes three Step 7 defects a second real Debian run found, all of them mine. The serious one: the wrong-key negative read the operator public key out of /media/usb/bro-root/operator-root.json, the file this same document says holds BOTH halves -- so an agent-runnable step sent an agent into the private key. It now reads payload.operator_public_key from the published registry, verified by running the expression against the real file. The deployed-tree check could not run at all: it must run as brops, and bro_protected imports bro_workspace imports bro_signature imports cryptography, which brops does not have; a root-owned virtualenv at /opt/brops/venv fixes it, explicitly not --break-system-packages. And one check needs Steps 3 and 4 first, so it is marked NOT RUN rather than left to be recorded as passed. check_runbook_snippets now also checks every repo-relative path the runbooks cite, and prints on every run that /etc, /opt and /media cannot be checked from a repository. Step 6 passed end to end with no intervention on that run. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor.
+>
+> **The gate is untouched.** `platform_governed_execution_supported()` stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.
 >
 > PR #74 is housekeeping on docs/OWNER_ACTION_REQUIRED.md after #73 merged (1d623ad): the two custody sites move from being-fixed to closed, and a short section records the one thing the night could not explain -- a Windows custody test that failed on one CI run and passed on the next with no change to its behaviour. The Windows job now runs -v and names every skip; the current run shows that test executing and passing rather than skipping, but the flip is unexplained and is written down rather than treated as resolved by a green. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor.
 >
