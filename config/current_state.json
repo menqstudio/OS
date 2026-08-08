@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "12f731cd9bf5727cda3ceea5aaa1e6899c4e7aca",
-    "snapshot_branch": "fix/step7-and-o1-coverage",
+    "baseline_main_head_at_sync": "a018ea72b06053f6e54e04d8bf6176173e2205dd",
+    "snapshot_branch": "fix/floor-and-store-custody",
     "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 0efa99e (PR #65 merged). The active branch chore/staleness-sweep is a direct child of it.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #72). PR #72's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #73). PR #73's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "fix/step7-and-o1-coverage"
+    "branch": "fix/floor-and-store-custody"
   },
   "prs": [],
   "status_tokens": {
@@ -212,11 +212,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 72,
-    "branch": "fix/step7-and-o1-coverage",
+    "number": 73,
+    "branch": "fix/floor-and-store-custody",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #72 body.",
-    "note": "PR #72 fixes three defects a real Debian deployment found in docs/DEBIAN_DEPLOYMENT.md, plus the coverage hole they exposed. Step 6's recovery path did not recover: remount,rw leaves the mount up, rm -rf dies on the mountpoint after emptying the tree, and cp -a then silently nests into engine/engine with exit 0. Step 7 told you to run the test suite from the deployed tree, which produces fourteen failures on a CORRECTLY deployed box, none of them real. And the O-1 probe's central claim -- that it answers by attempting a create rather than by reading permission bits -- was pinned by a skipUnless(nt) test in a suite that had only ever run on ubuntu, so replacing the create probe with os.access passed everything on Linux. Fixed at the syscall on both platforms plus a new engine-windows job; all 1214 tests were run on Windows before wiring it. Adds tools/check_runbook_snippets.py, which parses every python3 -c snippet in the runbooks and checks each call against the real signature. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #73 body.",
+    "note": "PR #73 follows #72 (merged, a018ea7). Auditing the operator-pin fix found two more sites asking the same custody question the same broken way: bro_completion._refuse_self_owned_floor (R-06) returns before checking anything when os.name is not posix, so the entire anti-rollback custody rule is a no-op on Windows -- on a rule whose own docstring says the F-13/F-14 attack needed exactly one capability, write access to the evidence store; and brops_evidence_store._ensure_dir keeps both its 0700 creation and its world-accessible refusal inside a posix branch, so on Windows the store directory is created with whatever it inherits and nothing checks it. A check that returns early on a platform is indistinguishable from no check. Also corrects the audit LEDGER, which described F-06 as the owner-SID comparison #72 removed and claimed the Windows tests were all skipped; the audit REPORTS are untouched because they record what an auditor found on a date. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",
