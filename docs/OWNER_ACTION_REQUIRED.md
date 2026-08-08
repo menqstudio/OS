@@ -86,6 +86,20 @@ from you.
 - The read-only control plane (O-1) is **deployed and verified** on the Debian box — root itself
   cannot write to `/opt/brops/engine` — but O-1 stays open until the acknowledgement path is
   removed rather than merely unused.
+- **22 tests skipped in every CI run**, including the entire live enforcement-wall subprocess suite
+  and the execution-transaction drills, because both modules are gated on `engine/` being its own
+  git worktree root and it is not one in this monorepo. They were proved to pass against a
+  throwaway git-root copy of the tree; being fixed with a fixture, so they run rather than being
+  waived.
+- **A Windows security check did nothing where it mattered.** The operator-root pin refuses a pin
+  file owned by the account reading it (audit F-06) — an anchor one write away from being whatever
+  that account wants. On the CI runner it did not refuse, because an administrator's files are
+  owned by `BUILTIN\Administrators` rather than by the user, so the "is the owner me?" comparison
+  came back unequal. The question is being changed to the one that matters: *can the reading
+  account rewrite this file?* Found by running the engine suite on Windows for the first time.
+
+*The last two are why `engine-windows` and the prerequisite guard were added in PR #72: a test
+that never runs and a check that never fires both read exactly like coverage.*
 
 ---
 
