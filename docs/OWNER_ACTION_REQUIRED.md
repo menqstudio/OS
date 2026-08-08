@@ -45,10 +45,24 @@ Shipping a signer helper the app invokes itself would produce anchors that verif
 because the account that signs the anchor is the account that can rewrite what it attests. That is
 precisely the failure the item exists to name, so it was not built.
 
-Phase 10's exit criteria allow "closed **or owner-signed-deferred**". This is the deferral case.
-The decision is yours: accept O-2 as a documented residual for the desktop shape, or require a
-second principal — a service account, a separate machine — and accept that the product then needs
-one.
+You chose the second principal, and it is built: a Windows service under a virtual account, its own
+key, reached over the existing named pipe. Proved end to end against the real `bro_audit_log` — and
+proved, in the same run, that it does not yet close O-2.
+
+**Why.** `provision()` keeps every private half in the app's own trust store, and two of those keys
+are anchor-capable. `verify_signed_payload` accepts any active registry key under either anchor
+authority. So the ledger's writer can truncate the chain, re-sign it with a key it holds, and the
+real verifier returns green. `bro_audit_log` states the assumption four lines above the constant —
+*"The builder/writer of the ledger holds neither"* — and that stopped being true the moment the app
+started minting its own root. Nothing failed, because the sentence is a comment.
+
+**What closing it needs**, and why it is not a signer change: the registry must stop carrying an
+anchor-capable key whose private half the app holds. The clean form is a dedicated anchor authority
+that only the service ever possesses. That collides with O-3 and O-5, which both mint with
+operator-root, so it is a custody restructure rather than a patch. It is next.
+
+A self-destructing test holds the line meanwhile: it asserts the gap still exists and goes red the
+day it is fixed.
 
 ---
 
