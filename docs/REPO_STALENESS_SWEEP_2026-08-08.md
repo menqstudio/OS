@@ -39,14 +39,26 @@ Run at `0efa99e`, before any change in this sweep.
 | `check_ledger_ddl_parity` | GREEN — supervisor ledger DDL single-source, 10 load-bearing constraints present |
 | `check_reachability` | GREEN — **87 of 92** Tauri commands invoked from the frontend; the other 5 declared with written reasons |
 | `check_release_signing` | GREEN — updater state UNPROVISIONED, 10 Owner secrets declared and named consistently |
+| `check_runbook_snippets` | GREEN — 5 pasted `python3 -c` calls in the runbooks checked against the real signatures |
 | `check_repo_state` | GREEN — `current_state.json` exact-head-matches live GitHub |
 | `check_residual_items` | GREEN — 5 items inventoried, **all 5 OPEN**, every cited engine path exists |
 | `check_spec_references` | GREEN — every `§` reference in source is declared (7 partial, 43 unreviewed) |
 | `check_token_parity` | GREEN — `tokens.ts` and `tokens.css` agree on every `--menq-*` in both themes |
 | `generate_agent_definitions --check` | GREEN — **262** agent definitions match the pack + authority registries |
 
-**15 of 15 green.** The `.claude/agents/` tree is generated, so "262 definitions" is a checked
+**16 of 16 green.** The `.claude/agents/` tree is generated, so "262 definitions" is a checked
 fact rather than a number someone typed.
+
+`check_runbook_snippets` is the newest and the only one here that is not stdlib-only: it imports
+the engine modules the runbook snippets call, because the point is to compare against the module
+that actually loads at runtime rather than to re-parse the source with a second, weaker parser.
+
+Two CI jobs were added alongside it, and both found real defects within minutes of existing.
+`engine-windows` runs the engine suite on `windows-latest` — it had only ever run on ubuntu, so
+every `skipUnless(os.name == "nt")` test in it executed in no job at all. And a fixture now builds
+the git root that `test_hooks_subprocess.py` and `test_full_execution_transaction_e2e.py` were
+gated on, recovering **21 tests that had never run once**, including the entire live
+enforcement-wall subprocess suite.
 
 ---
 
