@@ -353,9 +353,19 @@ class OperatorRootPinTests(SignatureFixture):
         self.assertIn("the very account reading it", message)
         self.assertIn(ENV_PIN_SELF_OWNED_ACK, message)
         if _os.name == "nt":
-            self.assertRegex(message, r"granted (FILE_WRITE_DATA|FILE_APPEND_DATA|"
-                                      r"DELETE|WRITE_DAC|WRITE_OWNER) on it")
-            self.assertIn("its owner", message)
+            # HOW the right arrives varies with the account, and the message must name the
+            # route so the reader knows what to change. A workstation user owns the files
+            # they create, and the message says "its owner". An administrator does NOT: the
+            # file is owned by BUILTIN\Administrators and the right arrives through a group
+            # ACE, or through a privilege that makes the DACL irrelevant. Requiring the
+            # ownership wording made this pass on a workstation and fail on the CI runner —
+            # on a refusal that was working perfectly. Assert that a route is named, not
+            # that one particular route is.
+            self.assertRegex(message, r"(granted (FILE_WRITE_DATA|FILE_APPEND_DATA|DELETE|"
+                                      r"WRITE_DAC|WRITE_OWNER) on it through .+|"
+                                      r"holds Se\w+Privilege)")
+            self.assertRegex(message, r"(its owner|an access-allowed ACE for .+|"
+                                      r"holds Se\w+Privilege)")
         else:
             self.assertIn("owned by the very account reading it", message)
 
