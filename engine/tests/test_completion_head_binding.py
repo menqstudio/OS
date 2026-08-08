@@ -479,15 +479,24 @@ class FloorCustodyTests(unittest.TestCase):
         difference is asserted.
 
         The descriptor is built from SDDL rather than stamped on a real directory: assigning
-        BUILTIN\\Administrators as owner needs elevation, and a test that can only run
-        elevated is a test that does not run.
+        an owner needs elevation, and a test that can only run elevated is a test that does
+        not run.
+
+        The owner is SYSTEM, and that is load-bearing. The first version used
+        BUILTIN\\Administrators, reasoning that the old "is the owner me?" proxy would then
+        answer NO. It does on an unelevated workstation, where the token carries
+        Administrators DENY_ONLY. On the CI runner the token IS Administrators, so the process
+        is the owner, collects the owner's implicit WRITE_DAC, and the FILE list stops being
+        blind — the assertion below failed against a completely correct implementation. SYSTEM
+        is never the caller on either box.
         """
         import bro_custody
         from test_signature_authority import _descriptor_from_sddl
 
-        # Owner BUILTIN\Administrators, so the old "is the owner literally me?" proxy answers
-        # NO; FILE_DELETE_CHILD granted to Authenticated Users, which every token carries.
-        held = _descriptor_from_sddl("O:BAG:BAD:(A;;0x00000040;;;AU)")
+        # Owner SYSTEM, so the old "is the owner literally me?" proxy answers NO on any token
+        # this suite can run under; FILE_DELETE_CHILD granted to Authenticated Users, which
+        # every token carries.
+        held = _descriptor_from_sddl("O:SYG:SYD:(A;;0x00000040;;;AU)")
         directory = pathlib.Path(r"C:\nowhere\head-floor")
         grant = bro_custody.windows_rewrite_grant(
             directory, "the evidence head floor", held.descriptor, held.owner, held.dacl,

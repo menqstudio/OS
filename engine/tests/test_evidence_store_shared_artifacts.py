@@ -234,7 +234,7 @@ class StoreCustodyTests(unittest.TestCase):
         else:
             _apply_dacl(self, directory,
                         "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"
-                        "(A;OICI;0x1200a9;;;WD)")
+                        "(A;OICI;0x1200a9;;;WD)", expect="Everyone")
         with self.assertRaises(EvidenceStoreError) as caught:
             EvidenceStore(directory)
         message = str(caught.exception)
@@ -384,8 +384,14 @@ def _dacl_sddl(test_case, path) -> str:
     return printed.value
 
 
-def _apply_dacl(test_case, path, sddl: str) -> None:
-    """Stamp an explicit protected DACL on a directory this process owns, or skip saying why."""
+def _apply_dacl(test_case, path, sddl: str, expect: str | None = None) -> None:
+    """Stamp an explicit protected DACL on a directory this process owns, or skip saying why.
+
+    ``expect`` is a principal name that must appear in the directory's ACL afterwards,
+    read back independently. Pass it whenever the test's premise IS the ACE — otherwise
+    a host that quietly declines the change produces a failure that reads like a defect
+    in the rule.
+    """
     import ctypes
     from ctypes import wintypes
 
@@ -408,6 +414,18 @@ def _apply_dacl(test_case, path, sddl: str) -> None:
             f"cannot set the DACL of {path} to {sddl!r} (SetNamedSecurityInfo error "
             f"{status}); this host cannot construct the configuration under test, so it is "
             "NOT covered here")
+    if expect is not None:
+        # Read it back with a tool that is not the code under test, and not the call that
+        # wrote it. A zero status is the API saying it accepted the request, not the
+        # filesystem saying the request survived — and a test whose premise is unverified
+        # reports "the rule did not fire" when the truth may be "the rule was never given
+        # anything to fire on". That distinction is the whole subject of this module.
+        landed = subprocess.run(["icacls", str(path)], capture_output=True, text=True).stdout
+        if expect not in landed:
+            test_case.skipTest(
+                f"the DACL did not survive on this host: {expect!r} is absent from icacls "
+                f"output after setting {sddl!r}. The configuration under test could not be "
+                f"constructed, so it is NOT covered here.\n{landed.strip()[:600]}")
 
 
 if __name__ == "__main__":

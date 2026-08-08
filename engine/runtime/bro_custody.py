@@ -683,7 +683,6 @@ def windows_refuse_world_accessible(path: pathlib.Path, env_name: str,
     Fail closed: a NULL DACL (everyone has full access), an unreadable ACE, or an ACE shape
     this check cannot reason about refuse rather than assume the directory is private.
     """
-    return
     import ctypes
     from ctypes import wintypes
 
