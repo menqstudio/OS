@@ -46,6 +46,19 @@ registry is bound to an operator-pinned anti-rollback floor
 (BRO_OPERATOR_REGISTRY_MIN[_FILE]): a superseded — but still operator-signed —
 registry replayed from history is refused, which is what makes key revocation
 stick.
+
+WHERE the registry is read from is a deployment question, not a source-tree one.
+`load_trusted_keys` read `<root>/config/trusted-keys.json` and every engine caller
+passed the engine's own tree, so a deployment that provisions its trust material
+elsewhere — the desktop install mints keys, a signed registry, the out-of-registry
+pin and a floor under the app data directory — was invisible, and the development
+registry committed in `engine/config/` answered for everything instead (O-3).
+BRO_TRUSTED_REGISTRY_ROOT names the deployment's registry root; unset, behaviour is
+byte-for-byte what it was. Redirecting the READ is safe precisely because the ANCHOR
+does not move with it: the pin still comes from outside the registry, under its own
+custody rules, and `resolve_registry_root` refuses an override that contains the pin
+or the floor, so one variable can never hand over the registry and the thing that
+authenticates it.
 """
 
 from __future__ import annotations
@@ -71,6 +84,9 @@ from typing import Any
 from bro_custody import (
     ENV_PIN_SELF_OWNED_ACK,
     PIN_SELF_OWNED_ACK_VALUE,
+    WINDOWS_DIRECTORY_REWRITE_RIGHTS,
+    WINDOWS_DIRECTORY_WRITE_MASK,
+    platform_name,
     posix_rewrite_verdict,
     refuse_windows_writable,
     self_owned_acknowledged as _self_owned_pin_acknowledged,
@@ -124,6 +140,30 @@ CI_FLAG_VALUE = "ci"
 # replays cleanly, so key revocation cannot be enforced.
 ENV_REGISTRY_MIN = "BRO_OPERATOR_REGISTRY_MIN"
 ENV_REGISTRY_MIN_FILE = "BRO_OPERATOR_REGISTRY_MIN_FILE"
+
+# WHERE the registry is read from (O-3). `load_trusted_keys` reads
+# `<root>/config/trusted-keys.json`, and every engine caller passes the engine's OWN
+# tree, so a deployment that provisions its trust material somewhere else — the desktop
+# install mints keys, a signed registry, the out-of-registry operator pin and an
+# anti-rollback floor under the app data directory — was invisible to the engine, and
+# the development registry committed at `engine/config/trusted-keys.json` answered for
+# everything instead. This names the deployment's registry root.
+#
+# Redirecting WHERE the registry is read is safe only because the ANCHOR does not move
+# with it. The operator-root pin comes from outside the registry (ENV_PIN_FILE, with its
+# own custody rules) and the registry payload is never the pin; a redirect that could
+# also select its own anchor would hand an attacker the whole trust root, so the two are
+# kept independent and `resolve_registry_root` refuses an override that contains the pin
+# or the anti-rollback floor. Everything the registry has to clear — the operator
+# signature under the external pin, the production binding, the rollback floor, the
+# operator entry — is unchanged and runs against whatever this variable selects.
+#
+# NOT `BRO_REGISTRY_ROOT`: that name is already taken by `bridge/engine_sidecar.py`,
+# where it is a presence-only provisioning check whose value nothing reads. Giving the
+# engine's trust root the name a shipped surface already uses for something else would
+# silently turn "I set this so the sidecar's provisioning check passes" into "I moved
+# the trust root", which is exactly the class of change this variable must never make.
+ENV_REGISTRY_ROOT = "BRO_TRUSTED_REGISTRY_ROOT"
 
 OPERATOR = "operator-root"
 ISSUER = "issuer"
@@ -542,6 +582,222 @@ def resolve_registry_floor(env: Mapping[str, str] | None = None,
         floor, ENV_REGISTRY_MIN_FILE if file_floor else ENV_REGISTRY_MIN)
 
 
+def _same_directory(left: pathlib.Path, right: pathlib.Path) -> bool:
+    """Do two paths name the same directory? Lexically, or after resolution.
+
+    Compared both ways because the callers spell their roots differently — a module
+    constant, an env var, a test fixture — and a redirect that treated
+    ``/opt/bro/engine`` and ``/opt/bro/engine/.`` as different roots would refuse a
+    correctly configured deployment.
+    """
+    if pathlib.Path(os.path.normpath(str(left))) == pathlib.Path(os.path.normpath(str(right))):
+        return True
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:  # pragma: no cover - resolve() is non-strict; a failure means "not equal"
+        return False
+
+
+def _refuse_writable_registry_root(directory: pathlib.Path, env_name: str) -> None:
+    """Can the account reading the redirected registry rewrite the directory it lives in?
+
+    The same question the operator pin asks of its file (audit F-06) and the evidence
+    floor asks of its directory (audit R-06), asked of the registry root, through the
+    same ``bro_custody`` decision so the three cannot drift. The DIRECTORY right list is
+    used, not the file one: on a directory, "rewrite" also means adding an entry and —
+    via FILE_DELETE_CHILD — deleting one without holding DELETE on it, and swapping the
+    registry file out from under the reader is precisely the move.
+
+    What this does and does not buy is worth stating, because the honest version is
+    smaller than it looks. The registry is operator-signed, bound to an external pin,
+    and floored against rollback, so an account that can write this directory still
+    cannot introduce a key. What it CAN do is replace the registry with another the
+    operator signed — a superseded one when no floor is pinned, or a different
+    deployment's — and it can delete it and stop the engine. That is a downgrade and a
+    denial, not a forgery, and it is what this refusal is for.
+
+    A platform with neither branch REFUSES: "no permission model here" is not "no
+    permission requirement", and an unchecked redirect is the thing being asked for.
+    The single acknowledgement (``BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged``) that
+    already covers the pin, the evidence floor and the evidence store covers this too —
+    a deployment either has a second principal to offer or it does not, and a
+    single-user desktop that provisions its own trust into its own app data directory
+    does not. It must say so here rather than be silently exempted.
+    """
+    if _self_owned_pin_acknowledged():
+        return
+    if platform_name() == "posix":
+        info = directory.stat()
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise SignatureError(
+                f"{env_name} is group/other-writable: {directory}; a trust store anyone "
+                f"can replace is not a trust store")
+        verdict = posix_rewrite_verdict(directory, info, env_name, SignatureError)
+        if verdict is not None:
+            if verdict.kind == "owner":
+                raise SignatureError(
+                    f"{env_name} is owned by the very account reading it (uid {verdict.st_uid}), "
+                    f"which can replace the registry inside it at will; point it at a directory "
+                    f"owned by another principal, or set "
+                    f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge that "
+                    f"this deployment has no principal separation: {directory}")
+            if verdict.kind == "permission":
+                raise SignatureError(
+                    f"{env_name} is owned by uid {verdict.st_uid}, but the account reading it "
+                    f"(euid {verdict.euid}) has write permission on it anyway"
+                    + (" — running as root, which can write any directory, so no filesystem "
+                       "permission keeps this process out" if verdict.euid == 0 else "") +
+                    f", so it can replace the registry inside it; point it at a directory this "
+                    f"process cannot write, or set "
+                    f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge that "
+                    f"this deployment has no principal separation: {directory}")
+            raise SignatureError(
+                f"{env_name} itself is owned by uid {verdict.st_uid}, but its parent "
+                f"{verdict.parent} (uid {verdict.parent_uid}, mode {verdict.parent_mode:04o}) is "
+                f"writable by the account reading it, which can therefore rename the whole "
+                f"registry root away and put its own in its place regardless of this "
+                f"directory's mode; put it under a directory this process cannot write, or set "
+                f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge that this "
+                f"deployment has no principal separation: {directory}")
+    elif platform_name() == "nt":
+        refuse_windows_writable(
+            directory, env_name, SignatureError,
+            rights=WINDOWS_DIRECTORY_REWRITE_RIGHTS,
+            write_mask=WINDOWS_DIRECTORY_WRITE_MASK,
+            on_rewrite=lambda right, principal: (
+                f"{env_name} can be rewritten by the very account reading it: this "
+                f"process's token is granted {right} on it through {principal}, so it can "
+                f"replace the registry inside it. Point it at a directory under a principal "
+                f"this process cannot impersonate, or set "
+                f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge that "
+                f"this deployment has no principal separation: {directory}"),
+            on_privilege=lambda privilege: (
+                f"{env_name} can be rewritten by the very account reading it: this "
+                f"process's token holds {privilege}, which lets it take ownership of the "
+                f"directory and rewrite the DACL, so no ACL on it can keep this process out. "
+                f"Run the engine under an account without that privilege (an elevated "
+                f"administrator always holds it), or set "
+                f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to acknowledge that "
+                f"this deployment has no principal separation: {directory}"))
+    else:
+        raise SignatureError(
+            f"{env_name} cannot be checked on {platform_name()}: this runtime has no way to "
+            f"ask who may rewrite it there, and an unchecked trust store is not a trust "
+            f"store. Set {ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} only if this "
+            f"deployment genuinely has no principal separation to offer: {directory}")
+
+
+def _refuse_anchor_inside_registry_root(registry_root: pathlib.Path,
+                                        env: Mapping[str, str], env_name: str) -> None:
+    """The redirect may not select its own anchor.
+
+    "The registry payload is never the pin" is what makes writing the registry
+    insufficient to introduce a key. Moving WHERE the registry is read keeps that
+    property only while the pin — and the anti-rollback floor, which is the other half
+    of "this registry is the current one" — stay outside whatever the redirect selects.
+    Otherwise one variable hands over the registry, the anchor that authenticates it and
+    the floor that keeps it current, and the external anchor rule becomes decorative.
+
+    Checked lexically AND after resolution, against both spellings of the registry root,
+    so neither a ``..`` nor a symlink can launder an anchor into the redirected tree.
+    """
+    boundaries = {registry_root}
+    try:
+        boundaries.add(registry_root.resolve())
+    except OSError:  # pragma: no cover - non-strict resolve; keep the lexical boundary
+        pass
+    for anchor_var in (ENV_PIN_FILE, ENV_REGISTRY_MIN_FILE):
+        raw = env.get(anchor_var)
+        if not raw:
+            continue
+        candidate = pathlib.Path(raw)
+        forms = {pathlib.Path(os.path.normpath(str(candidate)))}
+        try:
+            forms.add(candidate.resolve())
+        except OSError:  # pragma: no cover - an unresolvable anchor fails later, by name
+            pass
+        for form in forms:
+            for boundary in boundaries:
+                if form == boundary or boundary in form.parents:
+                    raise SignatureError(
+                        f"{anchor_var} lives inside {env_name} ({form} is under "
+                        f"{boundary}): the registry may not name its own trust anchor, and "
+                        f"a redirect that carries the anchor with it is the same defect by "
+                        f"another route. Keep the operator pin and the anti-rollback floor "
+                        f"outside the registry root")
+
+
+def resolve_registry_root(root: pathlib.Path = ROOT,
+                          *, env: Mapping[str, str] | None = None) -> pathlib.Path:
+    """Where this deployment's trusted-key registry actually lives (O-3).
+
+    Unset — the default, and every deployment that exists today — returns ``root``
+    unchanged, having touched neither the filesystem nor the environment beyond one
+    dictionary lookup. Nothing about an existing deployment changes.
+
+    Set, it must clear custody rules at least as strong as the operator pin's, because a
+    trust store selected by a variable is only as good as the rules on what may be
+    selected: an absolute path (a relative one would mean "wherever this process happens
+    to be"), no symlink at ANY component (an intermediate link would let something that
+    can write one directory redirect the trust root), an existing directory that actually
+    holds ``config/trusted-keys.json`` as a regular non-symlink file (so a typo refuses by
+    name instead of surfacing later as "cannot read trusted key registry"), a directory
+    the reading account cannot rewrite, and — the rule that keeps the redirect honest — no
+    operator pin or anti-rollback floor inside it.
+
+    The one thing this must never become is a redirect half the callers honour: a
+    deployment where the hook consults the provisioned trust and the supervisor consults
+    the stale committed one, with nothing saying so, is worse than no redirect at all. So
+    when the override is set, a caller asking for the engine's own tree gets the override,
+    a caller asking for the override gets the override, and a caller asking for anything
+    else is REFUSED by name rather than quietly served a different registry from the one
+    the rest of the process is using. Tests and tools that name a registry root are
+    unaffected while the variable is unset, which is how they run.
+    """
+    env = os.environ if env is None else env
+    raw = (env.get(ENV_REGISTRY_ROOT) or "").strip()
+    if not raw:
+        return root
+    override = pathlib.Path(raw)
+    if not override.is_absolute():
+        raise SignatureError(f"{ENV_REGISTRY_ROOT} must be an absolute path: {raw!r}")
+    # No symlink at ANY component, walked from the filesystem root down, exactly as the
+    # pin file is walked: an intermediate link is a redirect inside the redirect.
+    for component in (*reversed(override.parents), override):
+        if component.is_symlink():
+            raise SignatureError(
+                f"{ENV_REGISTRY_ROOT} path component is a symlink: {component}")
+    try:
+        info = override.lstat()
+    except OSError as exc:
+        raise SignatureError(f"cannot stat {ENV_REGISTRY_ROOT}: {exc}") from exc
+    if not stat.S_ISDIR(info.st_mode):
+        raise SignatureError(
+            f"{ENV_REGISTRY_ROOT} must be a directory holding {REGISTRY_REL}: {override}")
+    registry_file = override / REGISTRY_REL
+    if registry_file.is_symlink():
+        raise SignatureError(
+            f"{ENV_REGISTRY_ROOT}/{REGISTRY_REL} is a symlink: {registry_file}; the "
+            f"registry file itself may not redirect elsewhere")
+    try:
+        registry_info = registry_file.lstat()
+    except OSError as exc:
+        raise SignatureError(f"{ENV_REGISTRY_ROOT} holds no {REGISTRY_REL}: {exc}") from exc
+    if not stat.S_ISREG(registry_info.st_mode):
+        raise SignatureError(
+            f"{ENV_REGISTRY_ROOT}/{REGISTRY_REL} must be a regular file: {registry_file}")
+    _refuse_writable_registry_root(override, ENV_REGISTRY_ROOT)
+    _refuse_anchor_inside_registry_root(override, env, ENV_REGISTRY_ROOT)
+    if _same_directory(root, ROOT) or _same_directory(root, override):
+        return override
+    raise SignatureError(
+        f"{ENV_REGISTRY_ROOT}={override} redirects this deployment's trusted-key "
+        f"registry, but this caller asked for {root}. Serving it a different registry "
+        f"from the one the rest of the process verifies against is how a deployment ends "
+        f"up half-trusting two registries with nothing saying so, so it is refused: "
+        f"either unset {ENV_REGISTRY_ROOT} or point the caller at the same root")
+
+
 def load_trusted_keys(root: pathlib.Path = ROOT,
                       operator_public_key: str | None = None,
                       *, env: Mapping[str, str] | None = None) -> dict[str, TrustedKey]:
@@ -563,9 +819,19 @@ def load_trusted_keys(root: pathlib.Path = ROOT,
     an older ``registry_version``/``issued_at_epoch``, or a file digest other than
     the pinned one — is refused even though it is operator-signed, so replaying a
     superseded registry cannot resurrect a revoked key.
+
+    WHERE the registry is read from is ``resolve_registry_root(root)``, not ``root``
+    itself (O-3): a deployment that provisions its trust material outside the engine
+    tree names that root in ``BRO_TRUSTED_REGISTRY_ROOT``, and every caller here
+    consults the same store rather than half of them consulting the development
+    registry committed at ``engine/config/trusted-keys.json``. With the variable unset
+    this is ``root``, unchanged. None of the checks below are relaxed by the redirect —
+    they are exactly what makes redirecting the READ safe, because the anchor that
+    authenticates the registry does not move with it.
     """
     env = os.environ if env is None else env
-    path = root / REGISTRY_REL
+    registry_root = resolve_registry_root(root, env=env)
+    path = registry_root / REGISTRY_REL
     try:
         raw = path.read_bytes()
     except OSError as exc:
