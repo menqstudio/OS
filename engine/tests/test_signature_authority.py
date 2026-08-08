@@ -346,11 +346,110 @@ class OperatorRootPinTests(SignatureFixture):
         # root cannot be swapped by environment variables alone.
         pin_file = _write_pin_file(
             self, self.operator_pub, mode=0o600, acknowledge_self_owned=False)
+        message = str(self._refuse_unacknowledged(pin_file))
+        # Both branches must say WHY, in terms the reader can act on. POSIX names the
+        # owning uid; Windows names the right the token holds and the principal it
+        # arrives through, because "the owner" is not necessarily this account there.
+        self.assertIn("the very account reading it", message)
+        self.assertIn(ENV_PIN_SELF_OWNED_ACK, message)
+        if _os.name == "nt":
+            self.assertRegex(message, r"granted (FILE_WRITE_DATA|FILE_APPEND_DATA|"
+                                      r"DELETE|WRITE_DAC|WRITE_OWNER) on it")
+            self.assertIn("its owner", message)
+        else:
+            self.assertIn("owned by the very account reading it", message)
+
+    @unittest.skipUnless(__import__("os").name == "nt", "Windows ownership model")
+    def test_a_pin_owned_by_a_group_this_process_can_still_rewrite_is_refused(self):
+        """The configuration a windows-latest runner has and a workstation may not.
+
+        A process running as an administrator does NOT own the files it creates:
+        they are owned by BUILTIN\\Administrators. So "is the file's owner literally
+        my user SID?" — the question this check used to ask — answers NO, while the
+        process keeps every right it needs to rewrite the anchor. The refusal then
+        silently did not apply in exactly the configuration where the danger is real,
+        and the suite went green on a workstation while proving nothing on the runner.
+
+        The owner is therefore constructed explicitly here rather than inherited from
+        however the ambient account happens to create files. Where it cannot be
+        constructed the test SKIPS with the reason; it must never pass by default,
+        which would repeat the same defect one level up.
+        """
+        pin_file = _write_pin_file(
+            self, self.operator_pub, mode=0o600, acknowledge_self_owned=False)
+        problem = _give_file_to_administrators(pin_file)
+        if problem:
+            self.skipTest(problem)
+        # The premise: the old proxy question now answers "not me", so anything that
+        # still refuses is refusing for the right reason rather than by accident.
+        self.assertFalse(_owner_is_process_user(pin_file),
+                         "the pin was supposed to be owned by BUILTIN\\Administrators")
+        message = str(self._refuse_unacknowledged(pin_file))
+        self.assertIn("can be rewritten by the very account reading it", message)
+        self.assertNotIn("its owner, which is the very account reading it", message)
+        self.assertRegex(message, r"(FILE_WRITE_DATA|FILE_APPEND_DATA|DELETE|WRITE_DAC|"
+                                  r"WRITE_OWNER|SeTakeOwnershipPrivilege|SeRestorePrivilege)")
+        self.assertIn(ENV_PIN_SELF_OWNED_ACK, message)
+
+    @unittest.skipUnless(__import__("os").name == "nt", "Windows ownership model")
+    def test_the_rewrite_question_is_answered_for_owners_that_are_not_this_account(self):
+        """The same decoupled configuration, reachable without elevation.
+
+        The test above needs an administrator-owned FILE and therefore skips on an
+        unelevated host — which would leave the group/ACE path with no coverage at all
+        on the machine where it is written. Here the security descriptor is built
+        directly from SDDL: owner BUILTIN\\Administrators (so "is the owner me?"
+        answers no), write granted to a principal every token carries. Any host can run
+        it, so the answer is checked where the code is written and not only where it
+        was failing.
+        """
+        import bro_signature
+
+        for mask, right in (("0x00000002", "FILE_WRITE_DATA"),
+                            ("0x00010000", "DELETE"),
+                            ("0x00040000", "WRITE_DAC")):
+            with self.subTest(right=right):
+                held = _descriptor_from_sddl(f"O:BAG:BAD:(A;;{mask};;;AU)")
+                grant = bro_signature._windows_pin_rewrite_grant(
+                    pathlib.Path(r"C:\\nowhere\\operator-root.pub"), ENV_PIN_FILE,
+                    held.descriptor, held.owner, held.dacl)
+                self.assertIsNotNone(
+                    grant, f"a descriptor granting {right} to this token was read as "
+                           f"un-rewritable — the refusal would not apply")
+                self.assertEqual(grant[0], right)
+                # S-1-5-11 is NT AUTHORITY\Authenticated Users; asserted as the SID
+                # because the display name is localised and may not resolve at all.
+                self.assertIn("S-1-5-11", grant[1])
+
+        # ...and it must not answer "rewritable" indiscriminately, or the refusal would
+        # be a blanket ban rather than a check: a descriptor that gives this token
+        # nothing is precisely the deployment posture the pin exists to require.
+        held = _descriptor_from_sddl("O:SYG:SYD:(A;;FA;;;SY)")
+        self.assertIsNone(bro_signature._windows_pin_rewrite_grant(
+            pathlib.Path(r"C:\\nowhere\\operator-root.pub"), ENV_PIN_FILE,
+            held.descriptor, held.owner, held.dacl))
+
+    @unittest.skipUnless(__import__("os").name == "nt", "Windows ownership model")
+    def test_the_acknowledgement_still_admits_a_group_owned_pin(self):
+        # The escape hatch is a documented deployment posture, not a test knob: a
+        # deployment with no principal separation says so and is admitted, with the
+        # weakness explicit. Broadening WHAT counts as "the reader can rewrite it"
+        # must not narrow what the acknowledgement covers.
+        pin_file = _write_pin_file(self, self.operator_pub, mode=0o600)
+        problem = _give_file_to_administrators(pin_file)
+        if problem:
+            self.skipTest(problem)
+        self.assertEqual(
+            resolve_operator_root_pin({ENV_PIN_FILE: str(pin_file)}, root=ROOT),
+            self.operator_pub)
+
+    def _refuse_unacknowledged(self, pin_file):
+        """Resolve the pin with the acknowledgement removed; return the refusal raised."""
         with _patch.dict(_os.environ, {}, clear=False):
             _os.environ.pop(ENV_PIN_SELF_OWNED_ACK, None)
             with self.assertRaises(SignatureError) as caught:
                 resolve_operator_root_pin({ENV_PIN_FILE: str(pin_file)}, root=ROOT)
-        self.assertIn("owned by the very account reading it", str(caught.exception))
+        return caught.exception
 
     def test_neither_present_is_hard_denied(self):
         with self.assertRaises(SignatureError):
@@ -459,6 +558,161 @@ def _write_pin_file(test_case, public_key, *, mode, acknowledge_self_owned=True)
         patcher.start()
         test_case.addCleanup(patcher.stop)
     return pin_file
+
+
+# Windows error codes SetNamedSecurityInfo returns when an owner may not be assigned.
+_OWNER_ASSIGN_ERRORS = {
+    5: "ERROR_ACCESS_DENIED",
+    1307: "ERROR_INVALID_OWNER (this token does not carry that SID as an "
+          "owner-capable group; an unelevated token carries Administrators deny-only)",
+    1314: "ERROR_PRIVILEGE_NOT_HELD (SeRestorePrivilege is required to assign it)",
+}
+
+
+def _give_file_to_administrators(pin_file):
+    """Make BUILTIN\\Administrators the owner of the pin. Returns why not, or None.
+
+    This constructs the configuration windows-latest runs under, where the process is
+    an administrator and therefore does NOT own the files it creates — they are owned
+    by the group. Relying on however the ambient account happens to create files is
+    what let the check pass on a workstation while doing nothing on the runner, so the
+    ownership is set explicitly and, when it cannot be, the caller skips WITH the
+    reason instead of passing on the ambient configuration.
+
+    Deliberately written against the Win32 API directly rather than through
+    bro_signature's helpers: a test that establishes its premise using the code under
+    test cannot detect that code answering the wrong question.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    advapi32.CreateWellKnownSid.argtypes = [
+        wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD)]
+    advapi32.CreateWellKnownSid.restype = wintypes.BOOL
+    advapi32.SetNamedSecurityInfoW.argtypes = [
+        wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    advapi32.SetNamedSecurityInfoW.restype = wintypes.DWORD
+
+    sid = ctypes.create_string_buffer(68)  # SECURITY_MAX_SID_SIZE
+    size = wintypes.DWORD(68)
+    if not advapi32.CreateWellKnownSid(26, None, sid, ctypes.byref(size)):
+        return ("cannot build the BUILTIN\\Administrators SID (error "
+                f"{ctypes.get_last_error()}), so the administrator-owned case is NOT "
+                "covered on this host")
+    status = advapi32.SetNamedSecurityInfoW(
+        str(pin_file), 1, 0x1,  # SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION
+        ctypes.cast(sid, ctypes.c_void_p), None, None, None)
+    if status == 0:
+        return None
+    return ("cannot construct an administrator-owned pin without elevation: setting "
+            f"the owner of {pin_file} to BUILTIN\\Administrators failed with "
+            f"{status} — {_OWNER_ASSIGN_ERRORS.get(status, 'unmapped Win32 error')}. "
+            "The configuration windows-latest runs under is therefore NOT exercised "
+            "on this host.")
+
+
+class _HeldDescriptor(tuple):
+    """A security descriptor plus pointers INTO it, kept alive together.
+
+    ``owner`` and ``dacl`` are interior pointers; letting the descriptor be collected
+    while they are still in use is how a comparison silently stops matching, which is
+    the failure mode this whole area is about.
+    """
+    descriptor = property(lambda self: self[0])
+    owner = property(lambda self: self[1])
+    dacl = property(lambda self: self[2])
+
+
+def _descriptor_from_sddl(sddl):
+    """Build a security descriptor from SDDL, for owners this process cannot assign."""
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.ULONG)]
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    advapi32.GetSecurityDescriptorOwner.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.BOOL)]
+    advapi32.GetSecurityDescriptorOwner.restype = wintypes.BOOL
+    advapi32.GetSecurityDescriptorDacl.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL), ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.BOOL)]
+    advapi32.GetSecurityDescriptorDacl.restype = wintypes.BOOL
+
+    descriptor = ctypes.c_void_p()
+    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, 1, ctypes.byref(descriptor), None):  # SDDL_REVISION_1
+        raise AssertionError(
+            f"cannot build a descriptor from {sddl!r} (error {ctypes.get_last_error()})")
+    owner = ctypes.c_void_p()
+    dacl = ctypes.c_void_p()
+    flag = wintypes.BOOL()
+    present = wintypes.BOOL()
+    if not advapi32.GetSecurityDescriptorOwner(
+            descriptor, ctypes.byref(owner), ctypes.byref(flag)):
+        raise AssertionError(f"no owner in the descriptor built from {sddl!r}")
+    if not advapi32.GetSecurityDescriptorDacl(
+            descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(flag)):
+        raise AssertionError(f"no DACL in the descriptor built from {sddl!r}")
+    return _HeldDescriptor((descriptor, owner, dacl))
+
+
+def _owner_is_process_user(pin_file):
+    """True when the file's owner SID is this process's user SID.
+
+    The premise of the administrator-owned test — read independently of the module
+    under test, so the test can assert that the OLD proxy question genuinely answers
+    "not me" for the file it constructed.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32.GetNamedSecurityInfoW.argtypes = [
+        wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi32.OpenProcessToken.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD)]
+    advapi32.GetTokenInformation.restype = wintypes.BOOL
+    advapi32.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    advapi32.EqualSid.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+
+    owner = ctypes.c_void_p()
+    descriptor = ctypes.c_void_p()
+    status = advapi32.GetNamedSecurityInfoW(
+        str(pin_file), 1, 0x1, ctypes.byref(owner), None, None, None,
+        ctypes.byref(descriptor))
+    if status != 0:
+        raise AssertionError(f"cannot read the owner of {pin_file} (error {status})")
+    try:
+        token = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(
+                kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+            raise AssertionError("cannot open this process's token")
+        try:
+            size = wintypes.DWORD(0)
+            advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))
+            buf = ctypes.create_string_buffer(max(size.value, 8))
+            if not advapi32.GetTokenInformation(token, 1, buf, size, ctypes.byref(size)):
+                raise AssertionError("cannot read this process's token user")
+            user = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p)).contents
+            return bool(advapi32.EqualSid(owner, user))
+        finally:
+            kernel32.CloseHandle(token)
+    finally:
+        kernel32.LocalFree(descriptor)
 
 
 if __name__ == "__main__":
