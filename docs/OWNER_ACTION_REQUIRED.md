@@ -92,15 +92,26 @@ from you.
   the requirement, and all 21 pass. Suite-wide skips fell from 56 to 35. Note what those tests now
   do *not* prove: the fixture supplies the O-1 acknowledgement (a temp checkout is writable by
   definition), so they are evidence about every other gate and none about O-1.
-- **A Windows security check did nothing where it mattered.** The operator-root pin refuses a pin
-  file owned by the account reading it (audit F-06) — an anchor one write away from being whatever
-  that account wants. On the CI runner it did not refuse, because an administrator's files are
-  owned by `BUILTIN\Administrators` rather than by the user, so the "is the owner me?" comparison
-  came back unequal. The question is being changed to the one that matters: *can the reading
-  account rewrite this file?* Found by running the engine suite on Windows for the first time.
+- **A Windows security check did nothing where it mattered. Closed in PR #72.** The operator-root
+  pin refuses a pin file owned by the account reading it (audit F-06) — an anchor one write away
+  from being whatever that account wants. On the CI runner it did not refuse: an administrator's
+  files are owned by `BUILTIN\Administrators`, not by the user, so the "is the owner me?"
+  comparison came back unequal and the refusal skipped the most privileged account on the box. It
+  now asks `AccessCheck` — what the kernel itself evaluates when a file is opened for writing —
+  plus the two privileges that make any ACL irrelevant. POSIX gained the two cases its own proxy
+  missed: running as root over someone else's file, and a writable containing directory.
+- **The same defect exists in two more places, found by auditing the first.** Being fixed now.
+  - `bro_completion._refuse_self_owned_floor` (**R-06**) begins `if ... or os.name != "posix":
+    return` — the entire anti-rollback custody rule is a **no-op on Windows**. Its own docstring
+    says the F-13/F-14 attack needed exactly one capability, write access to the evidence store;
+    on Windows it grants that for free.
+  - `brops_evidence_store._ensure_dir` keeps both its 0700 creation and its world-accessible
+    refusal inside `if os.name == "posix"`, so on Windows the store directory is created with
+    whatever it inherits and nothing checks it.
 
-*The last two are why `engine-windows` and the prerequisite guard were added in PR #72: a test
-that never runs and a check that never fires both read exactly like coverage.*
+*Three of these four are why `engine-windows` and the prerequisite guard were added in PR #72: a
+test that never runs and a check that never fires both read exactly like coverage. The job found
+its first two defects within minutes of existing, and the audit of one of those found two more.*
 
 ---
 
