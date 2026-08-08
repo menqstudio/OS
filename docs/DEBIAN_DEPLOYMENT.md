@@ -345,8 +345,27 @@ and no CI job runs the engine suite on Windows. Fixed in the tests, not here.)*
 
 ### What the deployed tree is actually checked with
 
+The check has to run **as `brops`**, because the question it asks is what *that* account can
+write. So `brops` needs the engine's dependencies, and `pip install` as your login user does not
+give it them: `bro_protected` imports `bro_workspace`, which imports `bro_signature`, which
+imports `cryptography`. Run as `brops` against your own site-packages this dies with
+`ModuleNotFoundError` before it checks anything.
+
+A root-owned virtualenv, readable by everyone and writable by nobody but root, is the smallest
+thing that fixes it:
+
 ```bash
-cd ~/OS && sudo -u brops BRO_ENV=ci python3 -B -c "
+sudo python3 -m venv /opt/brops/venv
+sudo /opt/brops/venv/bin/pip install --require-hashes -r ~/OS/engine/requirements-ci.txt
+sudo -u brops /opt/brops/venv/bin/python3 -c "import cryptography; print('brops can import it')"
+```
+
+Do **not** install these into the system python with `--break-system-packages`. The engine's
+dependency set is pinned by hash for a reason, and merging it into the OS python puts an
+unpinned upgrade one `apt` away from changing what the verifier runs.
+
+```bash
+cd ~/OS && sudo -u brops BRO_ENV=ci /opt/brops/venv/bin/python3 -B -c "
 import pathlib, sys
 sys.path.insert(0, 'engine/runtime')
 import bro_protected as bp
@@ -366,6 +385,9 @@ Step 6 exists to establish, asked of the deployment rather than of the source.
 **Remove the artifact and confirm it refuses.** An item you cannot break is an item you have not
 verified.
 
+Three of these four are runnable by anyone. The fourth needs the Owner's ceremony first and says
+so where it stands.
+
 - unset `BRO_CONDUCTOR_SESSION_TOKEN` → a conductor stop must refuse
 - unset `BRO_AUDIT_ANCHOR_KEY_ID` but keep the signer → refused, loudly
 - remount read-write → the engine must refuse to start
@@ -377,13 +399,25 @@ verified.
 
   ```bash
   export BRO_ENV=ci
-  export BRO_OPERATOR_ROOT_PUBKEY=$(python3 -c "import json; print(json.load(open('/media/usb/bro-root/operator-root.json'))['public_key'])")
+  # From the PUBLISHED REGISTRY, which is public by construction. NOT from
+  # /media/usb/bro-root/operator-root.json — that file holds the private half too, as this
+  # document says at Step 1, and an earlier version of this line sent whoever ran it straight
+  # into it. Reading a private key to obtain a public one is never necessary and is exactly the
+  # step this runbook keeps telling agents not to take.
+  export BRO_OPERATOR_ROOT_PUBKEY=$(python3 -c "import json; print(json.load(open('$HOME/OS/engine/config/trusted-keys.json'))['payload']['operator_public_key'])")
   # expect: unknown signing key: 'wrong-key-…'   — the KEY is what was rejected
   ```
 
   Then run the **positive control**: the same command with the correctly signed anchor must be
   *accepted*. A negative test with no positive control cannot tell "the check works" from
   "everything is refused".
+
+  ⚠️ **Both halves of this one need the Owner.** The registry above is what Step 4 publishes, and
+  a correctly signed anchor is what Step 3 produces — so until the Owner has run Steps 1, 3 and 4
+  there is no pin to set and no positive control to run. Report this check as **NOT RUN**, not as
+  passed. It is listed here rather than moved because it belongs with the other three
+  negatives; what it needs is stated so nobody records a refusal-for-the-wrong-reason as
+  evidence.
 
 Every one of these applies to the last: a refusal is only evidence when you know which refusal it
 is. Read the message, not the exit code.
