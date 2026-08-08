@@ -110,6 +110,44 @@ def check(path: pathlib.Path) -> list[str]:
     return problems
 
 
+#: A repo-relative path the runbooks cite. Runtime paths (/etc/brops, /opt/brops, /media/usb)
+#: cannot be checked from here and are deliberately not matched.
+#: Anchored on the top-level directories this repository actually has, so a path is
+#: recognised wherever it appears -- inside a bash block, in prose, backticked or not.
+#: The first version required backticks and found ONE path in a document that cites a
+#: dozen, then reported GREEN. A checker that under-reports is the defect it is meant
+#: to catch, one level up.
+_TOP = 'engine|docs|tools|apps|bridge|config|schemas|laws|scripts'
+CITED_PATH = re.compile(r'(?<![\w/.-])(?:' + _TOP + r')(?:/[A-Za-z0-9_.-]+)+\.[A-Za-z]{1,4}(?![\w-])')
+
+
+def check_paths(path: pathlib.Path) -> list[str]:
+    """Every repo-relative file the runbook names must exist.
+
+    Three times this week a runbook cited a path that was not there: a key file named after the
+    key id instead of the authority, a tool invoked from a directory that does not contain it,
+    and a registry read from /etc when the step that writes it writes into the tree. Each was
+    found by somebody following the document on a real machine, at the point where the wrong
+    path costs them the most. A wrong path is the cheapest possible defect to catch and the most
+    expensive to hit.
+    """
+    problems = []
+    text = path.read_text(encoding="utf-8")
+    seen = set()
+    for match in CITED_PATH.finditer(text):
+        rel = match.group(0)
+        if rel in seen:
+            continue
+        seen.add(rel)
+        if not (ROOT / rel).exists():
+            line = text[: match.start()].count("\n") + 1
+            problems.append(f"{path}:{line}: cites `{rel}`, which does not exist in the tree")
+    print(f"  {path}: {len(seen)} repo-relative path(s) checked "
+          f"(runtime paths under /etc, /opt and /media are NOT checked and cannot be "
+          f"from here -- two of the three wrong paths this week were of that kind)")
+    return problems
+
+
 def main() -> int:
     problems: list[str] = []
     for rel in DOCS:
@@ -118,12 +156,14 @@ def main() -> int:
             problems.append(f"{rel}: listed here but missing from the tree")
             continue
         problems += check(p)
+        problems += check_paths(p)
     if problems:
         print("\nRED: runbook snippets disagree with the code they call:")
         for prob in problems:
             print(f"  {prob}")
         return 1
-    print("GREEN: every runbook snippet parses and every owned call matches its real signature.")
+    print("GREEN: every runbook snippet parses, every owned call matches its real signature,")
+    print("       and every repo-relative path the runbooks cite exists.")
     return 0
 
 
