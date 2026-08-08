@@ -335,9 +335,13 @@ That is worse than useless: a step whose red is routine teaches you to skim past
 suite asserts things about the **source repository**; the deployed tree is checked by the
 deployment checks below, which is what they are for.
 
-*(Those fourteen did expose one genuine hole, in the other direction — the O-1 refusal path never
-executes in CI, because a CI checkout is writable. That is being fixed in the tests themselves,
-not here.)*
+*(Those fourteen did expose a genuine hole, though not the one first supposed. The initial reading
+was that CI never exercises the O-1 refusal path; that is backwards — a writable CI checkout makes
+the gate refuse, so CI drives refusal and the deployed box drives the pass. The real defect was the
+coupling itself: which direction got covered depended on which machine ran the suite, and neither
+machine covered the claim the check is actually built on — that it answers by attempting to create
+a file rather than by reading permission bits. The one test that pinned that ran only on Windows,
+and no CI job runs the engine suite on Windows. Fixed in the tests, not here.)*
 
 ### What the deployed tree is actually checked with
 

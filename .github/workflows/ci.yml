@@ -137,6 +137,34 @@ jobs:
       - name: Test the host crate (ai.rs governed/receipt unit tests)
         run: cargo test -p brops --manifest-path apps/desktop/src-tauri/Cargo.toml
 
+  engine-windows:
+    name: Engine · governance runtime on Windows (python)
+    runs-on: windows-latest
+    env:
+      BRO_ENV: ci
+      BRO_OPERATOR_ROOT_PUBKEY: 7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c
+      PYTHONDONTWRITEBYTECODE: "1"
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # The engine suite ran on ubuntu only, so every `skipUnless(os.name == "nt")` test in it
+      # executed in NO job at all. That is not a hypothetical gap: the one test proving the O-1
+      # writability probe answers by ATTEMPTING A CREATE rather than by reading permission bits —
+      # the sentence the whole check is built on — is Windows-only, because POSIX `os.access` and a
+      # real create agree for every case a non-root Linux test can construct. It disagrees on
+      # Windows ACLs, which is exactly why the test exists, and exactly where nothing ran it.
+      # Deleting the create probe and substituting os.access passed the entire suite on Linux.
+      # This job is the second platform, not a duplicate of the first.
+      - name: Install engine CI dependencies
+        run: pip install --require-hashes -r requirements-ci.txt
+      - name: Run the engine test suite on Windows
+        run: python -B -m unittest discover -s tests
+
   windows-broker:
     name: Windows · §0.W broker syscall proof (named-pipe peer-auth)
     runs-on: windows-latest
