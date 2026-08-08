@@ -1,0 +1,41 @@
+[package]
+name = "brops-audit-signer"
+version = "0.1.0"
+publish = false
+edition = "2021"
+description = "The audit-head anchor SECOND PRINCIPAL, made real: a service that owns the anchor key and serves it over the peer-authenticated named pipe, plus the unprivileged relay shim BRO_AUDIT_ANCHOR_SIGNER points at. All the DECISIONS live in brops-provision::audit_signer; this crate is the process, the transport and the custody of the key on disk."
+
+[lib]
+name = "brops_audit_signer"
+path = "src/lib.rs"
+
+# The two executables `audit_signer::SignerPaths` names. The bin names are the file stems
+# `SERVICE_EXE_NAME` / `SHIM_EXE_NAME` promise, so the installer's plan and the build output
+# cannot drift; `tests/relay_contract.rs::the_binaries_are_named_what_the_install_plan_promises`
+# pins that.
+[[bin]]
+name = "brops-audit-signer"
+path = "src/bin/service.rs"
+
+[[bin]]
+name = "brops-anchor-relay"
+path = "src/bin/relay.rs"
+
+[dependencies]
+# Every policy decision — payload shape, anti-rollback, principal check, DACL plans, key id
+# derivation — is `brops_provision::audit_signer`. Nothing here re-decides any of it.
+brops-provision = { path = "../provision" }
+serde_json = "1"
+# Held only by the SERVICE process. The relay never constructs a key type; that is enforced by
+# `tests/relay_contract.rs::the_relay_binary_links_no_signing_key`.
+ed25519-dalek = "2"
+
+# The transport is the EXISTING one: `brops_win_live::pipe::run_server` (restrictive DACL from
+# `pipe_acl::pipe_dacl_plan` + peer-SID auth via `brops_win_broker::syscall`) and its
+# `hop_once` client. This crate adds no third pipe implementation.
+[target.'cfg(windows)'.dependencies]
+brops-win-live = { path = "../win-live" }
+brops-win-broker = { path = "../win-broker" }
+
+[dev-dependencies]
+tempfile = "3"

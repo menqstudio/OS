@@ -737,7 +737,24 @@ fn a_signed_anchor_verifies_under_the_published_key_over_canonical_bytes() {
     // The state handed back is what the signer must persist to resist the next rollback.
     assert_eq!(state.count, 7);
     assert_eq!(state.last_hash, H1);
-    assert_eq!(state.anchor_sha256, brops_provision::sha256_hex(&serde_json::to_vec(&doc).unwrap()));
+    // CORRECTED. This used to assert the digest was over `serde_json::to_vec(&doc)` - the
+    // compact encoding - and it passed, because it was checking this crate's encoder against
+    // itself. The engine digests the anchor FILE, and `bro_audit_log._install_anchor` writes
+    // that file with `json.dumps(document, sort_keys=True)`: Python's DEFAULT separators, a
+    // space after every `,` and `:`. The two differ, so the first anchor of a ledger installed
+    // and the SECOND append was refused forever as AnchorChainBroken. Nothing in Rust could
+    // find that; `audit-signer/tests/anchor_end_to_end.py` found it on its first run, and
+    // `provision/tests/anchor_file_encoding.rs` now pins the encoder against the real
+    // `json.dumps` so it cannot come back.
+    assert_eq!(
+        state.anchor_sha256,
+        brops_provision::sha256_hex(&anc::installed_anchor_bytes(&doc).unwrap())
+    );
+    assert_ne!(
+        state.anchor_sha256,
+        brops_provision::sha256_hex(&serde_json::to_vec(&doc).unwrap()),
+        "the compact encoding is NOT what the engine digests; if these ever coincide, this test          has stopped distinguishing the two encodings"
+    );
 
     // And the chain closes: the next anchor must carry that digest.
     let next = anc::check_anchor_payload(&payload(8, H2, Some(&state.anchor_sha256)), KEY_ID).unwrap();

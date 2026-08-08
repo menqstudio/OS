@@ -200,15 +200,24 @@ pub const ANCHOR_AUTHORITY: &str = "evidence-recorder";
 /// The request/reply contract on the pipe, restated in one place so the shim, the service
 /// and the tests cannot each invent their own.
 ///
-/// One connection, one anchor. The client writes the canonical payload JSON (exactly the
-/// bytes `bro_audit_log._sign_anchor` would put on the signer's stdin) and half-closes; the
-/// server writes one `{"payload": …, "signature": …}` document, or
-/// `{"ok": false, "reason": …}`, and closes. No framing beyond that, because the engine's
-/// own contract is stdin-to-stdout and the shim must not add semantics the engine cannot see.
-pub const PIPE_SPEC: &str = "\
-one connection = one anchor. client -> canonical audit-head payload JSON, then half-close. \
-server -> {payload,signature} or {ok:false,reason}, then close. peer SID is authenticated by \
-brops_win_broker::authenticate_pipe_client_sid and must equal the provisioned app SID.";
+/// One connection, one anchor. The client writes the audit-head payload as **one
+/// length-prefixed frame** (4-byte big-endian length, `brops_core::ipc_framing`) and then reads
+/// one frame back carrying either `{"payload": ..., "signature": ...}` or
+/// `{"ok": false, "reason": ...}`. The server then disconnects.
+///
+/// **Corrected.** This constant used to say "write the payload, then half-close". That is not
+/// available on a byte-mode named pipe: there is no `shutdown(SHUT_WR)` equivalent, and
+/// `CloseHandle` closes the read direction along with the write direction, so a client that
+/// half-closed to signal end-of-request could never receive the reply. The length prefix is
+/// what delimits the request, and it is not a new invention - it is the framing
+/// `brops_win_live::pipe::run_server` and its `hop_once` client already speak, which is why
+/// this design reuses that transport rather than adding a third one.
+///
+/// The *engine's* contract is unchanged and still stdin-to-stdout: the shim reads the canonical
+/// payload from stdin (which `subprocess.run` closes) and writes the document to stdout. The
+/// framing exists only on the pipe hop between the shim and the service and adds no semantics
+/// the engine cannot see - one payload in, one document out, either way.
+pub const PIPE_SPEC: &str = "one connection = one anchor. client -> ONE length-prefixed frame (4-byte big-endian) carrying the audit-head payload JSON; server -> one frame carrying {payload,signature} or {ok:false,reason}, then disconnect. A byte-mode named pipe has NO half-close. Peer SID is authenticated by brops_win_broker::authenticate_pipe_client_sid and must equal the provisioned app SID.";
 
 // =================================================================================================
 // Access masks — the same numbers as `brops_win_live::pipe_acl`, pinned by a drift test
@@ -1360,12 +1369,124 @@ pub fn check_monotonic(fields: &AnchorFields, last: Option<&AnchorState>) -> Res
     Ok(())
 }
 
+/// The anchor sidecar's bytes **exactly as `bro_audit_log` writes them to disk**.
+///
+/// # Why this is not `serde_json::to_vec`
+///
+/// The signer's anti-rollback state records the digest of the anchor it last emitted, and the
+/// engine tells it, in the next payload's `previous_anchor_sha256`, the digest of the anchor
+/// file it found. Those two numbers must be the same number or every anchor after the first is
+/// refused as [`SignRefusal::AnchorChainBroken`].
+///
+/// The engine's digest is over the FILE, and `_install_anchor` writes that file with
+/// `json.dumps(document, sort_keys=True)` — Python's **default** separators, `", "` and `": "`,
+/// with `ensure_ascii=True`. `serde_json::to_vec` writes the compact form with no spaces and
+/// raw UTF-8. The two differ on the first anchor and every one after it.
+///
+/// This was not a hypothetical: `sign_anchor` used `serde_json::to_vec`, every Rust test agreed
+/// with itself, and the real `bro_audit_log` refused the **second** append of every ledger. Only
+/// running the module that has to accept the anchor could find it, which is the whole argument
+/// for `audit-signer/tests/anchor_end_to_end.py`.
+///
+/// Note the asymmetry, because it is deliberate and not a mistake: the bytes that are **signed**
+/// are [`crate::canonical::canonical_bytes`] (compact, `bro_signature.canonical_bytes`), and the
+/// bytes that are **digested for the rollback chain** are these (spaced, `json.dumps` default).
+/// Two different encodings of the same document, because the engine uses two different ones.
+///
+/// Fail-closed on anything it cannot reproduce exactly. A float has no agreed shortest
+/// representation between Python's `repr` and Rust's, so rather than emit a digest that might be
+/// right, this refuses — no anchor payload contains one, and if one is ever added the refusal is
+/// what makes that visible.
+pub fn installed_anchor_bytes(document: &Value) -> Result<Vec<u8>, ProvisionError> {
+    let mut out = Vec::new();
+    write_python_json(document, &mut out)?;
+    Ok(out)
+}
+
+fn write_python_json(value: &Value, out: &mut Vec<u8>) -> Result<(), ProvisionError> {
+    match value {
+        Value::Null => out.extend_from_slice(b"null"),
+        Value::Bool(true) => out.extend_from_slice(b"true"),
+        Value::Bool(false) => out.extend_from_slice(b"false"),
+        Value::Number(n) => {
+            if n.is_f64() {
+                return Err(ProvisionError::Corrupt {
+                    what: "an anchor document contains a floating-point number".to_string(),
+                    detail: format!(
+                        "{n} cannot be re-encoded byte-identically to Python's json.dumps, so the \
+                         digest this signer records would not match the digest the engine \
+                         computes over the anchor FILE, and every later anchor would be refused \
+                         as AnchorChainBroken. Refusing rather than emitting a digest that might \
+                         be right"
+                    ),
+                });
+            }
+            out.extend_from_slice(n.to_string().as_bytes());
+        }
+        Value::String(s) => write_python_json_string(s, out),
+        Value::Array(items) => {
+            out.push(b'[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.extend_from_slice(b", ");
+                }
+                write_python_json(item, out)?;
+            }
+            out.push(b']');
+        }
+        Value::Object(map) => {
+            // `serde_json::Map` is a `BTreeMap` here, so iteration is already `sort_keys=True`.
+            out.push(b'{');
+            for (i, (k, v)) in map.iter().enumerate() {
+                if i > 0 {
+                    out.extend_from_slice(b", ");
+                }
+                write_python_json_string(k, out);
+                out.extend_from_slice(b": ");
+                write_python_json(v, out)?;
+            }
+            out.push(b'}');
+        }
+    }
+    Ok(())
+}
+
+/// `json.encoder.py_encode_basestring_ascii`: escape `"` and `\`, use the short forms for the
+/// five control characters that have them, and `\uXXXX` for **everything outside `0x20..=0x7E`** —
+/// which includes `0x7F` and every non-ASCII character, as surrogate pairs above `0xFFFF`.
+fn write_python_json_string(s: &str, out: &mut Vec<u8>) {
+    out.push(b'"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.extend_from_slice(b"\\\""),
+            '\\' => out.extend_from_slice(b"\\\\"),
+            '\u{8}' => out.extend_from_slice(b"\\b"),
+            '\u{c}' => out.extend_from_slice(b"\\f"),
+            '\n' => out.extend_from_slice(b"\\n"),
+            '\r' => out.extend_from_slice(b"\\r"),
+            '\t' => out.extend_from_slice(b"\\t"),
+            c if (' '..='~').contains(&c) => out.push(c as u8),
+            c => {
+                let mut buf = [0u16; 2];
+                for unit in c.encode_utf16(&mut buf) {
+                    out.extend_from_slice(format!("\\u{unit:04x}").as_bytes());
+                }
+            }
+        }
+    }
+    out.push(b'"');
+}
+
 /// Sign a checked anchor payload and return both the `{payload, signature}` document the
 /// engine expects and the state to record.
 ///
 /// Uses [`crate::sign_document`], so the bytes signed are exactly
 /// [`crate::canonical::canonical_bytes`] — the same encoding `bro_signature.verify_detached`
 /// recomputes. There is no second signing path in this crate.
+///
+/// The recorded `anchor_sha256` is over [`installed_anchor_bytes`], **not** over the signed
+/// bytes: the engine digests the sidecar file, and that file is written by `json.dumps` with
+/// Python's default separators. See that function for why the two encodings differ on purpose.
 pub fn sign_anchor(
     key: &SigningKey,
     payload: Value,
@@ -1375,10 +1496,7 @@ pub fn sign_anchor(
     // canonicaliser rejects fails before any signature exists.
     let _ = canonical_bytes(&payload)?;
     let document = crate::sign_document(key, payload)?;
-    let bytes = serde_json::to_vec(&document).map_err(|e| ProvisionError::Corrupt {
-        what: "serialising the anchor document".to_string(),
-        detail: e.to_string(),
-    })?;
+    let bytes = installed_anchor_bytes(&document)?;
     Ok((
         document,
         AnchorState {
