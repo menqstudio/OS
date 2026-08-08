@@ -67,11 +67,19 @@ back RED on rows the builder had marked closed, which is why a tick in these doc
 
 Recorded so nothing reads as closed that is not. These are being worked.
 
-- **O-3 — the artifact verifies; the engine cannot see it.** `load_trusted_keys` reads
-  `<root>/config/trusted-keys.json` and `bro_hook.py` passes the engine's own tree, so the
-  app-provisioned registry is invisible to it and a different, older, development registry answers
-  instead. The minted token is accepted the moment the registry is at that root — the cross-language
-  test proves both directions. Wiring the engine to the provisioned store is the remaining work.
+- **O-3 — the engine can now see it.** `BRO_TRUSTED_REGISTRY_ROOT` redirects where the registry is
+  read, fail-closed, with the operator-root pin deliberately staying where it was: a redirect that
+  carried the anchor along would have handed over the whole thing. Proven in both directions against
+  the real verifier, including that a token accepted by *a* provisioned registry is still refused by
+  *this* deployment's. What remains is one line in the app's startup — exporting the variable
+  alongside the pin and floor it already writes.
+- **The committed `engine/config/trusted-keys.json` is a fixture, not a deployment default.** It is
+  `production: false`, carries no private half anywhere in the tree, and a real deployment with a
+  file pin has never been able to anchor on it. Its cost is confusion rather than forgery: it is the
+  thing that answers, which makes provisioned trust look absent. The recommendation is to relocate
+  it under `engine/tests/fixtures/` so an unconfigured deployment fails closed with "cannot read
+  trusted key registry" instead of quietly loading a development registry. Four dependents would
+  name it explicitly. Not done unilaterally — CI depends on it today.
 - **O-5 — deliberately not minted at install.** At install no task exists, and an anchor the app
   mints by reading the store the check polices would restate the store's own claim under a
   signature: worse than none, because it looks like corroboration. `mint_floor_anchor` exists and is
