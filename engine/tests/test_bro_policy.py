@@ -272,7 +272,32 @@ class ConductorBootstrapReadTests(unittest.TestCase):
 
 
 class ReceiptFreshnessTests(unittest.TestCase):
-    """L1 literacy and L8 thirty-minute reread: the audit's missing freshness coverage."""
+    """L1 literacy and L8 thirty-minute reread: the audit's missing freshness coverage.
+
+    What is under test is `receipt_fresh`: a receipt must exist, its age must sit under
+    the policy ceiling, and the tree identity it recorded must still match the tree's.
+    None of that needs a REAL tree identity -- only a stable one -- and reaching for the
+    real one coupled these tests to the checkout by accident: `tree_identity()` shells
+    out to `git ls-files`, so on a deployed tree (Step 6 copies engine/ without .git)
+    four of these five ERRORed with CalledProcessError 128 while the freshness logic
+    they cover was in perfect health.
+
+    So the identity is now a fixture the test builds itself: one fixed digest standing
+    in for "the tree as it is right now", which is the whole of what the comparison
+    asks of it. Same verdict in CI and on a deployed box, and no skip -- there is
+    nothing left here to be missing. The git-backed identity itself keeps its own
+    coverage where it belongs, in
+    `test_repository_state.test_tree_identity_includes_untracked_but_ignores_ignored`,
+    which `git init`s a repository of its own instead of borrowing the checkout.
+    """
+
+    TREE_IDENTITY = "b" * 64
+
+    def setUp(self):
+        import bro_policy
+        patcher = patch.object(bro_policy, "tree_identity", lambda: self.TREE_IDENTITY)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _write_receipt(self, session_id, *, age=0, tree=None):
         import json

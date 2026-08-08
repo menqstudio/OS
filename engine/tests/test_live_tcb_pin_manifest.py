@@ -18,10 +18,21 @@ import sys
 import tempfile
 import unittest
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-BUILDER = os.path.join(REPO_ROOT, "engine", "ci", "live", "build_tcb_pin_manifest.py")
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if TESTS_DIR not in sys.path:
+    sys.path.insert(0, TESTS_DIR)
+ENGINE_ROOT = os.path.dirname(TESTS_DIR)
+REPO_ROOT = os.path.dirname(ENGINE_ROOT)
+# Derived from the engine tree, not from REPO_ROOT/"engine": the builder ships INSIDE
+# engine/, so it is present wherever the engine is -- a deployed tree, or a checkout in
+# which engine/ is itself the root (engine/.github/workflows/verify.yml runs that way).
+# Spelling it REPO_ROOT/engine/... made the two tests that need only the builder depend
+# on the engine sitting one level down.
+BUILDER = os.path.join(ENGINE_ROOT, "ci", "live", "build_tcb_pin_manifest.py")
 TCB_INTEGRITY_RS = os.path.join(
     REPO_ROOT, "apps", "desktop", "src-tauri", "core", "src", "tcb_integrity.rs")
+
+from _prerequisites import DESKTOP_TCB_SOURCE, requires  # noqa: E402
 
 
 def required_artifacts() -> list[str]:
@@ -82,7 +93,16 @@ class LiveTcbPinManifestTests(unittest.TestCase):
         with open(out, "r", encoding="utf-8") as f:
             return json.load(f)
 
+    @requires(DESKTOP_TCB_SOURCE)
     def test_the_manifest_covers_every_required_artifact(self):
+        """Cross-tree agreement: engine's builder against the Rust TCB's required set.
+
+        This is an assertion about the SOURCE REPOSITORY -- the required list is read
+        from apps/desktop rather than copied, precisely so it cannot drift -- and
+        deployment Step 6 copies engine/ alone. Without the Rust source there is no
+        required set to compare against, so the test says so by name instead of
+        raising FileNotFoundError at a reader four frames down.
+        """
         with tempfile.TemporaryDirectory() as root:
             manifest = self._build(root)
             listed = {a["logical_name"] for a in manifest["artifacts"]}

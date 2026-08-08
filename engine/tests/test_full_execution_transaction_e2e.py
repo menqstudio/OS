@@ -24,6 +24,22 @@ test signs against its own operator-signed dev registry.
 
 The last two tests prove the gate is not vacuous: dropping the execution lease or
 the mode grant flips the same assembled transaction to DENY.
+
+WHAT THESE TESTS DO NOT PROVE
+-----------------------------
+They run against a fixture checkout built by `_engine_git_root` (see the class
+docstring for why) and set `BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED` for the length
+of each test. That is a real security acknowledgement, not a test knob: it waives
+O-1, the gate that refuses to trust a control plane the running account can still
+write into. A temporary checkout is writable by definition, so without it the O-1
+refusal arrives first and displaces every assertion below.
+
+The trade is explicit: everything here is evidence about the OTHER gates and NO
+evidence whatsoever about O-1. Nothing in this file may be cited as showing the
+control plane is unwritable or unshadowed -- `tests/test_control_plane_writable.py`
+owns that property and pops this variable so nothing can waive it there. A test
+added here that comes to claim something about control-plane writability or
+bytecode shadowing must NOT be given `acknowledged_environment()`; today none does.
 """
 import hashlib
 import json
@@ -37,9 +53,18 @@ import unittest
 from contextlib import ExitStack
 from unittest.mock import patch
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "runtime"))
-sys.path.insert(0, str(ROOT / "tools"))
+ENGINE_ROOT = pathlib.Path(__file__).resolve().parents[1]
+for _path in (ENGINE_ROOT / "runtime", ENGINE_ROOT / "tools",
+              pathlib.Path(__file__).resolve().parent):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
+#: The tree these drills assemble their transaction against, rebound ONCE in
+#: setUpClass to a tree that is its own git worktree root -- see the class docstring.
+#: The imports above deliberately stay anchored to ENGINE_ROOT: the runtime modules are
+#: shared with every other test module in the process, so the fixture supplies the
+#: repository, never a second copy of the code under test.
+ROOT = ENGINE_ROOT
 
 from bro_authorization import classify_tool_action
 from bro_contracts import canonical_json_sha256
@@ -52,6 +77,8 @@ from bro_authorize_specialist import build_mode_grant_payload, sign_mode_grant
 from bro_bind_workspace import build_binding, sign_binding
 from bro_skill_receipt import build_skill_receipt
 from broctl import build_registry, generate_key, sign_payload
+
+from _engine_git_root import acknowledged_environment, anchored_to, engine_git_root
 
 # Deterministic stand-ins for the environmental git observations. They must be
 # internally consistent across every artifact and every patched seam.
@@ -88,20 +115,34 @@ def _agent():
             "allowed_modes": ["review", "work"], "can_verify": False, "can_push": False}
 
 
-# Monorepo note: these end-to-end drills run the full enforcement path against the
-# real runtime root and require engine/ to BE a git worktree root. In the OS monorepo
-# engine/ is a subdirectory (git top-level is OS/), so the worktree check cannot pass.
-# The runtime/security code is unchanged and audited; only this harness assumption does
-# not hold in a subtree. Re-enabled automatically once engine/ is a checkout root
-# (Phase 1 root-model decision — see CLAUDE.md).
-_ENGINE_IS_GIT_ROOT = (pathlib.Path(__file__).resolve().parents[1] / ".git").exists()
-
-
-@unittest.skipUnless(
-    _ENGINE_IS_GIT_ROOT,
-    "requires engine/ to be its own git worktree root; deferred in the OS monorepo — see CLAUDE.md",
-)
 class FullExecutionTransactionE2ETests(unittest.TestCase):
+    """Assembled against a tree that IS a git worktree root, built once per class.
+
+    `_bind_workspace` reads the repository binding out of `<root>/.git/config`, so
+    these drills need the engine directory to be a checkout root. It is not one in the
+    OS monorepo (the git top-level is OS/), and this class used to answer that with
+
+        @unittest.skipUnless(_ENGINE_IS_GIT_ROOT, "deferred in the OS monorepo")
+
+    so every end-to-end proof below skipped in every CI run. `.git` at the engine root
+    is a precondition a test can BUILD rather than one it must be handed, so
+    `_engine_git_root` builds it and `setUpClass` rebinds ROOT to it. Where engine/ is
+    already a checkout root the ambient tree is used and nothing is built; the verdict
+    is the same either way.
+
+    Unlike the subprocess drills in `test_hooks_subprocess`, these call the runtime
+    in-process, and every runtime module fixes its own `ROOT` at import time from
+    `__file__`. `anchored_to` therefore rebinds those constants for the duration of each
+    test (and restores them), so the gate, the binding, the digest and the scope check
+    all address ONE tree -- proving integrity on one tree while checking scope on
+    another is the confusion `_bind_workspace`'s M-7 check exists to refuse.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        global ROOT
+        ROOT = engine_git_root()
+
     def setUp(self):
         self.now = int(time.time())
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-exec-e2e-"))
@@ -205,6 +246,14 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             "BRO_EXECUTION_LEASE_LEDGER": str(self.lease_ledger),
             "BRO_RECOVERY_RECORD": self._write("recovery-record.signed.json", recovery),
             "BRO_RECOVERY_STORE": str(self.recovery_store),
+            # A temp checkout is writable by definition, so the O-1 read-half gate
+            # refuses before any gate this file is about and DISPLACES every assertion
+            # below -- a negative that passes for the wrong reason, which is the failure
+            # mode this repository has been removing. Acknowledged for these drills
+            # only, and at a price: nothing here is evidence about O-1. See
+            # `_engine_git_root.O1_ACKNOWLEDGEMENT`; the property itself is owned by
+            # tests/test_control_plane_writable.py.
+            **acknowledged_environment(),
         }
 
     # ---- seam patches -------------------------------------------------------
@@ -212,6 +261,10 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
         real_load = bro_signature.load_trusted_keys
         reg = self.tmp
         stack = ExitStack()
+        # Every runtime module resolves its ROOT from its own __file__, i.e. to the
+        # real engine tree, which is not a checkout root here. Rebind them to the
+        # fixture for the length of the test; restored on exit.
+        stack.enter_context(anchored_to(ROOT))
         operator_pub = self.operator["public_key"]
         redirected = lambda root=None, operator_public_key=None: real_load(  # noqa: E731
             reg, operator_public_key=operator_pub)
