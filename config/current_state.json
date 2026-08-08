@@ -2,15 +2,15 @@
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
   "sync": {
-    "baseline_main_head_at_sync": "69a69c4a71201a6ca60b4523675aa6625b07efff",
-    "snapshot_branch": "fix/step7-defects-round2",
+    "baseline_main_head_at_sync": "a28f274b59090b65b2d3ee1eeefac248f19c4683",
+    "snapshot_branch": "fix/umask-preempts-the-branch-under-test",
     "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 0efa99e (PR #65 merged). The active branch chore/staleness-sweep is a direct child of it.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #75). PR #75's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #76). PR #76's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "fix/step7-defects-round2"
+    "branch": "fix/umask-preempts-the-branch-under-test"
   },
   "prs": [],
   "status_tokens": {
@@ -212,11 +212,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 75,
-    "branch": "fix/step7-defects-round2",
+    "number": 76,
+    "branch": "fix/umask-preempts-the-branch-under-test",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #75 body.",
-    "note": "PR #75 fixes three Step 7 defects a second real Debian run found, all of them mine. The serious one: the wrong-key negative read the operator public key out of /media/usb/bro-root/operator-root.json, the file this same document says holds BOTH halves -- so an agent-runnable step sent an agent into the private key. It now reads payload.operator_public_key from the published registry, verified by running the expression against the real file. The deployed-tree check could not run at all: it must run as brops, and bro_protected imports bro_workspace imports bro_signature imports cryptography, which brops does not have; a root-owned virtualenv at /opt/brops/venv fixes it, explicitly not --break-system-packages. And one check needs Steps 3 and 4 first, so it is marked NOT RUN rather than left to be recorded as passed. check_runbook_snippets now also checks every repo-relative path the runbooks cite, and prints on every run that /etc, /opt and /media cannot be checked from a repository. Step 6 passed end to end with no intervention on that run. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #76 body.",
+    "note": "PR #76 fixes two findings from a third real Debian run. FloorCustodyTests built its fixture directory with a bare mkdir, whose mode is 0o777 masked by the ambient umask; on Debian's stock 0002 the floor came out group-writable, so _refuse_self_owned_floor refused at its FIRST branch and the branch each test exists to pin never ran -- coverage that depended on whose machine ran it, in the module written to remove exactly that. chmod now states the mode and the precondition is asserted. And the deployed-tree check in Step 7 still could not run: the venv added in #75 was necessary and not sufficient, and the document blamed the wrong thing -- the blocker was a relative sys.path pointing into a 0700 home brops cannot traverse, and it was the wrong tree on principle. It now imports from /opt/brops/engine/runtime. Step 6 passed end to end with no intervention on that run, including the fstab entry reconstituting the mount from nothing. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",
