@@ -62,7 +62,7 @@
 >
 > Four checks were deleted one at a time to confirm their tests go red. **One stayed GREEN** — the guard refusing to prove an owner without a command to bind against, untested because every caller passes one — and now has its own test. **O-4 stays OPEN:** the shipped registry pins no key for the type, and a test holds that a flawless artifact signed by an ungranted key still refuses. Registering a type opens no path.
 >
-> **[`docs/OWNER_CEREMONY.md`](./docs/OWNER_CEREMONY.md)** is the other half: exactly what Gev signs for O-2, O-3 and O-5, in what order, with the payload for each. O-3 first — conductor stops refuse today until it exists. O-2 is different in kind, a signing COMMAND rather than a file, and worth nothing unless it runs as a principal the ledger's own writer cannot reach. It also says which two are not his: O-4 needs the same ceremony, and **O-1 is not closeable from inside Python at all**.
+> **`docs/OWNER_CEREMONY.md`** *(since deleted — the install mints these itself)* is the other half: exactly what Gev signs for O-2, O-3 and O-5, in what order, with the payload for each. O-3 first — conductor stops refuse today until it exists. O-2 is different in kind, a signing COMMAND rather than a file, and worth nothing unless it runs as a principal the ledger's own writer cannot reach. It also says which two are not his: O-4 needs the same ceremony, and **O-1 is not closeable from inside Python at all**.
 >
 > Also: three roadmaps cut to one. `engine/ROADMAP.md` claimed *Canonical branch `main`, Merged PR `#52`* — of the STANDALONE repository, frozen 2026-07-19, with nothing marking it as history. `engine/AUDIT/` stays, deliberately: five of its tickets carry live status, and a closed audit is history while an open one is a work item.
 >

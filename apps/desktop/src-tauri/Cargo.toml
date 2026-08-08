@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "launcher", "executor", "broker", "proof", "win-broker", "win-live"]
+members = ["core", "launcher", "executor", "broker", "proof", "win-broker", "win-live", "provision"]
 
 [package]
 name = "brops"
@@ -28,6 +28,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 brops-core = { path = "core" }
+# First-launch trust provisioning (mints the operator-signed trusted-key registry,
+# the out-of-registry operator-root pin and the operator-signed artifacts the engine
+# requires). Its own crate because it must hold PRIVATE key halves, and `brops-core`
+# deliberately keeps ed25519-dalek verify-only so the data core is never a
+# `sign(arbitrary_bytes)` oracle. Cross-platform: not a `cfg(windows)` dependency.
+brops-provision = { path = "provision" }
 # T-011 single-instance enforcement: an exclusive advisory file lock held for the
 # process lifetime, so a second instance cannot open the DB / run reconciliation and
 # invalidate the first instance's live execution.

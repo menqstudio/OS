@@ -1,0 +1,24 @@
+[package]
+name = "brops-provision"
+version = "0.1.0"
+publish = false
+edition = "2021"
+description = "First-launch trust provisioning: mints the operator-signed trusted-key registry, the out-of-registry operator-root pin, and the operator-signed artifacts the engine's governance chain requires, on the installing user's own machine."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Ed25519 signing. `brops-core` deliberately keeps ed25519-dalek VERIFY-ONLY so the
+# data core is never a `sign(arbitrary_bytes)` oracle (core/Cargo.toml, design §1).
+# Provisioning is the one place that must hold private halves, so it is its own
+# crate rather than a signing capability bolted onto core.
+ed25519-dalek = "2"
+# Seeds come from the OS CSPRNG, exactly as `brops-win-live`'s `crypto::gen_seed`
+# does; `SigningKey::from_bytes(&seed)` needs no `rand_core` feature.
+getrandom = "0.2"
+serde_json = "1"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

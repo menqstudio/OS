@@ -1,135 +1,92 @@
 # Owner action required
 
-Everything in this repository that cannot move without Gev. One page, kept current, so the answer
-to "what is waiting on me" is never reconstructed from a chat log.
+Everything that cannot move without Gev. One page, kept current, so the answer to "what is waiting
+on me" is never reconstructed from a chat log.
 
 Nothing here is a suggestion to flip anything. `platform_governed_execution_supported()` is false
-and `main()` keeps `UpstreamBlockedExecutor`; that stands until every item below is closed, a
+and `main()` keeps `UpstreamBlockedExecutor`; that stands until every item below is settled, a
 **separate** audit passes, and the Owner approves — in that order.
 
 ---
 
-## 1. How a production trust registry gets minted — a decision, not a task
+## The install does the ceremony now
 
-**This blocks O-2, O-3 and O-5, and nothing else can unblock them.**
+There used to be a page here listing artifacts only the Owner could mint, and a runbook step for
+each. Both are deleted. `apps/desktop/src-tauri/provision/` mints the trust material on first
+launch: one Ed25519 key per authority the engine knows, a signed `trusted-key-registry` in exactly
+the form `bro_signature.load_trusted_keys` accepts, the operator-root pin written outside the
+registry root where the anchor rule requires it, and an anti-rollback floor so a superseded registry
+cannot be replayed. Nothing expires — `not_after_epoch` is 9999-12-31 — so nothing will ever ask for
+a renewal.
 
-Nothing in this repository can produce a production trust root, and that is deliberate:
+It is proven byte-compatible with the engine by a test that runs the **real** Python verifiers
+against **real** Rust output: 29 checks through `load_trusted_keys`, `verify_conductor_session_token`
+and `bro_deploy_preflight`. Not a Rust test asserting that its own encoding round-trips — the thing
+that has to accept it, accepting it.
 
-| Where | What it does |
-|---|---|
-| `engine/tools/broctl.py` — `build-registry` | hardcodes `"production": false` and stamps *DEVELOPMENT REGISTRY* |
-| `engine/tools/broctl.py` — `keygen --production` | refuses outright |
-| `engine/runtime/bro_signature.py` | refuses a non-production registry whenever the operator pin comes from the production `BRO_OPERATOR_ROOT_PUBKEY_FILE` path |
-
-So the ceremony in [`OWNER_CEREMONY.md`](./OWNER_CEREMONY.md) runs honestly end to end and produces
-a **development** root. That is enough to exercise every path, watch each refusal turn into an
-acceptance, and find the next problem. It is not enough to close O-2, O-3 or O-5, and recording it
-as though it were is the exact failure this repository has spent a week removing.
-
-The decision is yours because it is a custody question, not an engineering one: **what process
-mints the production registry, and where does its private half live?** A tool in this repository
-that could do it would defeat the reason the refusals exist.
-
-Until that is answered, treat every ceremony run as a rehearsal.
+**What that posture claims, and does not.** Locally-minted trust material defends against an
+attacker who arrives **later**. It does not defend against one who already owned the machine at
+install time. An SSH host key makes the same trade. The deleted ceremony claimed more, and that
+claim was right for a vendor-signs/customer-verifies fleet and wrong for a product with one user.
 
 ---
 
-## 2. Ceremony steps only you can run
+## 1. O-2 — a decision only you can make
 
-From [`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md). Each one touches the operator private key,
-which is why no agent may run them and why Step 4 carries its own warning — `build-registry` reads
-private halves out of `--keydir`.
+**O-2 cannot be closed on this product, by provisioning or by anything else, and that is a property
+of the shape rather than a gap in the work.**
 
-| Step | What it is | State |
-|---|---|---|
-| 1 | the offline root key | done — development root on USB |
-| 2 | **O-3**, the conductor session | waiting on you |
-| 3 | **O-5**, the evidence floor anchor | waiting on you |
-| 4 | publish the keys — **a signing step** | waiting on you |
-| 5 | **O-2**, the audit signer | waiting on you |
+It requires `BRO_AUDIT_ANCHOR_SIGNER`: an executable outside `engine/`, run **under a principal that
+cannot write the audit ledger**. A single-user desktop application has exactly one principal.
+Provisioning can supply the key — the minted `evidence-recorder` key qualifies — but it cannot
+supply a second person.
 
-**Steps 0, 6 and 7 are agent-runnable and now pass, verbatim, in a single run** on the Debian box
-at `506ecea` — no deviations, no repository edits. That took four rounds: Step 6 was rewritten
-twice (#71, #73) and Step 7 three times (#72, #75, #76), every defect found by somebody running
-the document rather than reading it. What is green is the half that does not need you; nothing
-below it is closed.
+Shipping a signer helper the app invokes itself would produce anchors that verify and prove nothing,
+because the account that signs the anchor is the account that can rewrite what it attests. That is
+precisely the failure the item exists to name, so it was not built.
 
-The one check inside Step 7 that is **not** runnable is the wrong-key negative, because its pin
-comes from Step 4 and its positive control from Step 3. Its prerequisites were verified absent
-rather than assumed.
-
-Everything you produce here is anchored to a development root until item 1 is decided.
+Phase 10's exit criteria allow "closed **or owner-signed-deferred**". This is the deferral case.
+The decision is yours: accept O-2 as a documented residual for the desktop shape, or require a
+second principal — a service account, a separate machine — and accept that the product then needs
+one.
 
 ---
 
-## 3. The independent audit, then your approval
+## 2. The independent audit, then your approval
 
-The gate does not open when O-1..O-5 close. It needs an audit of the whole chain **by someone who
-did not build it**, and then your approval.
+The gate does not open when these settle. It needs an audit of the whole chain **by someone who did
+not build it**, and then your approval.
 
 A green CI is not an audit. CI runs the tests we wrote. Three audits on this repository have come
-back RED on rows the builder had marked closed, which is why `✅` in these documents means
-*independently confirmed* and `◑` means *the builder's unverified claim*.
+back RED on rows the builder had marked closed, which is why a tick in these documents means
+*independently confirmed* and a half-tick means *the builder's unverified claim*.
 
 ---
 
-## 4. Merge authority
+## 3. Open, and not waiting on you
 
-Normally yours. On the night of 2026-08-07 you delegated it explicitly ("քըմիթ փուշ մերջ սաղ քո
-վրայա") for that session only. Merges made under that delegation are listed in the PR history with
-their CI state at the time; the delegation does not extend past that session and does not extend to
-the gate under any circumstances.
+Recorded so nothing reads as closed that is not. These are being worked.
 
----
-
-## 5. Known open, not blocked on you
-
-Recorded here only so nothing looks closed that is not. These are being worked and need no decision
-from you.
-
-- `docs/PHASE_10_PRODUCTION_ITEMS.md` — O-1 through O-5, all OPEN. `tools/check_residual_items.py`
-  holds that document to a complete inventory and agrees with `CLAUDE.md` and
-  `docs/SECURITY_MODEL.md`.
-- The read-only control plane (O-1) is **deployed and verified** on the Debian box — root itself
-  cannot write to `/opt/brops/engine` — but O-1 stays open until the acknowledgement path is
-  removed rather than merely unused.
-- **21 tests had never run once** — the entire live enforcement-wall subprocess suite and the
-  execution-transaction drills, both gated on `engine/` being its own git worktree root, which it
-  is not in this monorepo. **Closed in PR #72**: a fixture builds the git root instead of waiving
-  the requirement, and all 21 pass. Suite-wide skips fell from 56 to 35. Note what those tests now
-  do *not* prove: the fixture supplies the O-1 acknowledgement (a temp checkout is writable by
-  definition), so they are evidence about every other gate and none about O-1.
-- **A Windows security check did nothing where it mattered. Closed in PR #72.** The operator-root
-  pin refuses a pin file owned by the account reading it (audit F-06) — an anchor one write away
-  from being whatever that account wants. On the CI runner it did not refuse: an administrator's
-  files are owned by `BUILTIN\Administrators`, not by the user, so the "is the owner me?"
-  comparison came back unequal and the refusal skipped the most privileged account on the box. It
-  now asks `AccessCheck` — what the kernel itself evaluates when a file is opened for writing —
-  plus the two privileges that make any ACL irrelevant. POSIX gained the two cases its own proxy
-  missed: running as root over someone else's file, and a writable containing directory.
-- **The same defect existed in two more places, found by auditing the first. Closed in PR #73.**
-  - `bro_completion._refuse_self_owned_floor` (**R-06**) began `if ... or os.name != "posix":
-    return` — the entire anti-rollback custody rule was a **no-op on Windows**, on a rule whose own
-    docstring says the F-13/F-14 attack needed exactly one capability: write access to the evidence
-    store.
-  - `brops_evidence_store._harden_dir` kept both its 0700 creation and its world-accessible refusal
-    inside `if os.name == "posix"`, so on Windows the store was created with whatever it inherited
-    and nothing looked at it afterwards.
-  - Both now answer through `bro_custody`, one implementation shared by all three sites instead of
-    three that drift. A platform that is neither POSIX nor Windows refuses rather than returning.
-    Watched refusing, not merely observed green.
-
-*Three of these four are why `engine-windows` and the prerequisite guard were added in PR #72: a
-test that never runs and a check that never fires both read exactly like coverage. The job found
-its first two defects within minutes of existing, and auditing one of those found two more.*
-
-### One thing I could not explain
-
-A Windows custody test failed on one CI run and passed on the next with no change to its behaviour.
-The job's output could not settle whether the second run proved the rule or merely declined to test
-it, so the Windows job now runs `-v` and names every skip. The current run shows that test
-executing and passing — it is not in the skip list — but the flip itself is unexplained and is
-written down here rather than treated as resolved by a green.
+- **O-3 — the artifact verifies; the engine cannot see it.** `load_trusted_keys` reads
+  `<root>/config/trusted-keys.json` and `bro_hook.py` passes the engine's own tree, so the
+  app-provisioned registry is invisible to it and a different, older, development registry answers
+  instead. The minted token is accepted the moment the registry is at that root — the cross-language
+  test proves both directions. Wiring the engine to the provisioned store is the remaining work.
+- **O-5 — deliberately not minted at install.** At install no task exists, and an anchor the app
+  mints by reading the store the check polices would restate the store's own claim under a
+  signature: worse than none, because it looks like corroboration. `mint_floor_anchor` exists and is
+  proven against the real verifier; when it is called is a design question, not a provisioning one.
+- **O-1 — a packaged install gives it for free.** The item wants the control plane unwritable by the
+  account that runs the engine. `Program Files`, `/Applications` and `/opt` are not writable by that
+  account. Needs verifying on a packaged build rather than asserting.
+- **Windows key-material permissions are inherited, not set.** `secure_owner_only_file` has no
+  non-unix branch, so on Windows the private keys carry the app data directory's ACL — per-user by
+  default, plus SYSTEM and Administrators. Failing closed there would mean the app never starts on
+  its primary platform, so it is recorded honestly instead: in `PROVISIONING.json`, in
+  `POSTURE.txt`, and on stderr at first launch.
+- **The minted registry grants `control-room-command`**, which the committed engine registry grants
+  to nobody. O-4's code half is closed, so pointing the engine at this registry also provisions
+  O-4's key. A consequence worth a decision rather than a silent side effect.
 
 ---
 

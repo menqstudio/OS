@@ -65,150 +65,26 @@ sudo -u signer rm /var/lib/brops-signer/.probe
 
 ---
 
-## Step 1 — the root key, offline
+## Steps 1–5 — deleted, the install does them
 
-Disconnect the network first. This key is the one thing that must never be on a networked box.
+They minted an operator root by hand, on removable media, and signed three artifacts with it. The
+app now provisions its own trust material on first launch: `apps/desktop/src-tauri/provision/`
+generates one Ed25519 key per authority the engine knows, signs a `trusted-key-registry` in the
+exact form `bro_signature.load_trusted_keys` accepts, and writes it under the app data directory
+with the operator-root pin outside the registry root, where the anchor rule requires it. Nothing is
+carried, nothing expires, nothing is ever asked of the person who installed it.
 
-```bash
-cd /path/to/OS
-python3 engine/tools/broctl.py keygen \
-  --authority operator-root --key-id gev-operator-root-1 \
-  --out /media/usb/bro-root       # removable media, not the disk
-ls /media/usb/bro-root            # → operator-root.json
-```
+What that posture claims is written into the code and worth repeating here, because it is smaller
+than the ceremony's claim: locally-minted trust material defends against an attacker who arrives
+**later**. It does not defend against one who already owned the machine at install time. An SSH
+host key makes exactly the same trade. The ceremony's stronger claim was the right one for a
+vendor-signs/customer-verifies fleet and the wrong one for a product with one user.
 
-**The file is named after the AUTHORITY, not the key id** — `operator-root.json`, holding both
-halves. Every `--key` path below uses that name; an earlier version of this document invented
-`gev-operator-root-1.private.json`, which no command would have resolved.
-
-`--production` is refused on purpose — see the blocker at the top. What you have made here is a
-development root, and it is the only kind this repository can currently make.
-
----
-
-
-> **Do not hand-type these.** `engine/tools/mint_owner_payloads.py` writes the O-3 and
-> O-5 payloads with the epoch computed for you — a wrong `expires_at_epoch` pasted at a
-> terminal is invisible until a session refuses. It cannot sign: that needs the offline
-> key, and a tool offering both would invite running it on the box that serves.
->
-> ```bash
-> python3 engine/tools/mint_owner_payloads.py \
->     --key-id gev-operator-root-1 --session-id s-2026-08-08-a \
->     --task-id t-example.1 --head-sequence 5 --hours 8 --out /media/usb/payloads
-> ```
-
-## Step 2 — O-3, the conductor session
-
-`conductor-session.json`:
-
-```json
-{ "artifact_type": "conductor-session",
-  "key_id": "gev-operator-root-1",
-  "session_id": "s-2026-08-08-a",
-  "agent_id": "bro-000",
-  "role": "bro",
-  "expires_at_epoch": 1786000000 }
-```
-
-```bash
-python3 engine/tools/broctl.py sign \
-  --key /media/usb/bro-root/operator-root.json \
-  --artifact conductor-session \
-  --in conductor-session.json --out conductor-session.signed.json
-
-export BRO_CONDUCTOR_SESSION_TOKEN=/etc/brops/conductor-session.signed.json
-```
-
-Get `expires_at_epoch` with `date -d '+8 hours' +%s`. **Short.** A long expiry is a long window in
-which a stolen token is a valid conductor, and the check reads the wall clock precisely so that a
-caller who could backdate the system clock cannot revive an expired one.
-
----
-
-## Step 3 — O-5, the evidence floor anchor
-
-One per task, and `head_sequence` must be the chain's real head.
-
-```json
-{ "artifact_type": "evidence-floor-anchor",
-  "key_id": "gev-operator-root-1",
-  "task_id": "t-example.1",
-  "head_sequence": 5 }
-```
-
-```bash
-python3 engine/tools/broctl.py sign \
-  --key /media/usb/bro-root/operator-root.json \
-  --artifact evidence-floor-anchor \
-  --in floor.json --out floor-anchor.signed.json
-
-export BRO_EVIDENCE_FLOOR_ANCHOR=/etc/brops/floor-anchor.signed.json
-```
-
-It is only consulted when a completion declares `head_sequence > 1` and no durable mark exists —
-i.e. exactly the wipe-and-re-provision case it was built for.
-
----
-
-## Step 4 — publish the keys (once, covers all three) ⚠️ THIS IS A SIGNING STEP
-
-**Not delegable.** `build-registry` reads every key in `--keydir`, private halves included, and
-ends by signing the registry with the operator root. An earlier version of this document listed it
-among the steps an agent may run — it belongs with Steps 2, 3 and 5, and the correction matters
-because following the old text would have put an agent next to the private key.
-
-```bash
-python3 engine/tools/broctl.py build-registry \
-  --keydir /media/usb/bro-root --out engine/config/trusted-keys.json
-
-python3 engine/tools/broctl.py inspect --in engine/config/trusted-keys.json
-```
-
-Each key needs `"status": "active"` and, in `allowed_artifact_types`, every type it may sign:
-`conductor-session`, `evidence-floor-anchor`, `control-room-command`. `_artifacts_for()` fills
-these in from the authority; you do not list them by hand.
-
-**Not `audit-head`, and it is not an omission.** It sits in `OUT_OF_REGISTRY_ARTIFACTS`
-(`broctl.py`), deliberately outside the registry: the audit anchor is verified against authorities
-named directly in `bro_audit_log.ANCHOR_AUTHORITIES`, so a compromised registry cannot grant
-somebody the right to sign the log's own head. An earlier version of this document told you to add
-it, which `_artifacts_for()` will never emit.
-
-**Registering a type opens no path** — a key must be granted it. There is a test asserting that a
-flawless artifact signed by an ungranted key still refuses. Two locks, on purpose.
-
----
-
-## Step 5 — O-2, the audit signer ⚠️ different in kind
-
-The other artifacts are files you sign once. This is a **command the engine runs** each time it
-appends to the audit log.
-
-Put the signing key where only `signer` can read it:
-
-```bash
-sudo -u signer python3 engine/tools/broctl.py keygen \
-  --authority evidence-recorder --key-id brops-audit-anchor-1 \
-  --out /var/lib/brops-signer/keys
-sudo chmod 700 /var/lib/brops-signer/keys
-```
-
-A tiny wrapper `brops` may execute but not read the key through — `sudo` with a single NOPASSWD
-rule is the usual shape:
-
-```bash
-export BRO_AUDIT_ANCHOR_SIGNER='["sudo","-u","signer","/usr/local/bin/brops-audit-sign"]'
-export BRO_AUDIT_ANCHOR_KEY_ID=brops-audit-anchor-1
-```
-
-**The rule that makes it worth anything:** `brops` must not be able to read the key or run the
-signer as itself. If it can, the log's own writer signs its own head and the anchor proves nothing
-— which was the original defect, one level along. The code refuses a signer path that resolves
-inside the engine, but it cannot check your account separation for you.
-
-Set one variable and not the other and it refuses loudly rather than falling back to the plaintext
-head.
+What survives below is the part that was never about key custody: **Step 0** separates the accounts,
+**Step 6** makes the control plane unwritable, and **Step 7** checks what you actually closed. A
+packaged install gives you Step 6 for free — `Program Files`, `/Applications` and `/opt` are not
+writable by the account that runs the app — so on a packaged deployment Step 6 is a verification
+rather than a procedure.
 
 ---
 
