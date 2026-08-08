@@ -79,7 +79,14 @@ def _run_state():
 class CustodyTests(unittest.TestCase):
     """(2)/(3): the store + key dirs refuse group/other access (POSIX)."""
 
-    @unittest.skipUnless(_POSIX, "POSIX file-mode custody; ACLs enforce this on Windows")
+    # The reason used to read "ACLs enforce this on Windows". Nothing did: `_harden_dir`
+    # kept the whole rule inside `if os.name == "posix"`, so the skip was asserting a
+    # protection that did not exist. The Windows half is now implemented and covered by
+    # `test_evidence_store_shared_artifacts.StoreCustodyTests`, which runs the same claim
+    # on both platforms; this case stays POSIX-only because the MECHANISM here is a mode.
+    @unittest.skipUnless(_POSIX, "POSIX file-mode custody; the Windows ACL equivalent is "
+                                 "covered by StoreCustodyTests in "
+                                 "test_evidence_store_shared_artifacts")
     def test_store_refuses_a_world_accessible_dir(self):
         d = tempfile.mkdtemp()
         os.chmod(d, 0o777)  # world-accessible
@@ -119,6 +126,10 @@ class CustodyTests(unittest.TestCase):
         if _POSIX:
             mode = stat.S_IMODE(os.stat(store.root).st_mode)
             self.assertEqual(mode, 0o700)
+        # The Windows counterpart (a PROTECTED owner/SYSTEM/Administrators DACL, asserted by
+        # reading the descriptor back) is `StoreCustodyTests.test_a_created_store_is_private_
+        # to_its_owner`. It is not repeated here; what matters is that it exists at all —
+        # this `if` used to be the whole story, and off POSIX the test asserted nothing.
 
 
 class NoOracleTests(unittest.TestCase):

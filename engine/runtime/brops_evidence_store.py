@@ -18,10 +18,20 @@ window:
   6. artifacts are retained until the receipt flow terminates + a retention policy
      elapses (retention/GC is out of this module's scope — it never deletes).
 
-Store custody (design §4.0): the directory is created owner-only (0700 on POSIX) so only
-the supervisor + signer identities (which run as the store owner) can read/write it; it
-is never the sidecar/desktop login identity's to read. This module reuses the same
-"refuse a group/other-accessible dir" discipline as `broctl._require_private_key_dir`.
+Store custody (design §4.0): the directory is created owner-only (0700 on POSIX; the
+equivalent PROTECTED owner/SYSTEM/Administrators DACL on Windows) so only the supervisor +
+signer identities (which run as the store owner) can read/write it; it is never the
+sidecar/desktop login identity's to read. This module reuses the same "refuse a
+group/other-accessible dir" discipline as `broctl._require_private_key_dir`.
+
+Both halves of that used to sit inside `if os.name == "posix"`, so on Windows the store was
+created with whatever it inherited — under a volume root or `C:\\ProgramData` that includes
+`BUILTIN\\Users` — and nothing checked it afterwards. A rule that returns early on a platform
+is indistinguishable from no rule, and this one was guarding exactly the identity the design
+says must never reach the store. The Windows equivalent is now implemented rather than
+skipped (`bro_custody.windows_make_private_directory` /
+`bro_custody.windows_refuse_world_accessible`), and a platform that is neither POSIX nor
+Windows REFUSES instead of returning.
 """
 
 from __future__ import annotations
@@ -32,6 +42,11 @@ import pathlib
 import stat
 import tempfile
 
+from bro_custody import (
+    platform_name,
+    windows_make_private_directory,
+    windows_refuse_world_accessible,
+)
 from brops_canonical import sha256_hex
 
 
@@ -57,27 +72,64 @@ def _hardlink_unsupported(exc: OSError) -> bool:
     return os.name == "nt" or exc.errno in _HARDLINK_UNSUPPORTED
 
 
+#: What the refusals call this directory, so a reader knows which path to fix.
+_STORE = "the evidence store dir"
+
+
 def _harden_dir(directory: pathlib.Path) -> pathlib.Path:
-    """Create (0700) or validate the store dir. On POSIX, refuse an **other-accessible**
-    dir. A *group*-accessible dir is allowed on purpose: the store is shared by the two
-    dedicated principals (the supervisor writes, the signer reads) via a shared group
-    (design §4.0), so it may be group-readable — but NEVER world-accessible, and never
-    reachable by the sidecar/desktop login identity. (The private-key dirs stay strictly
-    owner-only; only this shared store permits a group.)"""
+    """Create the store dir privately, or validate that an existing one is not world-reachable.
+
+    A *group*-accessible dir is allowed on purpose: the store is shared by the two dedicated
+    principals (the supervisor writes, the signer reads) via a shared group (design §4.0), so
+    it may be group-readable — but NEVER world-accessible, and never reachable by the
+    sidecar/desktop login identity. (The private-key dirs stay strictly owner-only; only this
+    shared store permits a group.)
+
+    Both platforms answer the same two questions, and neither may decline to answer:
+
+    * creation — POSIX ``chmod 0700``; Windows a PROTECTED DACL granting only OWNER RIGHTS,
+      SYSTEM and Administrators, because ``mkdir`` there takes no mode and a new directory
+      simply inherits whatever its parent grants. The operator opts a second principal in
+      afterwards, on either platform.
+    * validation — POSIX refuses ``mode & S_IRWXO``; Windows refuses an access-allowed ACE
+      for any principal that means "anyone who can log on" (Everyone, Authenticated Users,
+      INTERACTIVE, BUILTIN\\Users, …). Read access counts on both, which is the point: the
+      store's contents are the evidence, not merely the ability to change it.
+
+    A platform that is neither refuses. There is no honest third answer here — the store's
+    whole custody claim is a statement about who the operating system lets in, and a runtime
+    that cannot ask the question cannot make the claim.
+    """
     resolved = directory.expanduser().resolve()
     if not resolved.exists():
         resolved.mkdir(parents=True, exist_ok=True)
-        if os.name == "posix":
+        if platform_name() == "posix":
             os.chmod(resolved, 0o700)  # created owner-only; operator opts into a group
+        elif platform_name() == "nt":
+            windows_make_private_directory(resolved, _STORE, EvidenceStoreError)
+        else:
+            raise _unsupported_platform(resolved)
     elif not resolved.is_dir():
         raise EvidenceStoreError(f"evidence store path is not a directory: {resolved}")
-    elif os.name == "posix":
+    elif platform_name() == "posix":
         mode = resolved.stat().st_mode
         if mode & stat.S_IRWXO:
             raise EvidenceStoreError(
                 f"evidence store dir {resolved} is world-accessible; refusing"
             )
+    elif platform_name() == "nt":
+        windows_refuse_world_accessible(resolved, _STORE, EvidenceStoreError)
+    else:
+        raise _unsupported_platform(resolved)
     return resolved
+
+
+def _unsupported_platform(resolved: pathlib.Path) -> EvidenceStoreError:
+    return EvidenceStoreError(
+        f"evidence store custody cannot be established on {platform_name()}: this runtime has no "
+        f"way to create {resolved} privately or to ask who may reach it, and an unchecked store "
+        "is not a protected store"
+    )
 
 
 def _fsync_dir(directory: pathlib.Path) -> None:
@@ -124,6 +176,13 @@ class EvidenceStore:
                 # published artifact must be group-readable — but never world (design §4.0,
                 # audit P0-1). No effect on the single-principal case (the group is the
                 # owner's own). World stays denied.
+                #
+                # There is no `elif os.name == "nt"` branch here, and that is not the
+                # same omission `_harden_dir` had: a new file on Windows inherits the
+                # directory's DACL, and `_harden_dir` has just established (on creation)
+                # or verified (on an existing store) that the directory grants nothing to
+                # a third-party login identity. The published artifact is covered by the
+                # rule rather than exempted from it.
                 os.chmod(tmp, 0o640)
 
             # 3. verify size + recompute sha256 over the bytes actually on disk.

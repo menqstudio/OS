@@ -162,8 +162,14 @@ jobs:
       # This job is the second platform, not a duplicate of the first.
       - name: Install engine CI dependencies
         run: pip install --require-hashes -r requirements-ci.txt
+      # -v, unlike the ubuntu job. This job exists BECAUSE tests can run nowhere else, so what
+      # skipped here is the thing worth reading: a skip is a hole unless somebody counts them,
+      # and a count with no names cannot be audited. It also settles a question this job has
+      # already raised once — a Windows custody test failed on one run and passed on the next
+      # with no change to its behaviour, and a bare pass/fail line could not say whether the
+      # second run proved the rule or merely declined to test it.
       - name: Run the engine test suite on Windows
-        run: python -B -m unittest discover -s tests
+        run: python -B -m unittest discover -s tests -v
 
   windows-broker:
     name: Windows · §0.W broker syscall proof (named-pipe peer-auth)
