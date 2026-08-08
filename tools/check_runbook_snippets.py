@@ -24,7 +24,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "engine" / "runtime"))
 
-DOCS = ("docs/DEBIAN_DEPLOYMENT.md", "docs/OWNER_CEREMONY.md")
+DOCS = ("docs/DEBIAN_DEPLOYMENT.md",)
 # module name in the snippet -> importable module
 CHECKED_MODULES = ("bro_protected", "bro_signature", "bro_audit_log", "bro_completion")
 

@@ -56,11 +56,16 @@ tested, never rushed*), on its own branch/PR with Owner approval.
 > refuses; and `bro_signature` refuses a non-production registry whenever the operator pin comes
 > from the production file path (`BRO_OPERATOR_ROOT_PUBKEY_FILE`).
 >
-> So the ceremony in [`OWNER_CEREMONY.md`](./OWNER_CEREMONY.md) and
-> [`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md) runs honestly end to end and produces a
-> **development** root. That is enough to exercise every path and watch each refusal become an
-> acceptance. It is **not** enough to close these three items, and none of them may be recorded as
-> closed on the strength of it.
+> That blocker is **gone**, and so is the ceremony it blocked. The app provisions its own trust
+> material on first launch (`apps/desktop/src-tauri/provision/`): one key per authority, a signed
+> registry marked `production: true` because a locally-minted root IS this deployment's root, the
+> operator pin outside the registry root, and an anti-rollback floor. It is proven byte-compatible
+> against the real Python verifiers rather than against a second Rust encoder.
+>
+> What it does **not** do is close these three items by itself, and the reasons differ per item —
+> see each entry below and [`OWNER_ACTION_REQUIRED.md`](./OWNER_ACTION_REQUIRED.md). A provisioning
+> step that produced artifacts the engine still rejects would be worse than none, because it looks
+> finished.
 >
 > Found on 2026-08-08 by following the runbook rather than reading it — the first real attempt
 > stopped at Step 0 and turned up four further defects in the document itself. Whoever closes this
@@ -321,7 +326,10 @@ matching stop-gate refusal. Every one of these checks was deleted once and the m
 - **Owner secret needed:** yes
   A `control-room-command` artifact per owner command, signed by the offline operator root and
   bound to that command's `command_id`, `task_id` and `command`, with its key listed `active` in
-  `config/trusted-keys.json`. See [`OWNER_CEREMONY.md`](./OWNER_CEREMONY.md).
+  `config/trusted-keys.json`. The install now mints a registry that grants `control-room-command`,
+  which the committed engine registry grants to nobody — so pointing the engine at the provisioned
+  store also provisions this key. That is a consequence to decide on, not a side effect to inherit;
+  see [`OWNER_ACTION_REQUIRED.md`](./OWNER_ACTION_REQUIRED.md).
 - **Engine ticket:** `engine/AUDIT/tickets/LOW-findings.md` § L-8
 - **Engine code:** `engine/runtime/bro_control_room_api.py` — `validate_command_intent`, which reads
   `requested_by_type` / `requested_by` straight out of the caller's JSON and compares them against the

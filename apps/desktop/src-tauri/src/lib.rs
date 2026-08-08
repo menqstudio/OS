@@ -39,30 +39,70 @@ fn acquire_instance_lock(dir: &std::path::Path) -> std::io::Result<std::fs::File
 /// Restrict the app data directory to the owner (0700). Called BEFORE the DB is
 /// opened, so the database is created inside an already-private directory.
 /// A failure here aborts startup rather than running with weak permissions.
-#[cfg(unix)]
-fn secure_data_dir(dir: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-}
-#[cfg(not(unix))]
-fn secure_data_dir(_dir: &std::path::Path) -> std::io::Result<()> {
-    Ok(())
-}
+///
+/// The per-OS routine itself now lives in `brops-provision`, so the host and the
+/// first-launch trust provisioner restrict directories through ONE implementation
+/// rather than two that can drift. It is still a no-op off unix — and
+/// `brops_provision::Protection`, recorded in the provisioning manifest, is what says
+/// so out loud instead of letting a silent no-op read as "owner only everywhere".
+use brops_provision::secure_data_dir;
 
-/// Restrict the SQLite database and its WAL/SHM sidecars to the owner (0600).
-#[cfg(unix)]
+/// Restrict the SQLite database and its WAL/SHM sidecars to the owner (0600), through
+/// the same single file routine that restricts the provisioned private keys.
 fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
     for suffix in ["", "-wal", "-shm"] {
         let p = std::path::PathBuf::from(format!("{}{}", db_path.display(), suffix));
         if p.exists() {
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
+            brops_provision::secure_owner_only_file(&p)?;
         }
     }
     Ok(())
 }
-#[cfg(not(unix))]
-fn secure_db_files(_db_path: &std::path::Path) -> std::io::Result<()> {
+
+/// Mint the local trust store on first launch, or verify the existing one.
+///
+/// Runs immediately after the data directory is made owner-only and BEFORE the
+/// database is opened, because the trust store is the thing every governance claim
+/// downstream rests on and a database opened over a half-trusted tree is a database
+/// whose provenance nobody can state.
+///
+/// **A failure aborts startup.** There is no degraded mode: `brops_provision` removes
+/// anything a failed mint wrote, so the choice at this point is a complete trust store
+/// or none, and running with none while pretending otherwise is the failure this whole
+/// path exists to prevent.
+///
+/// # What is deliberately NOT done here
+///
+/// The environment variables the engine reads (`BRO_OPERATOR_ROOT_PUBKEY_FILE`,
+/// `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_OPERATOR_ROOT_PIN_SELF_OWNED`,
+/// `BRO_CONDUCTOR_SESSION_TOKEN`, `BRO_SESSION_ID`) are reported by
+/// `Provisioned::engine_env()` and NOT exported into this process. Two reasons, both
+/// concrete:
+///
+/// 1. `bro_signature.load_trusted_keys` reads `<engine root>/config/trusted-keys.json`
+///    and takes no path override. Pointing the anchor at the minted operator key while
+///    the engine still reads its OWN committed registry would swap one fail-closed
+///    refusal ("no operator-root pin") for a different one ("registry does not
+///    authenticate") without provisioning anything — motion that looks like progress.
+/// 2. `_resolve_operator_root_pin` hard-fails when a file pin and the CI
+///    `BRO_OPERATOR_ROOT_PUBKEY` disagree, so exporting one unconditionally would break
+///    any environment that already carries the other.
+///
+/// Wiring the engine to this store is a deployment decision that needs the registry to
+/// live at the engine's own root; it is not something this startup path can do silently.
+fn provision_local_trust(dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let provisioned = brops_provision::provision(dir)?;
+    if provisioned.freshly_minted {
+        eprintln!(
+            "BroPS provisioned its local trust store at {} (install {}).\n\
+             Posture: {}\n\
+             Key material protection — {}",
+            provisioned.trust_dir.display(),
+            provisioned.install_id,
+            brops_provision::POSTURE_SUMMARY,
+            provisioned.key_file_protection,
+        );
+    }
     Ok(())
 }
 
@@ -78,6 +118,11 @@ pub fn run() {
             // Owner-only (0700) BEFORE opening the DB, so conversation/memory/audit
             // data is never briefly world-readable. A failure aborts startup.
             secure_data_dir(&dir)?;
+            // First-launch trust provisioning: mint the operator-signed trusted-key
+            // registry, the out-of-registry operator-root pin and the operator-signed
+            // artifacts the engine requires, or verify the ones already there. Before
+            // the DB opens; a failure aborts startup naming what failed.
+            provision_local_trust(&dir)?;
             // T-011 single-instance: take the exclusive lock BEFORE opening the DB or
             // reconciling — a second instance aborts here and never touches the first
             // instance's live execution state.
