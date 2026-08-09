@@ -1,8 +1,8 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **⏭️ CURRENT ACTIVE: PR #81 · branch `docs/make-the-repo-tell-the-truth`** (base `main`, tip `c1e0aca`, task T-017).
+> **✅ SETTLED — nothing is open.** `main` is at `b3010f6`; PR #81 was the last to merge and its branch is gone. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> PR #81 makes the repository true about itself: the gate everyone was watching is not a function, the POSIX custody path could never have passed on any machine, docs/SECURITY_MODEL.md stated five pre-remediation defects in the present tense, START_HERE.md was sixteen PRs behind, and the two crates that mint this deployment's trust root ran in no CI job on any platform. Sixteen mutations were run on both platforms; nine are green on Windows and red on Linux.
+> **Next:** the POSIX installer (mint as another uid), the SCM service implementation, then the independent audit
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, the broker hands out `UpstreamBlockedExecutor`, and `connect_broker()` refuses off Linux. Earlier prose below is HISTORY.
 

@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
-  "settled_at_main_head": "c1e0acaaef8b5280d44f94514e13032fd3b0c8b5",
+  "settled_at_main_head": "b3010f67b271bd6b8d20eff26e1724a0968fbcc0",
   "sync": {
     "baseline_main_head_at_sync": "c1e0acaaef8b5280d44f94514e13032fd3b0c8b5",
-    "snapshot_branch": "docs/make-the-repo-tell-the-truth",
+    "snapshot_branch": "main",
     "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 0efa99e (PR #65 merged). The active branch chore/staleness-sweep is a direct child of it.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #81). PR #81's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "docs/make-the-repo-tell-the-truth"
+    "branch": "main"
   },
   "prs": [],
   "status_tokens": {
