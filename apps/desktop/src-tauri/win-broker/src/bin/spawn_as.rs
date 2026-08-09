@@ -94,7 +94,7 @@ pub fn read_password_from_stdin() -> Result<String, String> {
 /// Overwrite a `String`'s bytes in place. Best effort — Rust may have copied the value during a
 /// reallocation — but it removes the obvious residue, and the caller drops it immediately after.
 #[allow(dead_code)]
-pub fn zero_string(s: &mut String) {
+pub fn zero_string(s: &mut str) {
     // SAFETY: zero bytes are valid UTF-8, so the String stays well-formed.
     unsafe { s.as_bytes_mut().fill(0) };
 }
