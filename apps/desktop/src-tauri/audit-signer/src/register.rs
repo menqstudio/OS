@@ -154,7 +154,7 @@ pub fn read_allowed_app_sid(signer_dir: &Path) -> Result<String, String> {
 /// authority. Refuses, naming the remedy, when it does not — a store minted before the signer
 /// existed cannot be amended into one that trusts it, and pretending otherwise would mean keeping
 /// a key that can amend the registry, which is exactly what was removed.
-pub fn register_anchor_key(trust_dir: &Path, custody: &Value) -> Result<String, ProvisionError> {
+pub fn register_anchor_key(anchor_dir: &Path, custody: &Value) -> Result<String, ProvisionError> {
     let key_id = custody
         .get("key_id")
         .and_then(Value::as_str)
@@ -175,7 +175,11 @@ pub fn register_anchor_key(trust_dir: &Path, custody: &Value) -> Result<String, 
         ));
     }
 
-    let registry_path = trust_dir
+    // The ANCHOR directory, not the trust directory. The registry moved there with the pin and
+    // the floor: `bro_signature.resolve_registry_root` refuses a registry root the reading
+    // account can write, and this function has to look where the engine looks or it would be
+    // confirming a document nothing reads.
+    let registry_path = anchor_dir
         .join(brops_provision::REGISTRY_ROOT_DIR)
         .join("config")
         .join("trusted-keys.json");

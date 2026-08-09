@@ -50,6 +50,8 @@
 //! * **Cross-platform**, with the platform difference reported rather than skipped:
 //!   see [`Protection`].
 
+pub mod anchor;
+
 pub mod canonical;
 
 /// The Windows **second principal** for the audit-head anchor (O-2).
@@ -230,24 +232,53 @@ pub const REGISTRY_VERSION: i64 = 1;
 // Layout
 // ---------------------------------------------------------------------------
 
-/// Everything this module writes lives under `<app_data_dir>/trust`.
+/// The app-side half of the store lives under `<app_data_dir>/trust`: the private keys, the
+/// trusted-key registry and the operator-signed artifacts. The app's account writes all of it,
+/// which is why none of it is the anchor — see [`anchor`].
 pub const TRUST_DIR: &str = "trust";
 /// The record of what was minted; its presence is what makes provisioning idempotent.
-pub const MANIFEST_FILE: &str = "PROVISIONING.json";
+///
+/// It lives in the ANCHOR directory, not here, and it is re-exported from [`anchor`] so there
+/// is one spelling. The manifest carries the sha256 of every app-side file, so it is the thing
+/// that makes the app-side store unforgeable — which it can only be if the app cannot rewrite
+/// it, and that is exactly what its location buys.
+pub use anchor::MANIFEST_FILE;
 /// The posture statement, for whoever finds this directory without the source.
 pub const POSTURE_FILE: &str = "POSTURE.txt";
 /// Private key material, one file per authority.
 pub const KEYS_DIR: &str = "keys";
 /// The registry ROOT: `bro_signature.load_trusted_keys` reads `<root>/config/trusted-keys.json`.
+///
+/// **It lives in the ANCHOR directory too**, and it has to. `bro_signature.resolve_registry_root`
+/// runs `_refuse_writable_registry_root` on whatever `BRO_TRUSTED_REGISTRY_ROOT` names, which is
+/// the same `bro_custody` question the pin asks, asked with the DIRECTORY right list — so a
+/// registry root the reading account can add to or delete from is refused outright. That refusal
+/// was invisible for as long as this deployment set `BRO_OPERATOR_ROOT_PIN_SELF_OWNED`, because
+/// the acknowledgement short-circuits every custody rule in the runtime at once, not just the
+/// pin's. Dropping the acknowledgement surfaced it immediately.
+///
+/// The engine states what it buys and it is smaller than it looks: the registry is
+/// operator-signed and pinned, so an account that can write this directory cannot introduce a
+/// key. What it can do is swap in a different registry the same operator signed, or delete it.
+/// That is a downgrade and a denial rather than a forgery, and it is what the rule is for.
+///
+/// It sits BESIDE the pin, never above it: `_refuse_anchor_inside_registry_root` refuses a pin
+/// lexically inside the registry root it anchors, because a root-controlled path must not be
+/// able to select its own anchor. `<anchor>/registry` and `<anchor>/operator-root.pub` are
+/// siblings, which is the same relationship `pin/` and `registry/` had inside the trust store.
 pub const REGISTRY_ROOT_DIR: &str = "registry";
 /// Relative to the registry root. `bro_signature.REGISTRY_REL`.
 pub const REGISTRY_REL: &str = "config/trusted-keys.json";
 /// The out-of-registry pins. Deliberately a SIBLING of the registry root, never inside
 /// it: `bro_signature._pin_from_file` refuses a pin lexically inside the root it
 /// anchors, because a root-controlled path must not be able to select its own anchor.
-pub const PIN_DIR: &str = "pin";
-pub const OPERATOR_PIN_FILE: &str = "operator-root.pub";
-pub const REGISTRY_FLOOR_FILE: &str = "registry-min";
+///
+/// **They no longer live in this directory at all.** The pin and the floor were files in
+/// `<app_data>/trust/pin/`, which the app's own account owns; an account that can rewrite the
+/// pin installs a trust root of its own and re-signs everything under it, with no need for any
+/// private key. They moved to [`anchor`], a location the app's account cannot write, and that
+/// move is the whole of O-2. The names are re-exported so there is one spelling.
+pub use anchor::{OPERATOR_PIN_FILE, REGISTRY_FLOOR_FILE};
 /// Operator-signed artifacts.
 pub const ARTIFACTS_DIR: &str = "artifacts";
 pub const CONDUCTOR_SESSION_FILE: &str = "conductor-session.json";
@@ -268,6 +299,14 @@ pub enum ProvisionError {
     Corrupt { what: String, detail: String },
     /// This platform cannot do something the posture requires. Fails closed.
     Unsupported { platform: String, what: String },
+    /// The trust anchor is not held where the policed account cannot write it — the one
+    /// property O-2 reduces to. Raised by [`anchor::prove_unwritable`] with the path, the
+    /// measurement that failed, and what a deployment has to change.
+    ///
+    /// Never softened into a warning and never given a fallback: a deployment that cannot
+    /// provide the location has no trust anchor, and continuing without one would mean the
+    /// application choosing its own trust root while reporting that it had one.
+    Custody { path: PathBuf, what: String, remedy: String },
 }
 
 impl std::fmt::Display for ProvisionError {
@@ -286,6 +325,11 @@ impl std::fmt::Display for ProvisionError {
             ProvisionError::Unsupported { platform, what } => {
                 write!(f, "trust provisioning refuses to continue on {platform}: {what}")
             }
+            ProvisionError::Custody { path, what, remedy } => write!(
+                f,
+                "the trust anchor at {} is not out of this account's reach — {what}. {remedy}",
+                path.display()
+            ),
         }
     }
 }
@@ -979,6 +1023,9 @@ fn write_key_file(path: &Path, value: &Value) -> Result<(), ProvisionError> {
 #[derive(Debug, Clone)]
 pub struct Provisioned {
     pub trust_dir: PathBuf,
+    /// Where the pin, the anti-rollback floor and the manifest live: a directory this
+    /// account cannot write. See [`anchor`].
+    pub anchor_dir: PathBuf,
     /// Pass this as `root` to `bro_signature.load_trusted_keys`.
     pub registry_root: PathBuf,
     pub registry_path: PathBuf,
@@ -994,6 +1041,16 @@ pub struct Provisioned {
     pub freshly_minted: bool,
     pub dir_protection: Protection,
     pub key_file_protection: Protection,
+    /// The OS's own answer to "can this account rewrite the anchor?", re-measured on THIS
+    /// call. Never read from a file: a stored proof is a claim about the past.
+    ///
+    /// `None` ONLY when the store came from [`mint_store_without_custody_proof`] or
+    /// [`verify_store_without_custody_proof`], which exist so the mint and the verifier can be
+    /// tested without permanently sealing a directory on the machine running the tests. A
+    /// `None` here means the anchor's custody was never established and the store must not be
+    /// used: `provision`, `provision_with_anchor` and `verify_existing` — every path the
+    /// application actually takes — always carry `Some`.
+    pub custody: Option<anchor::CustodyProof>,
 }
 
 impl Provisioned {
@@ -1007,10 +1064,15 @@ impl Provisioned {
         vec![
             ("BRO_OPERATOR_ROOT_PUBKEY_FILE", self.operator_pin_path.display().to_string()),
             ("BRO_OPERATOR_REGISTRY_MIN_FILE", self.registry_floor_path.display().to_string()),
-            // The anchor and the floor both live under an account this process can
-            // write. `bro_signature`/`bro_custody` refuse exactly that unless the
-            // deployment says out loud that it has no second principal to offer.
-            ("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", "acknowledged".to_string()),
+            // `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` is deliberately ABSENT, and its absence is
+            // the point of this whole round. It used to be set to `acknowledged`, which is
+            // the deployment saying out loud that the account reading the pin can also write
+            // it — `bro_custody` short-circuits every custody rule when it is set. The pin
+            // and the floor now live in [`anchor`], which this account cannot write, so the
+            // engine's own unacknowledged rule (`bro_signature._pin_from_file` ->
+            // `bro_custody.refuse_windows_writable` / `posix_rewrite_verdict`) accepts them
+            // on their merits. Setting it again would re-disable the check that is now the
+            // only thing standing between the app and a trust root of its own choosing.
             ("BRO_CONDUCTOR_SESSION_TOKEN", self.conductor_session_path.display().to_string()),
             ("BRO_SESSION_ID", self.session_id.clone()),
         ]
@@ -1061,8 +1123,11 @@ pub fn published_anchor_custody(machine_root: &Path) -> Result<Option<Value>, Pr
 /// NEVER be given one afterwards — see that function for why. A Windows deployment that
 /// installs the audit signer must call [`provision_with_anchor`] with
 /// [`published_anchor_custody`] instead.
-pub fn provision(app_data_dir: &Path) -> Result<Provisioned, ProvisionError> {
-    provision_with_anchor(app_data_dir, None)
+pub fn provision(
+    app_data_dir: &Path,
+    machine_root: &Path,
+) -> Result<Provisioned, ProvisionError> {
+    provision_with_anchor(app_data_dir, machine_root, None)
 }
 
 /// Mint the trust store, optionally admitting the audit signer's published key.
@@ -1091,11 +1156,32 @@ pub fn provision(app_data_dir: &Path) -> Result<Provisioned, ProvisionError> {
 /// registry — is the thing this design exists to remove.
 pub fn provision_with_anchor(
     app_data_dir: &Path,
+    machine_root: &Path,
     anchor: Option<&Value>,
 ) -> Result<Provisioned, ProvisionError> {
+    let anchor_dir = anchor::anchor_dir(machine_root);
     let trust = app_data_dir.join(TRUST_DIR);
-    if trust.join(MANIFEST_FILE).is_file() {
-        return verify_existing(&trust);
+    // The MANIFEST is the idempotency marker, and it lives in the anchor directory. That is
+    // not incidental: the marker that says "this machine is provisioned" must not itself be a
+    // file the provisioned machine can delete, or a first launch can be staged over and over.
+    if anchor_dir.join(MANIFEST_FILE).is_file() {
+        return verify_existing(&trust, &anchor_dir);
+    }
+    // Refuse BEFORE minting anything if the location cannot become an anchor. Everything below
+    // this point is expensive and, once sealed, irreversible for this account; discovering
+    // afterwards that the path can be renamed aside would leave a sealed directory nothing
+    // running as this account can remove.
+    anchor::precheck_location(&anchor_dir, machine_root)?;
+    if anchor_dir.exists() {
+        return corrupt(
+            "the trust anchor path already holds something that is not a provisioned anchor",
+            format!(
+                "{} exists but has no {MANIFEST_FILE}. It is either a half-removed anchor or a \
+                 directory something else owns; minting over it would destroy whichever it is, \
+                 and sealing over it would make that permanent",
+                anchor_dir.display()
+            ),
+        );
     }
     // Something is at the trust path but it is not a provisioned store. Refuse rather
     // than mint over it. This is also where the two platforms would otherwise differ:
@@ -1103,31 +1189,25 @@ pub fn provision_with_anchor(
     // staging directory over an existing FILE succeeds there and fails with ENOTDIR on
     // unix. Deciding here, before anything is minted, makes the behaviour the same
     // everywhere and the refusal explicit.
-    if trust.exists() {
-        return corrupt(
-            "the trust path already holds something that is not a provisioned store",
-            format!(
-                "{} exists but has no {MANIFEST_FILE}. It is either a half-removed store or a \
-                 directory something else owns, and minting over it would destroy whichever it is",
-                trust.display()
-            ),
-        );
-    }
+    refuse_occupied_trust_path(&trust)?;
 
     // Mint into a staging directory and rename it into place as the last step, so the
     // trust directory only ever exists complete. A failure in between removes the
     // staging directory and leaves nothing behind.
     let staging = app_data_dir.join(format!(".trust-staging-{}", random_hex(8)?));
-    if let Err(e) = mint(&staging, anchor) {
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(e);
-    }
+    let minted = match mint(&staging, anchor) {
+        Ok(minted) => minted,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+    };
     if let Err(source) = std::fs::rename(&staging, &trust) {
         let _ = std::fs::remove_dir_all(&staging);
         // A concurrent first launch may have won the race and put a complete store
         // there. That is a success, not a failure — verify theirs.
-        if trust.join(MANIFEST_FILE).is_file() {
-            return verify_existing(&trust);
+        if anchor_dir.join(MANIFEST_FILE).is_file() {
+            return verify_existing(&trust, &anchor_dir);
         }
         return Err(ProvisionError::Io {
             what: "moving the newly minted trust store into place".into(),
@@ -1136,19 +1216,135 @@ pub fn provision_with_anchor(
         });
     }
 
-    // Verify what we just wrote through exactly the same code a later launch uses. A
-    // mint that produces something the verifier rejects must not survive, so this is
-    // the one case where an existing store IS removed: this call created it.
-    match verify_existing(&trust) {
-        Ok(mut provisioned) => {
-            provisioned.freshly_minted = true;
-            Ok(provisioned)
-        }
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&trust);
-            Err(e)
-        }
+    // The anchor half: the pin, the floor and the manifest, then the seal, then the operating
+    // system's own answer to whether the seal took.
+    if let Err(e) = establish_anchor(&anchor_dir, machine_root, &trust, &minted) {
+        // Whatever failed, it failed at or before the proof — so either nothing was sealed or
+        // the seal did not take, and in both cases this account can still remove what it just
+        // wrote. A half-provisioned pair must never survive: an app-side store without its
+        // anchor is a trust store with no trust root.
+        let _ = std::fs::remove_dir_all(&anchor_dir);
+        let _ = std::fs::remove_dir_all(&trust);
+        return Err(e);
     }
+
+    // Verify what we just wrote through exactly the same code a later launch uses. A mint that
+    // produces something the verifier rejects must not survive — but the anchor is sealed by
+    // now, so removing it is no longer this account's to do. That is stated rather than papered
+    // over: the refusal names the paths and an administrator has to clear them.
+    let mut provisioned = verify_existing(&trust, &anchor_dir)?;
+    provisioned.freshly_minted = true;
+    Ok(provisioned)
+}
+
+/// Write the anchor half, seal it, and prove the seal took.
+///
+/// The order is the whole safety argument:
+///
+/// 1. the pin, the floor and `CUSTODY.txt` — plain writes, still this account's to make;
+/// 2. the manifest LAST, because its presence is what makes the machine "provisioned" and it
+///    must not appear until everything it describes is in place;
+/// 3. [`anchor::seal`], after which this account can no longer write, delete or rename any of
+///    them, or any directory on the path to them;
+/// 4. [`anchor::prove_unwritable`], which asks the operating system — rather than this code —
+///    whether step 3 did what it claimed.
+///
+/// Step 4 is not a formality. Step 3 can succeed on every call and still leave the anchor
+/// reachable, because a security descriptor cannot restrain a parent directory. That is not
+/// hypothetical: it is what the first construction for this round did, and the rename that
+/// defeated it took one call.
+fn establish_anchor(
+    anchor_dir: &Path,
+    machine_root: &Path,
+    trust: &Path,
+    minted: &Minted,
+) -> Result<(), ProvisionError> {
+    write_anchor_files(anchor_dir, trust, minted)?;
+    anchor::seal(anchor_dir, machine_root)?;
+    anchor::prove_unwritable(anchor_dir)?;
+    Ok(())
+}
+
+/// Steps 1 and 2 of [`establish_anchor`]: the pin, the floor, `CUSTODY.txt` and the manifest.
+fn write_anchor_files(
+    anchor_dir: &Path,
+    trust: &Path,
+    minted: &Minted,
+) -> Result<(), ProvisionError> {
+    io(std::fs::create_dir_all(anchor_dir), "creating the trust anchor directory", anchor_dir)?;
+
+    write_bytes(
+        &anchor_dir.join(OPERATOR_PIN_FILE),
+        format!("{}\n", minted.operator_public_key).as_bytes(),
+    )?;
+    write_bytes(&anchor_dir.join(REGISTRY_FLOOR_FILE), format!("{REGISTRY_VERSION}\n").as_bytes())?;
+    write_json(
+        &under(&anchor_dir.join(REGISTRY_ROOT_DIR), REGISTRY_REL),
+        &minted.registry,
+    )?;
+    write_bytes(&anchor_dir.join(anchor::CUSTODY_FILE), anchor::custody_text().as_bytes())?;
+
+    // The manifest records the digest of every APP-SIDE file. That direction is the point: the
+    // half this account can rewrite is vouched for by the half it cannot.
+    let mut files = BTreeMap::new();
+    for relative in provisioned_files() {
+        let path = under(trust, &relative);
+        let bytes = io(std::fs::read(&path), "hashing a provisioned file", &path)?;
+        files.insert(relative, Value::from(sha256_hex(&bytes)));
+    }
+    let manifest = json!({
+        "schema": SCHEMA,
+        "install_id": minted.install_id,
+        "session_id": minted.session_id,
+        "provisioned_at_epoch": minted.now,
+        "registry_version": REGISTRY_VERSION,
+        "operator_key_id": minted.operator_key_id,
+        "operator_public_key": minted.operator_public_key,
+        // Which store this anchor is the anchor FOR. An anchor that named no store could be
+        // pointed at a second one the same account minted somewhere it CAN write.
+        "trust_dir": trust.display().to_string(),
+        "operator_root_custody": OPERATOR_ROOT_CUSTODY,
+        "anchor_custody": ANCHOR_CUSTODY,
+        "anchor_key_id": minted.anchor_key_id,
+        "not_before_epoch": NOT_BEFORE_EPOCH,
+        "not_after_epoch": NEVER_EXPIRES_EPOCH,
+        "expiry_policy": "non-expiring by design: this product has no operator but its owner, \
+                          so nothing may ever require a renewal. Revocation is a re-mint plus a \
+                          registry_version rise, enforced by the anti-rollback floor, not an \
+                          expiry date.",
+        "platform": platform_name(),
+        "directory_protection": directory_protection().to_string(),
+        "key_file_protection": key_file_protection().to_string(),
+        "posture": POSTURE_SUMMARY,
+        "files": files.into_iter().collect::<Map<String, Value>>(),
+    });
+    write_json(&anchor_dir.join(MANIFEST_FILE), &manifest)?;
+    Ok(())
+}
+
+/// Refuse to mint over whatever is already at the trust path.
+///
+/// Asked before anything is minted, and identically on both platforms, because the two differ
+/// where it matters: `std::fs::rename` on Windows carries `MOVEFILE_REPLACE_EXISTING`, so
+/// renaming the staging directory over an existing FILE succeeds there and fails with `ENOTDIR`
+/// on unix. Deciding here makes the behaviour the same everywhere and the refusal explicit.
+///
+/// It lives in one function rather than in `provision_with_anchor` because
+/// `mint_store_without_custody_proof` mints too, and a refusal that only one of two minting
+/// paths performs is a refusal the other one does not have.
+fn refuse_occupied_trust_path(trust: &Path) -> Result<(), ProvisionError> {
+    if !trust.exists() {
+        return Ok(());
+    }
+    corrupt(
+        "the trust path already holds something that is not a provisioned store",
+        format!(
+            "{} exists but the trust anchor records no provisioning for it. It is either a \
+             half-removed store or a directory something else owns, and minting over it would \
+             destroy whichever it is",
+            trust.display()
+        ),
+    )
 }
 
 /// Every file the mint writes, relative to the trust directory, in manifest order.
@@ -1159,9 +1355,16 @@ pub fn provision_with_anchor(
 fn provisioned_files() -> Vec<String> {
     let mut relatives: Vec<String> =
         RETAINED_AUTHORITIES.iter().map(|a| format!("{KEYS_DIR}/{a}.json")).collect();
-    relatives.push(format!("{REGISTRY_ROOT_DIR}/{REGISTRY_REL}"));
-    relatives.push(format!("{PIN_DIR}/{OPERATOR_PIN_FILE}"));
-    relatives.push(format!("{PIN_DIR}/{REGISTRY_FLOOR_FILE}"));
+    // The registry is NOT here either: it moved to the anchor with the pin and the floor,
+    // because `bro_signature.resolve_registry_root` refuses a registry root the reading
+    // account can write. What is left in this list is the private key material the app
+    // legitimately uses and the conductor-session artifact — neither of which can be forged
+    // without a key that no longer exists, and both of which are bound by digest from a
+    // manifest that account cannot rewrite.
+    // The pin and the floor are NOT here: they are not in the trust directory any more, and
+    // a digest recorded for them would be a digest of a file this manifest sits beside. What
+    // this list covers is exactly the app-WRITABLE half — the half whose integrity has to be
+    // vouched for from outside it.
     relatives.push(format!("{ARTIFACTS_DIR}/{CONDUCTOR_SESSION_FILE}"));
     relatives.push(POSTURE_FILE.to_string());
     relatives
@@ -1181,7 +1384,22 @@ fn under(root: &Path, relative: &str) -> PathBuf {
 /// inside one scope, and the key leaves that scope only by being dropped. Nothing after
 /// the drop can reach it, and — because no `write_key_file` call names `operator-root` —
 /// nothing before the drop wrote it down.
-fn mint(staging: &Path, anchor: Option<&Value>) -> Result<(), ProvisionError> {
+/// What [`mint`] produces that the ANCHOR half needs. Every field is public information:
+/// the private halves are on disk under `staging`, and the one that never was — the operator
+/// root — is represented here only by its 64-character public key.
+struct Minted {
+    install_id: String,
+    session_id: String,
+    operator_key_id: String,
+    operator_public_key: String,
+    anchor_key_id: Option<String>,
+    now: i64,
+    /// The signed `trusted-key-registry` document. It is carried here rather than written by
+    /// `mint`, because it belongs on the anchor side: see [`REGISTRY_ROOT_DIR`].
+    registry: Value,
+}
+
+fn mint(staging: &Path, anchor: Option<&Value>) -> Result<Minted, ProvisionError> {
     io(std::fs::create_dir_all(staging), "creating the staging directory", staging)?;
     io(secure_data_dir(staging), "restricting the staging directory to its owner", staging)?;
 
@@ -1215,16 +1433,16 @@ fn mint(staging: &Path, anchor: Option<&Value>) -> Result<(), ProvisionError> {
     // does not. `operator_public_key` is what survives — the pin, the registry's own
     // `operator_public_key` field and the manifest all carry the PUBLIC half.
     let operator_public_key;
+    let registry_document;
     let operator_key_id = format!("brops-{install_id}-{OPERATOR}");
     {
         let operator = mint_key(OPERATOR, &install_id)?;
         operator_public_key = operator.public_key_hex();
 
-        let registry = sign_document(
+        registry_document = sign_document(
             &operator.signing,
             registry_payload(&keys, &operator, anchor.as_ref(), now),
         )?;
-        write_json(&under(staging, &format!("{REGISTRY_ROOT_DIR}/{REGISTRY_REL}")), &registry)?;
 
         let session = sign_document(
             &operator.signing,
@@ -1239,59 +1457,22 @@ fn mint(staging: &Path, anchor: Option<&Value>) -> Result<(), ProvisionError> {
     }
     debug_assert_eq!(operator_public_key.len(), 64);
 
-    let pin_dir = staging.join(PIN_DIR);
-    io(std::fs::create_dir_all(&pin_dir), "creating the pin directory", &pin_dir)?;
-    io(secure_data_dir(&pin_dir), "restricting the pin directory to its owner", &pin_dir)?;
-    let pin_path = pin_dir.join(OPERATOR_PIN_FILE);
-    write_bytes(&pin_path, format!("{operator_public_key}\n").as_bytes())?;
-    io(secure_owner_only_file(&pin_path), "restricting the operator pin to its owner", &pin_path)?;
-    let floor_path = pin_dir.join(REGISTRY_FLOOR_FILE);
-    write_bytes(&floor_path, format!("{REGISTRY_VERSION}\n").as_bytes())?;
-    io(
-        secure_owner_only_file(&floor_path),
-        "restricting the registry anti-rollback floor to its owner",
-        &floor_path,
-    )?;
-
+    // The pin and the anti-rollback floor are NOT written here any more, and that absence is
+    // the change this whole round is. They used to be `staging/pin/*`, restricted to their
+    // owner — which is the account being policed, so the restriction protected the anchor from
+    // everyone except the one principal it needed to be protected from. They are written by
+    // `establish_anchor` into a directory that account cannot write, and so is the manifest.
     write_bytes(&staging.join(POSTURE_FILE), posture_text(&install_id).as_bytes())?;
 
-    // The manifest LAST: its presence is what makes the store "provisioned", and it
-    // records the digest of every other file so a later launch verifies rather than
-    // assumes. It is not listed in its own `files` map.
-    let mut files = BTreeMap::new();
-    for relative in provisioned_files() {
-        let path = under(staging, &relative);
-        let bytes = io(std::fs::read(&path), "hashing a provisioned file", &path)?;
-        files.insert(relative, Value::from(sha256_hex(&bytes)));
-    }
-
-    let manifest = json!({
-        "schema": SCHEMA,
-        "install_id": install_id,
-        "session_id": session_id,
-        "provisioned_at_epoch": now,
-        "registry_version": REGISTRY_VERSION,
-        "operator_key_id": operator_key_id,
-        "operator_public_key": operator_public_key,
-        // Stated in the manifest so a reader of the directory learns it without this
-        // source in front of them, and so `verify_existing` can refuse a store whose key
-        // directory grew an operator-root file after the fact.
-        "operator_root_custody": OPERATOR_ROOT_CUSTODY,
-        "anchor_key_id": anchor.as_ref().map(|a| a.key_id.clone()),
-        "not_before_epoch": NOT_BEFORE_EPOCH,
-        "not_after_epoch": NEVER_EXPIRES_EPOCH,
-        "expiry_policy": "non-expiring by design: this product has no operator but its owner, \
-                          so nothing may ever require a renewal. Revocation is a re-mint plus a \
-                          registry_version rise, enforced by the anti-rollback floor, not an \
-                          expiry date.",
-        "platform": platform_name(),
-        "directory_protection": directory_protection().to_string(),
-        "key_file_protection": key_file_protection().to_string(),
-        "posture": POSTURE_SUMMARY,
-        "files": files.into_iter().collect::<Map<String, Value>>(),
-    });
-    write_json(&staging.join(MANIFEST_FILE), &manifest)?;
-    Ok(())
+    Ok(Minted {
+        install_id,
+        session_id,
+        operator_key_id,
+        operator_public_key,
+        anchor_key_id: anchor.as_ref().map(|a| a.key_id.clone()),
+        now,
+        registry: registry_document,
+    })
 }
 
 pub const POSTURE_SUMMARY: &str =
@@ -1304,6 +1485,23 @@ pub const POSTURE_SUMMARY: &str =
 /// Two claims, and the second is as important as the first. Not writing the key down is
 /// not the same as putting the anchor out of reach, and a manifest that said only the
 /// first would be inviting exactly the overclaim this store must not make.
+/// What became of the trust ANCHOR — the claim `OPERATOR_ROOT_CUSTODY` had to decline to make.
+///
+/// The two are deliberately separate strings. Destroying a key and moving an anchor are
+/// different properties, they were closed in different rounds, and a single sentence covering
+/// both would let either be believed on the strength of the other.
+pub const ANCHOR_CUSTODY: &str =
+    "the operator-root pin, the registry anti-rollback floor and this manifest live OUTSIDE the \
+     application\'s data directory, in a location the account the application runs as cannot \
+     write: on Windows a PROTECTED DACL whose OWNER RIGHTS (S-1-3-4) entry replaces the owner\'s \
+     implicit READ_CONTROL|WRITE_DAC with read+execute, applied to the anchor, its files and \
+     every ancestor up to the machine root; on POSIX a uid the application is not. This is \
+     re-proved on EVERY launch by asking the operating system - creating a file here, opening \
+     each file here for writing, and opening this directory and every ancestor for DELETE must \
+     all be refused - and the application refuses to start if any of them succeeds. Because of \
+     it, BRO_OPERATOR_ROOT_PIN_SELF_OWNED is NOT set: the engine\'s own custody rule passes on \
+     its merits rather than being switched off.";
+
 pub const OPERATOR_ROOT_CUSTODY: &str =
     "destroyed at the end of provisioning: the operator-root private half was generated in \
      memory, signed the trusted-key registry and the conductor session, and was dropped before \
@@ -1371,8 +1569,33 @@ fn posture_text(install_id: &str) -> String {
 }
 
 /// Verify a trust store that is already on disk. Never repairs, never re-mints.
-pub fn verify_existing(trust: &Path) -> Result<Provisioned, ProvisionError> {
-    let manifest_path = trust.join(MANIFEST_FILE);
+///
+/// # The first thing it does, and why it is first
+///
+/// It proves the anchor's custody before it reads a single byte out of it. Every other check
+/// below — the digests, the registry signature, the conductor session — resolves through the
+/// pin, and a pin the reading account can rewrite makes all of them checks against a value that
+/// account chose. Reading first and checking custody afterwards would be the same defect one
+/// step later.
+///
+/// This runs on EVERY launch, not only at install. An anchor is not a thing that was true once:
+/// an administrator can re-permission the directory, the application can be moved to a machine
+/// where the path means something else, and the account it runs as can change. The property is
+/// re-measured against the operating system each time and a launch that cannot demonstrate it
+/// fails closed.
+pub fn verify_existing(
+    trust: &Path,
+    anchor_dir: &Path,
+) -> Result<Provisioned, ProvisionError> {
+    let custody = anchor::prove_unwritable(anchor_dir)?;
+    let mut provisioned = verify_store(trust, anchor_dir)?;
+    provisioned.custody = Some(custody);
+    Ok(provisioned)
+}
+
+/// Everything `verify_existing` checks EXCEPT the anchor's custody.
+fn verify_store(trust: &Path, anchor_dir: &Path) -> Result<Provisioned, ProvisionError> {
+    let manifest_path = anchor_dir.join(MANIFEST_FILE);
     let raw =
         io(std::fs::read(&manifest_path), "reading the provisioning manifest", &manifest_path)?;
     let manifest: Value = match serde_json::from_slice(&raw) {
@@ -1386,7 +1609,29 @@ pub fn verify_existing(trust: &Path) -> Result<Provisioned, ProvisionError> {
         );
     }
 
-    // 1. Every file the mint recorded is present with the digest it recorded, and the
+    // 1. The manifest names the store it is the anchor FOR.
+    //
+    //    Without this, an anchor is a floating claim: the same account that owns the app data
+    //     directory could mint a SECOND trust store somewhere it CAN write, point the engine at
+    //    the sealed anchor and the second store together, and every digest in the manifest
+    //    would simply be a digest of files that are not the ones being used. The manifest is
+    //    unforgeable, so binding the path into it is enough to make that mismatch visible.
+    match manifest.get("trust_dir").and_then(|v| v.as_str()) {
+        Some(recorded) if recorded == trust.display().to_string() => {}
+        other => {
+            return corrupt(
+                "the trust anchor was provisioned for a different trust store",
+                format!(
+                    "the manifest in the anchor names {other:?}, but the store being verified is \
+                     {}. An anchor that did not name its store could be paired with a second \
+                     store minted somewhere this account CAN write",
+                    trust.display()
+                ),
+            )
+        }
+    }
+
+    // 2. Every file the mint recorded is present with the digest it recorded, and the
     //    manifest covers every file the mint is supposed to write (so dropping an entry
     //    cannot smuggle a file past the digest check).
     let files = match manifest.get("files").and_then(|v| v.as_object()) {
@@ -1413,7 +1658,7 @@ pub fn verify_existing(trust: &Path) -> Result<Provisioned, ProvisionError> {
         }
     }
 
-    // 1b. The key directory holds the RETAINED authorities and nothing else — asked of
+    // 2b. The key directory holds the RETAINED authorities and nothing else — asked of
     //     the directory, not of the manifest that describes it.
     //
     //     The digest loop above cannot see this. It checks that every file the manifest
@@ -1442,12 +1687,12 @@ pub fn verify_existing(trust: &Path) -> Result<Provisioned, ProvisionError> {
         }
     }
 
-    // 2. The pin file and the registry agree on the operator-root public key.
-    let pin_path = trust.join(PIN_DIR).join(OPERATOR_PIN_FILE);
+    // 3. The pin file and the registry agree on the operator-root public key.
+    let pin_path = anchor_dir.join(OPERATOR_PIN_FILE);
     let pin = io(std::fs::read_to_string(&pin_path), "reading the operator-root pin", &pin_path)?
         .trim()
         .to_string();
-    let registry_root = trust.join(REGISTRY_ROOT_DIR);
+    let registry_root = anchor_dir.join(REGISTRY_ROOT_DIR);
     let registry_path = under(&registry_root, REGISTRY_REL);
     let registry_raw =
         io(std::fs::read(&registry_path), "reading the trusted-key registry", &registry_path)?;
@@ -1456,7 +1701,7 @@ pub fn verify_existing(trust: &Path) -> Result<Provisioned, ProvisionError> {
         Err(e) => return corrupt("the trusted-key registry is not JSON", e.to_string()),
     };
 
-    // 3. The registry verifies under the pin — the same check `load_trusted_keys` runs.
+    // 4. The registry verifies under the pin — the same check `load_trusted_keys` runs.
     let payload = verify_document(&registry, &pin)?;
     if payload.get("operator_public_key").and_then(|v| v.as_str()) != Some(pin.as_str()) {
         return corrupt(
@@ -1472,7 +1717,7 @@ pub fn verify_existing(trust: &Path) -> Result<Provisioned, ProvisionError> {
         );
     }
 
-    // 4. Every authority the engine knows has an ACTIVE key, and the registry's
+    // 5. Every authority the engine knows has an ACTIVE key, and the registry's
     //    operator-root key is the pinned one (`load_trusted_keys`'s last check).
     let entries = match payload.get("keys").and_then(|v| v.as_array()) {
         Some(k) if !k.is_empty() => k.clone(),
@@ -1510,7 +1755,7 @@ pub fn verify_existing(trust: &Path) -> Result<Provisioned, ProvisionError> {
         }
     }
 
-    // 5. The conductor-session artifact still verifies and still binds what O-3 requires.
+    // 6. The conductor-session artifact still verifies and still binds what O-3 requires.
     let session_path = trust.join(ARTIFACTS_DIR).join(CONDUCTOR_SESSION_FILE);
     let session_raw =
         io(std::fs::read(&session_path), "reading the conductor-session artifact", &session_path)?;
@@ -1551,10 +1796,11 @@ pub fn verify_existing(trust: &Path) -> Result<Provisioned, ProvisionError> {
 
     Ok(Provisioned {
         trust_dir: trust.to_path_buf(),
+        anchor_dir: anchor_dir.to_path_buf(),
         registry_root,
         registry_path,
         operator_pin_path: pin_path,
-        registry_floor_path: trust.join(PIN_DIR).join(REGISTRY_FLOOR_FILE),
+        registry_floor_path: anchor_dir.join(REGISTRY_FLOOR_FILE),
         conductor_session_path: session_path,
         keys_dir: trust.join(KEYS_DIR),
         install_id: manifest
@@ -1568,5 +1814,56 @@ pub fn verify_existing(trust: &Path) -> Result<Provisioned, ProvisionError> {
         freshly_minted: false,
         dir_protection: directory_protection(),
         key_file_protection: key_file_protection(),
+        custody: None,
     })
+}
+
+/// Verify the app-side store against the anchor's manifest and pin — **and do not ask who can
+/// write the anchor**.
+///
+/// This is the mechanism, not an entry point. [`verify_existing`] is the entry point: it runs
+/// [`anchor::prove_unwritable`] first and then this. The split exists for one reason, and it is
+/// a property of what was built rather than a convenience: [`anchor::seal`] is one-way for the
+/// account that applies it, so a test that wanted a sealed anchor would have to leave a
+/// directory on the machine that nothing running as the test's own account could ever remove.
+/// The digest, registry and conductor-session logic is testable without that; the custody
+/// property is tested separately, against a real sealed directory, in `tests/anchor_custody.rs`
+/// and `audit-signer/tests/anchor_end_to_end.rs`.
+///
+/// The name is deliberately unpleasant. Nothing shipping may call it: a store verified this way
+/// carries `custody: None`, and `custody: None` means the pin it was verified against may be
+/// one the verifying account wrote a moment earlier.
+pub fn verify_store_without_custody_proof(
+    trust: &Path,
+    anchor_dir: &Path,
+) -> Result<Provisioned, ProvisionError> {
+    verify_store(trust, anchor_dir)
+}
+
+/// Mint both halves and **do not seal or prove the anchor**. See
+/// [`verify_store_without_custody_proof`] for why this exists and why nothing shipping may
+/// call it.
+pub fn mint_store_without_custody_proof(
+    app_data_dir: &Path,
+    anchor_dir: &Path,
+    anchor: Option<&Value>,
+) -> Result<Provisioned, ProvisionError> {
+    let trust = app_data_dir.join(TRUST_DIR);
+    if anchor_dir.join(MANIFEST_FILE).is_file() {
+        return verify_store(&trust, anchor_dir);
+    }
+    refuse_occupied_trust_path(&trust)?;
+    let staging = app_data_dir.join(format!(".trust-staging-{}", random_hex(8)?));
+    let minted = match mint(&staging, anchor) {
+        Ok(minted) => minted,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+    };
+    io(std::fs::rename(&staging, &trust), "moving the newly minted trust store into place", &trust)?;
+    write_anchor_files(anchor_dir, &trust, &minted)?;
+    let mut provisioned = verify_store(&trust, anchor_dir)?;
+    provisioned.freshly_minted = true;
+    Ok(provisioned)
 }

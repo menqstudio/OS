@@ -32,6 +32,10 @@ windows = { version = "0.58", features = [
     "Win32_Security_Authorization",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
+    # `CreateFileW(..., DELETE, ..., FILE_FLAG_BACKUP_SEMANTICS)` — the behavioural probe
+    # `anchor::prove_unwritable` uses to ask the kernel, rather than a DACL, whether this
+    # account can delete or rename any component of the trust anchor's path.
+    "Win32_Storage_FileSystem",
 ] }
 
 [dev-dependencies]

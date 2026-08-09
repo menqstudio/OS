@@ -100,7 +100,17 @@ fn the_real_python_verifier_accepts_the_real_rust_output() {
 
     let temp = tempfile::tempdir().expect("temp dir");
     let data_dir = python_safe(temp.path());
-    let provisioned = brops_provision::provision(&data_dir).expect("provisioning");
+    // The UNSEALED entry point, deliberately. What this proof is about is byte-compatibility:
+    // the real `bro_signature` accepting the real Rust output. Sealing the anchor would put it
+    // under %ProgramData% and leave it there permanently (the seal is one-way for the account
+    // that applies it), and it would prove nothing extra here — the custody property has its
+    // own proofs, and one of them is the cross-language case in
+    // `audit-signer/tests/anchor_end_to_end.py` where the engine accepts the sealed pin with
+    // BRO_OPERATOR_ROOT_PIN_SELF_OWNED unset.
+    let anchor_dir = data_dir.join("anchor");
+    let provisioned =
+        brops_provision::mint_store_without_custody_proof(&data_dir, &anchor_dir, None)
+            .expect("provisioning");
     assert!(provisioned.freshly_minted);
 
     // O-5's artifact is never a startup side effect (see `mint_floor_anchor`), so the
@@ -139,6 +149,7 @@ fn the_real_python_verifier_accepts_the_real_rust_output() {
         .arg("-B") // no bytecode beside the engine runtime (O-1's rule)
         .arg(&script)
         .arg(provisioned.trust_dir.as_os_str())
+        .arg(provisioned.anchor_dir.as_os_str())
         .arg(engine.as_os_str())
         .output()
         .unwrap_or_else(|e| panic!("could not run `{python} {}`: {e}", script.display()));

@@ -47,18 +47,24 @@ def load(path: pathlib.Path):
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
+    if len(argv) != 4:
         print(__doc__, file=sys.stderr)
         return 2
     trust = pathlib.Path(argv[1]).resolve()
-    engine = pathlib.Path(argv[2]).resolve()
+    anchor = pathlib.Path(argv[2]).resolve()
+    engine = pathlib.Path(argv[3]).resolve()
 
     sys.path.insert(0, str(engine / "runtime"))
     sys.path.insert(0, str(engine / "tools"))
 
-    registry_root = trust / "registry"
-    pin_file = trust / "pin" / "operator-root.pub"
-    floor_file = trust / "pin" / "registry-min"
+    # The registry, the pin and the floor all live in the ANCHOR now. This proof runs against
+    # the UNSEALED mint (see `python_verifier.rs`), so the acknowledgement below is still
+    # needed here and is still honest: THIS directory really is one the running account can
+    # write. What the acknowledgement is no longer needed for is production, which is proved
+    # separately, with it unset, in `audit-signer/tests/anchor_end_to_end.py`.
+    registry_root = anchor / "registry"
+    pin_file = anchor / "operator-root.pub"
+    floor_file = anchor / "registry-min"
     session_file = trust / "artifacts" / "conductor-session.json"
 
     # The engine resolves its anchor and its anti-rollback floor from the environment,

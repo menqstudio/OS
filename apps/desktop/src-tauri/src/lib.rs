@@ -74,8 +74,9 @@ fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
 /// # What is deliberately NOT done here
 ///
 /// The environment variables the engine reads (`BRO_OPERATOR_ROOT_PUBKEY_FILE`,
-/// `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_OPERATOR_ROOT_PIN_SELF_OWNED`,
-/// `BRO_CONDUCTOR_SESSION_TOKEN`, `BRO_SESSION_ID`) are reported by
+/// `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN`, `BRO_SESSION_ID`
+/// — and NOT `BRO_OPERATOR_ROOT_PIN_SELF_OWNED`, which this deployment no longer needs
+/// because the pin is no longer in a directory it can write) are reported by
 /// `Provisioned::engine_env()` and NOT exported into this process. Two reasons, both
 /// concrete:
 ///
@@ -97,37 +98,51 @@ fn provision_local_trust(dir: &std::path::Path) -> Result<(), Box<dyn std::error
     // signed can never be admitted at all. That is why the install plan starts the signer
     // service before the app's first launch. An unreadable-but-present record is an error
     // rather than a shrug — see `published_anchor_custody`.
-    let anchor = machine_root().map(|root| brops_provision::published_anchor_custody(&root))
-        .transpose()?
-        .flatten();
-    let provisioned = brops_provision::provision_with_anchor(dir, anchor.as_ref())?;
+    // The machine-wide root is now REQUIRED, not optional. It used to be looked up only to
+    // find the audit signer's published identity, and `None` off Windows was harmless. It is
+    // now also where the operator-root pin, the anti-rollback floor and the provisioning
+    // manifest live — the three files that decide whether the whole chain is genuine — so a
+    // deployment that cannot name one has nowhere to put its trust anchor and must be told so
+    // rather than quietly provisioned into a directory it can rewrite.
+    let root = machine_root()?;
+    let anchor = brops_provision::published_anchor_custody(&root)?;
+    let provisioned = brops_provision::provision_with_anchor(dir, &root, anchor.as_ref())?;
     if provisioned.freshly_minted {
         eprintln!(
             "BroPS provisioned its local trust store at {} (install {}).\n\
              Posture: {}\n\
              Key material protection — {}\n\
-             Operator root — {}",
+             Operator root — {}\n\
+             Trust anchor — {}\n\
+             Custody, measured on this launch:\n{}",
             provisioned.trust_dir.display(),
             provisioned.install_id,
             brops_provision::POSTURE_SUMMARY,
             provisioned.key_file_protection,
             brops_provision::OPERATOR_ROOT_CUSTODY,
+            brops_provision::ANCHOR_CUSTODY,
+            provisioned
+                .custody
+                .as_ref()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "NOT MEASURED".to_string()),
         );
     }
     Ok(())
 }
 
-/// `%ProgramData%\BroPS` — the machine-wide root the elevated installer creates the audit
-/// signer's protected directory under.
+/// `%ProgramData%\BroPS` (or its POSIX equivalent) — the machine-wide root that holds both
+/// the audit signer's protected directory and, since O-2, the trust ANCHOR.
 ///
-/// `None` off Windows: on POSIX the audit signer is a separate uid provisioned outside
-/// this application, so there is no ProgramData-shaped place to look and pretending
-/// otherwise would invent a path.
-fn machine_root() -> Option<std::path::PathBuf> {
-    if !cfg!(windows) {
-        return None;
-    }
-    std::env::var_os("ProgramData").map(|d| std::path::PathBuf::from(d).join("BroPS"))
+/// It used to return `Option` and `None` off Windows, because the only thing under it was the
+/// audit signer and on POSIX that signer is a separate uid provisioned elsewhere. It cannot be
+/// optional any more: `<machine_root>/trust-anchor` is where the operator-root pin, the
+/// anti-rollback floor and the provisioning manifest live, and a startup with no such location
+/// has no trust anchor at all. `brops_provision::anchor::default_machine_root` owns the choice
+/// and refuses, by name, on a platform where it cannot make one — which is the whole point of
+/// asking it rather than falling back to the application's own directory.
+fn machine_root() -> Result<std::path::PathBuf, brops_provision::ProvisionError> {
+    brops_provision::anchor::default_machine_root()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
