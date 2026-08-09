@@ -167,7 +167,7 @@ OS/
 ├── docs/               📚  Architecture, security model, ուղեցույցներ, ապացույցներ (երկլեզու)
 ├── tools/              ✅  15 repository gate (capabilities · reachability · release signing · …)
 ├── .claude/            🤖  262 գեներացված մասնագետի սահմանում + մեկ coordination Stop guard
-└── .github/workflows/  ⚙️  7 workflow, 28 պարտադիր ստուգում
+└── .github/workflows/  ⚙️  7 workflow, 31 ստուգում ամեն PR-ի վրա (ոչ մեկը *պարտադիր* չի — տես ավելի ներքև)
 ```
 
 **Root-ի `.claude/`-ը wall-ը չի։** Այնտեղ մասնագետ ագենտների սահմանումներն են (գեներացված pack-ի ու

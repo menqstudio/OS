@@ -76,24 +76,16 @@ phase. That is the whole onboarding for *building*.
 | 7 | Group Chat | 🔨 **Consensus and delegation.** Silence is never consent, dissent renders even when the vote passes, and delegations show in the room. |
 | 8 | Automation | 🔨 **Scheduler real, runs carry a contract.** Refused runs and their reasons are shown, not swallowed. |
 | 9 | Integrations | 🔨 **Modelled honestly.** Four independent facts per connector, each allowed to say "I don't know"; `auth_ref` names where a secret lives without ever holding one. `probe_integration` is deliberately **not** registered — nothing downstream can answer it, and a command that returns no answer would make the surface *worse*. |
-| 10 | Production | ⏳ **Supply chain strong, release blocked.** Release refuses to ship unsigned. O-1…O-5 are inventoried in [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md) and **all five remain OPEN**, three needing an Owner-minted artifact. |
+| 10 | Production | ⏳ **Supply chain strong, release blocked.** Release refuses to ship unsigned. O-1…O-5 are inventoried in [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md) and **all five remain OPEN**. **None needs an Owner-minted artifact** — that column reads `no` for all five and is machine-checked by `tools/check_residual_items.py`; this cell said “three needing an Owner-minted artifact” until 2026-08-09. What blocks them is deployment wiring and a second principal. |
 
 **What "blocked" now means here:** not a dependency on an earlier phase, but a named thing that
 does not exist — an Owner artifact, an independent audit, or an approval. Each is written down
 where it applies rather than inferred from a chain.
 
----|---|---|
-| 0 | Foundation | ✅ **Locked (done)** |
-| 1 | Bridge | 🔨 **In progress** — slice 1 (contract + adapter + tests + bridge CI leg) **merged** (PR #3, `41cf4ff`, 10/10); slice 2 **transport** (desktop `Provider::GovernedEngine` in `ai.rs` opt-in + sidecar wiring + chat receipt badge + Settings toggle) **merged** (PR #8); verify-seam · receipt-plumbing · fail-closed governed round-trip **WIRED** (Wave 3a / T-016, PR #28 — matches `PROJECT_STATE` `CURRENT_VERIFY_SEAM: complete` / `CURRENT_RECEIPT_PLUMBING: complete` / `CURRENT_GOVERNED_ROUNDTRIP: complete`); streaming intentionally **not** implemented (governed turns are buffered by design); production **"Verified"** (`trusted_verified`) still awaits Wave 3b |
-| 2 | Governance Sidecar | ⏳ Ready (P1 contract exists) |
-| 3 | Desktop Integration | ⏳ Blocked on P1 round-trip + P2 gate |
-| 4 | UI/UX System | ⏳ Blocked on P3 |
-| 5 | Memory & Knowledge | ⏳ Blocked on P3 |
-| 6 | Multi-Agent | ⏳ Blocked on P4+P5 |
-| 7 | Group Chat | ⏳ Blocked on P6 |
-| 8 | Automation | ⏳ Blocked on P4+P5 |
-| 9 | Integrations | ⏳ Blocked on P7+P8 |
-| 10 | Production | ⏳ Blocked on P9 |
+> *(A headerless copy of the SUPERSEDED phase table stood here until 2026-08-09 — the same ten rows,
+> still reading “Blocked on P3 / P4+P5 / P9”, left behind by the 2026-08-08 rewrite of the board above.
+> A reader scrolling past the corrected board met the old one a dozen lines later. Deleted, not
+> annotated: two tables cannot both be the board.)*
 
 ---
 
@@ -445,7 +437,7 @@ remain separate; IDs will cross the bridge in Phase 1 — no shared table.
 fixed; Cockpit: 1 High + 8 Med + 18 Low, all fixed). Residual/deferred engine items **O-1..O-5** are
 tracked on Bro's `fix/audit-followups` and are **not** in scope here (wall/owner-env coupled).
 
-**Tests.** Engine `BRO_ENV=ci python -m unittest discover -s tests` → green (591 passed, 38 skipped, 0
+**Tests.** Engine `BRO_ENV=ci python -m unittest discover -s tests` → green (1282 tests, 43 skipped, 0
 failed, option-C skip-guard). Cockpit `cargo test -p brops-core` 29/29; `npm run build` green.
 
 **CI requirements.** One workflow, three legs: cockpit-frontend (npm build) · cockpit-core (cargo test) ·

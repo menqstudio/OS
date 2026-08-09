@@ -1,5 +1,15 @@
 # Repository staleness sweep — 2026-08-08
 
+> **⚠ SUPERSEDED SNAPSHOT — do not read any line here as the current state.** This report describes
+> `main` @ `0efa99e` (PR #65). `main` is now further on, sixteen-odd merged PRs later, and this
+> document's “still open” list has been overtaken in at least one place (see item 5). It is kept as
+> the record of what one sweep checked and how. **Current state:** [`NEXT_CHAT.md`](../NEXT_CHAT.md)
+> and [`config/current_state.json`](../config/current_state.json). **Current audit position:**
+> [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](../apps/desktop/AUDIT/AUDIT_LEDGER.md) — the last
+> independent audit returned **RED** and has never been re-run. *(Banner added 2026-08-09: a dated
+> filename is not a superseded marker, and every present-tense sentence below was written as though
+> it were current.)*
+
 **Asked for:** check the whole GitHub repository, leave nothing stale, update everything starting
 from the ordinary `.md` files, and report **with evidence** that it is up to date.
 
@@ -239,8 +249,12 @@ the same defect this document is about.
    this document's authority.**
 4. **15 branch deletions remain**, blocked mid-run by the environment's command classifier. Command
    in §7.
-5. **All five engine residual items O-1…O-5 remain OPEN**, three needing an Owner-minted artifact:
-   a conductor session token, an audit anchor signer, and an evidence floor anchor. The deliberate
+5. **All five engine residual items O-1…O-5 remain OPEN.** ~~three needing an Owner-minted artifact:
+   a conductor session token, an audit anchor signer, and an evidence floor anchor.~~
+   **Corrected 2026-08-09: none of the five needs an Owner-minted artifact.** The
+   `Needs an Owner secret?` column in `docs/PHASE_10_PRODUCTION_ITEMS.md` reads `no` for all
+   five and is machine-checked by `tools/check_residual_items.py`; first-launch provisioning
+   mints every authority key. What blocks them is deployment wiring and a second principal. The deliberate
    consequence is that conductor stops and owner-issued control-room commands **refuse** until
    those exist. That is the honest state of an unverifiable identity and must not be resolved by
    re-defaulting a flag.
