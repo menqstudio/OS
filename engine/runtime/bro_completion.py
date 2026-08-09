@@ -387,33 +387,42 @@ def _require_store_agrees_with_head(task_id: str, store: pathlib.Path, keys: dic
 
 
 def _signed_floor_anchor(task_id: str, root: pathlib.Path, now: int | None) -> int | None:
-    """The operator-signed high-water statement for ``task_id``, if the deployment has one.
+    """The owner-signed high-water statement for ``task_id``, if the deployment has one.
 
     Returns ``None`` only when the deployment presents nothing. A presented anchor that does
     not verify is a refusal — never a fallback.
 
-    ``evidence-floor-anchor`` IS registered against ``operator-root`` in
-    ``bro_signature.ARTIFACT_AUTHORITY`` (it was absent when this was written, which made the
-    check unusable rather than merely unprovisioned). So an anchor can verify here — once the
-    Owner mints one offline and lists that key ``active`` in ``config/trusted-keys.json`` with
+    ``evidence-floor-anchor`` IS registered in ``bro_signature.ARTIFACT_AUTHORITY`` (it was
+    absent when this was written, which made the check unusable rather than merely
+    unprovisioned). So an anchor can verify here — once the owner mints a key under the
+    ``evidence-floor`` authority and lists it ``active`` in ``config/trusted-keys.json`` with
     the type among its ``allowed_artifact_types``. The shipped registry grants it to nobody, and
     no seed is compiled in to pretend otherwise: registering a type opens no path on its own.
+
+    The authority is ``evidence-floor`` and no longer ``operator-root``. Stating a task's
+    evidence high-water mark is a routine act; signing the trusted-key registry is not, and a
+    deployment that had to keep the registry-signing root online to perform the routine one
+    ended up holding the key that admits any authority it likes — which on the desktop shape is
+    the key the audit ledger's own writer would use to authorise its own anchor. The delegated
+    authority may be held online. It signs floor anchors and nothing else: it cannot sign a
+    registry, a conductor session or a control-room command, and ``verify_artifact`` says so by
+    name for each.
     """
     raw = os.getenv(ENV_FLOOR_ANCHOR)
     if not raw:
         return None
-    from bro_signature import verify_artifact
+    from bro_signature import EVIDENCE_FLOOR, verify_artifact
     document = _json(pathlib.Path(raw))
     try:
         payload = verify_artifact(document, FLOOR_ANCHOR_ARTIFACT,
                                   load_trusted_keys(root), now=now)
     except SignatureError as exc:
         raise CompletionError(
-            f"{ENV_FLOOR_ANCHOR} is set but does not verify as an operator-signed "
-            f"{FLOOR_ANCHOR_ARTIFACT}: {exc}. The owner must mint this artifact with an "
-            f"offline operator-root key and register '{FLOOR_ANCHOR_ARTIFACT}' against the "
-            "operator-root authority; this runtime holds no key for it and none is "
-            "compiled in") from exc
+            f"{ENV_FLOOR_ANCHOR} is set but does not verify as an owner-signed "
+            f"{FLOOR_ANCHOR_ARTIFACT}: {exc}. The owner must mint this artifact with a "
+            f"key held under the '{EVIDENCE_FLOOR}' authority and register "
+            f"'{FLOOR_ANCHOR_ARTIFACT}' against that authority in the operator-signed "
+            "registry; this runtime holds no key for it and none is compiled in") from exc
     if payload.get("task_id") != task_id:
         raise CompletionError(
             f"the {FLOOR_ANCHOR_ARTIFACT} at {ENV_FLOOR_ANCHOR} names task "
@@ -438,6 +447,7 @@ def _require_establishable_mark(task_id: str, declared: int | None, recorded: in
     """
     if declared is None or declared <= 1 or recorded >= 1:
         return
+    from bro_signature import EVIDENCE_FLOOR
     anchor = _signed_floor_anchor(task_id, root, now)
     if anchor is not None and anchor >= declared:
         return
@@ -446,11 +456,12 @@ def _require_establishable_mark(task_id: str, declared: int | None, recorded: in
         f"binds head_sequence {declared}, but this deployment holds no durable mark for the "
         "task. A floor that was deleted and re-provisioned is indistinguishable from a first "
         "sighting, so this refuses rather than defaulting to zero. Closing it needs an "
-        f"owner-provided key: mint an operator-root-signed '{FLOOR_ANCHOR_ARTIFACT}' artifact "
-        f"(task_id + head_sequence) offline, present it at {ENV_FLOOR_ANCHOR} under a "
-        f"principal the policed account cannot write, and register '{FLOOR_ANCHOR_ARTIFACT}' "
-        "against the operator-root authority in the signature module's artifact registry. No "
-        "key is invented here and none is compiled in")
+        f"owner-provided key: mint an '{FLOOR_ANCHOR_ARTIFACT}' artifact (task_id + "
+        f"head_sequence) with a key held under the '{EVIDENCE_FLOOR}' authority, present it at "
+        f"{ENV_FLOOR_ANCHOR} under a principal the policed account cannot write, and list that "
+        "key active in the operator-signed trusted-key registry. The authority is delegated and "
+        "deliberately NOT operator-root: the key that signs the registry must not have to be "
+        "online to state a high-water mark. No key is invented here and none is compiled in")
 
 
 #: The marker file that says "this deployment HAS an anti-rollback floor". Its absence is the

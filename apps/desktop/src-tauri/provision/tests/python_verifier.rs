@@ -100,11 +100,24 @@ fn the_real_python_verifier_accepts_the_real_rust_output() {
 
     let temp = tempfile::tempdir().expect("temp dir");
     let data_dir = python_safe(temp.path());
-    let provisioned = brops_provision::provision(&data_dir).expect("provisioning");
+    // The UNSEALED entry point, deliberately. What this proof is about is byte-compatibility:
+    // the real `bro_signature` accepting the real Rust output. Sealing the anchor would put it
+    // under %ProgramData% and leave it there permanently (the seal is one-way for the account
+    // that applies it), and it would prove nothing extra here — the custody property has its
+    // own proofs, and one of them is the cross-language case in
+    // `audit-signer/tests/anchor_end_to_end.py` where the engine accepts the sealed pin with
+    // BRO_OPERATOR_ROOT_PIN_SELF_OWNED unset.
+    let anchor_dir = data_dir.join("anchor");
+    let provisioned =
+        brops_provision::mint_store_without_custody_proof(&data_dir, &anchor_dir, None)
+            .expect("provisioning");
     assert!(provisioned.freshly_minted);
 
     // O-5's artifact is never a startup side effect (see `mint_floor_anchor`), so the
-    // proof mints one here, with the same signer and the same canonicalizer.
+    // proof mints one here, with the same signer and the same canonicalizer. It is signed
+    // by the DELEGATED `evidence-floor` key, because the operator root no longer exists —
+    // and the Python side verifies it through the real `verify_artifact`, which is what
+    // proves the delegation reaches the engine and not only this crate's mirrored table.
     brops_provision::mint_floor_anchor(
         &provisioned.trust_dir,
         "t-001",
@@ -113,11 +126,30 @@ fn the_real_python_verifier_accepts_the_real_rust_output() {
     )
     .expect("floor anchor");
 
+    // O-4's artifact, likewise: signed by the delegated `control-room` key and judged on
+    // the Python side by the real `bro_control_room_api._prove_command_actor`.
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs() as i64
+        + 3600;
+    brops_provision::mint_control_room_command(
+        &provisioned.trust_dir,
+        "cmd-provisioned-1",
+        "task-actor-1",
+        "cancel",
+        "s-owner-provisioned",
+        expires,
+        &provisioned.trust_dir.join("artifacts").join("test-control-room-command.json"),
+    )
+    .expect("control-room command");
+
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("verify_provisioning.py");
     let output = Command::new(&python)
         .arg("-B") // no bytecode beside the engine runtime (O-1's rule)
         .arg(&script)
         .arg(provisioned.trust_dir.as_os_str())
+        .arg(provisioned.anchor_dir.as_os_str())
         .arg(engine.as_os_str())
         .output()
         .unwrap_or_else(|e| panic!("could not run `{python} {}`: {e}", script.display()));

@@ -47,18 +47,24 @@ def load(path: pathlib.Path):
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
+    if len(argv) != 4:
         print(__doc__, file=sys.stderr)
         return 2
     trust = pathlib.Path(argv[1]).resolve()
-    engine = pathlib.Path(argv[2]).resolve()
+    anchor = pathlib.Path(argv[2]).resolve()
+    engine = pathlib.Path(argv[3]).resolve()
 
     sys.path.insert(0, str(engine / "runtime"))
     sys.path.insert(0, str(engine / "tools"))
 
-    registry_root = trust / "registry"
-    pin_file = trust / "pin" / "operator-root.pub"
-    floor_file = trust / "pin" / "registry-min"
+    # The registry, the pin and the floor all live in the ANCHOR now. This proof runs against
+    # the UNSEALED mint (see `python_verifier.rs`), so the acknowledgement below is still
+    # needed here and is still honest: THIS directory really is one the running account can
+    # write. What the acknowledgement is no longer needed for is production, which is proved
+    # separately, with it unset, in `audit-signer/tests/anchor_end_to_end.py`.
+    registry_root = anchor / "registry"
+    pin_file = anchor / "operator-root.pub"
+    floor_file = anchor / "registry-min"
     session_file = trust / "artifacts" / "conductor-session.json"
 
     # The engine resolves its anchor and its anti-rollback floor from the environment,
@@ -80,6 +86,8 @@ def main(argv: list[str]) -> int:
         ARTIFACT_AUTHORITY,
         AUDIT_ANCHOR,
         AUTHORITY_TYPES,
+        CONTROL_ROOM,
+        EVIDENCE_FLOOR,
         OPERATOR,
         SignatureError,
         canonical_bytes,
@@ -103,6 +111,79 @@ def main(argv: list[str]) -> int:
     require(any(k.authority_type == OPERATOR and k.public_key == pin for k in keys.values()),
             "the registry contains the operator-root key it is signed by")
 
+    print("== O-2: the operator-root PRIVATE half is nowhere on disk, by enumeration ==")
+    # Asked of the filesystem, not of the code that writes it: every file under the trust
+    # directory is read whole and every 32-byte window and every 64-character hex run in it
+    # is tried AS AN ED25519 SEED. A seed that moved to a differently named file, a temp
+    # file or a log line would still be found. A check for `keys/operator-root.json` would
+    # not.
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    def derives(seed: bytes, public_hex: str) -> bool:
+        try:
+            return (Ed25519PrivateKey.from_private_bytes(seed)
+                    .public_key().public_bytes_raw().hex() == public_hex)
+        except Exception:  # noqa: BLE001 - any 32 bytes are a valid seed; be defensive
+            return False
+
+    def find_seed(public_hex: str):
+        for path in sorted(trust.rglob("*")):
+            if not path.is_file():
+                continue
+            raw = path.read_bytes()
+            for offset in range(0, max(0, len(raw) - 31)):
+                if derives(raw[offset:offset + 32], public_hex):
+                    return path
+            text = raw.decode("utf-8", "replace")
+            for start in range(0, max(0, len(text) - 63)):
+                run = text[start:start + 64]
+                if all(c in "0123456789abcdefABCDEF" for c in run) and derives(
+                        bytes.fromhex(run), public_hex):
+                    return path
+        return None
+
+    # The control first: the same search DOES find a key that is really there, so a null
+    # result for the root cannot be the search being broken.
+    a_retained = json.loads((trust / "keys" / "issuer.json").read_text(encoding="utf-8"))
+    require(find_seed(a_retained["public_key"]) is not None,
+            "the seed search finds a private half the store really holds")
+    where = find_seed(pin)
+    require(where is None,
+            f"NO file under {trust} carries a seed deriving the PINNED operator-root public "
+            f"key: it was generated in memory, signed the registry and the conductor "
+            f"session, and was destroyed before provisioning returned (found {where})")
+    require(not (trust / "keys" / "operator-root.json").exists(),
+            "and there is no keys/operator-root.json at all")
+
+    print("== the registry the engine reads still NAMES the operator root, publicly ==")
+    require(any(k.authority_type == OPERATOR and k.public_key == pin for k in keys.values()),
+            "load_trusted_keys refuses a registry that does not contain its own signer, so "
+            "the PUBLIC half must still be there — and it is, which is what makes the "
+            "destroyed private half a reduction rather than a break")
+
+    print("== O-4 / O-5: the delegated authorities the root handed its routine work to ==")
+    for authority, artifact in ((CONTROL_ROOM, "control-room-command"),
+                                (EVIDENCE_FLOOR, "evidence-floor-anchor")):
+        require(ARTIFACT_AUTHORITY[artifact] == authority,
+                f"the REAL bro_signature binds {artifact} to {authority}")
+        require(ARTIFACT_AUTHORITY[artifact] != OPERATOR,
+                f"and NOT to operator-root — otherwise the root would have to survive for "
+                f"{artifact} to be usable at all")
+        held = [k for k in keys.values() if k.authority_type == authority]
+        require(len(held) == 1, f"the store holds exactly one {authority} key")
+        require(held[0].allowed_artifact_types == (artifact,),
+                f"granted exactly {artifact} and nothing else: {held[0].allowed_artifact_types}")
+        require((trust / "keys" / f"{authority}.json").is_file(),
+                f"and its private half IS retained — this is work the app may keep doing")
+    require(CONTROL_ROOM != EVIDENCE_FLOOR,
+            "the two delegations are separate authorities: one key that could do both would "
+            "be strictly more powerful than either")
+    operator_key = next(k for k in keys.values() if k.authority_type == OPERATOR)
+    for artifact in ("control-room-command", "evidence-floor-anchor"):
+        require(artifact not in operator_key.allowed_artifact_types,
+                f"the operator root is not granted {artifact}, so the delegation is a move "
+                "and not a copy")
+
     print("== O-2: the anchor authority is ABSENT from the store, on the filesystem ==")
     # Asked of the directory, not of the code that writes it. `provision()` writes one
     # `<authority>.json` per authority it mints, each carrying BOTH halves; the check is
@@ -121,11 +202,16 @@ def main(argv: list[str]) -> int:
             f"(found {anchor_capable})")
     require(not (trust / "keys" / f"{AUDIT_ANCHOR}.json").exists(),
             f"provision() did not write a {AUDIT_ANCHOR}.json at all")
-    # And the registry the engine reads carries no anchor-capable key yet either: the
-    # signer service registers its PUBLIC half after its own first start.
+    # And the registry the engine reads carries no anchor-capable key either: this store was
+    # provisioned with no anchor argument at all. On a real Windows install the signer
+    # service has already started and published its PUBLIC half, and
+    # `provision_with_anchor` admits it WHILE THE REGISTRY IS BEING SIGNED — there is no
+    # later step, because the operator root is destroyed before provisioning returns and the
+    # registry can never be amended. A store minted without one, like this one, simply has
+    # no audit anchor, and every keyed verify() of a ledger fails closed.
     require(not [k for k in keys.values() if k.authority_type in ANCHOR_AUTHORITIES],
-            "a freshly provisioned registry names no anchor key; one arrives only when the "
-            "signer service publishes its public half")
+            "a registry provisioned with no anchor argument names no anchor key, and no key "
+            "in this store could add one afterwards")
 
     print("== the authority list came from the engine, not from a guess ==")
     # O-2. The anchor authority is the ONE the provisioner must NOT mint: `bro_audit_log`
@@ -207,8 +293,83 @@ def main(argv: list[str]) -> int:
     require(isinstance(anchor.get("head_sequence"), int) and anchor["head_sequence"] >= 1,
             "the anchor carries the positive head_sequence bro_completion._signed_floor_anchor "
             "requires")
-    ok("verify_artifact accepted a Rust-signed evidence-floor-anchor under the "
-       "operator-root authority")
+    require(anchor["key_id"] == next(
+        k.key_id for k in keys.values() if k.authority_type == EVIDENCE_FLOOR),
+        "verify_artifact accepted a Rust-signed evidence-floor-anchor under the DELEGATED "
+        "evidence-floor authority — the operator root that would have signed it before is "
+        "gone, and the artifact still verifies")
+
+    print("== O-4: a control-room-command minted by the same Rust signer ==")
+    command_file = trust / "artifacts" / "test-control-room-command.json"
+    if not command_file.is_file():
+        fail(f"the harness did not mint a control-room command at {command_file}")
+    command_document = load(command_file)
+    command_payload = verify_artifact(command_document, "control-room-command", keys)
+    require(command_payload["key_id"] == next(
+        k.key_id for k in keys.values() if k.authority_type == CONTROL_ROOM),
+        "verify_artifact accepted it under the delegated control-room authority")
+
+    # The acceptance is not the whole claim. The artifact has to survive the thing that
+    # CONSUMES it, which binds it to one command and refuses a replay against another.
+    from bro_control_room_api import ACTOR_PROVEN_PER_COMMAND, ControlRoomAPIError
+
+    class _Runtime:
+        evidence_keys = keys
+
+    class _API:
+        pass
+
+    from bro_control_room_api import ControlRoomAPIV1
+    api = ControlRoomAPIV1.__new__(ControlRoomAPIV1)
+    api.runtime = _Runtime()
+    this_command = {"command_id": command_payload["command_id"],
+                    "task_id": command_payload["task_id"],
+                    "command": command_payload["command"]}
+    proof = api._prove_command_actor(("owner", "owner-gev"), command_document, this_command)
+    require(proof["identity_basis"] == ACTOR_PROVEN_PER_COMMAND,
+            "the REAL _prove_command_actor accepts it as a per-command owner proof")
+
+    other_command = dict(this_command, command_id="cmd-somebody-elses")
+    try:
+        api._prove_command_actor(("owner", "owner-gev"), command_document, other_command)
+        fail("the artifact authorised a DIFFERENT command — it is a session credential "
+             "wearing another name")
+    except ControlRoomAPIError as exc:
+        require("different command" in str(exc),
+                f"and refuses it against another command: {exc}")
+
+    print("== and the delegation did not become a blanket grant, in both directions ==")
+    # The strongest key the store has — the operator root that signed this very registry —
+    # presented for each delegated artifact. Refused BY AUTHORITY, which is exactly what
+    # makes destroying it cost O-4 and O-5 nothing.
+    for artifact, sample in (("control-room-command", command_payload),
+                             ("evidence-floor-anchor", load(anchor_file)["payload"]
+                              if (trust / "artifacts" / "test-floor-anchor.json").is_file()
+                              else None)):
+        if sample is None:
+            continue
+        impostor = dict(sample)
+        impostor["key_id"] = operator_key.key_id
+        try:
+            verify_artifact({"payload": impostor, "signature": "00" * 64}, artifact, keys)
+            fail(f"the operator root was accepted for {artifact}")
+        except SignatureError as exc:
+            require(f"({OPERATOR}) may not sign {artifact}" in str(exc),
+                    f"the operator root may not sign {artifact}: {exc}")
+    # And neither delegate may reach the other's artifact, or the registry.
+    for authority, forbidden in ((CONTROL_ROOM, "evidence-floor-anchor"),
+                                 (EVIDENCE_FLOOR, "control-room-command"),
+                                 (CONTROL_ROOM, "trusted-key-registry"),
+                                 (EVIDENCE_FLOOR, "conductor-session")):
+        key = next(k for k in keys.values() if k.authority_type == authority)
+        try:
+            verify_artifact(
+                {"payload": {"artifact_type": forbidden, "key_id": key.key_id},
+                 "signature": "00" * 64}, forbidden, keys)
+            fail(f"the {authority} key was accepted for {forbidden}")
+        except SignatureError as exc:
+            require(f"({authority}) may not sign {forbidden}" in str(exc),
+                    f"the {authority} key may not sign {forbidden}: {exc}")
 
     print("== the canonical bytes themselves, compared directly ==")
     registry_document = load(registry_root / "config" / "trusted-keys.json")

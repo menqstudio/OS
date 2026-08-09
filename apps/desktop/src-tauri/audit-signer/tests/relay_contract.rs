@@ -482,20 +482,29 @@ fn a_peer_allowlist_that_is_not_a_sid_is_refused_rather_than_treated_as_a_name()
 // The caveat is not decoration
 // =================================================================================================
 
-/// Re-aimed, not deleted. It used to assert that the caveat named the two anchor authorities the
-/// app held private halves for; those are no longer anchor authorities, so asserting that text
-/// would pin a sentence that is now false. What still has to be true — and is the whole reason this
-/// test exists — is that the caveat states the limit of what registration buys and names the route
-/// that is STILL open, rather than reading as a closure notice.
+/// Re-aimed twice, never deleted. It first asserted that the caveat named the two anchor
+/// authorities the app held private halves for; then, once those stopped being anchor
+/// authorities, that it named the operator root the app still kept. The root is now destroyed at
+/// the end of provisioning, so that sentence would be false too.
+///
+/// What has to be true in every version is the same thing: the caveat states the limit of what
+/// the anchor key buys and names the route that is STILL open, rather than reading as a closure
+/// notice. The route moved — it is no longer a key at all, it is the PIN — so that is what is
+/// asserted, and a caveat that stopped naming it fails here.
 #[test]
 fn the_registry_caveat_states_the_residual_route_rather_than_implying_it_is_closed() {
     let caveat = register::REGISTRY_CAVEAT;
     // The narrowing, so the caveat cannot go stale in the other direction either.
     assert!(caveat.contains("ONLY the audit-anchor authority"), "{caveat}");
-    // And the honest remainder: the operator root the app keeps, which signs the registry.
-    assert!(caveat.contains("operator-root private half"), "{caveat}");
+    // What destroying the root DID buy: a registry nobody can amend.
+    assert!(caveat.contains("destroyed before"), "{caveat}");
+    assert!(caveat.contains("sealed"), "{caveat}");
+    // And the honest remainder, which is now the pin rather than a key.
     assert!(caveat.contains("residual"), "{caveat}");
+    assert!(caveat.contains("not a key at all"), "{caveat}");
+    assert!(caveat.contains("PIN"), "{caveat}");
     assert!(caveat.contains("trust directory"), "{caveat}");
+    assert!(caveat.contains("second principal"), "{caveat}");
     // It must not claim the item is finished.
     assert!(!caveat.to_lowercase().contains("o-2 is closed"), "{caveat}");
 }

@@ -596,12 +596,25 @@ fn this_key_signs_audit_heads_and_nothing_else() {
     assert_eq!(anc::ANCHOR_ARTIFACT_TYPE, "audit-head");
     assert!(anc::ANCHOR_AUTHORITIES.contains(&anc::ANCHOR_AUTHORITY));
     // The narrowing itself: exactly one authority may anchor, and it is a type this crate never
-    // mints a private half for. `provision()` walks `AUTHORITY_TYPES`; if the anchor authority
-    // ever appeared there, the app's own account would hold the seed again and O-2 would reopen.
+    // mints a private half for. `provision()` walks `MINTED_AUTHORITIES` to generate keys and
+    // `RETAINED_AUTHORITIES` to write them down; the anchor authority must be in NEITHER, or the
+    // app's own account would hold the seed again and O-2 would reopen.
     assert_eq!(anc::ANCHOR_AUTHORITIES, ["audit-anchor"]);
     assert!(
-        !brops_provision::AUTHORITY_TYPES.contains(&anc::ANCHOR_AUTHORITY),
+        !brops_provision::MINTED_AUTHORITIES.contains(&anc::ANCHOR_AUTHORITY),
         "provision() would mint a private half for the anchor authority"
+    );
+    assert!(
+        !brops_provision::RETAINED_AUTHORITIES.contains(&anc::ANCHOR_AUTHORITY),
+        "provision() would write a private half for the anchor authority to disk"
+    );
+    // And the operator root, whose destruction this round is about, is minted but never
+    // retained. A regression that put it back would be silent everywhere else.
+    assert!(brops_provision::MINTED_AUTHORITIES.contains(&brops_provision::OPERATOR));
+    assert!(
+        !brops_provision::RETAINED_AUTHORITIES.contains(&brops_provision::OPERATOR),
+        "the operator root survived provisioning: it can re-sign the registry, so it can \
+         admit an audit-anchor key of the app's own choosing"
     );
     // And it can be granted nothing in the registry: no artifact type binds to it, so its entry
     // carries an empty grant that cannot be widened by rewriting the registry.

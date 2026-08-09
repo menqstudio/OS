@@ -30,8 +30,11 @@ from bro_signature import (
 from broctl import build_registry, generate_key, sign_payload
 from _operator_pin import use_operator_pin
 
+# Every authority that binds at least one REGISTRY artifact type. `audit-anchor` is
+# deliberately absent: its authority is out-of-registry (bro_audit_log.ANCHOR_AUTHORITIES)
+# and it binds nothing here, which is what test_audit_head_anchor asserts separately.
 AUTHORITIES = ["operator-root", "issuer", "evidence-recorder", "builder",
-               "verifier", "release", "recovery"]
+               "verifier", "release", "recovery", "control-room", "evidence-floor"]
 
 NOW = 1_700_000_000
 YEAR = 365 * 24 * 60 * 60

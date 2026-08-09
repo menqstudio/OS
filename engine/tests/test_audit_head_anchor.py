@@ -402,8 +402,8 @@ class OnlyTheAnchorAuthorityMayAnchorTests(AnchoredLedgerFixture):
         # this case has to catch.
         self.assertEqual(bro_signature.OUT_OF_REGISTRY_ONLY_AUTHORITIES,
                          frozenset({"audit-anchor"}))
-        for authority in ("builder", "evidence-recorder", "issuer", "operator-root",
-                          "recovery", "release", "verifier"):
+        for authority in ("builder", "control-room", "evidence-floor", "evidence-recorder",
+                          "issuer", "operator-root", "recovery", "release", "verifier"):
             with self.subTest(authority=authority):
                 with self.assertRaises(bro_signature.SignatureError) as caught:
                     bro_signature._parse_key(dict(entry, authority_type=authority))
@@ -412,8 +412,8 @@ class OnlyTheAnchorAuthorityMayAnchorTests(AnchoredLedgerFixture):
         # cannot silently stop covering a newly added authority either.
         self.assertEqual(
             bro_signature.AUTHORITY_TYPES,
-            {"builder", "evidence-recorder", "issuer", "operator-root", "recovery",
-             "release", "verifier", "audit-anchor"})
+            {"builder", "control-room", "evidence-floor", "evidence-recorder", "issuer",
+             "operator-root", "recovery", "release", "verifier", "audit-anchor"})
 
 
 class AnchorPayloadShapeTests(AnchoredLedgerFixture):

@@ -31,63 +31,48 @@ claim was right for a vendor-signs/customer-verifies fleet and wrong for a produ
 
 ---
 
-## 1. O-2 — a decision only you can make
+## 1. O-2 — closed on Windows, and what is left
 
-**O-2 cannot be closed on this product, by provisioning or by anything else, and that is a property
-of the shape rather than a gap in the work.**
+The forgery that worked four rounds ago now fails, and it is proved by running it rather than by
+argument. Every step is refused by the operating system — overwriting the pin, appending to it,
+deleting it, renaming it aside, creating a new file beside it, raising the anti-rollback floor,
+rewriting the manifest, renaming the anchor directory, **renaming its parent**, removing it — and
+then the real `bro_audit_log.verify()` refuses the truncated ledger, with the signer's own anchor
+still accepted in the same run.
 
-It requires `BRO_AUDIT_ANCHOR_SIGNER`: an executable outside `engine/`, run **under a principal that
-cannot write the audit ledger**. A single-user desktop application has exactly one principal.
-Provisioning can supply the key — the minted `evidence-recorder` key qualifies — but it cannot
-supply a second person.
+Four rounds, and each ended by naming a gap instead of claiming closure:
 
-Shipping a signer helper the app invokes itself would produce anchors that verify and prove nothing,
-because the account that signs the anchor is the account that can rewrite what it attests. That is
-precisely the failure the item exists to name, so it was not built.
+1. `ANCHOR_AUTHORITIES` accepted two authorities the app holds → narrowed to a dedicated one.
+2. The app held the operator root, which signs the registry → destroyed at install.
+3. Destroying it was not enough: the **pin** was a file the app could rewrite → moved out of reach.
+4. Sealing the leaf was not enough either: the **parent** could be renamed aside → the whole chain
+   is now walked to the volume root.
 
-You chose the second principal, and it is built: a Windows service under a virtual account, its own
-key, reached over the existing named pipe. Proved end to end against the real `bro_audit_log` — and
-proved, in the same run, that it does not yet close O-2.
+The mechanism is the OWNER RIGHTS SID, and it needs no elevation, no service and no second login: an
+owner implicitly holds `WRITE_DAC`, so "read-only" is theatre, but an access-allowed ACE for OWNER
+RIGHTS *replaces* those implicit rights rather than adding to them.
 
-**Why.** `provision()` keeps every private half in the app's own trust store, and two of those keys
-are anchor-capable. `verify_signed_payload` accepts any active registry key under either anchor
-authority. So the ledger's writer can truncate the chain, re-sign it with a key it holds, and the
-real verifier returns green. `bro_audit_log` states the assumption four lines above the constant —
-*"The builder/writer of the ledger holds neither"* — and that stopped being true the moment the app
-started minting its own root. Nothing failed, because the sentence is a comment.
+`BRO_OPERATOR_ROOT_PIN_SELF_OWNED` is no longer set anywhere. The custody rules pass on their merits
+instead of being switched off — and removing it exposed a second rule it had been hiding, which is
+why the trusted-key registry moved out of the app's reach too.
 
-**Done, and it closed half.** `ANCHOR_AUTHORITIES` is now the single dedicated `audit-anchor`
-authority, hardcoded — it was `evidence-recorder` and `operator-root`, both of which the app holds.
-`audit-head` is granted by no registry entry, so even a rewritten registry cannot hand the right to
-anyone. Every key the app holds is now refused **by name** when it tries to anchor: seven keys, each
-presented with a chain that is internally self-consistent so nothing but the authority can be the
-reason.
+### What is not done
 
-**And the other half cannot be closed by any authority list.** The app still holds the
-`operator-root` private half, and that is the key the trust registry is signed with. So it can mint
-its own `audit-anchor` keypair, register it, re-sign the registry, raise the anti-rollback floor it
-also owns, and anchor anything. That was run, not argued: the engine's own `load_trusted_keys`
-accepts the re-signed registry — external pin, production binding, rollback floor and all.
-
-On a machine that provisions its own trust root, **the registry's signer is the ledger's writer**.
-That is not a bug in the signer; it is what
-`BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` already declares about this machine.
-
-So: **O-2 is closed for a deployment whose operator root the app does not hold, and open on the
-self-provisioned desktop.** A tracking test asserts the remaining route and goes red the day the app
-stops holding that key — and this time the item is not being reported closed on the strength of the
-parts that pass.
-
-### What would close it here
-
-The app would have to stop holding the operator root: generate it at install, mint everything with
-it, then destroy it. No ceremony, no removable media, no second machine — it never leaves the
-process that made it.
-
-The cost is what it can no longer sign afterwards: `control-room-command` (O-4) and any later
-`evidence-floor-anchor` (O-5) are operator-root artifacts minted on demand. Either they move to
-delegated authorities the app may keep, or they are minted once at install and a machine that needs
-new ones re-installs. **That is the decision left.**
+- **POSIX is specified and refuses rather than pretending.** `seal` returns `Unsupported`, naming
+  what a POSIX deployment must provide: the directory created by another uid, provisioning run once
+  as that uid. An owner may always `chmod` a directory it owns, and POSIX has no OWNER RIGHTS
+  equivalent. That branch has never executed.
+- **`bro_custody`'s Windows rule still reads one descriptor** and cannot see an ancestor. The
+  property holds because *provisioning* walks the chain; the engine alone would accept a sealed leaf
+  under a renameable parent. It is a shared rule across the pin, the registry root, the evidence
+  floor and the evidence store, so widening it is a named follow-up rather than an end-of-session
+  edit.
+- **The boundary is the app's unelevated token.** On a machine whose user is a local administrator,
+  one UAC consent gives full control. Provisioning fails closed if the token ever holds
+  `SeTakeOwnership` or `SeRestore`, so an elevated run refuses rather than quietly proceeding — but
+  that is the residual, and it is what having no second principal ultimately costs.
+- **The installer interaction is untested**, and one mutation stayed green (a redundant proof whose
+  removal nothing notices).
 
 ---
 
