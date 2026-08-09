@@ -133,6 +133,39 @@ def rewrite_banners(banner: str) -> None:
         rebuilt = lines[:2] + banner.split(chr(10)) + lines[end + 1:]
         p.write_text(chr(10).join(rebuilt), encoding="utf-8")
 
+def rewrite_carrier_block(pr: int, branch: str) -> bool:
+    """Point `next_action_by_carrier` at the PR that is actually carrying the snapshot.
+
+    `check_coordination` refuses a block naming a PR other than `current_workflow_pr`, because this
+    one modelled a merged PR as the open carrier for three days. The tool that moves the carrier has
+    to move this too — otherwise the rule fires on every pull request and gets satisfied by hand,
+    which is the drift it exists to prevent.
+    """
+    text = STATE.read_text(encoding="utf-8")
+    data = json.loads(text)
+    block = data.get("next_action_by_carrier")
+    if not isinstance(block, dict):
+        return False
+    note = ("The carrier is current_workflow_pr (#" + str(pr) + " on " + branch + "). This block is "
+            "rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as "
+            "the open carrier for three days after #48 merged, because nothing updated it. No "
+            "merge-transition is modeled (there is no carrier_transition block), so the branches "
+            "below are advisory prose, not gate inputs.")
+    replaced = {
+        "_note": note,
+        "open": "merge #" + str(pr) + " so main records this state; see next_action for what follows",
+        "merged": "re-run tools/sync_active_pr.py --settled --pr <next> --branch <next> so the "
+                  "snapshot stops naming a carrier that has merged",
+    }
+    for key, value in replaced.items():
+        old = json.dumps(block.get(key, ""), ensure_ascii=False)
+        new = json.dumps(value, ensure_ascii=False)
+        if old != new and old in text:
+            text = text.replace(old, new, 1)
+    json.loads(text)                     # never leave it unreadable
+    STATE.write_text(text, encoding="utf-8")
+    return True
+
 def settle(head: str, next_up: str | None, pr: int | None, branch: str | None) -> int:
     """Record that nothing is open, and point the reader at main rather than at a dead branch.
 
@@ -171,6 +204,7 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None) -
         rewrite_state(pr, branch,
                       "Settling the state anchor at main " + head[:7] + ". Nothing else is open; "
                       "this pull request is the commit that records it.", head)
+        rewrite_carrier_block(pr, branch)
 
     last = (data.get("current_workflow_pr") or {}).get("number")
     tail = ("\n>\n> **Next:** " + next_up) if next_up else ""
@@ -207,6 +241,7 @@ def main() -> int:
     if not (args.pr and args.branch and args.summary):
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
     changed = rewrite_state(args.pr, args.branch, args.summary, head)
+    rewrite_carrier_block(args.pr, args.branch)
     banner = args.banner or (
         f"> **⏭️ CURRENT ACTIVE: PR #{args.pr} · branch `{args.branch}`** (base `main`, tip "
         f"`{head[:7]}`, task T-017).\n>\n> {args.summary}\n>\n> "
