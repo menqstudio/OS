@@ -289,12 +289,18 @@ pub fn list_approvals(state: State<AppState>) -> Result<Vec<Approval>, String> {
     repo::approvals::list(&conn, None, None).map_err(|e| e.to_string())
 }
 
-/// Decide a pending approval. M-1 hardening: the webview session (window) that
-/// programmatically created an approval is barred from *approving* it — a
-/// compromised renderer could otherwise self-approve the very steps it just
-/// requested. Rejections are always allowed (they only remove privilege). The
-/// approver identity is derived server-side from the invoking window, not
-/// taken from the request body.
+/// Decide a pending approval. M-1 hardening: NO webview session (window) can approve
+/// anything — a compromised renderer could otherwise self-approve the very steps it just
+/// requested. Rejections are always allowed (they only remove privilege). The approver
+/// identity is derived server-side from the invoking window, not taken from the request
+/// body.
+///
+/// The sentence above used to read "the webview session that programmatically created an
+/// approval is barred from approving it", which described the unsatisfiable equality the
+/// audit found (F-30) and was weaker than the wording implied: it left `webview:a` free
+/// to approve `webview:b`'s request. `repo::approvals::approve_confirmed` now accepts
+/// `NATIVE_CONFIRMER_PRINCIPAL` and nothing else, so the barred set is every webview
+/// principal, not just the requesting one.
 ///
 /// M-1 DONE: renderer-independent native confirmation is implemented in
 /// [`confirm_approval`] (T-011) — a `tauri-plugin-dialog` blocking dialog driven from
@@ -510,7 +516,10 @@ pub async fn confirm_approval(
     repo::approvals::approve_confirmed(
         &conn,
         &id,
-        "native",
+        // The named constant, not a second copy of the literal: the repo accepts this
+        // principal and no other (audit F-30), so the binding is structural rather than
+        // two strings that happen to agree.
+        repo::approvals::NATIVE_CONFIRMER_PRINCIPAL,
         &confirmed_by,
         Some(note),
         &expected_nonce,

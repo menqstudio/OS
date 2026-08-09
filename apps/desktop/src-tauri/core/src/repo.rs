@@ -576,6 +576,34 @@ pub mod approvals {
         sha256_hex(&format!("{request_digest}:{nonce}:{method}"))
     }
 
+    /// The ONE principal that may confirm an approval: the renderer-independent native
+    /// OS authority. Any `webview:*` principal — the requester's own or another
+    /// window's — is refused.
+    ///
+    /// **Why this constant exists (independent audit F-30, remediation round 2).** The
+    /// self-approval defence used to be a single equality: refuse when
+    /// `origin_principal == confirmer_principal`. That comparison could not fail on the
+    /// only production path. `confirm_approval` passes the literal `"native"`, and the
+    /// only writer of `origin_principal` writes `format!("webview:{label}")`, so
+    /// `Some("webview:main") == Some("native")` was evaluated on every approval and was
+    /// never true. Worse, the two tests that claimed to lock the property drove it with
+    /// `"webview:main"` as the confirmer — a value no shipped caller emits — so they
+    /// stayed green while the production path was unguarded, and a mutation of the
+    /// production call site killed nothing.
+    ///
+    /// The equality is replaced by two checks that CAN fail, at the two ends:
+    ///
+    ///   * [`approve_confirmed`] accepts this principal and no other, so no webview
+    ///     principal can confirm ANYTHING — strictly stronger than the old check, which
+    ///     still let `webview:a` confirm `webview:b`'s request;
+    ///   * [`create`] refuses to record this principal as an `origin_principal`, so a
+    ///     requester cannot borrow the native authority's name.
+    ///
+    /// Composed, no row can exist whose origin equals the only accepted confirmer, so
+    /// "the requester cannot approve its own request" still holds — and it holds because
+    /// two checks enforce it, not because a third was computed and could not fire.
+    pub const NATIVE_CONFIRMER_PRINCIPAL: &str = "native";
+
     /// Create a pending approval, optionally linked to the entity that needs it.
     /// T-011: the caller supplies the durable `origin_principal` (stable enforcement
     /// identity, restart-safe), a forensic `origin_session_id`, and a one-time
@@ -595,6 +623,16 @@ pub mod approvals {
         origin_session_id: &str,
         nonce: &str,
     ) -> CoreResult<Approval> {
+        // F-30: the requester may not record itself under the native authority's name.
+        // This is one half of the composition that replaced the unsatisfiable
+        // self-approval equality; see [`NATIVE_CONFIRMER_PRINCIPAL`]. It is checked
+        // BEFORE the transaction because it depends on nothing in the database.
+        if origin_principal == NATIVE_CONFIRMER_PRINCIPAL {
+            return Err(CoreError::Invalid {
+                field: "origin_principal",
+                value: "a requester may not claim the native confirmation authority".into(),
+            });
+        }
         let id = id();
         super::atomic(conn, |tx| {
             // An approval may only point at an entity that actually exists — a
@@ -624,9 +662,11 @@ pub mod approvals {
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
     }
 
-    /// T-011 approve: record a native-confirmed approval. In ONE atomic transaction
-    /// it enforces pending-only (replay-safe), refuses self-approval by the durable
-    /// `origin_principal` (restart-safe — read from the DB, not process memory), and
+    /// T-011 approve: record a native-confirmed approval. It first refuses any
+    /// confirmer that is not [`NATIVE_CONFIRMER_PRINCIPAL`] — that, with `create`'s
+    /// refusal to store the same name as an origin, is what bars self-approval; the old
+    /// `origin == confirmer` equality was unsatisfiable in production and is gone. Then,
+    /// in ONE atomic transaction, it enforces pending-only (replay-safe) and
     /// rechecks the `request_digest` against the CURRENT entity state (a request that
     /// changed after it was raised is refused). The caller performs the
     /// renderer-independent native confirmation BEFORE calling this; the nonce is
@@ -640,6 +680,15 @@ pub mod approvals {
         expected_nonce: &str,
         expected_request_digest: &str,
     ) -> CoreResult<Approval> {
+        // F-30: only the renderer-independent native authority may confirm. Checked
+        // before anything is read, so it depends on no row and therefore cannot be used
+        // to probe which approval ids exist. See [`NATIVE_CONFIRMER_PRINCIPAL`].
+        if confirmer_principal != NATIVE_CONFIRMER_PRINCIPAL {
+            return Err(CoreError::Invalid {
+                field: "approver",
+                value: "only the native confirmation authority may approve".into(),
+            });
+        }
         super::atomic(conn, |tx| {
             let a: Approval = tx
                 .query_row("SELECT * FROM approvals WHERE id = ?1", [id], map)
@@ -656,13 +705,11 @@ pub mod approvals {
                     value: "approval nonce was spent or changed (replay)".into(),
                 });
             }
-            // Self-approval, restart-safe: compare the persisted principal.
-            if a.origin_principal.as_deref() == Some(confirmer_principal) {
-                return Err(CoreError::Invalid {
-                    field: "approver",
-                    value: "the requesting principal cannot approve its own request".into(),
-                });
-            }
+            // (The self-approval equality that used to sit here compared the persisted
+            //  `origin_principal` against `confirmer_principal`. It could not fail on
+            //  the only production path — see [`NATIVE_CONFIRMER_PRINCIPAL`] — so it was
+            //  deleted rather than shipped, and the property it advertised is now
+            //  enforced by the confirmer check above plus the `create` check.)
             // The stored digest must equal the digest confirmed before the dialog…
             if a.request_digest.as_deref() != Some(expected_request_digest) {
                 return Err(CoreError::Invalid {
@@ -678,7 +725,12 @@ pub mod approvals {
                     value: "the request changed since it was raised".into(),
                 });
             }
-            let conf_digest = confirmation_digest(&current, expected_nonce, "native");
+            // Bound to the principal that actually confirmed, not to a second hardcoded
+            // literal. The value is unchanged (the check above proves it is
+            // `NATIVE_CONFIRMER_PRINCIPAL`), but the parameter is now load-bearing in
+            // the stored evidence instead of being read only by a check that could not
+            // fail.
+            let conf_digest = confirmation_digest(&current, expected_nonce, confirmer_principal);
             let changed = tx.execute(
                 "UPDATE approvals SET status = 'approved', decision_note = ?1, decided_at = ?2, \
                  confirmed_at = ?2, confirmed_by = ?3, confirmation_method = 'native', \

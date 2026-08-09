@@ -8,6 +8,38 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The self-approval guard compared two values that were never equal (2026-08-10)
+
+Audit **F-30**, closed. The self-approval defence in `repo::approvals::approve_confirmed` was a single
+equality: refuse when `origin_principal == confirmer_principal`. That comparison **could not fail on the
+only production path.** `confirm_approval` passes the literal `"native"`, and the sole writer of
+`origin_principal` writes `format!("webview:{label}")`, so `Some("webview:main") == Some("native")` was
+evaluated on every approval and was never once true.
+
+The tests made it worse rather than catching it. Two of them claimed to lock the property and drove
+`approve_confirmed` with `"webview:main"` as the *confirmer* — a value no shipped caller emits. They stayed
+green while the production path was unguarded, and mutating the real call site killed nothing.
+
+**The equality is replaced by two checks that can each fail, at the two ends.** `approve_confirmed` accepts
+`NATIVE_CONFIRMER_PRINCIPAL` and nothing else, so no webview principal can confirm anything — strictly
+stronger than the old rule, which still let `webview:a` confirm `webview:b`'s request. And `create` refuses
+to record that same name as an `origin_principal`, so a requester cannot borrow the native authority's
+name. Composed, no row can exist whose origin equals the only accepted confirmer, so "the requester cannot
+approve its own request" still holds — and it holds because two checks enforce it, not because a third was
+computed and could not fire. The confirmer check runs before any row is read, so it cannot be used to probe
+which approval ids exist.
+
+**The agent that started this died mid-run** on a network error, having written the code and the tests but
+never the mutation proof. Rather than trust it, the two mutants were run here: deleting the confirmer check
+turns three tests red (`t011_only_the_native_authority_can_confirm_and_it_does`,
+`approvals_composition_forbids_self_approval`, `t011_self_approval_survives_a_real_reopen`); deleting the
+`create` refusal turns two red. Both restores verified byte-exact by SHA-256
+(`3dca6a55…` before and after).
+
+Verified by re-running: `brops-core --lib` **312 passed** (up from 310), `brops --lib` **120**, frontend
+**69 files / 635 tests**, and `check_ai_surfaces` / `check_capabilities` / `check_reachability` GREEN.
+
+
 ### The staging protocols, and a check that could never fire (2026-08-10)
 
 Wave 3b-1B step 2: §4.10(a) `brops.governed-staging-open.v1`, §4.10(b) the chunk upload, and §4.10(c) the
