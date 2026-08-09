@@ -319,6 +319,20 @@ def _git_is_ancestor(a: str, b: str) -> bool:
         return False
 
 
+def open_prs_now() -> set[int]:
+    """Which pull requests are open right now, or an empty set when gh cannot say.
+
+    Empty on failure is deliberate: this feeds a check that must not invent a mismatch out of a
+    network problem. The exact-head anchors above are the ones that fail closed.
+    """
+    try:
+        out = subprocess.run(["gh", "pr", "list", "--state", "open", "--json", "number"],
+                             capture_output=True, text=True, timeout=30)
+        return {int(pr["number"]) for pr in json.loads(out.stdout or "[]")}
+    except (subprocess.SubprocessError, OSError, ValueError, KeyError):
+        return set()
+
+
 def _live_main_head() -> str | None:
     """origin/main as GitHub has it. None when git cannot answer, so the caller stays permissive
     about the thing it could not measure rather than inventing a failure."""
@@ -394,11 +408,23 @@ def main(argv: list[str] | None = None) -> int:
                     f"names it as active and records no settled_at_main_head. A reader would look "
                     f"for an open PR that does not exist. Run: python tools/sync_active_pr.py "
                     f"--settled")
-            elif live_main and settled != live_main:
+            elif live_main and settled != live_main and not _git_is_ancestor(settled, live_main):
+                # ANCESTOR, not equality. The first version demanded equality and could never be
+                # satisfied: the settle commit is what MOVES main, so a file recording the head it
+                # produces can never match it. Every settle left main red and the next settle
+                # inherited the same impossibility. What the field actually means is "everything up
+                # to here has merged", and an ancestor check says exactly that -- while still
+                # refusing a snapshot that settled at a commit which is not on this main at all,
+                # which is the case worth catching.
                 failures.append(
-                    f"settled_at_main_head {str(settled)[:7]} != live main {live_main[:7]} — the "
-                    f"snapshot settled at an older main. Re-run: python tools/sync_active_pr.py "
-                    f"--settled")
+                    f"settled_at_main_head {str(settled)[:7]} is not an ancestor of live main "
+                    f"{live_main[:7]} — the snapshot settled at a commit that is not on this "
+                    f"main. Re-run: python tools/sync_active_pr.py --settled")
+            elif open_prs_now() and carrier_no not in open_prs_now():
+                failures.append(
+                    f"current_workflow_pr #{carrier_no} is {carrier_state} while other pull "
+                    f"requests are open — the snapshot names none of them. Re-sync to whichever "
+                    f"is now the carrier.")
 
     # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
     # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The
