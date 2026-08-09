@@ -45,10 +45,49 @@ Shipping a signer helper the app invokes itself would produce anchors that verif
 because the account that signs the anchor is the account that can rewrite what it attests. That is
 precisely the failure the item exists to name, so it was not built.
 
-Phase 10's exit criteria allow "closed **or owner-signed-deferred**". This is the deferral case.
-The decision is yours: accept O-2 as a documented residual for the desktop shape, or require a
-second principal — a service account, a separate machine — and accept that the product then needs
-one.
+You chose the second principal, and it is built: a Windows service under a virtual account, its own
+key, reached over the existing named pipe. Proved end to end against the real `bro_audit_log` — and
+proved, in the same run, that it does not yet close O-2.
+
+**Why.** `provision()` keeps every private half in the app's own trust store, and two of those keys
+are anchor-capable. `verify_signed_payload` accepts any active registry key under either anchor
+authority. So the ledger's writer can truncate the chain, re-sign it with a key it holds, and the
+real verifier returns green. `bro_audit_log` states the assumption four lines above the constant —
+*"The builder/writer of the ledger holds neither"* — and that stopped being true the moment the app
+started minting its own root. Nothing failed, because the sentence is a comment.
+
+**Done, and it closed half.** `ANCHOR_AUTHORITIES` is now the single dedicated `audit-anchor`
+authority, hardcoded — it was `evidence-recorder` and `operator-root`, both of which the app holds.
+`audit-head` is granted by no registry entry, so even a rewritten registry cannot hand the right to
+anyone. Every key the app holds is now refused **by name** when it tries to anchor: seven keys, each
+presented with a chain that is internally self-consistent so nothing but the authority can be the
+reason.
+
+**And the other half cannot be closed by any authority list.** The app still holds the
+`operator-root` private half, and that is the key the trust registry is signed with. So it can mint
+its own `audit-anchor` keypair, register it, re-sign the registry, raise the anti-rollback floor it
+also owns, and anchor anything. That was run, not argued: the engine's own `load_trusted_keys`
+accepts the re-signed registry — external pin, production binding, rollback floor and all.
+
+On a machine that provisions its own trust root, **the registry's signer is the ledger's writer**.
+That is not a bug in the signer; it is what
+`BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` already declares about this machine.
+
+So: **O-2 is closed for a deployment whose operator root the app does not hold, and open on the
+self-provisioned desktop.** A tracking test asserts the remaining route and goes red the day the app
+stops holding that key — and this time the item is not being reported closed on the strength of the
+parts that pass.
+
+### What would close it here
+
+The app would have to stop holding the operator root: generate it at install, mint everything with
+it, then destroy it. No ceremony, no removable media, no second machine — it never leaves the
+process that made it.
+
+The cost is what it can no longer sign afterwards: `control-room-command` (O-4) and any later
+`evidence-floor-anchor` (O-5) are operator-root artifacts minted on demand. Either they move to
+delegated authorities the app may keep, or they are minted once at install and a machine that needs
+new ones re-installs. **That is the decision left.**
 
 ---
 
@@ -67,11 +106,19 @@ back RED on rows the builder had marked closed, which is why a tick in these doc
 
 Recorded so nothing reads as closed that is not. These are being worked.
 
-- **O-3 — the artifact verifies; the engine cannot see it.** `load_trusted_keys` reads
-  `<root>/config/trusted-keys.json` and `bro_hook.py` passes the engine's own tree, so the
-  app-provisioned registry is invisible to it and a different, older, development registry answers
-  instead. The minted token is accepted the moment the registry is at that root — the cross-language
-  test proves both directions. Wiring the engine to the provisioned store is the remaining work.
+- **O-3 — the engine can now see it.** `BRO_TRUSTED_REGISTRY_ROOT` redirects where the registry is
+  read, fail-closed, with the operator-root pin deliberately staying where it was: a redirect that
+  carried the anchor along would have handed over the whole thing. Proven in both directions against
+  the real verifier, including that a token accepted by *a* provisioned registry is still refused by
+  *this* deployment's. What remains is one line in the app's startup — exporting the variable
+  alongside the pin and floor it already writes.
+- **The committed `engine/config/trusted-keys.json` is a fixture, not a deployment default.** It is
+  `production: false`, carries no private half anywhere in the tree, and a real deployment with a
+  file pin has never been able to anchor on it. Its cost is confusion rather than forgery: it is the
+  thing that answers, which makes provisioned trust look absent. The recommendation is to relocate
+  it under `engine/tests/fixtures/` so an unconfigured deployment fails closed with "cannot read
+  trusted key registry" instead of quietly loading a development registry. Four dependents would
+  name it explicitly. Not done unilaterally — CI depends on it today.
 - **O-5 — deliberately not minted at install.** At install no task exists, and an anchor the app
   mints by reading the store the check polices would restate the store's own claim under a
   signature: worse than none, because it looks like corroboration. `mint_floor_anchor` exists and is

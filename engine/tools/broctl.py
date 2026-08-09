@@ -40,8 +40,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from bro_signature import (
     ACTIVE,
     ARTIFACT_AUTHORITY,
+    AUDIT_ANCHOR,
     AUTHORITY_TYPES,
-    EVIDENCE,
     OPERATOR,
     SignatureError,
     canonical_bytes,
@@ -57,8 +57,14 @@ DEFAULT_VALIDITY_SECONDS = 365 * 24 * 60 * 60
 # never be replayed as a registry artifact and vice versa. The signing side must
 # mirror those exact bindings: bro_audit_log.ANCHOR_AUTHORITIES for the head,
 # bro_backup.MANIFEST_AUTHORITIES for the manifest.
+# NOTE on `audit-head`: it is bound to the dedicated `audit-anchor` authority ALONE,
+# mirroring `bro_audit_log.ANCHOR_AUTHORITIES`. It used to name `evidence-recorder` and
+# `operator-root`; on any deployment that provisions its own trust material the ledger's
+# own writer holds both of those private halves, so an anchor signed with one proved
+# nothing. `audit-anchor` is a type nothing in this repository mints for an app: the
+# signer principal mints its own seed and publishes only the public half.
 OUT_OF_REGISTRY_ARTIFACTS = {
-    "audit-head": (EVIDENCE, OPERATOR),
+    "audit-head": (AUDIT_ANCHOR,),
     "backup-manifest": (OPERATOR,),
 }
 

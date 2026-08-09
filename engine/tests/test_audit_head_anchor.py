@@ -105,7 +105,7 @@ class AppendProducesAnAnchorTests(AnchoredLedgerFixture):
         self.fill(2)
         payload = head_anchor_payload(self.ledger, key_id=self.custody.key_id,
                                       now=_audit_anchor.NOW)
-        document = self.custody.sign("evidence-recorder", payload)
+        document = self.custody.sign(_audit_anchor.ANCHOR_AUTHORITY, payload)
         attach_head_anchor(self.ledger, document, self.custody.trusted)
         self.assertEqual(verify(self.ledger, keys=self.custody.trusted), 2)
 
@@ -193,7 +193,12 @@ class CustodyIsTheOwnersTests(unittest.TestCase):
         self.assertIn("BRO_AUDIT_ANCHOR_SIGNER", message)
         self.assertIn("BRO_AUDIT_ANCHOR_KEY_ID", message)
         self.assertIn("none will be invented", message)
-        self.assertIn("evidence-recorder", message)
+        # It must name the ONE authority that can anchor, and say out loud that the two
+        # the app's own trust store used to carry are not it. A refusal that still said
+        # "evidence-recorder or operator-root" would send an owner to provision exactly
+        # the key that reopens O-2.
+        self.assertIn("audit-anchor", message)
+        self.assertIn("are NOT accepted", message)
         self.assertIn("anti-rollback", message)
 
     def test_half_configured_custody_is_refused_not_silently_ignored(self):
@@ -271,7 +276,7 @@ class SignerMisbehaviourFailsClosedTests(AnchoredLedgerFixture):
         head = json.loads(lines[0])
         self.head_path().write_text(
             json.dumps({"count": 1, "last_hash": head["hash"]}), encoding="utf-8")
-        rollback = self.custody.sign("evidence-recorder", {
+        rollback = self.custody.sign(_audit_anchor.ANCHOR_AUTHORITY, {
             "artifact_type": "audit-head",
             "key_id": self.custody.key_id,
             "ledger": self.ledger.name,
@@ -285,6 +290,132 @@ class SignerMisbehaviourFailsClosedTests(AnchoredLedgerFixture):
         self.assertIn("rollback refused", str(caught.exception))
 
 
+class OnlyTheAnchorAuthorityMayAnchorTests(AnchoredLedgerFixture):
+    """The half of O-2 the signed anchor did NOT close until the authority narrowed.
+
+    ``ANCHOR_AUTHORITIES`` used to be ``("evidence-recorder", "operator-root")`` on the
+    premise that the ledger's writer held neither key. A deployment that provisions its
+    own trust material holds BOTH, so the writer could truncate the chain, recompute it,
+    sign a fresh anchor with a key out of its own store and get a green keyed
+    ``verify()``. These cases present a *validly signed, registry-resolvable* anchor from
+    each of those authorities and require the refusal — and require it to name the
+    authority, so an operator reading it learns which key is wrong rather than hunting a
+    signature that is in fact perfectly good.
+    """
+
+    FORGEABLE = ("evidence-recorder", "operator-root")
+
+    def test_the_only_accepted_anchor_authority_is_audit_anchor(self):
+        self.assertEqual(bro_audit_log.ANCHOR_AUTHORITIES, ("audit-anchor",))
+        # Named directly here rather than granted through the registry, on purpose:
+        # `audit-head` is out-of-registry, so rewriting the registry cannot hand anyone
+        # the right to sign this ledger's own head.
+        import broctl
+        self.assertEqual(broctl.OUT_OF_REGISTRY_ARTIFACTS["audit-head"],
+                         bro_audit_log.ANCHOR_AUTHORITIES)
+
+    def test_a_validly_signed_anchor_from_another_authority_is_refused_by_name(self):
+        for authority in self.FORGEABLE:
+            with self.subTest(authority=authority):
+                # A fresh ledger per authority, inside ONE provisioned custody: re-running
+                # setUp would stack a second registry patch over the first and mint a
+                # second key under the same key id.
+                self.ledger = self.tmp / f"audit-{authority}.jsonl"
+                self.fill(1)
+                payload = head_anchor_payload(
+                    self.ledger, key_id=self.custody.keys[authority]["key_id"],
+                    now=_audit_anchor.NOW)
+                document = self.custody.sign(authority, payload)
+                # The signature itself is good and the key IS in the registry the engine
+                # reads — this is not a forged signature, it is the wrong principal.
+                with self.assertRaises(AuditError) as caught:
+                    attach_head_anchor(self.ledger, document, self.custody.trusted)
+                message = str(caught.exception)
+                self.assertIn(f"({authority}) may not sign audit-head", message)
+                self.assertIn("audit-anchor", message)
+                # Refused BEFORE installation: a refused anchor must not land on disk.
+                installed = json.loads(self.anchor_path().read_text(encoding="utf-8"))
+                self.assertEqual(installed["payload"]["key_id"], self.custody.key_id)
+
+    def test_the_truncation_forgery_with_a_key_the_writer_holds_is_refused(self):
+        """THE O-2 negative, end to end, against the real verify().
+
+        The writer drops records, recomputes the plaintext head it also controls, and
+        signs a fresh anchor for the shorter chain with a private key sitting in its own
+        trust store. Before the narrowing this returned a clean count. It must now refuse,
+        and refuse for the authority, not for the chain.
+        """
+        for authority in self.FORGEABLE:
+            with self.subTest(authority=authority):
+                self.ledger = self.tmp / f"forged-{authority}.jsonl"
+                self.fill(3)
+                lines = self.ledger.read_text(encoding="utf-8").splitlines()
+                self.ledger.write_text(lines[0] + "\n", encoding="utf-8")
+                head = json.loads(lines[0])
+                self.head_path().write_text(
+                    json.dumps({"count": 1, "last_hash": head["hash"]}), encoding="utf-8")
+                # Written straight to the sidecar: the install-side monotonic check is
+                # explicitly defence in depth and a writer simply bypasses it.
+                self.anchor_path().write_text(json.dumps(self.custody.sign(authority, {
+                    "artifact_type": "audit-head",
+                    "key_id": self.custody.keys[authority]["key_id"],
+                    "ledger": self.ledger.name,
+                    "count": 1,
+                    "last_hash": head["hash"],
+                    "previous_anchor_sha256": None,
+                    "issued_at_epoch": _audit_anchor.NOW,
+                }), sort_keys=True), encoding="utf-8")
+                # The chain and the plaintext head agree with the anchor, so nothing but
+                # the authority can be the reason.
+                self.assertEqual(verify(self.ledger), 1)
+                with self.assertRaises(AuditError) as caught:
+                    verify(self.ledger, keys=self.custody.trusted)
+                message = str(caught.exception)
+                self.assertIn(f"({authority}) may not sign audit-head", message)
+                self.assertNotIn("disagrees", message)
+
+    def test_the_anchor_authority_can_be_granted_no_registry_artifact_at_all(self):
+        """Why the narrowing cannot be undone by writing the registry.
+
+        `audit-anchor` binds no artifact type in `ARTIFACT_AUTHORITY`, so its entries
+        carry an EMPTY `allowed_artifact_types` and any attempt to grant one — including
+        `audit-head` itself — fails to parse. The registry can name the key; it can never
+        widen what the key is for.
+        """
+        import bro_signature
+        entry = {
+            "key_id": "dev-audit-anchor", "public_key": "ab" * 32,
+            "authority_type": "audit-anchor", "allowed_artifact_types": [],
+            "not_before_epoch": 0, "not_after_epoch": 9_999_999_999,
+            "status": "active", "issued_by": "dev-operator-root",
+        }
+        self.assertEqual(bro_signature._parse_key(entry).allowed_artifact_types, ())
+        for artifact in ("audit-head", "evidence-head", "conductor-session"):
+            with self.subTest(artifact=artifact):
+                with self.assertRaises(bro_signature.SignatureError):
+                    bro_signature._parse_key(dict(entry, allowed_artifact_types=[artifact]))
+        # And the empty grant stays a refusal for every OTHER authority: only an
+        # out-of-registry-only authority may allow nothing. The list is written out
+        # rather than derived from OUT_OF_REGISTRY_ONLY_AUTHORITIES on purpose - a test
+        # that computes its expectation from the constant it is checking passes happily
+        # when that constant is widened to everything, which is exactly the mutation
+        # this case has to catch.
+        self.assertEqual(bro_signature.OUT_OF_REGISTRY_ONLY_AUTHORITIES,
+                         frozenset({"audit-anchor"}))
+        for authority in ("builder", "evidence-recorder", "issuer", "operator-root",
+                          "recovery", "release", "verifier"):
+            with self.subTest(authority=authority):
+                with self.assertRaises(bro_signature.SignatureError) as caught:
+                    bro_signature._parse_key(dict(entry, authority_type=authority))
+                self.assertIn("allows no artifact types", str(caught.exception))
+        # The written-out list is the whole of AUTHORITY_TYPES minus the exemption, so it
+        # cannot silently stop covering a newly added authority either.
+        self.assertEqual(
+            bro_signature.AUTHORITY_TYPES,
+            {"builder", "evidence-recorder", "issuer", "operator-root", "recovery",
+             "release", "verifier", "audit-anchor"})
+
+
 class AnchorPayloadShapeTests(AnchoredLedgerFixture):
     def test_an_anchor_carrying_extra_fields_is_refused(self):
         # Fields the verifier does not check are fields whose meaning the signer,
@@ -295,7 +426,7 @@ class AnchorPayloadShapeTests(AnchoredLedgerFixture):
         payload["waiver"] = "trust me"
         with self.assertRaises(AuditError) as caught:
             attach_head_anchor(self.ledger,
-                               self.custody.sign("evidence-recorder", payload),
+                               self.custody.sign(_audit_anchor.ANCHOR_AUTHORITY, payload),
                                self.custody.trusted)
         self.assertIn("wrong field set", str(caught.exception))
 
@@ -306,7 +437,7 @@ class AnchorPayloadShapeTests(AnchoredLedgerFixture):
         del payload["previous_anchor_sha256"]
         with self.assertRaises(AuditError):
             attach_head_anchor(self.ledger,
-                               self.custody.sign("evidence-recorder", payload),
+                               self.custody.sign(_audit_anchor.ANCHOR_AUTHORITY, payload),
                                self.custody.trusted)
 
     def test_an_anchor_for_a_different_ledger_is_refused(self):
@@ -316,7 +447,7 @@ class AnchorPayloadShapeTests(AnchoredLedgerFixture):
         payload["ledger"] = "someone-elses.jsonl"
         with self.assertRaises(AuditError) as caught:
             attach_head_anchor(self.ledger,
-                               self.custody.sign("evidence-recorder", payload),
+                               self.custody.sign(_audit_anchor.ANCHOR_AUTHORITY, payload),
                                self.custody.trusted)
         self.assertIn("different ledger", str(caught.exception))
 

@@ -3,7 +3,9 @@
 ``bro_audit_log.append`` attaches an Ed25519-signed head anchor and every keyed
 ``verify()`` requires one. The engine holds no private key and no seed is compiled
 in: the signature comes from a command named by ``BRO_AUDIT_ANCHOR_SIGNER`` that
-lives outside the engine and signs with ``BRO_AUDIT_ANCHOR_KEY_ID``. In production
+lives outside the engine and signs with ``BRO_AUDIT_ANCHOR_KEY_ID``, whose registry
+entry must carry the dedicated ``audit-anchor`` authority - the only one
+``bro_audit_log.ANCHOR_AUTHORITIES`` accepts. In production
 that command is the owner's, under separate custody. In tests this helper plays
 that role: it mints ephemeral keys, writes an operator-signed trusted-key registry,
 and drops a signing SCRIPT into the test's temp directory (outside the engine, so
@@ -31,7 +33,14 @@ from broctl import build_registry, generate_key
 # a fixed historical epoch would make every key "expired" against wall time.
 NOW = int(time.time())
 YEAR = 365 * 24 * 60 * 60
-AUTHORITIES = ("operator-root", "evidence-recorder")
+# The registry the runtime verifies against carries all three on purpose. `audit-anchor`
+# is the only one `bro_audit_log.ANCHOR_AUTHORITIES` accepts and is what the signing
+# script holds; `operator-root` signs the registry itself; `evidence-recorder` is kept
+# precisely so tests can present a VALID signature from a key the ledger's writer would
+# hold on a self-provisioned deployment and prove the anchor check refuses it by
+# authority. Dropping it would delete the negative that closes O-2.
+ANCHOR_AUTHORITY = "audit-anchor"
+AUTHORITIES = ("operator-root", "evidence-recorder", ANCHOR_AUTHORITY)
 
 # The owner's signing command, as a standalone script. It reads one canonical
 # audit-head payload on stdin and writes {"payload": ..., "signature": ...} on
@@ -110,7 +119,7 @@ def _write_signer(directory: pathlib.Path, private_key_hex: str, *,
     return script
 
 
-def provision(test_case, *, authority="evidence-recorder") -> AnchorCustody:
+def provision(test_case, *, authority=ANCHOR_AUTHORITY) -> AnchorCustody:
     """Provision anchor custody for the lifetime of ``test_case``.
 
     Patches ``bro_signature.load_trusted_keys`` to the ephemeral registry (the
@@ -149,7 +158,7 @@ def provision(test_case, *, authority="evidence-recorder") -> AnchorCustody:
 
 
 def use_variant_signer(test_case, custody: AnchorCustody, *, refuse_all=False,
-                       sign_different=False, authority="evidence-recorder"):
+                       sign_different=False, authority=ANCHOR_AUTHORITY):
     """Point ``BRO_AUDIT_ANCHOR_SIGNER`` at a misbehaving signer for one test."""
     script = _write_signer(custody.signer_dir, custody.keys[authority]["private_key"],
                            refuse_all=refuse_all, sign_different=sign_different)

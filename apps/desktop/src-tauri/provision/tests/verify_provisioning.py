@@ -74,9 +74,11 @@ def main(argv: list[str]) -> int:
     os.environ.pop("BRO_ENV", None)
 
     import bro_signature
+    from bro_audit_log import ANCHOR_AUTHORITIES
     from bro_signature import (
         ACTIVE,
         ARTIFACT_AUTHORITY,
+        AUDIT_ANCHOR,
         AUTHORITY_TYPES,
         OPERATOR,
         SignatureError,
@@ -101,10 +103,43 @@ def main(argv: list[str]) -> int:
     require(any(k.authority_type == OPERATOR and k.public_key == pin for k in keys.values()),
             "the registry contains the operator-root key it is signed by")
 
+    print("== O-2: the anchor authority is ABSENT from the store, on the filesystem ==")
+    # Asked of the directory, not of the code that writes it. `provision()` writes one
+    # `<authority>.json` per authority it mints, each carrying BOTH halves; the check is
+    # that no file in there — whatever it is named — carries a private key whose entry
+    # claims an authority `bro_audit_log.ANCHOR_AUTHORITIES` would accept.
+    key_files = sorted((trust / "keys").glob("*.json"))
+    require(bool(key_files), f"there are key files to enumerate in {trust / 'keys'}")
+    anchor_capable = []
+    for path in key_files:
+        entry = json.loads(path.read_text(encoding="utf-8"))
+        if entry.get("authority_type") in ANCHOR_AUTHORITIES and entry.get("private_key"):
+            anchor_capable.append(path.name)
+    print(f"  NOTE  minted private halves: {[p.name for p in key_files]}")
+    require(not anchor_capable,
+            f"NO private half in the app's own trust store is anchor-capable "
+            f"(found {anchor_capable})")
+    require(not (trust / "keys" / f"{AUDIT_ANCHOR}.json").exists(),
+            f"provision() did not write a {AUDIT_ANCHOR}.json at all")
+    # And the registry the engine reads carries no anchor-capable key yet either: the
+    # signer service registers its PUBLIC half after its own first start.
+    require(not [k for k in keys.values() if k.authority_type in ANCHOR_AUTHORITIES],
+            "a freshly provisioned registry names no anchor key; one arrives only when the "
+            "signer service publishes its public half")
+
     print("== the authority list came from the engine, not from a guess ==")
+    # O-2. The anchor authority is the ONE the provisioner must NOT mint: `bro_audit_log`
+    # accepts nothing else for an audit head, and a private half in the app's own store
+    # would put the ledger's writer back in possession of a key that anchors it. So the
+    # expected set is every authority the engine knows MINUS that one, and its absence is
+    # checked separately and on the filesystem below.
+    require(ANCHOR_AUTHORITIES == (AUDIT_ANCHOR,),
+            f"bro_audit_log accepts exactly one anchor authority ({ANCHOR_AUTHORITIES})")
+    provisionable = set(AUTHORITY_TYPES) - {AUDIT_ANCHOR}
     minted = {k.authority_type for k in keys.values()}
-    require(minted == set(AUTHORITY_TYPES),
-            f"one key per bro_signature.AUTHORITY_TYPES ({sorted(AUTHORITY_TYPES)})")
+    require(minted == provisionable,
+            f"one key per bro_signature.AUTHORITY_TYPES except the anchor authority "
+            f"({sorted(provisionable)})")
     for key in keys.values():
         expected = tuple(sorted(a for a, required in ARTIFACT_AUTHORITY.items()
                                 if required == key.authority_type))

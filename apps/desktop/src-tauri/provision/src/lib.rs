@@ -52,6 +52,13 @@
 
 pub mod canonical;
 
+/// The Windows **second principal** for the audit-head anchor (O-2).
+///
+/// Additive and self-contained: nothing in this module runs unless a caller asks for it,
+/// and the POSIX provisioning path above is untouched. See the module docs for the design,
+/// the rejected alternatives, and the exact elevation the installer needs.
+pub mod audit_signer;
+
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};

@@ -20,5 +20,27 @@ getrandom = "0.2"
 serde_json = "1"
 sha2 = "0.10"
 
+# The audit-anchor second principal (`audit_signer`) is a Windows security-descriptor
+# feature. Windows-only on purpose: on POSIX the signer is already a separate uid and this
+# crate's existing `secure_owner_only_file` path is unchanged, so a Linux build must not pay
+# for the bindings. Every DECISION in `audit_signer` is pure and compiles/tests everywhere;
+# only the syscalls live behind this dependency.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 tempfile = "3"
+
+# Used by ONE test: `win_live_constants_have_not_drifted`, which pins every access mask and
+# world SID in `audit_signer` against the real `brops_win_live::pipe_acl`. A dev-dependency
+# rather than a dependency, because the constants are restated (this crate builds on Linux,
+# where `brops-win-live` is not in the graph) and the only thing needed is proof that the two
+# copies agree.
+[target.'cfg(windows)'.dev-dependencies]
+brops-win-live = { path = "../win-live" }

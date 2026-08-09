@@ -35,7 +35,8 @@ Modes
   (issuer key, trusted-key registry, signed workspace binding, builder command),
   supplied via env: ``BRO_KEYDIR``, ``BRO_REGISTRY_ROOT``, ``BRO_BINDING``,
   ``BRO_REPOSITORY_ROOT``, ``BRO_BUILDER_COMMAND``. Absent provisioning -> fail
-  closed.
+  closed. Each is checked for PRESENCE only; see `_PROVISION_ENV` for why
+  ``BRO_REGISTRY_ROOT`` is not the engine's trusted-key registry root.
 
 SECURITY — the isolated signer is deliberately NOT wired here yet
 ----------------------------------------------------------------
@@ -68,6 +69,15 @@ for _sub in ("runtime", "tools"):
 from engine_adapter import run_governed_turn  # noqa: E402  (bridge/ on path above)
 
 # Operator-provisioned state the real supervisor requires (none may come from the desktop).
+#
+# These are a PRESENCE check and nothing else: `_real_run_task` refuses to proceed while
+# any of them is empty, and no value here is read by anything. In particular
+# `BRO_REGISTRY_ROOT` is NOT the engine's trusted-key registry root — nothing consumes
+# it, and setting it redirects no verification anywhere. The engine reads its registry
+# from `bro_signature.resolve_registry_root`, which is governed by
+# `BRO_TRUSTED_REGISTRY_ROOT` (O-3) under custody rules this presence check does not
+# apply. The two are deliberately different names: a deployment that set this one to
+# satisfy the check below must not thereby have moved its trust root.
 _PROVISION_ENV = (
     "BRO_KEYDIR",
     "BRO_REGISTRY_ROOT",

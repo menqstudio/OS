@@ -14,7 +14,7 @@ The hash chain alone cannot resist the party that writes the ledger: whoever can
 append can also drop records, recompute the chain and rewrite the plaintext
 ``.head`` sidecar, and an unkeyed ``verify()`` stays green. The authority against
 that forger is an Ed25519 head ANCHOR, mirroring how ``bro_evidence`` anchors its
-``evidence-head``: an external recorder/operator signs a payload naming the ledger,
+``evidence-head``: an external anchor authority signs a payload naming the ledger,
 its record count and its tail hash, and ``verify(path, keys=...)`` refuses any chain
 that does not reproduce that signed head exactly.
 
@@ -23,8 +23,9 @@ enforcement point that could sign is an enforcement point that could forge. The
 signature comes from an OWNER-PROVIDED signing command named by
 ``BRO_AUDIT_ANCHOR_SIGNER``, which lives outside this engine, runs under a
 principal that cannot write the ledger, and holds the private half of the
-``BRO_AUDIT_ANCHOR_KEY_ID`` key registered under an ``evidence-recorder`` or
-``operator-root`` authority. ``append()`` assembles the payload itself, hands it to
+``BRO_AUDIT_ANCHOR_KEY_ID`` key registered under the dedicated ``audit-anchor``
+authority - a type this repository never mints, so its private half can only be
+held by that separate principal. ``append()`` assembles the payload itself, hands it to
 that command, and REFUSES any returned document whose payload is not identical to
 the one it assembled, does not verify against the operator-pinned trusted key
 registry, or disagrees with the chain on disk. No seed is compiled in and none is
@@ -32,15 +33,32 @@ invented: with no custody configured the ledger is honestly UNANCHORED, which ev
 keyed ``verify()`` reports as its own distinct refusal (``AuditAnchorMissing``) -
 never as "intact", and never confused with tampering (a plain ``AuditError``).
 
-WHAT THIS BUYS, EXACTLY. It closes the O-2 defect: a party who can write the
-ledger file can no longer drop records, recompute the chain, rewrite the plaintext
-``.head`` and have ``verify()`` report intact - it cannot produce the signature.
-It does NOT defend against a party who can also make the owner's signing command
-sign arbitrary heads; that boundary belongs to the signer's custody, which is
-required to run as a separate principal and to REFUSE any anchor whose count is
-below the last one it signed. ``previous_anchor_sha256`` is carried in the payload
-so such a signer can chain its own decisions, and a count rollback is additionally
-refused here on install.
+WHAT THIS BUYS, EXACTLY. A party who can write the ledger file can no longer drop
+records, recompute the chain, rewrite the plaintext ``.head`` and have ``verify()``
+report intact - it cannot produce the signature. That claim is only worth as much as
+the custody of the anchor key, which is why ``ANCHOR_AUTHORITIES`` names ONE dedicated
+authority (see the comment on it): while it named ``evidence-recorder`` and
+``operator-root``, a deployment that provisions its own trust material at install held
+both private halves in the ledger writer's own store, and the writer could simply sign
+a fresh anchor for the truncation it had just made.
+
+WHAT IT STILL DOES NOT BUY. Two things, both named rather than left to be discovered.
+(1) It does not defend against a party who can make the owner's signing command sign
+arbitrary heads; that boundary belongs to the signer's custody, which is required to run
+as a separate principal and to REFUSE any anchor whose count is below the last one it
+signed. ``previous_anchor_sha256`` is carried in the payload so such a signer can chain
+its own decisions, and a count rollback is additionally refused here on install (defence
+in depth only - a writer that drops the sidecar in directly walks past it).
+(2) It does not defend against a party that holds the key the TRUSTED-KEY REGISTRY is
+signed with. ``verify_signed_payload`` resolves the anchor's ``key_id`` through
+``bro_signature.load_trusted_keys``; whoever holds the operator root can add an
+``audit-anchor`` key of their own to that registry, re-sign it, raise the anti-rollback
+floor, and anchor anything. On a deployment where the application provisions its own
+trust root, that party IS the ledger's writer, and no authority list in this module can
+separate a principal from itself. It is closed only by an operator root the ledger's
+writer does not hold - an offline root, or one held by another principal. The
+acknowledgement ``BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`` is exactly a
+deployment saying it has no such separation to offer.
 
 Pure standard library on the append hot path when no custody is configured;
 ``bro_signature`` and the signing subprocess are reached only when anchoring is
@@ -64,10 +82,36 @@ GENESIS = "0" * 64
 # artifact (lease, receipt, evidence head, ...) and no registry artifact can be
 # presented as an audit head.
 ANCHOR_ARTIFACT_TYPE = "audit-head"
-# Authorities whose keys may anchor an audit head: the evidence recorder (the same
-# external authority that anchors evidence chains) or the offline operator. The
-# builder/writer of the ledger holds neither.
-ANCHOR_AUTHORITIES = ("evidence-recorder", "operator-root")
+# The ONE authority whose keys may anchor an audit head, named here and nowhere else.
+#
+# HARDCODED ON PURPOSE, and deliberately not grantable. ``audit-head`` is in
+# ``broctl.OUT_OF_REGISTRY_ARTIFACTS``, so no registry entry can name it in its own
+# ``allowed_artifact_types``; the binding is carried by the authority TYPE instead, and
+# that type is compared against this literal. A party who can rewrite the trusted-key
+# registry therefore still cannot hand anybody the right to sign this ledger's own head -
+# it would have to change this line, in the engine, which is the tree the deployment
+# mounts read-only.
+#
+# WHY IT IS ONE NAME AND NOT THREE. It used to read
+# ``("evidence-recorder", "operator-root")``, on the premise that the ledger's writer held
+# neither. That premise died when the desktop app began minting its own trust material at
+# install: ``brops_provision::provision()`` writes a private half for EVERY authority it
+# knows into ``<app_data>/trust/keys/``, which the app's own account owns - so the ledger's
+# writer held both anchor-capable halves, could truncate the chain, recompute it, sign a
+# fresh anchor with a key it already had, and a keyed ``verify()`` returned green. The
+# anchor authority is now a type nothing in this repository mints: the signer principal
+# (a Windows service under its own virtual account, or a separate uid on POSIX) mints its
+# own seed and publishes only the PUBLIC half for registration. ``operator-root`` keeps
+# minting conductor sessions and evidence-floor anchors; it simply may no longer speak for
+# the audit log's head, which is the separation this ledger's whole anchor mechanism is for.
+#
+# An offline-operator deployment is NOT excluded by this: an operator who really is offline
+# mints an ``audit-anchor`` keypair on the offline machine exactly as they mint the operator
+# root, registers the public half, and signs heads out of band through
+# ``head_anchor_payload``/``attach_head_anchor``. What changed is that the anchor's custody
+# is now its own fact, instead of riding on a key the deployment needs online for other work.
+ANCHOR_AUTHORITY = "audit-anchor"
+ANCHOR_AUTHORITIES = (ANCHOR_AUTHORITY,)
 # The anchor payload's EXACT field set. Checked as an exact set, not a subset, so a
 # signing command cannot smuggle extra fields into a document the verifier then
 # treats as authoritative, and cannot omit one the chain check relies on.
@@ -104,9 +148,13 @@ CUSTODY_REFUSAL = (
     "it MUST refuse to sign an anchor whose count is lower than the last one it "
     "signed (anti-rollback).\n"
     "  2. " + SIGNER_KEY_ID_ENV + " - the key id that command signs with, "
-    "registered in the operator-pinned trusted-key registry under an "
-    "'evidence-recorder' or 'operator-root' authority. The private half never "
-    "enters this process."
+    "registered in the operator-pinned trusted-key registry under the "
+    "'audit-anchor' authority - a type nothing in this repository mints, so the "
+    "only party that can hold its private half is the signer principal itself. "
+    "'evidence-recorder' and 'operator-root' are NOT accepted here: a deployment "
+    "that provisions its own trust material holds both of those, and an anchor "
+    "signed with a key the ledger's writer holds proves nothing. The private half "
+    "never enters this process."
 )
 
 
@@ -356,7 +404,7 @@ def head_anchor_payload(path, *, key_id: str, now: int) -> dict:
 
     The out-of-band path, for an operator anchoring a ledger by hand. This module
     never signs - the returned payload leaves the process, is signed by the
-    recorder/operator authority, and comes back through ``attach_head_anchor``. The
+    ``audit-anchor`` authority, and comes back through ``attach_head_anchor``. The
     chain is structurally verified first so an anchor is never minted over an
     already-broken ledger.
     """
@@ -549,7 +597,7 @@ def verify(path, *, keys: dict | None = None, now: int | None = None) -> int:
     """Walk the chain, proving linkage, hashes and (via the head) no tail truncation.
 
     With ``keys`` (the operator-pinned trusted key registry) the check is
-    authoritative: a signed head anchor from the recorder/operator authority is
+    authoritative: a signed head anchor from the ``audit-anchor`` authority is
     REQUIRED and the chain must reproduce it exactly, so a writer that drops
     records, recomputes the chain and rewrites the plaintext ``.head`` still fails
     (it cannot re-sign the anchor). A ledger that exists but carries no anchor is
