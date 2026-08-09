@@ -176,9 +176,23 @@ independent places:
 > *"the platform gate as specified; it is a hardcoded false."* The three refusals above are the hardcoded
 > false. Cite them when you need to prove the gate is shut; cite the spec symbol only as a spec symbol.
 
-The **only** wired chain path is the owner-visible self-test (`governed_trust_selftest`), which runs the real
-crypto under a **compiled-in demonstration anchor** and reports `demonstration_custody: true` — it never
-flips live turns. The UI shows a distinct "DEMONSTRATION CUSTODY" badge.
+**Two** paths in the shipped app run the real chain, and both run it under the **compiled-in
+demonstration anchor**, so neither can render production `trusted_verified`:
+
+1. the owner-visible self-test `governed_trust_selftest`, which reports `demonstration_custody: true`
+   and never touches live turns; the UI shows a distinct "DEMONSTRATION CUSTODY" badge; and
+2. `demonstration_verified_reply` (`src/commands.rs`), the chat "Demo-verify" button — a real chat
+   reply produced *inside* the chain by `BROPS_SELFTEST_MODEL_CMD`, bound and verified, then posted
+   with the derived `demonstration_verified` badge. Windows-only; fail-closed on every branch.
+
+> This paragraph said *"the **only** wired chain path"* until 2026-08-09, and (2) had in fact never
+> run: it accepted on `outcome.bound && outcome.production_verified`, and `production_verified` is
+> `false` for every run the in-process proof can produce — the anchor is the demonstration root, which
+> `win-live/src/proof.rs` both documents and asserts. A registered command, exported through
+> `desktop.ts`, wired to a button, that could only ever return its error string. The acceptance
+> condition now lives on `ProofOutcome::may_post_as_demonstration_verified` beside the fields it
+> reads, with a test that runs on both CI platforms. The sentence and the defect had the same cause:
+> nobody re-read either after the second path was added.
 
 **Production custody has been proven once, locally** (2026-08-04): the operator's real offline root signed a
 manifest the TCB pin accepted, and a full `win_live_turn` over real named pipes reached
@@ -238,7 +252,11 @@ landed against every one of them. What each item is *now*:
   policy as REQUIRED, and `verify_conductor_session_token` is called from `bro_completion`. First-launch
   provisioning mints the `conductor-session` artifact, so **no Owner-minted artifact is needed**, and
   `BRO_TRUSTED_REGISTRY_ROOT` lets the engine read the registry that admits its key. **Still open:** one line
-  in the app's startup — exporting the variables `engine_env()` already computes.
+  in the app's startup — exporting the four variables `engine_env()` computes **plus
+  `BRO_TRUSTED_REGISTRY_ROOT`, which it does not**. §1.3 above says so explicitly ("the list does not
+  include `BRO_TRUSTED_REGISTRY_ROOT` at all") and §5.5 below says so too; this bullet used to say
+  "the variables `engine_env()` already computes", which contradicted both and understated the work by
+  the one variable that decides which registry the engine trusts.
 - **O-4 (LOW)** — control-room actor: **no longer self-asserted.** `_prove_command_actor` routes by actor: a
   conductor command must present the operator-signed `conductor-session`; an **owner** command must present a
   `control-room-command` artifact bound to this exact `command_id`, `task_id` and `command`, so a stolen

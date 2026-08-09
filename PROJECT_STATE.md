@@ -103,8 +103,9 @@ Follow [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md). Immediate
    GREEN at rev-30** (design-GREEN ≠ code-GREEN). The 3b-1B/3b-2/3b-3 implementation is built and
    **proven live on Linux** (the first production `trusted_verified` ran end-to-end via
    `engine/ci/live/run_live_turn.sh`); three builder security passes converged (all P1 fixed). **But** the
-   external Architect CODE-audit is still pending, and the SHIPPED desktop app stays fail-closed
-   (`main()` keeps `UpstreamBlockedExecutor`; the live chain is not yet wired into the desktop runtime).
+   external Architect CODE-audit is still pending, and the SHIPPED desktop app stays fail-closed — the
+   broker falls back to `UpstreamBlockedExecutor` because nothing sets `$BROPS_BROKER_CONFIG`, and the
+   live chain is not wired into the desktop runtime.
    **Now MERGED into `main`** (with Phase-2 slices #49/#50/#51/#52); the external Architect CODE-audit was
    waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand
    as the verdict). **PR #53 is merged too, as is everything through PR #81 — no PR is open on this item.**

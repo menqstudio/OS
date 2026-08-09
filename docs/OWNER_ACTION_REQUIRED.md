@@ -113,8 +113,13 @@ Recorded so nothing reads as closed that is not. These are being worked.
   read, fail-closed, with the operator-root pin deliberately staying where it was: a redirect that
   carried the anchor along would have handed over the whole thing. Proven in both directions against
   the real verifier, including that a token accepted by *a* provisioned registry is still refused by
-  *this* deployment's. What remains is one line in the app's startup — exporting the variable
-  alongside the pin and floor it already writes.
+  *this* deployment's. What remains is one line in the app's startup — and it must export **five**
+  variables, not one: the four `Provisioned::engine_env()` returns (`BRO_OPERATOR_ROOT_PUBKEY_FILE`,
+  `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN`, `BRO_SESSION_ID`) **plus**
+  `BRO_TRUSTED_REGISTRY_ROOT`, which `engine_env()` does **not** compute. Today nothing exports any
+  of them, which is why the engine still reads the committed *development* registry. *(This bullet
+  said "the variable ... it already writes", which reads as one remaining export of something the app
+  hands over already; corrected 2026-08-09.)*
 - **The committed `engine/config/trusted-keys.json` is a fixture, not a deployment default.** It is
   `production: false`, carries no private half anywhere in the tree, and a real deployment with a
   file pin has never been able to anchor on it. Its cost is confusion rather than forgery: it is the

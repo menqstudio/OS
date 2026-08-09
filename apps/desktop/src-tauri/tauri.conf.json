@@ -36,7 +36,7 @@
     "publisher": "menq studio",
     "category": "Productivity",
     "shortDescription": "Bro's Personal Space — a local-first governed-AI desktop workspace.",
-    "longDescription": "BroPS is a local-first desktop workspace where every AI turn runs through a governed, cryptographically-verified trust chain (isolated signer + supervised execution) before it is shown as Verified. No cloud lock-in; your data stays on your machine.",
+    "longDescription": "BroPS is a local-first desktop workspace for running AI work under a governance engine. Your data stays on your machine; there is no cloud lock-in. Honest about what is shipped: ordinary chat runs through the Claude CLI in a private sandbox \u2014 contained, but NOT governed and NOT shown as Verified. The governed trust chain (isolated signer + supervised execution + signed receipt) is built and machine-proven end to end, and the production Verified badge is deliberately unreachable in this build: every governed turn refuses rather than pretending. Opening that gate needs an independent audit and the owner's approval.",
     "copyright": "(c) 2026 menq studio",
     "homepage": "https://github.com/menqstudio/OS",
     "windows": {
