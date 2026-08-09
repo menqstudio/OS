@@ -46,12 +46,20 @@ any non-ASCII id. The implementation enforces the strict **intersection** — th
 governed-family encoding *and* both encoders must agree — so a document only one of them calls canonical is
 refused. Fail-closed under either reading.
 
-**The design contradicts itself about `challenge_handle`, and that is now an Owner/Architect decision**
-(`docs/OWNER_ACTION_REQUIRED.md` §1c). §3 and §4.10(a0) say `SHA256(JCS({payload, sig}))`; shipped
-`accept_open` computes `SHA256(JCS(payload))` and §5's own summary table records that as correct. The staging
-row's handle and the acceptance row's handle are therefore digests of different strings for the same turn, so
-§4.10(d)'s join cannot succeed until they agree. Not fixed downstream on purpose: either direction is
-defensible and picking one quietly is how a chain ends up binding something nobody specified.
+**The `challenge_handle` contradiction is RESOLVED — §3/§4.10(a0)/Appendix B are normative, and both
+halves now agree** (`docs/OWNER_ACTION_REQUIRED.md` §1c is closed). rev-30 defined the field twice:
+§3's artifact matrix, §4.10(a0) and Appendix B's handle matrix say `SHA256(JCS({payload, sig}))`, while
+§5's summary table and the shipped `accept_open` used `SHA256(JCS(payload))` — so for one turn the
+staging row and the acceptance row carried digests of DIFFERENT strings. The Architect ruled the
+defining sections normative; `accept_open` and the win-live kit's `servers.rs` were corrected to the
+`{payload, sig}` form and §5's table was corrected to match, under a visible CORRECTION block at the
+head of the addendum. The decisive argument was not seniority of section: §7's challenge predicate
+re-hashes the STORED `{payload, sig}` document and compares it to `challenge_handle`, so the
+payload-only form could never satisfy §7 for any turn. The §5 form's one property — two signatures over
+one payload collapsing to one handle — costs nothing to lose: a re-signed replay now collides on
+`UNIQUE(install_id, request_nonce)` and is refused instead, so it still buys zero execution attempts.
+A new `test_challenge_handle_agreement` drives BOTH real paths over ONE document into ONE ledger and
+asserts the two rows carry the same digest; a Rust test pins the win-live half. No gate moved.
 
 **Mutation testing: 48 mutants, 48 killed, zero survivors**, restore verified by SHA-256 after every run.
 Three earlier survivors were real gaps and are closed by tests: the decoded-size cap (masked by an allocation

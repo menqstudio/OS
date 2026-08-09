@@ -695,9 +695,17 @@ impl Supervisor {
         }
 
         // A replay of the SAME signed challenge returns the ORIGINAL lease. The supervisor's own
-        // content address of the payload it just verified is the key, so a caller cannot obtain a
-        // second execution attempt by resubmitting.
-        let challenge_handle = crypto::sha256_hex(&crypto::jcs(payload));
+        // content address of the exact signed DOCUMENT it just verified is the key, so a caller
+        // cannot obtain a second execution attempt by resubmitting.
+        //
+        // rev-30 correction (2026-08-10): this hashed `jcs(payload)` -- the payload ALONE -- which
+        // was the half of rev-30 that lost. The normative form is `SHA256(JCS({payload, sig}))`
+        // (rev-30 section 3 artifact matrix, 4.10(a0), Appendix B handle matrix); the payload-only
+        // form appeared only in section 5's summary table, which merely described the shipped code
+        // and is now corrected. `doc` is exactly `{payload, sig}` (exact_keys above), and jcs sorts
+        // keys, so this is byte-identical to what the Python supervisor and the 4.10(a0) staging
+        // path compute. See engine/runtime/governed_supervisor.py::challenge_handle_for.
+        let challenge_handle = crypto::sha256_hex(&crypto::jcs(doc));
         if let Some(existing) = self.by_challenge.lock().unwrap().get(&challenge_handle).cloned() {
             let accepted = self.accepted.lock().unwrap();
             if let Some(a) = accepted.get(&existing) {
@@ -1555,6 +1563,75 @@ mod terminal_artifact_tests {
                 .as_deref()
                 == Some(protocol)
         })
+    }
+
+    // ---- rev-30 CORRECTION: `challenge_handle` addresses the signed DOCUMENT ------------------
+
+    /// The handle is `SHA256(JCS({payload, sig}))`, NOT `SHA256(JCS(payload))`.
+    ///
+    /// rev-30 said both. Its section 3 artifact matrix, section 4.10(a0) and Appendix B's handle
+    /// matrix define the `{payload, sig}` form; section 5's summary table described the
+    /// payload-only form this server used to compute. The Architect declared section 3 normative
+    /// (docs/OWNER_ACTION_REQUIRED.md 1c) and section 5's table was corrected. Without this test the
+    /// Rust half of the correction had no executable guard at all: every consumer of the handle is
+    /// opaque to the formula, so a revert here would break nothing that runs.
+    #[test]
+    fn challenge_handle_addresses_the_signed_document_not_the_payload_alone() {
+        let now = 1_700_000_000_000i64;
+        let kit = kit();
+        let pending = kit.authority.dispatch(
+            &json!({
+                "op": "create-pending",
+                "run_id": "run-1", "task_id": "task-1", "workspace_id": "ws-1",
+                "install_id": "in-1", "request_nonce": format!("n-{now}"),
+                "system_sha256": "aa".repeat(32), "history_sha256": "bb".repeat(32),
+                "generation_config_sha256": "cc".repeat(32), "requested_at_ms": now,
+            }),
+            now,
+        );
+        let issued = kit.authority.dispatch(
+            &json!({ "op": "issue", "pending_challenge_id": pending["pending_challenge_id"] }),
+            now,
+        );
+        let doc = issued["challenge"].as_object().unwrap().clone();
+        let payload = doc["payload"].as_object().unwrap().clone();
+
+        // The two candidate formulas, computed HERE from the real issued document so neither is
+        // taken on the server's word.
+        let normative = crypto::sha256_hex(&crypto::jcs(&doc));
+        let superseded = crypto::sha256_hex(&crypto::jcs(&payload));
+        assert_ne!(
+            normative, superseded,
+            "the two formulas must be distinguishable or this test proves nothing"
+        );
+
+        let open = kit
+            .supervisor
+            .dispatch(&json!({ "op": "accept-open", "challenge_doc": issued["challenge"] }), now);
+        assert_eq!(open["ok"], json!(true), "{open}");
+        let attempt = open["lease"]["execution_attempt_id"].as_str().unwrap().to_string();
+
+        // What the supervisor durably keyed the acceptance on.
+        let keyed: Vec<String> = kit.supervisor.by_challenge.lock().unwrap().keys().cloned().collect();
+        assert_eq!(keyed, vec![normative.clone()], "replay key is not SHA256(JCS({{payload, sig}}))");
+        assert!(
+            !keyed.contains(&superseded),
+            "accept_open regressed to the superseded SHA256(JCS(payload)) form"
+        );
+
+        // ...and what it will name in the terminal record an auditor dereferences.
+        let recorded = kit.supervisor.accepted.lock().unwrap()[&attempt].challenge_handle.clone();
+        assert_eq!(recorded, normative);
+
+        // A different signature over the SAME payload is a DIFFERENT handle. This is the property
+        // the payload-only form did not have, and the reason the stronger binding was chosen.
+        let mut other = doc.clone();
+        let flipped: String = doc["sig"].as_str().unwrap().chars().rev().collect();
+        other.insert("sig".into(), json!(flipped));
+        assert_ne!(crypto::sha256_hex(&crypto::jcs(&other)), normative);
+
+        let _ = std::fs::remove_dir_all(&kit.store);
+        let _ = std::fs::remove_dir_all(&kit.evidence);
     }
 
     // ---- IDX-121: nothing is published until the state machine has accepted ---------------------

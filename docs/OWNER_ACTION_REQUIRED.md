@@ -207,33 +207,61 @@ over: `HeadFloorConfigurationContradictionTests` asks both rules of a real direc
 a posture needs elevation, and both `_head_floor_dir` and `_advance_head_floor` carry warnings saying the
 escape route in their own text cannot be configured.
 
-## 1c. The design contradicts itself about what `challenge_handle` covers — Architect decision
+## 1c. RESOLVED 2026-08-10 — `challenge_handle` covers `{payload, sig}` (Architect decision, taken)
 
-**What you have to decide: which half of rev-30 is normative.** This is not a coding choice; both readings
-are internally consistent and they produce different digests for the same turn.
+**This is closed. It is kept on this page as the record of what was decided and on what grounds, not as
+something waiting on you.** No Owner action is required for 1c.
 
-- §3's matrix and §4.10(a0) both say `challenge_handle = SHA256(JCS({payload, sig}))`.
-- The shipped `governed_supervisor.accept_open` computes `SHA256(JCS(payload))` — and §5's own summary
-  table (`WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2774`) records that behaviour as correct.
+**The contradiction.** rev-30 defined one field two ways. §3's artifact matrix, §4.10(a0) and Appendix B's
+handle matrix all said `challenge_handle = SHA256(JCS({payload, sig}))`. The shipped
+`governed_supervisor.accept_open` computed `SHA256(JCS(payload))` — the payload alone — and §5's own summary
+table recorded that as correct. The §4.10(a0) open path landed on 2026-08-10 followed the §3 half, so for one
+and the same turn the staging row's handle and the acceptance row's handle were digests of DIFFERENT byte
+strings and §4.10(d)'s join on `(install_id, request_nonce, challenge_handle)` could not succeed.
 
-So the document disagrees with itself, and the code follows the §5 half. The §4.10(a0) implementation
-landed on 2026-08-10 follows the §3 half, on the grounds that §3 and §4.10(a0) are the sections that define
-the field.
+**The ruling: §3 / §4.10(a0) / Appendix B are normative. `accept_open` was wrong and is corrected; §5's
+summary table is corrected to match.**
 
-**The consequence, stated plainly.** For one and the same turn, the staging row's handle and the acceptance
-row's handle are digests of *different strings*. §4.10(d) looks up the `INPUTS_READY` row by
-`(install_id, request_nonce, challenge_handle)`, and that join **cannot succeed** until the two agree. The
-open path is correct in isolation and the chain does not close.
+**Why, in increasing order of force.**
 
-**Why it was not "just fixed" downstream.** Making §4.10(a0) compute the §5 form would silently ratify a
-digest the normative sections do not define; making `accept_open` compute the §3 form changes a shipped §5
-behaviour and the digests any existing evidence recorded. Either is defensible; neither is a builder's call,
-and picking one quietly is how a chain ends up binding something nobody specified. The correction belongs to
-whichever section is declared normative.
+1. §3 and §4.10(a0) *define* the field. §5's table was *describing* what the code happened to do. A
+   definition outranks a description, and §0 says the design document wins over the code.
+2. `{payload, sig}` is the strictly stronger binding — two distinct signatures over one payload get two
+   distinct handles, which is the property a content address should have.
+3. **Decisive, and it is not an argument from authority.** §7's challenge predicate fetches the stored
+   document BY `challenge_handle` and re-hashes the exact stored bytes: `SHA256(bytes) == challenge_handle`
+   AND `bytes == canonical_bytes({payload, sig})`. The stored document *is* the signed `{payload, sig}`
+   envelope (§2.1.1 `issued_challenge_document`, §6 step-1 publish). Under the payload-only form that
+   predicate could never pass for ANY turn. §5's half was therefore not a weaker-but-workable alternative;
+   it was incompatible with §7, and no reading of the document makes it work.
 
-**Nothing is blocked on it today** — no governed surface became reachable, `platform_governed_execution_supported`
-is unchanged, and no acceptance row, lease, or `trusted_verified` path is created by the open path. It
-blocks §4.10(d), which is the next ordered piece but one.
+**What the §5 form bought, and why losing it costs nothing.** Hashing the payload alone made two different
+signatures over one payload collapse to ONE handle, so a re-signed replay hit `UNIQUE(challenge_handle)` and
+was served the original lease. Under the `{payload, sig}` form it misses that lookup — and then collides on
+`UNIQUE(install_id, request_nonce)` and is refused `nonce_rebound_to_different_turn`
+(`governed_supervisor_ledger._prepare_locked`). It still buys **zero** additional execution attempts. The only
+change is that a re-signed document is refused instead of quietly served the original lease, which is the
+fail-closed direction. This was checked by reading the CAS path, not assumed.
+
+**Blast radius, established by searching before anything was changed.** Producers of `challenge_handle`:
+`governed_turn_open.verify_open_request` (§4.10(a0), already the `{payload, sig}` form — unchanged),
+`governed_supervisor.accept_open` (corrected), and the win-live kit's `servers.rs::accept_open` (corrected the
+same way). Consumers: the two `supervisor_ledger.sql` copies' `UNIQUE(challenge_handle)` and the staging
+table's, `governed_supervisor_ledger.reuse_or_prepare` / `_prepare_locked` / `_BOUND_FIELDS`,
+`governed_staging_ledger.load_staging_by_handle`, `build_terminal_record`, `core/src/supervisor_ledger.rs`,
+and the win-live terminal record — every one of them is opaque to the formula and takes the handle as given.
+
+**No durable artifact was invalidated.** No committed fixture, receipt, attestation, evidence row or recorded
+proof under `apps/desktop/AUDIT/` or `apps/desktop/src-tauri/win-live/proof/` contains a `challenge_handle`
+VALUE at all. Established by grepping every tracked file for a `"challenge_handle"` JSON field with a 64-hex
+value (no hits) and every 64-hex literal in those directories (5 hits: 4 are the `supervisor_ledger.sql`
+digest, 1 is an `output_handle`). `apps/desktop/AUDIT/2026-08-06-remediation-audit.md:166` *describes* the old
+formula in prose — it is a historical record of the code at `219c763` and is deliberately left as written.
+
+**Nothing was unlocked by this.** `governed_verification_unconfigured()`, `UpstreamBlockedExecutor` and
+`connect_broker()` are untouched; no governed surface became reachable and no production `trusted_verified`
+can be produced. §4.10(d) itself is still NOT IMPLEMENTED — this only makes the join it will need
+satisfiable.
 
 ## 2. The independent audit, then your approval
 
