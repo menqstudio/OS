@@ -1,6 +1,14 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **⏭️ CURRENT ACTIVE: PR #80 · branch `feat/destroy-the-root-and-delegate`** (base `main`, tip `2d39ef1`, task T-017).
+> **✅ SETTLED — nothing is open.** `main` is at `c1e0aca`; PR #80 was the last to merge and its branch is gone. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+>
+> **Next:** close the POSIX half of O-2 on the Debian box, then the independent audit
+>
+> **The gate is untouched.** `platform_governed_execution_supported()` stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.
+>
+> **Next:** close the POSIX half of O-2 on the Debian box, then the independent audit
+>
+> **The gate is untouched.** `platform_governed_execution_supported()` stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.
 >
 > PR #80 closes O-2 on Windows. Four rounds, each ending by naming a gap rather than claiming closure: ANCHOR_AUTHORITIES accepted two authorities the app holds, so it was narrowed to a dedicated audit-anchor; the app held operator-root which signs the registry, so it is destroyed at install; destroying it was not enough because the operator pin was a file the app could rewrite, so the pin, the anti-rollback floor, the provisioning manifest and the trusted-key registry moved out of reach; and sealing the leaf was not enough because the parent could be renamed aside, so the chain is now walked to the volume root. The mechanism is the OWNER RIGHTS SID, which replaces the owner's implicit WRITE_DAC rather than adding to it, so no elevation, service or second login is needed. Proved by running the attack: every step is refused by the operating system and the real bro_audit_log.verify() then refuses the truncated ledger, with the signer's own anchor still accepted in the same run. BRO_OPERATOR_ROOT_PIN_SELF_OWNED is no longer set anywhere. Not done and named: POSIX refuses with Unsupported rather than pretending, bro_custody's Windows rule still reads one descriptor and cannot see an ancestor, the boundary is the app's unelevated token, and one mutation stayed green. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor.
 >

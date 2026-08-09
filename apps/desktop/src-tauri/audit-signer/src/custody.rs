@@ -76,7 +76,19 @@ fn io<T>(r: std::io::Result<T>, what: &str, path: &Path) -> Result<T, CustodyErr
 pub fn load_or_mint(signer_dir: &Path, signer_sid: &str) -> Result<SignerCustody, CustodyError> {
     let key_file = signer_dir.join(spec::KEY_FILE_NAME);
     let custody_file = signer_dir.join(spec::CUSTODY_FILE_NAME);
-    io(std::fs::create_dir_all(signer_dir), "creating the signer directory", signer_dir)?;
+    // 0755, STATED. `create_dir_all` would have used `0777 & ~umask`, which under a stock
+    // Debian `umask 002` is 0775 — a signer directory anyone in the group can add a
+    // `custody.json` to. The mode is not the boundary on Windows (the protected DACL is), but
+    // on POSIX it is the only one there is, and it must not be decided by the shell that
+    // started the service. See `brops_provision::Exposure`.
+    io(
+        brops_provision::create_dir_all_mode(
+            signer_dir,
+            brops_provision::Exposure::WorldReadable.dir_mode(),
+        ),
+        "creating the signer directory",
+        signer_dir,
+    )?;
 
     if key_file.is_file() {
         let raw = io(std::fs::read_to_string(&key_file), "reading the anchor key", &key_file)?;
@@ -159,7 +171,19 @@ fn write_custody(
     })?;
     let mut with_newline = bytes;
     with_newline.push(b'\n');
-    io(std::fs::write(path, &with_newline), "writing the custody record", path)
+    // 0644, STATED. This record is what provisioning reads — running as the APP's account —
+    // to learn the key id and the public half, so it must be world-readable; and it is what
+    // binds the anchor key into a registry that can never be re-signed, so it must be
+    // writable by nobody else. `fs::write` would have left both to the umask.
+    io(
+        brops_provision::write_at(
+            path,
+            &with_newline,
+            brops_provision::Exposure::WorldReadable,
+        ),
+        "writing the custody record",
+        path,
+    )
 }
 
 /// Read the published custody record. Used by provisioning (which must learn the key id and the
@@ -262,7 +286,14 @@ pub fn save_state(
     })?;
     bytes.push(b'\n');
     let tmp = path.with_extension("json.tmp");
-    io(std::fs::write(&tmp, &bytes), "writing the anchor state", &tmp)?;
+    // 0600, STATED. This is the anti-rollback high-water mark: an account that can rewrite it
+    // can make the signer bless a count it has already signed past. Nothing outside the signer
+    // reads it, so it gets the tightest mode there is rather than whatever the umask allowed.
+    io(
+        brops_provision::write_at(&tmp, &bytes, brops_provision::Exposure::OwnerOnly),
+        "writing the anchor state",
+        &tmp,
+    )?;
     io(std::fs::rename(&tmp, path), "replacing the anchor state", path)?;
     Ok(())
 }

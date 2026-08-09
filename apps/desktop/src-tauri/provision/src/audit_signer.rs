@@ -917,6 +917,13 @@ impl Separation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnchorRefusal {
     NotASid { what: String, value: String },
+    /// The signer shim was named by a relative path. `bro_audit_log._signer_argv` resolves it
+    /// against whatever directory the engine happens to be running in, so a relative name
+    /// selects a different binary depending on the caller's cwd — including one an attacker
+    /// controls. Its own refusal because it is its own failure: it was raised as `NotASid`,
+    /// whose text talks about account names that failed to resolve, and a reader chasing that
+    /// would go looking at principals instead of at a path.
+    ShimPathNotAbsolute { path: String },
     WorldPrincipal { what: String, sid: String },
     SamePrincipal { sid: String },
     SignerNotAServiceAccount { sid: String },
@@ -962,6 +969,13 @@ impl AnchorRefusal {
             AnchorRefusal::NotASid { what, value } => format!(
                 "the {what} principal {value:?} is not a SID. An account name that failed to \
                  resolve would silently become NO ace, i.e. a DACL that says nothing"
+            ),
+            AnchorRefusal::ShimPathNotAbsolute { path } => format!(
+                "the audit-anchor signer shim is named by the RELATIVE path {path:?}. \
+                 `bro_audit_log._signer_argv` resolves it against the engine's working \
+                 directory, so which binary signs the audit head would depend on where the \
+                 engine was started from — and a relative name is resolvable by anyone who can \
+                 choose that directory. The shim must be named absolutely"
             ),
             AnchorRefusal::WorldPrincipal { what, sid } => format!(
                 "the {what} principal is the world SID {sid}. Naming it is indistinguishable \
@@ -1092,9 +1106,8 @@ impl AnchorEnv {
         ledger_proof: ReadbackProof,
     ) -> Result<AnchorEnv, AnchorRefusal> {
         if !shim_path.is_absolute() {
-            return Err(AnchorRefusal::NotASid {
-                what: "shim path".to_string(),
-                value: shim_path.display().to_string(),
+            return Err(AnchorRefusal::ShimPathNotAbsolute {
+                path: shim_path.display().to_string(),
             });
         }
         if key_id.trim().is_empty() {

@@ -24,6 +24,8 @@ use brops_provision::audit_signer::{
 };
 use serde_json::{json, Value};
 
+mod prerequisites;
+
 // ---------------------------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------------------------
@@ -74,9 +76,7 @@ fn ledger_plan() -> anc::DaclPlan {
     anc::ledger_dacl_plan(APP, SIGNER).expect("the healthy ledger plan must build")
 }
 
-fn skip(test: &str, why: &str) {
-    println!("SKIP {test}: {why}");
-}
+
 
 // ---------------------------------------------------------------------------------------------
 // The derived principal
@@ -455,25 +455,47 @@ fn an_administrator_app_account_is_never_upgraded_to_full_separation() {
     );
 }
 
+/// An absolute path **on the platform this test is running on**.
+///
+/// The hardcoded `C:\\Program Files\\...` this used to carry is not absolute on Linux, so
+/// `from_proofs` refused it and the test failed there — on a product check that is
+/// platform-agnostic and right. The check asks `Path::is_absolute`, which is a question about
+/// the running platform, so the fixture has to be one too. Nothing here is about Windows: the
+/// property is "a relative shim path is refused, an absolute one is accepted".
+fn absolute_shim() -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from("C:\\Program Files\\BroPS\\brops-anchor-relay.exe")
+    } else {
+        PathBuf::from("/opt/brops/brops-anchor-relay")
+    }
+}
+
 #[test]
 fn the_anchor_environment_cannot_exist_without_both_proofs() {
     let kp = anc::verify_key_custody(&key_plan(), &healthy_key_facts()).unwrap();
     let lp = anc::verify_ledger_custody(&ledger_plan(), &healthy_ledger_facts()).unwrap();
 
     // A relative signer path would make `bro_audit_log._signer_argv` refuse anyway; refuse here
-    // so the failure names the real cause.
-    assert!(anc::AnchorEnv::from_proofs(
+    // so the failure names the real cause. `relay.exe` is relative on every platform.
+    let relative = anc::AnchorEnv::from_proofs(
         Path::new("relay.exe"),
         "audit-anchor-0011223344556677",
         Separation::Separated,
         kp.clone(),
         lp.clone(),
     )
-    .is_err());
+    .expect_err("a relative shim path must be refused");
+    // And the refusal is ABOUT the path. It used to be `NotASid`, whose text sends the reader
+    // to look at account names that failed to resolve — a different failure entirely.
+    assert!(
+        matches!(relative, AnchorRefusal::ShimPathNotAbsolute { .. }),
+        "a relative shim path was refused under the wrong name: {relative:?}"
+    );
+    assert!(relative.explain().contains("RELATIVE path"), "{}", relative.explain());
 
     // No key id ⇒ the engine could not name the key in the trusted registry.
     assert!(anc::AnchorEnv::from_proofs(
-        Path::new("C:\\Program Files\\BroPS\\brops-anchor-relay.exe"),
+        &absolute_shim(),
         "  ",
         Separation::Separated,
         kp.clone(),
@@ -482,7 +504,7 @@ fn the_anchor_environment_cannot_exist_without_both_proofs() {
     .is_err());
 
     let env = anc::AnchorEnv::from_proofs(
-        Path::new("C:\\Program Files\\BroPS\\brops-anchor-relay.exe"),
+        &absolute_shim(),
         "audit-anchor-0011223344556677",
         Separation::Separated,
         kp,
@@ -919,7 +941,7 @@ fn the_behavioural_probe_reports_real_denial_and_real_access() {
     match anc::winimpl::apply_dacl(&locked, &plan, None) {
         Ok(()) => {}
         Err(e) => {
-            skip(
+            prerequisites::skip(
                 "the_behavioural_probe_reports_real_denial_and_real_access",
                 &format!("SetNamedSecurityInfoW refused on this box: {e}"),
             );
@@ -955,7 +977,7 @@ fn the_behavioural_probe_reports_real_denial_and_real_access() {
     match anc::verify_key_custody(&key_plan_here, &facts) {
         Err(AnchorRefusal::UntrustedOwner { owner_sid, .. }) => {
             assert_eq!(owner_sid, me);
-            skip(
+            prerequisites::skip(
                 "the_behavioural_probe_reports_real_denial_and_real_access (owner half)",
                 "assigning BUILTIN\\Administrators as owner needs SeRestorePrivilege, which an \
                  unelevated token does not hold, so only the DACL half of the key proof ran here",
@@ -997,7 +1019,7 @@ fn the_ledger_directory_really_excludes_the_signer_when_locked() {
     let plan = anc::ledger_dacl_plan(&me, &signer).expect("ledger plan");
 
     if let Err(e) = anc::winimpl::apply_dacl(&ledger, &plan, None) {
-        skip("the_ledger_directory_really_excludes_the_signer_when_locked", &format!("{e}"));
+        prerequisites::skip("the_ledger_directory_really_excludes_the_signer_when_locked", &format!("{e}"));
         return;
     }
     let facts = anc::winimpl::dacl_facts(&ledger).expect("read back the ledger dir");
@@ -1051,7 +1073,7 @@ fn without_the_installed_service_the_whole_thing_refuses() {
     match anc::verify_installed(&paths, KEY_ID) {
         Err(AnchorRefusal::SignerAbsent { why }) => {
             assert!(why.contains("BroPSAuditSigner"), "{why}");
-            skip(
+            prerequisites::skip(
                 "without_the_installed_service_the_whole_thing_refuses (install half)",
                 "creating the NT SERVICE\\BroPSAuditSigner virtual account requires \
                  SC_MANAGER_CREATE_SERVICE, i.e. an ELEVATED token. This session runs at medium \

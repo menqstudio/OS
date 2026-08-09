@@ -86,16 +86,70 @@ def rewrite_banners(banner: str) -> None:
         p.write_text("\n".join(lines), encoding="utf-8")
 
 
+def settle(head: str, next_up: str | None) -> int:
+    """Record that nothing is open, and point the reader at main rather than at a dead branch.
+
+    `check_repo_state` refuses a snapshot that still names a merged carrier, because the reader it
+    misleads is a person or an agent arriving at the repository cold — and CI never noticed, since
+    the PR-event checks only run on a `pull_request` and after the merge nothing asked.
+    """
+    text = STATE.read_text(encoding="utf-8")
+    data = json.loads(text)
+    line = '  "settled_at_main_head": "' + head + '",\n'
+    existing = re.search(r'^\s*"settled_at_main_head":.*\n', text, re.M)
+    if existing:
+        text = text[: existing.start()] + line + text[existing.end() :]
+    else:
+        insert = text.index('  "sync":')
+        text = text[:insert] + line + text[insert:]
+    # The ACTIVE branch moves to main too. `check_coordination` requires the human docs to name
+    # `active.branch`; leaving a deleted branch there asks every canonical document to point at
+    # something that no longer exists -- the same staleness this mode exists to remove, one level
+    # down, and it would have been caught only by whoever tried to check the branch out.
+    for field, was in (("branch", (data.get("active") or {}).get("branch")),):
+        if was and was != "main":
+            text = text.replace('    "' + field + '": "' + was + '"\n  },',
+                                '    "' + field + '": "main"\n  },', 1)
+    snapshot_branch = (data.get("sync") or {}).get("snapshot_branch")
+    if snapshot_branch and snapshot_branch != "main":
+        text = text.replace('"snapshot_branch": "' + snapshot_branch + '"',
+                            '"snapshot_branch": "main"', 1)
+    json.loads(text)                     # never leave it unreadable
+    STATE.write_text(text, encoding="utf-8")
+
+    last = (data.get("current_workflow_pr") or {}).get("number")
+    tail = ("\n>\n> **Next:** " + next_up) if next_up else ""
+    rewrite_banners(
+        "> **\u2705 SETTLED \u2014 nothing is open.** `main` is at `" + head[:7] + "`; PR #"
+        + str(last) + " was the last to merge and its branch is gone. Start from "
+        "`docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom."
+        + tail + "\n>\n> **The gate is untouched.** `platform_governed_execution_supported()` "
+        "stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.")
+    print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
+    print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--pr", type=int, required=True)
-    ap.add_argument("--branch", required=True)
-    ap.add_argument("--summary", required=True,
-                    help="the machine-readable note in current_state.json")
+    ap.add_argument("--pr", type=int, help="required unless --settled")
+    ap.add_argument("--branch", help="required unless --settled")
+    ap.add_argument("--summary", help="required unless --settled")
+    ap.add_argument("--settled", action="store_true",
+                    help="nothing is open: record the main everything merged into, and say so in "
+                         "the banner. Without this the docs keep naming a PR that no longer "
+                         "exists, and a reader goes looking for a branch that was deleted.")
+    ap.add_argument("--next", dest="next_up",
+                    help="with --settled: one line on what happens next, for whoever reads this "
+                         "repository cold")
     ap.add_argument("--banner", help="the human banner; defaults to a line built from --summary")
     args = ap.parse_args()
 
     head = live_main_head()
+    if args.settled:
+        return settle(head, args.next_up)
+    if not (args.pr and args.branch and args.summary):
+        raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
     changed = rewrite_state(args.pr, args.branch, args.summary, head)
     banner = args.banner or (
         f"> **⏭️ CURRENT ACTIVE: PR #{args.pr} · branch `{args.branch}`** (base `main`, tip "

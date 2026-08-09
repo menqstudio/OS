@@ -7,9 +7,19 @@
 //! as the test's own account could ever remove. This file covers what that file deliberately
 //! does not: whether the location is actually out of reach.
 //!
-//! Two of the checks here need a genuinely sealed directory. They share ONE, at a fixed name
-//! under `%TEMP%`, created the first time this file is ever run on a machine and reused
-//! afterwards — see [`shared_sealed_probe`]. Everything else needs no side effect at all.
+//! One check here needs a genuinely sealed directory, which no platform lets a process
+//! manufacture out of nothing: on Windows it is a fixed `%TEMP%` path sealed once ever, and on
+//! POSIX it must be a directory owned by another uid, because an owner may always `chmod` what
+//! it owns. `tests/prerequisites/mod.rs` supplies whichever exists and SKIPS — visibly, and as
+//! a hard failure under CI — naming exactly what is missing when neither does.
+//!
+//! **Nothing in this file is `#[cfg]`-ed out any more.** Two tests used to be `#[cfg(windows)]`,
+//! so on Linux they were not skipped but absent, and the nine that remained all measured a
+//! writable directory: they exercised only `prove_unwritable`'s early-return refusal, while
+//! `can_delete`'s POSIX branch, `posix_ownership` and `posix_euid` had never executed on any
+//! machine. A Linux run went green and told nobody anything. Every decision those functions
+//! make is now a pure function tested on every platform, and only the syscalls that feed them
+//! need a fixture.
 //!
 //! The positive end to end — a sealed anchor, the real `bro_signature` accepting its pin with
 //! `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` unset, and the real `bro_audit_log.verify()` refusing a
@@ -19,6 +29,8 @@ use std::path::{Path, PathBuf};
 
 use brops_provision as prov;
 use prov::anchor;
+
+mod prerequisites;
 
 fn is_custody(err: &prov::ProvisionError) -> bool {
     matches!(err, prov::ProvisionError::Custody { .. })
@@ -112,85 +124,121 @@ fn a_location_whose_ancestors_this_account_can_rename_is_refused_before_anything
 /// And the production location passes the same check, on this machine, measured.
 ///
 /// `C:\ProgramData` grants `BUILTIN\Users` `RX` and `WD,AD` — enough to create the product's
-/// directory, never enough to delete or rename one. That is the whole reason the anchor can be
-/// established by an unelevated first launch, so it is measured rather than assumed, and it
-/// creates nothing: the check only reads.
+/// directory, never enough to delete or rename one. `/var/lib` is root-owned `0755` on every
+/// distribution, which is the same shape. That is the whole reason the ancestor chain is out
+/// of reach without provisioning touching it, so it is measured rather than assumed, and it
+/// creates nothing lasting: the check only probes and cleans up.
+///
+/// **This used to be `#[cfg(windows)]`**, so on Linux it was not skipped, it was absent — and
+/// `default_machine_root`'s POSIX answer had never been checked against a real filesystem by
+/// anything. It runs everywhere now. The only prerequisite is that this process is not root,
+/// for which no location on any machine is out of reach and the question is meaningless.
 #[test]
-#[cfg(windows)]
 fn the_production_machine_root_has_an_ancestor_this_account_cannot_rename() {
-    let machine_root = anchor::default_machine_root().expect("%ProgramData%");
+    const NAME: &str = "the_production_machine_root_has_an_ancestor_this_account_cannot_rename";
+    if prerequisites::running_as_root() {
+        prerequisites::skip(
+            NAME,
+            "this process is running as root, so every write probe succeeds and no ancestor \
+             holds anything in place. Run the suite as an unprivileged account",
+        );
+        return;
+    }
+    let machine_root = anchor::default_machine_root().expect("a machine-wide root");
     anchor::precheck_location(&anchor::anchor_dir(&machine_root), &machine_root).unwrap_or_else(
         |e| {
             panic!(
-                "the production anchor location is refused on this machine, so no unelevated \
-                 first launch could establish an anchor here: {e}"
+                "the production anchor location {} is refused on this machine, so no first \
+                 launch could establish an anchor here: {e}",
+                machine_root.display()
             )
         },
     );
+}
+
+/// The POSIX machine root is not, and does not contain, and does not sit inside, any account's
+/// home directory — decided against a real `/etc/passwd` shape, on every platform.
+///
+/// `/var/lib/brops` was the previous answer, and on a real Debian box it is already the home of
+/// the `brops` system account the deployment runbook creates, so following the instructions
+/// chowned a service account's home to root. The fixture below carries both collisions this
+/// product's own instructions can produce.
+#[test]
+fn the_posix_machine_root_is_not_any_accounts_home_directory() {
+    let passwd = "\
+root:x:0:0:root:/root:/bin/bash\n\
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n\
+gev:x:1000:1000:Gev:/home/gev:/bin/bash\n\
+brops:x:998:998:BroPS service,,,:/var/lib/brops:/usr/sbin/nologin\n\
+brops-anchor:x:997:997:BroPS anchor,,,:/var/lib/brops-anchor:/usr/sbin/nologin\n\
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n";
+    let root = Path::new(anchor::POSIX_MACHINE_ROOT);
+    assert_eq!(
+        anchor::home_directory_collision(root, passwd),
+        None,
+        "{} collides with an account this deployment's own instructions create",
+        root.display()
+    );
+
+    // The previous default did, and this is the collision the Debian box hit.
+    assert_eq!(
+        anchor::home_directory_collision(Path::new("/var/lib/brops"), passwd),
+        Some(("brops".to_string(), PathBuf::from("/var/lib/brops"))),
+    );
+    // So does the account name this module's own remedy suggests.
+    assert_eq!(
+        anchor::home_directory_collision(Path::new("/var/lib/brops-anchor"), passwd),
+        Some(("brops-anchor".to_string(), PathBuf::from("/var/lib/brops-anchor"))),
+    );
+    // Both directions: a root INSIDE a home, and a home inside the ROOT.
+    assert!(anchor::home_directory_collision(Path::new("/home/gev/brops"), passwd).is_some());
+    assert!(anchor::home_directory_collision(Path::new("/var/lib"), passwd).is_some());
+    // `/nonexistent` means "this account has no home", not "its home is everywhere".
+    assert_eq!(anchor::home_directory_collision(Path::new("/nonexistent-x"), passwd), None);
+    // And the comparison is by PATH COMPONENT, not by string prefix — which is exactly why the
+    // new root does not collide with `/var/lib/brops`.
+    assert_eq!(anchor::home_directory_collision(Path::new("/var/lib/bropsX"), passwd), None);
 }
 
 // =================================================================================================
 // A really sealed directory, and the OS really refusing
 // =================================================================================================
 
-/// One sealed directory, shared, at a fixed path, created once ever.
-///
-/// It cannot be a fresh `tempfile::tempdir()` per run: the seal removes this account's
-/// `FILE_ADD_FILE`, `DELETE`, `FILE_DELETE_CHILD` and `WRITE_DAC`, so after it returns nothing
-/// running as this account can undo it, empty it, or remove it. That is the property. A test
-/// that wanted a clean-up would be a test asking for the property not to hold.
-///
-/// So: one directory, reused, and if it is already sealed it is used as it is. Removing it
-/// needs an administrator:
-///
-/// ```text
-/// takeown /f "%TEMP%\brops-o2-sealed-probe" /r /d y
-/// icacls  "%TEMP%\brops-o2-sealed-probe" /reset /t
-/// rmdir /s /q "%TEMP%\brops-o2-sealed-probe"
-/// ```
-#[cfg(windows)]
-fn shared_sealed_probe() -> PathBuf {
-    let root = std::env::temp_dir().join("brops-o2-sealed-probe");
-    let dir = root.join("trust-anchor");
-    if dir.join("operator-root.pub").is_file() {
-        return dir;
-    }
-    std::fs::create_dir_all(&dir).expect("create the probe directory");
-    std::fs::write(dir.join("operator-root.pub"), "11".repeat(32) + "\n").expect("write the pin");
-    // `seal` walks upward and REFUSES rather than re-permission a directory outside the machine
-    // root it was given — here that is `%TEMP%`, which the rest of the system relies on. It is
-    // the right refusal (`a_location_whose_ancestors_...` is the test for it) and it arrives
-    // AFTER the leaf and its files have been sealed, because the walk is deepest-first. So the
-    // leaf really is sealed at this point; the caller proves that with syscalls rather than
-    // taking this helper's word for it.
-    match anchor::seal(&dir, &root) {
-        Ok(_) => {}
-        Err(prov::ProvisionError::Custody { ref path, .. }) if *path == std::env::temp_dir() => {}
-        Err(e) => panic!("the probe directory could not be sealed: {e}"),
-    }
-    dir
-}
-
 /// The seal, as the operating system reports it — not as a DACL read-back describes it.
 ///
 /// A descriptor read has to be right about ACE ordering, generic mappings, deny entries,
-/// inheritance and the owner's implicit rights. `CreateFile` returning `ERROR_ACCESS_DENIED` is
-/// the same code path an attacker takes, and it is immune to all of that.
+/// inheritance and the owner's implicit rights. `CreateFile` returning `ERROR_ACCESS_DENIED`
+/// (or `open(2)` returning `EACCES`) is the same code path an attacker takes, and it is immune
+/// to all of that.
+///
+/// **This used to be `#[cfg(windows)]`.** On Linux it was absent, so the only anchor the suite
+/// ever measured there was a writable one, and `prove_unwritable`'s SUCCESS path had never run
+/// on any machine. It runs on both platforms now, against whatever real out-of-reach directory
+/// the platform can supply, and skips by name when there is none — see
+/// `tests/prerequisites/mod.rs`.
 #[test]
-#[cfg(windows)]
 fn a_sealed_anchor_refuses_this_accounts_own_writes() {
-    let dir = shared_sealed_probe();
-    let pin = dir.join("operator-root.pub");
-    let before = std::fs::read(&pin).expect("the pin is still READABLE — read is what it keeps");
+    const NAME: &str = "a_sealed_anchor_refuses_this_accounts_own_writes";
+    let Some(fixture) = prerequisites::sealed_anchor(NAME) else { return };
+    let pin = &fixture.pin;
+    let before = std::fs::read(pin).expect("the pin is still READABLE — read is what it keeps");
 
     for (what, result) in [
-        ("overwrite the pin", std::fs::write(&pin, b"rogue").err()),
-        ("create a new file in the anchor", std::fs::write(dir.join("rogue.pub"), b"x").err()),
-        ("delete the pin", std::fs::remove_file(&pin).err()),
-        ("remove the anchor directory", std::fs::remove_dir_all(&dir).err()),
+        ("overwrite the pin", std::fs::write(pin, b"rogue").err()),
+        (
+            "create a new file in the anchor",
+            std::fs::write(fixture.dir.join("rogue.pub"), b"x").err(),
+        ),
+        ("delete the pin", std::fs::remove_file(pin).err()),
+        ("remove the anchor directory", std::fs::remove_dir_all(&fixture.dir).err()),
     ] {
         let e = result.unwrap_or_else(|| {
-            panic!("the operating system ALLOWED this account to {what}: the anchor is not sealed")
+            panic!(
+                "the operating system ALLOWED this account to {what}: {} is not out of reach \
+                 ({})",
+                fixture.dir.display(),
+                fixture.provenance
+            )
         });
         assert_eq!(
             e.kind(),
@@ -199,17 +247,59 @@ fn a_sealed_anchor_refuses_this_accounts_own_writes() {
              nothing about custody: {e}"
         );
     }
-    assert_eq!(std::fs::read(&pin).unwrap(), before, "the pin's bytes changed after all");
+    assert_eq!(std::fs::read(pin).unwrap(), before, "the pin's bytes changed after all");
 
-    // And the module's own verdict agrees with the four syscalls above. It fails on the
-    // ANCESTOR here, not on the directory — %TEMP% can be renamed by this account — which is
-    // the check from `a_location_whose_ancestors_...` firing at the second of its two sites.
-    let err = anchor::prove_unwritable(&dir)
-        .expect_err("%TEMP% is renameable by this account, so the chain is not intact");
-    assert!(
-        err.to_string().contains("component of the trust anchor's path"),
-        "the refusal is not the ancestor one: {err}"
-    );
+    // And the module's own verdict agrees with the four syscalls above.
+    let verdict = anchor::prove_unwritable(&fixture.dir);
+    if fixture.chain_is_intact {
+        // **The success path.** Everything above the anchor is out of reach too, so this is
+        // the whole of `prove_unwritable` — the recursive tree probe, `can_delete` on every
+        // component, `posix_euid` and `posix_ownership` on POSIX — returning `Ok`. Nothing in
+        // this crate had ever reached this line on any machine before.
+        let proof = verdict.unwrap_or_else(|e| {
+            panic!(
+                "an anchor that refused all four of the writes above was still not proved \
+                 unwritable ({}): {e}",
+                fixture.provenance
+            )
+        });
+        assert_eq!(proof.dir, fixture.dir);
+        assert!(!proof.refusals.is_empty(), "a proof with no measured refusal proves nothing");
+        assert!(!proof.chain.is_empty(), "a proof that walked no ancestor chain proves nothing");
+        assert!(
+            proof.mechanism.contains("posix:") || proof.mechanism.contains("windows:"),
+            "the proof does not name a mechanism: {}",
+            proof.mechanism
+        );
+        // Every SUBDIRECTORY was walked into. The real anchor has one — the registry root at
+        // `<anchor>/registry` — and the previous probe listed the anchor once and asked each
+        // entry whether it could be "opened for writing", which POSIX answers `EISDIR` and
+        // Windows answers `ERROR_ACCESS_DENIED` for every directory alike. So on POSIX this
+        // could never have returned `Ok`, and on Windows the subdirectory was skipped without
+        // being checked. If the fixture has one, the proof has to mention it.
+        for entry in std::fs::read_dir(&fixture.dir).unwrap().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let named = path.display().to_string();
+            assert!(
+                proof.refusals.iter().any(|r| r.contains(&named)),
+                "the walk never entered the subdirectory {named}: {:?}",
+                proof.refusals
+            );
+        }
+    } else {
+        // The Windows fixture lives under `%TEMP%`, which this account CAN rename, so the leaf
+        // is sealed and the chain is not. That is `a_location_whose_ancestors_...` firing at
+        // the second of its two sites.
+        let err = verdict
+            .expect_err("this fixture's ancestors are renameable, so the chain is not intact");
+        assert!(
+            err.to_string().contains("component of the trust anchor's path"),
+            "the refusal is not the ancestor one: {err}"
+        );
+    }
 }
 
 // =================================================================================================
@@ -341,5 +431,351 @@ fn the_engine_environment_no_longer_acknowledges_a_self_owned_pin() {
                 "{name} points at {value}, which is not inside the anchor"
             );
         }
+    }
+}
+
+// =================================================================================================
+// The POSIX decisions, run on EVERY machine
+//
+// Reaching these through the filesystem needs an anchor whose whole ancestor chain is out of
+// this account's reach, and POSIX offers no unprivileged construction of one: under a temporary
+// directory the chain check refuses first, and as root every probe succeeds and the chain check
+// refuses first as well. So inline in `platform_precondition` they were unreachable on any box
+// but a correctly deployed production one — which is how three refusals and a mechanism string
+// went a whole round without ever executing. Split out as pure functions, they run here.
+// =================================================================================================
+
+/// Root is refused whatever the modes say, because root rewrites any file regardless of them.
+#[test]
+fn a_posix_reader_running_as_root_is_refused_before_any_mode_is_considered() {
+    let ancestors = vec![(PathBuf::from("/var/lib"), 0u32), (PathBuf::from("/var"), 0)];
+    assert_eq!(
+        anchor::posix_ownership(0, 0, &ancestors),
+        anchor::PosixOwnership::RunningAsRoot
+    );
+    // Even with the anchor owned by somebody else entirely: the reader is still root.
+    assert_eq!(
+        anchor::posix_ownership(0, 997, &ancestors),
+        anchor::PosixOwnership::RunningAsRoot
+    );
+    let err = anchor::posix_ownership(0, 997, &ancestors)
+        .resolve(Path::new("/var/lib/brops-trust-anchor/trust-anchor"))
+        .expect_err("root is never out of reach");
+    assert!(err.to_string().contains("running as root"), "{err}");
+}
+
+/// An anchor the reader OWNS is refused even when its mode denies writes, because an owner may
+/// always chmod it back. This is the check the behavioural probes cannot make.
+#[test]
+fn a_posix_anchor_owned_by_the_reader_is_refused_however_it_is_chmodded() {
+    let ancestors = vec![(PathBuf::from("/var/lib"), 0u32)];
+    assert_eq!(
+        anchor::posix_ownership(1000, 1000, &ancestors),
+        anchor::PosixOwnership::AnchorOwnedByReader { euid: 1000 }
+    );
+    let err = anchor::posix_ownership(1000, 1000, &ancestors)
+        .resolve(Path::new("/tmp/anchor"))
+        .expect_err("an owner may always chmod what it owns");
+    let text = err.to_string();
+    assert!(text.contains("owned by the very account reading it (uid 1000)"), "{text}");
+    assert!(text.contains("may always chmod"), "{text}");
+}
+
+/// And so is an ANCESTOR the reader owns — the question a mode on the leaf cannot answer,
+/// because that ancestor can be chmodded and the anchor then renamed aside.
+#[test]
+fn a_posix_ancestor_owned_by_the_reader_is_refused_and_the_refusal_names_it() {
+    let ancestors = vec![
+        (PathBuf::from("/home/gev/brops"), 0u32),
+        (PathBuf::from("/home/gev"), 1000),
+        (PathBuf::from("/home"), 0),
+    ];
+    assert_eq!(
+        anchor::posix_ownership(1000, 0, &ancestors),
+        anchor::PosixOwnership::AncestorOwnedByReader {
+            euid: 1000,
+            ancestor: PathBuf::from("/home/gev"),
+        }
+    );
+    let err = anchor::posix_ownership(1000, 0, &ancestors)
+        .resolve(Path::new("/home/gev/brops/trust-anchor"))
+        .expect_err("an ancestor this account owns defeats the leaf");
+    let text = err.to_string();
+    // The refusal names the ANCESTOR, not the anchor: the reader has to be told which
+    // directory to change.
+    assert!(text.contains("/home/gev"), "{text}");
+    assert!(text.contains("rename the anchor aside"), "{text}");
+    // The nearest offending ancestor wins, so the remedy is the smallest one.
+    assert!(!text.contains("/home/gev/brops/trust-anchor is"), "{text}");
+}
+
+/// The success case, which had never executed anywhere: everything belongs to another uid.
+#[test]
+fn a_posix_anchor_no_ancestor_of_which_the_reader_owns_is_out_of_reach() {
+    let ancestors = vec![
+        (PathBuf::from("/var/lib/brops-trust-anchor"), 0u32),
+        (PathBuf::from("/var/lib"), 0),
+        (PathBuf::from("/var"), 0),
+        (PathBuf::from("/"), 0),
+    ];
+    assert_eq!(
+        anchor::posix_ownership(1000, 0, &ancestors),
+        anchor::PosixOwnership::OutOfReach { euid: 1000 }
+    );
+    let mechanism = anchor::posix_ownership(1000, 0, &ancestors)
+        .resolve(Path::new("/var/lib/brops-trust-anchor/trust-anchor"))
+        .expect("an anchor owned by another uid, with every ancestor likewise, is out of reach");
+    assert!(mechanism.starts_with("posix:"), "{mechanism}");
+    assert!(mechanism.contains("uid 1000"), "{mechanism}");
+    // It reports what was MEASURED, never a claim that the mode bits were inspected.
+    assert!(mechanism.contains("refused by the kernel"), "{mechanism}");
+}
+
+/// `posix_euid` agrees with the kernel's own answer, asked a different way.
+///
+/// The product learns its effective uid by creating a file and reading the owner back, because
+/// the crate has no `libc` dependency. That is only trustworthy if it agrees with an
+/// independent oracle, so this compares it with `/proc/self`'s owner — which the kernel sets
+/// from the process's effective uid and no file mode influences.
+#[test]
+fn the_effective_uid_probe_agrees_with_the_kernel() {
+    const NAME: &str = "the_effective_uid_probe_agrees_with_the_kernel";
+    #[cfg(not(windows))]
+    {
+        let Some(kernel) = prerequisites::procfs_euid() else {
+            prerequisites::skip(
+                NAME,
+                "/proc/self is not present, so there is no independent oracle for this \
+                 process's effective uid on this platform (procfs is Linux's)",
+            );
+            return;
+        };
+        let measured = anchor::posix_euid().expect("the probe must answer or refuse, never guess");
+        assert_eq!(
+            measured, kernel,
+            "the probe-file mechanism and /proc/self disagree about this process's uid, so the \
+             number `posix_ownership` compares against the anchor's owner is not this account's"
+        );
+    }
+    #[cfg(windows)]
+    {
+        // Not a skip that hides anything: Windows has no uid, and the whole POSIX ownership
+        // question is answered there by the token/DACL path instead.
+        prerequisites::skip(NAME, "windows has no effective uid; custody is decided by the token");
+    }
+}
+
+// =================================================================================================
+// The platform that cannot build its own anchor
+// =================================================================================================
+
+/// A POSIX first launch is refused **at the top, by name, before anything is minted** — and the
+/// refusal names the directory, the uid, the modes, and the fact that no tool ships to make it.
+///
+/// This is the decision, taken purely, so this test runs on Windows too. What it replaced: the
+/// application minted the entire store, wrote the pin, the floor and the manifest, and only
+/// then called `anchor::seal`, which returns `Unsupported` off Windows. So on Linux and macOS
+/// the desktop app did not fail to provision, it failed to LAUNCH, with an error escaping from
+/// a function whose job was to seal a directory.
+#[test]
+fn a_platform_that_cannot_seal_refuses_at_the_top_and_says_what_is_missing() {
+    let dir = Path::new("/var/lib/brops-trust-anchor/trust-anchor");
+    for platform in ["linux", "macos", "unix"] {
+        let err = anchor::preprovision_refusal(platform, dir)
+            .unwrap_or_else(|| panic!("{platform} cannot build an anchor it cannot rewrite"));
+        assert!(is_custody(&err), "{err:?}");
+        let text = err.to_string();
+        // WHICH directory, WHICH owner, WHICH modes.
+        assert!(text.contains("/var/lib/brops-trust-anchor/trust-anchor"), "{text}");
+        assert!(text.contains("DIFFERENT uid"), "{text}");
+        assert!(text.contains("0755") && text.contains("0644"), "{text}");
+        assert!(text.contains("brops-anchor"), "{text}");
+        // And the honest part: nothing ships that creates it, so this is not a step to follow.
+        assert!(text.contains("no shipped tool creates it yet"), "{text}");
+        // Never a fallback. An app that provisioned into a directory it can write would look
+        // provisioned and not be, which is strictly worse than one that will not start.
+        assert!(!text.to_lowercase().contains("proceeding"), "{text}");
+        assert!(!text.to_lowercase().contains("fall back"), "{text}");
+        // An anchor already in place is still used — the refusal says so, so an operator with
+        // a provisioned box does not read this as "unsupported forever".
+        assert!(text.contains("An anchor already in place IS used"), "{text}");
+    }
+}
+
+/// Windows is the one platform that CAN build an anchor it afterwards cannot reach, so it is
+/// the one platform this refusal does not fire on.
+#[test]
+fn windows_is_the_only_platform_that_can_construct_its_own_anchor() {
+    let dir = Path::new("C:\\ProgramData\\BroPS\\trust-anchor");
+    assert!(anchor::preprovision_refusal("windows", dir).is_none());
+    // And the refusal fires on exactly the platform this build is not Windows on, so the two
+    // halves of the decision cannot drift apart from `platform_name()`.
+    assert_eq!(
+        anchor::preprovision_refusal(prov::platform_name(), dir).is_none(),
+        cfg!(windows),
+        "preprovision_refusal disagrees with the platform this build is for"
+    );
+}
+
+// =================================================================================================
+// The anchor is a TREE, and a directory inside it is not asked whether it opens for writing
+// =================================================================================================
+
+/// A subdirectory of the anchor is descended into, not "opened for write".
+///
+/// `write_anchor_files` puts the operator-signed registry at
+/// `<anchor>/registry/config/trusted-keys.json`. The previous probe listed the anchor once and
+/// asked every entry whether it could be opened for writing — a question neither platform
+/// answers usefully about a directory:
+///
+/// * POSIX: `open(dir, O_WRONLY)` is `EISDIR`, which is not `PermissionDenied`, so the old code
+///   fell into its "cannot be measured" branch. `prove_unwritable` could therefore **never**
+///   have returned `Ok` on POSIX, even against a perfectly sealed root-owned anchor.
+/// * Windows: `CreateFileW(dir, GENERIC_WRITE)` is `ERROR_ACCESS_DENIED` for every directory,
+///   wide open or not, so the subdirectory passed without being checked and the files inside it
+///   were never looked at.
+///
+/// Building the fixture needs a directory this account can LIST but not ADD to. POSIX makes one
+/// with `chmod 0555`; Windows needs a DACL, so it skips by name rather than pretend.
+#[test]
+fn a_subdirectory_of_the_anchor_is_walked_into_rather_than_opened_for_writing() {
+    const NAME: &str = "a_subdirectory_of_the_anchor_is_walked_into_rather_than_opened_for_writing";
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if prerequisites::running_as_root() {
+            prerequisites::skip(NAME, "root ignores mode bits, so a 0555 directory denies it nothing");
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let anchor_dir = temp.path().join("trust-anchor");
+        let registry = anchor_dir.join("registry");
+        std::fs::create_dir_all(&registry).unwrap();
+        let pin = anchor_dir.join("operator-root.pub");
+        std::fs::write(&pin, "11".repeat(32) + "\n").unwrap();
+        // 0444 so the pin is not itself what refuses: `entries` is sorted, and
+        // `operator-root.pub` sorts before `registry`, so an owner-WRITABLE pin would end
+        // the walk one entry before the subdirectory this test is about.
+        std::fs::set_permissions(&pin, std::fs::Permissions::from_mode(0o444)).unwrap();
+        // The anchor denies creation even to its owner; the subdirectory does not.
+        std::fs::set_permissions(&anchor_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let err = anchor::prove_unwritable(&anchor_dir)
+            .expect_err("the registry subdirectory is writable, so the anchor is not out of reach");
+        let text = err.to_string();
+        // The walk went INTO the subdirectory and refused there, naming it.
+        assert!(
+            text.contains(&registry.display().to_string()),
+            "the probe never entered the subdirectory: {text}"
+        );
+        assert!(text.contains("CAN create files"), "{text}");
+        // And it never asked the directory the question that has no answer.
+        assert!(
+            !text.contains("cannot be measured"),
+            "a directory entry was asked whether it opens for writing: {text}"
+        );
+
+        // Restore write so the TempDir can clean itself up.
+        std::fs::set_permissions(&anchor_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&pin, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        prerequisites::skip(
+            NAME,
+            "a directory this account can list but not add entries to cannot be made with a \
+             mode on this platform; it needs a DACL, which is what the sealed fixture in \
+             `prerequisites` supplies and `a_sealed_anchor_refuses_this_accounts_own_writes` \
+             measures",
+        );
+    }
+}
+
+/// A symlink inside the anchor is refused rather than followed.
+///
+/// Provisioning writes none. One that appeared redirects a read to a file whose custody this
+/// walk never measured — possibly one this very account owns — so it fails closed.
+#[test]
+fn a_symlink_inside_the_anchor_is_refused_rather_than_followed() {
+    const NAME: &str = "a_symlink_inside_the_anchor_is_refused_rather_than_followed";
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if prerequisites::running_as_root() {
+            prerequisites::skip(NAME, "root ignores mode bits, so a 0555 directory denies it nothing");
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let anchor_dir = temp.path().join("trust-anchor");
+        std::fs::create_dir_all(&anchor_dir).unwrap();
+        let elsewhere = temp.path().join("mine.pub");
+        std::fs::write(&elsewhere, "22".repeat(32) + "\n").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, anchor_dir.join("operator-root.pub")).unwrap();
+        std::fs::set_permissions(&anchor_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let err = anchor::prove_unwritable(&anchor_dir).expect_err("a symlinked pin is not an anchor");
+        assert!(err.to_string().contains("SYMLINK"), "{err}");
+
+        std::fs::set_permissions(&anchor_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        prerequisites::skip(
+            NAME,
+            "creating a symlink needs SeCreateSymbolicLinkPrivilege or developer mode on this \
+             platform, which the test account may not hold",
+        );
+    }
+}
+
+/// And the refusal is WIRED: a POSIX first launch stops at it, before anything is minted.
+///
+/// The pure test above proves the decision and its wording. This proves `provision` actually
+/// asks — which is the part that was missing, because nothing minted the store, wrote the pin,
+/// wrote the floor and then died in `anchor::seal` by accident. It needs no privileges: the
+/// machine root is a not-yet-existing directory under `/var/lib`, which is root-owned `0755`
+/// on every distribution, so `precheck_location` passes and the preflight is what fires.
+#[test]
+fn a_posix_first_launch_refuses_before_it_mints_anything() {
+    const NAME: &str = "a_posix_first_launch_refuses_before_it_mints_anything";
+    #[cfg(unix)]
+    {
+        if prerequisites::running_as_root() {
+            prerequisites::skip(
+                NAME,
+                "root can delete /var/lib, so `precheck_location` refuses first and the \
+                 preflight below is never reached. Run the suite as an unprivileged account",
+            );
+            return;
+        }
+        let app_data = tempfile::tempdir().unwrap();
+        let machine_root = Path::new("/var/lib/brops-preflight-should-never-exist");
+        let err = prov::provision(app_data.path(), machine_root)
+            .expect_err("a POSIX first launch cannot build an anchor it could not rewrite");
+        let text = err.to_string();
+        assert!(
+            text.contains("cannot CREATE a trust anchor"),
+            "provisioning got PAST the preflight and refused for some other reason: {text}"
+        );
+        // Before anything was written — neither half of the pair exists.
+        assert!(!machine_root.exists(), "the refusal still created {}", machine_root.display());
+        assert!(
+            !app_data.path().join(prov::TRUST_DIR).exists(),
+            "the refusal still minted an app-side trust store"
+        );
+        let leftovers: Vec<PathBuf> =
+            std::fs::read_dir(app_data.path()).unwrap().map(|e| e.unwrap().path()).collect();
+        assert!(leftovers.is_empty(), "the refusal left staging behind: {leftovers:?}");
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows CAN construct its own anchor, so there is no refusal to wire. Running the
+        // equivalent here would seal a real directory under %ProgramData% permanently, which
+        // is exactly what `provision.rs` uses the unsealed entry points to avoid.
+        prerequisites::skip(
+            NAME,
+            "windows builds its own anchor, so this refusal does not apply; \
+             `windows_is_the_only_platform_that_can_construct_its_own_anchor` is its half",
+        );
     }
 }

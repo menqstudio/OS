@@ -319,6 +319,18 @@ def _git_is_ancestor(a: str, b: str) -> bool:
         return False
 
 
+def _live_main_head() -> str | None:
+    """origin/main as GitHub has it. None when git cannot answer, so the caller stays permissive
+    about the thing it could not measure rather than inventing a failure."""
+    try:
+        out = subprocess.run(["git", "ls-remote", "origin", "refs/heads/main"],
+                             capture_output=True, text=True, timeout=30)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    parts = out.stdout.split()
+    return parts[0] if parts and _is_sha(parts[0]) else None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Live-GitHub exact-head verifier for current_state.json")
     ap.add_argument("--root", default=str(pathlib.Path(__file__).resolve().parents[1]))
@@ -364,6 +376,29 @@ def main(argv: list[str] | None = None) -> int:
         print("SKIPPED (online PR checks): gh unavailable locally; event-context checks passed. CI is the wall.")
         return 0
     failures += compare_external_prs(snap, fetch_live(numbers))
+
+    # A carrier that has MERGED is the staleness this gate could not see. The event-context checks
+    # above only run on a pull_request, so after the carrier merges the snapshot keeps naming it --
+    # and a reader arriving at the repository goes looking for an open PR and a branch that no
+    # longer exist. CI stayed green throughout, because nothing asked. It asks now: once the carrier
+    # is no longer OPEN, the snapshot must say so explicitly and record the main it settled at.
+    if carrier_no is not None:
+        carrier_live = fetch_live([carrier_no]).get(carrier_no) or {}
+        carrier_state = str(carrier_live.get("state") or "").upper()
+        if carrier_state and carrier_state != "OPEN":
+            settled = snap.get("settled_at_main_head")
+            live_main = _live_main_head()
+            if not settled:
+                failures.append(
+                    f"current_workflow_pr #{carrier_no} is {carrier_state}, but the snapshot still "
+                    f"names it as active and records no settled_at_main_head. A reader would look "
+                    f"for an open PR that does not exist. Run: python tools/sync_active_pr.py "
+                    f"--settled")
+            elif live_main and settled != live_main:
+                failures.append(
+                    f"settled_at_main_head {str(settled)[:7]} != live main {live_main[:7]} — the "
+                    f"snapshot settled at an older main. Re-run: python tools/sync_active_pr.py "
+                    f"--settled")
 
     # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
     # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The

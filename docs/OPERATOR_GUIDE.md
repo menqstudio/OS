@@ -2,16 +2,20 @@
 
 > **Scope.** This guide covers installing, provisioning, updating, backing up, and removing the
 > **BroPS desktop cockpit** (`apps/desktop/`) — the human-facing half of `menqstudio/OS`
-> (Tauri 2 + Rust + SQLite + React 19). Windows is the primary release platform; Linux is also
-> built and tested.
+> (Tauri 2 + Rust + SQLite + React 19).
+>
+> **Windows is the only platform the app can currently run on.** Linux still builds and its tests
+> run, but since first-launch trust provisioning landed, the POSIX branch of sealing the trust
+> anchor returns `Unsupported` and **startup aborts**. §2.3 says exactly what a POSIX deployment
+> would have to provide. Do not read the Linux column of any table here as a supported install.
 >
 > **Honesty contract.** Every section marks what **exists today** vs. what is **PLANNED**. The
 > governed-execution **Windows broker** (services, per-service SIDs, NTFS/CNG DACLs, AppContainer
 > executor, WDAC) is a *normative, unaudited design target* — it is **not implemented**. Where an
 > operator step depends on it, the step is labelled **PLANNED (broker)** and points at
-> [`docs/design/WINDOWS_BROKER_DESIGN.md`](design/WINDOWS_BROKER_DESIGN.md) (currently on the
-> `docs/windows-broker-design` branch). Do not provision services or ACLs from this guide that the
-> code does not yet create.
+> [`docs/design/WINDOWS_BROKER_DESIGN.md`](design/WINDOWS_BROKER_DESIGN.md), which is on `main`.
+> The **trust anchor** in §2.3 is a separate, implemented thing — do not confuse the two. Do not
+> provision services or ACLs from this guide that the code does not yet create.
 
 ---
 
@@ -25,11 +29,14 @@
 | Stack | Tauri 2 shell · Rust host (`brops-core`, `rusqlite` bundled) · React 19 + TypeScript + Vite webview |
 | Data store | one local SQLite file, `brops.db` (+ `-wal` / `-shm`) |
 | AI execution | local `claude` CLI (default), Anthropic API, or Ollama — see §5 |
-| Trust boundary | **webview → Rust host**; single-user local app |
+| Trust boundary | **webview → Rust host**, and **the app's account → the machine-wide trust anchor** (§2.3); single-user local app |
+| Trust material | minted on this machine at first launch; the operator root is destroyed at install |
 
-There is **no server, no service, and no network listener** in the shipping app today. It is a
-single desktop process that owns one SQLite database. (The multi-service governed-execution broker
-in §7 is PLANNED and separate.)
+There is **no server and no network listener** in the shipping app. It is a single desktop process
+that owns one SQLite database, plus a machine-wide trust anchor it deliberately cannot write.
+(The multi-service governed-execution broker in §4/§7 is PLANNED and separate.) The one Windows
+**service** in the design — the audit signer that holds the `audit-anchor` key — is built but
+ships in no installer, so a stock install runs no service either; see §2.3.
 
 ---
 
@@ -65,24 +72,88 @@ npm run tauri dev
 Build prerequisites: Node 20, a stable Rust toolchain, and (Linux only) the webview system
 libraries `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev`.
 
-### 2.3 First-run provisioning (automatic)
+### 2.3 First-run provisioning (automatic) — **including trust provisioning**
 
-On first launch the host creates and initialises its own state — no manual provisioning:
+On first launch the host creates and initialises its own state — no manual provisioning, and **no
+owner ceremony**. The order below is the order in `run()`'s `setup` hook
+(`apps/desktop/src-tauri/src/lib.rs`) and it is load-bearing:
 
 1. Creates the app-data directory (`app_data_dir()` for `studio.menq.brops`).
-2. **(Unix only)** sets that directory to `0700` **before** opening the DB.
-3. Takes an **exclusive single-instance advisory lock** on a lock file in that directory (a second
+2. **(Unix only)** sets that directory to `0700` — **before** anything is written into it.
+3. **Mints (or verifies) the local trust store** — `provision_local_trust`. This runs **before the
+   database is opened**, and **a failure aborts startup**: there is no degraded mode, and a partial
+   mint is removed rather than kept. See below for what it writes and where.
+4. Takes an **exclusive single-instance advisory lock** on a lock file in that directory (a second
    instance aborts cleanly rather than touching live state).
-4. Opens/creates `brops.db`, runs schema migrations (currently up to `0014_receipt_verification`),
-   and seeds baseline rows.
-5. **(Unix only)** sets `brops.db` and its `-wal`/`-shm` to `0600`.
-6. Reconciles any execution claim abandoned by a crashed prior session (fail-closed) and sweeps
+5. Opens/creates `brops.db`, runs forward-only schema migrations, and seeds baseline rows.
+6. **(Unix only)** sets `brops.db` and its `-wal`/`-shm` to `0600`.
+7. Reconciles any execution claim abandoned by a crashed prior session (fail-closed) and sweeps
    stale AI sandbox directories.
 
-> **Windows data-at-rest gap (honest).** The `0700`/`0600` hardening in steps 2 and 5 is
-> **Unix-only** (`#[cfg(not(unix))]` is a no-op). On Windows the database inherits the ACL of the
-> per-user app-data directory. Explicit owner-only DACL enforcement on the DB is **PLANNED**. Until
-> then, protect the machine account itself (full-disk encryption / a locked user profile).
+**What step 3 does.** `brops-provision` mints one Ed25519 keypair for each of the nine authorities
+the engine knows, signs a `trusted-key-registry` and a `conductor-session` artifact with
+`operator-root`, and then **destroys the operator-root private half before it returns**. Eight
+delegated keys are retained; `control-room` and `evidence-floor` are the two the app legitimately
+needs afterwards, and neither can sign a registry, a conductor session or an audit head. Nothing
+expires (`not_after_epoch` is 9999-12-31), so nothing is ever asked of the person who installed it.
+On a later launch the step **verifies** what is on disk and returns; it never re-mints over a
+working install.
+
+**Where it writes.** Two halves, and the split is the whole security argument:
+
+| Half | Windows | Linux (specified; see the platform warning) | Holds |
+|---|---|---|---|
+| App-side trust store | `%APPDATA%\studio.menq.brops\trust\` | `~/.local/share/studio.menq.brops/trust/` | `keys/` (the 8 retained private halves), `artifacts/conductor-session.json`, `POSTURE.txt` |
+| Machine-wide **trust anchor** | `%ProgramData%\BroPS\trust-anchor\` | `<POSIX_MACHINE_ROOT>/trust-anchor/` | `operator-root.pub` (the pin), `registry-min` (anti-rollback floor), `registry/config/trusted-keys.json`, `PROVISIONING.json`, `CUSTODY.txt` |
+| Audit signer (Windows, when installed) | under `%ProgramData%\BroPS\` | — | the `audit-anchor` key and its published custody record |
+
+The anchor is **sealed**: a PROTECTED DACL whose OWNER RIGHTS (`S-1-3-4`) ACE grants read+execute
+only — replacing the owner's implicit `WRITE_DAC` rather than adding to it, so no elevation and no
+second account are needed — applied to the anchor's files, its directory, and **every ancestor up
+to the machine root**. Every launch re-measures with the OS's own answer and refuses if the seal no
+longer holds. **The seal is one-way for the account that applied it:** removing the anchor
+afterwards needs an administrator.
+
+> #### ⚠️ Install ordering — the audit signer must be registered BEFORE the app's first launch
+>
+> Provisioning admits the audit signer's published public key to the registry **while the registry
+> is being signed**, and the operator root is destroyed as that returns. **The registry seals when
+> provisioning returns**, so a signer key that was not admitted at that moment can never be admitted
+> afterwards — there is no key left to re-sign the registry with. If this machine is to have an
+> audit-head anchor (residual item O-2), register the signer service **first**, then launch the app.
+> Reversing the order means re-provisioning the machine.
+>
+> **Today nothing does this for you:** the signer's two binaries (`brops-audit-signer`,
+> `brops-anchor-relay`) are **in no installer**, `tauri.conf.json` declares no `externalBin` or
+> extra resources, and the elevated registration routine (`audit-signer/src/register.rs`, which
+> prints the exact `sc.exe` plan) has no entry point outside tests. On a stock install the machine
+> therefore has **no** audit signer: `published_anchor_custody` returns `None`, provisioning proceeds
+> without an anchor, and every keyed `bro_audit_log.verify()` then fails closed — which is correct,
+> and is not something to paper over.
+
+> #### ⚠️ Platform: Windows only, today
+>
+> `anchor::seal` returns `Unsupported` on POSIX **by construction** — a POSIX owner may always
+> `chmod` a directory it owns and there is no OWNER RIGHTS equivalent — so **first-launch
+> provisioning aborts startup on Linux**. The POSIX design is written down (the anchor directory
+> created at `<POSIX_MACHINE_ROOT>/trust-anchor` (read `anchor::POSIX_MACHINE_ROOT` for the current
+> literal rather than copying one out of a document), mode `0755`, owned by a **different** uid — root or a
+> dedicated `brops-anchor` account — with every ancestor likewise, and provisioning run once as that
+> account by the installer, before the app runs as its own unprivileged uid) but **that branch has
+> never executed.** Do not treat the Linux column above as a supported install.
+
+> **Windows data-at-rest gap (honest).** The `0700`/`0600` hardening in steps 2 and 6 is
+> **Unix-only** (`secure_data_dir` / `secure_owner_only_file` have no non-unix branch). On Windows
+> the database **and the retained private keys** inherit the ACL of the per-user app-data directory
+> — per-user by default, plus SYSTEM and Administrators. This is recorded rather than fixed: it is
+> stated in `PROVISIONING.json`, in `POSTURE.txt` and on stderr at first launch. Explicit owner-only
+> DACL enforcement on those files is **PLANNED**. Until then, protect the machine account itself
+> (full-disk encryption / a locked user profile).
+
+> **What the posture claims.** Trust material minted on the user's own machine defends against an
+> attacker who arrives **later**. It does **not** defend against one who already owned the machine
+> at install time — that attacker witnesses the mint or performs it. An SSH host key makes the same
+> trade. The chain proves *integrity over time on this machine*, not *provenance from a vendor*.
 
 ### 2.4 Data locations
 
@@ -90,10 +161,17 @@ On first launch the host creates and initialises its own state — no manual pro
 |---|---|---|
 | App-data dir (holds `brops.db`) | `%APPDATA%\studio.menq.brops\` | `~/.local/share/studio.menq.brops/` |
 | SQLite DB | `…\studio.menq.brops\brops.db` | `…/studio.menq.brops/brops.db` |
+| App-side trust store | `…\studio.menq.brops\trust\` | `…/studio.menq.brops/trust/` |
+| Machine-wide trust anchor | `%ProgramData%\BroPS\trust-anchor\` | `<POSIX_MACHINE_ROOT>/trust-anchor/` (never executed) |
 | Files workspace root | `%USERPROFILE%\BroPS\` | `~/BroPS/` |
 
 Exact resolution is Tauri's `app_data_dir()` for the identifier; the table gives the platform
-defaults. Override the Files root with `BROPS_FILES_ROOT` (§5).
+defaults. Override the Files root with `BROPS_FILES_ROOT` (§5). The trust anchor's location is
+**not** overridable by the application — that is the point of it.
+
+**Backup and uninstall treat the anchor differently.** It is machine-wide, outside the app-data
+directory, and sealed against the account that made it, so §8's "copy the app-data directory" does
+not capture it and §9's uninstaller does not remove it. See those sections.
 
 ---
 
@@ -123,15 +201,57 @@ UI for these; the Settings screen shows the resolved provider **read-only**.
 Secrets (`ANTHROPIC_API_KEY`) are read **only** from the environment and are never written to
 SQLite. Set them in the user/session environment before launching BroPS.
 
+### 3.1 Engine trust environment — **what provisioning writes, and what nothing exports**
+
+These are read by the **engine** (`engine/runtime/bro_signature.py`, `bro_policy.py`,
+`bro_audit_log.py`), not by the desktop host. `Provisioned::engine_env()` *computes* the first four
+and hands them back to the caller — and `provision_local_trust` **deliberately does not apply
+them**. Nothing else does either.
+
+| Variable | What it names | Provisioning's value |
+|---|---|---|
+| `BRO_OPERATOR_ROOT_PUBKEY_FILE` | the out-of-registry operator-root pin (absolute, non-symlink, not group/other-writable) | `<anchor>/operator-root.pub` — returned by `engine_env()`, **not exported** |
+| `BRO_OPERATOR_REGISTRY_MIN_FILE` | the anti-rollback floor, so a superseded but still-signed registry cannot be replayed | `<anchor>/registry-min` — returned, **not exported** |
+| `BRO_CONDUCTOR_SESSION_TOKEN` | the operator-signed `conductor-session` artifact the wall requires (O-3) | `<trust>/artifacts/conductor-session.json` — returned, **not exported** |
+| `BRO_SESSION_ID` | the session the artifact above is bound to | minted at install — returned, **not exported** |
+| `BRO_TRUSTED_REGISTRY_ROOT` | **where the engine reads `config/trusted-keys.json` from** | `<anchor>/registry` — **not even returned by `engine_env()`** |
+| `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID` | the audit-head signing command and its key id (O-2). Deliberately two variables: half a configuration is refused loudly rather than degrading to an unanchored ledger | unset on a stock install (there is no signer) |
+| `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` | the acknowledgement that short-circuits **every** custody rule at once | **no longer set anywhere**, and setting it again would re-disable the checks the anchor now passes on their merits |
+
+> **The consequence, stated plainly.** Because nothing exports these, **the engine still reads the
+> committed development registry** at `engine/config/trusted-keys.json` — which is `production:
+> false` and carries a "DEVELOPMENT REGISTRY" warning. The trust material the app minted is
+> invisible to it. Wiring the two together is a deployment decision (the registry has to live
+> somewhere the engine's custody rules accept, and `bro_signature` hard-fails when a file pin and
+> the CI `BRO_OPERATOR_ROOT_PUBKEY` disagree), not something the startup path may do silently.
+>
+> `BRO_TRUSTED_REGISTRY_ROOT` is fail-closed when you do set it: absolute path only, no symlink at
+> **any** component, must hold `config/trusted-keys.json` as a regular file, must be a directory the
+> reading account cannot rewrite, and must contain **neither the pin nor the floor** — a redirect
+> that carried the anchor along would hand over the registry and the thing that authenticates it in
+> one variable. While it is set, a caller naming a *third* root is refused by name rather than
+> quietly served a different registry from the rest of the process.
+
+> **And there is no production registry to point at.** `broctl build-registry` hardcodes
+> `"production": false`, `broctl keygen --production` refuses by name, and `bro_signature` refuses a
+> non-production registry whenever the pin comes from the production `_FILE` path. An **engine-only**
+> deployment therefore has no path to a production registry at all; how one is minted is an
+> Owner/architecture decision, not a missing function.
+
 ---
 
 ## 4. Service + ACL setup — **PLANNED (broker)**
 
-> **Nothing in this section is implemented.** The shipping app runs as a single unprivileged
-> desktop process and registers **no Windows service and no custom ACLs**. This section documents
-> the *target* provisioning so operators understand the roadmap and do not hand-provision anything
-> the runtime cannot yet consume. Source of truth:
-> [`docs/design/WINDOWS_BROKER_DESIGN.md`](design/WINDOWS_BROKER_DESIGN.md) (§1, §3, §8).
+> **Nothing in this section is implemented, and it is a different subject from §2.3.** The
+> governed-execution *broker* below — its services, per-service SIDs, CNG stores, AppContainer
+> executor and WDAC policy — does not exist. Do not confuse it with the **trust anchor** in §2.3,
+> which *is* real on Windows: first-launch provisioning applies a PROTECTED DACL to
+> `%ProgramData%\BroPS\trust-anchor` and its ancestors, unelevated, with no service involved. So
+> the shipping app registers **no Windows service**, but it is no longer true that it applies **no
+> custom ACLs**. Separately, the audit-signer service (§2.3's install-ordering warning) *is* built
+> and *is* designed to be registered by an elevated installer — but no installer ships it. Source of
+> truth for the broker: [`docs/design/WINDOWS_BROKER_DESIGN.md`](design/WINDOWS_BROKER_DESIGN.md)
+> (§1, §3, §8). Do not hand-provision anything the runtime cannot yet consume.
 
 The PLANNED governed-execution broker replaces "trust the process" with OS-enforced separation:
 
@@ -150,10 +270,21 @@ The PLANNED governed-execution broker replaces "trust the process" with OS-enfor
   `SeRestorePrivilege`/`SeTakeOwnershipPrivilege`; all provisioning is idempotent and re-verified
   after apply (§8.1 of the design).
 
-**Gate behaviour today:** `platform_governed_execution_supported()` returns **false** on Windows,
-so no lease is issued and every governed turn fail-closes (see §6 and the User Guide). An operator
-cannot enable governed "Verified" execution on Windows yet — the flip is gated on the broker being
-implemented **and** its Windows CI isolation proof (`isolation_proof.ps1`, design §10) passing.
+**Gate behaviour today:** every governed turn fail-closes and no lease is issued (see §6 and the
+User Guide). An operator cannot enable governed "Verified" execution on Windows — the flip is gated
+on the broker being implemented **and** its Windows CI isolation proof (`isolation_proof.ps1`,
+design §10) passing, **and** an independent audit, **and** the Owner's approval.
+
+> **Naming, because this trips people up.** The design calls the gate
+> `platform_governed_execution_supported()` (§0.1 / §7.1 / §10). **No function of that name exists
+> in the tree** — it is a specification symbol, and `config/spec-conformance.json` records §0.1 as
+> `partial`: *"the platform gate as specified; it is a hardcoded false."* The hardcoded false is
+> three real refusals, and those are what to cite:
+> `governed_verification_unconfigured()` (`src/commands.rs`) returns `Some(…)` unconditionally and
+> fires *before the model is called*; `connect_broker()` (`src/governed_turn.rs`) returns
+> `UnsupportedPlatform` on every host but Linux; and the broker's own
+> `build_governed_executor` falls back to `UpstreamBlockedExecutor` unless a complete
+> `BROPS_BROKER_CONFIG` parses.
 
 ---
 
@@ -185,8 +316,8 @@ Three providers, selected by `BROPS_AI_PROVIDER` (or auto-detected):
 4. **`governed-engine`** — routes the turn through the bridge into the engine's governed chain.
    Requires `BROPS_ALLOW_GOVERNED_ENGINE=1` as well as the provider name; without it the provider
    is refused by name. **On the shipped build every governed turn is then refused anyway**, because
-   `platform_governed_execution_supported()` is false and `main()` keeps `UpstreamBlockedExecutor`
-   — see §6.
+   verification is unprovisioned by construction and the broker keeps `UpstreamBlockedExecutor`
+   — see §4's naming note and §6.
 
 Provider resolution is **fail-closed**: an unknown/misconfigured provider is a hard error, and an
 ambient `ANTHROPIC_API_KEY` never silently selects a provider for a governed turn.
@@ -211,8 +342,9 @@ command surface.
   full Wave 3b chain **are merged and machine-proven**, on Linux (7 services, real uids, a setuid
   launcher) and on Windows (named pipes, cross-account, distinct service accounts), and CI runs
   both on every PR. What still refuses is the **shipped application**, deliberately:
-  `platform_governed_execution_supported()` returns false and `main()` keeps
-  `UpstreamBlockedExecutor`.
+  `governed_verification_unconfigured()` returns `Some(…)` unconditionally (before the model is
+  called), `connect_broker()` returns `UnsupportedPlatform` off Linux, and the broker keeps
+  `UpstreamBlockedExecutor`. See §4's naming note.
 
   **A proof kit that runs is not a shipped guarantee.** Opening the gate needs an independent audit
   of the whole chain **and** the Owner's approval — a green CI run is neither. Five engine residual
@@ -235,6 +367,12 @@ Update manually:
    on the product/upgrade code; NSIS reinstalls per-user).
 3. Launch once. Schema migrations run **forward-only** and automatically to the version the new
    binary expects.
+
+> **The trust store is not re-minted by an update.** Provisioning is idempotent: because
+> `PROVISIONING.json` is present in the anchor, the new build **verifies** the existing store
+> against it and returns. A verification failure aborts startup as `Corrupt` and is never silently
+> repaired — it means the app-side store and the anchor disagree, which is either damage or
+> tampering, and replacing it would destroy the evidence of which.
 
 ### 7.2 Rollback (today)
 
@@ -260,7 +398,8 @@ manifest + WDAC policy, and a failed update leaving the old, still-pinned binari
 
 ## 8. Backup & restore
 
-The entire application state is the SQLite database. There is no external service or cloud state.
+The application's *user* state is the SQLite database. There is no external service or cloud state.
+Its *trust* state is not in the database and does not move with it — see §8.3.
 
 ### 8.1 Backup
 
@@ -284,6 +423,20 @@ Copying while the app is running can capture a torn WAL; always quit first. (A h
 Secrets are **not** in the backup (API keys live only in the environment), so no secret material is
 exposed by copying `brops.db`.
 
+### 8.3 The trust store and the anchor — read before you copy anything
+
+- The app-side trust store (`…\studio.menq.brops\trust\`) **does** hold private key material.
+  Copying the app-data directory copies it. Treat that backup as key material: it is exactly the
+  set of delegated keys this machine can sign with.
+- The **anchor** (`%ProgramData%\BroPS\trust-anchor\`) is **not** in the app-data directory and is
+  not captured by §8.1. It is also sealed against the account that made it, so an ordinary backup
+  tool running as that account may not be able to read every part of it.
+- **Restoring an app-side store under a different anchor does not work, and must not.**
+  `PROVISIONING.json` (in the anchor) carries the sha256 of every app-side file — the half the app
+  can rewrite is vouched for by the half it cannot — so a mismatched pair is refused at startup as
+  `Corrupt`, never silently repaired and never re-minted over. If you are moving to a new machine,
+  let it provision its own trust; do not transplant one.
+
 ---
 
 ## 9. Uninstall
@@ -296,6 +449,13 @@ exposed by copying `brops.db`.
 3. The uninstaller does **not** delete your data. To remove it, delete the app-data directory
    (`%APPDATA%\studio.menq.brops\`) and, if desired, the Files workspace (`~/BroPS`). Keep a backup
    first if the conversation/knowledge history matters.
+4. **The trust anchor survives the uninstall, and an ordinary user cannot remove it.**
+   `%ProgramData%\BroPS\trust-anchor\` was sealed one-way by the account that created it, so
+   deleting it requires an **administrator**. Leaving it in place is harmless and is what makes a
+   reinstall verify against the same anchor; removing it means the next launch mints a fresh trust
+   store, which is a different machine identity. If an audit signer was registered
+   (`brops-audit-signer`), removing it is likewise an elevated, separate step — no uninstaller does
+   it, because no installer created it.
 
 ### 9.2 Broker teardown — **PLANNED (broker)**
 
@@ -313,6 +473,9 @@ containers, leaving the evidence store TCB-owned/deny-all for a clean reinstall.
 | Single-instance lock | Launch a second copy | Second instance exits without touching state |
 | AI provider resolved | Settings screen / `ai_status` | Correct provider + `ready: true`; `governed:false` on ungoverned |
 | Governed path | Attempt a governed turn | Fail-closed *"Governed reply blocked (unverified)"* (expected today) |
+| Trust provisioning | First launch, on stderr | `BroPS provisioned its local trust store at …` plus the posture, the operator-root line and the **measured** custody proof. A startup abort naming a path means provisioning refused — read the message; it names what failed |
+| Anchor custody still holds | Every launch | Silent. `prove_unwritable` re-measures against the OS on each start and aborts startup if the seal no longer holds — so "the app opened" *is* the check |
+| Anchor present | Inspect `%ProgramData%\BroPS\trust-anchor\` | `operator-root.pub`, `registry-min`, `registry/config/trusted-keys.json`, `PROVISIONING.json`, `CUSTODY.txt`; readable, and **not** writable by your account |
 | Files confinement | Browse Files | Cannot escape the root; sensitive paths (`.ssh`, `.env`, `*.pem`, …) not listed |
 | CI green | `.github/workflows/ci.yml` | Frontend build + Rust core/host tests + clippy `-D warnings` + release build pass |
 
@@ -330,6 +493,29 @@ Exists today (see [`apps/desktop/SECURITY.md`](../apps/desktop/SECURITY.md) for 
   refused across restarts; pre-dispatch execution claim so one grant starts exactly one run.
 - CI: SHA-pinned actions, `clippy -D warnings`, release build on every push.
 
-Known gaps (honest): Windows lacks the Unix `0700`/`0600` data hardening and owner-only sandbox
-(Windows equivalents are **PLANNED (broker)**); installers are **unsigned**; a residual filesystem
-TOCTOU window is accepted for the single-user threat model.
+Added since this list was written — real on Windows, not planned:
+
+- The engine's trust material is **minted at first launch and the operator root is destroyed**, so
+  no key that can sign the trusted-key registry survives on the machine (§2.3).
+- The pin, the anti-rollback floor, the registry and the provisioning manifest live in a
+  **machine-wide anchor the app's own account cannot write**, sealed to the volume root and
+  re-measured against the OS on every launch.
+- The `audit-anchor`, `control-room` and `evidence-floor` authorities are **split**: the audit log's
+  head can only be signed by a principal the ledger's writer cannot become, while the two routine
+  authorities stay online and can sign nothing else.
+
+Known gaps (honest):
+
+- **Windows-only.** Provisioning refuses on POSIX and aborts startup there (§2.3).
+- **The engine does not see any of it.** Nothing exports the provisioned environment, so the engine
+  still reads the committed *development* registry (§3.1) — and `broctl` cannot mint a production
+  one at all.
+- **No audit signer ships.** The second principal O-2 needs is built but is in no installer, so a
+  stock install has no audit-head anchor and keyed ledger verification fails closed (§2.3).
+- Windows lacks the Unix `0700`/`0600` data hardening and owner-only sandbox — the retained private
+  keys inherit the app-data ACL (Windows equivalents are **PLANNED (broker)**).
+- Installers are **unsigned**; a residual filesystem TOCTOU window is accepted for the single-user
+  threat model.
+- The boundary is the app's **unelevated token**: on a machine whose user is a local administrator,
+  one UAC consent gives full control. Provisioning refuses outright if its token holds
+  `SeTakeOwnership` or `SeRestore`, rather than proceeding and claiming an anchor it does not have.

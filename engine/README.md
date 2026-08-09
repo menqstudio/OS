@@ -23,6 +23,14 @@ Bro converts a request into a governed task contract, selects the correct pack o
 - **Canonical orchestration.** Task lifecycle, queue classes, routing policy, checkpoints, budgets, cancellation, recovery, quarantine, and Control Room commands are owned by one orchestration SST.
 - **Durable runtime truth.** Task contracts and append-only SHA-256 chained runtime records live outside Git, with deterministic claims, expiring leases, evidence-backed checkpoints, budget gates, and fail-closed integrity checks.
 
+> **Where this file's numbers come from.** `engine/` is vendored from the standalone
+> [`menqstudio/Bro`](https://github.com/menqstudio/Bro) repository, and the PR numbers, merge commit
+> and audit dates below are **Bro's**, frozen at the point of vendoring. They are history, not the
+> state of `menqstudio/OS`. For the live state read the OS root's `NEXT_CHAT.md` /
+> `PROJECT_STATE.md`, and for what is still open against this engine read
+> [`../docs/PHASE_10_PRODUCTION_ITEMS.md`](../docs/PHASE_10_PRODUCTION_ITEMS.md) (residual items
+> O-1 … O-5, all OPEN) and [`../docs/SECURITY_MODEL.md`](../docs/SECURITY_MODEL.md).
+
 ## Current merged baseline
 
 Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestration Runtime V1, and Control Room API V1 are merged into `main`. The containment, issuance, and execution-integrity **components** are merged; `LIVE_PROVEN` is a traceability-validator label (a named test/path exists), **not** a proof of production wiring. The 2026-07-19 audit established that several of these are not wired end-to-end — see the caveats below.
@@ -39,7 +47,7 @@ Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestrati
 - owner authorization has a green end-to-end bundle+ALLOW test; the durable-runtime completion path now requires an independent verifier-signed receipt (builder ≠ verifier, blocker 6b)
 - legacy retired: the dead v1/v2 release-grant loaders are removed; Ed25519 Release Grant V3 is the only release path
 - operational rollout: shadow (observe-only) enforcement, integrity-checked backup/restore, a live health monitor, and an operator runbook are merged
-- CI: foundation GREEN on ubuntu-latest and windows-latest (SHA-pinned actions, `--require-hashes` deps, least-privilege token — blocker 9c); ~616 tests
+- CI: foundation GREEN on ubuntu-latest and windows-latest (SHA-pinned actions, `--require-hashes` deps, least-privilege token — blocker 9c). Measured from the OS monorepo on 2026-08-09: `BRO_ENV=ci python -m unittest discover -s tests` runs **1282 tests, OK (43 skipped)** on Windows
 - inventories: 52 packs, 42 skills, 63 documents
 
 ## Resolved findings and current open work
@@ -73,7 +81,26 @@ Both prior open items are now closed:
 6. Run `python -m unittest discover -s tests -v`.
 7. Continue only when the exact repository state is GREEN.
 
-> **Operator configuration required (trust anchor).** The operator-root public key is now pinned from **outside** the trusted-key registry. Before `bro_validate` or any signature-verifying runtime path will run, set the pin: production points `BRO_OPERATOR_ROOT_PUBKEY_FILE` at an operator-controlled file (absolute path, outside the repository, a regular non-symlink, not group/other-writable); CI passes the key in `BRO_OPERATOR_ROOT_PUBKEY`. If both are set they must match; a mismatch, or neither being set, is a hard failure. The registry payload is never the anchor.
+> **Operator configuration required (trust anchor).** The operator-root public key is pinned from **outside** the trusted-key registry. Before `bro_validate` or any signature-verifying runtime path will run, set the pin: production points `BRO_OPERATOR_ROOT_PUBKEY_FILE` at an operator-controlled file (absolute path, outside the repository, a regular non-symlink, not group/other-writable); CI passes the key in `BRO_OPERATOR_ROOT_PUBKEY`. If both are set they must match; a mismatch, or neither being set, is a hard failure. The registry payload is never the anchor.
+>
+> **Where the registry is READ from is a separate question (O-3).** `load_trusted_keys` reads
+> `<root>/config/trusted-keys.json`, and every caller used to pass the engine's own tree — so the
+> **development** registry committed at `config/trusted-keys.json` (`production: false`, carrying a
+> DEVELOPMENT REGISTRY warning) answered for everything. `BRO_TRUSTED_REGISTRY_ROOT` names a
+> deployment's real registry root instead. Unset, behaviour is byte-for-byte what it was. Set, it is
+> fail-closed: absolute path, no symlink at **any** component, must hold `config/trusted-keys.json`
+> as a regular file, must be a directory the reading account cannot rewrite, and must contain
+> **neither the pin nor the floor** — the redirect deliberately does not carry the anchor with it,
+> and a caller naming a third root while it is set is refused by name rather than served a different
+> registry from the rest of the process. See `runtime/bro_signature.resolve_registry_root` and
+> `tests/test_provisioned_registry_root.py`.
+>
+> **Nothing in this repository can mint a PRODUCTION registry.** `tools/broctl.py build-registry`
+> hardcodes `"production": false` and stamps the development warning, `keygen --production` refuses
+> by name, and `bro_signature` refuses a non-production registry whenever the pin comes from the
+> production `_FILE` path. So the ceremony below runs honestly end to end and produces a
+> **development** root — enough to exercise every path, not enough to close O-2, O-3 or O-5. How a
+> production registry is minted is an Owner/architecture decision, not a missing function.
 
 ## Security remediation (all blockers resolved)
 
@@ -98,7 +125,24 @@ Owner-environment hardening then landed (PRs #51–#52): a fail-closed deploymen
 - **Owner-environment hardening:** the dedicated non-admin account, workspace-scoped filesystem ACLs, a fine-grained GitHub credential, and the `main` branch ruleset. Owner-operated, outside any agent process.
 - **Control Room visual surfaces:** the rendered surfaces belong to the operator client (BroPS); Bro exposes the read-only data and the client renders it.
 
-A trust root cannot be issued by the system it roots, so the first bootstrap authority is signed by Gev by hand, outside any agent process.
+**Who signs the first bootstrap authority — this changed, and the old sentence is gone.** It used to
+read: *"a trust root cannot be issued by the system it roots, so the first bootstrap authority is
+signed by Gev by hand, outside any agent process."* The principle still holds; the deployment that
+satisfies it no longer does. For the **desktop product**, `apps/desktop/src-tauri/provision/` mints
+the whole set on the user's machine at first launch — every authority keypair, the operator-signed
+`trusted-key-registry`, the out-of-registry pin, the anti-rollback floor and the `conductor-session`
+— and then **destroys the operator-root private half before it returns**, so the key that signs the
+registry does not survive on the machine that uses it. There is no hand ceremony, no USB and no
+renewal; `docs/OWNER_CEREMONY.md` and `tools/mint_owner_payloads.py` were deleted when this landed.
+
+What that buys and what it does not, stated because the difference is the whole security argument:
+locally-minted trust material defends against an attacker who arrives **later**, exactly as an SSH
+host key does. It does **not** defend against one who already owned the machine at install time. So
+the chain proves integrity over time on one machine, not provenance from a vendor. The pin, the
+floor and the registry are therefore kept in a machine-wide anchor the application's own account
+cannot write; the audit log's head is signed by a dedicated `audit-anchor` authority nothing in this
+tree mints. For an **engine-only** deployment there is still no path to a production trust root at
+all — see the note under "Start here".
 
 ## Authority
 
