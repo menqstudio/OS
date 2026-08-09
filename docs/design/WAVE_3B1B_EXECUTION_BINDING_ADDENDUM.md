@@ -1,6 +1,19 @@
 # Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 30 — closes the rev-29 Architect design RED: 1 P0 + 3 P1)
 
-> **STATUS: ❌ DESIGN RED. Last reviewed candidate = rev-29 = Architect design RED (1 P0 + 3 P1 at exact
+> **STATUS: OWNER-APPROVED 2026-08-10 — rev-30, by the Owner, NOT by an Architect audit.**
+> Gev ruled rev-30 approved and authorised 3b-1B implementation to proceed. That is a waiver of the
+> DESIGN-ONLY clause below, granted by the person who holds the repository, and it is recorded as
+> exactly that: **no Architect re-audit of rev-30 has taken place, and this line is not a substitute
+> for one.** An independent audit of the resulting code is still required before any production gate
+> opens, and the standing verdict on the last independent audit is RED.
+>
+> Why this had to be written rather than toggled: `config/current_state.json` carried
+> `CURRENT_DESIGN_GATE: GREEN` while this banner said RED, and §0 of this document says that where
+> any other file disagrees with it, **this document wins**. So the state file had been asserting a
+> verdict the normative source denied. The disagreement is resolved by naming who decided, not by
+> letting a token stand in for a verdict that never happened.
+>
+> **The superseded verdict, kept because it is the record:** ❌ DESIGN RED. Last reviewed candidate = rev-29 = Architect design RED (1 P0 + 3 P1 at exact
 > HEAD `1a79bc28ba89d78fc547b9f17b4fb94cdea81abe`; CI run 30297820594 9/9 GREEN — CI ≠ design GREEN).
 > CURRENT candidate = rev-30 = PENDING re-audit (the remediation below; it does NOT inherit the rev-29
 > verdict). No Architect-approved or merged 3b-1B implementation exists; PR #32 holds UNAPPROVED

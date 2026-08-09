@@ -45,6 +45,7 @@ from governed_supervisor import (  # noqa: E402
 )
 from governed_supervisor_server import (  # noqa: E402
     LENGTH_PREFIX_BYTES,
+    MAX_ERROR_CHARS,
     MAX_FRAME_BYTES,
     OP_ACCEPT_OPEN,
     OP_ATTEST_RUN,
@@ -58,6 +59,7 @@ from governed_supervisor_server import (  # noqa: E402
     REFUSE_UNKNOWN_ATTEMPT,
     dispatch,
     handle_connection,
+    _try_write,
     read_frame,
     serve_forever,
 )
@@ -222,8 +224,18 @@ def _clock(now=NOW):
     return lambda: now
 
 
-def _frame(obj) -> bytes:
-    body = json.dumps(obj).encode("utf-8")
+def _frame(obj, *, ensure_ascii: bool = True) -> bytes:
+    """Length-prefix a request the way a real peer would put it on the wire.
+
+    `ensure_ascii` is EXPLICIT because it decides which check a test reaches.
+    `json.dumps` defaults to True, expanding every non-ASCII character into a
+    6-byte ``\\uXXXX`` escape — so a payload built to exercise a handler can
+    silently balloon past MAX_FRAME_BYTES and be refused by `read_frame` before
+    the handler is ever entered. (That is exactly what had happened to the
+    amplified-error test below.) A peer that wants those bytes THROUGH the frame
+    bound sends them as raw UTF-8, i.e. ensure_ascii=False.
+    """
+    body = json.dumps(obj, ensure_ascii=ensure_ascii).encode("utf-8")
     return len(body).to_bytes(LENGTH_PREFIX_BYTES, "big") + body
 
 
@@ -347,12 +359,82 @@ class FrameBoundTests(unittest.TestCase):
         # A hostile op whose repr() expands ~4x used to produce a reply too large to frame,
         # and the FrameError escaped the handler and killed the supervisor (audit F-11).
         # The error text is bounded now, and _try_write degrades instead of raising.
+        #
+        # This test used to frame the payload with json.dumps' DEFAULT ensure_ascii=True,
+        # which turned 3000 U+0080 characters into 18010 wire bytes against an 8192-byte
+        # MAX_FRAME_BYTES. `read_frame` refused the length prefix, the bounds check alone
+        # satisfied both assertions, and neither `_bounded_error` nor `_try_write`'s
+        # FrameError branch was ever entered — it passed identically on the unfixed code.
+        # To reach the amplifier the frame must be one the supervisor ACCEPTS: raw UTF-8.
         hostile = {"op": "" * 3_000}
-        conn = FakeConn(BROKER_UID, inbound=_frame(hostile))
+        framed = _frame(hostile, ensure_ascii=False)
+
+        # Guard 1 — the request really does get past the frame bound. Without this the
+        # test can silently rot back into a length-prefix test that proves nothing.
+        declared = int.from_bytes(framed[:LENGTH_PREFIX_BYTES], "big")
+        self.assertLessEqual(
+            declared, MAX_FRAME_BYTES,
+            "the hostile frame must be ACCEPTED, or read_frame answers and the "
+            "error-bounding path under test is never reached")
+
+        # Guard 2 — un-bounded, this op's error text really would be un-framable, so the
+        # bounding below is doing work rather than describing an already-small reply.
+        unbounded = json.dumps({"ok": False, "error": "unknown op %r" % (hostile["op"],)},
+                               separators=(",", ":")).encode("utf-8")
+        self.assertGreater(
+            len(unbounded), MAX_FRAME_BYTES,
+            "premise of this test: the un-bounded error reply must exceed the frame bound")
+
+        conn = FakeConn(BROKER_UID, inbound=framed)
+        reply = _handle(conn)
+
+        self.assertFalse(reply["ok"])
+        # The refusal is about the OP — proof the frame was read and dispatch was entered,
+        # not that the length prefix was rejected.
+        self.assertIn("unknown op", reply["error"])
+        self.assertNotIn("exceeds bound", reply["error"])
+        # `_bounded_error` ran: the text is capped, and it says so.
+        self.assertLessEqual(len(reply["error"]), MAX_ERROR_CHARS + 32)
+        self.assertTrue(reply["error"].endswith("(truncated)"))
+        # A real framed reply reached the peer and the connection survived.
+        self.assertTrue(conn.out, "a reply was still written")
+        self.assertLessEqual(len(conn.out), MAX_FRAME_BYTES + LENGTH_PREFIX_BYTES)
+        self.assertEqual(conn.decoded_reply(), reply)
+
+    def test_error_bounding_holds_at_the_largest_frame_a_peer_may_send(self):
+        # The bound must hold at the WORST legal input, not one hand-picked size: a peer
+        # may send a full MAX_FRAME_BYTES frame, and repr() expands non-printables ~4x.
+        op = "" * ((MAX_FRAME_BYTES - 32) // 2)
+        framed = _frame({"op": op}, ensure_ascii=False)
+        self.assertLessEqual(int.from_bytes(framed[:LENGTH_PREFIX_BYTES], "big"),
+                             MAX_FRAME_BYTES)
+        conn = FakeConn(BROKER_UID, inbound=framed)
         reply = _handle(conn)
         self.assertFalse(reply["ok"])
+        self.assertIn("unknown op", reply["error"])
+        self.assertTrue(reply["error"].endswith("(truncated)"))
+        self.assertTrue(conn.out)
         self.assertLessEqual(len(conn.out), MAX_FRAME_BYTES + LENGTH_PREFIX_BYTES)
-        self.assertTrue(conn.out, "a reply was still written")
+
+    def test_try_write_degrades_instead_of_raising_on_an_unframable_reply(self):
+        # The F-11 belt itself, driven directly. If a reply is over-bound for ANY reason,
+        # `_try_write` must emit the minimal typed refusal rather than let FrameError
+        # escape `handle_connection` and kill the process that mints every lease. Nothing
+        # else in this suite enters that branch.
+        conn = FakeConn(BROKER_UID)
+        _try_write(conn, {"ok": False, "error": "x" * (MAX_FRAME_BYTES * 2)})
+        self.assertTrue(conn.out, "_try_write must still answer the peer")
+        self.assertLessEqual(len(conn.out), MAX_FRAME_BYTES + LENGTH_PREFIX_BYTES)
+        self.assertEqual(conn.decoded_reply(),
+                         {"ok": False, "error": "reply exceeded frame bound"})
+
+    def test_try_write_swallows_a_dead_peer(self):
+        # The other half of the belt: a peer that has gone away must not raise either.
+        class DeadConn(FakeConn):
+            def send_all(self, data):
+                raise OSError("peer gone")
+
+        _try_write(DeadConn(BROKER_UID), {"ok": True})  # must not raise
 
 
 # ---------------------------------------------------------------------------

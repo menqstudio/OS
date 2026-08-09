@@ -20,7 +20,9 @@ socket is opened.
 """
 
 import base64
+import contextlib
 import hashlib
+import io
 import json
 import pathlib
 import sys
@@ -407,6 +409,74 @@ class ServeLoopTests(unittest.TestCase):
         reply = served[0].decoded_reply()
         self.assertTrue(reply["ok"])
         self.assertEqual(reply["artifact_type"], ENVELOPE_ARTIFACT_TYPE)
+
+
+class NeverRaisesTests(unittest.TestCase):
+    """``handle_connection`` promises it "never raises on hostile input" and
+    ``serve_forever`` promises "a single hostile connection never tears down the
+    loop". Both were false.
+
+    ``SignerError`` is defined in ``isolated_signer`` as a SIBLING of
+    ``SignerServerError`` — not a subclass — so it was not in
+    ``handle_connection``'s ``except`` tuple. The signer core raises it from
+    ``ArtifactStore.read_verified`` when a stored blob's bytes no longer hash to
+    the handle naming them, which is exactly the state a write into the signer's
+    blob directory produces. It escaped the front door, no refusal frame was
+    written, and the accept loop died.
+    """
+
+    def _corrupt_store_conn(self):
+        signer, _pub, handles = _make_signer()
+        frame = _frame(
+            {"op": OP_SIGN_RESULT, "sign_request": _sign_request(_evidence(handles))}
+        )
+        # A blob whose bytes no longer match the handle that names them.
+        signer._store._blobs[handles["output_handle"]] = b"tampered bytes"
+        return signer, frame
+
+    def test_store_corruption_becomes_a_reply_not_an_exception(self):
+        signer, frame = self._corrupt_store_conn()
+        conn = FakeConn(BROKER_UID, inbound=frame)
+        reply = handle_connection(conn, BROKER_UID, signer)
+        self.assertFalse(reply["ok"])
+        # And the refusal actually reached the peer as a framed reply.
+        self.assertEqual(conn.decoded_reply(), reply)
+
+    def test_store_corruption_does_not_kill_the_accept_loop(self):
+        signer, frame = self._corrupt_store_conn()
+        conns = [FakeConn(BROKER_UID, inbound=frame), FakeConn(BROKER_UID, inbound=frame)]
+        served = list(conns)
+
+        def accept_one():
+            return conns.pop(0) if conns else None
+
+        serve_forever(accept_one, BROKER_UID, signer)
+
+        # BOTH connections were served: the loop survived the first one.
+        for conn in served:
+            self.assertTrue(conn.closed)
+            self.assertFalse(conn.decoded_reply()["ok"])
+
+    def test_unexpected_seam_failure_fails_closed_without_leaking_detail(self):
+        """Any OTHER exception is a fail-closed reply too, and its text is NOT
+        handed to the broker — an internal fault must not become a channel."""
+        signer, _pub, handles = _make_signer()
+        frame = _frame(
+            {"op": OP_SIGN_RESULT, "sign_request": _sign_request(_evidence(handles))}
+        )
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("HSM slot 3 unreachable at /run/pkcs11/token")
+
+        signer._sign_fn = boom
+        conn = FakeConn(BROKER_UID, inbound=frame)
+        with contextlib.redirect_stderr(io.StringIO()) as captured:
+            reply = handle_connection(conn, BROKER_UID, signer)
+        self.assertFalse(reply["ok"])
+        self.assertEqual(reply["error"], "internal signer fault")
+        self.assertNotIn("HSM slot 3", json.dumps(reply))
+        # The operator still gets the detail, on stderr.
+        self.assertIn("HSM slot 3", captured.getvalue())
 
 
 if __name__ == "__main__":

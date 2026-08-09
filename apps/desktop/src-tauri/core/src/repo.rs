@@ -947,12 +947,32 @@ pub mod chat {
     /// anchor (a separate additive table — never the production trust records). A real production receipt always
     /// wins (it is the first COALESCE arm). A `blocked` verdict has no message, so it never appears here. Every
     /// message SELECT that feeds `map_message` must include this `AS receipt` column and alias `messages` as `m`.
+    ///
+    /// The accepted-attempt arm is an AGGREGATE, not `LIMIT 1`. It used to be
+    /// `SELECT a.outcome ... LIMIT 1` with no `ORDER BY`, over a `message_id`
+    /// column that carried no UNIQUE constraint and no index — so if a message
+    /// ever had two accepted attempts, the badge this paints in the shipped chat
+    /// was whichever row SQLite happened to return first. A green
+    /// `trusted_verified` badge decided by a query plan is not a trust signal.
+    /// Migration 0023 makes that state impossible (a partial UNIQUE index on
+    /// `message_id`); this query stops depending on it anyway, and where two
+    /// accepted attempts disagree it takes the WEAKER answer. Over-claiming
+    /// trust is the failure that matters, so ambiguity resolves down, never up.
+    ///
+    /// `WHEN COUNT(*) = 0 THEN NULL` is load-bearing: an aggregate subquery over
+    /// zero rows still returns one row, so without it a message with NO accepted
+    /// attempt would fall through to the `ELSE` arm and be painted
+    /// `trusted_verified`.
     const MESSAGE_RECEIPT_PROJECTION: &str = "COALESCE(\
-         (SELECT a.outcome \
+         (SELECT CASE \
+                   WHEN COUNT(*) = 0 THEN NULL \
+                   WHEN SUM(a.outcome = 'development_untrusted') > 0 \
+                     THEN 'development_untrusted' \
+                   ELSE 'trusted_verified' \
+                 END \
             FROM receipt_verification_attempts a \
             WHERE a.message_id = m.id \
-              AND a.outcome IN ('development_untrusted', 'trusted_verified') \
-            LIMIT 1), \
+              AND a.outcome IN ('development_untrusted', 'trusted_verified')), \
          (SELECT 'demonstration_verified' \
             FROM demonstration_verified_messages d \
             WHERE d.message_id = m.id))";

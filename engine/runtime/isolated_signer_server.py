@@ -40,9 +40,10 @@ import json
 import socket
 import struct
 import sys
+import traceback
 from typing import Any, Dict, Mapping, Optional
 
-from isolated_signer import IsolatedSigner
+from isolated_signer import IsolatedSigner, SignerError
 
 # ---------------------------------------------------------------------------
 # Wire framing constants (§7 signing channel)
@@ -270,12 +271,35 @@ def handle_connection(
         raw = read_frame(conn)
         request = json.loads(raw.decode("utf-8"))
         reply = dispatch(request, signer)
-    except (FrameError, SignerServerError, ValueError, UnicodeDecodeError) as exc:
+    except (
+        FrameError,
+        SignerServerError,
+        SignerError,
+        ValueError,
+        UnicodeDecodeError,
+    ) as exc:
+        # ``SignerError`` is a SIBLING of ``SignerServerError``, not a subclass:
+        # it is defined in ``isolated_signer`` and the signer core raises it for
+        # a broken seam (``read_verified`` on a blob whose digest no longer
+        # matches its handle, a ``sign_fn`` returning junk, a ``clock_ms`` that
+        # is not an int). Omitting it here let it escape the whole front door and
+        # tear down ``serve_forever`` with no refusal frame written.
         reply = {"ok": False, "error": str(exc)}
         # Surface a typed reason if the raised error carried one.
         reason = getattr(exc, "reason", None)
         if isinstance(reason, str) and reason:
             reply["reason"] = reason
+    except Exception:  # noqa: BLE001 - the fail-closed backstop, see below
+        # The docstring above promises this function never raises. An explicit
+        # tuple can only ever promise that for the classes someone remembered to
+        # list, and this front door sits on a trust boundary where an escape is
+        # a denial-of-service on the signing authority. So ANY other exception —
+        # a latent ``TypeError``/``KeyError``, an injected seam that raised
+        # something new — becomes a fail-closed reply too. The detail is written
+        # to the operator's stderr and NOT to the broker: an unexpected internal
+        # fault must not become an information channel.
+        traceback.print_exc(file=sys.stderr)
+        reply = {"ok": False, "error": "internal signer fault"}
 
     _try_write(conn, reply)
     return reply
@@ -284,8 +308,11 @@ def handle_connection(
 def _try_write(conn: Any, reply: Mapping[str, Any]) -> None:
     try:
         write_frame(conn, _encode_reply(reply))
-    except OSError:
-        pass  # peer already gone; nothing to do, connection is closed by loop
+    except (OSError, FrameError, TypeError, ValueError):
+        # peer already gone, or a reply we could not frame/encode. Either way the
+        # connection is closed by the loop; never let the write path raise back
+        # into ``handle_connection``'s contract.
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -312,10 +339,15 @@ def serve_forever(
             return
         try:
             handle_connection(conn, allowed_broker_uid, signer)
+        except Exception:  # noqa: BLE001 - one connection must never kill the loop
+            # Belt to ``handle_connection``'s braces: the accept loop IS the
+            # availability of the signing authority, so nothing a single peer can
+            # do may end it. If the handler somehow still raises, log and move on.
+            traceback.print_exc(file=sys.stderr)
         finally:
             try:
                 conn.close()
-            except OSError:
+            except Exception:  # noqa: BLE001 - a failing close must not end the loop
                 pass
 
 

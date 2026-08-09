@@ -1,8 +1,8 @@
 //! End-to-end schema/migration test for `brops-core`.
 //!
-//! Applies every migration (0001..0022) in order to a fresh SQLite database and
-//! asserts the resulting shape: `SCHEMA_VERSION == 22`, the ledger is contiguous
-//! 1..=22, the key tables/columns exist, and the constraints introduced across
+//! Applies every migration (0001..0023) in order to a fresh SQLite database and
+//! asserts the resulting shape: `SCHEMA_VERSION == 23`, the ledger is contiguous
+//! 1..=23, the key tables/columns exist, and the constraints introduced across
 //! the migrations (status-guard triggers, the run_steps position uniqueness, and
 //! the Wave-3a receipt tables' CHECK/PK/one-time-consume invariants) actually
 //! bite. Migrations are forward-only (no down scripts), so the "down/idempotency"
@@ -72,10 +72,10 @@ fn migrate_applies_all_versions_in_order_to_a_fresh_db() {
     c.pragma_update(None, "foreign_keys", "ON").unwrap();
     db::migrate(&c).unwrap();
 
-    assert_eq!(db::SCHEMA_VERSION, 22, "crate SCHEMA_VERSION must be 22");
-    assert_eq!(db::current_version(&c).unwrap(), 22);
-    // The ledger is contiguous 1..=22 — nothing skipped, nothing double-counted.
-    assert_eq!(applied_versions(&c), (1..=22).collect::<Vec<i64>>());
+    assert_eq!(db::SCHEMA_VERSION, 23, "crate SCHEMA_VERSION must be 23");
+    assert_eq!(db::current_version(&c).unwrap(), 23);
+    // The ledger is contiguous 1..=23 — nothing skipped, nothing double-counted.
+    assert_eq!(applied_versions(&c), (1..=23).collect::<Vec<i64>>());
     // 0017 created the group-chat participants roster table.
     let has_participants: i64 = c
         .query_row(
@@ -500,7 +500,7 @@ fn migrate_is_idempotent_in_process() {
     db::migrate(&c).unwrap();
     assert_eq!(db::current_version(&c).unwrap(), db::SCHEMA_VERSION);
     assert_eq!(applied_versions(&c), before, "re-running migrate must not add ledger rows");
-    assert_eq!(before.len(), 22);
+    assert_eq!(before.len(), 23);
 }
 
 #[test]
@@ -515,12 +515,12 @@ fn migrate_is_idempotent_across_a_real_file_reopen() {
 
     {
         let c1 = db::open(path).unwrap();
-        assert_eq!(db::current_version(&c1).unwrap(), 22);
+        assert_eq!(db::current_version(&c1).unwrap(), 23);
     } // c1 dropped
 
     let c2 = db::open(path).unwrap(); // reopen re-runs migrate() (idempotent)
-    assert_eq!(db::current_version(&c2).unwrap(), 22);
-    assert_eq!(applied_versions(&c2), (1..=22).collect::<Vec<i64>>());
+    assert_eq!(db::current_version(&c2).unwrap(), 23);
+    assert_eq!(applied_versions(&c2), (1..=23).collect::<Vec<i64>>());
 }
 
 // --- 0022: the integrations credential REFERENCE column ---------------------
@@ -605,8 +605,8 @@ fn an_existing_database_upgrades_to_0022_without_losing_data() {
 
     // 2. The upgrade path production actually uses.
     let c = db::open(path).unwrap();
-    assert_eq!(db::current_version(&c).unwrap(), 22, "reopening must apply 0022");
-    assert_eq!(applied_versions(&c), (1..=22).collect::<Vec<i64>>());
+    assert_eq!(db::current_version(&c).unwrap(), 23, "reopening must apply 0022 and 0023");
+    assert_eq!(applied_versions(&c), (1..=23).collect::<Vec<i64>>());
     assert!(has_column(&c, "integrations", "auth_ref"));
 
     // 3. Nothing was lost, and nothing was rewritten: the pre-existing rows are byte-for

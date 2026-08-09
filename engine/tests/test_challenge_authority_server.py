@@ -20,6 +20,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
+import contextlib  # noqa: E402
+import io  # noqa: E402
 import json  # noqa: E402
 
 from challenge_authority import (  # noqa: E402
@@ -253,6 +255,66 @@ class ServeLoopTests(unittest.TestCase):
         self.assertTrue(served[0].closed)
         self.assertTrue(served[0].decoded_reply()["ok"])
         self.assertIsNotNone(store.get("pending-loop"))
+
+
+class NeverRaisesTests(unittest.TestCase):
+    """The same "never raises / never tears down the loop" promise the sibling
+    ``isolated_signer_server`` carries.
+
+    The audit question was whether this core has the SAME defect the signer had —
+    an exception class of the core module that is a sibling of, rather than a
+    subclass of, the class named in the ``except`` tuple. It does not: every
+    explicit ``raise`` in ``challenge_authority`` is a ``ChallengeAuthorityError``
+    and ``FrameError`` subclasses it, so the core's own refusals are all caught.
+
+    What was NOT covered is the injected seams. ``sign_fn``, ``clock_ms`` and
+    ``id_fn`` are supplied by the deployment and may raise anything at all; a real
+    signer that cannot reach its key raises ``RuntimeError``/``OSError``, which
+    escaped the front door and killed the accept loop with no refusal frame
+    written.
+    """
+
+    def _seeded_store(self):
+        store = PendingStore(id_fn=lambda: "pending-boom")
+        dispatch({"op": OP_CREATE_PENDING, **VALID_FIELDS}, store, _config(), _sign_fn, _clock)
+        return store
+
+    @staticmethod
+    def _boom_sign(_data: bytes) -> str:
+        raise RuntimeError("HSM slot 3 unreachable at /run/pkcs11/token")
+
+    def test_raising_sign_fn_becomes_a_reply_not_an_exception(self):
+        store = self._seeded_store()
+        conn = FakeConn(
+            BROKER_UID, inbound=_frame({"op": OP_ISSUE, "pending_challenge_id": "pending-boom"})
+        )
+        with contextlib.redirect_stderr(io.StringIO()) as captured:
+            reply = handle_connection(conn, BROKER_UID, store, _config(), self._boom_sign, _clock)
+        self.assertFalse(reply["ok"])
+        self.assertEqual(reply["error"], "internal authority fault")
+        # The internal detail goes to the operator, never to the broker.
+        self.assertNotIn("HSM slot 3", json.dumps(reply))
+        self.assertIn("HSM slot 3", captured.getvalue())
+        self.assertEqual(conn.decoded_reply(), reply)
+
+    def test_raising_sign_fn_does_not_kill_the_accept_loop(self):
+        store = self._seeded_store()
+        conns = [
+            FakeConn(BROKER_UID, inbound=_frame({"op": OP_ISSUE, "pending_challenge_id": "pending-boom"}))
+            for _ in range(2)
+        ]
+        served = list(conns)
+
+        def accept_one():
+            return conns.pop(0) if conns else None
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            serve_forever(accept_one, BROKER_UID, store, _config(), self._boom_sign, _clock)
+
+        # BOTH connections were served: the loop survived the first one.
+        for conn in served:
+            self.assertTrue(conn.closed)
+            self.assertFalse(conn.decoded_reply()["ok"])
 
 
 if __name__ == "__main__":

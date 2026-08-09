@@ -797,16 +797,37 @@ pub enum FloorDecision {
 
 /// The durable evidence-head-floor CAS (§5 step 11 / §7 P1-7). In ONE `BEGIN IMMEDIATE` (write-lock up
 /// front; a nested/outer transaction is refused so the read-then-write cannot be rolled back under it)
-/// it reads the current floor for `(install_id, task_id)` keyed on the `head_sequence` epoch +
-/// `final_event_hash` identity and decides:
+/// it decides against the floor for the **install**, keyed on the `head_sequence` epoch +
+/// `final_event_hash` identity:
 ///
-/// - **no row** ⇒ INSERT the validated head ([`FloorDecision::Bootstrapped`]);
-/// - **`head_sequence < highest`** ⇒ refuse [`LedgerError::StaleEvidence`] (a retained older signed
-///   head always carries a LOWER re-anchor number);
-/// - **`head_sequence == highest`** ⇒ identical content is an idempotent re-sign
-///   ([`FloorDecision::Idempotent`]); ANY content difference is a same-head fork
-///   ([`LedgerError::EvidenceFork`]);
-/// - **`head_sequence > highest`** ⇒ advance the floor (every field) + commit ([`FloorDecision::Advanced`]).
+/// - **this task already holds this exact `head_sequence`** ⇒ identical content is an idempotent
+///   re-sign ([`FloorDecision::Idempotent`]); ANY content difference is a same-head fork
+///   ([`LedgerError::EvidenceFork`]). Decided FIRST, so a byte-identical retry is not read as a
+///   rollback merely because another task advanced past it;
+/// - **`head_sequence` below the highest recorded ANYWHERE on this install** ⇒ refuse
+///   [`LedgerError::StaleEvidence`] (a retained older signed head always carries a LOWER re-anchor
+///   number);
+/// - **`head_sequence` equal to it** ⇒ [`LedgerError::EvidenceFork`]: one install has one counter, so
+///   the same value cannot legitimately be minted twice;
+/// - otherwise INSERT ([`FloorDecision::Bootstrapped`]) or advance ([`FloorDecision::Advanced`]) the
+///   `(install_id, task_id)` row.
+///
+/// # The scope is the INSTALL, not `(install_id, task_id)`
+///
+/// This used to read and compare ONLY the `(install_id, task_id)` row, so the `no row ⇒ bootstrap`
+/// branch handed a free pass to anyone presenting a rolled-back head under a task_id that had no row
+/// yet. `task_id` is not a supervisor secret: it arrives on the wire, the challenge authority accepts
+/// any bounded string for it, and the supervisor copies it out of the challenge payload — so the scope
+/// of the anti-rollback defence was a value the attacker chose. Driven against the Python twin,
+/// `(task-1, head 99)` recorded, `(task-1, head 3)` was refused `StaleEvidence`, and
+/// `(task-FRESH, head 3)` — the SAME rolled-back head — recorded and produced attestation state.
+///
+/// Install scope is also what the number MEANS. `head_sequence` is minted by ONE per-recorder counter
+/// (`governed_recorder`'s `next_head_sequence` read-increments a single
+/// `<evidence_state_dir>/evidence-head-sequence.json`), so it is monotonic across every run of a
+/// deployment regardless of task. A per-task partition could never have matched the counter it
+/// polices; it could only create buckets to hide in. The `(install_id, task_id)` row is KEPT (the DDL
+/// is unchanged) as the per-task detail record and as the idempotency key.
 ///
 /// The floor is committed BEFORE any envelope is minted, closing the TOCTOU on the `(install_id,
 /// task_id)` PK; a crash after commit re-hits the equal-head idempotent branch and re-signs identically.
@@ -851,7 +872,55 @@ fn evidence_floor_cas_body(
         )
         .optional()?;
 
-    let Some((highest, ec, ls, feh)) = stored else {
+    // Fail closed on a corrupt stored row (startup-integrity, scoped to the rows we touch).
+    fn refuse_corrupt(highest: i64, ec: i64, ls: i64, feh: &str) -> Result<(), LedgerError> {
+        if highest < 1 || ec < 1 || ls < 1 || ls != ec || feh.len() != 64 {
+            return Err(LedgerError::Corrupt("evidence_head_floor"));
+        }
+        Ok(())
+    }
+
+    // (1) The exact row this task holds decides the idempotent re-sign, BEFORE the install-wide
+    // ceiling: a byte-identical retry writes nothing and must not read as a rollback just because
+    // another task advanced past it in the meantime.
+    if let Some((highest, ec, ls, feh)) = stored.as_ref() {
+        refuse_corrupt(*highest, *ec, *ls, feh)?;
+        if head.head_sequence == *highest {
+            let identical =
+                head.event_count == *ec && head.last_sequence == *ls && head.final_event_hash == *feh;
+            return if identical {
+                Ok(FloorDecision::Idempotent)
+            } else {
+                Err(LedgerError::EvidenceFork)
+            };
+        }
+    }
+
+    // (2) The FLOOR: the highest head this install has recorded in ANY task bucket. `task_id` is
+    // caller-chosen, so it may not select which floor the head is measured against.
+    let ceiling: Option<(String, i64, i64, i64, String)> = conn
+        .query_row(
+            "SELECT task_id, highest_head_sequence, event_count, last_sequence, final_event_hash \
+             FROM governed_evidence_head_floor WHERE install_id = ?1 \
+             ORDER BY highest_head_sequence DESC, task_id ASC LIMIT 1",
+            params![head.install_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()?;
+    if let Some((_, highest, ec, ls, feh)) = ceiling.as_ref() {
+        refuse_corrupt(*highest, *ec, *ls, feh)?;
+        if head.head_sequence < *highest {
+            return Err(LedgerError::StaleEvidence);
+        }
+        if head.head_sequence == *highest {
+            // One install, one counter: the same head_sequence cannot be minted twice. Equal-and-
+            // identical for THIS task already returned above, so this is a different task claiming
+            // a taken counter value.
+            return Err(LedgerError::EvidenceFork);
+        }
+    }
+
+    if stored.is_none() {
         conn.execute(
             "INSERT INTO governed_evidence_head_floor (\
                 install_id, task_id, highest_head_sequence, event_count, last_sequence, \
@@ -867,25 +936,8 @@ fn evidence_floor_cas_body(
             ],
         )?;
         return Ok(FloorDecision::Bootstrapped);
-    };
-
-    // Fail closed on a corrupt stored floor row (startup-integrity, scoped to the row we touch).
-    if highest < 1 || ec < 1 || ls < 1 || ls != ec || feh.len() != 64 {
-        return Err(LedgerError::Corrupt("evidence_head_floor"));
     }
 
-    if head.head_sequence < highest {
-        return Err(LedgerError::StaleEvidence);
-    }
-    if head.head_sequence == highest {
-        let identical =
-            head.event_count == ec && head.last_sequence == ls && head.final_event_hash == feh;
-        return if identical {
-            Ok(FloorDecision::Idempotent)
-        } else {
-            Err(LedgerError::EvidenceFork)
-        };
-    }
     // Strictly-higher head_sequence: advance the floor (every field) and commit.
     conn.execute(
         "UPDATE governed_evidence_head_floor SET highest_head_sequence = ?3, event_count = ?4, \
@@ -1414,17 +1466,83 @@ mod tests {
         conn.execute_batch("ROLLBACK;").unwrap();
     }
 
+    /// This test used to assert the DEFECT. It read:
+    ///
+    /// ```text
+    /// // A DIFFERENT task_id is an independent floor — bootstraps, unaffected by task-1's floor.
+    /// let mut other = head(1, 1, H64_B);
+    /// other.task_id = "task-2".into();
+    /// assert_eq!(evidence_floor_cas(&conn, &other, 110).unwrap(), FloorDecision::Bootstrapped);
+    /// ```
+    ///
+    /// — head 1 accepted after head 5 was recorded, because it arrived under another caller-chosen
+    /// `task_id`. It passed for four releases while the anti-rollback floor did nothing.
     #[test]
-    fn floor_scopes_by_install_and_task() {
+    fn floor_scopes_by_install_not_by_a_caller_chosen_task_id() {
         let conn = store();
         evidence_floor_cas(&conn, &head(5, 3, H64), 100).unwrap();
-        // A DIFFERENT task_id is an independent floor — bootstraps, unaffected by task-1's floor.
-        let mut other = head(1, 1, H64_B);
-        other.task_id = "task-2".into();
+        // A DIFFERENT task_id is NOT a fresh floor: `head_sequence` comes from one per-recorder
+        // counter, so a head below the install's high-water mark is a rollback whatever it is
+        // filed under.
+        let mut rewound = head(1, 1, H64_B);
+        rewound.task_id = "task-2".into();
+        assert!(matches!(
+            evidence_floor_cas(&conn, &rewound, 110),
+            Err(LedgerError::StaleEvidence)
+        ));
+        // Equal to the install's high-water mark under another task is a fork: one install, one
+        // counter, so that value cannot be minted twice.
+        let mut taken = head(5, 3, H64_B);
+        taken.task_id = "task-2".into();
+        assert!(matches!(
+            evidence_floor_cas(&conn, &taken, 111),
+            Err(LedgerError::EvidenceFork)
+        ));
+        // A genuinely new task still bootstraps its own row — above the install-wide mark.
+        let mut fresh = head(6, 4, H64_B);
+        fresh.task_id = "task-2".into();
         assert_eq!(
-            evidence_floor_cas(&conn, &other, 110).unwrap(),
+            evidence_floor_cas(&conn, &fresh, 112).unwrap(),
             FloorDecision::Bootstrapped
         );
+        // And an interleaved byte-identical re-sign of task-1's own head is still idempotent.
+        assert_eq!(
+            evidence_floor_cas(&conn, &head(5, 3, H64), 113).unwrap(),
+            FloorDecision::Idempotent
+        );
+    }
+
+    #[test]
+    fn floor_still_scopes_by_install_id() {
+        // Narrowed to the install, not below it: another install is another recorder with another
+        // counter, and is unaffected.
+        let conn = store();
+        evidence_floor_cas(&conn, &head(99, 3, H64), 100).unwrap();
+        let mut other_install = head(1, 1, H64_B);
+        other_install.install_id = "install-2".into();
+        assert_eq!(
+            evidence_floor_cas(&conn, &other_install, 110).unwrap(),
+            FloorDecision::Bootstrapped
+        );
+    }
+
+    #[test]
+    fn floor_refuses_a_corrupt_row_in_another_bucket() {
+        // The install-wide ceiling can be a row this task never touches; a corrupt one must
+        // refuse rather than be silently skipped.
+        let conn = store();
+        evidence_floor_cas(&conn, &head(99, 3, H64), 100).unwrap();
+        conn.execute_batch(
+            "UPDATE governed_evidence_head_floor SET final_event_hash = 'short' \
+             WHERE task_id = 'task-1'",
+        )
+        .unwrap();
+        let mut other = head(100, 3, H64_B);
+        other.task_id = "task-2".into();
+        assert!(matches!(
+            evidence_floor_cas(&conn, &other, 110),
+            Err(LedgerError::Corrupt("evidence_head_floor"))
+        ));
     }
 
     #[test]

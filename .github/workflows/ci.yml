@@ -493,6 +493,19 @@ jobs:
       # compile-check on the shipping platform is the property that was missing.
       - name: Shipped desktop host compiles on Windows
         run: cargo check -p brops --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml
+      # (audit) Both Windows "machine-proof" harnesses used to PRINT their expectation beside an
+      # unexamined result and exit 0 whatever the pipe or the chain answered. They now compare, and the
+      # comparison is a pure function driven by `-SelfTest` against synthetic transcripts -- including
+      # the inverted-gate ones the old scripts waved through. That self-test needs no service accounts,
+      # no elevation and no offline root key, so it runs HERE: a verdict nothing exercises is the same
+      # defect one layer up.
+      - name: Proof harnesses can actually fail (verdict self-tests)
+        shell: pwsh
+        run: |
+          ./apps/desktop/src-tauri/win-broker/proof/isolation_proof.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          ./apps/desktop/src-tauri/win-live/proof/win_live_proof.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
   engine:
     name: Engine · governance runtime (python)

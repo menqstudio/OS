@@ -608,6 +608,17 @@
         "empty-is-not-a-refusal",
         "unreadable-store-refuses"
       ]
+    },
+    {
+      "id": "npm-audit-filter",
+      "path": "tests/test_npm_audit_filter.py",
+      "covers": [
+        "npm-error-document-fails-closed",
+        "unrecognised-audit-shape-fails-closed",
+        "npm-exit-code-backstop",
+        "metadata-count-cross-check",
+        "severity-threshold-and-allowlist"
+      ]
     }
   ]
 }

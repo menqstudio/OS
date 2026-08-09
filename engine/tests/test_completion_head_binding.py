@@ -20,6 +20,7 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 import sys
 import stat
 import tempfile
@@ -588,6 +589,161 @@ class FloorCustodyTests(unittest.TestCase):
         self.assertIn("rename the whole floor away", message)
         self.assertIn(str(self.base), message)
         self.assertIn("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", message)
+
+
+class HeadFloorConfigurationContradictionTests(unittest.TestCase):
+    """**No floor directory satisfies both halves of the design.** This is a contradiction
+    pinned as executable fact, NOT a regression test for a fix — there is no fix here.
+
+    `_advance_head_floor` writes the mark **in the process the mark polices**, and any write
+    failure raises. `_refuse_self_owned_floor` refuses any floor directory that process owns
+    or can write. Those two requirements have no intersection:
+
+    * a floor the builder CAN write fails custody;
+    * a floor the builder CANNOT write fails the advance (creating `<task>.floor.json.tmp` and
+      renaming it over the mark needs exactly the capability custody refuses);
+    * so the only satisfiable posture is `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`,
+      which `bro_custody` describes as short-circuiting **every rule in that module** — the
+      operator-root pin, the redirected registry root, the evidence store and this floor. The
+      desktop's `engine_trust::resolve` refuses to export any engine trust material at all
+      while that variable is present, for exactly that reason.
+
+    `_head_floor_dir`'s own docstring offers the escape route "a deployment that can put the
+    marks under a principal the builder cannot write should do exactly that". That deployment
+    cannot be configured: the builder IS the writer.
+
+    Closing it needs a second principal to perform the write — a floor-writer service, a
+    setuid helper, or the supervisor's durable ledger, which already holds an equivalent floor
+    written by the supervisor uid rather than by the builder. **That is an Owner/Architect
+    decision about where the write happens, not a patch**, so this class states the
+    contradiction rather than hiding it: any change that claims to resolve it has to come here
+    and say which posture now satisfies both rules.
+
+    Each test asks BOTH rules of a real directory on the host running the suite. Where a
+    posture cannot be constructed without elevation the test SKIPS with that reason rather
+    than passing on whatever the ambient account happens to be.
+    """
+
+    DIGEST = "e" * 64
+
+    def setUp(self):
+        import bro_completion
+        self.completion = bro_completion
+        self.store = pathlib.Path(
+            tempfile.mkdtemp(prefix="bro-floor-contradiction-")).resolve()
+        self.addCleanup(shutil.rmtree, self.store, ignore_errors=True)
+        self.floor = self.store / "head-floor"
+        self.floor.mkdir()
+        if os.name == "posix":
+            os.chmod(self.floor, 0o700)  # see FloorCustodyTests.setUp on the ambient umask
+        (self.floor / "_index.json").write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        env = unittest.mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        for name in ("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", "BRO_EVIDENCE_HEAD_FLOOR"):
+            os.environ.pop(name, None)
+
+    # -- the two rules, each reported as "did it refuse, and why" -----------------------
+
+    def _custody_refusal(self):
+        try:
+            self.completion._refuse_self_owned_floor(self.floor)
+        except self.completion.CompletionError as exc:
+            return str(exc)
+        return None
+
+    def _advance_refusal(self):
+        """Drive ONLY the write half: the acknowledgement is set so custody cannot be the
+        thing that refuses, which is what makes this an independent measurement of the write.
+        """
+        with unittest.mock.patch.dict(
+                os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"}):
+            try:
+                self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+            except self.completion.CompletionError as exc:
+                return str(exc)
+        return None
+
+    def _make_unwritable(self):
+        """Take this process's ability to create entries in the floor away, for real.
+
+        Returns False when the posture could not be constructed (an account that writes
+        regardless — root, or a token no DENY ACE binds), so the caller skips instead of
+        asserting against a directory that is still writable.
+        """
+        if os.name == "posix":
+            os.chmod(self.floor, 0o500)
+            self.addCleanup(os.chmod, self.floor, 0o700)
+        elif os.name == "nt":
+            domain, user = os.environ.get("USERDOMAIN"), os.environ.get("USERNAME")
+            if not domain or not user:
+                return False
+            principal = "%s\\%s" % (domain, user)
+            # WD/AD/DC: create a file, create a subdirectory, delete a child — the three
+            # rights `_advance_head_floor`'s write-temp-then-rename needs.
+            if subprocess.run(["icacls", str(self.floor), "/deny", principal + ":(WD,AD,DC)"],
+                              capture_output=True, text=True).returncode != 0:
+                return False
+            self.addCleanup(lambda: subprocess.run(
+                ["icacls", str(self.floor), "/remove:d", principal],
+                capture_output=True, text=True))
+        else:
+            return False
+        probe = self.floor / "writability-probe"
+        try:
+            probe.write_text("x", encoding="utf-8")
+        except OSError:
+            return True
+        probe.unlink()
+        return False
+
+    # -- the postures -------------------------------------------------------------------
+
+    def test_a_floor_the_builder_can_write_is_refused_by_custody(self):
+        message = self._custody_refusal()
+        self.assertIsNotNone(message, "a self-owned floor was admitted")
+        self.assertIn("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", message)
+        # ...and it is exactly the posture in which the write half works.
+        self.assertIsNone(self._advance_refusal())
+        self.assertTrue((self.floor / "task-1.floor.json").exists())
+
+    def test_a_floor_the_builder_cannot_write_cannot_be_advanced(self):
+        if not self._make_unwritable():
+            self.skipTest("this account writes the floor regardless (root, or a token no DENY "
+                          "ACE binds), so the un-writable posture cannot be constructed here")
+        message = self._advance_refusal()
+        self.assertIsNotNone(
+            message, "the mark was written to a directory this process cannot write")
+        self.assertIn("cannot record the evidence head floor for task-1", message)
+
+    def test_no_posture_satisfies_both_rules_without_the_acknowledgement(self):
+        """THE contradiction. Both reachable postures, both rules, one verdict each."""
+        self.assertIsNotNone(self._custody_refusal(), "posture 1 (writable) passed custody")
+        self.assertIsNone(self._advance_refusal(), "posture 1 (writable) failed the write")
+        (self.floor / "task-1.floor.json").unlink()
+
+        if not self._make_unwritable():
+            self.skipTest("the un-writable posture cannot be constructed under this account")
+        self.assertIsNotNone(self._advance_refusal(), "posture 2 (un-writable) wrote the mark")
+        # Custody on posture 2 is deliberately not asserted: on Windows this process still
+        # OWNS the directory, so it holds WRITE_DAC and custody refuses that posture as well —
+        # i.e. on this platform NEITHER posture passes both rules, the contradiction in its
+        # strongest form. On POSIX a floor owned by a second principal would pass custody and
+        # still fail the write, the contradiction in its weakest form. Either way, no posture
+        # passes both.
+
+    def test_the_only_satisfiable_posture_disables_every_custody_rule(self):
+        import bro_custody
+        with unittest.mock.patch.dict(
+                os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"}):
+            self.completion._refuse_self_owned_floor(self.floor)      # custody: admitted
+            self.completion._advance_head_floor(                      # write: succeeds
+                self.store, "task-1", 5, self.DIGEST)
+            # The price. This is not a floor-scoped knob: the same predicate short-circuits
+            # the operator-root pin, the redirected registry root and the evidence store.
+            self.assertTrue(bro_custody.self_owned_acknowledged())
+        self.assertTrue((self.floor / "task-1.floor.json").exists())
+        self.assertFalse(bro_custody.self_owned_acknowledged())
 
 
 if __name__ == "__main__":

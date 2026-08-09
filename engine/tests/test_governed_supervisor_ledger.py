@@ -357,6 +357,118 @@ class EvidenceFloorTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# The floor is scoped to the INSTALL, not to a caller-chosen task_id.
+#
+# Every test above drives one constant `task_id`, which is exactly why none of them
+# could see the defect: `_evidence_floor_cas` read only the `(install_id, task_id)`
+# row, so a head below the durable floor was accepted merely by presenting it under a
+# task_id that had no row yet — `row is None` bootstrapped a fresh bucket and the floor
+# never fired. `task_id` arrives on the wire (`validate_create_pending` accepts any
+# bounded string; the supervisor copies it out of the challenge payload), so that made
+# the scope of the anti-rollback defence a value the attacker picks.
+# ---------------------------------------------------------------------------
+
+
+class EvidenceFloorInstallScopeTests(unittest.TestCase):
+    def _complete(self, conn, attempt, task_id, head, now_ms=50):
+        _drive_to_executing(conn, attempt, _acceptance(attempt, task_id=task_id))
+        return gsl.record_completion(
+            conn, attempt, _produced(), now_ms,
+            derived=_derived(evidence_head_sequence=head))
+
+    def test_a_fresh_task_id_cannot_reset_the_floor(self):
+        # THE reproduction. Before the fix this recorded `created` and produced a full
+        # attestation state over the rolled-back head.
+        conn = _conn()
+        self.assertEqual(self._complete(conn, "att-1", "task-1", 99), gsl.CREATED)
+        with self.assertRaises(gsl.StaleEvidence):
+            self._complete(conn, "att-2", "task-1", 3)
+        with self.assertRaises(gsl.StaleEvidence):
+            self._complete(conn, "att-3", "task-FRESH", 3)
+        # Refused whole: no completion, no attestation, and no bucket to hide in.
+        self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-3"))
+        self.assertEqual(
+            [tuple(r) for r in conn.execute(
+                "SELECT task_id, highest_head_sequence FROM governed_evidence_head_floor")],
+            [("task-1", 99)])
+
+    def test_a_new_task_must_still_advance_the_install_wide_counter(self):
+        # `head_sequence` comes from ONE per-recorder counter, so a genuinely new task's
+        # first head is still HIGHER than every head this install has recorded.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 12)
+        self.assertEqual(self._complete(conn, "att-2", "task-2", 13), gsl.CREATED)
+        self.assertEqual(
+            sorted(tuple(r) for r in conn.execute(
+                "SELECT task_id, highest_head_sequence FROM governed_evidence_head_floor")),
+            [("task-1", 12), ("task-2", 13)])
+
+    def test_an_equal_head_under_a_different_task_is_a_fork(self):
+        # One install, one counter: the same head_sequence cannot be minted twice.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 12)
+        with self.assertRaises(gsl.EvidenceFork):
+            self._complete(conn, "att-2", "task-2", 12)
+
+    def test_another_install_keeps_its_own_independent_floor(self):
+        # The scope narrowed to the install, not below it: a different install_id is a
+        # different recorder with a different counter and is unaffected.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 99)
+        _drive_to_executing(
+            conn, "att-2", _acceptance("att-2", install_id="install-2", task_id="task-1"))
+        self.assertEqual(
+            gsl.record_completion(conn, "att-2", _produced(), 60,
+                                  derived=_derived(evidence_head_sequence=3)),
+            gsl.CREATED)
+
+    def test_an_interleaved_idempotent_re_sign_is_still_idempotent(self):
+        # A byte-identical re-presentation of a head a task ALREADY holds writes nothing
+        # and must not read as a rollback just because another task advanced past it.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 12)
+        self._complete(conn, "att-2", "task-2", 13)
+        self.assertEqual(self._complete(conn, "att-3", "task-1", 12), gsl.CREATED)
+        self.assertEqual(
+            sorted(tuple(r) for r in conn.execute(
+                "SELECT task_id, highest_head_sequence FROM governed_evidence_head_floor")),
+            [("task-1", 12), ("task-2", 13)])
+
+    def test_a_corrupt_row_in_another_bucket_still_fails_closed(self):
+        # The install-wide ceiling can be a row this task never touches; a corrupt one
+        # must refuse rather than be silently skipped.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 99)
+        # (`event_count = 0` is refused by the DDL CHECK, which is the point of having
+        # both walls; corrupt the one field the CHECK cannot constrain.)
+        conn.execute("UPDATE governed_evidence_head_floor SET final_event_hash = 'short'"
+                     " WHERE task_id = 'task-1'")
+        with self.assertRaises(gsl.Corrupt):
+            self._complete(conn, "att-2", "task-2", 100)
+
+    def test_a_corrupt_row_in_this_bucket_is_reported_as_corrupt(self):
+        # The row this task holds is read before the install-wide ceiling, so it needs its
+        # own integrity check: without one a corrupt mark is laundered into an
+        # `EvidenceFork` verdict, which reads as "the caller forked" rather than "this
+        # deployment's floor is damaged".
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 12)
+        conn.execute("UPDATE governed_evidence_head_floor SET last_sequence = 2"
+                     " WHERE task_id = 'task-1'")
+        with self.assertRaises(gsl.Corrupt):
+            self._complete(conn, "att-2", "task-1", 12)
+
+    def test_the_ceiling_is_the_highest_bucket_not_just_any_bucket(self):
+        # With more than two buckets, reading the WRONG row still refuses the obvious
+        # rollback while letting a head between the lowest and the highest through.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 5)
+        self._complete(conn, "att-2", "task-2", 100)
+        with self.assertRaises(gsl.StaleEvidence):
+            self._complete(conn, "att-3", "task-3", 50)
+
+
+# ---------------------------------------------------------------------------
 # THE F-01 PROPERTY: attestation state exists only for a real, completed run.
 # ---------------------------------------------------------------------------
 

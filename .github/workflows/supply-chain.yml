@@ -153,18 +153,31 @@ jobs:
         working-directory: apps/desktop
         # `npm audit` exits non-zero when vulnerabilities exist; capture its JSON and
         # let the stdlib filter own the pass/fail decision. `|| true` keeps a non-zero
-        # audit exit from aborting the step before the filter runs.
+        # audit exit from aborting the step before the filter runs -- but the exit code
+        # is RECORDED and handed to the filter, because `|| true` otherwise erases the
+        # difference between "npm found nothing" and "npm never ran". `test -s` is no
+        # backstop for that: npm's ERROR document is non-empty, valid JSON.
         run: |
           set -uo pipefail
-          npm audit --json > npm-audit.json || true
+          rc=0
+          npm audit --json > npm-audit.json 2> npm-audit.err || rc=$?
+          echo "$rc" > npm-audit.rc
+          echo "npm audit exited $rc"
+          if [ "$rc" != "0" ] && [ "$rc" != "1" ]; then
+            echo "::error::npm audit did not run (exit $rc); stderr follows"
+            cat npm-audit.err || true
+          fi
           test -s npm-audit.json || { echo "npm produced no audit JSON"; exit 1; }
       - name: Enforce high+ threshold (honouring the allowlist)
-        # The filter is fail-closed: un-waived high/critical -> exit 1 -> job red.
+        # The filter is fail-closed on BOTH questions: did the audit actually RUN (npm
+        # exit code + npm error document + recognised v6/v7 shape + metadata
+        # cross-check), and did it find an un-waived high/critical. Either -> exit 1.
         run: |
           python "${SUPPLY_CHAIN_DIR}/npm_audit_filter.py" \
             apps/desktop/npm-audit.json \
             --allow "${SUPPLY_CHAIN_DIR}/npm-audit-allow.txt" \
-            --threshold high
+            --threshold high \
+            --npm-exit-code "$(cat apps/desktop/npm-audit.rc)"
 
   sbom:
     name: SBOM - CycloneDX (rust + npm + python)

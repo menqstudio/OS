@@ -346,7 +346,13 @@ echo "== recorder sudo vector =="; cat "$SUDOERS"
 # deployment that is not this one.
 install -m 0644 "$SCRIPT_DIR/run_live_turn.sh" "$TCB/brops-live.unit"; chown 0:0 "$TCB/brops-live.unit"
 chown 0:0 "$TCB"/*.ipc-policy.json; chmod 0644 "$TCB"/*.ipc-policy.json
-python3 "$PYLIVE/build_tcb_pin_manifest.py" --root-dir "$LIVE"   --sudoers "$SUDOERS" --unit "$TCB/brops-live.unit" --out "$TCB/tcb-pin-manifest.json"   || { echo "FAIL: build_tcb_pin_manifest.py"; exit 1; }
+# `--source-dir` is the repository tree this kit was staged FROM, and it is required. Without it
+# every `expected_sha256` was computed by hashing the very file it pinned, in THIS shell,
+# moments after installing it — so the later §2.5 check compared the tree against itself and a
+# substitution made before the pin was taken was pinned rather than caught. The repo-sourced
+# artifacts now take their digest from $REPO_ROOT and the build REFUSES if the installed copy
+# differs. The compiled and provisioned artifacts stay self-measured; the manifest labels them.
+python3 "$PYLIVE/build_tcb_pin_manifest.py" --root-dir "$LIVE" --source-dir "$REPO_ROOT"   --sudoers "$SUDOERS" --unit "$TCB/brops-live.unit" --out "$TCB/tcb-pin-manifest.json"   || { echo "FAIL: build_tcb_pin_manifest.py"; exit 1; }
 chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
 # The §2.5 floor requires every ANCESTOR of a pinned artifact to be TCB-owned and non-writable by
 # any other principal — a writable parent is a rename/replace vector, so it is treated exactly like

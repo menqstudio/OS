@@ -483,6 +483,25 @@ def _head_floor_dir(store: pathlib.Path) -> pathlib.Path:
     principal separation. Without the env var the marks sit beside the external evidence store,
     which needs no new configuration; that placement is weaker by construction and the
     acknowledgement rule applies there too.
+
+    .. warning::
+
+       **The escape route in the paragraph above cannot be configured. This is an open design
+       contradiction, not a documentation nit.** ``_advance_head_floor`` writes the mark in the
+       very process the mark polices. A directory that process cannot write therefore fails the
+       ADVANCE — the temp-file write and the rename over the mark need exactly the capability
+       custody is refusing — and a directory it CAN write fails custody here. The two
+       requirements have no intersection, so the only satisfiable posture is
+       ``BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged``, which ``bro_custody`` short-circuits
+       EVERY rule in the runtime on, not just this one.
+
+       Both postures are driven against a real directory by
+       ``test_completion_head_binding.HeadFloorConfigurationContradictionTests``; read that class
+       before changing anything here. Resolving it means moving the WRITE to a second principal
+       (a floor-writer service, a setuid helper, or the supervisor's durable ledger, which
+       already holds an equivalent floor written by the supervisor uid rather than by the
+       builder) — an Owner/Architect decision about deployment topology, not a change to this
+       function.
     """
     directory = (
         _external_dir("BRO_EVIDENCE_HEAD_FLOOR")
@@ -656,6 +675,17 @@ def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
     Never lowers the mark, and never removes a task from the index — a task that has been
     measured once must stay measurable, or deleting its mark would be a way back to zero.
     The digest of the head the mark was taken against is recorded with it (**O-5**).
+
+    .. warning::
+
+       **This function is the other half of the contradiction documented on
+       ``_head_floor_dir``.** It writes the mark AS the account the mark polices, so the write
+       below needs precisely the capability ``_refuse_self_owned_floor`` exists to refuse: a
+       floor this process cannot write raises ``CompletionError`` here, and a floor it can write
+       is refused there. There is no directory that satisfies both. Do not "fix" this by
+       widening either rule — the write has to move to a second principal, and that is an
+       Owner/Architect decision. See
+       ``test_completion_head_binding.HeadFloorConfigurationContradictionTests``.
     """
     if head_sequence <= _load_head_floor(store, task_id)[0]:
         return

@@ -25,14 +25,26 @@ export type Guard = 'unknown' | 'open' | 'read' | 'sealed';
  * render the honest `sealed` state only when the open was actually refused.
  *
  * The specific phrases are the EXACT strings the Rust backend returns on a
- * wall/scope refusal — "…root is not allowed", "path is outside the allowed
- * workspace", "access to this path is blocked". Availability / not-found strings
- * ("workspace is unavailable", "not found or not accessible", "cannot read
- * file") are deliberately NOT matched — those are transport failures, not guard
- * denials.
+ * wall/scope refusal — today that is "the configured files root is not allowed"
+ * (the `BROPS_FILES_ROOT` clamp in `files_root`). Availability / not-found
+ * strings ("workspace is unavailable", "cannot read file") are deliberately NOT
+ * matched — those are transport failures, not guard denials.
+ *
+ * "path is outside the allowed workspace" and "access to this path is blocked"
+ * USED to be matched here and are gone on purpose. `confine_in`/`confine_under`
+ * now return one single string, `"path is not accessible in this workspace"`,
+ * for every path refusal — does-not-exist, cannot-canonicalize, outside-the-root
+ * and denylisted alike — because the differing wordings made the backend an
+ * existence oracle for any absolute path a compromised renderer cared to try.
+ *
+ * That string is NOT matched here, and the omission is the honest reading, not
+ * an oversight: the backend deliberately no longer establishes WHICH of those
+ * four happened, so the page cannot claim `sealed` ("the guard refused this")
+ * for what may simply be a file that was deleted between the listing and the
+ * open. Per this module's rule, an unestablished fact stays unestablished.
  */
 export function isGuardDenied(message: string): boolean {
-  return /denied|not permitted|not allowed|permission|sealed|forbidden|scope|guard|outside the allowed workspace|access to this path is blocked|is blocked/i.test(
+  return /denied|not permitted|not allowed|permission|sealed|forbidden|scope|guard/i.test(
     message,
   );
 }
