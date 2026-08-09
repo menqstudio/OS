@@ -28,11 +28,14 @@ normative source for the governed-supervisor's durable state" — so opening a l
 second schema, second connection, or second CAS engine to keep in step.
 
 What this module adds is the staging-specific CAS: create-if-absent keyed on the two §2.4
-UNIQUEs, the idempotent re-open, and the §2.4 LIVE-row quota count. The rules that actually
-FORBID things live in the SQL (the ``state`` CHECK, the insert-must-be-``VERIFYING``
-trigger, the transition trigger, the immutable-binding trigger) — this module drives them
-and never substitutes for them, so an illegal transition is refused by the database even if
-a future caller bypasses these functions entirely.
+UNIQUEs, the idempotent re-open, the §2.4 LIVE-row quota count, and — added with
+§4.10(a)(b)(c) — the per-artifact upload session, its chunk cursor and its final publish.
+The rules that actually FORBID things live in the SQL (the ``state`` CHECKs, the
+insert-must-be-empty triggers, the transition triggers, the immutable-binding triggers, the
+cursor rule that ties ``byte_count`` to the recorded chunks, and the handle rule that ties a
+published input to the challenge's committed digest) — this module drives them and never
+substitutes for them, so an illegal transition is refused by the database even if a future
+caller bypasses these functions entirely.
 
 Only the Python standard library is used. Every clock is an injected ``now_ms``.
 """
@@ -49,6 +52,7 @@ from typing import Any, Optional, Tuple
 from governed_supervisor_ledger import (  # noqa: F401  (re-exported deliberately)
     Conflict,
     Corrupt,
+    IllegalTransition,
     LedgerError,
     NotFound,
     _is_lower_sha256_hex,
@@ -70,15 +74,16 @@ from governed_supervisor_ledger import (  # noqa: F401  (re-exported deliberatel
 #: declared at INSERT.
 VERIFYING = "VERIFYING"
 
-#: The turn may upload its three declared inputs. This is the state §4.10(a0) leaves behind,
-#: and it is where the turn STOPS today: the upload protocols §4.10(a) / §4.10(b) / §4.10(c)
-#: are NOT IMPLEMENTED — separate ordered pieces, no code in this tree serves them.
+#: The turn may upload its three declared inputs. This is the state §4.10(a0) leaves behind
+#: and the state §4.10(a) requires before it will open a session.
 UPLOADING = "UPLOADING"
 
-#: All three inputs published and re-hashed against the challenge's committed digests. It is
-#: reached only by §4.10(c), which is NOT IMPLEMENTED, so nothing in this tree currently sets
-#: it — the state exists in the closed domain because the DB must be able to refuse an
-#: illegal path INTO it long before anything is allowed to take the legal one.
+#: All three inputs published and re-hashed against the challenge's committed digests.
+#: Reached only by §4.10(c), and only through the DDL: a trigger refuses the state unless
+#: all three handles are set, and another refuses any handle that is not the digest the
+#: signed challenge committed to. So the reading §4.10(d) will place on this state is a
+#: property of the row rather than a claim about it. §4.10(d) itself — the message that
+#: consumes it — is NOT IMPLEMENTED here; it is a separate ordered piece.
 INPUTS_READY = "INPUTS_READY"
 
 #: The closed domain the ``state`` column may hold — identical to the SQL CHECK. A stored
@@ -307,21 +312,471 @@ def open_staging(conn: sqlite3.Connection, s: NewStaging,
         return CREATED, row
 
 
+# ---------------------------------------------------------------------------
+# §2.4 / §4.10(a)(b)(c) — the per-artifact chunked upload session.
+#
+# Everything below drives the DDL in `supervisor_ledger.sql` section 6. It is worth
+# being explicit about the division, because it is the reason this half is small:
+#
+#   the DATABASE forbids  — creating a session that is not empty and UPLOADING;
+#                           advancing the cursor by anything other than exactly one
+#                           recorded chunk; recording a chunk anywhere but AT the
+#                           cursor; re-describing a recorded chunk; rebinding a
+#                           session's declared contract or its published handle;
+#                           recording an input handle that is not the challenge's
+#                           committed digest; reaching INPUTS_READY without all three.
+#
+#   this MODULE does      — take the write lock, read the row, decide, and drive
+#                           those edges. It NEVER re-implements them, so a future
+#                           writer that skips these functions is refused anyway.
+# ---------------------------------------------------------------------------
+
+#: The session is accepting chunks. Created here, and the only state a session may be
+#: born in (the DDL insert trigger enforces it, cursor and handle included).
+SESSION_UPLOADING = "UPLOADING"
+
+#: The artifact assembled, re-hashed from byte zero and published; `published_handle`
+#: is set. Terminal: an identical §4.10(c) retry re-returns the recorded handle.
+ARTIFACT_READY = "ARTIFACT_READY"
+
+#: §2.4 P1-4, terminal and fail-closed: a durable chunk file is missing, unreadable, or
+#: no longer hashes to its recorded digest. Every later open/chunk/final for this session
+#: refuses `session_corrupt`; the supervisor never finalizes, publishes, or advances the
+#: turn. Recovery is operator-sweep only, and the sweep does NOT consume the challenge
+#: nonce — so a corrupt session costs the desktop a re-issue, never the turn.
+SESSION_CORRUPT = "SESSION_CORRUPT"
+
+#: The closed domain the session `state` column may hold — identical to the SQL CHECK.
+ALL_SESSION_STATES = frozenset({SESSION_UPLOADING, ARTIFACT_READY, SESSION_CORRUPT})
+
+#: The three artifacts a sidecar may upload (§2.4). `policy_bundle` is absent by design,
+#: not by omission: policy is a supervisor authority, the signed challenge carries no
+#: `policy_bundle_sha256` to bind an uploaded one against, and the SQL CHECK holds the
+#: same closed set so the refusal survives a caller that never reaches this module.
+STAGING_ARTIFACTS = ("system", "history", "generation_config")
+
+#: artifact -> the `governed_turn_staging` column carrying the digest the SIGNED challenge
+#: committed to, and the column that records the handle actually published for it.
+ARTIFACT_DIGEST_COLUMN = {a: "%s_sha256" % a for a in STAGING_ARTIFACTS}
+ARTIFACT_HANDLE_COLUMN = {a: "%s_handle" % a for a in STAGING_ARTIFACTS}
+
+#: §2.4 P1-3/P1-4, LOCKED: 46 = ceil(8 MiB / 184320), the worst case being the
+#: `history <= 8 MiB` ceiling. Mirrors the `next_seq <= 46` / `seq <= 45` SQL CHECKs.
+MAX_STAGING_CHUNKS = 46
+
+#: §2.4 P1-3: concurrent `governed_turn_staging_session` rows per install
+#: (= MAX_CONCURRENT_GOVERNED_TURNS 2 turns x 3 artifacts). Over ⇒ `quota_sessions`.
+MAX_STAGING_SESSIONS_PER_INSTALL = 6
+
+#: §2.4 P1-3: total decoded staging bytes per install, 17 MiB = 2 x the 8.5 MiB per-turn
+#: request ceiling. Over ⇒ `quota_bytes`.
+MAX_STAGING_BYTES_PER_INSTALL = 17825792
+
+#: §2.4 P1-3, derived and asserted rather than separately counted: with the deterministic
+#: chunk length, `n_chunks = ceil(declared_len / 184320)`, so the per-artifact ceilings
+#: already bound a turn at history 46 + system 2 + generation_config 1 = 49 immutable
+#: `<seq>.chunk` files, and an install at 2 x 49 = 98. A separate runtime file count would
+#: be a second, weaker statement of the same arithmetic.
+MAX_STAGING_FILES_PER_TURN = 49
+MAX_STAGING_FILES_PER_INSTALL = 98
+
+#: Refusal reasons this module's quota exception carries, matching §4.10(a)'s closed set.
+QUOTA_SESSIONS = "quota_sessions"
+QUOTA_BYTES = "quota_bytes"
+
+
+class SessionQuotaExceeded(LedgerError):
+    """A §2.4 per-install session/byte cap would be exceeded.
+
+    Carries the §4.10(a) reason so the protocol layer relays the supervisor's actual
+    verdict instead of guessing which cap was hit from a message string.
+    """
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
+
+
+class SessionCorrupt(LedgerError):
+    """The session is (or has just become) ``SESSION_CORRUPT`` — §2.4 P1-4, terminal."""
+
+
+@dataclass(frozen=True)
+class NewSession:
+    """The §4.10(a) staging-open bindings.
+
+    ``declared_sha256`` is NOT a caller's free choice by the time it reaches here: the
+    protocol layer has already required it to equal the digest the signature-verified
+    challenge committed to for this artifact. What the caller genuinely chooses is
+    ``declared_len``, and that is bounded by the artifact's ceiling before it arrives.
+    """
+
+    staging_session_id: str
+    challenge_handle: str
+    artifact: str
+    declared_len: int
+    declared_sha256: str
+    session_dir: str
+
+    def validate(self) -> None:
+        if not _nonempty_str(self.staging_session_id) or len(self.staging_session_id) > 128:
+            raise LedgerError("staging_session_id must be a 1..128 char string")
+        if not _is_lower_sha256_hex(self.challenge_handle):
+            raise LedgerError("session challenge_handle must be lowercase 64-hex")
+        if self.artifact not in STAGING_ARTIFACTS:
+            raise LedgerError("session artifact %r is not a staging artifact" % (self.artifact,))
+        if (not isinstance(self.declared_len, int) or isinstance(self.declared_len, bool)
+                or not 0 <= self.declared_len <= 8388608):
+            raise LedgerError("declared_len must be an int in 0..8388608")
+        if not _is_lower_sha256_hex(self.declared_sha256):
+            raise LedgerError("declared_sha256 must be lowercase 64-hex")
+        if not _nonempty_str(self.session_dir):
+            raise LedgerError("session_dir must be a non-empty string")
+
+
+# ---------------------------------------------------------------------------
+# Session reads
+# ---------------------------------------------------------------------------
+
+
+def load_session(conn: sqlite3.Connection,
+                 staging_session_id: str) -> Optional[sqlite3.Row]:
+    """The session row, or ``None``. A stored state outside the closed domain is
+    :class:`Corrupt` — a row the supervisor cannot interpret is never coerced into the
+    state it happens to resemble."""
+    row = conn.execute(
+        "SELECT * FROM governed_turn_staging_session WHERE staging_session_id = ?",
+        (staging_session_id,),
+    ).fetchone()
+    if row is not None and row["state"] not in ALL_SESSION_STATES:
+        raise Corrupt("staging session holds unknown state %r" % (row["state"],))
+    return row
+
+
+def load_session_for_artifact(conn: sqlite3.Connection, challenge_handle: str,
+                              artifact: str) -> Optional[sqlite3.Row]:
+    """The one session for ``(challenge_handle, artifact)`` — the §2.4 UNIQUE that makes
+    "one in-flight session per (tuple, artifact)" a database fact."""
+    row = conn.execute(
+        "SELECT * FROM governed_turn_staging_session"
+        " WHERE challenge_handle = ? AND artifact = ?",
+        (challenge_handle, artifact),
+    ).fetchone()
+    if row is not None and row["state"] not in ALL_SESSION_STATES:
+        raise Corrupt("staging session holds unknown state %r" % (row["state"],))
+    return row
+
+
+def count_install_sessions(conn: sqlite3.Connection, install_id: str) -> int:
+    """Concurrent sessions for an install, counted THROUGH the parent staging row.
+
+    The session table carries no ``install_id`` of its own — deliberately. §2.4's table
+    binds a session to a ``challenge_handle``, and ``challenge_handle`` is UNIQUE on
+    ``governed_turn_staging``, so the install is derived from the turn rather than
+    re-declared beside it. A second copy of the install id would be a second thing that
+    could disagree with the first.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM governed_turn_staging_session s"
+        " JOIN governed_turn_staging t ON t.challenge_handle = s.challenge_handle"
+        " WHERE t.install_id = ?",
+        (install_id,),
+    ).fetchone()
+    return int(row["n"])
+
+
+def sum_install_declared_bytes(conn: sqlite3.Connection, install_id: str) -> int:
+    """Staging bytes RESERVED by an install's live sessions (§2.4 ``quota_bytes``).
+
+    It sums ``declared_len``, not ``byte_count``. That is the fail-closed reading: a
+    compromised sidecar that could open sessions declaring 8 MiB each and be charged only
+    for what it had uploaded so far would be able to reserve unbounded disk and then fill
+    it. Charging the declaration at open means the cap binds before the bytes arrive.
+    """
+    row = conn.execute(
+        "SELECT COALESCE(SUM(s.declared_len), 0) AS n FROM governed_turn_staging_session s"
+        " JOIN governed_turn_staging t ON t.challenge_handle = s.challenge_handle"
+        " WHERE t.install_id = ?",
+        (install_id,),
+    ).fetchone()
+    return int(row["n"])
+
+
+def _session_matches(row: sqlite3.Row, s: NewSession) -> bool:
+    """Is this the SAME declared upload? §4.10(a): an identical re-open is idempotent, any
+    differing ``declared_len``/``declared_sha256`` is ``retry_conflict``. ``session_dir``
+    is excluded on purpose — it is derived from the session id the supervisor minted, so
+    it can never differ for a row that matched on everything else."""
+    return (
+        row["declared_len"] == s.declared_len
+        and row["declared_sha256"] == s.declared_sha256
+    )
+
+
+def open_session(conn: sqlite3.Connection, s: NewSession) -> Tuple[str, sqlite3.Row]:
+    """CAS the §4.10(a) session row into existence. Returns ``(outcome, row)``.
+
+    ``outcome`` is :data:`CREATED` or :data:`IDEMPOTENT`. On :data:`IDEMPOTENT` the caller
+    MUST return the stored ``staging_session_id`` and ``next_seq``, not the ones it just
+    minted — a lost reply is retried, and the retry has to reach the same session.
+
+    Order inside the one ``BEGIN IMMEDIATE`` is idempotent-lookup BEFORE quota, the same
+    rule §4.10(a0) follows: a retry of a session that already holds a slot must not be
+    refused for occupying the slot it already holds.
+
+    Refusals: :class:`SessionCorrupt` (§2.4 P1-4 — a corrupt session is never silently
+    re-created or reused), :class:`Conflict` (a differing declaration for the same
+    ``(challenge_handle, artifact)``), :class:`SessionQuotaExceeded`.
+    """
+    if not isinstance(s, NewSession):
+        raise LedgerError("open_session requires a NewSession")
+    s.validate()
+
+    with _Tx(conn) as tx:
+        parent = load_staging_by_handle(tx, s.challenge_handle)
+        if parent is None:
+            raise NotFound("no staging row for challenge_handle")
+
+        existing = load_session_for_artifact(tx, s.challenge_handle, s.artifact)
+        if existing is not None:
+            if existing["state"] == SESSION_CORRUPT:
+                raise SessionCorrupt("staging session is SESSION_CORRUPT")
+            if not _session_matches(existing, s):
+                raise Conflict("session for this artifact declares different bytes")
+            return IDEMPOTENT, existing
+
+        install_id = parent["install_id"]
+        if count_install_sessions(tx, install_id) >= MAX_STAGING_SESSIONS_PER_INSTALL:
+            raise SessionQuotaExceeded(
+                QUOTA_SESSIONS,
+                "install already holds %d staging sessions" % MAX_STAGING_SESSIONS_PER_INSTALL,
+            )
+        if (sum_install_declared_bytes(tx, install_id) + s.declared_len
+                > MAX_STAGING_BYTES_PER_INSTALL):
+            raise SessionQuotaExceeded(
+                QUOTA_BYTES,
+                "install staging bytes would exceed %d" % MAX_STAGING_BYTES_PER_INSTALL,
+            )
+
+        try:
+            tx.execute(
+                "INSERT INTO governed_turn_staging_session ("
+                " staging_session_id, challenge_handle, artifact, declared_len,"
+                " declared_sha256, next_seq, byte_count, session_dir, state, published_handle)"
+                " VALUES (?,?,?,?,?,0,0,?,?,NULL)",
+                (s.staging_session_id, s.challenge_handle, s.artifact, s.declared_len,
+                 s.declared_sha256, s.session_dir, SESSION_UPLOADING),
+            )
+        except sqlite3.IntegrityError as exc:
+            if _is_unique_violation(exc):
+                raise Conflict("staging session CAS lost to a concurrent open: %s" % exc)
+            raise
+
+        row = load_session(tx, s.staging_session_id)
+        if row is None:
+            raise Corrupt("staging session vanished after insert")
+        return CREATED, row
+
+
+# ---------------------------------------------------------------------------
+# Chunks
+# ---------------------------------------------------------------------------
+
+
+def load_chunk(conn: sqlite3.Connection, staging_session_id: str,
+               seq: int) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM governed_turn_staging_chunk"
+        " WHERE staging_session_id = ? AND seq = ?",
+        (staging_session_id, seq),
+    ).fetchone()
+
+
+def record_chunk(conn: sqlite3.Connection, staging_session_id: str, seq: int,
+                 chunk_sha256: str, chunk_len: int) -> sqlite3.Row:
+    """§2.4 steps 7-11: take the write lock, RE-CHECK the cursor, record the chunk, advance.
+
+    The re-check inside the transaction is the point. Steps 1-6 (validate, hash, write the
+    temp, fsync, link the immutable ``<seq>.chunk``, fsync the dir) run outside any lock,
+    so a second connection could have advanced the cursor in the meantime. Committing on a
+    cursor read before that work would let two senders both believe they filled ``seq``.
+
+    The DDL is the floor under all of it: the INSERT is refused unless ``seq`` IS the
+    cursor, and the UPDATE is refused unless it advances by exactly one seq and exactly
+    this chunk's recorded length. So even a caller that skipped this function cannot
+    produce a cursor that outruns the bytes on disk.
+    """
+    if not _is_lower_sha256_hex(chunk_sha256):
+        raise LedgerError("chunk_sha256 must be lowercase 64-hex")
+    if not isinstance(chunk_len, int) or isinstance(chunk_len, bool) or chunk_len < 1:
+        raise LedgerError("chunk_len must be a positive int")
+
+    with _Tx(conn) as tx:
+        row = load_session(tx, staging_session_id)
+        if row is None:
+            raise NotFound("no such staging session")
+        if row["state"] == SESSION_CORRUPT:
+            raise SessionCorrupt("staging session is SESSION_CORRUPT")
+        if row["state"] != SESSION_UPLOADING:
+            raise IllegalTransition(row["state"], SESSION_UPLOADING)
+        if row["next_seq"] != seq:
+            raise Conflict("cursor moved to %d under seq %d" % (row["next_seq"], seq))
+
+        try:
+            tx.execute(
+                "INSERT INTO governed_turn_staging_chunk"
+                " (staging_session_id, seq, chunk_sha256, chunk_len) VALUES (?,?,?,?)",
+                (staging_session_id, seq, chunk_sha256, chunk_len),
+            )
+        except sqlite3.IntegrityError as exc:
+            # The cursor re-check above should have caught every reachable case; if the DDL
+            # still refuses, the two disagree and the ledger is not in a state this code
+            # understands. Typed as Corrupt rather than left as a raw `sqlite3.IntegrityError`
+            # because nothing above this layer catches that type — it would escape the front
+            # door entirely instead of becoming a fail-closed reply.
+            raise Corrupt("ledger refused a chunk the cursor check admitted: %s" % exc)
+        updated = tx.execute(
+            "UPDATE governed_turn_staging_session"
+            " SET next_seq = ?, byte_count = ?"
+            " WHERE staging_session_id = ? AND next_seq = ?",
+            (seq + 1, row["byte_count"] + chunk_len, staging_session_id, seq),
+        ).rowcount
+        if updated != 1:
+            raise Corrupt("staging session vanished between chunk insert and advance")
+
+        advanced = load_session(tx, staging_session_id)
+        if advanced is None:
+            raise Corrupt("staging session vanished after advance")
+        return advanced
+
+
+def mark_session_corrupt(conn: sqlite3.Connection, staging_session_id: str) -> None:
+    """Drive UPLOADING -> SESSION_CORRUPT (§2.4 recovery rule b). Terminal and idempotent:
+    a session already corrupt stays corrupt, and the DDL refuses any edge back out."""
+    with _Tx(conn) as tx:
+        row = load_session(tx, staging_session_id)
+        if row is None:
+            raise NotFound("no such staging session")
+        if row["state"] == SESSION_CORRUPT:
+            return
+        tx.execute(
+            "UPDATE governed_turn_staging_session SET state = ?"
+            " WHERE staging_session_id = ?",
+            (SESSION_CORRUPT, staging_session_id),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Final publish
+# ---------------------------------------------------------------------------
+
+
+def finalize_session(conn: sqlite3.Connection, staging_session_id: str, handle: str,
+                     now_ms: int) -> Tuple[sqlite3.Row, bool]:
+    """§4.10(c): record the published handle on the session AND on the turn, in ONE
+    transaction, and advance the turn to ``INPUTS_READY`` when all three are in.
+
+    Returns ``(session_row, inputs_ready)``.
+
+    Two DDL rules do the load-bearing work and are relied on rather than restated: the
+    handle written onto the staging row must EQUAL the digest the signed challenge
+    committed to for that artifact, and ``INPUTS_READY`` cannot be reached until all three
+    handles are set. So the state §4.10(d) (NOT IMPLEMENTED — a later ordered piece; nothing
+    in this tree consumes an ``INPUTS_READY`` row) will read as "every declared input exists
+    and re-hashes to the challenge's committed digest" is true of the row by construction,
+    not because this function was careful.
+    """
+    if not _is_lower_sha256_hex(handle):
+        raise LedgerError("published handle must be lowercase 64-hex")
+    if not _is_u64_ms(now_ms):
+        raise LedgerError("now_ms must be an epoch-ms int")
+
+    with _Tx(conn) as tx:
+        row = load_session(tx, staging_session_id)
+        if row is None:
+            raise NotFound("no such staging session")
+        if row["state"] == SESSION_CORRUPT:
+            raise SessionCorrupt("staging session is SESSION_CORRUPT")
+        if row["state"] != SESSION_UPLOADING:
+            raise IllegalTransition(row["state"], SESSION_UPLOADING)
+
+        artifact = row["artifact"]
+        handle_column = ARTIFACT_HANDLE_COLUMN[artifact]
+
+        tx.execute(
+            "UPDATE governed_turn_staging_session"
+            " SET published_handle = ?, state = ?"
+            " WHERE staging_session_id = ? AND state = ?",
+            (handle, ARTIFACT_READY, staging_session_id, SESSION_UPLOADING),
+        )
+        # The column name comes from a fixed dict keyed by the CHECK-constrained
+        # `artifact` value, never from anything a caller wrote.
+        tx.execute(
+            "UPDATE governed_turn_staging SET %s = ?, updated_at_ms = ?"
+            " WHERE challenge_handle = ?" % handle_column,
+            (handle, now_ms, row["challenge_handle"]),
+        )
+
+        turn = load_staging_by_handle(tx, row["challenge_handle"])
+        if turn is None:
+            raise Corrupt("staging row vanished under its own session")
+        inputs_ready = all(
+            turn[ARTIFACT_HANDLE_COLUMN[a]] is not None for a in STAGING_ARTIFACTS
+        )
+        if inputs_ready and turn["state"] == UPLOADING:
+            tx.execute(
+                "UPDATE governed_turn_staging SET state = ?, updated_at_ms = ?"
+                " WHERE challenge_handle = ? AND state = ?",
+                (INPUTS_READY, now_ms, row["challenge_handle"], UPLOADING),
+            )
+
+        final = load_session(tx, staging_session_id)
+        if final is None:
+            raise Corrupt("staging session vanished after finalize")
+        return final, inputs_ready
+
+
 __all__ = [
+    "ALL_SESSION_STATES",
     "ALL_STAGING_STATES",
+    "ARTIFACT_DIGEST_COLUMN",
+    "ARTIFACT_HANDLE_COLUMN",
+    "ARTIFACT_READY",
     "CREATED",
     "IDEMPOTENT",
     "INPUTS_READY",
     "MAX_CONCURRENT_GOVERNED_TURNS",
+    "MAX_STAGING_BYTES_PER_INSTALL",
+    "MAX_STAGING_CHUNKS",
+    "MAX_STAGING_FILES_PER_INSTALL",
+    "MAX_STAGING_FILES_PER_TURN",
+    "MAX_STAGING_SESSIONS_PER_INSTALL",
+    "NewSession",
     "NewStaging",
+    "QUOTA_BYTES",
+    "QUOTA_SESSIONS",
     "QUOTA_TURNS",
+    "SESSION_CORRUPT",
+    "SESSION_UPLOADING",
+    "STAGING_ARTIFACTS",
+    "SessionCorrupt",
+    "SessionQuotaExceeded",
     "StagingQuotaExceeded",
     "UPLOADING",
     "VERIFYING",
     "apply_schema",
+    "count_install_sessions",
     "count_live_turns",
+    "finalize_session",
+    "load_chunk",
+    "load_session",
+    "load_session_for_artifact",
     "load_staging",
     "load_staging_by_handle",
+    "mark_session_corrupt",
     "open_ledger",
+    "open_session",
     "open_staging",
+    "record_chunk",
+    "sum_install_declared_bytes",
 ]

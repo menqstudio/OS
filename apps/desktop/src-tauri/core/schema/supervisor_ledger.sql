@@ -285,3 +285,214 @@ WHEN OLD.install_id <> NEW.install_id
 BEGIN
     SELECT RAISE(ABORT, 'staging row binding is immutable');
 END;
+
+-- ---------------------------------------------------------------------------
+-- 6. Per-artifact staging upload session (rev-30 §2.4 + §4.10(a)(b)(c)).
+--
+-- One row per (challenge_handle, artifact): the durable cursor of a chunked
+-- upload. The rules that make an upload MEAN something live here rather than in
+-- the Python that drives them, for the same reason the acceptance lifecycle does:
+-- a writer that bypasses the handlers entirely still cannot fabricate a finished
+-- upload.
+--
+--   * a session is BORN `UPLOADING` at cursor zero with no published handle, so
+--     nothing can declare an `ARTIFACT_READY` session having uploaded nothing;
+--   * the cursor may only advance by EXACTLY one seq and EXACTLY the length of
+--     the chunk row just recorded, so `byte_count` is provably the sum of the
+--     recorded `chunk_len`s and `next_seq` is provably their count -- there is no
+--     way to write a cursor that outruns the bytes actually on disk;
+--   * a chunk row may only be inserted AT the current cursor, so the sequence is
+--     gapless by construction, and it can never be UPDATEd afterwards, so an
+--     already-counted chunk cannot be retroactively re-described.
+--
+-- `session_dir` holds the IMMUTABLE `<seq>.chunk` files; the DB records only the
+-- cursor plus each chunk's `(sha256, len)`. There is deliberately NO
+-- `running_sha256` column (§2.4, P0-1): a finalized SHA-256 digest is not a
+-- resumable internal hash state, so the final digest is recomputed from byte zero
+-- over the immutable chunk files and no incremental state is trusted across a
+-- restart.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS governed_turn_staging_session (
+    staging_session_id TEXT PRIMARY KEY NOT NULL,
+    challenge_handle   TEXT NOT NULL,
+    artifact           TEXT NOT NULL CHECK (artifact IN (
+        'system','history','generation_config')),
+    declared_len       INTEGER NOT NULL CHECK (
+        declared_len >= 0 AND declared_len <= 8388608),
+    declared_sha256    TEXT NOT NULL,
+    next_seq           INTEGER NOT NULL CHECK (next_seq >= 0 AND next_seq <= 46),
+    byte_count         INTEGER NOT NULL CHECK (
+        byte_count >= 0 AND byte_count <= declared_len),
+    session_dir        TEXT NOT NULL,
+    state              TEXT NOT NULL CHECK (state IN (
+        'UPLOADING','ARTIFACT_READY','SESSION_CORRUPT')),
+    published_handle   TEXT,
+    UNIQUE (challenge_handle, artifact),
+
+    -- The session's turn is its parent row, in the DB and not merely by convention:
+    -- an orphan session -- one naming a challenge the supervisor never opened, or one
+    -- outliving the sweep of its turn -- can neither be created nor left behind.
+    -- `policy_bundle` has no place in the `artifact` CHECK above because §2.4 gives
+    -- policy to the supervisor itself; the untrusted sidecar can never upload it.
+    FOREIGN KEY (challenge_handle)
+        REFERENCES governed_turn_staging (challenge_handle) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_governed_turn_staging_session_challenge
+    ON governed_turn_staging_session (challenge_handle);
+
+-- Per-chunk digest of the IMMUTABLE `<seq>.chunk` file -- the source of truth for
+-- resume/idempotency (§2.4). `chunk_len >= 1` is load-bearing: the §4.10(b)
+-- deterministic length is `min(184320, declared_len - byte_count)` and a chunk is
+-- only ever sent while bytes remain, so a zero-length chunk row is not a small
+-- upload, it is a cursor advance that carried nothing.
+CREATE TABLE IF NOT EXISTS governed_turn_staging_chunk (
+    staging_session_id TEXT NOT NULL,
+    seq                INTEGER NOT NULL CHECK (seq >= 0 AND seq <= 45),
+    chunk_sha256       TEXT NOT NULL,
+    chunk_len          INTEGER NOT NULL CHECK (
+        chunk_len >= 1 AND chunk_len <= 184320),
+    PRIMARY KEY (staging_session_id, seq),
+    FOREIGN KEY (staging_session_id)
+        REFERENCES governed_turn_staging_session (staging_session_id) ON DELETE CASCADE
+);
+
+-- A session may only ENTER the world empty: `UPLOADING`, cursor 0, zero bytes, no
+-- published handle. Without this a writer could INSERT an `ARTIFACT_READY` row
+-- carrying a `published_handle` for bytes that were never uploaded -- the same
+-- "declare the end state, do nothing" hole the staging row's own insert trigger closes.
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_session_insert_state
+BEFORE INSERT ON governed_turn_staging_session
+FOR EACH ROW
+WHEN NEW.state <> 'UPLOADING'
+  OR NEW.next_seq <> 0
+  OR NEW.byte_count <> 0
+  OR NEW.published_handle IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'staging session must be created empty and UPLOADING');
+END;
+
+-- The closed §2.4 session lifecycle. `ARTIFACT_READY` and `SESSION_CORRUPT` are both
+-- terminal, so neither appears as an OLD.state with a different NEW.state: a corrupt
+-- session can never be resurrected into a usable one (§2.4 "operator-swept only"), and
+-- a published artifact can never be walked back into an uploading one.
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_session_transition
+BEFORE UPDATE OF state ON governed_turn_staging_session
+FOR EACH ROW
+WHEN NOT (
+    OLD.state = NEW.state
+    OR (OLD.state = 'UPLOADING' AND NEW.state IN ('ARTIFACT_READY','SESSION_CORRUPT'))
+)
+BEGIN
+    SELECT RAISE(ABORT, 'illegal staging session state transition');
+END;
+
+-- THE CURSOR RULE. `next_seq`/`byte_count` may only move forward by exactly one seq
+-- and exactly the length of the chunk row recorded at the cursor being left. Anything
+-- else -- a jump, a rewind, a byte count that does not match the bytes on disk, an
+-- advance with no chunk row at all (the sub-select is NULL, and `IS` makes that a
+-- refusal rather than an unknown) -- aborts. This is what makes `byte_count` provably
+-- SUM(chunk_len) and `next_seq` provably COUNT(chunk rows): a cursor cannot outrun the
+-- immutable files it claims to summarize.
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_session_cursor
+BEFORE UPDATE OF next_seq, byte_count ON governed_turn_staging_session
+FOR EACH ROW
+WHEN NOT (
+    NEW.next_seq = OLD.next_seq + 1
+    AND NEW.byte_count IS (OLD.byte_count + (
+        SELECT chunk_len FROM governed_turn_staging_chunk
+         WHERE staging_session_id = OLD.staging_session_id AND seq = OLD.next_seq))
+)
+BEGIN
+    SELECT RAISE(ABORT, 'staging cursor must advance by exactly one recorded chunk');
+END;
+
+-- The session's identity and its declared contract are fixed at open, and the handle
+-- it publishes is write-once. Rebinding any of them would let a second declared digest,
+-- a second artifact, or a second published handle inherit a session's already-accepted
+-- chunks (§4.10(a) `retry_conflict` is the wire verdict; this is the floor under it).
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_session_immutable
+BEFORE UPDATE ON governed_turn_staging_session
+FOR EACH ROW
+WHEN OLD.staging_session_id <> NEW.staging_session_id
+  OR OLD.challenge_handle <> NEW.challenge_handle
+  OR OLD.artifact <> NEW.artifact
+  OR OLD.declared_len <> NEW.declared_len
+  OR OLD.declared_sha256 <> NEW.declared_sha256
+  OR OLD.session_dir <> NEW.session_dir
+  OR (OLD.published_handle IS NOT NULL
+      AND NEW.published_handle IS NOT OLD.published_handle)
+BEGIN
+    SELECT RAISE(ABORT, 'staging session binding is immutable');
+END;
+
+-- A chunk may only be recorded AT the cursor, so the recorded sequence is gapless by
+-- construction: there is no INSERT that skips a seq and none that back-fills one. A
+-- session that does not exist yields NULL from the sub-select, and `IS NOT` turns that
+-- into a refusal rather than an unknown that lets the row through.
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_chunk_gapless
+BEFORE INSERT ON governed_turn_staging_chunk
+FOR EACH ROW
+WHEN NEW.seq IS NOT (
+    SELECT next_seq FROM governed_turn_staging_session
+     WHERE staging_session_id = NEW.staging_session_id)
+BEGIN
+    SELECT RAISE(ABORT, 'staging chunk must be recorded at the current cursor');
+END;
+
+-- A recorded chunk is IMMUTABLE. The PRIMARY KEY already refuses a second INSERT at a
+-- seq; this refuses the other way in -- re-describing an already-counted chunk with a
+-- different digest or length, which would silently break the `byte_count == SUM(chunk_len)`
+-- guarantee the cursor rule establishes. (DELETE is deliberately still permitted: the
+-- §2.4 operator sweep removes a whole session, and the FK cascade takes its chunks.)
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_chunk_immutable
+BEFORE UPDATE ON governed_turn_staging_chunk
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'recorded staging chunks are immutable');
+END;
+
+-- ---------------------------------------------------------------------------
+-- 6b. What a published input handle is allowed to be (§4.10(c)).
+--
+-- The staging row's three `*_handle` columns are filled by §4.10(c) as each artifact
+-- publishes. A handle is SHA256 of the exact stored bytes, and the challenge already
+-- COMMITTED to that digest -- so a published handle that is not the committed digest
+-- means the supervisor published bytes the signature never authorized. §4.10(c)
+-- refuses that on the wire as `handle_not_challenge`; this refuses to RECORD it at all,
+-- and it is also write-once, so a second artifact cannot displace a published one.
+-- ---------------------------------------------------------------------------
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_handle_binding
+BEFORE UPDATE ON governed_turn_staging
+FOR EACH ROW
+WHEN (NEW.system_handle IS NOT NULL
+      AND NEW.system_handle <> NEW.system_sha256)
+  OR (NEW.history_handle IS NOT NULL
+      AND NEW.history_handle <> NEW.history_sha256)
+  OR (NEW.generation_config_handle IS NOT NULL
+      AND NEW.generation_config_handle <> NEW.generation_config_sha256)
+  OR (OLD.system_handle IS NOT NULL
+      AND NEW.system_handle IS NOT OLD.system_handle)
+  OR (OLD.history_handle IS NOT NULL
+      AND NEW.history_handle IS NOT OLD.history_handle)
+  OR (OLD.generation_config_handle IS NOT NULL
+      AND NEW.generation_config_handle IS NOT OLD.generation_config_handle)
+BEGIN
+    SELECT RAISE(ABORT, 'published input handle must be the challenge-committed digest');
+END;
+
+-- `INPUTS_READY` is the state §4.10(d) reads as "every declared input exists in the
+-- store and re-hashes to the challenge's committed digest". Combined with the handle
+-- trigger above, this makes that reading TRUE of the row rather than a claim about it:
+-- the state cannot be reached until all three handles are set, and no handle can be set
+-- unless it equals the digest the signed challenge committed to.
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_inputs_ready
+BEFORE UPDATE OF state ON governed_turn_staging
+FOR EACH ROW
+WHEN NEW.state = 'INPUTS_READY'
+  AND (NEW.system_handle IS NULL
+       OR NEW.history_handle IS NULL
+       OR NEW.generation_config_handle IS NULL)
+BEGIN
+    SELECT RAISE(ABORT, 'INPUTS_READY requires all three published input handles');
+END;

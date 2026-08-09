@@ -68,25 +68,29 @@ requires **both** — the decoded bytes must equal the governed-family canonical
 two encoders must agree on the document. That is the strict intersection: fail-closed under
 either reading, and it never admits bytes that only one of them would call canonical.
 
-**(2) Which bytes the handle covers.** §3's artifact matrix and §4.10(a0) both define
-``challenge_handle = SHA256(JCS({payload, sig}))``. The SHIPPED ``accept_open``
-(``governed_supervisor.py``) computes ``SHA256(JCS(payload))`` — the payload only — and §5's
-own summary table records that behaviour. This module implements the §3/§4.10(a0) form,
-because §0 says this document wins. The consequence is NOT cosmetic and is reported rather
-than smoothed over: the staging row's ``challenge_handle`` and the acceptance row's
-``challenge_handle`` are digests of different byte strings for the same turn, so §4.10(d)'s
-lookup of "the ``INPUTS_READY`` staging row for ``(install_id, request_nonce,
-challenge_handle)``" cannot join them until one side is corrected. That lookup is itself
-NOT IMPLEMENTED (a later ordered piece), so nothing depends on the join yet — but whoever
-builds it must fix the divergence rather than work around it. Fixing ``accept_open`` belongs
-to the §5 piece, not this one.
+**(2) Which bytes the handle covers — RESOLVED 2026-08-10, no longer a divergence.**
+§3's artifact matrix and §4.10(a0) both define
+``challenge_handle = SHA256(JCS({payload, sig}))``, while the shipped ``accept_open``
+computed ``SHA256(JCS(payload))`` — the payload alone — and §5's summary table recorded that
+behaviour. Two digests of different byte strings were specified for one field of one turn.
+The §3/§4.10(a0) form won and ``accept_open`` was corrected; see the addendum's
+``### CORRECTION 2026-08-10`` block at its head. The decisive argument was §7's challenge
+predicate, which fetches the stored document BY the handle and re-hashes the exact stored
+bytes — and the stored document IS the ``{payload, sig}`` envelope, so the payload-only form
+could never have satisfied §7 for any turn.
+
+There is now ONE definition, ``governed_supervisor.challenge_handle_for(payload, sig)``.
+Anything that needs a ``challenge_handle`` should call it rather than recompute the digest.
+This module still hashes the exact decoded document bytes, which is the same value by
+construction: the canonicality gate above has already required those bytes to equal
+``canonical_bytes({payload, sig})``, so re-canonicalizing would only add a second way to get
+the same number — and hashing what actually arrived is the property §4.10(a0) asks for.
 
 Only the Python standard library is used.
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from dataclasses import dataclass
@@ -94,7 +98,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 import challenge_key_registry as registry
 import governed_staging_ledger as staging
-from brops_protocol import ProtocolError, strict_loads
+from brops_protocol import ProtocolError, decode_base64url, strict_loads
 from challenge_authority import peer_is_broker
 from governed_supervisor import (
     SupervisorConfig,
@@ -333,15 +337,14 @@ def _decode_document(challenge_doc_b64: str) -> bytes:
     """
     if len(challenge_doc_b64) > 4 * ((MAX_CHALLENGE_DOC_BYTES + 2) // 3) + 4:
         raise _Refuse(REFUSE_DOC_OVERSIZE, "encoded challenge document exceeds the 4096-byte cap")
-    padding = "=" * (-len(challenge_doc_b64) % 4)
+    # `brops_protocol.decode_base64url` owns the strictness (alphabet + round-trip):
+    # `urlsafe_b64decode` silently tolerates stray characters, so a document that does not
+    # re-encode to the exact string sent is not the document that was sent. It is shared
+    # with §4.10(b)'s chunk decode rather than repeated here.
     try:
-        decoded = base64.urlsafe_b64decode(challenge_doc_b64 + padding)
-    except (ValueError, TypeError) as exc:
+        decoded = decode_base64url(challenge_doc_b64)
+    except ProtocolError as exc:
         raise _Refuse(REFUSE_MALFORMED, "challenge_doc_b64 is not base64url: %s" % exc)
-    # Round-trip: `urlsafe_b64decode` silently tolerates stray characters, so a document
-    # that does not re-encode to the exact string sent is not the document that was sent.
-    if base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != challenge_doc_b64.rstrip("="):
-        raise _Refuse(REFUSE_MALFORMED, "challenge_doc_b64 is not canonical base64url")
     if len(decoded) > MAX_CHALLENGE_DOC_BYTES:
         raise _Refuse(REFUSE_DOC_OVERSIZE, "decoded challenge document exceeds 4096 bytes")
     return decoded

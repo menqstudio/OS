@@ -8,6 +8,73 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The staging protocols, and a check that could never fire (2026-08-10)
+
+Wave 3b-1B step 2: §4.10(a) `brops.governed-staging-open.v1`, §4.10(b) the chunk upload, and §4.10(c) the
+final. **§4.10(a) was outside the brief and was built anyway, correctly.** (b) and (c) operate on a
+`governed_turn_staging_session` row, nothing in the tree created one, and (a) is its only creator — so
+without (a) every refusal in (b) and (c) would have been an unreachable stub, the exact shape the brief
+told the agent to avoid. Accepted. (d), (e) and (f) remain unbuilt.
+
+**A check that could never fire was deleted rather than shipped.** The handler-level frame cap on
+§4.10(a)/(c) is unreachable: their shapes are exhaustive and every field is length-bounded, so the shape
+check always refuses first with the same verdict. It survived mutation because removing it changed nothing.
+It is gone, replaced by a test proving the shape bound implies the frame bound arithmetically. §4.10(b)
+keeps its check — `bytes_b64` is legitimately 240 KiB there and the frame cap is the only thing standing.
+
+**A mutant survived because the code it broke could not run on this platform.** The §2.4 owner-only staging
+directory policy lived inside a POSIX-only branch, so on Windows no test could reach it and deleting it was
+invisible. Extracted to a pure `posix_forbidden_mode()` and tested on every platform.
+
+**The best test in the file came out of a survivor.** A frame padded with 8 KiB of JSON whitespace decodes
+to a perfectly legal `staging-final`. Only a check on the raw wire bytes refuses it, and nothing else in the
+suite would have caught that check being removed.
+
+**Two real bugs, not merely test gaps.** `record_chunk` could leak a raw `sqlite3.IntegrityError` under a
+genuine race — no layer above catches that type, so it would have escaped `handle_connection` entirely; it
+is typed `Corrupt` now. And `IllegalTransition` was being constructed with the wrong arity, which would have
+raised `TypeError` instead of refusing.
+
+**Everything the DB can enforce, the DB enforces** — the parity gate went from 17 load-bearing clauses to
+40. A chunk row may only be INSERTed at the session's current `next_seq` (gapless, and a missing session
+yields a refusal rather than a NULL that lets the row through); chunks cannot be rewritten; the session
+cursor may only advance by exactly one seq and exactly the recorded `chunk_len`, which makes `byte_count`
+*provably* `SUM(chunk_len)`. Two further triggers on `governed_turn_staging`: a published input handle must
+EQUAL the challenge-committed digest, and `INPUTS_READY` is unreachable until all three are set. §4.10(d)
+will therefore read a property of the row, not a claim about it.
+
+**29 named refusals, all tested. 84 mutants, zero survivors.** The first pass found ten real problems,
+three of them the masking class. Three refusals are honestly marked as not sidecar-reachable:
+`publish_divergent` and one arm of `handle_not_challenge` come from a faulty store, not a frame (the same
+precedent as step 1's `handle_mismatch`), and the other arm required *dropping* the immutable-binding
+trigger to stage — the test says so, because it is defence-in-depth against already-tampered durable state
+rather than a wire verdict.
+
+**Where the design's arithmetic is wrong, recorded rather than rounded away.** §2.4 states the worst-case
+chunk frame as "≤ 245963 (≥ 16 KiB headroom)" from a "~203 byte" envelope. The real compact envelope with a
+128-char session id is **222 bytes**, so the worst case is **245982** and the headroom is **15.78 KiB**, not
+≥16 KiB. The conclusion holds comfortably; two intermediate numbers were optimistic. Separately,
+`MAX_STAGING_CHUNKS = 46` and the 8 MiB history ceiling are **not** the same statement: 46 full chunks hold
+8478720 bytes, so the cap binds only because the ceiling binds first, and a future ceiling above that would
+need 47 while the `next_seq <= 46` CHECK began refusing legal uploads — fail-closed, but surprising. Both
+are pinned by tests.
+
+**The front door's frame bound is now per-peer.** A legal chunk frame is ~246 KB against a module constant
+of 8192. Raising the constant would have widened the broker's `op` surface to buy the sidecar's, so
+`read_frame`/`write_frame` take a bound instead, and the §4.10(a0) "frame ≤ 8 KiB" rule is re-applied per
+protocol after decode.
+
+Reuse rather than copies: `atomic_link_or_create` (the frozen `os.link`/`O_EXCL` primitive), `fsync_dir`,
+`harden_private_dir` and `decode_base64url` were extracted and shared; `EvidenceStore._atomic_publish` and
+`governed_turn_open._decode_document` now call them.
+
+Engine suite **1551 tests OK (43 skipped)**, converged over three identical runs, up from 1406.
+`check_ledger_ddl_parity` (40 clauses), `check_spec_references` (§4.10(a)(b)(c) now `implemented` with 22
+named tests; §4.10(d) citations carry `NOT IMPLEMENTED`), `check_reachability` and `check_coordination` all
+GREEN. Nothing governed is minted: no `execution_attempt_id`, no acceptance clock, no nonce consumption, no
+lease, no acceptance row, no `trusted_verified` path — asserted by `NothingGovernedIsMintedTests`.
+
+
 ### Wave 3b-1B step 1: the pre-accept open, and a design that disagrees with itself (2026-08-10)
 
 The first ordered piece of Wave 3b-1B is in: `brops.governed-turn-open.v1`, the §2.4 `governed_turn_staging`

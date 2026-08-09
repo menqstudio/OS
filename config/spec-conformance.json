@@ -139,16 +139,44 @@
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
     "§4.10(a)": {
-      "status": "not_implemented",
-      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
+      "status": "implemented",
+      "reason": "`brops.governed-staging-open.v1` is served by `engine/runtime/governed_staging_upload.handle_staging_open`, reached from the supervisor front door for the sidecar principal only. The durable half is the `governed_turn_staging_session` CAS in `governed_staging_ledger.open_session`, over the `UNIQUE (challenge_handle, artifact)` and the per-install session/byte quotas. All ten reasons in the closed refusal set are reachable by name from a request a hostile sidecar could send, and each has a test that produces it.",
+      "tests": [
+        "test_digest_mismatch_when_declared_sha256_is_not_the_committed_digest",
+        "test_oversize_boundary_the_exact_ceiling_is_admitted",
+        "test_quota_sessions_on_the_seventh_concurrent_session",
+        "test_quota_bytes_when_the_declared_reservation_exceeds_the_install_cap",
+        "test_an_identical_reopen_returns_the_same_session_and_the_current_cursor",
+        "test_a_session_may_only_be_created_empty_and_uploading"
+      ]
     },
     "§4.10(b)": {
-      "status": "not_implemented",
-      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
+      "status": "implemented",
+      "reason": "`brops.governed-staging-chunk.v1` is served by `engine/runtime/governed_staging_upload.handle_staging_chunk`. The four-way order predicate, the deterministic chunk length, the two independent size caps and the ACK-after-commit ordering are implemented; the immutable `<seq>.chunk` file is written with the frozen `brops_evidence_store` os.link/O_EXCL create-if-absent primitive, and the gapless sequence plus the `byte_count == SUM(chunk_len)` cursor rule are enforced by triggers in the canonical ledger DDL, not in Python. All ten reasons in the closed refusal set are reachable by name and tested.",
+      "tests": [
+        "test_nondeterministic_chunk_on_a_short_chunk_that_still_fits",
+        "test_oversize_chunk_one_byte_over_the_decoded_cap",
+        "test_oversize_frame_on_a_256_kib_decoded_chunk",
+        "test_too_many_chunks_at_and_above_the_cardinality_cap",
+        "test_a_replayed_chunk_acks_without_re_appending",
+        "test_rule_a_a_durable_chunk_with_no_db_row_is_adopted_by_an_identical_retry",
+        "test_the_cursor_advances_by_exactly_one_recorded_chunk",
+        "test_a_chunk_may_only_be_recorded_at_the_cursor"
+      ]
     },
     "§4.10(c)": {
-      "status": "not_implemented",
-      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
+      "status": "implemented",
+      "reason": "`brops.governed-staging-final.v1` is served by `engine/runtime/governed_staging_upload.handle_staging_final`. The artifact is reassembled from the immutable `<seq>.chunk` files in strict order with SHA-256 and length recomputed from byte zero (no stored running hash), asserted against `declared_len`/`declared_sha256` and against the digest the signed challenge committed to, then published through the idempotent `EvidenceStore.publish`. The handle is recorded on the turn and the turn advances to `INPUTS_READY` when all three are in — both gated by triggers in the canonical ledger DDL. All nine reasons in the closed refusal set are reachable by name and tested; two of them (`publish_divergent` and one arm of `handle_not_challenge`) are reachable from a faulty or tampered STORE rather than from a sidecar frame, and their tests say so.",
+      "tests": [
+        "test_sha_mismatch_when_the_uploaded_bytes_are_not_the_declared_bytes",
+        "test_len_mismatch_when_the_sender_finals_before_the_declared_bytes_arrive",
+        "test_handle_not_challenge_when_the_store_returns_a_different_handle",
+        "test_publish_divergent_when_the_store_refuses_the_publish",
+        "test_an_identical_final_retry_re_returns_the_same_reply",
+        "test_a_zero_byte_artifact_sends_no_chunk_and_publishes_the_empty_bytes",
+        "test_inputs_ready_is_unreachable_until_all_three_handles_are_published",
+        "test_a_published_input_handle_must_be_the_challenge_committed_digest"
+      ]
     },
     "§4.10(d)": {
       "status": "not_implemented",

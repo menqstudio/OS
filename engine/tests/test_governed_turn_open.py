@@ -732,6 +732,24 @@ class StagingStateMachineTests(_Case):
         self.open()
         return self.staging_rows()[0]
 
+    def _publish_all_three(self, challenge_handle):
+        """Fill the three `*_handle` columns with the digests the challenge committed to.
+
+        §4.10(c) added two DDL rules that this class's edge tests now have to walk through:
+        a published handle must EQUAL the challenge's committed `*_sha256`, and INPUTS_READY
+        cannot be reached until all three are set. Doing it here keeps each test below aimed
+        at the transition trigger it is actually about — otherwise the newer trigger fires
+        first and the older one is never exercised, which is the masking this class already
+        warns about for the CHECK.
+        """
+        self.conn.execute(
+            "UPDATE governed_turn_staging SET system_handle = system_sha256,"
+            " history_handle = history_sha256,"
+            " generation_config_handle = generation_config_sha256, state = state"
+            " WHERE challenge_handle = ?",
+            (challenge_handle,),
+        )
+
     def test_the_state_domain_is_closed_by_a_check_constraint(self):
         self._row()
         with self.assertRaises(sqlite3.IntegrityError):
@@ -782,6 +800,7 @@ class StagingStateMachineTests(_Case):
     def test_the_two_legal_edges_are_permitted(self):
         row = self._row()
         self.assertEqual(row["state"], gsl.UPLOADING)   # VERIFYING -> UPLOADING already ran
+        self._publish_all_three(row["challenge_handle"])
         self.conn.execute(
             "UPDATE governed_turn_staging SET state = ? WHERE challenge_handle = ?",
             (gsl.INPUTS_READY, row["challenge_handle"]),
@@ -797,6 +816,10 @@ class StagingStateMachineTests(_Case):
             " updated_at_ms) VALUES ('i','n',?,'r','t','w',?,?,?,'VERIFYING',1,1,1)",
             ("d" * 64, "a" * 64, "b" * 64, "c" * 64),
         )
+        # The three handles first, so the ONLY thing left to refuse the jump is the
+        # transition trigger this test names (§4.10(c)'s INPUTS_READY gate would otherwise
+        # fire and mask it).
+        self._publish_all_three("d" * 64)
         with self.assertRaises(sqlite3.IntegrityError) as ctx:
             self.conn.execute(
                 "UPDATE governed_turn_staging SET state = 'INPUTS_READY' WHERE request_nonce = 'n'")
@@ -804,6 +827,7 @@ class StagingStateMachineTests(_Case):
 
     def test_moving_backwards_is_refused_by_the_database(self):
         row = self._row()
+        self._publish_all_three(row["challenge_handle"])
         self.conn.execute(
             "UPDATE governed_turn_staging SET state = 'INPUTS_READY' WHERE challenge_handle = ?",
             (row["challenge_handle"],),
@@ -821,9 +845,9 @@ class StagingStateMachineTests(_Case):
         self.conn.execute(
             "UPDATE governed_turn_staging SET system_handle = ?, state = state"
             " WHERE challenge_handle = ?",
-            ("f" * 64, row["challenge_handle"]),
+            (row["system_sha256"], row["challenge_handle"]),
         )
-        self.assertEqual(self.staging_rows()[0]["system_handle"], "f" * 64)
+        self.assertEqual(self.staging_rows()[0]["system_handle"], row["system_sha256"])
 
     def test_the_challenge_binding_is_immutable_in_the_database(self):
         row = self._row()

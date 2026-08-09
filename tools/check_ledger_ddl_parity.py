@@ -59,6 +59,42 @@ REQUIRED_CLAUSES = (
     "RAISE(ABORT, 'illegal staging state transition')",
     "trg_governed_turn_staging_immutable_binding",
     "RAISE(ABORT, 'staging row binding is immutable')",
+    # §4.10(a)(b)(c) chunked staging upload. Each of these is a rule that, if it
+    # lived only in Python, a writer bypassing the handlers could ignore -- which is
+    # exactly how a "finished" upload could be declared over bytes nobody sent:
+    #   * the session is born empty, so ARTIFACT_READY cannot be an INSERT;
+    #   * the cursor advances by exactly one recorded chunk, so `byte_count` is
+    #     provably SUM(chunk_len) and `next_seq` provably their count;
+    #   * a chunk is recorded only AT the cursor and never UPDATEd, so the sequence
+    #     is gapless and an already-counted chunk cannot be re-described;
+    #   * a published input handle must BE the challenge-committed digest, and
+    #     INPUTS_READY cannot be reached until all three are set -- which is what
+    #     makes §4.10(d)'s reading of that state true rather than merely asserted
+    #     (§4.10(d) itself is NOT IMPLEMENTED -- a later ordered piece; the DDL simply
+    #     refuses to produce a state it could misread).
+    "CREATE TABLE IF NOT EXISTS governed_turn_staging_session",
+    "CREATE TABLE IF NOT EXISTS governed_turn_staging_chunk",
+    "artifact           TEXT NOT NULL CHECK (artifact IN (",
+    "next_seq           INTEGER NOT NULL CHECK (next_seq >= 0 AND next_seq <= 46)",
+    "chunk_len >= 1 AND chunk_len <= 184320",
+    "seq                INTEGER NOT NULL CHECK (seq >= 0 AND seq <= 45)",
+    "UNIQUE (challenge_handle, artifact)",
+    "trg_governed_turn_staging_session_insert_state",
+    "RAISE(ABORT, 'staging session must be created empty and UPLOADING')",
+    "trg_governed_turn_staging_session_transition",
+    "RAISE(ABORT, 'illegal staging session state transition')",
+    "trg_governed_turn_staging_session_cursor",
+    "RAISE(ABORT, 'staging cursor must advance by exactly one recorded chunk')",
+    "trg_governed_turn_staging_session_immutable",
+    "RAISE(ABORT, 'staging session binding is immutable')",
+    "trg_governed_turn_staging_chunk_gapless",
+    "RAISE(ABORT, 'staging chunk must be recorded at the current cursor')",
+    "trg_governed_turn_staging_chunk_immutable",
+    "RAISE(ABORT, 'recorded staging chunks are immutable')",
+    "trg_governed_turn_staging_handle_binding",
+    "RAISE(ABORT, 'published input handle must be the challenge-committed digest')",
+    "trg_governed_turn_staging_inputs_ready",
+    "RAISE(ABORT, 'INPUTS_READY requires all three published input handles')",
 )
 
 

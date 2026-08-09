@@ -68,6 +68,12 @@ from governed_supervisor import (
     build_terminal_record,
     recompute_request_sha256 as default_recompute_request_sha256,
 )
+from governed_staging_upload import (
+    MAX_SIDECAR_FRAME_BYTES,
+    STAGING_PROTOCOLS,
+    StagingService,
+    frame_cap_refusal,
+)
 from governed_turn_open import (
     OPEN_PROTOCOL,
     REFUSE_PEER_DENIED,
@@ -75,6 +81,12 @@ from governed_turn_open import (
     peer_is_sidecar,
     refused as open_refused,
 )
+
+#: Every protocol the SIDECAR principal is allowed to speak on this socket: the §4.10(a0)
+#: open plus the three §4.10(a)(b)(c) staging messages. It is a closed tuple rather than a
+#: prefix match, so widening the sidecar's door is an edit to this line and cannot happen
+#: by a new protocol merely being named `brops.governed-*`.
+SIDECAR_PROTOCOLS = (OPEN_PROTOCOL,) + STAGING_PROTOCOLS
 
 # ---------------------------------------------------------------------------
 # Wire framing constants (§5 supervisor front door — same shape as §2.1)
@@ -213,11 +225,19 @@ class SocketPeerConn:
 # ---------------------------------------------------------------------------
 
 
-def read_frame(conn: Any) -> bytes:
-    """Read exactly one length-prefixed frame, bounded to ``MAX_FRAME_BYTES``.
+def read_frame(conn: Any, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
+    """Read exactly one length-prefixed frame, bounded to ``max_bytes``.
 
     Fail-closed on a short header, a zero/oversize declared length, or a
     truncated body.
+
+    The bound is a parameter because the two principals on this socket carry different
+    traffic (§2.4/§4.10(b)). The broker's ``op`` frames stay at the deliberately tight
+    8 KiB; the sidecar's staging chunk is 240 KiB of base64url by design and cannot be made
+    smaller without breaking the design's own frame-sizing proof. Raising the module
+    constant instead would have widened the broker's surface to buy the sidecar's, so the
+    two are separated rather than merged — and the sidecar's larger read is immediately
+    narrowed again per-protocol by ``governed_staging_upload.frame_cap_refusal``.
     """
     header = conn.recv_exactly(LENGTH_PREFIX_BYTES)
     if len(header) != LENGTH_PREFIX_BYTES:
@@ -225,9 +245,9 @@ def read_frame(conn: Any) -> bytes:
     length = int.from_bytes(header, "big")
     if length == 0:
         raise FrameError("empty frame rejected")
-    if length > MAX_FRAME_BYTES:
+    if length > max_bytes:
         raise FrameError(
-            "frame length %d exceeds bound %d" % (length, MAX_FRAME_BYTES)
+            "frame length %d exceeds bound %d" % (length, max_bytes)
         )
     body = conn.recv_exactly(length)
     if len(body) != length:
@@ -235,11 +255,11 @@ def read_frame(conn: Any) -> bytes:
     return body
 
 
-def write_frame(conn: Any, payload: bytes) -> None:
+def write_frame(conn: Any, payload: bytes, max_bytes: int = MAX_FRAME_BYTES) -> None:
     """Write one length-prefixed frame. The reply is supervisor-built and small;
     an over-bound reply is a programming error, not attacker input, so we still
     refuse it rather than emit an un-framable blob."""
-    if len(payload) > MAX_FRAME_BYTES:
+    if len(payload) > max_bytes:
         raise FrameError("reply exceeds frame bound")
     conn.send_all(len(payload).to_bytes(LENGTH_PREFIX_BYTES, "big") + payload)
 
@@ -367,6 +387,7 @@ def dispatch(
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
     open_service: Optional[OpenService] = None,
+    staging_service: Optional[StagingService] = None,
     peer_uid: Any = None,
 ) -> Dict[str, Any]:
     """Route one decoded request into the pure supervisor core + the durable ledger.
@@ -425,6 +446,17 @@ def dispatch(
             return open_refused(REFUSE_PEER_DENIED)
         return open_service.handle(request, peer_uid=peer_uid, conn=conn, clock_ms=clock_ms)
 
+    # §4.10(a)(b)(c) — the three staging-upload protocols, keyed the same way. Without a
+    # `staging_service` they are served by nobody: the handlers are reached through an
+    # UNCONFIGURABLE peer uid, so every such request refuses on the peer check rather than
+    # this layer inventing a verdict in a vocabulary that is not its own.
+    if request.get("protocol") in STAGING_PROTOCOLS:
+        if staging_service is None:
+            return _staging_unconfigured(request)
+        return staging_service.handle(
+            request, peer_uid=peer_uid, conn=conn, clock_ms=clock_ms
+        )
+
     op = request.get("op")
 
     if op == OP_ATTEST_RUN:
@@ -441,6 +473,35 @@ def dispatch(
         return _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidence)
 
     raise ServerError("unknown op %r" % (op,))
+
+
+def _staging_unconfigured(request: Mapping[str, Any]) -> Dict[str, Any]:
+    """A staging message on a supervisor with no ``StagingService``.
+
+    The reply is produced by the protocol's OWN handler with an impossible sidecar uid
+    (``None``, which ``peer_is_sidecar`` refuses fail-closed), rather than assembled here.
+    That way this layer never has to know which reason each of the three closed sets uses
+    for "you are not allowed to send this" — it asks the module that owns the set.
+    """
+    from governed_staging_upload import (
+        STAGING_CHUNK_PROTOCOL,
+        STAGING_FINAL_PROTOCOL,
+        STAGING_OPEN_PROTOCOL,
+        staging_open_refused,
+        chunk_refused,
+        final_refused,
+        REFUSE_MALFORMED,
+        REFUSE_PEER_DENIED as STAGING_PEER_DENIED,
+    )
+
+    protocol = request.get("protocol")
+    if protocol == STAGING_OPEN_PROTOCOL:
+        return staging_open_refused(STAGING_PEER_DENIED)
+    if protocol == STAGING_CHUNK_PROTOCOL:
+        return chunk_refused(REFUSE_MALFORMED, 0)
+    if protocol == STAGING_FINAL_PROTOCOL:
+        return final_refused(REFUSE_MALFORMED)
+    raise ServerError("unknown staging protocol %r" % (protocol,))
 
 
 def _op_accept_open(request, config, conn, verify_sig, recompute_request_sha256, clock_ms):
@@ -658,6 +719,7 @@ def handle_connection(
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
     open_service: Optional[OpenService] = None,
+    staging_service: Optional[StagingService] = None,
 ) -> Dict[str, Any]:
     """Authenticate the peer, read one bounded frame, dispatch, and write the
     framed reply. Returns the reply object (also useful for tests). Never raises
@@ -668,11 +730,19 @@ def handle_connection(
     omit them and only the lifecycle ops are served.
 
     **Two principals, two disjoint surfaces (§2.6 / §4.10(a0)).** The broker uid drives the
-    §5 ``op`` lifecycle. The sidecar uid — supplied only via ``open_service``, and DENIED
-    entirely when it is absent — may send exactly one thing: ``brops.governed-turn-open.v1``.
-    A sidecar-authenticated connection presenting an ``op`` frame is refused as an
-    unauthorized peer, so admitting the sidecar to this socket widens the door by exactly one
-    protocol and not by one op.
+    §5 ``op`` lifecycle. The sidecar uid — supplied only via ``open_service`` /
+    ``staging_service``, and DENIED entirely when neither is present — may send exactly the
+    four protocols in ``SIDECAR_PROTOCOLS``: the §4.10(a0) open and the three §4.10(a)(b)(c)
+    staging messages. A sidecar-authenticated connection presenting an ``op`` frame is
+    refused as an unauthorized peer, so admitting the sidecar to this socket widens the door
+    by exactly four protocol names and not by one op.
+
+    **Two frame bounds, not one (§4.10(b)).** The broker's read stays at the tight 8 KiB.
+    The sidecar's read is the largest cap any of its four protocols declares (262144, the
+    staging chunk), and the exact bytes that arrived are then re-checked against that
+    protocol's OWN cap — so a 200 KiB `governed-staging-open` is still refused even though
+    the transport was willing to read it, and the §4.10(a0) "frame ≤ 8 KiB" survives the
+    widening.
 
     A configuration where the broker uid EQUALS the sidecar uid is refused outright rather
     than served: that is the §2.6 single-UID collapse, and under it every ACL in this design
@@ -680,7 +750,17 @@ def handle_connection(
     cannot detect the collapse later from anything a peer sends.
     """
     peer_uid = getattr(conn, "peer_uid", None)
-    sidecar_uid = open_service.allowed_sidecar_uid if open_service is not None else None
+    open_uid = open_service.allowed_sidecar_uid if open_service is not None else None
+    staging_uid = staging_service.allowed_sidecar_uid if staging_service is not None else None
+
+    # Two services naming DIFFERENT sidecar uids is a mis-provisioned supervisor, not a
+    # richer one: it would mean one principal may open turns and another may upload their
+    # inputs, which no part of §2.6 describes. Refuse at the door rather than pick one.
+    if open_uid is not None and staging_uid is not None and open_uid != staging_uid:
+        reply = {"ok": False, "error": "principal split: open and staging name different sidecar uids"}
+        _try_write(conn, reply)
+        return reply
+    sidecar_uid = open_uid if open_uid is not None else staging_uid
 
     if sidecar_uid is not None and peer_is_broker(sidecar_uid, allowed_broker_uid):
         reply = {"ok": False, "error": "principal collapse: sidecar uid equals broker uid"}
@@ -696,16 +776,24 @@ def handle_connection(
         return reply
 
     try:
-        raw = read_frame(conn)
+        raw = read_frame(conn, MAX_FRAME_BYTES if broker_peer else MAX_SIDECAR_FRAME_BYTES)
         request = json.loads(raw.decode("utf-8"))
-        # The sidecar's grant is one protocol wide. Anything else it sends is refused here,
-        # in the transport, so the op handlers below never see a non-broker caller at all.
+        # The sidecar's grant is four protocol names wide. Anything else it sends is refused
+        # here, in the transport, so the op handlers below never see a non-broker caller.
         if not broker_peer and (
-            not isinstance(request, dict) or request.get("protocol") != OPEN_PROTOCOL
+            not isinstance(request, dict) or request.get("protocol") not in SIDECAR_PROTOCOLS
         ):
             reply = {"ok": False, "error": "peer not authorized"}
             _try_write(conn, reply)
             return reply
+        # The per-protocol frame cap, applied to the bytes that actually arrived. The
+        # transport had to read up to the largest of them to reach this line; this is where
+        # the tighter ones are re-imposed.
+        if not broker_peer:
+            over = frame_cap_refusal(request.get("protocol"), len(raw))
+            if over is not None:
+                _try_write(conn, over)
+                return over
         reply = dispatch(
             request,
             config,
@@ -718,6 +806,7 @@ def handle_connection(
             sign_attestation=sign_attestation,
             supervisor_attestation_key_id=supervisor_attestation_key_id,
             open_service=open_service,
+            staging_service=staging_service,
             peer_uid=peer_uid,
         )
     except (FrameError, ServerError, SupervisorError, ValueError, UnicodeDecodeError) as exc:
@@ -786,6 +875,7 @@ def serve_forever(
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
     open_service: Optional[OpenService] = None,
+    staging_service: Optional[StagingService] = None,
 ) -> None:
     """Drive the accept loop. ``accept_one`` returns the next connection (any
     object with ``peer_uid`` / ``recv_exactly`` / ``send_all`` / ``close``) or
@@ -813,6 +903,7 @@ def serve_forever(
                 sign_attestation=sign_attestation,
                 supervisor_attestation_key_id=supervisor_attestation_key_id,
                 open_service=open_service,
+                staging_service=staging_service,
             )
         finally:
             try:
@@ -848,6 +939,8 @@ def accept_socket_conn(listener: "socket.socket") -> SocketPeerConn:
 __all__ = [
     "LENGTH_PREFIX_BYTES",
     "MAX_FRAME_BYTES",
+    "MAX_SIDECAR_FRAME_BYTES",
+    "SIDECAR_PROTOCOLS",
     "OP_ACCEPT_OPEN",
     "OP_LAUNCH_GATE",
     "OP_EXECUTION_STARTED",
