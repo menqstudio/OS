@@ -3,15 +3,15 @@
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS. STATE: settled. main is at settled_at_main_head (b3010f6); PR #81 was the last to merge; prs[] is empty and active.branch is the settle carrier's branch (see active.branch and current_workflow_pr), so no implementation work is queued here. What is blocked, and on whom, is docs/OWNER_ACTION_REQUIRED.md. AUDIT POSITION: the last INDEPENDENT audit -- apps/desktop/AUDIT/2026-08-06-remediation-audit.md, of main @ 219c763 -- returned RED (4 of 18 blockers confirmed closed; 122 surviving findings, 1 P0), and no independent audit has been run on any later head, so RED is the standing verdict; the index is apps/desktop/AUDIT/AUDIT_LEDGER.md. The production trusted_verified gate stays SHUT (status_tokens.CURRENT_PRODUCTION_VERIFIED: false) until an independent audit passes and the Owner approves. PROVENANCE, not open work: the Wave 3b design+implementation+live proof were consolidated as PR #48 and merged with the Phase-2 slices #49/#50/#51/#52; PR #53 (the Windows LIVE machine-proof) merged after them; CURRENT_DESIGN_PR/CURRENT_IMPL_PR: 48 records where that work landed. tools/check_coordination.py checks the human docs agree with this file; tools/check_repo_state.py verifies it against LIVE GitHub in CI. Update in the same commit as any state change. (This field described PR #53 as the active workflow until 2026-08-09, four merged PRs after it stopped being true; and it asserted \"active.branch is main\" while active.branch was a branch, which is now machine-checked.)",
   "settled_at_main_head": "b3010f67b271bd6b8d20eff26e1724a0968fbcc0",
   "sync": {
-    "baseline_main_head_at_sync": "b3010f67b271bd6b8d20eff26e1724a0968fbcc0",
-    "snapshot_branch": "settle/after-81",
+    "baseline_main_head_at_sync": "6bd302761eca7e7a2bfbaad49a15a142b8894583",
+    "snapshot_branch": "at-main-2",
     "live_main_resolution": "Read settled_at_main_head: live main is b3010f6 (PR #81 merged, 2026-08-09), baseline_main_head_at_sync now equals it, and the only open pull request is the self-carrier #82 that records the settle. No implementation work is queued. Until 2026-08-09 this field said the baseline WAS the live HEAD 0efa99e (PR #65 merged) and named an active branch chore/staleness-sweep that no longer exists - stale by roughly sixteen merged PRs, in the machine-readable file the human docs are checked against.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #82). PR #82's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #83). PR #83's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "settle/after-81"
+    "branch": "at-main-2"
   },
   "prs": [],
   "status_tokens": {
@@ -214,11 +214,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live) machine-proves the Windows governed turn to trusted_verified over named pipes, but the SHIPPED app stays fail-closed. Do not cite platform_governed_execution_supported() as the flag holding that line: NO FUNCTION OF THAT NAME EXISTS in the tree (config/spec-conformance.json records section 0.1 as partial for exactly this reason, and this list named it as though it were real until 2026-08-09). The Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE independent audit of the Windows broker passes. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 82,
-    "branch": "settle/after-81",
+    "number": 83,
+    "branch": "at-main-2",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #82 body.",
-    "note": "Settling the state anchor at main b3010f6. Nothing else is open; this pull request is the commit that records it."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #83 body.",
+    "note": "PR #83 is the second correction after two cold reads of this repository both concluded a competent person would NOT arrive at an accurate picture. The audit position was inverted: NEXT_CHAT led with INDEPENDENT AUDIT COMPLETE while the Owner's SECOND independent audit returned RED, with 122 findings across three rounds (1 P0, 7 P1, 32 P2, 82 P3) recorded in a ledger that was in no read list. F-29 was listed CLOSED forty lines above its own correction, while production_trust.rs states the guard cannot fail. The audit ledger is not tamper-evident on a shipped install: nothing sets the anchor custody variables and neither signer binary ships. The corrections had reached English and not Armenian in the two bilingual files the Owner reads. And the defect was committed while fixing it -- two files still asserted the phantom gate after six were corrected -- found by a sweep rather than by rereading. current_state.json's free-text fields are gate-checked for the first time."
   },
   "next_action_by_carrier": {
     "_note": "The carrier is current_workflow_pr (#82 on settle/after-81), the self-carrier that records the settle. This block modelled PR #48 as the open carrier until 2026-08-09 -- PR #48 merged on 2026-08-06 and everything through PR #81 merged after it, so both branches below described a transition that had already happened. No merge-transition is modeled (there is no carrier_transition block), so these branches are advisory prose, not gate inputs.",
