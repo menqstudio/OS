@@ -36,6 +36,12 @@ windows = { version = "0.58", features = [
 
 [dev-dependencies]
 tempfile = "3"
+# The tests install a FRESH operator root over a provisioned store to reach the checks
+# that sit downstream of the registry signature. They have to, now: provisioning destroys
+# the root it minted, so there is no key to re-sign anything with — which is itself the
+# property under test, and the reason `reroot()` doubles as a live demonstration of the
+# pin-rewrite route that destruction does NOT close.
+ed25519-dalek = "2"
 
 # Used by ONE test: `win_live_constants_have_not_drifted`, which pins every access mask and
 # world SID in `audit_signer` against the real `brops_win_live::pipe_acl`. A dev-dependency

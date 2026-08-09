@@ -230,8 +230,12 @@ class ControlRoomActorProofTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         base = pathlib.Path(self.temp.name)
         self.now = int(time.time())
+        # `control-room` is the DELEGATED authority the owner command artifact is bound to;
+        # `operator-root` still signs the registry and the conductor session. Both are in the
+        # fixture so the negatives below can present a perfectly good root signature for an
+        # artifact the root may not sign.
         self.keys = {authority: generate_key(authority, f"dev-{authority}", False)
-                     for authority in ("operator-root", "builder")}
+                     for authority in ("operator-root", "builder", "control-room")}
         use_operator_pin(self, self.keys["operator-root"]["public_key"])
         (base / "registry" / "config").mkdir(parents=True)
         (base / "registry" / "config" / "trusted-keys.json").write_text(
@@ -269,7 +273,7 @@ class ControlRoomActorProofTests(unittest.TestCase):
         payload.update(overrides)
         return sign_payload(self.keys[authority]["private_key"], payload)
 
-    def owner_attestation(self, authority: str = "operator-root", command: dict | None = None,
+    def owner_attestation(self, authority: str = "control-room", command: dict | None = None,
                           **overrides) -> dict:
         """A `control-room-command` artifact bound to one command.
 
@@ -345,6 +349,39 @@ class ControlRoomActorProofTests(unittest.TestCase):
         self.assertEqual(reply["actor_identity"], ACTOR_PROVEN_PER_COMMAND)
         self.assertNotEqual(reply["actor_identity"], ACTOR_PROVEN_BY_SESSION,
                             "a per-command proof must not report itself as a session")
+
+    def test_the_operator_root_may_not_sign_an_owner_command(self) -> None:
+        """The delegation, in the direction that decides whether it was worth doing.
+
+        `operator-root` is the key this fixture's registry is signed with — the strongest
+        key the deployment has, active and in date. Presented for a `control-room-command`
+        it is refused BY AUTHORITY, which is exactly what lets `brops_provision` destroy
+        the root at the end of the mint without taking O-4 with it. If this ever passes,
+        the delegation has collapsed back into the root and the destruction buys nothing.
+        """
+        owner = self.command(requested_by_type="owner", requested_by="owner-gev")
+        with self.assertRaises(ControlRoomAPIError) as caught:
+            self.api.validate_command_intent(
+                owner, now_epoch=self.now + 1,
+                actor_attestation=self.owner_attestation(authority="operator-root",
+                                                         command=owner))
+        message = str(caught.exception)
+        self.assertIn("control-room actor attestation is RED", message)
+        self.assertIn("(operator-root) may not sign control-room-command", message)
+
+    def test_a_control_room_key_may_not_stand_in_for_a_conductor_session(self) -> None:
+        """And the other way round: the delegated key is not a session credential.
+
+        A `control-room` key that could also mint a `conductor-session` would authorise a
+        WINDOW rather than one command, which is the distinction `_prove_command_actor`
+        exists to hold.
+        """
+        with self.assertRaises(ControlRoomAPIError) as caught:
+            self.api.validate_command_intent(
+                self.command(), now_epoch=self.now + 1,
+                actor_attestation=self.attestation(authority="control-room"))
+        self.assertIn("(control-room) may not sign conductor-session",
+                      str(caught.exception))
 
     def test_an_owner_attestation_for_a_different_command_is_refused(self) -> None:
         """The whole point of the artifact: signing one command must not authorise another.

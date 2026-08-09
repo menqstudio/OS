@@ -10,6 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use brops_provision as prov;
+use ed25519_dalek::SigningKey;
 use serde_json::Value;
 
 fn read_json(path: &Path) -> Value {
@@ -35,12 +36,79 @@ fn repair_digest(trust: &Path, relative: &str) {
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 }
 
-/// Replace a signed document with `payload`, re-signed by the REAL operator-root key,
-/// and repair its recorded digest. Every check downstream of the signature then has to
-/// catch the change on its own — which is the only way to prove those checks exist.
-fn respin(trust: &Path, relative: &str, payload: Value) {
-    let operator = prov::load_key(trust, "operator-root").expect("operator key");
-    let document = prov::sign_document(&operator.signing, payload).expect("sign");
+/// Install a NEW operator root over a provisioned store, and return it.
+///
+/// # Why the tests need this, and what it incidentally proves
+///
+/// Several checks in `verify_existing` sit DOWNSTREAM of the registry signature — the
+/// production flag, the per-authority entries, the operator entry matching the pin, the
+/// conductor session's bindings. Reaching them needs a registry that verifies and is
+/// wrong in exactly one other way, i.e. a validly re-signed one. There is no longer a key
+/// to do that with: `mint` destroys the operator root before it returns.
+///
+/// So this does what the only remaining party who could do it would do — it rewrites the
+/// PIN. A fresh Ed25519 key is minted, `pin/operator-root.pub` is replaced with its public
+/// half, the registry's `operator_public_key` and its `operator-root` entry are rebuilt
+/// around it, the registry and the conductor session are re-signed under it, and every
+/// digest is repaired. The store then verifies again — asserted here, so that when a test
+/// mutates one field afterwards and gets a refusal, the refusal can only be about that
+/// field.
+///
+/// That it works at all is the residual this round did not close, exercised in Rust as
+/// well as in `audit-signer/tests/anchor_end_to_end.py` (`case_pin_rewrite`): destroying
+/// the operator root removed the KEY, not the anchor's custody. The pin is still a file in
+/// a directory the app's own account owns.
+fn reroot(trust: &Path) -> SigningKey {
+    let root = SigningKey::from_bytes(&throwaway_seed());
+    let public = prov::hex(root.verifying_key().as_bytes());
+
+    fs::write(
+        trust.join(prov::PIN_DIR).join(prov::OPERATOR_PIN_FILE),
+        format!("{public}\n"),
+    )
+    .unwrap();
+    repair_digest(trust, &format!("{}/{}", prov::PIN_DIR, prov::OPERATOR_PIN_FILE));
+
+    let mut payload = payload_of(trust, REGISTRY_REL);
+    payload["operator_public_key"] = Value::from(public.clone());
+    for entry in payload["keys"].as_array_mut().unwrap() {
+        if entry["authority_type"] == Value::from("operator-root") {
+            entry["public_key"] = Value::from(public.clone());
+        }
+    }
+    respin(trust, &root, REGISTRY_REL, payload);
+    // The session names the operator ENTRY's key_id, which reroot leaves alone, so it
+    // only needs a signature under the new root.
+    let session = payload_of(trust, SESSION_REL);
+    respin(trust, &root, SESSION_REL, session);
+
+    prov::verify_existing(trust).expect(
+        "a store re-rooted through the pin must verify — otherwise a later refusal in \
+         this test could be about the re-rooting rather than about the mutation",
+    );
+    root
+}
+
+/// A throwaway 32-byte seed. Not key material anyone relies on: these keys exist for one
+/// test each, so there is no reason to pull in an RNG crate for them.
+fn throwaway_seed() -> [u8; 32] {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos();
+    let mut seed = [0u8; 32];
+    for (i, byte) in seed.iter_mut().enumerate() {
+        *byte = (i as u32).wrapping_mul(31).wrapping_add(nanos).to_le_bytes()[i % 4];
+    }
+    seed[0] |= 1;
+    seed
+}
+
+/// Replace a signed document with `payload`, re-signed by `root`, and repair its recorded
+/// digest. Every check downstream of the signature then has to catch the change on its
+/// own — which is the only way to prove those checks exist.
+fn respin(trust: &Path, root: &SigningKey, relative: &str, payload: Value) {
+    let document = prov::sign_document(root, payload).expect("sign");
     let mut path = trust.to_path_buf();
     for part in relative.split('/') {
         path.push(part);
@@ -77,17 +145,24 @@ fn first_launch_mints_one_key_per_authority_the_engine_knows() {
     let p = prov::provision(dir.path()).expect("first launch provisions");
     assert!(p.freshly_minted);
 
-    for authority in prov::AUTHORITY_TYPES {
+    for authority in prov::RETAINED_AUTHORITIES {
         let key = p.keys_dir.join(format!("{authority}.json"));
         assert!(key.is_file(), "no private key minted for the {authority} authority");
     }
+    // The registry names one key per MINTED authority; the key DIRECTORY holds only the
+    // retained ones. The difference is exactly `operator-root`, and it is the point.
+    assert_eq!(
+        fs::read_dir(&p.keys_dir).unwrap().count(),
+        prov::RETAINED_AUTHORITIES.len(),
+        "the key directory must hold the retained authorities and nothing else"
+    );
 
     let registry = read_json(&p.registry_path);
     let keys = registry["payload"]["keys"].as_array().unwrap();
     assert_eq!(
         keys.len(),
-        prov::AUTHORITY_TYPES.len(),
-        "the registry must carry exactly one key per authority"
+        prov::MINTED_AUTHORITIES.len(),
+        "the registry must carry exactly one key per minted authority"
     );
     for entry in keys {
         let authority = entry["authority_type"].as_str().unwrap();
@@ -165,14 +240,14 @@ fn the_operator_pin_lives_outside_the_registry_root() {
 fn a_second_launch_verifies_and_never_re_mints() {
     let dir = tempfile::tempdir().unwrap();
     let first = prov::provision(dir.path()).unwrap();
-    let key_before = fs::read(first.keys_dir.join("operator-root.json")).unwrap();
+    let key_before = fs::read(first.keys_dir.join("issuer.json")).unwrap();
     let registry_before = fs::read(&first.registry_path).unwrap();
 
     let second = prov::provision(dir.path()).expect("second launch verifies");
     assert!(!second.freshly_minted, "a second launch must not mint");
     assert_eq!(first.install_id, second.install_id);
     assert_eq!(first.operator_public_key, second.operator_public_key);
-    assert_eq!(key_before, fs::read(second.keys_dir.join("operator-root.json")).unwrap());
+    assert_eq!(key_before, fs::read(second.keys_dir.join("issuer.json")).unwrap());
     assert_eq!(registry_before, fs::read(&second.registry_path).unwrap());
     assert!(staging_entries(dir.path()).is_empty());
 }
@@ -236,6 +311,7 @@ fn a_registry_whose_operator_entry_is_not_the_pinned_key_is_refused() {
     // its own signer, and a store that shipped one would fail at the engine instead.
     let dir = tempfile::tempdir().unwrap();
     let p = prov::provision(dir.path()).unwrap();
+    let root = reroot(&p.trust_dir);
     let other = prov::load_key(&p.trust_dir, "issuer").unwrap();
     let mut payload = payload_of(&p.trust_dir, REGISTRY_REL);
     for entry in payload["keys"].as_array_mut().unwrap() {
@@ -243,7 +319,7 @@ fn a_registry_whose_operator_entry_is_not_the_pinned_key_is_refused() {
             entry["public_key"] = Value::from(other.public_key_hex());
         }
     }
-    respin(&p.trust_dir, REGISTRY_REL, payload);
+    respin(&p.trust_dir, &root, REGISTRY_REL, payload);
 
     let err = prov::provision(dir.path()).expect_err("a registry without its signer must refuse");
     assert!(err.to_string().contains("operator-root key is not the pinned key"), "{err}");
@@ -256,9 +332,10 @@ fn a_registry_that_stops_declaring_production_is_refused() {
     // store that quietly lost the flag would pass here and fail at the engine.
     let dir = tempfile::tempdir().unwrap();
     let p = prov::provision(dir.path()).unwrap();
+    let root = reroot(&p.trust_dir);
     let mut payload = payload_of(&p.trust_dir, REGISTRY_REL);
     payload["production"] = Value::from(false);
-    respin(&p.trust_dir, REGISTRY_REL, payload);
+    respin(&p.trust_dir, &root, REGISTRY_REL, payload);
 
     let err = prov::provision(dir.path()).expect_err("a non-production registry must be refused");
     assert!(err.to_string().contains("not marked production"), "{err}");
@@ -268,10 +345,11 @@ fn a_registry_that_stops_declaring_production_is_refused() {
 fn a_registry_naming_an_operator_key_other_than_the_pin_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let p = prov::provision(dir.path()).unwrap();
+    let root = reroot(&p.trust_dir);
     let other = prov::load_key(&p.trust_dir, "issuer").unwrap();
     let mut payload = payload_of(&p.trust_dir, REGISTRY_REL);
     payload["operator_public_key"] = Value::from(other.public_key_hex());
-    respin(&p.trust_dir, REGISTRY_REL, payload);
+    respin(&p.trust_dir, &root, REGISTRY_REL, payload);
 
     let err = prov::provision(dir.path()).expect_err("a mismatched declared root must be refused");
     assert!(err.to_string().contains("operator key other than the pinned one"), "{err}");
@@ -281,13 +359,14 @@ fn a_registry_naming_an_operator_key_other_than_the_pin_is_refused() {
 fn a_revoked_authority_key_leaves_the_store_unusable_rather_than_silently_degraded() {
     let dir = tempfile::tempdir().unwrap();
     let p = prov::provision(dir.path()).unwrap();
+    let root = reroot(&p.trust_dir);
     let mut payload = payload_of(&p.trust_dir, REGISTRY_REL);
     for entry in payload["keys"].as_array_mut().unwrap() {
         if entry["authority_type"] == Value::from("release") {
             entry["status"] = Value::from("revoked");
         }
     }
-    respin(&p.trust_dir, REGISTRY_REL, payload);
+    respin(&p.trust_dir, &root, REGISTRY_REL, payload);
 
     let err = prov::provision(dir.path()).expect_err("a missing active authority must be refused");
     let text = err.to_string();
@@ -299,9 +378,10 @@ fn a_revoked_authority_key_leaves_the_store_unusable_rather_than_silently_degrad
 fn an_expired_conductor_session_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let p = prov::provision(dir.path()).unwrap();
+    let root = reroot(&p.trust_dir);
     let mut payload = payload_of(&p.trust_dir, SESSION_REL);
     payload["expires_at_epoch"] = Value::from(1);
-    respin(&p.trust_dir, SESSION_REL, payload);
+    respin(&p.trust_dir, &root, SESSION_REL, payload);
 
     let err = prov::provision(dir.path()).expect_err("an expired session token must be refused");
     assert!(err.to_string().contains("has expired"), "{err}");
@@ -311,9 +391,10 @@ fn an_expired_conductor_session_is_refused() {
 fn a_conductor_session_rebound_to_another_identity_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let p = prov::provision(dir.path()).unwrap();
+    let root = reroot(&p.trust_dir);
     let mut payload = payload_of(&p.trust_dir, SESSION_REL);
     payload["role"] = Value::from("owner");
-    respin(&p.trust_dir, SESSION_REL, payload);
+    respin(&p.trust_dir, &root, SESSION_REL, payload);
 
     let err = prov::provision(dir.path()).expect_err("a rebound session token must be refused");
     let text = err.to_string();
@@ -387,7 +468,7 @@ fn a_half_removed_store_is_refused_rather_than_completed() {
     let err = prov::provision(dir.path()).expect_err("a manifest-less store must be refused");
     assert!(err.to_string().contains("not a provisioned store"), "{err}");
     assert!(
-        p.keys_dir.join("operator-root.json").is_file(),
+        p.keys_dir.join("issuer.json").is_file(),
         "the surviving key material must not be minted over"
     );
     assert!(staging_entries(dir.path()).is_empty());
@@ -417,8 +498,274 @@ fn the_floor_anchor_is_minted_only_on_demand_and_refuses_a_non_positive_sequence
     assert_eq!(doc["payload"]["artifact_type"], Value::from("evidence-floor-anchor"));
     assert_eq!(doc["payload"]["task_id"], Value::from("t-001"));
     assert_eq!(doc["payload"]["head_sequence"], Value::from(7));
-    assert_eq!(doc["payload"]["key_id"], Value::from(p.operator_key_id.clone()));
+    // The DELEGATED key, not the operator root — which no longer exists. If this ever
+    // reads `p.operator_key_id` again, either the root survived provisioning or the
+    // artifact moved back onto it, and both undo the whole round.
+    let delegated = prov::load_key(&p.trust_dir, prov::EVIDENCE_FLOOR).unwrap();
+    assert_eq!(doc["payload"]["key_id"], Value::from(delegated.key_id.clone()));
+    assert_ne!(doc["payload"]["key_id"], Value::from(p.operator_key_id.clone()));
     assert!(out.is_file());
+}
+
+#[test]
+fn the_control_room_command_is_signed_by_its_own_delegated_key_and_binds_the_command() {
+    // O-4. `bro_control_room_api._prove_command_actor` verifies the artifact and then
+    // requires command_id/task_id/command to equal the command in hand, so an artifact
+    // that did not carry all three would be a session credential wearing another name.
+    let dir = tempfile::tempdir().unwrap();
+    let p = prov::provision(dir.path()).unwrap();
+    let out = dir.path().join("command.json");
+
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+        + 3600;
+    let doc = prov::mint_control_room_command(
+        &p.trust_dir,
+        "cmd-1",
+        "t-001",
+        "cancel",
+        "s-owner",
+        expires,
+        &out,
+    )
+    .unwrap();
+    assert_eq!(doc["payload"]["artifact_type"], Value::from("control-room-command"));
+    for (field, value) in
+        [("command_id", "cmd-1"), ("task_id", "t-001"), ("command", "cancel"),
+         ("role", "owner"), ("agent_id", "owner-gev")]
+    {
+        assert_eq!(doc["payload"][field], Value::from(value), "{field}");
+    }
+    let delegated = prov::load_key(&p.trust_dir, prov::CONTROL_ROOM).unwrap();
+    assert_eq!(doc["payload"]["key_id"], Value::from(delegated.key_id.clone()));
+    assert_ne!(doc["payload"]["key_id"], Value::from(p.operator_key_id.clone()));
+
+    // An expiry that is not in the future, and an unbound field, are refusals — a
+    // never-expiring per-command attestation is a bearer token for that command forever.
+    let bad = dir.path().join("bad.json");
+    assert!(prov::mint_control_room_command(
+        &p.trust_dir, "cmd-1", "t-001", "cancel", "s-owner", 1, &bad
+    )
+    .is_err());
+    assert!(prov::mint_control_room_command(
+        &p.trust_dir, "", "t-001", "cancel", "s-owner", expires, &bad
+    )
+    .is_err());
+    assert!(!bad.exists(), "a refused artifact must not be written");
+}
+
+#[test]
+fn the_two_delegated_keys_are_separate_and_neither_can_reach_the_others_artifact() {
+    // One shared "local delegate" key would be strictly more powerful than either
+    // delegation, and would leave `verify_artifact`'s authority check with nothing to
+    // say. The registry grant is the thing the engine reads, so it is what is asserted.
+    let dir = tempfile::tempdir().unwrap();
+    let p = prov::provision(dir.path()).unwrap();
+    let control = prov::load_key(&p.trust_dir, prov::CONTROL_ROOM).unwrap();
+    let floor = prov::load_key(&p.trust_dir, prov::EVIDENCE_FLOOR).unwrap();
+    assert_ne!(control.public_key_hex(), floor.public_key_hex());
+
+    let registry = read_json(&p.registry_path);
+    let mut seen = 0;
+    for entry in registry["payload"]["keys"].as_array().unwrap() {
+        match entry["authority_type"].as_str().unwrap() {
+            "control-room" => {
+                seen += 1;
+                assert_eq!(entry["allowed_artifact_types"], Value::from(vec!["control-room-command"]));
+            }
+            "evidence-floor" => {
+                seen += 1;
+                assert_eq!(entry["allowed_artifact_types"], Value::from(vec!["evidence-floor-anchor"]));
+            }
+            // And the root itself keeps only what a root should: nothing routine.
+            "operator-root" => {
+                let allowed = entry["allowed_artifact_types"].as_array().unwrap();
+                for forbidden in ["control-room-command", "evidence-floor-anchor"] {
+                    assert!(
+                        !allowed.iter().any(|v| v == forbidden),
+                        "the operator root is still granted {forbidden}"
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(seen, 2, "both delegated authorities must be in the registry");
+}
+
+/// **Requirement 1**, asked of the filesystem rather than of the code that writes it.
+///
+/// Every byte of the whole application data directory is enumerated — not just
+/// `keys/`, and not just the files the manifest names — and every 32-byte window and
+/// every 64-character hex run in each is tried AS AN ED25519 SEED. If any of them
+/// derives the pinned operator public key, the private half is on disk somewhere,
+/// whatever the file is called and whatever encoding it used.
+///
+/// A test that looked for `keys/operator-root.json` would pass the day the seed moved
+/// to a temp file, a log line or a staging directory nobody cleaned up.
+#[test]
+fn no_operator_root_private_half_exists_anywhere_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = prov::provision(dir.path()).unwrap();
+    let target = p.operator_public_key.clone();
+
+    // The control: the same search DOES find every retained key, so a negative result
+    // below cannot be the search being broken.
+    let mut found_retained = 0;
+    for authority in prov::RETAINED_AUTHORITIES {
+        let key = prov::load_key(&p.trust_dir, authority).unwrap();
+        if seed_for(dir.path(), &key.public_key_hex()).is_some() {
+            found_retained += 1;
+        }
+    }
+    assert_eq!(
+        found_retained,
+        prov::RETAINED_AUTHORITIES.len(),
+        "the search did not find the keys that ARE on disk, so finding nothing for the \
+         operator root would prove nothing"
+    );
+
+    if let Some(where_) = seed_for(dir.path(), &target) {
+        panic!(
+            "the operator-root private half survived provisioning, in {}. The registry can \
+             therefore still be re-signed by whoever holds this directory.",
+            where_.display()
+        );
+    }
+}
+
+/// Search every file under `root` for a 32-byte seed deriving `public_key_hex`.
+fn seed_for(root: &Path, public_key_hex: &str) -> Option<std::path::PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
+            for entry in fs::read_dir(&path).into_iter().flatten().flatten() {
+                stack.push(entry.path());
+            }
+            continue;
+        }
+        let bytes = match fs::read(&path) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        if bytes_hold_seed(&bytes, public_key_hex) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn bytes_hold_seed(bytes: &[u8], public_key_hex: &str) -> bool {
+    // Raw: any 32-byte window.
+    for window in bytes.windows(32) {
+        let seed: [u8; 32] = window.try_into().unwrap();
+        if prov::hex(SigningKey::from_bytes(&seed).verifying_key().as_bytes()) == public_key_hex {
+            return true;
+        }
+    }
+    // Hex: any 64-character run of hex digits, which is how this module writes seeds.
+    let text = String::from_utf8_lossy(bytes);
+    let chars: Vec<char> = text.chars().collect();
+    for start in 0..chars.len().saturating_sub(63) {
+        let run: String = chars[start..start + 64].iter().collect();
+        if !run.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        if let Some(raw) = prov::unhex(&run) {
+            let seed: [u8; 32] = match raw.try_into() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if prov::hex(SigningKey::from_bytes(&seed).verifying_key().as_bytes())
+                == public_key_hex
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[test]
+fn a_store_that_grows_an_operator_root_key_file_afterwards_is_refused() {
+    // The digest map cannot see this: a file the mint never wrote adds no digest to
+    // compare and removes none. Without the key-directory check the store would go on
+    // verifying with a registry-signing key sitting beside it.
+    let dir = tempfile::tempdir().unwrap();
+    let p = prov::provision(dir.path()).unwrap();
+    let planted = p.keys_dir.join("operator-root.json");
+    fs::write(&planted, br#"{"key_id":"planted","private_key":"00"}"#).unwrap();
+
+    let err = prov::provision(dir.path()).expect_err("a planted root key must be refused");
+    let text = err.to_string();
+    assert!(text.contains("private key material provisioning never wrote"), "{text}");
+    assert!(text.contains("operator-root.json"), "{text}");
+    assert!(planted.is_file(), "refused, not repaired");
+}
+
+#[test]
+fn the_manifest_states_what_became_of_the_operator_root_without_overclaiming() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = prov::provision(dir.path()).unwrap();
+    let manifest = read_json(&p.trust_dir.join(prov::MANIFEST_FILE));
+    let custody = manifest["operator_root_custody"].as_str().unwrap();
+    assert_eq!(custody, prov::OPERATOR_ROOT_CUSTODY);
+    assert!(custody.contains("destroyed"), "{custody}");
+    // And the second half, which matters as much: the anchor did NOT move out of reach.
+    assert!(custody.contains("does NOT make the trust root external"), "{custody}");
+    let posture = fs::read_to_string(p.trust_dir.join(prov::POSTURE_FILE)).unwrap();
+    assert!(posture.contains("OPERATOR-ROOT PRIVATE HALF IS NOT HERE"), "{posture}");
+    assert!(posture.contains("did NOT move the trust anchor"), "{posture}");
+}
+
+#[test]
+fn an_anchor_key_is_admitted_at_mint_time_and_only_when_its_publisher_claims_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let custody = serde_json::json!({
+        "key_id": "brops-anchor-1",
+        "public_key": "ab".repeat(32),
+        "authority": "audit-anchor",
+    });
+    let p = prov::provision_with_anchor(dir.path(), Some(&custody)).unwrap();
+    let registry = read_json(&p.registry_path);
+    let entry = registry["payload"]["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["key_id"] == Value::from("brops-anchor-1"))
+        .expect("the anchor key must be in the registry the operator root signed");
+    assert_eq!(entry["authority_type"], Value::from("audit-anchor"));
+    // Empty and necessarily so: `audit-anchor` binds no registry artifact type, and
+    // `bro_signature._parse_key` refuses ANY grant given to it.
+    assert_eq!(entry["allowed_artifact_types"], Value::from(Vec::<String>::new()));
+    assert_eq!(entry["status"], Value::from("active"));
+    assert_eq!(
+        read_json(&p.trust_dir.join(prov::MANIFEST_FILE))["anchor_key_id"],
+        Value::from("brops-anchor-1")
+    );
+
+    // A record claiming some other authority, or carrying a secret, is refused rather
+    // than credited with an authority its own publisher never claimed.
+    for bad in [
+        serde_json::json!({"key_id": "x", "public_key": "ab".repeat(32),
+                           "authority": "operator-root"}),
+        serde_json::json!({"key_id": "x", "public_key": "ab".repeat(32),
+                           "authority": "audit-anchor", "private_key": "00".repeat(32)}),
+        serde_json::json!({"key_id": "x", "public_key": "nothex", "authority": "audit-anchor"}),
+    ] {
+        let other = tempfile::tempdir().unwrap();
+        assert!(
+            prov::provision_with_anchor(other.path(), Some(&bad)).is_err(),
+            "a custody record {bad} must be refused"
+        );
+        assert!(!other.path().join(prov::TRUST_DIR).exists(), "and nothing left behind");
+    }
 }
 
 #[test]
@@ -443,7 +790,7 @@ fn private_key_material_is_owner_only_on_posix() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let p = prov::provision(dir.path()).unwrap();
-    for authority in prov::AUTHORITY_TYPES {
+    for authority in prov::RETAINED_AUTHORITIES {
         let mode = fs::metadata(p.keys_dir.join(format!("{authority}.json")))
             .unwrap()
             .permissions()

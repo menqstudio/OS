@@ -130,9 +130,12 @@ _BASIS_UNPROVEN = frozenset({ACTOR_RUNTIME_ORIGINATED, ACTOR_ASSIGNEE_LEASE,
 # --------------------------------------------------------------------------- #
 CONTROL_ROOM_ACTORS = {("owner", "owner-gev"), (CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID)}
 
-#: The artifact an OWNER-issued command must present: a `control-room-command` signed by the
-#: operator root and bound to this exact command. Registered in
-#: `bro_signature.ARTIFACT_AUTHORITY` against `operator-root`.
+#: The artifact an OWNER-issued command must present: a `control-room-command` bound to this
+#: exact command, signed by a key under the dedicated `control-room` authority. Registered in
+#: `bro_signature.ARTIFACT_AUTHORITY` against `control-room` — NOT against `operator-root`.
+#: Issuing commands is routine; signing the trusted-key registry is not, and a deployment that
+#: had to keep the registry-signing root online in order to issue a command was holding a key
+#: that can admit any authority it likes. The delegated key signs commands and nothing else.
 CONTROL_ROOM_COMMAND_ARTIFACT = "control-room-command"
 
 #: The command fields an owner attestation must reproduce. Chosen as the smallest set that makes a
@@ -143,7 +146,7 @@ COMMAND_BOUND_FIELDS = ("command_id", "task_id", "command")
 
 #: How an actor identity was established, published on the governance mirror. `ACTOR_PROVEN_BY_SESSION`
 #: is a window; this one is a single command and is therefore the stronger of the two.
-ACTOR_PROVEN_PER_COMMAND = "operator-signed-control-room-command"
+ACTOR_PROVEN_PER_COMMAND = "owner-signed-control-room-command"
 
 #: The credential a conductor-issued command must present. Reusing the artifact the
 #: operator already signs for M-4/O-3 is deliberate: one owner-minted credential, one
@@ -170,12 +173,12 @@ ACTOR_ATTESTATION_MISSING = (
 #: not signed it", and only one of those is actionable by whoever reads the refusal.
 OWNER_ACTOR_UNPROVABLE = (
     "an owner-issued control-room command must present a `control-room-command` artifact signed "
-    "by the operator root and bound to this exact command (command_id, task_id, command). The "
-    "engine can verify one: the artifact type is registered, this module consumes it, and the "
-    "schema carries `artifact_type`/`key_id`/`signature`. What is missing is the artifact itself "
-    "— mint it offline with `broctl sign --artifact control-room-command` and list its key "
-    "`active` in config/trusted-keys.json. Until then the owner's identity is a claim, and a "
-    "claim is refused")
+    "under the `control-room` authority and bound to this exact command (command_id, task_id, "
+    "command). The engine can verify one: the artifact type is registered, this module consumes "
+    "it, and the schema carries `artifact_type`/`key_id`/`signature`. What is missing is the "
+    "artifact itself — mint it with `broctl sign --artifact control-room-command` using a "
+    "`control-room` key and list that key `active` in config/trusted-keys.json. Until then the "
+    "owner's identity is a claim, and a claim is refused")
 
 
 class ControlRoomAPIError(ValueError):

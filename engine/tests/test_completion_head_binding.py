@@ -303,17 +303,19 @@ class RollbackTests(HeadBindingFixture):
         message = self.refusal(self.manifest())
         self.assertIn("cannot establish the evidence high-water mark", message)
         self.assertIn("BRO_EVIDENCE_FLOOR_ANCHOR", message)
-        self.assertIn("operator-root-signed", message)
+        self.assertIn("'evidence-floor' authority", message)
+        self.assertIn("deliberately NOT operator-root", message)
         self.assertIn("none is compiled in", message)
 
     def test_a_presented_floor_anchor_that_cannot_verify_refuses(self):
         # A presented anchor is never a fallback: one this deployment cannot verify is a
         # refusal that says what the owner must mint. `evidence-floor-anchor` is now a
-        # registered artifact type (bro_signature.ARTIFACT_AUTHORITY), so the anchor is
-        # signed here by an authority that may NOT sign it — registering the type gave
-        # nobody a key, and this is what that looks like from the consuming side. The
-        # matching positive path, and the case where the type is registered but no key is
-        # pinned for it, live in test_owner_artifact_registration.py.
+        # registered artifact type (bro_signature.ARTIFACT_AUTHORITY) bound to the
+        # delegated `evidence-floor` authority, so the anchor is signed here by an
+        # authority that may NOT sign it — registering the type gave nobody a key, and
+        # this is what that looks like from the consuming side. The matching positive
+        # path, the operator-root refusal and the case where the type is registered but no
+        # key is pinned for it live in test_owner_artifact_registration.py.
         from bro_completion import CompletionError
         self.advance_to(5)
         shutil.rmtree(self.store / "head-floor")
@@ -329,7 +331,7 @@ class RollbackTests(HeadBindingFixture):
             with self.assertRaises(CompletionError) as caught:
                 self.check(self.manifest())
         message = str(caught.exception)
-        self.assertIn("does not verify as an operator-signed evidence-floor-anchor", message)
+        self.assertIn("does not verify as an owner-signed evidence-floor-anchor", message)
         self.assertIn("none is compiled in", message)
 
     def test_a_second_signed_head_at_the_same_sequence_is_refused(self):

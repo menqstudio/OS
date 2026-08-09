@@ -49,15 +49,26 @@ sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from bro_signature import (ARTIFACT_AUTHORITY, AUTHORITY_TYPES, OPERATOR, SignatureError,
-                           _parse_key, load_trusted_keys, verify_artifact)
+from bro_signature import (ARTIFACT_AUTHORITY, AUTHORITY_TYPES, CONTROL_ROOM, EVIDENCE_FLOOR,
+                           OPERATOR, SignatureError, _parse_key, load_trusted_keys,
+                           verify_artifact)
 from broctl import build_registry, generate_key, sign_payload
 from _operator_pin import use_operator_pin
 
-# The two types this change registers.
+# The two types this change registers, each against its OWN delegated authority.
+#
+# They started life bound to `operator-root`, which is what forced a deployment that wanted
+# to use either of them to keep the registry-signing root online. On the desktop shape that
+# root sat in the app's own trust directory, and holding it is holding the ability to admit
+# an `audit-anchor` key of one's own choosing — i.e. the ability to re-sign the record of
+# what one did. The delegation is what lets the root be destroyed at the end of provisioning
+# while the two routine powers survive.
 CONTROL_ROOM_COMMAND = "control-room-command"
 EVIDENCE_FLOOR_ANCHOR = "evidence-floor-anchor"
 NEW_TYPES = (CONTROL_ROOM_COMMAND, EVIDENCE_FLOOR_ANCHOR)
+#: artifact type -> the ONE authority that may sign it.
+DELEGATED_AUTHORITY = {CONTROL_ROOM_COMMAND: CONTROL_ROOM,
+                       EVIDENCE_FLOOR_ANCHOR: EVIDENCE_FLOOR}
 
 ENV_FLOOR_ANCHOR = "BRO_EVIDENCE_FLOOR_ANCHOR"
 
@@ -80,24 +91,57 @@ class RegistryMayNameTheOwnerTypesTests(unittest.TestCase):
             "issued_by": "dev-operator-root",
         }
 
-    def test_each_type_is_bound_to_the_operator_root_authority(self) -> None:
-        for artifact in NEW_TYPES:
+    def test_each_type_is_bound_to_its_own_delegated_authority(self) -> None:
+        """One authority per artifact, and neither of them the trust root.
+
+        The second assertion is the load-bearing one. If either type drifted back onto
+        `operator-root`, a deployment would have to hold the registry-signing key online to
+        use it, and `brops_provision` could not destroy the root at the end of the mint.
+        """
+        for artifact, authority in DELEGATED_AUTHORITY.items():
             with self.subTest(artifact=artifact):
-                self.assertEqual(ARTIFACT_AUTHORITY.get(artifact), OPERATOR)
+                self.assertEqual(ARTIFACT_AUTHORITY.get(artifact), authority)
+                self.assertNotEqual(ARTIFACT_AUTHORITY.get(artifact), OPERATOR)
+        # And they are not the SAME authority: one key that could do both would be
+        # strictly more powerful than either delegation.
+        self.assertNotEqual(DELEGATED_AUTHORITY[CONTROL_ROOM_COMMAND],
+                            DELEGATED_AUTHORITY[EVIDENCE_FLOOR_ANCHOR])
 
     def test_an_operator_registry_entry_may_name_each_type(self) -> None:
         """This is the wall that made both closures impossible: before the registration,
         `_parse_key` raised `unknown artifact type` and the whole registry failed to load,
         so the owner could not be given a key even offline."""
-        for artifact in NEW_TYPES:
+        for artifact, authority in DELEGATED_AUTHORITY.items():
             with self.subTest(artifact=artifact):
-                key = _parse_key(self.entry(OPERATOR, [artifact]))
+                key = _parse_key(self.entry(authority, [artifact]))
                 self.assertIn(artifact, key.allowed_artifact_types)
 
     def test_no_other_authority_may_be_granted_either_type(self) -> None:
-        for artifact in NEW_TYPES:
-            for authority in sorted(AUTHORITY_TYPES - {OPERATOR}):
+        """The delegation did not become a blanket grant — in BOTH directions.
+
+        `operator-root` is deliberately inside this loop now. The root may sign the registry
+        that introduces these keys and may not sign what they sign, so a store that has
+        destroyed its root has lost nothing these two types need, and a store that still has
+        one cannot use it to shortcut them.
+        """
+        for artifact, allowed in DELEGATED_AUTHORITY.items():
+            for authority in sorted(AUTHORITY_TYPES - {allowed}):
                 with self.subTest(artifact=artifact, authority=authority):
+                    with self.assertRaises(SignatureError) as caught:
+                        _parse_key(self.entry(authority, [artifact]))
+                    self.assertIn("may not", str(caught.exception))
+
+    def test_neither_delegated_authority_may_sign_a_registry_or_a_session(self) -> None:
+        """What the delegation must NOT carry with it.
+
+        A `control-room` or `evidence-floor` key that could sign a `trusted-key-registry`
+        would be the operator root under a different name, and destroying the root would
+        buy nothing at all.
+        """
+        for authority in (CONTROL_ROOM, EVIDENCE_FLOOR):
+            for artifact in ("trusted-key-registry", "conductor-session",
+                             "workspace-binding", "protected-authority"):
+                with self.subTest(authority=authority, artifact=artifact):
                     with self.assertRaises(SignatureError) as caught:
                         _parse_key(self.entry(authority, [artifact]))
                     self.assertIn("may not", str(caught.exception))
@@ -128,13 +172,17 @@ class RegistryMayNameTheOwnerTypesTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         base = pathlib.Path(temp.name)
         operator = generate_key(OPERATOR, "dev-operator-root", False)
+        delegates = [generate_key(a, f"dev-{a}", False)
+                     for a in (CONTROL_ROOM, EVIDENCE_FLOOR)]
         use_operator_pin(self, operator["public_key"])
-        registry = build_registry([operator], int(time.time()) - 60, 86_400)
-        # Strip the two grants back out: a deployment that has registered the types but
-        # has not yet minted or pinned a key for them.
-        for entry in registry["payload"]["keys"]:
-            entry["allowed_artifact_types"] = [
-                a for a in entry["allowed_artifact_types"] if a not in NEW_TYPES]
+        registry = build_registry([operator, *delegates], int(time.time()) - 60, 86_400)
+        # Strip the two grants back out: a deployment that has registered the types AND
+        # minted the delegated keys, but whose operator has not yet granted them anything.
+        # `_parse_key` allows an empty grant for the out-of-registry authorities alone, so
+        # the delegates are dropped entirely rather than left allowing nothing.
+        registry["payload"]["keys"] = [
+            entry for entry in registry["payload"]["keys"]
+            if not set(entry["allowed_artifact_types"]) & set(NEW_TYPES)]
         resigned = sign_payload(operator["private_key"], registry["payload"])
         (base / "config").mkdir(parents=True)
         (base / "config" / "trusted-keys.json").write_text(json.dumps(resigned),
@@ -165,6 +213,26 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
     deployment can present a signed anchor.
     """
 
+    def setUp(self) -> None:
+        super().setUp()
+        # The delegated authority the anchor is now bound to. `EvidenceFixture` mints one
+        # key per registry authority it knows about and does not know about this one, so it
+        # is minted here and the fixture registry is re-signed to carry it. The operator
+        # root still signs that registry — it simply may no longer sign a floor anchor,
+        # which `test_the_operator_root_that_signs_the_registry_may_not_sign_an_anchor`
+        # exercises against this very fixture.
+        self.keys[EVIDENCE_FLOOR] = generate_key(EVIDENCE_FLOOR, f"dev-{EVIDENCE_FLOOR}",
+                                                 False)
+        self.resign_registry(list(self.keys.values()))
+
+    def resign_registry(self, keys: list[dict]) -> None:
+        path = self.repo / "config" / "trusted-keys.json"
+        path.write_text(
+            json.dumps(build_registry(keys, int(time.time()) - 60, 365 * 24 * 60 * 60)),
+            encoding="utf-8")
+        from bro_signature import load_trusted_keys as _load
+        self.live_keys = _load(self.repo)
+
     def wipe_floor(self) -> None:
         self.advance_to(5)
         shutil.rmtree(self.store / "head-floor")
@@ -175,7 +243,7 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
         self.reseal_head(head_sequence)
         self.check(self.manifest())
 
-    def anchor(self, *, authority: str = "operator-root", tamper: bool = False,
+    def anchor(self, *, authority: str = EVIDENCE_FLOOR, tamper: bool = False,
                **overrides) -> pathlib.Path:
         payload = {
             "artifact_type": EVIDENCE_FLOOR_ANCHOR,
@@ -209,16 +277,9 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
         is pinned for it. The operator key here is the deployment's real, external,
         registry-signing root — and it still cannot sign a floor anchor.
         """
-        path = self.repo / "config" / "trusted-keys.json"
-        payload = json.loads(path.read_text(encoding="utf-8"))["payload"]
-        for entry in payload["keys"]:
-            entry["allowed_artifact_types"] = [
-                a for a in entry["allowed_artifact_types"] if a not in NEW_TYPES]
-        path.write_text(
-            json.dumps(sign_payload(self.keys["operator-root"]["private_key"], payload)),
-            encoding="utf-8")
-        from bro_signature import load_trusted_keys as _load
-        self.live_keys = _load(self.repo)
+        self.resign_registry([k for k in self.keys.values()
+                              if k["authority_type"] not in
+                              (CONTROL_ROOM, EVIDENCE_FLOOR)])
 
     # ---- the refusals -----------------------------------------------------------------
 
@@ -236,30 +297,44 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
     def test_registered_but_unpinned_the_anchor_is_still_refused(self) -> None:
         """THE hard-rule case: type registered, no key granted it. Must still fail closed.
 
-        The document is genuinely signed, by the deployment's own operator-root key, and
-        that key anchors the registry itself. It is refused anyway, because authority to
-        sign an artifact comes from the per-key grant in the operator-signed registry —
-        which no one has issued.
+        The signature is genuine and the key really was minted under the right authority;
+        it is simply not in the registry the deployment reads. Authority to sign an
+        artifact comes from the per-key grant in the operator-signed registry, and nobody
+        has issued one.
         """
         self.wipe_floor()
         self.restrict_registry()
         message = self.refuse(self.anchor())
-        self.assertIn("does not verify as an operator-signed evidence-floor-anchor", message)
-        self.assertIn("may not sign", message)
+        self.assertIn("does not verify as an owner-signed evidence-floor-anchor", message)
+        self.assertIn("unknown signing key", message)
         self.assertIn("none is compiled in", message)
 
-    def test_an_anchor_from_a_non_operator_authority_is_refused(self) -> None:
-        for authority in ("builder", "evidence-recorder", "issuer", "verifier", "release"):
+    def test_the_operator_root_that_signs_the_registry_may_not_sign_an_anchor(self) -> None:
+        """The delegation, in the direction that decides whether it was worth doing.
+
+        `operator-root` is present, active, and is the very key this registry is signed
+        with — the strongest key the deployment has. It is refused BY AUTHORITY, which is
+        what makes destroying it at the end of provisioning cost the floor anchor nothing.
+        """
+        self.wipe_floor()
+        message = self.refuse(self.anchor(authority="operator-root"))
+        self.assertIn("does not verify as an owner-signed", message)
+        self.assertIn("(operator-root) may not sign evidence-floor-anchor", message)
+
+    def test_an_anchor_from_any_other_authority_is_refused(self) -> None:
+        for authority in ("builder", "evidence-recorder", "issuer", "verifier", "release",
+                          "operator-root"):
             with self.subTest(authority=authority):
                 self.setUp()
                 self.wipe_floor()
                 message = self.refuse(self.anchor(authority=authority))
-                self.assertIn("does not verify as an operator-signed", message)
+                self.assertIn("does not verify as an owner-signed", message)
+                self.assertIn(f"({authority}) may not sign", message)
 
     def test_a_tampered_anchor_is_refused(self) -> None:
         self.wipe_floor()
         message = self.refuse(self.anchor(tamper=True))
-        self.assertIn("does not verify as an operator-signed", message)
+        self.assertIn("does not verify as an owner-signed", message)
 
     def test_an_anchor_for_another_task_is_refused(self) -> None:
         self.wipe_floor()
@@ -284,11 +359,11 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
     def test_an_artifact_of_another_type_may_not_stand_in(self) -> None:
         self.wipe_floor()
         message = self.refuse(self.anchor(artifact_type="workspace-binding"))
-        self.assertIn("does not verify as an operator-signed", message)
+        self.assertIn("does not verify as an owner-signed", message)
 
     # ---- the closure the registration makes possible -----------------------------------
 
-    def test_a_genuinely_operator_signed_anchor_establishes_the_mark(self) -> None:
+    def test_a_genuinely_delegated_signed_anchor_establishes_the_mark(self) -> None:
         """The point of the registration: with a real key granted the type and a real
         signature over the payload, the owner can now close the wiped-floor case. Before
         the type existed this was unreachable — the registry naming it would not load."""
@@ -348,7 +423,7 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
         base = pathlib.Path(self.temp.name)
         self.now = int(time.time())
         self.keys = {authority: generate_key(authority, f"dev-{authority}", False)
-                     for authority in (OPERATOR, "builder")}
+                     for authority in (OPERATOR, "builder", CONTROL_ROOM)}
         use_operator_pin(self, self.keys[OPERATOR]["public_key"])
         (base / "registry" / "config").mkdir(parents=True)
         (base / "registry" / "config" / "trusted-keys.json").write_text(
@@ -371,12 +446,13 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
         })
         return body
 
-    def signed_command_artifact(self, command: dict) -> dict:
-        """A flawless `control-room-command`: real Ed25519, operator-root key, granted
+    def signed_command_artifact(self, command: dict,
+                                authority: str = CONTROL_ROOM) -> dict:
+        """A flawless `control-room-command`: real Ed25519, a `control-room` key granted
         the type by the operator-signed registry, bound to this exact command."""
         payload = {
             "artifact_type": CONTROL_ROOM_COMMAND,
-            "key_id": self.keys[OPERATOR]["key_id"],
+            "key_id": self.keys[authority]["key_id"],
             "role": "owner",
             "agent_id": "owner-gev",
             "session_id": "s-owner",
@@ -386,7 +462,7 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
             "issued_at_epoch": self.now - 10,
             "expires_at_epoch": self.now + 3600,
         }
-        return sign_payload(self.keys[OPERATOR]["private_key"], payload)
+        return sign_payload(self.keys[authority]["private_key"], payload)
 
     def test_the_registry_can_now_grant_the_type(self) -> None:
         # Precondition for the test below: the artifact really is verifiable here, so the

@@ -94,8 +94,12 @@ fn stand_up(tag: &str) -> Fixture {
     std::fs::create_dir_all(&app_data).unwrap();
     std::fs::create_dir_all(&work).unwrap();
 
-    let provisioned = brops_provision::provision(&app_data).expect("provisioning");
-
+    // THE ORDER HERE IS THE PRODUCTION ORDER, and it has to be. The signer mints its seed
+    // first, under its own account; only then does the app provision, admitting the published
+    // PUBLIC half while the registry is being signed. There is no later step: `mint` destroys
+    // the operator root before it returns, so the registry is sealed from that moment and no
+    // key can be added to it afterwards by anybody — including this fixture.
+    //
     // The service's own account, as far as this unelevated session can get: the key is minted by
     // THIS process, in a directory of its own, exactly as the service would on first start.
     let me = spec::winimpl::current_user_sid().expect("own SID");
@@ -105,13 +109,18 @@ fn stand_up(tag: &str) -> Fixture {
 
     // The seed never leaves the service: what provisioning is handed is the published record.
     let published = custody::read_custody(&signer_dir).expect("custody record");
-    let registered =
-        register::register_anchor_key(&provisioned.trust_dir, &published).expect("register");
-    assert_eq!(registered, key_id);
+    let provisioned =
+        brops_provision::provision_with_anchor(&app_data, Some(&published)).expect("provisioning");
 
-    // The store must still verify after the amendment, through the SAME code a later launch runs.
+    // `register_anchor_key` can no longer register anything; it CONFIRMS. Running it here
+    // proves the confirmation agrees with what provisioning actually wrote.
+    let confirmed =
+        register::register_anchor_key(&provisioned.trust_dir, &published).expect("confirm");
+    assert_eq!(confirmed, key_id);
+
+    // The store must verify through the SAME code a later launch runs.
     brops_provision::verify_existing(&provisioned.trust_dir)
-        .expect("the amended trust store must still verify");
+        .expect("the provisioned trust store must verify");
 
     let state_path = signer_dir.join(spec::STATE_FILE_NAME);
     let core = AnchorCore::new(held, &me, &me, &state_path).expect("core");
@@ -123,6 +132,79 @@ fn stand_up(tag: &str) -> Fixture {
     std::thread::spawn(move || brops_audit_signer::win::serve(&served, &peer, leaked));
 
     Fixture { _temp: temp, trust_dir: provisioned.trust_dir, work, pipe, key_id }
+}
+
+/// `register_anchor_key` is a CONFIRMATION now, and a confirmation that only checked the key id
+/// would report success for a key `bro_audit_log` is going to refuse.
+///
+/// Each of these guards was found untested by mutation: breaking the authority check and breaking
+/// the public-key check both left the suite green, because every other test presents a custody
+/// record that agrees with the registry in every field. They are exercised here directly.
+#[test]
+fn confirming_the_anchor_key_checks_more_than_the_key_id() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let app_data = temp.path().join("app");
+    let signer_dir = temp.path().join("signer");
+    std::fs::create_dir_all(&app_data).unwrap();
+
+    let me = spec::winimpl::current_user_sid().expect("own SID");
+    custody::load_or_mint(&signer_dir, &me).expect("mint the anchor key");
+    let published = custody::read_custody(&signer_dir).expect("custody record");
+    let provisioned =
+        brops_provision::provision_with_anchor(&app_data, Some(&published)).expect("provisioning");
+    let trust = &provisioned.trust_dir;
+
+    // The honest positive first, so every refusal below is about the field it varies.
+    register::register_anchor_key(trust, &published).expect("the genuine record confirms");
+
+    // A record naming the right id against a DIFFERENT public half. The registry entry is
+    // untouched and real; what is wrong is that the signer this record describes is not the
+    // signer the registry trusts, so its anchors would not verify.
+    let mut wrong_key = published.clone();
+    wrong_key["public_key"] = serde_json::json!("cd".repeat(32));
+    let err = register::register_anchor_key(trust, &wrong_key)
+        .expect_err("a record whose public half disagrees with the registry must be refused");
+    assert!(err.to_string().contains("DIFFERENT public key"), "{err}");
+
+    // A record claiming an authority its own publisher did not: refused before anything is
+    // looked up, so a custody file that had been edited cannot borrow the anchor's standing.
+    let mut wrong_authority = published.clone();
+    wrong_authority["authority"] = serde_json::json!("operator-root");
+    let err = register::register_anchor_key(trust, &wrong_authority)
+        .expect_err("a record claiming another authority must be refused");
+    assert!(err.to_string().contains("does not claim the audit-anchor authority"), "{err}");
+
+    // And the registry naming the key under an authority that cannot anchor. Reached by
+    // rewriting the registry entry — which no longer verifies, but this function's job is to
+    // answer "is the anchor resolvable", and a yes here for a non-anchor authority would be a
+    // green light for a ledger `bro_audit_log` will refuse.
+    let registry_path = trust
+        .join(brops_provision::REGISTRY_ROOT_DIR)
+        .join("config")
+        .join("trusted-keys.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&registry_path).unwrap()).unwrap();
+    for entry in document["payload"]["keys"].as_array_mut().unwrap() {
+        if entry["key_id"] == published["key_id"] {
+            entry["authority_type"] = serde_json::json!("evidence-recorder");
+        }
+    }
+    std::fs::write(&registry_path, serde_json::to_vec(&document).unwrap()).unwrap();
+    let err = register::register_anchor_key(trust, &published)
+        .expect_err("a key registered under a non-anchor authority must be refused");
+    assert!(err.to_string().contains("an authority that cannot anchor"), "{err}");
+
+    // A store whose registry never carried the key at all: refused, naming the remedy rather
+    // than quietly amending — there is no key left that could amend it.
+    let bare = temp.path().join("bare");
+    std::fs::create_dir_all(&bare).unwrap();
+    let bare_store = brops_provision::provision(&bare).expect("provisioning without an anchor");
+    let err = register::register_anchor_key(&bare_store.trust_dir, &published)
+        .expect_err("a store with no anchor key must be refused");
+    let text = err.to_string();
+    assert!(text.contains("does not carry the audit signer's key"), "{text}");
+    assert!(text.contains("cannot be amended"), "{text}");
+    assert!(text.contains("BEFORE the app's first launch"), "{text}");
 }
 
 fn run_case(fixture: &Fixture, case: &str) -> (bool, String, String) {
@@ -277,35 +359,82 @@ fn an_anchor_signed_by_any_key_the_app_holds_is_refused_by_the_real_verifier() {
     );
 }
 
-/// The gap that is **still open**, asserted rather than left to a comment.
+/// **The inverse of the test this replaces.**
 ///
-/// Narrowing `ANCHOR_AUTHORITIES` closed the direct route. It does not close the indirect one:
-/// `provision()` leaves the `operator-root` private half in the app's own trust directory, and
-/// that key is what the trusted-key registry is *signed with*. The app can therefore mint its own
-/// keypair, register it under `audit-anchor`, re-sign the registry, raise the anti-rollback floor
-/// it also owns, and anchor any head it likes. The Python case does exactly that against the real
-/// `bro_audit_log` and the real provisioned store.
+/// `the_operator_root_the_app_still_holds_can_register_its_own_anchor_key` asserted a defect that
+/// was open: `provision()` left the `operator-root` private half in the app's own trust directory,
+/// that key is what the trusted-key registry is *signed with*, and the app could therefore mint an
+/// `audit-anchor` keypair of its own, admit it, re-sign the registry, raise the anti-rollback
+/// floor it also owns, and anchor any head it liked. Its own doc said it should go RED "the day
+/// the app stops holding the operator root". That day is this change: `brops_provision::mint`
+/// generates the root in memory, signs the registry and the conductor session with it, and drops
+/// it before returning.
 ///
-/// **This test asserts a DEFECT that is open today**, for the same reason its predecessor did: a
-/// tree that stays quiet about a route it knows is open is the failure this whole item exists to
-/// end. It goes RED — with the Python side printing `O2-RESIDUAL-GONE` — the day the app stops
-/// holding the operator root, or the day the anchor key is bound by something outside the
-/// registry. Replace it with its inverse then, and not before.
+/// So the case asserts the closure, run rather than argued, exactly the way its predecessor ran
+/// the attack:
 ///
-/// It is NOT closeable inside this crate. `bro_audit_log`'s trust root is the registry; on a
-/// deployment that provisions its own trust material the registry's signer is the ledger's
-/// writer, and no hardcoded authority list can separate a principal from itself.
+/// * the app's whole data directory is enumerated on the FILESYSTEM and every 32-byte window and
+///   64-character hex run in every file is tried as an Ed25519 seed — the operator root's private
+///   half is nowhere, and the same search finds every key that IS there, so a null result is not
+///   the search being broken;
+/// * the attack is then attempted anyway with each private half the app DOES hold: re-sign the
+///   registry, add a rogue `audit-anchor` key, raise the floor, fix the manifest. The real
+///   `bro_signature.load_trusted_keys` must refuse every one of them at the external pin;
+/// * and the positive control still passes in the same run.
 #[test]
-fn the_operator_root_the_app_still_holds_can_register_its_own_anchor_key() {
+fn the_registry_can_no_longer_be_re_signed_because_the_root_no_longer_exists() {
     let fixture = stand_up("residual");
     let (success, stdout, stderr) = run_case(&fixture, "registry-resign");
-    assert!(success, "the residual-route case did not complete:\n{stdout}\n{stderr}");
+    assert!(success, "the registry-resign case did not complete:\n{stdout}\n{stderr}");
     assert!(
-        stdout.contains("O2-RESIDUAL-OPERATOR-ROOT"),
-        "re-signing the registry with the app's own operator root no longer produces an \
-         accepted anchor. If provision() has stopped leaving the operator-root private half in \
-         the app's trust directory, or the anchor key is now bound outside the registry, then \
-         O-2 is closed end to end and this test must be replaced by its inverse:\n{stdout}"
+        stdout.contains("O2-RESIDUAL-GONE"),
+        "re-signing the registry still buys an accepted anchor. If provision() has started \
+         leaving an operator-root private half in the app's trust directory again, the whole \
+         round is undone:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("O2-RESIDUAL-OPERATOR-ROOT"),
+        "the old defect marker came back:\n{stdout}"
+    );
+}
+
+/// The gap that is **still open**, asserted rather than left to a comment — and it is not the one
+/// destroying the root closed.
+///
+/// `bro_audit_log` resolves an anchor's key through the trusted-key registry; the registry is
+/// authenticated by the out-of-registry operator pin; and the pin is
+/// `<app_data>/trust/pin/operator-root.pub` — a file in the app's own data directory, honoured
+/// because this deployment sets `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`, having no second
+/// principal to offer. An account that can rewrite that file does not need the destroyed key at
+/// all: it generates an operator root of its own, pins it, re-signs the registry under it with an
+/// `audit-anchor` entry of its choosing, raises the floor it also owns, and anchors anything.
+///
+/// The Python case does exactly that, against the real `bro_audit_log`, on a store from which
+/// EVERY private half has first been deleted — a strictly stronger starting point than destroying
+/// only the root, so the result cannot be attributed to a key that was left behind.
+///
+/// **This test asserts a DEFECT that is open today**, for the same reason its predecessor did: a
+/// tree that stays quiet about a route it knows is open is the failure this item exists to end.
+/// It goes RED — with the Python side printing `O2-PIN-CUSTODY-CLOSED` — the day the operator pin
+/// (or the anchor key's identity) lives somewhere the app's account cannot write: the audit
+/// signer's `%ProgramData%\BroPS\audit-signer` directory is the one such place this design already
+/// creates, and putting the anchor's binding there is what would close it. Replace this with its
+/// inverse then, and not before.
+///
+/// It is NOT closeable by removing more keys. Every file the verifier reads to decide whether an
+/// anchor is genuine — registry, pin, floor, manifest — is writable by the account being policed.
+/// Only a second principal changes that, and creating one needs the elevation this session does
+/// not have (see [`registration_applies_the_plan_for_real_or_says_why_it_could_not`]).
+#[test]
+fn rewriting_the_operator_pin_still_installs_a_root_of_the_apps_own_choosing() {
+    let fixture = stand_up("pinroute");
+    let (success, stdout, stderr) = run_case(&fixture, "pin-rewrite");
+    assert!(success, "the pin-rewrite case did not complete:\n{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("O2-RESIDUAL-PIN-REWRITE"),
+        "rewriting the operator pin no longer produces an accepted anchor. If the pin (or the \
+         anchor key's identity) is now held by a principal the app cannot write, then O-2 is \
+         closed end to end on this shape and this test must be replaced by its inverse:\n{stdout}"
     );
 }
 

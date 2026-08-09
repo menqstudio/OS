@@ -19,10 +19,15 @@ Cases:
   forgery    the ledger's own writer signs the truncated head with EVERY private key
              it holds ITSELF, out of the app's trust store, and installs each by hand.
              The real verify() must REFUSE every one of them, naming the authority.
-  registry-resign  the residual route, run for real: the app re-signs the trusted-key
-             registry with the operator-root private half provision() leaves it,
-             introduces an audit-anchor key of its own, and anchors the truncation
-             with that. Reports what the real verify() does.
+  registry-resign  the route that IS closed, run for real: the app's whole data
+             directory is enumerated for the operator-root private half, and the
+             registry re-signing attack is then attempted with every private half the
+             app does hold. Every one must be refused at the external pin.
+  pin-rewrite  the route that is NOT closed, run for real: every private half is
+             deleted, an operator root of the app's own is generated and written over
+             pin/operator-root.pub, the registry is re-signed under it with a rogue
+             audit-anchor key, and the truncation is anchored with that. Reports what
+             the real verify() does.
 
 The last argument is `brops_provision::audit_signer::ANCHOR_AUTHORITIES`, comma
 separated. It is a mirror of a hardcoded Python tuple, so every case asserts the two
@@ -330,20 +335,180 @@ def case_forgery(bro_audit_log, keys, ledger, signer_argv, key_id, trust, canoni
     return 0
 
 
+def _hex_runs(text: str):
+    """Every 64-character run of hex digits in `text`."""
+    for start in range(0, max(0, len(text) - 63)):
+        run = text[start:start + 64]
+        if all(c in "0123456789abcdefABCDEF" for c in run):
+            yield run.lower()
+
+
+def _find_seed_for(root: pathlib.Path, public_key_hex: str):
+    """The file under `root` holding a 32-byte seed that derives `public_key_hex`, or None.
+
+    Asked of the FILESYSTEM, not of the code that writes it. Every file is read whole and
+    every 32-byte window and every 64-character hex run in it is tried as an Ed25519 seed,
+    so a seed that moved to a temp file, a log line, a staging directory or a differently
+    named key file is still found. A check that looked for `keys/operator-root.json` would
+    pass the day the material moved.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    def derives(seed: bytes) -> bool:
+        try:
+            private = Ed25519PrivateKey.from_private_bytes(seed)
+        except Exception:  # noqa: BLE001 - any 32 bytes are a valid seed; be defensive anyway
+            return False
+        return private.public_key().public_bytes_raw().hex() == public_key_hex
+
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        for offset in range(0, max(0, len(raw) - 31)):
+            if derives(raw[offset:offset + 32]):
+                return path
+        for run in _hex_runs(raw.decode("utf-8", "replace")):
+            if derives(bytes.fromhex(run)):
+                return path
+    return None
+
+
 def case_registry_resign(bro_audit_log, keys, ledger, signer_argv, key_id, trust,
                          canonical_bytes) -> int:
-    """The route narrowing the authority does NOT close, run for real rather than argued.
+    """The route that IS closed now, proved the way the old case proved it was open.
 
     `verify_signed_payload` resolves the anchor's key through
     `bro_signature.load_trusted_keys`, i.e. through the operator-signed trusted-key
-    registry. `provision()` leaves the `operator-root` PRIVATE half in the app's own trust
-    directory, and that key is what the registry is signed with. So the app can mint a
-    keypair, register it under `audit-anchor`, re-sign the registry, raise the
-    anti-rollback floor it also owns, and anchor whatever head it likes.
+    registry. This case used to re-sign that registry with the `operator-root` PRIVATE half
+    `provision()` left in the app's own trust directory, admit an `audit-anchor` key of its
+    own, raise the anti-rollback floor, and anchor a truncation - and it printed
+    `O2-RESIDUAL-OPERATOR-ROOT` when the real `verify()` accepted the result.
 
-    Nothing in `bro_audit_log` can reach this: the module's trust root is the registry, and
-    on a self-provisioned deployment the registry's signer is the ledger's writer. It is
-    closed only by an operator root the app does not hold.
+    `brops_provision::mint` now generates the root in memory, signs the registry and the
+    conductor session with it, and drops it before returning. So:
+
+    1. the private half is looked for across the WHOLE application data directory, by
+       deriving a public key from every 32-byte window and every hex run in every file;
+    2. the same search is run for a key that IS retained, as the control - a null result
+       from a search that finds nothing at all would prove nothing;
+    3. the attack is attempted anyway, once per private half the app still holds. The real
+       `load_trusted_keys` must refuse every re-signed registry at the external pin.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from bro_signature import SignatureError, load_trusted_keys
+
+    os.environ[bro_audit_log.SIGNER_ENV] = signer_argv
+    os.environ[bro_audit_log.SIGNER_KEY_ID_ENV] = key_id
+    for i in range(3):
+        bro_audit_log.append(ledger, "note", {"index": str(i)})
+    ok("a three-record ledger is anchored at count 3 by the second principal")
+
+    app_data = trust.parent
+    operator_public = (trust / "pin" / "operator-root.pub").read_text(
+        encoding="utf-8").strip()
+
+    print("== the control: the search DOES find a private half that is really there ==")
+    held = []
+    for path in sorted((trust / "keys").glob("*.json")):
+        entry = json.loads(path.read_text(encoding="utf-8"))
+        if entry.get("private_key"):
+            held.append((path, entry))
+    require(bool(held), f"there are retained private halves to enumerate in {trust / 'keys'}")
+    print(f"  NOTE  private halves the app still holds: "
+          f"{ {p.name: e['authority_type'] for p, e in held} }")
+    require(_find_seed_for(app_data, held[0][1]["public_key"]) is not None,
+            "a seed the store really holds IS found by this search, so a null result for "
+            "the operator root below is about the operator root and not about the search")
+
+    print("== and it finds NO operator-root private half anywhere under the app data dir ==")
+    require(not (trust / "keys" / "operator-root.json").exists(),
+            "there is no keys/operator-root.json")
+    where = _find_seed_for(app_data, operator_public)
+    require(where is None,
+            f"NO file under {app_data} carries a 32-byte seed deriving the PINNED "
+            f"operator-root public key - searched every file, every byte offset and every "
+            f"hex run (found {where})")
+
+    print("== the attack, attempted anyway with every private half the app DOES hold ==")
+    registry_path = trust / "registry" / "config" / "trusted-keys.json"
+    original = registry_path.read_text(encoding="utf-8")
+    floor_path = trust / "pin" / "registry-min"
+    original_floor = floor_path.read_text(encoding="utf-8")
+    for path, entry in held:
+        rogue = Ed25519PrivateKey.generate()
+        payload = json.loads(original)["payload"]
+        payload["registry_version"] = int(payload.get("registry_version", 1)) + 1
+        payload["keys"] = sorted(payload["keys"] + [{
+            "key_id": f"audit-anchor-rogue-{path.stem}",
+            "public_key": rogue.public_key().public_bytes_raw().hex(),
+            "authority_type": "audit-anchor",
+            "allowed_artifact_types": [],
+            "not_before_epoch": 0,
+            "not_after_epoch": 253_402_300_799,
+            "status": "active",
+            "issued_by": entry["key_id"],
+        }], key=lambda e: e["key_id"])
+        signer = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(entry["private_key"]))
+        registry_path.write_text(json.dumps(
+            {"payload": payload, "signature": signer.sign(canonical_bytes(payload)).hex()},
+            sort_keys=True), encoding="utf-8")
+        floor_path.write_text(f"{payload['registry_version']}\n", encoding="utf-8")
+        try:
+            load_trusted_keys()
+        except SignatureError as exc:
+            # The pinned operator public key is untouched, so the refusal is the Ed25519
+            # check itself failing: this key is not the one the registry is anchored to.
+            # (Changing `operator_public_key` as well moves the refusal one step earlier,
+            # to "does not match the external operator pin" - either is the pin refusing,
+            # and neither is reachable without the destroyed private half.)
+            require("signature does not match payload" in str(exc)
+                    or "external operator pin" in str(exc),
+                    f"[{path.name}] the re-signed registry is REFUSED against the external "
+                    f"pin: {exc}")
+            registry_path.write_text(original, encoding="utf-8")
+            floor_path.write_text(original_floor, encoding="utf-8")
+            continue
+        registry_path.write_text(original, encoding="utf-8")
+        floor_path.write_text(original_floor, encoding="utf-8")
+        fail(f"[{path.name}] load_trusted_keys ACCEPTED a registry re-signed with a private "
+             f"half the app holds. O-2 IS NOT CLOSED.")
+
+    print("== the positive control: the service's key still anchors a fresh ledger ==")
+    control = ledger.with_name("positive-control.jsonl")
+    bro_audit_log.append(control, "note", {"index": "after"})
+    require(bro_audit_log.verify(control, keys=keys) == 1,
+            "an anchor from the signer service is still accepted, so the refusals above are "
+            "about the missing root and not about everything being refused now")
+
+    print("\nO2-RESIDUAL-GONE: no operator-root private half exists on disk, and no key the "
+          "app holds can re-sign the trusted-key registry. The registry is sealed.")
+    print(f"\nGREEN: {len(CHECKS)} checks passed against the real bro_audit_log.")
+    return 0
+
+
+def case_pin_rewrite(bro_audit_log, keys, ledger, signer_argv, key_id, trust,
+                     canonical_bytes) -> int:
+    """The route destroying the operator root does NOT close, run for real rather than argued.
+
+    `load_trusted_keys` authenticates the registry against an operator public key pinned
+    from OUTSIDE it - `BRO_OPERATOR_ROOT_PUBKEY_FILE`. On this deployment that file is
+    `<app_data>/trust/pin/operator-root.pub`, in the app's own data directory, honoured
+    because `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` says this machine has no second
+    principal to offer. An account that can rewrite it does not need the destroyed key at
+    all: it generates a root of its own, pins it, re-signs the registry under it with an
+    `audit-anchor` entry of its choosing, raises the floor it also owns, and anchors
+    whatever head it likes.
+
+    To make the result impossible to attribute to a key that was left behind, EVERY private
+    half in the store is deleted first - a strictly stronger starting point than the
+    destruction under test.
+
+    Nothing in `bro_audit_log`, `bro_signature` or `brops_provision` can reach this. Every
+    file the verifier reads to decide whether an anchor is genuine - registry, pin,
+    anti-rollback floor, provisioning manifest - is writable by the account being policed.
+    Only a second principal holding the pin changes that.
     """
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -355,71 +520,90 @@ def case_registry_resign(bro_audit_log, keys, ledger, signer_argv, key_id, trust
         bro_audit_log.append(ledger, "note", {"index": str(i)})
     ok("a three-record ledger is anchored at count 3 by the second principal")
 
-    operator_file = trust / "keys" / "operator-root.json"
-    require(operator_file.is_file(),
-            "provision() left the operator-root PRIVATE half in the app's own trust store")
-    operator = json.loads(operator_file.read_text(encoding="utf-8"))
-    require(bool(operator.get("private_key")),
-            "and it really is the private half, not a published record")
+    removed = []
+    for path in sorted((trust / "keys").glob("*.json")):
+        path.unlink()
+        removed.append(path.name)
+    require(bool(removed),
+            f"every private half in the store is deleted first ({removed}) - so nothing "
+            "below can be blamed on a key the destruction failed to remove")
 
-    # Mint the attacker's own anchor key and register it, exactly as register_anchor_key
-    # does for the service - with the app's own operator root doing the signing.
-    rogue = Ed25519PrivateKey.generate()
-    rogue_public = rogue.public_key().public_bytes_raw().hex()
-    rogue_id = "audit-anchor-rogue"
+    rogue_root = Ed25519PrivateKey.generate()
+    rogue_root_public = rogue_root.public_key().public_bytes_raw().hex()
+    (trust / "pin" / "operator-root.pub").write_text(rogue_root_public + "\n",
+                                                     encoding="utf-8")
+    ok("the app generated an operator root of its own and wrote it over the pin file - a "
+       "file in its OWN data directory, which is what the acknowledged self-owned posture "
+       "means")
 
+    rogue_anchor = Ed25519PrivateKey.generate()
+    rogue_anchor_id = "audit-anchor-rogue"
     registry_path = trust / "registry" / "config" / "trusted-keys.json"
-    document = json.loads(registry_path.read_text(encoding="utf-8"))
-    payload = document["payload"]
+    payload = json.loads(registry_path.read_text(encoding="utf-8"))["payload"]
+    payload["operator_public_key"] = rogue_root_public
     payload["registry_version"] = int(payload.get("registry_version", 1)) + 1
-    payload["keys"] = sorted(payload["keys"] + [{
-        "key_id": rogue_id,
-        "public_key": rogue_public,
+    entries = [e for e in payload["keys"] if e["authority_type"] != "operator-root"]
+    entries.append({
+        "key_id": "rogue-operator-root",
+        "public_key": rogue_root_public,
+        "authority_type": "operator-root",
+        "allowed_artifact_types": ["conductor-session", "protected-authority",
+                                   "trusted-key-registry", "workspace-binding"],
+        "not_before_epoch": 0,
+        "not_after_epoch": 253_402_300_799,
+        "status": "active",
+        "issued_by": "rogue-operator-root",
+    })
+    entries.append({
+        "key_id": rogue_anchor_id,
+        "public_key": rogue_anchor.public_key().public_bytes_raw().hex(),
         "authority_type": "audit-anchor",
         "allowed_artifact_types": [],
         "not_before_epoch": 0,
         "not_after_epoch": 253_402_300_799,
         "status": "active",
-        "issued_by": operator["key_id"],
-    }], key=lambda e: e["key_id"])
-    signer = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(operator["private_key"]))
+        "issued_by": "rogue-operator-root",
+    })
+    payload["keys"] = sorted(entries, key=lambda e: e["key_id"])
     registry_path.write_text(json.dumps(
-        {"payload": payload, "signature": signer.sign(canonical_bytes(payload)).hex()},
+        {"payload": payload, "signature": rogue_root.sign(canonical_bytes(payload)).hex()},
         sort_keys=True), encoding="utf-8")
-    # The anti-rollback floor is a file in the app's own trust store too.
-    (trust / "pin" / "registry-min").write_text(
-        f"{payload['registry_version']}\n", encoding="utf-8")
-    ok("the app re-signed the trusted-key registry with the operator root it holds, adding "
-       "an audit-anchor key of its own, and raised the anti-rollback floor to match")
+    (trust / "pin" / "registry-min").write_text(f"{payload['registry_version']}\n",
+                                                encoding="utf-8")
+    ok("and re-signed the registry under it, with an audit-anchor key of its own, raising "
+       "the anti-rollback floor it also owns")
 
     reloaded = load_trusted_keys()
-    require(rogue_id in reloaded,
-            "the engine's own load_trusted_keys accepts the re-signed registry - external "
+    require(rogue_anchor_id in reloaded,
+            "the engine's own load_trusted_keys ACCEPTS the self-installed root - external "
             "pin, production binding, rollback floor and all")
-    require(reloaded[rogue_id].authority_type == "audit-anchor",
+    require(reloaded[rogue_anchor_id].authority_type == "audit-anchor",
             "and resolves the rogue key under the one authority that may anchor")
 
-    _forge_anchor(bro_audit_log, ledger, rogue.private_bytes_raw().hex(), rogue_id,
-                  canonical_bytes)
+    _forge_anchor(bro_audit_log, ledger, rogue_anchor.private_bytes_raw().hex(),
+                  rogue_anchor_id, canonical_bytes)
     try:
         count = bro_audit_log.verify(ledger, keys=reloaded)
     except bro_audit_log.AuditError as exc:
         print(f"  NOTE  the real verify() refused it: {type(exc).__name__}: {exc}")
-        print("\nO2-RESIDUAL-GONE: re-signing the registry no longer buys an accepted "
-              "anchor. Something now binds the anchor key beyond the registry - find it, "
-              "and replace this case and its Rust assertion with the inverse.")
+        print("\nO2-PIN-CUSTODY-CLOSED: rewriting the operator pin no longer buys an "
+              "accepted anchor. Something now holds the pin (or the anchor key's identity) "
+              "outside the app's reach - find it, and replace this case and its Rust "
+              "assertion with the inverse.")
         return 0
 
     print(f"  OPEN  the real verify(keys=...) returned {count} on a ledger truncated from 3 "
-          "to 1 records. The anchor was signed by a key the app minted for itself minutes "
-          "ago, admitted to the registry by the operator-root private half "
-          "brops_provision::provision() wrote into the app's own trust directory.")
-    print("  OPEN  Narrowing ANCHOR_AUTHORITIES closed the DIRECT route (a provisioned "
-          "anchor-capable key). It cannot close this one: bro_audit_log's trust root is the "
-          "registry, and on a self-provisioned deployment the registry's signer IS the "
-          "ledger's writer. Closing it needs an operator root the app does not hold.")
-    print("\nO2-RESIDUAL-OPERATOR-ROOT: the app re-signed the registry and anchored a "
-          "truncation with a key of its own.")
+          "to 1 records, with EVERY private half deleted from the trust store first. The "
+          "anchor was signed by a key admitted to the registry by an operator root the app "
+          "generated for itself seconds ago and pinned by overwriting one file.")
+    print("  OPEN  Destroying the provisioned operator root removed a KEY. It did not move "
+          "the trust ANCHOR out of the app's reach: registry, pin, anti-rollback floor and "
+          "provisioning manifest are all files in a directory the policed account owns. "
+          "Closing this needs a second principal holding the pin - on Windows, the audit "
+          "signer's ProgramData directory, which the elevated installer already creates "
+          "with the app absent from its DACL.")
+    print("\nO2-RESIDUAL-PIN-REWRITE: the app installed a trust root of its own and "
+          "anchored a truncation under it.")
     return 0
 
 

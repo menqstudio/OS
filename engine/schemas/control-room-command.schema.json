@@ -83,12 +83,12 @@
     },
     "artifact_type": {
       "const": "control-room-command",
-      "description": "Present only on a command the OWNER signed. Names the artifact type the operator root is authorised to sign for this document (see bro_signature.ARTIFACT_AUTHORITY)."
+      "description": "Present only on a command the OWNER signed. Names the artifact type the `control-room` authority is authorised to sign for this document (see bro_signature.ARTIFACT_AUTHORITY)."
     },
     "key_id": {
       "type": "string",
       "minLength": 1,
-      "description": "The operator-root key that signed it. Must be listed `active` in the operator-signed config/trusted-keys.json with `control-room-command` among its allowed_artifact_types."
+      "description": "The `control-room` key that signed it. Must be listed `active` in the operator-signed config/trusted-keys.json under the `control-room` authority, with `control-room-command` among its allowed_artifact_types. Deliberately NOT the operator root: issuing a command is routine, and the key that signs the trusted-key registry must not have to be online to do routine work."
     },
     "signature": {
       "type": "string",

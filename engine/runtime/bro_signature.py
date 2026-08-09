@@ -191,8 +191,36 @@ RECOVERY = "recovery"
 # `allowed_artifact_types` - the one authority for which that is legal, and the reason
 # `_parse_key` asks which authority it is before refusing an empty grant.
 AUDIT_ANCHOR = "audit-anchor"
+# Two DELEGATED owner authorities, split off operator-root for exactly the reason RECOVERY
+# was: a trust anchor should not also be the key a deployment keeps online to do routine
+# work. The argument got sharper once `brops_provision` began minting its own root at
+# install. There the operator-root private half sat in the app's own trust directory
+# BECAUSE THE APP NEEDED IT LATER — it is what `mint_floor_anchor` signs an O-5 anchor
+# with, and what an owner-issued O-4 command would be signed with — and for as long as it
+# sat there it was also the key the trusted-key registry is signed with, so the audit
+# ledger's own writer could admit an `audit-anchor` key of its own choosing and anchor any
+# head it liked.
+#
+# Splitting the two routine artifacts onto their own authorities is what lets the root be
+# DESTROYED at the end of provisioning (`brops_provision::mint`) while the app keeps the
+# two powers it legitimately needs. That is a real reduction, not a rename: a machine that
+# is compromised can authorise its own control-room command anyway, and can state its own
+# evidence high-water mark. What it must not be able to do is rewrite the record of what
+# it did, and neither of these keys can — neither is an `audit-anchor`, and neither may
+# sign a `trusted-key-registry`.
+#
+# TWO authorities and not one shared "local delegate", deliberately. The two artifacts
+# authorise different things — one acts on a running task, the other suppresses an
+# anti-rollback check over evidence — and this module's whole discipline is one authority
+# per kind of power ("a builder key cannot sign a verifier receipt even if the builder is
+# otherwise legitimate"). One shared key would be strictly more powerful than either, and
+# would leave `verify_artifact`'s authority check with nothing to say: the refusal "this
+# key may not sign that" is precisely what makes a delegation a delegation rather than a
+# blanket grant, and it is asserted in both directions in the tests.
+CONTROL_ROOM = "control-room"
+EVIDENCE_FLOOR = "evidence-floor"
 AUTHORITY_TYPES = {OPERATOR, ISSUER, EVIDENCE, BUILDER, VERIFIER, RELEASE, RECOVERY,
-                   AUDIT_ANCHOR}
+                   AUDIT_ANCHOR, CONTROL_ROOM, EVIDENCE_FLOOR}
 # Authorities whose entire authority is out-of-registry (bound by a hardcoded authority
 # list in the verifying module, never by a per-key grant). Only these may carry an empty
 # `allowed_artifact_types`; for every other authority an empty grant is still the
@@ -229,16 +257,24 @@ ARTIFACT_AUTHORITY = {
     # the committed config/trusted-keys.json grants it to no key, and no key material is
     # shipped or generated here. What the entry buys is that the owner CAN be given one —
     # before it, `_parse_key` refused any registry entry naming the type, so the closure
-    # could not be provisioned from configuration at all. Until the owner mints an
-    # offline key and pins it, an owner-issued command remains a refusal by name.
-    "control-room-command": OPERATOR,
+    # could not be provisioned from configuration at all.
+    #
+    # It moved off `operator-root` onto its own delegated authority (see CONTROL_ROOM).
+    # An owner command is a routine, repeated act; the trust root is not a routine key.
+    # On the desktop shape this is what lets the app hold the ability to issue one while
+    # holding nothing that can re-sign the trusted-key registry.
+    "control-room-command": CONTROL_ROOM,
     # O-5. The operator's statement of the evidence high-water mark for one task, read
     # from BRO_EVIDENCE_FLOOR_ANCHOR when a floor was deleted and re-provisioned. It is
-    # an authorisation about state the policed builder can write, so it may only come
-    # from the owner-held operator authority. The same rule applies: a registered type is
-    # not a provisioned key. With no pinned key allowed to sign it, `_signed_floor_anchor`
-    # refuses every presented anchor — exactly as it did before this entry existed.
-    "evidence-floor-anchor": OPERATOR,
+    # an authorisation about state the policed builder can write, so it may never come
+    # from the builder, the issuer or the evidence recorder. The same rule applies: a
+    # registered type is not a provisioned key, and with no key granted the type
+    # `_signed_floor_anchor` refuses every presented anchor.
+    #
+    # Like the control-room command it moved off `operator-root` onto its own delegated
+    # authority (see EVIDENCE_FLOOR), and separately from that one: a key that can state
+    # an evidence high-water mark must not thereby be able to cancel a task.
+    "evidence-floor-anchor": EVIDENCE_FLOOR,
     "evidence-event": EVIDENCE,
     # The head anchors where a chain ends. It must come from the recorder, never
     # the builder, or the builder signs a head describing whichever prefix suits it.

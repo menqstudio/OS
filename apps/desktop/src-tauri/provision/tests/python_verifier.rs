@@ -104,7 +104,10 @@ fn the_real_python_verifier_accepts_the_real_rust_output() {
     assert!(provisioned.freshly_minted);
 
     // O-5's artifact is never a startup side effect (see `mint_floor_anchor`), so the
-    // proof mints one here, with the same signer and the same canonicalizer.
+    // proof mints one here, with the same signer and the same canonicalizer. It is signed
+    // by the DELEGATED `evidence-floor` key, because the operator root no longer exists —
+    // and the Python side verifies it through the real `verify_artifact`, which is what
+    // proves the delegation reaches the engine and not only this crate's mirrored table.
     brops_provision::mint_floor_anchor(
         &provisioned.trust_dir,
         "t-001",
@@ -112,6 +115,24 @@ fn the_real_python_verifier_accepts_the_real_rust_output() {
         &provisioned.trust_dir.join("artifacts").join("test-floor-anchor.json"),
     )
     .expect("floor anchor");
+
+    // O-4's artifact, likewise: signed by the delegated `control-room` key and judged on
+    // the Python side by the real `bro_control_room_api._prove_command_actor`.
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs() as i64
+        + 3600;
+    brops_provision::mint_control_room_command(
+        &provisioned.trust_dir,
+        "cmd-provisioned-1",
+        "task-actor-1",
+        "cancel",
+        "s-owner-provisioned",
+        expires,
+        &provisioned.trust_dir.join("artifacts").join("test-control-room-command.json"),
+    )
+    .expect("control-room command");
 
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("verify_provisioning.py");
     let output = Command::new(&python)

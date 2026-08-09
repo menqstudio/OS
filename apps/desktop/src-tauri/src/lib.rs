@@ -91,19 +91,43 @@ fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
 /// Wiring the engine to this store is a deployment decision that needs the registry to
 /// live at the engine's own root; it is not something this startup path can do silently.
 fn provision_local_trust(dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let provisioned = brops_provision::provision(dir)?;
+    // The audit signer's published identity, if this machine has one. It has to be in hand
+    // HERE and not later: `provision` destroys the operator root before it returns, which
+    // seals the trusted-key registry, so a key not admitted while the registry is being
+    // signed can never be admitted at all. That is why the install plan starts the signer
+    // service before the app's first launch. An unreadable-but-present record is an error
+    // rather than a shrug — see `published_anchor_custody`.
+    let anchor = machine_root().map(|root| brops_provision::published_anchor_custody(&root))
+        .transpose()?
+        .flatten();
+    let provisioned = brops_provision::provision_with_anchor(dir, anchor.as_ref())?;
     if provisioned.freshly_minted {
         eprintln!(
             "BroPS provisioned its local trust store at {} (install {}).\n\
              Posture: {}\n\
-             Key material protection — {}",
+             Key material protection — {}\n\
+             Operator root — {}",
             provisioned.trust_dir.display(),
             provisioned.install_id,
             brops_provision::POSTURE_SUMMARY,
             provisioned.key_file_protection,
+            brops_provision::OPERATOR_ROOT_CUSTODY,
         );
     }
     Ok(())
+}
+
+/// `%ProgramData%\BroPS` — the machine-wide root the elevated installer creates the audit
+/// signer's protected directory under.
+///
+/// `None` off Windows: on POSIX the audit signer is a separate uid provisioned outside
+/// this application, so there is no ProgramData-shaped place to look and pretending
+/// otherwise would invent a path.
+fn machine_root() -> Option<std::path::PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    std::env::var_os("ProgramData").map(|d| std::path::PathBuf::from(d).join("BroPS"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
