@@ -8,6 +8,45 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The ledger was the wrong floor, and running it said so (2026-08-10)
+
+I decided to consolidate `bro_completion`'s configuration-impossible head floor onto the supervisor's
+durable ledger, on the strength of a sentence in the code's own docstring: the ledger "already holds an
+equivalent floor written by the supervisor uid rather than by the builder". The agent sent to implement it
+**stopped, changed nothing, and disproved the premise by execution.** That was the right outcome and the
+instruction asked for it explicitly.
+
+**The two floors measure different numbers.** The ledger counter is per INSTALL and, since bb26822,
+deliberately an install-wide ceiling; the completion floor is per TASK, and every task's first anchor is 1.
+Two real signed heads from the repo's own fixture -- task-1 seq 1 and task-2 seq 1 -- are both ACCEPTED by
+the filesystem floor and the second is REFUSED by the ledger with `EvidenceFork`. A negative control in the
+ledger's own shape behaved correctly, so that is a real semantic mismatch and not a broken probe.
+**Consolidating would have made the second task in any deployment permanently un-completable.**
+
+**It is also unreachable, absent, and narrower.** No module on the completion path imports
+`governed_supervisor_ledger`; the DB is opened only by `run_supervisor.py` as the supervisor account, and
+its only door is `governed_supervisor_server` -- AF_UNIX + `SO_PEERCRED`, Linux-only, allowlisting the
+broker uid alone. Opening that sqlite file directly from the builder would delete the second principal and
+reproduce the contradiction in sqlite instead of JSON. On **Windows**, the platform the desktop ships on and
+the host where the contradiction was proven, there is no ledger floor at all -- `win-live/src/servers.rs`
+keeps supervisor state in a `Mutex<BTreeMap<..>>` and `complete_run` performs no cross-run head comparison
+(open finding R-42). And the ledger table has no column for `evidence_head_sha256`, which drives the "same
+sequence, different signed head" refusal, nor any equivalent of the `_index.json` roster,
+`_require_establishable_mark`, or the owner-signed bootstrap.
+
+**What changed as a result.** No code was consolidated. The docstrings on `_head_floor_dir` and on
+`HeadFloorConfigurationContradictionTests` that recommended the ledger route now say, with the four
+disproofs, not to take it -- correcting the source of the error rather than its symptom. The contradiction
+itself is unchanged and is now a named Owner decision in `docs/OWNER_ACTION_REQUIRED.md` section 1b: a
+floor-writer service or a setuid helper, because the builder is the writer and no third posture exists.
+
+Measured, not asserted: the floor's only two call sites are `bro_completion.py:244` and `:287`, both inside
+`validate_evidence_chain`, established by instrumenting the functions and running the whole suite through
+the wrappers -- 35 distinct runtime stacks, 262/188/79 calls, no dynamic dispatch. Every production entry
+point observed (`bro_hook.py:194`, `bro_orchestration_runtime.py:956`, `bro_release_v3.py:164,207`) runs in
+the builder's own process. `tests.test_completion_head_binding`: 27 tests, OK, 2 skipped by name on Windows.
+
+
 ### Nine ticks were six facts, and one of them was false (2026-08-10)
 
 Phase 1's Definition of Done and Task checklist carried nine `[x]` boxes. Checked against the code rather

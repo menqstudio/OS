@@ -498,10 +498,35 @@ def _head_floor_dir(store: pathlib.Path) -> pathlib.Path:
        Both postures are driven against a real directory by
        ``test_completion_head_binding.HeadFloorConfigurationContradictionTests``; read that class
        before changing anything here. Resolving it means moving the WRITE to a second principal
-       (a floor-writer service, a setuid helper, or the supervisor's durable ledger, which
-       already holds an equivalent floor written by the supervisor uid rather than by the
-       builder) — an Owner/Architect decision about deployment topology, not a change to this
-       function.
+       -- a floor-writer service or a setuid helper -- which is an Owner/Architect decision about
+       deployment topology, not a change to this function.
+
+       DO NOT reach for the supervisor's durable ledger. This text used to name it as a candidate,
+       on the grounds that it "already holds an equivalent floor written by the supervisor uid".
+       That sentence sent an agent down the route on 2026-08-10, and it is wrong on four counts,
+       each of which was established by RUNNING it rather than by reading it:
+
+       1. It measures a different number. The ledger counter is per INSTALL
+          (``evidence-head-sequence.json``) and, since bb26822, deliberately an install-wide
+          ceiling; this floor is per TASK, and every task's first anchor is 1. Offering two real
+          signed heads -- task-1 seq 1 and task-2 seq 1 -- to the ledger refuses the second with
+          ``EvidenceFork``. Routing completion there would make the SECOND task in any deployment
+          permanently un-completable.
+       2. It is not reachable from here. No module on the completion path imports
+          ``governed_supervisor_ledger``; the DB is opened only by ``run_supervisor.py`` running as
+          the supervisor account, and its only door is ``governed_supervisor_server`` -- AF_UNIX +
+          SO_PEERCRED, Linux-only, allowlisting the broker uid alone, with an op set documented as
+          exhaustive. Opening that sqlite file directly from here would delete the second principal
+          and reproduce this exact contradiction in sqlite instead of JSON.
+       3. It does not exist on Windows -- the platform the desktop ships on, and the host where
+          this contradiction was proven. ``win-live/src/servers.rs`` keeps supervisor state in a
+          ``Mutex<BTreeMap<..>>`` and ``complete_run`` performs no cross-run head comparison. That
+          is open finding R-42.
+       4. It cannot carry what this floor carries. ``evidence_head_sha256`` -- the digest of the
+          signed head document, which drives the "same sequence, different signed head" refusal --
+          has no column in that table, and the ``_index.json`` roster,
+          ``_require_establishable_mark`` and the owner-signed ``evidence-floor-anchor`` bootstrap
+          have no equivalent there at all.
     """
     directory = (
         _external_dir("BRO_EVIDENCE_HEAD_FLOOR")

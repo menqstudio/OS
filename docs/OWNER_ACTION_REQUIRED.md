@@ -166,6 +166,47 @@ verifying key independently (so the comparison has two sources and can fail), or
 construction as the property and delete the guard rather than keep a check that reads as one. Doing
 neither leaves a keystone blocker open, which is where it stands today.
 
+## 1b. The engine's head floor has no posture that satisfies its own two rules
+
+**What you have to decide: where the write happens.** Not a patch — a deployment topology choice.
+
+`bro_completion`'s anti-rollback floor asks two things of the directory holding its marks: `bro_custody`
+refuses a directory the polices account can rewrite, and the code has to be able to write a mark into it.
+Every posture was driven against a real directory on Windows, and none satisfies both:
+
+| posture | result |
+|---|---|
+| writable, self-owned | custody REFUSES — "can be rewritten by the very account it polices" |
+| DENY ACE on WD/AD/DC | the write REFUSES `[Errno 13]`, **and custody still refuses**, because the process owns the directory and so holds `WRITE_DAC` |
+| `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` declared | it advances — with every custody rule in the runtime switched off |
+
+The reason is structural: **the builder is the writer.** The floor exists to stop the builder rolling
+evidence back, and the builder is the only principal that ever writes it. On POSIX the weaker form holds —
+creating `<task>.floor.json.tmp` and renaming needs `w+x` on the directory, which the custody rule refuses.
+
+**What was already tried and is now closed off.** On 2026-08-10 the obvious escape — "route it to the
+supervisor's durable ledger, which already has a floor written by a different uid" — was investigated and
+**disproved by execution**, not by argument. The two floors measure different numbers: the ledger counts per
+INSTALL and, deliberately, as an install-wide ceiling; this one counts per TASK with every task's first
+anchor at 1. Offering two real signed heads (task-1 seq 1, task-2 seq 1) to the ledger refuses the second
+with `EvidenceFork` — so routing completion there would make **the second task in any deployment permanently
+un-completable**. It is also unreachable from the completion path (Linux-only AF_UNIX + `SO_PEERCRED`,
+broker uid only), **absent entirely on Windows** (open finding R-42), and has no column for
+`evidence_head_sha256`, which drives the "same sequence, different signed head" refusal. The docstrings that
+recommended that route have been corrected so the next reader does not repeat it.
+
+**The real options, both needing your call:**
+1. **A floor-writer service** — a small always-on principal that owns the marks directory and accepts
+   append-only advance requests from the builder.
+2. **A setuid helper** — the same idea without a resident service; the repo already ships a setuid launcher
+   pattern for the Linux live kit.
+
+Until one of them exists, the floor's custody rule is satisfiable only by the acknowledgement, which
+switches off every custody rule at once. That is recorded in the code as a contradiction rather than papered
+over: `HeadFloorConfigurationContradictionTests` asks both rules of a real directory and skips by name where
+a posture needs elevation, and both `_head_floor_dir` and `_advance_head_floor` carry warnings saying the
+escape route in their own text cannot be configured.
+
 ## 2. The independent audit, then your approval
 
 The gate does not open when these settle. It needs an audit of the whole chain **by someone who did
