@@ -176,7 +176,28 @@ RELEASE = "release"
 # offline trust anchor is not used per recovery, and separate from the builder/issuer
 # so the policed builder process cannot mint its own recovery proof.
 RECOVERY = "recovery"
-AUTHORITY_TYPES = {OPERATOR, ISSUER, EVIDENCE, BUILDER, VERIFIER, RELEASE, RECOVERY}
+# The audit ledger's head anchor, and NOTHING else. Its whole reason to exist is that
+# `bro_audit_log.ANCHOR_AUTHORITIES` names it alone: the party that writes the ledger
+# must not hold a key that satisfies the ledger's own head. `evidence-recorder` and
+# `operator-root` used to be accepted there, and on a deployment that mints its own
+# trust material at install (the desktop app) BOTH private halves sit in the writer's
+# own store - so the writer could truncate the chain, recompute it, sign a fresh anchor
+# and have the real verify() return green. Splitting the anchor off into an authority
+# that nothing in this tree mints is what makes the anchor's custody a separate fact
+# from the registry's custody.
+#
+# It binds NO registry artifact type on purpose (`audit-head` is out-of-registry; see
+# `broctl.OUT_OF_REGISTRY_ARTIFACTS`), so its entries carry an EMPTY
+# `allowed_artifact_types` - the one authority for which that is legal, and the reason
+# `_parse_key` asks which authority it is before refusing an empty grant.
+AUDIT_ANCHOR = "audit-anchor"
+AUTHORITY_TYPES = {OPERATOR, ISSUER, EVIDENCE, BUILDER, VERIFIER, RELEASE, RECOVERY,
+                   AUDIT_ANCHOR}
+# Authorities whose entire authority is out-of-registry (bound by a hardcoded authority
+# list in the verifying module, never by a per-key grant). Only these may carry an empty
+# `allowed_artifact_types`; for every other authority an empty grant is still the
+# fail-closed "this key allows nothing" refusal it always was.
+OUT_OF_REGISTRY_ONLY_AUTHORITIES = frozenset({AUDIT_ANCHOR})
 
 ACTIVE = "active"
 REVOKED = "revoked"
@@ -295,7 +316,7 @@ def _parse_key(entry: Any) -> TrustedKey:
     if entry["status"] not in {ACTIVE, REVOKED}:
         raise SignatureError(f"unknown key status: {entry['status']}")
     artifacts = entry.get("allowed_artifact_types")
-    if not isinstance(artifacts, list) or not artifacts:
+    if not isinstance(artifacts, list):
         raise SignatureError(f"key {entry['key_id']} allows no artifact types")
     for artifact in artifacts:
         if artifact not in ARTIFACT_AUTHORITY:
@@ -305,6 +326,14 @@ def _parse_key(entry: Any) -> TrustedKey:
                 f"key {entry['key_id']} is {entry['authority_type']} and may not "
                 f"be allowed to sign {artifact}, which requires "
                 f"{ARTIFACT_AUTHORITY[artifact]}")
+    # Emptiness is checked AFTER the per-artifact loop so a mis-granted key is still
+    # refused by the grant that is wrong rather than by the count. An empty grant is legal
+    # for exactly the out-of-registry-only authorities: their power comes from a hardcoded
+    # authority list in the verifying module (bro_audit_log.ANCHOR_AUTHORITIES), which is
+    # precisely why they must be unable to carry a registry grant at all. For everyone else
+    # an empty list is still "this key allows nothing", refused.
+    if not artifacts and entry["authority_type"] not in OUT_OF_REGISTRY_ONLY_AUTHORITIES:
+        raise SignatureError(f"key {entry['key_id']} allows no artifact types")
     for field in ("not_before_epoch", "not_after_epoch"):
         if not isinstance(entry.get(field), int):
             raise SignatureError(f"trusted key entry missing {field}")

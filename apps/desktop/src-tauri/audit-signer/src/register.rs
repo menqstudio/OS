@@ -11,8 +11,8 @@
 //!    `custody.json`. The installer never sees the private half — the point of doing it in this
 //!    order rather than the convenient one.
 //! 3. **The app, unelevated, afterwards**: reads `custody.json` (public half + key id) and calls
-//!    [`register_anchor_key`] to put that key in its own trusted-key registry under the
-//!    `evidence-recorder` authority, because `bro_audit_log.verify_signed_payload` resolves the
+//!    [`register_anchor_key`] to put that key in its own trusted-key registry under the dedicated
+//!    `audit-anchor` authority, because `bro_audit_log.verify_signed_payload` resolves the
 //!    anchor's `key_id` through `bro_signature.load_trusted_keys` and refuses a key it has never
 //!    heard of.
 //!
@@ -38,28 +38,37 @@ pub const ALLOWED_APP_SID_FILE: &str = "allowed-app.sid";
 /// it can be read next to it.
 ///
 /// Putting the signer's public key in the registry lets the engine *verify* an anchor the signer
-/// produced. It does not stop anything else in the registry from producing one.
-/// `bro_audit_log.ANCHOR_AUTHORITIES` is `("evidence-recorder", "operator-root")` and
-/// `verify_signed_payload` accepts **any active registry key under either authority** — it does
-/// not consult `allowed_artifact_types`, and says so in its own docstring, because `audit-head` is
-/// deliberately not a registry artifact type.
+/// produced. What it does NOT do is decide who else can produce one; that is
+/// `bro_audit_log.ANCHOR_AUTHORITIES`, which is hardcoded in the engine and now reads
+/// `("audit-anchor",)` alone. `verify_signed_payload` accepts any active registry key under that
+/// authority — it does not consult `allowed_artifact_types`, and says so in its own docstring,
+/// because `audit-head` is deliberately not a registry artifact type.
 ///
-/// `brops_provision::provision()` mints one key per `AUTHORITY_TYPES` and writes **every private
-/// half** into `<app_data>/trust/keys/`, which the app's own account owns. Two of those —
-/// `evidence-recorder.json` and `operator-root.json` — are anchor-capable. So on a stock
-/// deployment the ledger's own writer holds a key that signs an anchor the engine accepts, and can
-/// truncate the ledger, recompute the chain, rewrite `.head`, mint a fresh `.head.sig` and have
-/// `verify(keys=…)` return green. That is the O-2 defect verbatim, and no property of the signer
-/// service touches it: the second principal is a second *route* to a signature, not the only one.
+/// **What narrowing it closed.** `brops_provision::provision()` mints one key per
+/// `AUTHORITY_TYPES` and writes **every private half** into `<app_data>/trust/keys/`, which the
+/// app's own account owns. While `evidence-recorder` and `operator-root` were anchor authorities,
+/// two of those files were anchor-capable: the ledger's own writer could truncate the chain,
+/// recompute it, mint a fresh `.head.sig` and have `verify(keys=…)` return green. `audit-anchor`
+/// is deliberately absent from `AUTHORITY_TYPES`, so provisioning mints no private half for it and
+/// the app has nothing to anchor with. `tests/anchor_end_to_end.py` proves that against the real
+/// `bro_audit_log` on the real provisioned store rather than asserting it here.
 ///
-/// `tests/forgery.rs` demonstrates it against the real `bro_audit_log`. Until the registry stops
-/// carrying an anchor-capable key whose private half the app holds, O-2 is not closed and nothing
-/// in this crate should be described as closing it.
+/// **What it did NOT close, stated plainly.** The app still holds the `operator-root` private
+/// half, and `operator-root` is the key the trusted-key registry is *signed with*. An attacker who
+/// is the app's account can mint a fresh keypair, add it to the registry under `audit-anchor`,
+/// re-sign the registry with the operator root it holds, raise the anti-rollback floor and the
+/// provisioning manifest it also owns, and then sign whatever head it likes — this very function
+/// is the shape of that attack, run with a key of the attacker's choosing. Narrowing the authority
+/// does not reach it and nothing in this crate can: on a deployment that provisions its own trust
+/// root, the registry's own signer IS the ledger's writer. It is closed only where the operator
+/// root is genuinely external, which is the posture
+/// `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` exists to say this machine does not have.
 pub const REGISTRY_CAVEAT: &str = "\
-registering the signer's public key makes its anchors VERIFIABLE. It does not make them the only \
-verifiable anchors: bro_audit_log accepts any active registry key under the evidence-recorder or \
-operator-root authority, and brops_provision::provision() leaves both private halves in the app's \
-own trust directory. See REGISTRY_CAVEAT and tests/forgery.rs.";
+registering the signer's public key makes its anchors VERIFIABLE, and bro_audit_log now accepts \
+ONLY the audit-anchor authority, whose private half this crate never mints. The residual route is \
+the operator-root private half provision() does leave in the app's trust directory: it signs the \
+registry itself, so an account holding it can register an audit-anchor key of its own. That is \
+closed only by an operator root the app does not hold.";
 
 /// The complete elevated plan: the specification's steps, then this crate's.
 pub fn install_plan(paths: &spec::SignerPaths, app_sid: &str) -> Vec<String> {
@@ -125,7 +134,7 @@ pub fn register_anchor_key(trust_dir: &Path, custody: &Value) -> Result<String, 
     }
     if custody.get("authority").and_then(Value::as_str) != Some(spec::ANCHOR_AUTHORITY) {
         return Err(corrupt(
-            "the custody record does not claim the evidence-recorder authority, so registering it \
+            "the custody record does not claim the audit-anchor authority, so registering it \
              would grant a key an authority its own publisher never claimed",
         ));
     }
@@ -162,10 +171,12 @@ pub fn register_anchor_key(trust_dir: &Path, custody: &Value) -> Result<String, 
         "key_id": key_id,
         "public_key": public_key,
         "authority_type": spec::ANCHOR_AUTHORITY,
-        // The same set every other evidence-recorder key carries. `verify_signed_payload` does not
-        // read it for `audit-head` (that binding is the authority type), but
-        // `bro_signature.verify_artifact` does for the registry artifact types, and a key with an
-        // inconsistent set would make the registry describe two different evidence recorders.
+        // EMPTY, and necessarily so: `audit-anchor` binds no type in `ARTIFACT_AUTHORITY`, so
+        // `bro_signature._parse_key` refuses ANY grant given to this authority — including
+        // `audit-head` itself, which is out-of-registry and unknown to the registry schema. The
+        // key's whole authority is the hardcoded `bro_audit_log.ANCHOR_AUTHORITIES` comparison,
+        // which is exactly why rewriting the registry cannot widen what this key is for. An empty
+        // list is legal for this authority alone (`bro_signature.OUT_OF_REGISTRY_ONLY_AUTHORITIES`).
         "allowed_artifact_types": brops_provision::artifacts_for(spec::ANCHOR_AUTHORITY),
         "not_before_epoch": brops_provision::NOT_BEFORE_EPOCH,
         "not_after_epoch": brops_provision::NEVER_EXPIRES_EPOCH,

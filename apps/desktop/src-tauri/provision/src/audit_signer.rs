@@ -189,13 +189,29 @@ pub const ANCHOR_PAYLOAD_FIELDS: [&str; 7] = [
 ];
 
 /// `bro_audit_log.ANCHOR_AUTHORITIES` — the registry authorities whose keys may anchor.
-pub const ANCHOR_AUTHORITIES: [&str; 2] = ["evidence-recorder", "operator-root"];
+///
+/// A mirror of a hardcoded Python tuple, so it can drift; it does not drift silently.
+/// `audit-signer/tests/anchor_end_to_end.py` is handed this array and fails unless the real
+/// `bro_audit_log.ANCHOR_AUTHORITIES` is exactly equal to it.
+pub const ANCHOR_AUTHORITIES: [&str; 1] = ["audit-anchor"];
 
-/// The authority the anchor key is minted under. `evidence-recorder`, not `operator-root`:
-/// the operator root is the pin the whole registry hangs from and lives in the app's own
-/// trust store, so anchoring with it would mean the app's account holds a key that satisfies
-/// the anchor — the defect restated.
-pub const ANCHOR_AUTHORITY: &str = "evidence-recorder";
+/// The authority the anchor key is minted under: a dedicated type, not `evidence-recorder`
+/// and not `operator-root`.
+///
+/// It used to be `evidence-recorder`, on the reasoning that the operator root is the pin the
+/// whole registry hangs from and therefore must not double as the anchor. That reasoning was
+/// right and did not go far enough: [`crate::provision`] mints a private half for EVERY
+/// authority in [`crate::AUTHORITY_TYPES`] into the app's own trust directory, and
+/// `evidence-recorder` is one of them — so the ledger's own writer held a key the engine
+/// accepted for an audit head, and could truncate the chain and re-anchor it. `audit-anchor`
+/// is deliberately absent from [`crate::AUTHORITY_TYPES`]: nothing in this crate mints it, the
+/// signer service mints its own seed under its own account, and only the public half is ever
+/// published (`register::register_anchor_key`).
+///
+/// It binds no artifact type in [`crate::ARTIFACT_AUTHORITY`] either, so its registry entry
+/// carries an EMPTY `allowed_artifact_types` and cannot be widened by rewriting the registry:
+/// `audit-head` is out-of-registry and the binding is the authority type itself.
+pub const ANCHOR_AUTHORITY: &str = "audit-anchor";
 
 /// The request/reply contract on the pipe, restated in one place so the shim, the service
 /// and the tests cannot each invent their own.

@@ -585,8 +585,8 @@ fn the_payload_field_set_is_checked_as_an_exact_set() {
 
 #[test]
 fn this_key_signs_audit_heads_and_nothing_else() {
-    // The anchor key is registered under an evidence-recorder authority. If it could be made to
-    // sign some other artifact_type, it would become an oracle for the governed chain.
+    // The anchor key is registered under the dedicated audit-anchor authority. If it could be made
+    // to sign some other artifact_type, it would become an oracle for the governed chain.
     let mut p = payload(1, H1, None);
     p["artifact_type"] = json!("execution-lease");
     assert!(matches!(
@@ -595,6 +595,17 @@ fn this_key_signs_audit_heads_and_nothing_else() {
     ));
     assert_eq!(anc::ANCHOR_ARTIFACT_TYPE, "audit-head");
     assert!(anc::ANCHOR_AUTHORITIES.contains(&anc::ANCHOR_AUTHORITY));
+    // The narrowing itself: exactly one authority may anchor, and it is a type this crate never
+    // mints a private half for. `provision()` walks `AUTHORITY_TYPES`; if the anchor authority
+    // ever appeared there, the app's own account would hold the seed again and O-2 would reopen.
+    assert_eq!(anc::ANCHOR_AUTHORITIES, ["audit-anchor"]);
+    assert!(
+        !brops_provision::AUTHORITY_TYPES.contains(&anc::ANCHOR_AUTHORITY),
+        "provision() would mint a private half for the anchor authority"
+    );
+    // And it can be granted nothing in the registry: no artifact type binds to it, so its entry
+    // carries an empty grant that cannot be widened by rewriting the registry.
+    assert!(brops_provision::artifacts_for(anc::ANCHOR_AUTHORITY).is_empty());
 }
 
 #[test]
@@ -782,7 +793,7 @@ fn the_custody_record_publishes_the_public_half_and_the_principal_but_no_secret(
     let text = serde_json::to_string(&record).unwrap();
     assert!(text.contains(&public));
     assert!(text.contains(SIGNER));
-    assert_eq!(record["authority"], "evidence-recorder");
+    assert_eq!(record["authority"], "audit-anchor");
     // The seed must not be anywhere in what the app can read.
     let seed_hex = brops_provision::hex(&key.to_bytes());
     assert!(!text.contains(&seed_hex), "the custody record leaked the private half");

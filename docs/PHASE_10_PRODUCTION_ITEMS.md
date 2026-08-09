@@ -230,7 +230,7 @@ inside `engine/` is refused by name. The Owner must export, from outside this re
 | Variable | What it is |
 |---|---|
 | `BRO_AUDIT_ANCHOR_SIGNER` | Absolute path to a signing command (or a JSON argv array whose first element is that path). It reads one canonical `audit-head` payload as JSON on stdin and writes a `{payload, signature}` JSON document on stdout. It **must** run under a principal that cannot write the audit ledger, **must not** live inside `engine/`, and **must** refuse to sign an anchor whose `count` is below the last one it signed (anti-rollback; `previous_anchor_sha256` is carried in the payload so it can chain its own decisions). |
-| `BRO_AUDIT_ANCHOR_KEY_ID` | The key id that command signs with, registered in the operator-pinned trusted-key registry under an `evidence-recorder` or `operator-root` authority. The private half never enters the engine process. |
+| `BRO_AUDIT_ANCHOR_KEY_ID` | The key id that command signs with, registered in the operator-pinned trusted-key registry under the dedicated **`audit-anchor`** authority. The private half never enters the engine process. **Not `evidence-recorder` or `operator-root`**, which is what this table said until the app began minting its own trust material and came to hold both of them — a key the ledger's writer holds can re-sign a truncated chain, so those two are now refused by name. |
 
 Until both are set, ledgers are written **UNANCHORED** — the wall keeps running, but every keyed `verify()`
 refuses them by name and prints exactly this list. That is deliberate: a silent green over an unanchored

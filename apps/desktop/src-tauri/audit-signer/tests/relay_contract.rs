@@ -482,10 +482,20 @@ fn a_peer_allowlist_that_is_not_a_sid_is_refused_rather_than_treated_as_a_name()
 // The caveat is not decoration
 // =================================================================================================
 
+/// Re-aimed, not deleted. It used to assert that the caveat named the two anchor authorities the
+/// app held private halves for; those are no longer anchor authorities, so asserting that text
+/// would pin a sentence that is now false. What still has to be true — and is the whole reason this
+/// test exists — is that the caveat states the limit of what registration buys and names the route
+/// that is STILL open, rather than reading as a closure notice.
 #[test]
-fn the_registry_caveat_states_the_open_defect_rather_than_implying_it_is_closed() {
+fn the_registry_caveat_states_the_residual_route_rather_than_implying_it_is_closed() {
     let caveat = register::REGISTRY_CAVEAT;
-    assert!(caveat.contains("evidence-recorder") && caveat.contains("operator-root"));
-    assert!(caveat.contains("does not make them the only"));
-    assert!(caveat.contains("trust directory"));
+    // The narrowing, so the caveat cannot go stale in the other direction either.
+    assert!(caveat.contains("ONLY the audit-anchor authority"), "{caveat}");
+    // And the honest remainder: the operator root the app keeps, which signs the registry.
+    assert!(caveat.contains("operator-root private half"), "{caveat}");
+    assert!(caveat.contains("residual"), "{caveat}");
+    assert!(caveat.contains("trust directory"), "{caveat}");
+    // It must not claim the item is finished.
+    assert!(!caveat.to_lowercase().contains("o-2 is closed"), "{caveat}");
 }

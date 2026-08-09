@@ -56,13 +56,38 @@ real verifier returns green. `bro_audit_log` states the assumption four lines ab
 *"The builder/writer of the ledger holds neither"* — and that stopped being true the moment the app
 started minting its own root. Nothing failed, because the sentence is a comment.
 
-**What closing it needs**, and why it is not a signer change: the registry must stop carrying an
-anchor-capable key whose private half the app holds. The clean form is a dedicated anchor authority
-that only the service ever possesses. That collides with O-3 and O-5, which both mint with
-operator-root, so it is a custody restructure rather than a patch. It is next.
+**Done, and it closed half.** `ANCHOR_AUTHORITIES` is now the single dedicated `audit-anchor`
+authority, hardcoded — it was `evidence-recorder` and `operator-root`, both of which the app holds.
+`audit-head` is granted by no registry entry, so even a rewritten registry cannot hand the right to
+anyone. Every key the app holds is now refused **by name** when it tries to anchor: seven keys, each
+presented with a chain that is internally self-consistent so nothing but the authority can be the
+reason.
 
-A self-destructing test holds the line meanwhile: it asserts the gap still exists and goes red the
-day it is fixed.
+**And the other half cannot be closed by any authority list.** The app still holds the
+`operator-root` private half, and that is the key the trust registry is signed with. So it can mint
+its own `audit-anchor` keypair, register it, re-sign the registry, raise the anti-rollback floor it
+also owns, and anchor anything. That was run, not argued: the engine's own `load_trusted_keys`
+accepts the re-signed registry — external pin, production binding, rollback floor and all.
+
+On a machine that provisions its own trust root, **the registry's signer is the ledger's writer**.
+That is not a bug in the signer; it is what
+`BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` already declares about this machine.
+
+So: **O-2 is closed for a deployment whose operator root the app does not hold, and open on the
+self-provisioned desktop.** A tracking test asserts the remaining route and goes red the day the app
+stops holding that key — and this time the item is not being reported closed on the strength of the
+parts that pass.
+
+### What would close it here
+
+The app would have to stop holding the operator root: generate it at install, mint everything with
+it, then destroy it. No ceremony, no removable media, no second machine — it never leaves the
+process that made it.
+
+The cost is what it can no longer sign afterwards: `control-room-command` (O-4) and any later
+`evidence-floor-anchor` (O-5) are operator-root artifacts minted on demand. Either they move to
+delegated authorities the app may keep, or they are minted once at install and a machine that needs
+new ones re-installs. **That is the decision left.**
 
 ---
 

@@ -144,6 +144,9 @@ fn run_case(fixture: &Fixture, case: &str) -> (bool, String, String) {
         .arg(env!("CARGO_BIN_EXE_brops-anchor-relay"))
         .arg(&fixture.pipe)
         .arg(&fixture.key_id)
+        // The Rust mirror of `bro_audit_log.ANCHOR_AUTHORITIES`, so the Python side can
+        // fail on drift instead of two hardcoded lists quietly disagreeing.
+        .arg(spec::ANCHOR_AUTHORITIES.join(","))
         .output()
         .unwrap_or_else(|e| panic!("could not run `{python} {}`: {e}", script.display()));
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -237,26 +240,72 @@ fn the_real_service_binary_refuses_to_run_as_this_account() {
     );
 }
 
-/// The negative that decides whether any of this bought anything.
+/// The negative that decides whether any of this bought anything — **its inverse**.
 ///
-/// Not a Rust assertion about Rust: the app's own account signs a truncated head with a private
-/// key out of its own trust store and asks the real `verify()`.
+/// This replaces `an_anchor_signed_by_the_apps_own_account_is_still_accepted_so_o2_is_not_closed`,
+/// which asserted the defect: while `ANCHOR_AUTHORITIES` was `("evidence-recorder",
+/// "operator-root")`, `provision()` wrote both of those private halves into the app's own trust
+/// directory and the app could truncate the ledger and re-anchor it. The authority narrowed to
+/// `audit-anchor`, a type this crate never mints, so the Python side stopped printing `O2-OPEN`
+/// and that test went RED. What replaces it asserts the closure directly and in both directions:
 ///
-/// **This test asserts a DEFECT that is open today.** When the trust store stops carrying a
-/// private key registered under `bro_audit_log.ANCHOR_AUTHORITIES`, the Python side stops printing
-/// `O2-OPEN` and this test goes RED. That is the signal O-2 has closed — replace it with its
-/// inverse then, and not before.
+/// * the app's trust store is enumerated on the FILESYSTEM and must contain no anchor-capable
+///   private half (not "the code that writes it looks right");
+/// * every private half it does hold is used to sign a self-consistent truncated head, and the
+///   real `bro_audit_log.verify()` must refuse each one *naming the authority* — a refusal for
+///   the chain would mean the forgery was merely clumsy;
+/// * and the positive control still passes in the same run, so "refused" cannot be "everything
+///   is refused now".
 #[test]
-fn an_anchor_signed_by_the_apps_own_account_is_still_accepted_so_o2_is_not_closed() {
+fn an_anchor_signed_by_any_key_the_app_holds_is_refused_by_the_real_verifier() {
     let fixture = stand_up("forgery");
     let (success, stdout, stderr) = run_case(&fixture, "forgery");
-    assert!(success, "the forgery case did not complete:\n{stdout}\n{stderr}");
     assert!(
-        stdout.contains("O2-OPEN"),
-        "the app's own account could no longer forge an accepted anchor. If \
-         brops_provision::provision() has stopped leaving an anchor-capable private key in \
-         the app's own trust directory, then O-2 has closed and this test must be replaced \
-         by its inverse:\n{stdout}"
+        success,
+        "a key out of the app's own trust store still anchored a truncated ledger, or the \
+         positive control stopped working:\n{stdout}\n{stderr}"
+    );
+    assert!(stdout.contains("GREEN:"), "no green run reported:\n{stdout}");
+    assert!(
+        stdout.contains("may not sign audit-head"),
+        "nothing was actually refused BY AUTHORITY — the run cannot have exercised the \
+         narrowing:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("O2-OPEN"),
+        "the old defect marker came back:\n{stdout}"
+    );
+}
+
+/// The gap that is **still open**, asserted rather than left to a comment.
+///
+/// Narrowing `ANCHOR_AUTHORITIES` closed the direct route. It does not close the indirect one:
+/// `provision()` leaves the `operator-root` private half in the app's own trust directory, and
+/// that key is what the trusted-key registry is *signed with*. The app can therefore mint its own
+/// keypair, register it under `audit-anchor`, re-sign the registry, raise the anti-rollback floor
+/// it also owns, and anchor any head it likes. The Python case does exactly that against the real
+/// `bro_audit_log` and the real provisioned store.
+///
+/// **This test asserts a DEFECT that is open today**, for the same reason its predecessor did: a
+/// tree that stays quiet about a route it knows is open is the failure this whole item exists to
+/// end. It goes RED — with the Python side printing `O2-RESIDUAL-GONE` — the day the app stops
+/// holding the operator root, or the day the anchor key is bound by something outside the
+/// registry. Replace it with its inverse then, and not before.
+///
+/// It is NOT closeable inside this crate. `bro_audit_log`'s trust root is the registry; on a
+/// deployment that provisions its own trust material the registry's signer is the ledger's
+/// writer, and no hardcoded authority list can separate a principal from itself.
+#[test]
+fn the_operator_root_the_app_still_holds_can_register_its_own_anchor_key() {
+    let fixture = stand_up("residual");
+    let (success, stdout, stderr) = run_case(&fixture, "registry-resign");
+    assert!(success, "the residual-route case did not complete:\n{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("O2-RESIDUAL-OPERATOR-ROOT"),
+        "re-signing the registry with the app's own operator root no longer produces an \
+         accepted anchor. If provision() has stopped leaving the operator-root private half in \
+         the app's trust directory, or the anchor key is now bound outside the registry, then \
+         O-2 is closed end to end and this test must be replaced by its inverse:\n{stdout}"
     );
 }
 
