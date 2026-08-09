@@ -21,6 +21,10 @@ This gate makes the inventory a checked claim rather than a description:
      is worse than none — it reads as verified.
   5. A status may not leave `OPEN` without a `Sign-off:` line. `CLOSED` and `OWNER-DEFERRED`
      are audited verdicts; neither may be asserted by editing a word.
+  6. The §0 summary table's `Needs an Owner secret?` column MATCHES the item's own
+     `**Owner secret needed:**` field. That column drifted from the sections below it in the same
+     file, and from `docs/SECURITY_MODEL.md` §4, while this gate printed GREEN — because it
+     validated the field's *shape* and never the summary that most readers actually read.
 
 Exit 0 = pass. Exit 1 = a violation. No other outcome.
 """
@@ -45,6 +49,8 @@ REQUIRED_FIELDS = ("Severity", "Status", "Owner secret needed", "Engine code", "
 _SEVERITY_ALIASES = {"MED": "MEDIUM", "MEDIUM": "MEDIUM", "HIGH": "HIGH", "LOW": "LOW"}
 
 _SECTION_RE = re.compile(r"^###\s+(O-[1-5])\s+·\s+(.+?)\s*$", re.MULTILINE)
+#: A §0 summary-table row: `| **O-3** | ticket | MEDIUM | OPEN | yes (...) | defect |`.
+_SUMMARY_ROW_RE = re.compile(r"^\|\s*\*\*(O-[1-5])\*\*\s*\|(?P<rest>.*)\|\s*$", re.MULTILINE)
 _FIELD_RE = re.compile(r"^-\s+\*\*(?P<label>[^*]+?):\*\*\s*(?P<value>.*)$", re.MULTILINE)
 #: `engine/a/b.py`, with or without a `:line` suffix, inside backticks or bare.
 _ENGINE_PATH_RE = re.compile(r"(engine/[A-Za-z0-9_./-]+\.(?:py|json|md|yml|toml))")
@@ -71,6 +77,24 @@ def parse_inventory(text: str) -> dict[str, dict[str, str]]:
         fields["__title__"] = match.group(2)
         sections[item] = fields
     return sections
+
+
+def summary_owner_secret(text: str) -> dict[str, str]:
+    """{item: yes|no} as the §0 summary table's `Needs an Owner secret?` column states it.
+
+    The column is the fifth cell of each `| **O-N** | ... |` row. Returned normalised to the same
+    yes/no vocabulary the per-item `**Owner secret needed:**` field uses, so the two can be
+    compared; a cell that says neither is returned verbatim and reported as unreadable.
+    """
+    found: dict[str, str] = {}
+    for match in _SUMMARY_ROW_RE.finditer(text):
+        cells = [c.strip() for c in match.group("rest").split("|")]
+        if len(cells) < 4:
+            continue
+        # cells: 0 ticket, 1 severity, 2 status, 3 owner-secret, 4.. defect
+        cell = cells[3].replace("*", "").strip().lower()
+        found[match.group(1)] = "yes" if cell.startswith("yes") else "no" if cell.startswith("no") else cell
+    return found
 
 
 def declared_severities(text: str) -> dict[str, str]:
@@ -139,6 +163,33 @@ def check(root: pathlib.Path) -> list[str]:
                 f"{INVENTORY}: {item} `Owner secret needed` must start with yes/no (got "
                 f"{owner[:24]!r}) — this is the field that separates 'we can fix it' from "
                 f"'only Gev can'"
+            )
+
+        # ---- rule 6: the §0 summary table must agree with this section ----
+        #
+        # The summary table is what a reader reads: five rows, one screen, the answer to "what does
+        # Gev still have to do?". Nothing checked it, and it drifted away from both the per-item
+        # fields BELOW it in the same file and from docs/SECURITY_MODEL.md §4 — three documents
+        # disagreeing on the one question the Owner cares about, with a green gate over all of it.
+        # A summary that contradicts the thing it summarises is worse than no summary.
+        summary = summary_owner_secret(text)
+        stated = summary.get(item)
+        declared_owner = owner.split()[0].rstrip(".,;:") if owner else ""
+        if stated is None:
+            problems.append(
+                f"{INVENTORY}: {item} has no row in the §0 summary table — the table is the only "
+                f"part of this file most readers read, and an item missing from it reads as absent"
+            )
+        elif stated not in ("yes", "no"):
+            problems.append(
+                f"{INVENTORY}: {item}'s §0 summary `Needs an Owner secret?` cell is {stated[:24]!r}, "
+                f"which is neither yes nor no"
+            )
+        elif declared_owner and stated != declared_owner:
+            problems.append(
+                f"owner-secret drift for {item}: the §0 summary table says {stated!r} but "
+                f"`**Owner secret needed:**` in §1 says {declared_owner!r} — the same file "
+                f"contradicts itself on whether only the Owner can close this item"
             )
 
         # rule 4: every cited engine path must exist.

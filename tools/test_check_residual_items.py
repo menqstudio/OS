@@ -19,23 +19,37 @@ import pathlib
 import tempfile
 import unittest
 
-from check_residual_items import ITEMS, check, declared_severities, parse_inventory
+from check_residual_items import (ITEMS, check, declared_severities, parse_inventory,
+                                  summary_owner_secret)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 _SEVERITIES = {"O-1": "HIGH", "O-2": "MEDIUM", "O-3": "MEDIUM", "O-4": "LOW", "O-5": "LOW"}
 
 
-def _section(item: str, severity: str, status: str = "OPEN", extra: str = "", cite: str = "engine/runtime/x.py") -> str:
+def _section(item: str, severity: str, status: str = "OPEN", extra: str = "",
+             cite: str = "engine/runtime/x.py", owner: str = "no") -> str:
     return (
         f"### {item} · a title\n\n"
         f"- **Severity:** {severity}\n"
         f"- **Status:** {status}\n"
-        f"- **Owner secret needed:** no\n"
+        f"- **Owner secret needed:** {owner}\n"
         f"- **Engine code:** `{cite}`\n"
         f"- **Closure requires:** do the audited thing\n"
         f"{extra}\n\n"
     )
+
+
+def _summary(owner: dict[str, str] | None = None, skip: str | None = None) -> str:
+    """The §0 summary table. Its `Needs an Owner secret?` column must agree with each section."""
+    owner = owner or {}
+    rows = ["| Item | Engine ticket | Severity | Status | Needs an Owner secret? | One-line defect |",
+            "|---|---|---|---|---|---|"]
+    for item, sev in _SEVERITIES.items():
+        if item == skip:
+            continue
+        rows.append(f"| **{item}** | `T-{item}` | {sev} | OPEN | {owner.get(item, 'no')} | a defect |")
+    return "\n".join(rows) + "\n\n"
 
 
 def _canonical(severities: dict[str, str]) -> str:
@@ -57,14 +71,15 @@ def _tree(inventory: str, claude: str | None = None, security: str | None = None
     return root
 
 
-def _full_inventory(**overrides: str) -> str:
+def _full_inventory(summary: str | None = None, **overrides: str) -> str:
     parts = []
     for item, sev in _SEVERITIES.items():
         if item in overrides:
             parts.append(overrides[item])
         else:
             parts.append(_section(item, sev))
-    return "# inventory\n\n" + "".join(parts)
+    head = "# inventory\n\n## 0. Summary\n\n" + (summary if summary is not None else _summary())
+    return head + "".join(parts)
 
 
 class InventoryGateTests(unittest.TestCase):
@@ -126,6 +141,29 @@ class InventoryGateTests(unittest.TestCase):
         problems = check(_tree(_full_inventory(**{"O-1": ghost})))
         self.assertTrue(any("bro_deleted_module.py" in p for p in problems), problems)
 
+    def test_summary_table_contradicting_a_section_is_RED(self):
+        """The exact drift found on 2026-08-09: the table said one thing, §1 said the other.
+
+        `docs/SECURITY_MODEL.md` §4 said a third. The gate stayed GREEN through all of it, because
+        it validated the FIELD's shape and never the summary table above it -- the part of the file
+        a reader actually reads.
+        """
+        problems = check(_tree(_full_inventory(summary=_summary({"O-3": "yes"}))))
+        self.assertTrue(any("owner-secret drift for O-3" in p for p in problems), problems)
+
+    def test_an_item_absent_from_the_summary_table_is_RED(self):
+        problems = check(_tree(_full_inventory(summary=_summary(skip="O-5"))))
+        self.assertTrue(any("O-5" in p and "summary table" in p for p in problems), problems)
+
+    def test_summary_and_section_agreeing_on_yes_passes(self):
+        yes = _section("O-2", "MEDIUM", owner="yes — an operator-signed artifact")
+        self.assertEqual(
+            check(_tree(_full_inventory(summary=_summary({"O-2": "yes"}), **{"O-2": yes}))), [])
+
+    def test_an_unreadable_summary_cell_is_RED(self):
+        problems = check(_tree(_full_inventory(summary=_summary({"O-1": "maybe"}))))
+        self.assertTrue(any("neither yes nor no" in p for p in problems), problems)
+
     def test_a_missing_inventory_file_is_RED(self):
         root = pathlib.Path(tempfile.mkdtemp())
         problems = check(root)
@@ -133,6 +171,13 @@ class InventoryGateTests(unittest.TestCase):
 
 
 class ParsingTests(unittest.TestCase):
+    def test_the_summary_column_is_read_from_the_right_cell(self):
+        table = ("| Item | Ticket | Severity | Status | Needs an Owner secret? | Defect |\n"
+                 "|---|---|---|---|---|---|\n"
+                 "| **O-1** | `L-6` | HIGH | OPEN | no | the read half |\n"
+                 "| **O-3** | `M-4` | MEDIUM | OPEN | **yes** (an artifact) | the token |\n")
+        self.assertEqual(summary_owner_secret(table), {"O-1": "no", "O-3": "yes"})
+
     def test_combined_severity_lines_are_understood(self):
         """CLAUDE.md writes `**O-4 / O-5 (LOW)**` on one line."""
         found = declared_severities("  - **O-4 / O-5 (LOW)** control-room actor …")

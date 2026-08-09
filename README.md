@@ -25,10 +25,12 @@ The point of merging them: the cockpit is the only thing a person touches, and t
 
 > **Read this before you trust the sentence above.** That is the design, and it is not yet the
 > shipped behaviour. The governed chain is proven end to end on Linux and on Windows, but in the
-> desktop application `platform_governed_execution_supported()` returns **false** and `main()`
-> keeps `UpstreamBlockedExecutor`, so **production `trusted_verified` is unreachable** — every
-> governed turn refuses rather than pretending. Flipping that gate needs an independent audit and
-> the Owner's approval. Ordinary chat today runs through the Claude CLI provider, contained but
+> desktop application **production `trusted_verified` is unreachable** — every governed turn
+> refuses rather than pretending.
+>
+> **Do not go looking for `platform_governed_execution_supported()`. No function of that name exists in the tree** — it is the *specification* symbol from `docs/design/WINDOWS_BROKER_DESIGN.md` §0.1, which `config/spec-conformance.json` records as `partial` for exactly that reason. The gate is three real refusals, all in the tree: `governed_verification_unconfigured()` (`apps/desktop/src-tauri/src/commands.rs`) returns `Some(...)` unconditionally and fires *before the model is called*; `connect_broker()` (`src/governed_turn.rs`) returns `UnsupportedPlatform` on every host but Linux; and the broker's `build_governed_executor` (`broker/src/main.rs`) serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment config carrying a TCB-root-signed manifest** — nothing in the shipped app sets that variable, so the fallback is what runs.
+>
+> Flipping that gate needs an independent audit and the Owner's approval. Ordinary chat today runs through the Claude CLI provider, contained but
 > not governed, and the UI says so rather than borrowing the governed vocabulary.
 
 ### Repository structure
@@ -44,7 +46,7 @@ OS/
 ├── docs/               📚  Architecture, security model, guides, evidence (bilingual)
 ├── tools/              ✅  15 repository gates (capabilities · reachability · release signing · …)
 ├── .claude/            🤖  262 generated specialist definitions + one coordination Stop guard
-└── .github/workflows/  ⚙️  7 workflows, 28 required checks
+└── .github/workflows/  ⚙️  7 workflows, 31 checks per PR (none *required* — see below)
 ```
 
 **`.claude/` at the repository root is not the wall.** It holds the specialist agent definitions
@@ -145,11 +147,12 @@ cd apps/desktop && npx tauri build --no-bundle
 
 > **Կարդա սա նախքան վերևի նախադասությանը վստահելը։** Դա նախագիծն ա, ու **դեռ ոչ** shipped
 > վարքագիծը։ Կառավարվող շղթան ապացուցված ա ծայրից ծայր՝ Linux-ի ու Windows-ի վրա, բայց desktop
-> հավելվածում `platform_governed_execution_supported()` վերադարձնում ա **false**, ու `main()`-ը
-> պահում ա `UpstreamBlockedExecutor`, այսինքն **production `trusted_verified`-ը անհասանելի ա** —
+> հավելվածում **production `trusted_verified`-ը անհասանելի ա** —
 > ամեն կառավարվող turn մերժում ա, ոչ թե ձևացնում։ Այդ դարպասը բացելու համար պետք ա անկախ աուդիտ ու
 > Տիրոջ հաստատումը։ Սովորական չատը այսօր անցնում ա Claude CLI provider-ով՝ զսպված, բայց ոչ
 > կառավարվող, ու UI-ը հենց դա էլ ասում ա, ոչ թե փոխառում կառավարվողի բառապաշարը։
+>
+> **`platform_governed_execution_supported()` անունով ֆունկցիա ծառում չկա։** Դա spec-ի սիմվոլն ա (`docs/design/WINDOWS_BROKER_DESIGN.md` §0.1), ու `config/spec-conformance.json`-ը գրանցում ա որպես `partial`։ Դարպասը երեք իրական մերժումն են՝ `governed_verification_unconfigured()`-ը անպայման `Some(...)` ա վերադարձնում մոդելին կանչելուց առաջ, `connect_broker()`-ը Linux-ից դուրս վերադարձնում ա `UnsupportedPlatform`, ու broker-ի `build_governed_executor`-ը տալիս ա `UpstreamBlockedExecutor` **քանի դեռ `$BROPS_BROKER_CONFIG`-ը չի ցույց տալիս TCB-root-ով ստորագրված manifest-ով config** — shipped հավելվածում ոչինչ այդ փոփոխականը չի դնում։
 
 ### Repo-ի կառուցվածքը
 

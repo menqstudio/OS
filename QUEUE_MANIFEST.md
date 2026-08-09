@@ -52,7 +52,10 @@ that job continuously, so no freeze is needed:
 > A branch is admitted only after it builds, its tests pass, and an independent adversarial review
 > returns CLEAN.
 
-That rule is now the merge rule: 28 required checks, 15 repository gates, and — for security work —
+That rule is now the merge rule — held by convention, not by enforcement: **31 checks run on every
+PR** (15 of them repository gates under `tools/`), and **none of them is a *required* check**,
+because `main` has no branch protection and no rulesets (verified 2026-08-09). Enabling protection
+is the Owner's, not the Builder's. For security work there is also
 the discipline that every added check is **deleted once to confirm its test goes red**. In the last
 wave about ninety checks were verified that way, and four came back *green*, meaning four tests
 were testing nothing. That is exactly the failure the admission rule was written against.
