@@ -68,6 +68,13 @@ from governed_supervisor import (
     build_terminal_record,
     recompute_request_sha256 as default_recompute_request_sha256,
 )
+from governed_turn_open import (
+    OPEN_PROTOCOL,
+    REFUSE_PEER_DENIED,
+    OpenService,
+    peer_is_sidecar,
+    refused as open_refused,
+)
 
 # ---------------------------------------------------------------------------
 # Wire framing constants (§5 supervisor front door — same shape as §2.1)
@@ -359,8 +366,21 @@ def dispatch(
     read_run_evidence: Optional[Callable[[str], Optional[bytes]]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
+    open_service: Optional[OpenService] = None,
+    peer_uid: Any = None,
 ) -> Dict[str, Any]:
     """Route one decoded request into the pure supervisor core + the durable ledger.
+
+    **Two disjoint frame families, discriminated by their own top-level key.** The §5 ops
+    below are keyed on ``op`` and come from the BROKER. ``brops.governed-turn-open.v1``
+    (§4.10(a0)) is keyed on ``protocol`` and comes from the SIDECAR — a different principal,
+    a different reply shape, and a different refusal vocabulary. Routing on the key each
+    family actually carries keeps them from ever being confusable: an ``op`` frame can never
+    be answered with a governed-turn-open verdict, and vice versa.
+
+    ``open_service`` is the §4.10(a0) binding; without it that protocol is served by nobody
+    and every such request is ``peer_denied`` — a supervisor with no configured sidecar
+    principal, store publish or registry anchor admits no turn.
 
     The §5 v2 op set, in lifecycle order — each one moves the SAME durable attempt forward:
 
@@ -396,6 +416,15 @@ def dispatch(
         raise ServerError("request body must be a JSON object")
     if conn is None:
         raise SupervisorError("supervisor requires a durable ledger connection")
+
+    # §4.10(a0) — the sidecar's protocol-keyed frame. Checked FIRST and by its own key, so a
+    # frame carrying both `protocol` and `op` is answered as the open it declares itself to
+    # be rather than smuggling an op through the sidecar's door.
+    if request.get("protocol") == OPEN_PROTOCOL:
+        if open_service is None:
+            return open_refused(REFUSE_PEER_DENIED)
+        return open_service.handle(request, peer_uid=peer_uid, conn=conn, clock_ms=clock_ms)
+
     op = request.get("op")
 
     if op == OP_ATTEST_RUN:
@@ -628,6 +657,7 @@ def handle_connection(
     read_run_evidence: Optional[Callable[[str], Optional[bytes]]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
+    open_service: Optional[OpenService] = None,
 ) -> Dict[str, Any]:
     """Authenticate the peer, read one bounded frame, dispatch, and write the
     framed reply. Returns the reply object (also useful for tests). Never raises
@@ -636,10 +666,31 @@ def handle_connection(
     ``ledger_conn`` is the supervisor's durable ledger; every lifecycle op needs it.
     ``sign_attestation`` + ``supervisor_attestation_key_id`` enable the ``attest-run`` op;
     omit them and only the lifecycle ops are served.
+
+    **Two principals, two disjoint surfaces (§2.6 / §4.10(a0)).** The broker uid drives the
+    §5 ``op`` lifecycle. The sidecar uid — supplied only via ``open_service``, and DENIED
+    entirely when it is absent — may send exactly one thing: ``brops.governed-turn-open.v1``.
+    A sidecar-authenticated connection presenting an ``op`` frame is refused as an
+    unauthorized peer, so admitting the sidecar to this socket widens the door by exactly one
+    protocol and not by one op.
+
+    A configuration where the broker uid EQUALS the sidecar uid is refused outright rather
+    than served: that is the §2.6 single-UID collapse, and under it every ACL in this design
+    means nothing. It fails closed at the door, before a frame is read, because a supervisor
+    cannot detect the collapse later from anything a peer sends.
     """
     peer_uid = getattr(conn, "peer_uid", None)
-    # Allowlist ONLY the broker uid; refuse BEFORE reading any frame.
-    if not peer_is_broker(peer_uid, allowed_broker_uid):
+    sidecar_uid = open_service.allowed_sidecar_uid if open_service is not None else None
+
+    if sidecar_uid is not None and peer_is_broker(sidecar_uid, allowed_broker_uid):
+        reply = {"ok": False, "error": "principal collapse: sidecar uid equals broker uid"}
+        _try_write(conn, reply)
+        return reply
+
+    broker_peer = peer_is_broker(peer_uid, allowed_broker_uid)
+    sidecar_peer = sidecar_uid is not None and peer_is_sidecar(peer_uid, sidecar_uid)
+    # Refuse an unknown peer BEFORE reading any frame.
+    if not (broker_peer or sidecar_peer):
         reply = {"ok": False, "error": "peer not authorized"}
         _try_write(conn, reply)
         return reply
@@ -647,6 +698,14 @@ def handle_connection(
     try:
         raw = read_frame(conn)
         request = json.loads(raw.decode("utf-8"))
+        # The sidecar's grant is one protocol wide. Anything else it sends is refused here,
+        # in the transport, so the op handlers below never see a non-broker caller at all.
+        if not broker_peer and (
+            not isinstance(request, dict) or request.get("protocol") != OPEN_PROTOCOL
+        ):
+            reply = {"ok": False, "error": "peer not authorized"}
+            _try_write(conn, reply)
+            return reply
         reply = dispatch(
             request,
             config,
@@ -658,6 +717,8 @@ def handle_connection(
             read_run_evidence=read_run_evidence,
             sign_attestation=sign_attestation,
             supervisor_attestation_key_id=supervisor_attestation_key_id,
+            open_service=open_service,
+            peer_uid=peer_uid,
         )
     except (FrameError, ServerError, SupervisorError, ValueError, UnicodeDecodeError) as exc:
         reply = {"ok": False, "error": _bounded_error(str(exc))}
@@ -724,6 +785,7 @@ def serve_forever(
     read_run_evidence: Optional[Callable[[str], Optional[bytes]]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
+    open_service: Optional[OpenService] = None,
 ) -> None:
     """Drive the accept loop. ``accept_one`` returns the next connection (any
     object with ``peer_uid`` / ``recv_exactly`` / ``send_all`` / ``close``) or
@@ -750,6 +812,7 @@ def serve_forever(
                 read_run_evidence=read_run_evidence,
                 sign_attestation=sign_attestation,
                 supervisor_attestation_key_id=supervisor_attestation_key_id,
+                open_service=open_service,
             )
         finally:
             try:

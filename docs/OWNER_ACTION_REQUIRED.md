@@ -207,6 +207,34 @@ over: `HeadFloorConfigurationContradictionTests` asks both rules of a real direc
 a posture needs elevation, and both `_head_floor_dir` and `_advance_head_floor` carry warnings saying the
 escape route in their own text cannot be configured.
 
+## 1c. The design contradicts itself about what `challenge_handle` covers — Architect decision
+
+**What you have to decide: which half of rev-30 is normative.** This is not a coding choice; both readings
+are internally consistent and they produce different digests for the same turn.
+
+- §3's matrix and §4.10(a0) both say `challenge_handle = SHA256(JCS({payload, sig}))`.
+- The shipped `governed_supervisor.accept_open` computes `SHA256(JCS(payload))` — and §5's own summary
+  table (`WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2774`) records that behaviour as correct.
+
+So the document disagrees with itself, and the code follows the §5 half. The §4.10(a0) implementation
+landed on 2026-08-10 follows the §3 half, on the grounds that §3 and §4.10(a0) are the sections that define
+the field.
+
+**The consequence, stated plainly.** For one and the same turn, the staging row's handle and the acceptance
+row's handle are digests of *different strings*. §4.10(d) looks up the `INPUTS_READY` row by
+`(install_id, request_nonce, challenge_handle)`, and that join **cannot succeed** until the two agree. The
+open path is correct in isolation and the chain does not close.
+
+**Why it was not "just fixed" downstream.** Making §4.10(a0) compute the §5 form would silently ratify a
+digest the normative sections do not define; making `accept_open` compute the §3 form changes a shipped §5
+behaviour and the digests any existing evidence recorded. Either is defensible; neither is a builder's call,
+and picking one quietly is how a chain ends up binding something nobody specified. The correction belongs to
+whichever section is declared normative.
+
+**Nothing is blocked on it today** — no governed surface became reachable, `platform_governed_execution_supported`
+is unchanged, and no acceptance row, lease, or `trusted_verified` path is created by the open path. It
+blocks §4.10(d), which is the next ordered piece but one.
+
 ## 2. The independent audit, then your approval
 
 The gate does not open when these settle. It needs an audit of the whole chain **by someone who did

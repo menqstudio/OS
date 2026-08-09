@@ -138,6 +138,22 @@
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
+    "§4.10(a)": {
+      "status": "not_implemented",
+      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
+    },
+    "§4.10(b)": {
+      "status": "not_implemented",
+      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
+    },
+    "§4.10(c)": {
+      "status": "not_implemented",
+      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
+    },
+    "§4.10(d)": {
+      "status": "not_implemented",
+      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
+    },
     "§4.10(f)": {
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
@@ -145,6 +161,10 @@
     "§4.10(g)": {
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.10(h)": {
+      "status": "not_implemented",
+      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
     },
     "§4.2": {
       "status": "unreviewed",

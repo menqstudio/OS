@@ -175,3 +175,113 @@ CREATE TABLE IF NOT EXISTS governed_evidence_head_floor (
     updated_at_ms         INTEGER NOT NULL,
     PRIMARY KEY (install_id, task_id)
 );
+
+-- ---------------------------------------------------------------------------
+-- 5. PRE-ACCEPT input staging (rev-30 §2.4 + §4.10(a0)).
+--
+-- This table is the supervisor's record that a signed challenge was OPENED --
+-- admitted to upload its three declared inputs -- and NOTHING more. It is
+-- deliberately NOT the acceptance ledger above, and the difference is the whole
+-- point of the §2.4 "no staging<->acceptance deadlock" rule:
+--
+--   * it carries NO `execution_attempt_id` and NO lease. Opening a turn grants no
+--     execution right; the right is minted later, once, by the acceptance CAS.
+--     A caller that supplies an `execution_attempt_id` at open (the P1-5 defect --
+--     the requester minting what the supervisor must mint) has nowhere to put it:
+--     the wire shape rejects the field and this table has no column for it.
+--   * it is gated by the VERIFIED signed challenge, not by an acceptance row --
+--     which, at open time, does not and must not yet exist.
+--
+-- `challenge_expires_at_ms` is copied from the *signature-verified* §4.1 payload,
+-- so the row's own lifetime is bounded by the challenge that authorized it. The
+-- §2.4 live-count rule reads it: a row past its expiry occupies ZERO staging quota
+-- whether or not the sweep has reached it, which is what stops an expired or
+-- replayed challenge from pinning a `MAX_CONCURRENT_GOVERNED_TURNS` slot (P1-3).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS governed_turn_staging (
+    install_id               TEXT NOT NULL,
+    request_nonce            TEXT NOT NULL,
+    challenge_handle         TEXT NOT NULL,   -- 64hex = SHA256(exact signed document bytes)
+    run_id                   TEXT NOT NULL,
+    task_id                  TEXT NOT NULL,
+    workspace_id             TEXT NOT NULL,
+
+    -- The three digests the VERIFIED challenge committed to. §4.10(a) refuses any
+    -- staging-open whose `declared_sha256` is not one of these, so the bytes that
+    -- may be uploaded are fixed by the signature before the first chunk arrives.
+    system_sha256            TEXT NOT NULL,
+    history_sha256           TEXT NOT NULL,
+    generation_config_sha256 TEXT NOT NULL,
+
+    -- Set by §4.10(c) as each artifact publishes; all three set => INPUTS_READY.
+    system_handle            TEXT,
+    history_handle           TEXT,
+    generation_config_handle TEXT,
+
+    state                    TEXT NOT NULL CHECK (state IN (
+        'VERIFYING','UPLOADING','INPUTS_READY')),
+    challenge_expires_at_ms  INTEGER NOT NULL,
+    created_at_ms            INTEGER NOT NULL,
+    updated_at_ms            INTEGER NOT NULL,
+    UNIQUE (install_id, request_nonce),
+    UNIQUE (challenge_handle)
+);
+
+-- The §2.4 live-count predicate (`install_id` + not-yet-expired) is read on EVERY
+-- open to enforce MAX_CONCURRENT_GOVERNED_TURNS, so it gets an index rather than a
+-- table scan a hostile caller could lengthen.
+CREATE INDEX IF NOT EXISTS idx_governed_turn_staging_live
+    ON governed_turn_staging (install_id, challenge_expires_at_ms);
+
+-- A row may only ENTER the world as VERIFYING. §4.10(a0) is the only creator, and it
+-- creates `absent -> VERIFYING -> UPLOADING` inside one transaction; every later state
+-- must therefore be REACHED through the transitions below rather than declared at
+-- INSERT. Without this, a writer could conjure an `INPUTS_READY` row -- the exact state
+-- §4.10(d) treats as "all three inputs published and re-hashed against the challenge" --
+-- having published nothing at all.
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_insert_state
+BEFORE INSERT ON governed_turn_staging
+FOR EACH ROW
+WHEN NEW.state <> 'VERIFYING'
+BEGIN
+    SELECT RAISE(ABORT, 'staging row must be created VERIFYING');
+END;
+
+-- CHECK cannot see OLD.state, so the §2.4 ordering VERIFYING -> UPLOADING -> INPUTS_READY
+-- is enforced by a BEFORE-UPDATE trigger, exactly as the acceptance lifecycle above. A
+-- same-state write (recording a published `*_handle`) is allowed; every cross-state edge
+-- must be one of the two legal ones; nothing may move backwards, and nothing may skip
+-- UPLOADING to reach INPUTS_READY.
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_transition
+BEFORE UPDATE OF state ON governed_turn_staging
+FOR EACH ROW
+WHEN NOT (
+    OLD.state = NEW.state
+    OR (OLD.state = 'VERIFYING'  AND NEW.state = 'UPLOADING')
+    OR (OLD.state = 'UPLOADING'  AND NEW.state = 'INPUTS_READY')
+)
+BEGIN
+    SELECT RAISE(ABORT, 'illegal staging state transition');
+END;
+
+-- The staging row's identity is the challenge it was opened for. Rebinding an existing
+-- row to a DIFFERENT challenge would let a second signed document inherit the first
+-- one's admitted slot and its already-published inputs, so the immutable columns are
+-- immutable in the DB and not merely by convention (§4.10(a0) `retry_conflict` is the
+-- wire verdict; this is the floor underneath it).
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_immutable_binding
+BEFORE UPDATE ON governed_turn_staging
+FOR EACH ROW
+WHEN OLD.install_id <> NEW.install_id
+  OR OLD.request_nonce <> NEW.request_nonce
+  OR OLD.challenge_handle <> NEW.challenge_handle
+  OR OLD.run_id <> NEW.run_id
+  OR OLD.task_id <> NEW.task_id
+  OR OLD.workspace_id <> NEW.workspace_id
+  OR OLD.system_sha256 <> NEW.system_sha256
+  OR OLD.history_sha256 <> NEW.history_sha256
+  OR OLD.generation_config_sha256 <> NEW.generation_config_sha256
+  OR OLD.challenge_expires_at_ms <> NEW.challenge_expires_at_ms
+BEGIN
+    SELECT RAISE(ABORT, 'staging row binding is immutable');
+END;

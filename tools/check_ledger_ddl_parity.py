@@ -47,6 +47,18 @@ REQUIRED_CLAUSES = (
     "execution_attempt_id        TEXT PRIMARY KEY NOT NULL",
     "CREATE TABLE IF NOT EXISTS governed_evidence_head_floor",
     "PRAGMA foreign_keys = ON",
+    # §2.4 / §4.10(a0) pre-accept staging. The two triggers are the reason an
+    # `INPUTS_READY` row cannot be conjured: one forbids any INSERT that is not
+    # `VERIFYING`, the other forbids any edge that is not VERIFYING->UPLOADING or
+    # UPLOADING->INPUTS_READY. Deleting either from both copies in one commit would
+    # restore exactly the "declare the end state, publish nothing" hole.
+    "CREATE TABLE IF NOT EXISTS governed_turn_staging",
+    "trg_governed_turn_staging_insert_state",
+    "RAISE(ABORT, 'staging row must be created VERIFYING')",
+    "trg_governed_turn_staging_transition",
+    "RAISE(ABORT, 'illegal staging state transition')",
+    "trg_governed_turn_staging_immutable_binding",
+    "RAISE(ABORT, 'staging row binding is immutable')",
 )
 
 

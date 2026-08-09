@@ -8,6 +8,66 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Wave 3b-1B step 1: the pre-accept open, and a design that disagrees with itself (2026-08-10)
+
+The first ordered piece of Wave 3b-1B is in: `brops.governed-turn-open.v1`, the §2.4 `governed_turn_staging`
+states, and the §4.10(a0) pre-accept open. Deliberately **not** built: §4.10(b)(c)(d)(e)(f) — the staging
+chunks, the evidence request, the result frame, the output pull. Those are separate ordered pieces.
+Building ahead is how this repository acquired a Phase 10 while Phase 1 was open.
+
+**The P1-5 defect is refused by name.** `execution_attempt_id` is supervisor-minted once, at §5 acceptance;
+§4.10(a0) must mint nothing, stamp no acceptance clock and consume no nonce. Its single clock read is a
+resource-admission read that is discarded. A request carrying `execution_attempt_id` is refused `malformed`,
+no row is written, nothing is published — and the table has no such column.
+
+**`accept_open` is not this operation, and was reused rather than copied.** It is §5 acceptance and does the
+two things a0 forbids. Its parts — `_validate_challenge_doc`, `_canonical_bytes`, `recompute_request_sha256`,
+`SupervisorConfig` — are imported; so are the ledger's connection, shared-DDL loader, `_Tx`
+(`BEGIN IMMEDIATE`), UNIQUE classification and error taxonomy. `peer_is_sidecar` delegates to
+`challenge_authority.peer_is_broker` rather than becoming the tree's third uid predicate.
+
+**Four DB-level enforcements, not four checks in Python.** The `state` CHECK over
+`VERIFYING/UPLOADING/INPUTS_READY`; an insert trigger so a row may only be *created* `VERIFYING` (nothing can
+declare an `INPUTS_READY` row having published nothing); a transition trigger allowing only
+`VERIFYING→UPLOADING` and `UPLOADING→INPUTS_READY`, no reverse and no skip; and an immutable-binding trigger
+so a challenge binding cannot be rewritten onto another turn. The DDL went into the supervisor's normative
+source and its byte-mirror, gated by `check_ledger_ddl_parity`, whose test fixture now **derives** from
+`REQUIRED_CLAUSES` instead of transcribing them — the transcribed copy had already rotted.
+
+**A gap that had to be filled to keep two refusals from being stubs.** §4.10(a0)'s `registry_unknown` and
+`key_invalid` need a root-signed `brops.challenge-key-registry.v1`, and **no such document exists anywhere in
+the tree**: `SupervisorConfig` carries four registry *scalars* that are recorded provenance and are checked
+against nothing. The §4.2 verification half is now implemented — not its provisioning, not its live-kit
+wiring — so those two refusals are reachable rather than decorative.
+
+**Two encoders both called canonical.** §4.10(a0) names `bro_signature.canonical_bytes` (`ensure_ascii=False`);
+the governed chain actually signs and verifies with `_canonical_bytes` (`ensure_ascii=True`). They diverge on
+any non-ASCII id. The implementation enforces the strict **intersection** — the bytes must equal the
+governed-family encoding *and* both encoders must agree — so a document only one of them calls canonical is
+refused. Fail-closed under either reading.
+
+**The design contradicts itself about `challenge_handle`, and that is now an Owner/Architect decision**
+(`docs/OWNER_ACTION_REQUIRED.md` §1c). §3 and §4.10(a0) say `SHA256(JCS({payload, sig}))`; shipped
+`accept_open` computes `SHA256(JCS(payload))` and §5's own summary table records that as correct. The staging
+row's handle and the acceptance row's handle are therefore digests of different strings for the same turn, so
+§4.10(d)'s join cannot succeed until they agree. Not fixed downstream on purpose: either direction is
+defensible and picking one quietly is how a chain ends up binding something nobody specified.
+
+**Mutation testing: 48 mutants, 48 killed, zero survivors**, restore verified by SHA-256 after every run.
+Three earlier survivors were real gaps and are closed by tests: the decoded-size cap (masked by an allocation
+pre-check), the base64 round-trip check, and the `state` CHECK (masked by the transition trigger — now proved
+on its own with the triggers dropped).
+
+**Baseline honesty, from the agent and worth keeping.** The engine suite is not deterministic from a cold
+state on this box: first run 14 failures / 8 errors, second 5 failures, third OK. Four pre-existing suites
+depend on durable state a prior run creates. The converged baseline was **1328**, not the 1325 an earlier
+brief claimed. Now **1406 tests OK (43 skipped)**, re-run here. `check_ledger_ddl_parity`,
+`check_spec_references` (5 not_implemented, 7 partial, 43 unreviewed) and `check_reachability` GREEN.
+
+No governed surface became reachable. No acceptance row, lease or `trusted_verified` path is created by
+anything here.
+
+
 ### One message and two messages hashed to the same bytes (2026-08-10)
 
 Three findings on the chat-to-model path. All three were reproduced first, and each fix was confirmed red
