@@ -139,8 +139,22 @@ fn the_production_machine_root_has_an_ancestor_this_account_cannot_rename() {
     if prerequisites::running_as_root() {
         prerequisites::skip(
             NAME,
+            prerequisites::TAG_NOT_ROOT,
             "this process is running as root, so every write probe succeeds and no ancestor \
              holds anything in place. Run the suite as an unprivileged account",
+        );
+        return;
+    }
+    // The Windows half of the same sentence. `C:\ProgramData` grants `BUILTIN\Users` create and
+    // not DELETE - which is the whole reason it is the machine root - but an ELEVATED
+    // administrator is granted DELETE by the `BUILTIN\Administrators` ACE beside it, and
+    // `can_delete` measures that correctly and says so. On that token the assertion below is
+    // FALSE, and it is false about the machine rather than about the product.
+    if prerequisites::running_elevated() {
+        prerequisites::skip(
+            NAME,
+            prerequisites::TAG_UNELEVATED_TOKEN,
+            prerequisites::ELEVATION_GAP,
         );
         return;
     }
@@ -545,6 +559,7 @@ fn the_effective_uid_probe_agrees_with_the_kernel() {
         let Some(kernel) = prerequisites::procfs_euid() else {
             prerequisites::skip(
                 NAME,
+                prerequisites::TAG_PROCFS,
                 "/proc/self is not present, so there is no independent oracle for this \
                  process's effective uid on this platform (procfs is Linux's)",
             );
@@ -559,9 +574,11 @@ fn the_effective_uid_probe_agrees_with_the_kernel() {
     }
     #[cfg(windows)]
     {
-        // Not a skip that hides anything: Windows has no uid, and the whole POSIX ownership
-        // question is answered there by the token/DACL path instead.
-        prerequisites::skip(NAME, "windows has no effective uid; custody is decided by the token");
+        // Not a skip that hides anything, and not one a runner could ever fill: Windows has no
+        // uid at all, and the whole POSIX ownership question is answered there by the
+        // token/DACL path instead. `PLATFORM_EXEMPTIONS` carries the reasoning, and the
+        // ubuntu-latest leg of the matrix runs this test for real.
+        prerequisites::not_applicable(NAME);
     }
 }
 
@@ -644,7 +661,11 @@ fn a_subdirectory_of_the_anchor_is_walked_into_rather_than_opened_for_writing() 
     {
         use std::os::unix::fs::PermissionsExt;
         if prerequisites::running_as_root() {
-            prerequisites::skip(NAME, "root ignores mode bits, so a 0555 directory denies it nothing");
+            prerequisites::skip(
+                NAME,
+                prerequisites::TAG_NOT_ROOT,
+                "root ignores mode bits, so a 0555 directory denies it nothing",
+            );
             return;
         }
         let temp = tempfile::tempdir().unwrap();
@@ -679,15 +700,75 @@ fn a_subdirectory_of_the_anchor_is_walked_into_rather_than_opened_for_writing() 
         std::fs::set_permissions(&anchor_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::set_permissions(&pin, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
-    #[cfg(not(unix))]
+    // The same fixture, built out of the access bit instead of the mode bit. This branch used to
+    // be a skip whose reason was "it needs a DACL" - true, and the DACL was buildable all along:
+    // `prerequisites::deny_access` removes FILE_ADD_FILE and FILE_DELETE_CHILD and keeps
+    // WRITE_DAC, so unlike `anchor::seal` it can be undone. What that
+    // skip cost: `probe_tree`'s descent into a subdirectory - the defect that motivated the
+    // recursion in the first place - had never been measured against a Windows descriptor on any
+    // machine.
+    #[cfg(windows)]
     {
-        prerequisites::skip(
-            NAME,
-            "a directory this account can list but not add entries to cannot be made with a \
-             mode on this platform; it needs a DACL, which is what the sealed fixture in \
-             `prerequisites` supplies and `a_sealed_anchor_refuses_this_accounts_own_writes` \
-             measures",
+        if prerequisites::running_elevated() {
+            prerequisites::skip(
+                NAME,
+                prerequisites::TAG_UNELEVATED_TOKEN,
+                prerequisites::ELEVATION_GAP,
+            );
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let anchor_dir = temp.path().join("trust-anchor");
+        let registry = anchor_dir.join("registry");
+        std::fs::create_dir_all(&registry).unwrap();
+        let pin = anchor_dir.join("operator-root.pub");
+        std::fs::write(&pin, "11".repeat(32) + "\n").unwrap();
+
+        // The pin is denied first, for the same reason the POSIX branch chmods it 0444: entries
+        // are walked in sorted order and `operator-root.pub` sorts before `registry`, so a pin
+        // this account could still open for writing would end the walk one entry before the
+        // subdirectory this test is about.
+        let me = match prerequisites::deny_access(
+            &pin,
+            prerequisites::deny::ADD_FILE | prerequisites::deny::DELETE,
+        ) {
+            Ok(me) => me,
+            Err(e) => {
+                prerequisites::skip(
+                    NAME,
+                    prerequisites::TAG_DACL_APPLICATION,
+                    &format!("SetNamedSecurityInfoW refused on this box: {e}"),
+                );
+                return;
+            }
+        };
+        // The registry subdirectory stays CREATABLE - that is the whole point - but it must not
+        // be deletable, or the walk refuses it for that instead of descending into it.
+        prerequisites::deny_access(&registry, prerequisites::deny::DELETE)
+            .expect("deny DELETE on the registry subdirectory");
+        // The anchor denies creation even to its owner, and denies removing what is inside it.
+        prerequisites::deny_access(
+            &anchor_dir,
+            prerequisites::deny::ADD_FILE | prerequisites::deny::DELETE_CHILD,
+        )
+        .expect("deny FILE_ADD_FILE and FILE_DELETE_CHILD on the anchor");
+
+        let err = anchor::prove_unwritable(&anchor_dir)
+            .expect_err("the registry subdirectory is writable, so the anchor is not out of reach");
+        let text = err.to_string();
+        assert!(
+            text.contains(&registry.display().to_string()),
+            "the probe never entered the subdirectory: {text}"
         );
+        assert!(text.contains("CAN create files"), "{text}");
+        assert!(
+            !text.contains("cannot be measured"),
+            "a directory entry was asked whether it opens for writing: {text}"
+        );
+
+        prerequisites::restore_full_control(&anchor_dir, &me).expect("restore the anchor DACL");
+        prerequisites::restore_full_control(&registry, &me).expect("restore the registry DACL");
+        prerequisites::restore_full_control(&pin, &me).expect("restore the pin DACL");
     }
 }
 
@@ -702,7 +783,11 @@ fn a_symlink_inside_the_anchor_is_refused_rather_than_followed() {
     {
         use std::os::unix::fs::PermissionsExt;
         if prerequisites::running_as_root() {
-            prerequisites::skip(NAME, "root ignores mode bits, so a 0555 directory denies it nothing");
+            prerequisites::skip(
+                NAME,
+                prerequisites::TAG_NOT_ROOT,
+                "root ignores mode bits, so a 0555 directory denies it nothing",
+            );
             return;
         }
         let temp = tempfile::tempdir().unwrap();
@@ -718,13 +803,61 @@ fn a_symlink_inside_the_anchor_is_refused_rather_than_followed() {
 
         std::fs::set_permissions(&anchor_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    #[cfg(not(unix))]
+    // Windows reaches the SAME line of `probe_tree`: the walk asks `symlink_metadata`, and a
+    // reparse point answers `is_symlink()` there exactly as a POSIX symlink does. What this
+    // branch measures that the POSIX one cannot is that the Windows *fixture* - an entry created
+    // by `CreateSymbolicLinkW` rather than `symlink(2)` - is seen by that code as a link and not
+    // as the file it points at.
+    #[cfg(windows)]
     {
-        prerequisites::skip(
-            NAME,
-            "creating a symlink needs SeCreateSymbolicLinkPrivilege or developer mode on this \
-             platform, which the test account may not hold",
-        );
+        if prerequisites::running_elevated() {
+            prerequisites::skip(
+                NAME,
+                prerequisites::TAG_UNELEVATED_TOKEN,
+                prerequisites::ELEVATION_GAP,
+            );
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let anchor_dir = temp.path().join("trust-anchor");
+        std::fs::create_dir_all(&anchor_dir).unwrap();
+        let elsewhere = temp.path().join("mine.pub");
+        std::fs::write(&elsewhere, "22".repeat(32) + "\n").unwrap();
+        // The one thing this platform will not hand an arbitrary account. Developer Mode
+        // (`AllowDevelopmentWithoutDevLicense`) or `SeCreateSymbolicLinkPrivilege` supplies it;
+        // the CI job turns the former on before the run, so this is measured there rather than
+        // declared away.
+        if let Err(e) =
+            prerequisites::create_symlink(&elsewhere, &anchor_dir.join("operator-root.pub"))
+        {
+            prerequisites::skip(
+                NAME,
+                prerequisites::TAG_WINDOWS_SYMLINK,
+                &format!(
+                    "creating a symlink needs SeCreateSymbolicLinkPrivilege or Developer Mode, \
+                     which this account does not hold, so no fixture with a link inside it can \
+                     be built here ({e})"
+                ),
+            );
+            return;
+        }
+        let me = match prerequisites::deny_access(&anchor_dir, prerequisites::deny::ADD_FILE) {
+            Ok(me) => me,
+            Err(e) => {
+                prerequisites::skip(
+                    NAME,
+                    prerequisites::TAG_DACL_APPLICATION,
+                    &format!("SetNamedSecurityInfoW refused on this box: {e}"),
+                );
+                return;
+            }
+        };
+
+        let err =
+            anchor::prove_unwritable(&anchor_dir).expect_err("a symlinked pin is not an anchor");
+        assert!(err.to_string().contains("SYMLINK"), "{err}");
+
+        prerequisites::restore_full_control(&anchor_dir, &me).expect("restore the anchor DACL");
     }
 }
 
@@ -743,6 +876,7 @@ fn a_posix_first_launch_refuses_before_it_mints_anything() {
         if prerequisites::running_as_root() {
             prerequisites::skip(
                 NAME,
+                prerequisites::TAG_NOT_ROOT,
                 "root can delete /var/lib, so `precheck_location` refuses first and the \
                  preflight below is never reached. Run the suite as an unprivileged account",
             );
@@ -769,13 +903,12 @@ fn a_posix_first_launch_refuses_before_it_mints_anything() {
     }
     #[cfg(not(unix))]
     {
-        // Windows CAN construct its own anchor, so there is no refusal to wire. Running the
-        // equivalent here would seal a real directory under %ProgramData% permanently, which
-        // is exactly what `provision.rs` uses the unsealed entry points to avoid.
-        prerequisites::skip(
-            NAME,
-            "windows builds its own anchor, so this refusal does not apply; \
-             `windows_is_the_only_platform_that_can_construct_its_own_anchor` is its half",
-        );
+        // Windows CAN construct its own anchor, so there is no refusal to wire, on any Windows
+        // machine, ever - a platform fact rather than a gap a runner could fill. Running the
+        // equivalent here would seal a real directory under %ProgramData% permanently, which is
+        // exactly what `provision.rs` uses the unsealed entry points to avoid.
+        // `windows_is_the_only_platform_that_can_construct_its_own_anchor` is the other half of
+        // the decision and runs here; the ubuntu-latest leg runs this test for real.
+        prerequisites::not_applicable(NAME);
     }
 }

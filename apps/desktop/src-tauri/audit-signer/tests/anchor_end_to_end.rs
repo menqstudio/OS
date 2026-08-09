@@ -38,6 +38,12 @@ use std::process::Command;
 use brops_audit_signer::{custody, register, AnchorCore};
 use brops_provision::audit_signer as spec;
 
+// The same prerequisite guard `brops-provision`'s tests use, included by path rather than
+// duplicated: a second copy would be a second policy, and the whole point of the module is that
+// there is exactly one answer to "what happens when a prerequisite is missing".
+#[path = "../../provision/tests/prerequisites/mod.rs"]
+mod prerequisites;
+
 /// `<repo>/apps/desktop/src-tauri/audit-signer` -> `<repo>`.
 fn repo_root() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -619,6 +625,17 @@ fn registration_applies_the_plan_for_real_or_says_why_it_could_not() {
                  got {other:?}"
             ),
         }
+        // The refusal above is real coverage; the elevated half is a hole, and until this
+        // round it was a hole announced with a `println!` that libtest captured - a green run
+        // that said nothing. It goes through the guard now, so the only way past this line is
+        // for somebody to have declared the gap by name.
+        prerequisites::skip(
+            "registration_applies_the_plan_for_real_or_says_why_it_could_not (elevated half)",
+            prerequisites::TAG_ELEVATED_REGISTRATION,
+            "this session is not an ElevatedAdministrator, so `sc.exe create` and a protected \
+             root owned by BUILTIN\\Administrators are both refused by the operating system, \
+             and the live registration path did not run here",
+        );
         return;
     }
 

@@ -50,11 +50,41 @@ fn resolve_python() -> String {
 }
 
 /// What `json.dumps(document, sort_keys=True)` really produces for `value`.
+///
+/// # The transport is explicit about bytes, and has to be
+///
+/// This used to hand Python the input through `sys.stdin.read()` and take the answer through
+/// `print`. Both of those go through Python's *text* layer, whose encoding on Windows is the
+/// process code page — cp1252 on a GitHub runner — not UTF-8. The first Windows CI run of this
+/// crate therefore compared:
+///
+/// ```text
+///   rust:   {"ledger": "journal-é中.jsonl"}
+///   python: {"ledger": "journal-Ã©ä¸­.jsonl"}
+/// ```
+///
+/// which is `é中` UTF-8-encoded and then re-read as cp1252, one byte at a time. The two encoders
+/// had not drifted at all; the test's own pipe had corrupted the input before either of them saw
+/// it, and the failure it reported was about the wrong thing entirely.
+///
+/// So the bytes are stated at both ends: `sys.stdin.buffer.read().decode("utf-8")` in, and
+/// `sys.stdout.buffer.write(...encode("ascii"))` out. The `ascii` encode is not cosmetic — it is
+/// an assertion that `json.dumps` really did honour `ensure_ascii=True`, and it raises rather
+/// than transcoding if it did not.
 fn python_dumps(python: &str, value: &Value) -> String {
     let compact = serde_json::to_string(value).expect("serialise the input for Python");
-    let program = "import json,sys; print(json.dumps(json.loads(sys.stdin.read()), sort_keys=True), end='')";
+    let program = "import json,sys;                    text = sys.stdin.buffer.read().decode('utf-8');                    out = json.dumps(json.loads(text), sort_keys=True);                    sys.stdout.buffer.write(out.encode('ascii'))";
     let mut child = Command::new(python)
         .args(["-c", program])
+        // A HOSTILE text layer, on purpose. The bug this guards against only reproduced on a
+        // machine whose Python text encoding was not UTF-8 — a GitHub Windows runner, code page
+        // 1252 — and on a developer box with UTF-8 mode on, reverting the fix goes green and
+        // says nothing. Pinning the child's text encoding to cp1252 and turning UTF-8 mode off
+        // makes the failure machine-independent: `sys.stdin.read()` mangles or raises on EVERY
+        // box under these, while `sys.stdin.buffer.read().decode("utf-8")` is indifferent to
+        // both because it never touches the text layer at all.
+        .env("PYTHONIOENCODING", "cp1252")
+        .env("PYTHONUTF8", "0")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -70,7 +100,13 @@ fn python_dumps(python: &str, value: &Value) -> String {
         "python refused the input: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    String::from_utf8(out.stdout).expect("json.dumps is ASCII with ensure_ascii=True")
+    let answer =
+        String::from_utf8(out.stdout).expect("json.dumps is ASCII with ensure_ascii=True");
+    assert!(
+        answer.is_ascii(),
+        "json.dumps returned non-ASCII bytes, so either ensure_ascii stopped defaulting to True          or the pipe transcoded them: {answer:?}"
+    );
+    answer
 }
 
 #[test]

@@ -180,12 +180,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        with:
-          toolchain: stable
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
-        with:
-          python-version: "3.12"
+
       # These two crates mint and police this deployment's entire trust root, and until now they
       # ran in NO job on either platform - every property they establish was gated on somebody
       # remembering to run cargo by hand. A single Debian run then found: a umask-dependent pin
@@ -194,17 +189,263 @@ jobs:
       # unchecked on Windows. Nine of the sixteen mutations from that round are GREEN on Windows
       # and RED on Linux, so ONE platform is not coverage - the matrix is the point, not a luxury.
       #
+      # The FIRST run of this job then found four more, and every one of them was about the
+      # machine rather than the code:
+      #
+      #   * ubuntu had no directory owned by another uid, so the one test that proves a POSIX
+      #     anchor is out of this account's reach could not run. That is provisioned below.
+      #   * windows ran as an ELEVATED administrator. Every O-2 property is a claim about what
+      #     THIS account cannot reach, and an elevated token holds SeTakeOwnership/SeRestore and
+      #     sits inside the BUILTIN\Administrators ACE those descriptors carry, so ten tests were
+      #     measuring a claim that is simply false on that token - which the product itself
+      #     reports as Separation::SeparatedUntilElevation. The Windows leg therefore runs the
+      #     test binaries as a STANDARD LOCAL ACCOUNT created below. That is not a workaround: it
+      #     is the posture the product is specified against ("the application must run
+      #     unelevated"), and it is the first time the Separation::Separated branch has been
+      #     exercised anywhere.
+      #   * `sc.exe create` had never been run by anything, and its argument vector was wrong
+      #     (`start= auto` as ONE argv element). Fixed in `register.rs`, with unit tests on the
+      #     argv shape that run on both platforms.
+      #   * the cross-language encoder proof fed Python through `sys.stdin.read()`, whose encoding
+      #     on Windows is the process code page. It compared cp1252 mojibake with UTF-8 and called
+      #     it a drift. The transport now states its bytes at both ends.
+      #
       # `python_verifier.rs` runs the REAL engine verifiers against the REAL Rust output, so the
       # dependency is not optional: that test FAILS rather than skips when cryptography is absent,
       # which is deliberate - a skip there would hide a byte-level divergence between the two
       # sides of the trust chain.
+
+      # ---------------------------------------------------------------------------------------
+      # Windows: the account, and the machine facts it needs. FIRST, because the ACL grant below
+      # is inherited by everything cargo writes afterwards - doing it after the build would mean
+      # re-permissioning a multi-gigabyte target directory.
+      # ---------------------------------------------------------------------------------------
+      - name: Create the standard account the Windows custody proofs are measured on
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # A throwaway password: it exists for CreateProcessWithLogonW and nothing else, it is
+          # masked out of the log, and the account is removed in the last step of this job.
+          $password = 'Br0ps-' + [guid]::NewGuid().ToString('N') + '!'
+          Write-Host "::add-mask::$password"
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name 'brops-ci' -Password $secure -PasswordNeverExpires `
+              -AccountNeverExpires -UserMayNotChangePassword `
+              -Description 'BroPS CI: unprivileged account the O-2 custody proofs are measured on' | Out-Null
+          Add-LocalGroupMember -Group 'Users' -Member 'brops-ci'
+          "BROPS_CI_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          # Developer Mode. `a_symlink_inside_the_anchor_is_refused_rather_than_followed` needs to
+          # CREATE a symlink to have a fixture at all, and a standard account holds no
+          # SeCreateSymbolicLinkPrivilege. This is the supported way to grant it without handing
+          # the account a privilege that would also let it walk past other checks.
+          $unlock = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+          New-Item -Path $unlock -Force | Out-Null
+          New-ItemProperty -Path $unlock -Name 'AllowDevelopmentWithoutDevLicense' -Value 1 `
+              -PropertyType DWord -Force | Out-Null
+
+          # Traversal down to the workspace, then read+execute over it. Inheritable, so the target
+          # directory cargo creates in the next steps carries the same grant without a second pass.
+          function Grant-Read([string]$target, [string]$spec) {
+            icacls $target /grant "brops-ci:$spec" /T /C /Q | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              # /C already means "carry on past individual failures"; a partial grant would show
+              # up as an unreadable file in the run below, so say so here rather than let that be
+              # the first anyone hears of it.
+              Write-Host "::warning::icacls $target returned $LASTEXITCODE - some entries may not carry the grant"
+            }
+            $global:LASTEXITCODE = 0
+          }
+          $path = $env:GITHUB_WORKSPACE
+          while ($path) {
+            icacls $path /grant 'brops-ci:(RX)' /C /Q | Out-Null
+            $global:LASTEXITCODE = 0
+            $parent = Split-Path $path -Parent
+            if (-not $parent -or $parent -eq $path) { break }
+            $path = $parent
+          }
+          Grant-Read $env:GITHUB_WORKSPACE '(OI)(CI)(RX)'
+
+          # Measured, not assumed. The entire point of this account is that it is NOT an
+          # administrator; if it were, this leg would reproduce the elevated-token run it exists
+          # to replace and every custody assertion in it would be vacuous.
+          $admins = @(Get-LocalGroupMember -Group 'Administrators' | ForEach-Object { $_.Name })
+          if ($admins -match 'brops-ci') {
+            throw "brops-ci ended up in BUILTIN\Administrators: $($admins -join ', ')"
+          }
+          Write-Host "brops-ci is a member of Users and not of Administrators ($($admins -join ', '))"
+          exit 0
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
       - name: Install the engine dependencies the cross-language proof needs
         run: pip install --require-hashes -r engine/requirements-ci.txt
-      - name: Trust provisioning + audit signer
-        env:
-          CI: "true"
+
+      # ---------------------------------------------------------------------------------------
+      # Linux: the one fixture POSIX gives no unprivileged way to build.
+      # ---------------------------------------------------------------------------------------
+      # `a_sealed_anchor_refuses_this_accounts_own_writes` needs a directory owned by a uid this
+      # process is NOT, with every ancestor likewise. An owner may always chmod what it owns, so
+      # there is no in-process construction of one and the guard fails naming exactly this. The
+      # runner has passwordless sudo, so the runner is what was missing.
+      #
+      # The FILE inside it is not decoration and was the second half of the same finding: an empty
+      # root-owned directory passes the ownership walk and then falls through to the skip, because
+      # `prove_unwritable`'s open-for-write probe has nothing to be asked about. A real Debian run
+      # hit exactly that.
+      #
+      # The `registry/config` subtree is deliberate too. `probe_tree` recurses, and the defect
+      # that made it recurse - a non-recursive probe that let `<anchor>/registry` through
+      # unchecked - is only measured by a fixture that HAS a subdirectory. This one is the shape
+      # of the real anchor.
+      - name: Provision the foreign-owned trust anchor the POSIX custody proof needs
+        if: runner.os == 'Linux'
         run: |
-          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml             -p brops-provision -p brops-audit-signer --no-fail-fast -- --test-threads=1
+          set -eu
+          if [ "$(id -u)" -eq 0 ]; then
+            echo "this job must not run as root: root rewrites any file regardless of owner or" \
+                 "mode, so no directory on this machine would be out of its reach and every" \
+                 "custody assertion below would be vacuous" >&2
+            exit 1
+          fi
+          root=/var/lib/brops-ci-foreign-anchor
+          sudo install -d -o root -g root -m 0755 "$root"
+          sudo install -d -o root -g root -m 0755 "$root/trust-anchor"
+          sudo install -d -o root -g root -m 0755 "$root/trust-anchor/registry"
+          sudo install -d -o root -g root -m 0755 "$root/trust-anchor/registry/config"
+          printf '%064d\n' 0 \
+            | sudo install -o root -g root -m 0644 /dev/stdin "$root/trust-anchor/operator-root.pub"
+          printf '{"keys":[]}\n' \
+            | sudo install -o root -g root -m 0644 /dev/stdin \
+                "$root/trust-anchor/registry/config/trusted-keys.json"
+          ls -lnR "$root"
+          # Measured, not assumed: if this account CAN write it, the fixture is not one and the
+          # tests below would be proving something about a directory they own.
+          if touch "$root/trust-anchor/.probe" 2>/dev/null; then
+            echo "uid $(id -u) can create files in $root/trust-anchor, so it is not foreign-owned" >&2
+            exit 1
+          fi
+          echo "the fixture refuses this account's writes, which is what makes it a fixture"
+
+      - name: Trust provisioning + audit signer (Linux)
+        if: runner.os == 'Linux'
+        env:
+          # Route 1 of the two `prerequisites::sealed_anchor` accepts. Deliberately NOT the
+          # production path (`/var/lib/brops-trust-anchor`): standing the real anchor up here
+          # would change what `the_production_machine_root_has_an_ancestor_this_account_cannot_
+          # rename` is measuring, and the fixture's job is to be a fixture.
+          BROPS_TEST_FOREIGN_ANCHOR: /var/lib/brops-ci-foreign-anchor/trust-anchor
+          # No declarations. Every prerequisite this leg needs is provided above, and an
+          # undeclared missing one is a hard failure - see provision/tests/prerequisites/mod.rs.
+        run: |
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml \
+            -p brops-provision -p brops-audit-signer --no-fail-fast -- --test-threads=1 --nocapture
+
+      # ---------------------------------------------------------------------------------------
+      # Windows: build as the runner, RUN as the standard account.
+      # ---------------------------------------------------------------------------------------
+      # Splitting the two is what keeps this simple. cargo, rustup and the registry cache live in
+      # the runner's own profile and are no business of the account under test; what the account
+      # under test needs is to be the one making the syscalls the custody proofs measure.
+      - name: Build the trust-provisioning test binaries
+        if: runner.os == 'Windows'
+        run: |
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml `
+            -p brops-provision -p brops-audit-signer --no-run
+
+      - name: Trust provisioning + audit signer (Windows, as a standard account)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $python = (Get-Command python).Source
+          icacls (Split-Path $python -Parent) /grant 'brops-ci:(OI)(CI)(RX)' /T /C /Q | Out-Null
+          $global:LASTEXITCODE = 0
+
+          # Ask cargo which executables it just built rather than guessing at paths under
+          # target/debug/deps, whose names carry a metadata hash.
+          $exes = cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml `
+                    -p brops-provision -p brops-audit-signer --no-run --message-format=json |
+                  ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } |
+                  Where-Object { $_ -and $_.executable -and $_.profile.test } |
+                  ForEach-Object { $_.executable } | Select-Object -Unique
+          if (-not $exes) { throw 'cargo produced no test executables to run' }
+          Write-Host "test executables to run as brops-ci:`n$($exes -join "`n")"
+
+          $work = Join-Path $env:RUNNER_TEMP 'brops-standard-account-run'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          icacls $work /grant 'brops-ci:(OI)(CI)(F)' /T /C /Q | Out-Null
+          $global:LASTEXITCODE = 0
+
+          # A batch file rather than an argument string: `Start-Process -Credential` builds a
+          # fresh environment block for the new logon, so the variables have to be set on the
+          # far side of it.
+          $lines = @(
+            '@echo off',
+            "set BROPS_TEST_PYTHON=$python",
+            # The three prerequisites this runner genuinely cannot provide, named one at a time
+            # because there is no blanket form. Each is a hole with a reason:
+            #
+            #  installed-signer-service      - `brops-audit-signer.exe` is a plain console binary
+            #                                  with no StartServiceCtrlDispatcher, so `sc.exe
+            #                                  start` cannot succeed against it. Standing up a
+            #                                  stub service instead would make the test pass
+            #                                  against something the product does not ship. What
+            #                                  is missing is the SCM implementation, not a runner.
+            #  windows-owner-assignment      - stamping BUILTIN\Administrators as a file's owner
+            #                                  needs SeRestorePrivilege, which is exactly what an
+            #                                  unelevated account does not have. Wanting it here
+            #                                  would mean running elevated, which is the posture
+            #                                  this whole step exists to avoid.
+            #  windows-elevated-registration - same trade, other direction: the live `sc.exe
+            #                                  create` path needs an elevated token. It is
+            #                                  covered offline by register.rs's argv tests and by
+            #                                  the ElevationRequired refusal, which DOES run here.
+            'set BROPS_TEST_MISSING_PREREQUISITES=installed-signer-service,windows-owner-assignment,windows-elevated-registration'
+          )
+          foreach ($exe in $exes) {
+            $lines += "echo === $exe ==="
+            $lines += "`"$exe`" --test-threads=1 --nocapture"
+            $lines += 'if errorlevel 1 exit /b 1'
+          }
+          $lines += 'exit /b 0'
+          $script = Join-Path $work 'run-tests.cmd'
+          $lines | Set-Content -Path $script -Encoding ASCII
+
+          $secure = ConvertTo-SecureString $env:BROPS_CI_PASSWORD -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential('brops-ci', $secure)
+          $out = Join-Path $work 'stdout.txt'
+          $err = Join-Path $work 'stderr.txt'
+          try {
+            $proc = Start-Process -FilePath $env:ComSpec -ArgumentList '/c', "`"$script`"" `
+                      -Credential $cred -WorkingDirectory $work `
+                      -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -Wait
+          } catch {
+            throw "could not start the suite as brops-ci, so the unelevated posture this leg is measured in was never entered: $_"
+          }
+          $proc.WaitForExit()
+          if (Test-Path $out) { Get-Content $out }
+          if (Test-Path $err) { Get-Content $err | ForEach-Object { Write-Host $_ } }
+          $code = $proc.ExitCode
+          if ($null -eq $code) { throw 'the standard-account run produced no exit code' }
+          if ($code -ne 0) {
+            throw "the trust-provisioning suite failed as brops-ci (exit $code). Note the posture: this run is deliberately NOT elevated, so a custody assertion failing here is a real refusal, not the elevated-token artefact the first run of this job produced."
+          }
+
+      - name: Remove the standard account
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Best effort: this is a throwaway runner, and a failure to clean up must not mask the
+          # verdict of the step above.
+          try { Remove-LocalUser -Name 'brops-ci' -ErrorAction Stop } catch { Write-Host "brops-ci not removed: $_" }
+
 
   windows-broker:
     name: Windows · §0.W broker syscall proof (named-pipe peer-auth)
