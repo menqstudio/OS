@@ -1,6 +1,7 @@
 """Tests for tools/check_coordination.py — the coordination-docs CI gate."""
 from __future__ import annotations
 
+import datetime
 import json
 import pathlib
 import sys
@@ -34,7 +35,7 @@ def _good_docs(root: pathlib.Path) -> None:
         encoding="utf-8",
     )
     (root / "PROJECT_STATE.md").write_text(
-        "# PROJECT_STATE\n\n**Last updated:** today, HEAD abc1234\n\n"
+        "# PROJECT_STATE\n\n**Last updated:** 2026-08-09, HEAD abc1234\n\n"
         "Where we are: everything is fine and this body is long enough.\n",
         encoding="utf-8",
     )
@@ -87,7 +88,7 @@ def _state_repo(root: pathlib.Path, *, current_state="DEFAULT",
         next_chat if next_chat is not None else _doc_mentioning_both(), encoding="utf-8")
     (root / "PROJECT_STATE.md").write_text(
         project_state if project_state is not None else
-        "# state\n\n**Last updated:** today\n\n" + _doc_mentioning_both(), encoding="utf-8")
+        "# state\n\n**Last updated:** 2026-08-09\n\n" + _doc_mentioning_both(), encoding="utf-8")
     (root / "TASKS.md").write_text(
         tasks if tasks is not None else
         f"> tokens {_TOKENS}\n\n"
@@ -170,7 +171,7 @@ class SemanticGateTests(unittest.TestCase):
 
     def test_rejects_doc_not_referencing_active_branch(self):
         root = self._tmp()
-        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\nPR #31 + PR #32, task T-017.\n")
+        _state_repo(root, project_state="# state\n\n**Last updated:** 2026-08-09\n\nPR #31 + PR #32, task T-017.\n")
         self.assertTrue(any("PROJECT_STATE.md" in p and "active branch" in p for p in cc.check(root)))
 
     def test_rejects_doc_missing_active_task(self):
@@ -205,14 +206,14 @@ class SemanticGateTests(unittest.TestCase):
     def test_rejects_current_region_contradiction(self):
         # Token says verify-seam complete, but the CURRENT region also calls it pending -> contradiction.
         root = self._tmp()
-        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\n"
+        _state_repo(root, project_state="# state\n\n**Last updated:** 2026-08-09\n\n"
                     + _doc_mentioning_both("The verify-seam is still pending."))
         self.assertTrue(any("PROJECT_STATE.md" in p and "pending" in p for p in cc.check(root)))
 
     def test_history_region_pending_is_excluded(self):
         # The SAME 'verify-seam pending' phrase inside HISTORY markers must NOT be flagged.
         root = self._tmp()
-        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\n"
+        _state_repo(root, project_state="# state\n\n**Last updated:** 2026-08-09\n\n"
                     + _doc_mentioning_both()
                     + "\n<!-- HISTORY_BEGIN -->\nOld note: the verify-seam was still pending.\n<!-- HISTORY_END -->\n")
         self.assertFalse(any("contradict" in p or ("verify" in p.lower() and "pending" in p)
@@ -305,7 +306,7 @@ class SemanticGateTests(unittest.TestCase):
 
     def test_rejects_unconditional_pr33_not_merged(self):
         root = self._tmp()
-        _state_repo(root, project_state="# state\n\n**Last updated:** today\n\n"
+        _state_repo(root, project_state="# state\n\n**Last updated:** 2026-08-09\n\n"
                     + _doc_mentioning_both("PR #33 is PENDING re-audit (not merged)."))
         self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
 
@@ -407,6 +408,78 @@ class CheckCoordinationTests(unittest.TestCase):
         # Dogfood: the live repo must pass its own gate.
         repo = pathlib.Path(__file__).resolve().parents[1]
         self.assertEqual(cc.check(repo), [])
+
+
+class ProjectStateFreshnessTests(unittest.TestCase):
+    """The `Last updated` date must be COMPARED, not merely present.
+
+    The predecessor of this check asserted only that a non-empty line existed, while the gate's
+    green output said "PROJECT_STATE fresh". These tests pin the comparison itself: each one fails
+    if the comparison is deleted, which is the property the older check did not have.
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = pathlib.Path(self._dir.name)
+        self._real = cc._last_commit_date
+        self.addCleanup(lambda: setattr(cc, "_last_commit_date", self._real))
+
+    def _dated(self, value: str) -> None:
+        (self.root / "PROJECT_STATE.md").write_text(
+            "# state" + "\n\n" + "**Last updated:** " + value + "\n\nbody\n", encoding="utf-8")
+
+    def _commit_date(self, iso):
+        cc._last_commit_date = lambda root, rel: (
+            None if iso is None
+            else datetime.date(*(int(x) for x in iso.split("-"))))
+
+    def test_date_older_than_the_newest_commit_is_red(self):
+        self._dated("2026-08-06")
+        self._commit_date("2026-08-09")
+        probs = cc._check_project_state_freshness(self.root)
+        self.assertTrue(any("older than the newest commit" in p for p in probs), probs)
+
+    def test_date_equal_to_the_newest_commit_is_green(self):
+        self._dated("2026-08-09")
+        self._commit_date("2026-08-09")
+        self.assertEqual([], cc._check_project_state_freshness(self.root))
+
+    def test_date_newer_than_the_newest_commit_is_green(self):
+        self._dated("2026-08-09")
+        self._commit_date("2026-08-01")
+        self.assertEqual([], cc._check_project_state_freshness(self.root))
+
+    def test_a_future_date_is_red(self):
+        far = datetime.datetime.now(datetime.timezone.utc).date() + datetime.timedelta(days=30)
+        self._dated(far.isoformat())
+        self._commit_date("2026-08-01")
+        probs = cc._check_project_state_freshness(self.root)
+        self.assertTrue(any("in the future" in p for p in probs), probs)
+
+    def test_prose_instead_of_a_date_is_red(self):
+        self._dated("today, HEAD abc1234")
+        self._commit_date("2026-08-09")
+        probs = cc._check_project_state_freshness(self.root)
+        self.assertTrue(any("no YYYY-MM-DD date" in p for p in probs), probs)
+
+    def test_an_impossible_date_is_red(self):
+        self._dated("2026-02-31")
+        self._commit_date(None)
+        probs = cc._check_project_state_freshness(self.root)
+        self.assertTrue(any("not a real calendar date" in p for p in probs), probs)
+
+    def test_ungitted_tree_cannot_be_compared_and_says_nothing_false(self):
+        # No git answer -> no invented failure, and (in main()) no claim that it was compared.
+        self._dated("2026-08-06")
+        self._commit_date(None)
+        self.assertEqual([], cc._check_project_state_freshness(self.root))
+
+    def test_missing_line_is_still_red(self):
+        (self.root / "PROJECT_STATE.md").write_text("# state" + "\n\nnothing\n", encoding="utf-8")
+        self._commit_date("2026-08-09")
+        probs = cc._check_project_state_freshness(self.root)
+        self.assertTrue(any("missing/empty" in p for p in probs), probs)
 
 
 if __name__ == "__main__":

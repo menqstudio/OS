@@ -2424,7 +2424,14 @@ pub fn demonstration_verified_reply(
         let outcome = brops_win_live::proof::in_process_turn_produce(&dir, now_ms, produce)
             .map_err(|e| format!("demonstration chain error: {e}"))?;
         let _ = std::fs::remove_dir_all(&dir);
-        if !(outcome.bound && outcome.production_verified) {
+        // The acceptance condition lives on `ProofOutcome` (win-live/src/proof.rs) so it sits beside
+        // the fields it reads and is covered by a test that runs on BOTH CI platforms. This used to
+        // read `outcome.bound && outcome.production_verified`, which no run reachable from here can
+        // satisfy: the in-process chain signs under the compiled-in DEMONSTRATION root, so
+        // `production_verified` is always false (proof.rs asserts it). The command was registered,
+        // exported through `desktop.ts`, and wired to a button — and could only ever return the
+        // error below. See `ProofOutcome::may_post_as_demonstration_verified`.
+        if !outcome.may_post_as_demonstration_verified() {
             return Err(format!("demonstration chain did not verify: {}", outcome.trust_str));
         }
         // Post the EXACT bytes the chain bound + verified as the message body — no trim, no lossy

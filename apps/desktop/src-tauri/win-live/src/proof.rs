@@ -94,6 +94,32 @@ pub struct ProofOutcome {
     pub trust_str: String,
 }
 
+impl ProofOutcome {
+    /// May a reply produced by this run be posted to the chat carrying the
+    /// `demonstration_verified` badge?
+    ///
+    /// **Read the field this returns, not [`production_verified`](Self::production_verified).**
+    /// `production_verified` is `true` only under a root whose custody is EXTERNAL to this kit,
+    /// and every path into this module signs with the compiled-in DEMONSTRATION root, so it is
+    /// **always** `false` here — asserted by `produce_drives_the_chain_output`. A caller that
+    /// gated on it therefore had a command that could not succeed on any input, which is exactly
+    /// what happened: `commands::demonstration_verified_reply` required
+    /// `outcome.bound && outcome.production_verified` and so always returned the
+    /// "demonstration chain did not verify" error, from a button wired in the shipped UI, for as
+    /// long as it existed. Nothing caught it because nothing tested it.
+    ///
+    /// The honest condition is the one the badge actually claims: the whole
+    /// challenge→lease→attest→sign→verify chain ran and resolved a key ([`chain_bound`]), and the
+    /// committed row's body digest matches what the envelope bound ([`bound`]). Custody is
+    /// demonstration custody, which is what `demonstration_verified` says.
+    ///
+    /// [`chain_bound`]: Self::chain_bound
+    /// [`bound`]: Self::bound
+    pub fn may_post_as_demonstration_verified(&self) -> bool {
+        self.bound && self.chain_bound
+    }
+}
+
 struct UuidIds;
 impl BrokerIds for UuidIds {
     fn new_broker_turn_id(&self) -> String {
@@ -495,6 +521,19 @@ mod tests {
             outcome.trust_str
         );
         assert!(!outcome.production_verified, "custody is demo, not production: {}", outcome.trust_str);
+        // The shipped chat button's acceptance condition, on a real completed run. This is the
+        // regression guard for the defect described on `may_post_as_demonstration_verified`: a
+        // command that gated on `production_verified` could never post, because the assertion on
+        // the line above holds for EVERY run this module can produce.
+        assert!(
+            outcome.may_post_as_demonstration_verified(),
+            "a chain-bound demonstration run must be postable: {}",
+            outcome.trust_str
+        );
+        assert!(
+            !(outcome.bound && outcome.production_verified),
+            "gating a demonstration post on production_verified is unsatisfiable here — that is              the bug this assertion exists to keep fixed"
+        );
     }
 
     #[test]

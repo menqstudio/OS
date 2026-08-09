@@ -316,8 +316,11 @@ Three providers, selected by `BROPS_AI_PROVIDER` (or auto-detected):
 4. **`governed-engine`** — routes the turn through the bridge into the engine's governed chain.
    Requires `BROPS_ALLOW_GOVERNED_ENGINE=1` as well as the provider name; without it the provider
    is refused by name. **On the shipped build every governed turn is then refused anyway**, because
-   verification is unprovisioned by construction and the broker keeps `UpstreamBlockedExecutor`
-   — see §4's naming note and §6.
+   verification is unprovisioned by construction and the broker falls back to
+   `UpstreamBlockedExecutor` — which it does *unless* `$BROPS_BROKER_CONFIG` names a deployment
+   config with a TCB-root-signed manifest, and nothing in the shipped app sets it. §4's naming note
+   already stated that condition correctly; this line said "keeps", flatly, until 2026-08-09. See §4
+   and §6.
 
 Provider resolution is **fail-closed**: an unknown/misconfigured provider is a hard error, and an
 ambient `ANTHROPIC_API_KEY` never silently selects a provider for a governed turn.

@@ -140,7 +140,12 @@ is **expected current behaviour** (not a bug), it is labelled **By design**.
 ## 7. Governed-execution broker (Windows) — why it's "unsupported"
 
 - If any tooling reports `platform_governed_execution_supported() == false` on Windows, that is
-  **correct and current.** The Windows governed-execution **broker** (services, per-service SIDs,
+  **correct and current** — though nothing can really report it, because **no function of that name
+  exists in the tree**. It is the specification symbol from `WINDOWS_BROKER_DESIGN.md` §0.1, recorded
+  as `partial` in `config/spec-conformance.json`. What actually refuses on Windows is
+  `connect_broker()` returning `UnsupportedPlatform`, on top of
+  `governed_verification_unconfigured()` returning `Some(…)` unconditionally on every platform.
+  The Windows governed-execution **broker** (services, per-service SIDs,
   NTFS/CNG DACLs, AppContainer executor, WDAC) is a **PLANNED, unaudited design** — not implemented
   — so no lease is issued and governed "Verified" mode stays fail-closed. See
   [`docs/design/WINDOWS_BROKER_DESIGN.md`](design/WINDOWS_BROKER_DESIGN.md). There is nothing to

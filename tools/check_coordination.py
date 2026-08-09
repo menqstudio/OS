@@ -9,7 +9,9 @@ the engine's `bro_docs_freshness.py` posture: green on structure, hard-fail othe
 
 Two layers:
   - STRUCTURAL (always, offline): canonical files present, roadmap 0..10 x 16 sections,
-    balanced fences, TASKS status vocabulary, PROJECT_STATE freshness line.
+    balanced fences, TASKS status vocabulary, and PROJECT_STATE's dated freshness line
+    COMPARED against the newest commit that touched that file (it used to be compared
+    against nothing while the output said "fresh").
   - SEMANTIC + PR-AWARE (Phase 0.2, strengthened): validate the machine-readable anchor
     config/current_state.json (schema 2) — closed enums, PR parent/child relationships,
     design-gate state, is_rc requires design-GREEN; require every human state doc to
@@ -26,6 +28,7 @@ Exit 0 + "GREEN: ..." when consistent; exit 1 + the problems otherwise.
 from __future__ import annotations
 
 import argparse
+import datetime
 import fnmatch
 import json
 import os
@@ -172,6 +175,85 @@ def _changed_files(base_ref: str) -> list[str] | None:
         except (subprocess.SubprocessError, OSError):
             continue
     return None
+
+
+PROJECT_STATE = "PROJECT_STATE.md"
+_LAST_UPDATED_RE = re.compile(r"(?m)^\*\*Last updated[^:]*:\*\*\s*(.+?)\s*$")
+_ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+
+
+def _last_commit_date(root: pathlib.Path, rel: str) -> datetime.date | None:
+    """The committer date of the newest commit that touched `rel`, or None when git cannot answer.
+
+    None is returned for a non-repository, a shallow clone that does not reach the commit, an
+    untracked file, or no git at all. The caller must then SAY it could not compare, never call the
+    file fresh — reporting a comparison that did not happen is the defect this whole check replaces.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "log", "-1", "--format=%cs", "--", rel],
+            capture_output=True, text=True, timeout=30, check=True,
+        ).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    m = _ISO_DATE_RE.fullmatch(out)
+    if not m:
+        return None
+    try:
+        return datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+
+def _claimed_last_updated(text: str) -> tuple[datetime.date | None, str | None]:
+    """(date, problem) for PROJECT_STATE.md's `**Last updated ...:**` line."""
+    m = _LAST_UPDATED_RE.search(text)
+    if not m or len(m.group(1).strip()) < 3:
+        return None, f"{PROJECT_STATE}: missing/empty '**Last updated ...:**' line"
+    raw = m.group(1).strip()
+    d = _ISO_DATE_RE.search(raw)
+    if not d:
+        return None, (f"{PROJECT_STATE}: the '**Last updated ...:**' line carries no YYYY-MM-DD date "
+                      f"({raw[:40]!r}) — this gate compares that date against the newest commit that "
+                      f"touched the file, and it cannot compare prose")
+    try:
+        return datetime.date(int(d.group(1)), int(d.group(2)), int(d.group(3))), None
+    except ValueError:
+        return None, (f"{PROJECT_STATE}: '**Last updated ...:**' names {d.group(0)}, which is not a "
+                      f"real calendar date")
+
+
+def _check_project_state_freshness(root: pathlib.Path) -> list[str]:
+    """PROJECT_STATE.md's stated date must not be older than the file's newest commit.
+
+    This used to check only that a non-empty `**Last updated:**` line EXISTED, while the gate's
+    output said "PROJECT_STATE fresh" — so a date three days behind the last change to the very
+    file it dates passed, and the green line asserted the opposite of the truth. The date is now
+    compared to something real, and when it cannot be compared the output says so instead.
+    """
+    text = _read(root, PROJECT_STATE)
+    if text is None:
+        return []                       # absence is reported by the canonical-files check
+    claimed, problem = _claimed_last_updated(text)
+    if problem:
+        return [problem]
+    assert claimed is not None
+    problems: list[str] = []
+    # A date in the future is the other way to make this line say nothing. One day of slack covers
+    # a runner whose clock sits on the far side of UTC midnight from the author's.
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    if claimed > today + datetime.timedelta(days=1):
+        problems.append(f"{PROJECT_STATE}: '**Last updated:** {claimed}' is in the future "
+                        f"(today is {today} UTC) — a date nothing has reached yet dates nothing")
+    committed = _last_commit_date(root, PROJECT_STATE)
+    if committed is not None and claimed < committed:
+        problems.append(
+            f"{PROJECT_STATE}: '**Last updated:** {claimed}' is older than the newest commit that "
+            f"touched the file ({committed}) — the file changed after the date it claims, so every "
+            f"reader is told the state is {(committed - claimed).days} day(s) fresher than it is. "
+            f"Update the line in the SAME commit as the change (the Startup Law), or move the prose "
+            f"it dates into a HISTORY block")
+    return problems
 
 
 def _check_current_state(root: pathlib.Path) -> list[str]:
@@ -546,12 +628,8 @@ def check(root: pathlib.Path, *, changed: list[str] | None = None) -> list[str]:
                         f"status ({'/'.join(TASK_STATUSES)})"
                     )
 
-    # 6. PROJECT_STATE carries a non-empty 'Last updated'.
-    state = _read(root, "PROJECT_STATE.md")
-    if state is not None:
-        m = re.search(r"(?m)^\*\*Last updated[^:]*:\*\*\s*(.+?)\s*$", state)
-        if not m or len(m.group(1).strip()) < 3:
-            problems.append("PROJECT_STATE.md: missing/empty '**Last updated ...:**' line")
+    # 6. PROJECT_STATE's 'Last updated' date is compared against the file's newest commit.
+    problems += _check_project_state_freshness(root)
 
     # 7. Semantic layer (Phase 0.2): machine-readable anchor + docs agree with it + manifest carries
     #    the active-wave docs. These skip cleanly when this is not a real coordination repo.
@@ -594,9 +672,21 @@ def main(argv: list[str] | None = None) -> int:
     # on non-ASCII (the exact hazard CLAUDE.md §5 warns about), which would break a hook.
     extra = " + state anchor consistent + docs reference the active PR/branch/task" if _read(root, "NEXT_CHAT.md") else ""
     diff_note = " + state-doc drift guard (PR diff)" if changed is not None else ""
+    # Say what was measured, not a word. The previous version printed "PROJECT_STATE fresh" while
+    # comparing the date to nothing at all; the reader who trusted that word was the person this
+    # gate exists to protect.
+    claimed, _ = _claimed_last_updated(_read(root, PROJECT_STATE) or "")
+    committed = _last_commit_date(root, PROJECT_STATE)
+    if claimed is None:
+        fresh = "PROJECT_STATE undated"
+    elif committed is None:
+        fresh = (f"PROJECT_STATE dated {claimed} (NOT compared: git could not date the file here — "
+                 f"CI has full history and does compare it)")
+    else:
+        fresh = f"PROJECT_STATE dated {claimed} >= its newest commit {committed}"
     print(f"GREEN: coordination docs consistent "
           f"(canonical files present; roadmap {len(EXPECTED_PHASES)} phases x "
-          f"{len(REQUIRED_SECTIONS)} sections; TASKS statuses valid; PROJECT_STATE fresh{extra}{diff_note}).")
+          f"{len(REQUIRED_SECTIONS)} sections; TASKS statuses valid; {fresh}{extra}{diff_note}).")
     return 0
 
 

@@ -28,6 +28,25 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BANNER_FILES = ("NEXT_CHAT.md", "PROJECT_STATE.md", "TASKS.md")
 STATE = ROOT / "config" / "current_state.json"
 
+#: The one sentence every banner ends with. It states the SHIPPED fail-closed posture, so it is
+#: load-bearing and has to stay true of the code.
+#:
+#: It used to say "the broker hands out `UpstreamBlockedExecutor`", flatly. That is false, and this
+#: file is where the falsehood was manufactured and stamped into three canonical documents at a
+#: time. `build_governed_executor` (`broker/src/main.rs:228`) returns a real `ChainExecutor` over a
+#: `LinuxGovernedTurnChain` whose `ProductionResolver` can reach `TrustState::Production`; the
+#: fail-closed `UpstreamBlockedExecutor` is the FALLBACK, taken at `:240` when `$BROPS_BROKER_CONFIG`
+#: is unset or empty, and again when the file is unreadable/malformed, carries no TCB-root-signed
+#: manifest, or the durable acceptance ledger will not open. The posture is real because nothing in
+#: the shipped app sets that variable -- which is the condition a reader needs, and which the old
+#: wording hid. Say what refuses AND under what condition it would stop refusing.
+FAIL_CLOSED_SENTENCE = (
+    "**The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns "
+    "Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, "
+    "and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a "
+    "deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets."
+)
+
 
 def live_main_head() -> str:
     """The 40-hex sha the gate compares against. Read from git, never typed."""
@@ -99,7 +118,7 @@ def rewrite_banners(banner: str) -> None:
         rebuilt = lines[:2] + banner.split(chr(10)) + lines[end + 1:]
         p.write_text(chr(10).join(rebuilt), encoding="utf-8")
 
-def settle(head: str, next_up: str | None) -> int:
+def settle(head: str, next_up: str | None, pr: int | None, branch: str | None) -> int:
     """Record that nothing is open, and point the reader at main rather than at a dead branch.
 
     `check_repo_state` refuses a snapshot that still names a merged carrier, because the reader it
@@ -130,16 +149,23 @@ def settle(head: str, next_up: str | None) -> int:
     json.loads(text)                     # never leave it unreadable
     STATE.write_text(text, encoding="utf-8")
 
+    # And the settle commit's OWN pull request becomes the carrier. While it is open, it is the one
+    # thing that is open, and the exact-head anchor has to point at it -- otherwise the snapshot
+    # names a merged PR's dead branch and the gate refuses the very commit that resolves it.
+    if pr and branch:
+        rewrite_state(pr, branch,
+                      "Settling the state anchor at main " + head[:7] + ". Nothing else is open; "
+                      "this pull request is the commit that records it.", head)
+
     last = (data.get("current_workflow_pr") or {}).get("number")
     tail = ("\n>\n> **Next:** " + next_up) if next_up else ""
     rewrite_banners(
-        "> **\u2705 SETTLED \u2014 nothing is open.** `main` is at `" + head[:7] + "`; PR #"
-        + str(last) + " was the last to merge and its branch is gone. Start from "
+        "> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`, and the only thing open is the pull request that records it.** PR #"
+        + ((str(pr) + " on `" + branch + "` is that pull request") if pr and branch
+           else "nothing is open at all")
+        + ". Start from "
         "`docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom."
-        + tail + "\n>\n> **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` "
-        "returns Some(...) unconditionally before the model is invoked, the broker hands out "
-        "`UpstreamBlockedExecutor`, and `connect_broker()` refuses off Linux. Earlier "
-        "prose below is HISTORY.")
+        + tail + "\n>\n> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
     print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
     print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
@@ -162,16 +188,14 @@ def main() -> int:
 
     head = live_main_head()
     if args.settled:
-        return settle(head, args.next_up)
+        return settle(head, args.next_up, args.pr, args.branch)
     if not (args.pr and args.branch and args.summary):
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
     changed = rewrite_state(args.pr, args.branch, args.summary, head)
     banner = args.banner or (
         f"> **⏭️ CURRENT ACTIVE: PR #{args.pr} · branch `{args.branch}`** (base `main`, tip "
-        f"`{head[:7]}`, task T-017).\n>\n> {args.summary}\n>\n> **The gate is untouched.** "
-        "`governed_verification_unconfigured()` returns Some(...) unconditionally before the "
-        "model is invoked, the broker hands out `UpstreamBlockedExecutor`, and `connect_broker()` "
-        "refuses off Linux. Earlier prose below is HISTORY.")
+        f"`{head[:7]}`, task T-017).\n>\n> {args.summary}\n>\n> "
+        + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
 
     # This call went missing in an edit, and the line below kept announcing it. A message that
     # reports work it did not do is worse than silence: the banner stayed stale while the tool

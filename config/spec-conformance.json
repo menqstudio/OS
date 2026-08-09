@@ -13,7 +13,7 @@
     },
     "§0.1": {
       "status": "partial",
-      "missing": "The platform gate as specified. `platform_governed_execution_supported()` is a hardcoded false.",
+      "missing": "The platform gate as specified. NO function named platform_governed_execution_supported() exists in the tree — this symbol is normative-only, which is why this section is partial. The shipped hardcoded-false is three separate refusals: governed_verification_unconfigured() returns Some(...) unconditionally before the model is called; connect_broker() returns UnsupportedPlatform off Linux; broker build_governed_executor() serves UpstreamBlockedExecutor unless $BROPS_BROKER_CONFIG names a deployment config with a TCB-root-signed manifest, which nothing in the shipped app sets.",
       "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
     },
     "§1": {

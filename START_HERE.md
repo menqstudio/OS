@@ -6,13 +6,19 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 **Նոր session? Ասե՞լ են «գնա ռեպո կարդա ՄԴները»։ Սա ամբողջ onboarding-ն ա։
 Արա ԱՌԱՋԻՆԸ, բացառություն չկա — հետո պատրաստ ես, ավել բացատրություն պետք չի։**
 
-> **Where things stand (2026-08-09).** `main` = `c1e0aca` — a **baseline at the time of writing**;
-> resolve the live HEAD yourself every session, and never trust this line over `git log`.
-> **Open pull requests: 0.** PRs #71–#80 all merged; #80 was the last and its branch is gone.
+> **Where things stand (2026-08-09).** `main` = `b3010f6` — a **baseline at the time of writing**;
+> resolve the live HEAD yourself every session, and never trust this line over `git log`. The machine
+> mirror is `config/current_state.json.settled_at_main_head`, which `tools/check_repo_state.py`
+> compares against live GitHub — so *that* cannot quietly drift. **This sentence can, and did:** it
+> said `c1e0aca` and "#80 was the last" one merge after both stopped being true.
+> **Open pull requests: 1** — #82 on `settle/after-81`, which is the pull request that records the
+> settle and carries this correction; nothing else is open. PRs #71–#81 all merged; #81 was the
+> last of them and its branch is gone.
 > The wave before them closed thirty-odd findings of one shape: *something was built and nothing
-> could reach it, or something was displayed and nothing established it.* The #71–#80 wave has a
+> could reach it, or something was displayed and nothing established it.* The #71–#81 wave has a
 > different shape: a deployment runbook and a trust ceremony that were **written and never run**,
-> and nearly every defect in them was found by running it.
+> and nearly every defect in them was found by running it. #81 then found that the repository's own
+> prescribed reading order led to its stalest text, and #82 fixed that.
 >
 > **What changed, and what you must not get wrong.** The desktop app now **provisions its own trust
 > material at first launch** — it mints a keypair for every authority the engine knows, signs the
@@ -29,7 +35,14 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 > **The production gate is CLOSED and must stay closed until you are told otherwise.** Production
 > `trusted_verified` is unreachable: `governed_verification_unconfigured()` returns `Some(…)`
 > unconditionally and fires *before the model is called*, `connect_broker()` returns
-> `UnsupportedPlatform` off Linux, and the broker keeps `UpstreamBlockedExecutor`. (Documents here
+> `UnsupportedPlatform` off Linux, and the broker's `build_governed_executor` serves
+> `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment config carrying a
+> TCB-root-signed manifest** — nothing in the shipped app sets it. State that third refusal *with its
+> condition*: `build_governed_executor` otherwise returns a real `ChainExecutor` over a
+> `LinuxGovernedTurnChain` whose resolver can reach `TrustState::Production`, so "the broker hands out
+> `UpstreamBlockedExecutor`" — which these documents said flatly until 2026-08-09, because
+> `tools/sync_active_pr.py` generated that sentence into three of them at a time — is false, and it
+> is false in the direction that tells a reader the wrong thing is load-bearing. (Documents here
 > often name this gate `platform_governed_execution_supported()`. **No function of that name exists
 > in the tree** — it is the spec symbol from `docs/design/WINDOWS_BROKER_DESIGN.md` §0.1, and
 > `config/spec-conformance.json` records §0.1 as `partial` saying exactly that. Cite the three real

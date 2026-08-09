@@ -21,17 +21,36 @@
 | Item | Engine ticket | Severity | Status | Needs an Owner secret? | One-line defect |
 |---|---|---|---|---|---|
 | **O-1** | `L-6` / `H-6-protected-set-gaps` | HIGH | OPEN | no | the gate is now called on every digest-trusting path and the hook interpreters run `-B`; what stays open is the *read* half — CPython imports an existing `.pyc` before any Python check can run |
-| **O-2** | `H-4-forgeable-audit-trail` (fix #1) | MEDIUM | OPEN | no | `append()` now attaches a signed head anchor and both production verifiers require one; OPEN until the Owner provides the signing custody — without it every ledger is honestly **UNANCHORED** and refused |
-| **O-3** | `M-4` | MEDIUM | OPEN | **yes** (operator-signed session artifact) | code now fails closed and the shipped policy requires the token; OPEN until the Owner mints the `conductor-session` artifact and exports `BRO_CONDUCTOR_SESSION_TOKEN` |
-| **O-4** | `L-8` | LOW | OPEN | yes | conductor actor is now signature-verified and an owner actor is refused by name; OPEN until an owner-authority artifact type + schema signature field exist |
-| **O-5** | `L-4` | LOW | OPEN | **yes** (operator-signed `evidence-floor-anchor`) | the manifest binding is **now required and enforced**; the residual is a wiped-and-re-provisioned floor, which only an owner-signed anchor can distinguish from a first sighting |
+| **O-2** | `H-4-forgeable-audit-trail` (fix #1) | MEDIUM | OPEN | no | `append()` now attaches a signed head anchor and both production verifiers require one; the signer mints its own key (`audit_signer::mint_anchor_key`), so no Owner secret — what is missing is an **elevated install step that registers the service**: `register::apply` has no binary entry point and no installer ships it, so every ledger is honestly **UNANCHORED** and refused |
+| **O-3** | `M-4` | MEDIUM | OPEN | no | code fails closed and the shipped policy requires the token; **first-launch provisioning mints the `conductor-session` artifact itself** (`provision::conductor_session_payload`, signed by the in-memory operator root before it is destroyed), so no Owner secret. OPEN until the app's startup EXPORTS `engine_env()` **plus** `BRO_TRUSTED_REGISTRY_ROOT` |
+| **O-4** | `L-8` | LOW | OPEN | no | both actors are signature-verified (`_prove_command_actor`); `control-room-command` is bound to the **delegated `control-room`** authority, whose key provisioning RETAINS, and `mint_control_room_command` signs one — so no Owner secret. OPEN until the engine reads the provisioned registry (the same export as O-3) |
+| **O-5** | `L-4` | LOW | OPEN | no | the manifest binding is **now required and enforced**; `evidence-floor-anchor` is bound to the **delegated `evidence-floor`** authority, whose key provisioning RETAINS, and `mint_floor_anchor` signs one — so no Owner secret. OPEN **deliberately**: it must not be minted at install (§1 O-5), and *when* it is called is an unanswered design question |
 
-**All five are engine-side code remediation, not credentials** — with the exception of O-3, whose
-*deployment* half needs the Owner to mint an operator-signed artifact, and of the residual half of O-5,
-whose "was this floor wiped or is this task new?" question no code can answer without an Owner-signed
-`evidence-floor-anchor` (see §1 O-5; the code half of O-5 is built and enforced). None of them is closeable by editing
-CI, `tauri.conf.json` or `docs/`; each is an audited change under `engine/` (the golden rule: *deliberate,
-tested, never rushed*), on its own branch/PR with Owner approval.
+**None of the five needs an Owner-minted artifact any more, and the column above says so** — which is a
+correction, not a restatement. Until 2026-08-09 this table said **yes** for O-3, O-4 and O-5 while
+`docs/SECURITY_MODEL.md` §4 said *"no Owner-minted artifact is needed"* for each of the same three, and
+`CLAUDE.md` §6 agreed with `SECURITY_MODEL`. Two of those documents are in the mandatory startup read
+order. **The code decides it, and the code says no:** `engine/runtime/bro_signature.py`'s
+`ARTIFACT_AUTHORITY` binds `control-room-command` to the delegated `CONTROL_ROOM` authority and
+`evidence-floor-anchor` to the delegated `EVIDENCE_FLOOR` authority — **not** to `operator-root` — and
+`provision::RETAINED_AUTHORITIES` keeps both of those private halves on the machine, with
+`mint_control_room_command` / `mint_floor_anchor` to sign with them. `conductor-session` *is* an
+`operator-root` artifact, but provisioning mints it in-process before it destroys that root, so the
+artifact exists without the Owner ever holding a key. Each entry in §1 now names the authority rather
+than repeating "operator-root-signed".
+
+What that leaves is not credentials but **wiring and packaging**: O-3 and O-4 both wait on one startup
+line that exports `Provisioned::engine_env()` **plus** `BRO_TRUSTED_REGISTRY_ROOT` (`engine_env()` does
+not compute that one — see §1 O-3); O-2 waits on an elevated install step that registers the audit-signer
+service; O-5 waits on a design decision about *when* an anchor may honestly be minted. None of them is
+closeable by editing CI, `tauri.conf.json` or `docs/`; each is an audited change (the golden rule:
+*deliberate, tested, never rushed*), on its own branch/PR with Owner approval.
+
+> **This table is now machine-checked against §1.** `tools/check_residual_items.py` compares each row's
+> `Needs an Owner secret?` cell with that item's `**Owner secret needed:**` field and turns RED on
+> disagreement. It did not before, which is how the two halves of one file contradicted each other
+> under a green gate. The gate still cannot read `SECURITY_MODEL.md`'s prose — that agreement is
+> maintained by hand.
 
 > **Provenance correction.** `CLAUDE.md` §6 and `docs/SECURITY_MODEL.md` §4 both state these items are
 > *"tracked on Bro's `fix/audit-followups`"*. **That ref does not exist** — not locally and not on
@@ -49,9 +68,12 @@ tested, never rushed*), on its own branch/PR with Owner approval.
 
 ---
 
-> ## ⛔ A blocker that applies to O-2, O-3 and O-5 together
+> ## ✅ The blocker that used to apply to O-2, O-3 and O-5 together — and is GONE
 >
-> **Nothing in this repository can mint a PRODUCTION trust root.** `broctl build-registry`
+> *(The heading said ⛔ **"A blocker that applies to O-2, O-3 and O-5"** directly above the sentence
+> "That blocker is gone", for a day. The heading is the correction.)*
+>
+> **It used to be that nothing in this repository could mint a PRODUCTION trust root.** `broctl build-registry`
 > hardcodes `"production": false` and stamps *"DEVELOPMENT REGISTRY"*; `broctl keygen --production`
 > refuses; and `bro_signature` refuses a non-production registry whenever the operator pin comes
 > from the production file path (`BRO_OPERATOR_ROOT_PUBKEY_FILE`).
@@ -182,11 +204,16 @@ that will not. Such a box may accept the residual risk by name:
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Owner secret needed:** yes
-  Not a CI secret: a deploy-time signing custody. The anchor signer must run as a principal the
-  ledger's own writer cannot reach, so it is provisioned where the engine is deployed rather than
-  in a repository secret.
-  (see *What the Owner must provide* below). Nothing here is closeable by inventing a key.
+- **Owner secret needed:** no
+  *(Was "yes" until 2026-08-09, contradicting this file's own §0 table, which said "no".)* The anchor
+  signer mints its own Ed25519 key — `provision::audit_signer::mint_anchor_key` — and the key never
+  needs to leave the machine, so there is no Owner-held secret. What the item genuinely needs is a
+  **principal the ledger's own writer cannot become**, and on Windows that principal is designed and
+  built (`brops-audit-signer` under a virtual service account, reached by `brops-anchor-relay` over a
+  peer-authenticated pipe) but **ships in no installer**: `register::apply` has no binary entry point
+  and no caller outside tests, `tauri.conf.json` declares no `externalBin`, and there is no WiX/NSIS
+  custom install step. On POSIX the path is specified and has never run. That is builder work plus one
+  elevated install action — not a key the Owner has to hold.
 - **Engine ticket:** `engine/AUDIT/tickets/H-4-forgeable-audit-trail.md` — fix #1 (*"sign the audit head with
   a recorder/operator Ed25519 authority … and verify that signature inside `verify()`"*) is exactly this
   item. **Correction to §0's provenance note above:** O-2 is *not* untracked engine-side; only the outer
@@ -250,8 +277,16 @@ verified green).
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Owner secret needed:** yes
-  an operator-root-signed `conductor-session` artifact (not a CI secret; an Owner deploy step)
+- **Owner secret needed:** no
+  *(Was "yes". `docs/SECURITY_MODEL.md` §4 and `CLAUDE.md` §6 have said "no Owner-minted artifact is
+  needed" since first-launch provisioning landed; this file had not caught up.)* `conductor-session`
+  is an `operator-root` artifact, but `provision::mint` generates that root in memory, signs the
+  registry and the session artifact with it, and **destroys it before returning** — the artifact
+  exists and verifies without the Owner ever holding a key. What remains is a startup line exporting
+  `Provisioned::engine_env()` **plus `BRO_TRUSTED_REGISTRY_ROOT`**, which `engine_env()` does **not**
+  compute (it returns exactly `BRO_OPERATOR_ROOT_PUBKEY_FILE`, `BRO_OPERATOR_REGISTRY_MIN_FILE`,
+  `BRO_CONDUCTOR_SESSION_TOKEN` and `BRO_SESSION_ID`). Nothing exports any of them today, so the
+  engine still reads the committed development registry.
 - **Engine ticket:** `engine/AUDIT/tickets/MEDIUM-findings.md` § M-4
 - **Engine code:** `engine/runtime/bro_policy.py` — `CONDUCTOR_SESSION_TOKEN_ENV =
   "BRO_CONDUCTOR_SESSION_TOKEN"` (a *path* to a signed artifact), `verify_conductor_session_token`, and the
@@ -323,25 +358,32 @@ matching stop-gate refusal. Every one of these checks was deleted once and the m
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Owner secret needed:** yes
-  A `control-room-command` artifact per owner command, signed by the offline operator root and
-  bound to that command's `command_id`, `task_id` and `command`, with its key listed `active` in
-  `config/trusted-keys.json`. The install now mints a registry that grants `control-room-command`,
-  which the committed engine registry grants to nobody — so pointing the engine at the provisioned
-  store also provisions this key. That is a consequence to decide on, not a side effect to inherit;
-  see [`OWNER_ACTION_REQUIRED.md`](./OWNER_ACTION_REQUIRED.md).
+- **Owner secret needed:** no
+  *(Was "yes — signed by the offline operator root". That is wrong twice over.)* A
+  `control-room-command` artifact is required per owner command, bound to that command's
+  `command_id`, `task_id` and `command` — but `engine/runtime/bro_signature.py` binds the type to the
+  **delegated `control-room` authority, not `operator-root`** ("an owner command is a routine,
+  repeated act; the trust root is not a routine key"), that key is in
+  `provision::RETAINED_AUTHORITIES`, and `provision::mint_control_room_command` signs one. The
+  install mints a registry that grants the type, which the committed engine registry grants to
+  nobody — so pointing the engine at the provisioned store is what closes this. That is a consequence
+  to decide on, not a side effect to inherit; see
+  [`OWNER_ACTION_REQUIRED.md`](./OWNER_ACTION_REQUIRED.md).
 - **Engine ticket:** `engine/AUDIT/tickets/LOW-findings.md` § L-8
 - **Engine code:** `engine/runtime/bro_control_room_api.py` — `validate_command_intent`, which reads
   `requested_by_type` / `requested_by` straight out of the caller's JSON and compares them against the
   literals `("owner", "owner-gev")` / `("bro", "bro-000")`; the same pattern in
   `engine/runtime/bro_orchestration_runtime.py` (`_validate_actor`); schema
-  `engine/schemas/control-room-command.schema.json` carries **no signature or key field**
-- **Closure requires:** promoting the control-room command to a signed artifact — (a) ✅ register a
-  `control-room-command` type in `engine/runtime/bro_signature.py`'s authority registry (**done** — bound to
-  `operator-root` — which grants no key: see below); (b) ❌ extend `control-room-command.schema.json` with
-  `artifact_type` / `key_id` and a detached signature; (c) ❌ verify it before `validate_command_intent` can
-  stamp `"valid": true`. **The conductor half of this is done** (below); the owner half still needs (b) and
-  (c), plus an operator key that is actually granted the new type.
+  `engine/schemas/control-room-command.schema.json` — which **does** carry `artifact_type` / `key_id` / `signature` as optional properties (this line said it carried none; corrected 2026-08-09, and `docs/SECURITY_MODEL.md` §4 has been right about it)
+- **Closure requires:** (a) ✅ register a `control-room-command` type in
+  `engine/runtime/bro_signature.py`'s authority registry (**done** — bound to the delegated
+  `CONTROL_ROOM` authority, which it moved onto *off* `operator-root`); (b) ✅ `artifact_type` /
+  `key_id` / `signature` in `control-room-command.schema.json` (**done**); (c) ✅ verify it before
+  `validate_command_intent` can stamp `"valid": true` (**done** — `_prove_command_actor` raises on
+  every failure, so there is no return path for an unproven actor). *(a)–(c) were shown here as two
+  ❌ until 2026-08-09; the code had moved and this line had not.* **What is actually left** is that
+  the *committed* registry pins no key for the type, so a flawless artifact signed by an ungranted
+  key still refuses — the same unexported-registry-root decision as O-3.
 
 **The defect in full.** The check is a string comparison on data the caller supplied. Anyone who can reach the
 control-room API can claim to be `owner-gev`, and the API then echoes the claimed identity back inside a
@@ -426,8 +468,14 @@ test holds that even a flawless artifact signed by an ungranted key still refuse
 - **Severity:** LOW
 - **Status:** OPEN
 - **Progress:** the manifest-binding half is built and enforced; what remains needs an Owner key (below)
-- **Owner secret needed:** yes
-  an operator-root-signed `evidence-floor-anchor` artifact (an Owner deploy step, not a CI secret). This corrects the earlier "no": the binding half needed no secret, the floor-reset half cannot be closed without one.
+- **Owner secret needed:** no
+  *(This has now been "no" → "yes" → "no". The middle value was written when `evidence-floor-anchor`
+  was an `operator-root` artifact. It is not any more: `bro_signature.ARTIFACT_AUTHORITY` binds it to
+  the **delegated `evidence-floor` authority** — explicitly, so "a key that can state an evidence
+  high-water mark must not thereby be able to cancel a task" — that key is in
+  `provision::RETAINED_AUTHORITIES`, and `provision::mint_floor_anchor` signs the anchor.)* The item
+  stays OPEN for a reason no key would fix: see **Closure requires** — it must not be minted at
+  install, and nothing has decided when it may honestly be minted instead.
 - **Engine ticket:** `engine/AUDIT/tickets/LOW-findings.md` § L-4
 - **Engine code:** `engine/runtime/bro_evidence.py` (`min_head_sequence` / `EvidenceHead.head_sequence`,
   staleness rejection in `load_head`, propagation through `validate_chain`) and
@@ -444,9 +492,12 @@ test holds that even a flawless artifact signed by an ungranted key still refuse
   `engine/schemas/completion-manifest.schema.json` (`required` + `properties`, since
   `additionalProperties` is `false`) — the schema no longer under-describes the enforced shape, and
   `engine/tests/test_manifest_schema_agreement.py` turns RED if the schema and the runtime required-set
-  disagree in either direction. *(remaining, Owner)* an operator-root-signed `evidence-floor-anchor`,
-  minted offline and granted to a key in the operator-signed registry, presented at
-  `BRO_EVIDENCE_FLOOR_ANCHOR`.
+  disagree in either direction. *(remaining, a design decision — not a key)* an `evidence-floor-anchor`
+  presented at `BRO_EVIDENCE_FLOOR_ANCHOR`, signed by the retained delegated `evidence-floor` key via
+  `provision::mint_floor_anchor` and granted in the provisioned registry. It must **not** be minted at
+  install: at install no task exists, and an anchor the app produced by reading the very store the
+  check polices would restate that store's own claim under a signature — worse than no anchor, because
+  it reads as corroboration. *When* it may honestly be minted is the open question.
 
 **The defect in full.** The anti-rollback property — "evidence cannot be replayed at an older head" — was
 carried entirely by an on-disk floor directory (`engine/runtime/bro_completion.py`: `_head_floor_dir`,

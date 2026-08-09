@@ -53,8 +53,12 @@ phase. That is the whole onboarding for *building*.
 > **Read the board as "what exists", never as "what is guaranteed to work".** Every phase from 1
 > to 10 has surfaces built and wired; the honest remaining work is mostly *connecting* things that
 > were built and *removing* claims nothing established. The one status that is a hard fact rather
-> than a judgement is the production gate, and it is **CLOSED**:
-> `platform_governed_execution_supported()` is false and `main()` keeps `UpstreamBlockedExecutor`.
+> than a judgement is the production gate, and it is **CLOSED** — by three refusals, not by the
+> `platform_governed_execution_supported()` these documents used to name (no function of that name
+> exists in the tree; it is the §0.1 spec symbol). `governed_verification_unconfigured()` returns
+> `Some(...)` unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and
+> the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a TCB-root-signed
+> deployment config — which nothing in the shipped app sets.
 >
 > The board below was rewritten on **2026-08-08**. It previously showed phases 2–10 as *Blocked*,
 > which had been false for weeks — the dependency chain it described (P3 blocked on P2, P4 on P3,
