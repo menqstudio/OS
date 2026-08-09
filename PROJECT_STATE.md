@@ -8,6 +8,47 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Nine ticks were six facts, and one of them was false (2026-08-10)
+
+Phase 1's Definition of Done and Task checklist carried nine `[x]` boxes. Checked against the code rather
+than against the commit messages the boxes cite, they are **six** distinct facts -- the adapter and its ten
+tests, the `bridge` CI job, and the badge plus provider control each appear twice -- and one of the six was
+false.
+
+**The false one: "One governed round-trip proven end-to-end -- done."** The box had already narrowed
+"round-trip" to a *fail-closed* one ending in `Blocked`. It is false on those narrowed terms. The production
+order at `commands.rs:1338-1428` is `issue_challenge` (:1370) -> `governed_unconfigured_block` (:1379) ->
+**early return** (:1382) -> and only then, unreached, `ai::governed_turn` (:1385) and
+`verify_and_record_receipt` (:1424). `governed_verification_unconfigured` (`commands.rs:1152`) returns
+`Some(...)` with no condition, and the same shape guards the other two governed surfaces at `:1854` and
+`:2061`. Nothing is sent, no receipt is produced, no signature is examined: `verify_and_record_receipt` and
+`verify_and_record_held_answer` have **zero runtime-reachable production callers**. The 23 green
+`receipt_store` tests exercise the seam in isolation, which is a different claim.
+
+**The refusal is deliberate and stays.** The gate is the Owner's standing constraint. The row is open because
+the roadmap was describing a round-trip the gate forbids -- not because the gate is wrong. A genuine
+end-to-end governed turn does exist, `engine/ci/live/run_live_turn.sh` under the `live-governed-turn` job
+(`ci.yml:72-119`), but it runs `broker_orchestrator::run_governed_turn` + `verify_and_accept` and never
+touches the chat path or the bridge adapter. Citing it under this box would repeat the substitution the box
+already made once, so it is named in the row and not counted.
+
+**The other five, stated at their real width.** The `task-request` contract is validated at runtime
+(`engine_adapter.py:120`); `bridge-result.schema.json` is loaded only by a test, so "contracts tested" was
+covering a test-only contract. The `bridge` CI job is real (`ci.yml:574-586`, re-run: **60 tests, 0
+failures**) -- it runs but is **not required**, since `main` has no branch protection. The adapter is built,
+correct and re-verified at **10/10**, and its only caller is reachable only through the dead governed path.
+The governed-provider transport is real and default-OFF, and all three callers of `ai::governed_turn` sit
+behind the unconditional refusal. The UI badge and control ship and a user reaches them (19 vitest cases),
+but the badge is driven by `MESSAGE_RECEIPT_PROJECTION`, whose `trusted_verified` state needs the round-trip
+above -- so the only badge a user can produce is `demonstration_verified`, Windows-only, behind
+`BROPS_SELFTEST_MODEL_CMD`. The UI/UX spec names four badge states; three tones ship, with no `pending` and
+no `blocked`/`error`.
+
+`tools/check_reachability.py` did not and structurally cannot catch this: it prints GREEN at 87/92 commands
+and its own LIMITS say it cannot tell whether a user can reach a path past an earlier return. An
+unconditional `Some(...)` is exactly that. Every finding here came from reading the call order by hand.
+
+
 ### The anti-rollback floor, the TCB pin and the self-owned acknowledgement (2026-08-10)
 
 Four live findings on the evidence-floor / custody cluster. Two are closed, one is closed as far as it can

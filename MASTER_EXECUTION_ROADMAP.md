@@ -67,7 +67,7 @@ phase. That is the whole onboarding for *building*.
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Foundation | ✅ **Locked (done)** |
-| 1 | Bridge | 🔨 **Wired, real mode still refuses.** Contract, adapter, broker and receipt are real; the three previously unreachable commands (`read_decision_ledger`, `read_verifier_verdicts`, `governed_turn_execute`) now have wrappers and a `bridge` route. `engine_sidecar._real_callables()` still raises unconditionally, pending the supervisor-reserved execution attempt and the authoritative execution→receipt binding — correct and fail-closed. **2026-08-09:** two long-open questions were settled in writing rather than left to disagree with the code. Governed **delta-streaming is descoped** (a governed turn is buffered by construction — the desktop's authority is a signature over the whole output); what stays open under that heading is the §4.10(f) chunked output **pull**, whose ladder sits in `core/src/governed_output_stream.rs` with zero production callers and is now declared unreachable rather than mistaken for built. The **Settings governed-provider row was amended to a read-only three-state control** — the provider is resolved from the backend environment and this phase's own gate is "Desktop never holds lease/key/env", so a switch the webview could flip is not buildable honestly; it now reports `default`/`on`/`blocked` and is keyboard-reachable instead of dropping out of the tab order. The phase stays **open**: the DoD box for governed output delivery is unchecked, matching this cell. |
+| 1 | Bridge | 🔨 **Wired, real mode still refuses.** Contract, adapter, broker and receipt are real; the three previously unreachable commands (`read_decision_ledger`, `read_verifier_verdicts`, `governed_turn_execute`) now have wrappers and a `bridge` route. `engine_sidecar._real_callables()` still raises unconditionally, pending the supervisor-reserved execution attempt and the authoritative execution→receipt binding — correct and fail-closed. **2026-08-09:** two long-open questions were settled in writing rather than left to disagree with the code. Governed **delta-streaming is descoped** (a governed turn is buffered by construction — the desktop's authority is a signature over the whole output); what stays open under that heading is the §4.10(f) chunked output **pull**, whose ladder sits in `core/src/governed_output_stream.rs` with zero production callers and is now declared unreachable rather than mistaken for built. The **Settings governed-provider row was amended to a read-only three-state control** — the provider is resolved from the backend environment and this phase's own gate is "Desktop never holds lease/key/env", so a switch the webview could flip is not buildable honestly; it now reports `default`/`on`/`blocked` and is keyboard-reachable instead of dropping out of the tab order. The phase stays **open**, and as of **2026-08-10** by one box more than this cell used to admit. The DoD row *One governed round-trip proven end-to-end* had been ticked and marked "done" and was false: the production order at `commands.rs:1338-1428` returns at `:1382`, before `ai::governed_turn` and before `verify_and_record_receipt`, so those two have zero runtime-reachable callers. The refusal is deliberate and stays — the row is open because the roadmap was describing a round-trip the gate forbids. Read the rest of this cell with that in mind: "contract, adapter, broker and receipt are real" is true about the code and says nothing about whether anything reaches it. Two DoD boxes are now unchecked, matching this cell. |
 | 2 | Governance Sidecar | 🔨 **Reachable at last.** The engine serves a three-valued `brops.governance-read.v1`, the sidecar dispatches named ops, and the desktop no longer requires the AI provider to be `governed-engine` to read a mirror. The mirror was never empty — it was never asked. |
 | 3 | Desktop Integration | 🔨 **Shell complete.** 23 routes, a total `Record<RouteId, …>` so a missing page is a compile error, an error boundary that renders the real cause, and route-change focus management. |
 | 4 | UI/UX System | 🔨 **Gated.** Design tokens, WCAG-AA contrast on 24 pairs, i18n parity across en/hy/ru on 233 keys, and a bundle budget — all enforced in CI. |
@@ -572,11 +572,50 @@ no engine/security diff; Owner approval.
 flag it as a separate audited engine task; do not edit engine code inside this PR. If key/trust-root
 provisioning is unresolved → stop and escalate to Owner/Architect (do not hardcode keys).
 
+> **Nine ticks, six facts — read this before counting.** The Definition of Done and the Task checklist
+> restate the same work: the adapter + its 10 tests, the `bridge` CI job, and the badge + provider control
+> each appear twice. A reader scanning nine `[x]` boxes saw roughly 50% more delivered than exists.
+> Reduced honestly, of the six distinct facts: **two are true and reached** (the `task-request` contract is
+> validated at runtime; the `bridge` CI job exists and passes), **two are true but dead** (the adapter and
+> the governed-provider transport are built and tested and nothing can invoke them), **one is true but
+> hollow** (the UI ships and a user reaches it, but it can only paint a Windows-only demonstration badge),
+> and **one was false** (the end-to-end governed round-trip — see its row). Checked against the code on
+> 2026-08-10, not against the commit messages the boxes cite.
+
 **Definition of Done.**
-- [x] `task-request` + `bridge-result` contracts defined and tested.
-- [x] Adapter (`engine_adapter.py`) built; slice-1 tests **10/10** (PR #3, commit `5be8d95`).
-- [x] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **transport shipped** (PR #8, slice 2).
-- [x] One governed round-trip proven end-to-end — **done**: the fail-closed governed round-trip (`issue_challenge → verify_and_record_receipt(&NoTrustedManifest) → Blocked`) landed in Wave 3a / T-016 (PR #28); verify-seam + receipt-plumbing are wired. Production **"Verified"** (`trusted_verified`) still pending Wave 3b (isolated signer + signed manifest).
+- [x] `task-request` + `bridge-result` contracts defined and tested — **but only `task-request` is
+      enforced at runtime.** `bridge/engine_adapter.py:120` validates against it. `bridge-result.schema.json`
+      is loaded in exactly one place, `bridge/tests/test_engine_sidecar.py:19`; `engine_sidecar.py` emits its
+      result without checking it and `ai.rs` parses it with serde. It is a **test-only** contract, and the
+      unqualified word "tested" above was hiding that.
+- [x] Adapter (`engine_adapter.py`) built; slice-1 tests **10/10** (PR #3, commit `5be8d95`) — re-run
+      2026-08-10, still 10. **Built, correct, and not reached:** its only caller is
+      `bridge/engine_sidecar.py:485`, entered only from `ai.rs::governed_engine`, which no turn can start
+      (see the round-trip row below).
+- [x] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **transport shipped** (PR #8,
+      slice 2). Default-OFF holds (`ai.rs:405-460`; governed needs `BROPS_ALLOW_GOVERNED_ENGINE=1`), and
+      the transport is real (`ai.rs:2880` spawns `bridge/engine_sidecar.py`). **No turn can use it:** all
+      three callers of `ai::governed_turn` — `commands.rs:1385`, `:1865`, `:2077` — sit *after* the
+      unconditional refusal at `commands.rs:1152`. "Transport shipped" is carrying the whole sentence.
+- [ ] One governed round-trip proven end-to-end. **This box read `[x]` and said "done", and it was
+      false — corrected 2026-08-10 by checking the claim against the code instead of against its own
+      commit message.** The box had already narrowed "round-trip" to a *fail-closed* one ending in
+      `Blocked`; it is false even on those narrowed terms. The production order at
+      `commands.rs:1338-1428` is `issue_challenge` (:1370) → `governed_unconfigured_block` (:1379) →
+      **early `return`** (:1382) → and only *then*, unreached, `ai::governed_turn` (:1385) and
+      `verify_and_record_receipt` (:1424). The gate is unconditional (`governed_verification_unconfigured`,
+      `commands.rs:1152`, `Some(...)` with no condition), and the same shape guards the other two
+      governed surfaces at `:1854` and `:2061`. So nothing is sent, no receipt is produced, and no
+      signature is examined: `verify_and_record_receipt` and `verify_and_record_held_answer` have **zero
+      runtime-reachable production callers**. The 23 green `receipt_store` tests exercise the seam in
+      isolation, which is not the same claim.
+      **What IS proven, and is a different seam:** `engine/ci/live/run_live_turn.sh`, driven by the
+      `live-governed-turn` job (`ci.yml:72-119`), runs a real end-to-end governed turn — through
+      `broker_orchestrator::run_governed_turn` + `governed_verification::verify_and_accept`, which never
+      touches the chat path or the bridge adapter. Citing that run under this box would be the same
+      substitution the box already made once. **The refusal itself is deliberate and stays:** the gate
+      is the Owner's standing constraint, and this row is open because the roadmap was describing a
+      round-trip the gate forbids — not because the gate is wrong.
 - [ ] Governed output delivery through the wall. **Delta-streaming is DESCOPED** (see Scope — a governed
       turn is buffered by construction, because the desktop's authority is a signature over the whole
       output). What this box now tracks is the thing that was being mistaken for it and is genuinely
@@ -584,18 +623,39 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
       `core/src/governed_output_stream.rs` with **zero production callers** and a table that diverges
       from the design it cites, so it is declared unreachable in
       `config/reachability-declarations.json`, not counted as built. **Open.**
-- [x] Bridge CI leg added and green (PR #3, merged to `main`).
-- [x] Chat receipt badge + governed-provider status control shipped in the cockpit UI — **transport**
+- [x] Bridge CI leg added and green (PR #3, merged to `main`) — job `bridge` at `ci.yml:574-586`, no
+      `paths` filter, so it runs on every push and PR; its exact command re-run 2026-08-10 gives **60
+      tests, 0 failures**. Two honest qualifiers: this phase's CI paragraph specifies `BRO_ENV=ci` and
+      the job does not set it (nothing in `bridge/` reads it, so it is cosmetic drift, not a hole); and
+      the job **runs** but is not a **required** check — `main` has no branch protection, which is the
+      Owner's to enable and is tracked in `docs/OWNER_ACTION_REQUIRED.md`.
+- [x] Chat receipt badge + governed-provider status control shipped in the cockpit UI — **shipped and
+      reachable, and it can only ever paint a demonstration badge.** The badge renders at
+      `Conversations.tsx:535/548` on the `chat` route, and the control at `Settings.tsx:282-293`; 19
+      vitest cases pass. But the badge is driven by `MESSAGE_RECEIPT_PROJECTION` (`core/src/repo.rs:966`),
+      and `trusted_verified` / `development_untrusted` need an accepted row in
+      `receipt_verification_attempts`, which needs the round-trip row above — impossible today. The only
+      badge a user can actually produce is `demonstration_verified`, via `demonstration_verified_reply`
+      (`commands.rs:2454`), which is `#[cfg(windows)]`-only and needs `BROPS_SELFTEST_MODEL_CMD`. Also
+      short of the UI/UX spec: it names four badge states (`pending` shimmer / `verified` /
+      `unverified-blocked` / `error`) and `receiptBadge` returns three tones or `null` — **no `pending`
+      and no `blocked`/`error` state ships**. Shipped as **transport**
       (PR #8); control **amended 2026-08-09** to the read-only three-state row the UI/UX section now
       specifies (`default`/`on`/`blocked`, focusable, `aria-disabled`, inert), because a webview-writable
       provider switch contradicts this phase's own "Desktop never holds lease/key/env" gate and could not
       change an outcome anyway.
 
 **Task checklist.**
-- [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`).
+- [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`). *Same
+      fact as the adapter row in the Definition of Done above; kept because it is the task ledger, but it
+      is not a second delivery.*
 - [ ] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence.
-- [x] Bridge CI leg added to the unified workflow (PR #3, merged `41cf4ff`).
-- [x] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider control (per UI/UX above) — **transport** (PR #8); control amended to read-only three-state 2026-08-09.
+- [x] Bridge CI leg added to the unified workflow (PR #3, merged `41cf4ff`) — job `bridge`, one of
+      `ci.yml`'s 19 jobs. *Same fact as the Bridge-CI row above.*
+- [x] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider control (per UI/UX
+      above) — **transport** (PR #8); control amended to read-only three-state 2026-08-09. *Same fact as
+      the badge row above.* The three states are honestly derived from a real `ai_status`, and every
+      install shows `default`, because `on`/`blocked` need a governed provider no turn can use.
 - [ ] Slice 3 — **delta-streaming descoped 2026-08-09** (buffered by construction; see Scope). What is left under this heading is the §4.10(f) chunked output pull, whose ladder exists uncalled in `core/src/governed_output_stream.rs` and needs the design's INSERT-ONCE bindings before anything may call it.
 - [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands.
 
