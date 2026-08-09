@@ -870,3 +870,91 @@ fn private_key_material_is_owner_only_on_posix() {
     let dir_mode = fs::metadata(&p.keys_dir).unwrap().permissions().mode() & 0o777;
     assert_eq!(dir_mode, 0o700);
 }
+
+/// **The umask defect.** Every provisioned file and directory carries a mode this crate
+/// STATES; none carries one the ambient umask decided.
+///
+/// The first Linux run of this code produced a group-writable `operator-root.pub`, because
+/// `File::create` opens at `0666 & ~umask` and Debian's stock `umask` is `002`. The real
+/// `bro_signature._pin_from_file` refused it by name — correctly, and the deployment was dead
+/// on arrival. `umask 077` breaks it the other way: the anchor becomes one the application's
+/// own account cannot READ.
+///
+/// # What this test does and does not catch on the machine running it
+///
+/// Stated plainly, because it decides how much this proves here. The assertions are for EXACT
+/// modes, so they bite whenever the runner's umask would have produced something else:
+///
+/// * under `umask 002` the `WorldReadable` assertions bite (0664 vs 0644, 0775 vs 0755);
+/// * under `umask 077` they bite the other way (0600 vs 0644, 0700 vs 0755);
+/// * under the common `umask 022` they do NOT — `0666 & ~022` is already `0644` — but the
+///   `OwnerOnly` assertions do, because `0644` is not `0600`.
+///
+/// So there is no umask under which the whole test is vacuous, and the `Exposure` assertions at
+/// the top are pure and run on every platform including the ones with no modes at all.
+#[test]
+fn nothing_provisioned_carries_a_mode_the_umask_decided() {
+    // The pure half: what the two exposures MEAN. Runs on every platform.
+    assert_eq!(prov::Exposure::WorldReadable.file_mode(), 0o644);
+    assert_eq!(prov::Exposure::WorldReadable.dir_mode(), 0o755);
+    assert_eq!(prov::Exposure::OwnerOnly.file_mode(), 0o600);
+    assert_eq!(prov::Exposure::OwnerOnly.dir_mode(), 0o700);
+    // The anchor must be readable by the account being policed and writable by nobody but its
+    // owner: that is exactly what `_pin_from_file` and `_refuse_writable_registry_root` ask.
+    assert_eq!(prov::Exposure::WorldReadable.file_mode() & 0o022, 0, "the anchor would be refused");
+    assert_eq!(prov::Exposure::WorldReadable.dir_mode() & 0o022, 0, "the anchor would be refused");
+    assert_ne!(prov::Exposure::WorldReadable.file_mode() & 0o044, 0, "the app could not read it");
+
+    // The measured half, where the platform has modes at all.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fn mode(path: &Path) -> u32 {
+            fs::metadata(path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+                .permissions()
+                .mode()
+                & 0o7777
+        }
+        // What the umask on THIS machine would have done, so a failure is legible rather than
+        // a bare number mismatch.
+        let scratch = tempfile::tempdir().unwrap();
+        let witness = scratch.path().join("umask-witness");
+        fs::write(&witness, b"x").unwrap();
+        let inherited = mode(&witness);
+
+        let dir = tempfile::tempdir().unwrap();
+        let p = mint_at(dir.path()).unwrap();
+        let anchor = anchor_of(&p.trust_dir);
+
+        for relative in [
+            prov::OPERATOR_PIN_FILE,
+            prov::REGISTRY_FLOOR_FILE,
+            prov::MANIFEST_FILE,
+            brops_provision::anchor::CUSTODY_FILE,
+        ] {
+            assert_eq!(
+                mode(&anchor.join(relative)),
+                0o644,
+                "{relative} carries an inherited mode (a plain create here yields {inherited:04o})"
+            );
+        }
+        // The registry root DIRECTORY is checked by the engine too, not only its file.
+        assert_eq!(mode(&anchor.join(prov::REGISTRY_ROOT_DIR)), 0o755);
+        assert_eq!(mode(&p.registry_path), 0o644);
+        assert_eq!(mode(&anchor), 0o755);
+
+        // And the app-side half stays owner-only, which is what bites under the common
+        // `umask 022`: a plain create there yields 0644, not 0600.
+        assert_eq!(mode(&p.keys_dir), 0o700);
+        for authority in prov::RETAINED_AUTHORITIES {
+            assert_eq!(mode(&p.keys_dir.join(format!("{authority}.json"))), 0o600);
+        }
+        assert_eq!(
+            mode(&p.conductor_session_path),
+            0o600,
+            "an app-side artifact inherited its mode (a plain create here yields {inherited:04o})"
+        );
+    }
+}

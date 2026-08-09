@@ -71,21 +71,33 @@ Full text and observed state live in `config/reachability-declarations.json`. Su
 | `set_run_step_status` | superseded | Steps transition through `stream_run_step` / `advance_run`; a renderer that could stamp a step status could claim work it never did. |
 | **`create_decision`** | **not-yet-wired (OPEN)** | **Tracked here.** The Decisions page is a read-only mirror and offers no create control, yet the command is registered and `allow`-granted. Closes either by wiring a create control on the Decisions page, **or** by flipping the grant to `deny` because authoring governance decisions from the webview is not wanted. Until one is chosen this is invokable surface with no user. |
 
-**Engine symbols — state observed 2026-08-07, the day the gate was written.** Two of the five
-changed state *while it was being written*, by concurrent agents closing O-1 and O-3 in the
-working tree. The gate re-derives all of this on every run; the table is the record of what one
-run saw, not a source of truth.
+**Engine symbols — state re-observed 2026-08-09 by running the gate.** Two of the five changed
+state *while the gate was being written* (2026-08-07), by concurrent agents closing O-1 and O-3 in
+the working tree, and the row for `head_anchor_payload`/`attach_head_anchor` said something about
+O-2 that stopped being true in the same window. The gate re-derives all of this on every run; the
+table is the record of what one run saw, not a source of truth. **Line numbers move — run the gate
+rather than citing this table.**
 
 | Engine symbol | Expectation | Residual item |
 |---|---|---|
-| `assert_no_bytecode_shadow` | **must_have_caller** | O-1 (HIGH) — the canonical "implemented and nothing calls it", and **it gained callers under the gate**: `bro_control_plane.py:80` (in `_bind_workspace`, before any binding loads) and `:267` (the settlement path, a second process the binding path never covers). The gate now defends those call sites. It does **not** verify the rest of O-1 closure (hooks running `python -B`, `compileall` scoped off digest roots, the stray-`.pyc` regression test); O-1's status is owned by `PHASE_10_PRODUCTION_ITEMS.md`. |
-| `head_anchor_payload` | declared_unreachable | O-2 (MEDIUM, OPEN) — no producer for the signed audit-head anchor. **Zero callers, confirmed by this run.** |
-| `attach_head_anchor` | declared_unreachable | O-2 (MEDIUM, OPEN) — the consumer half of the same dead path. **Zero callers, confirmed by this run.** |
+| `assert_no_bytecode_shadow` | **must_have_caller** | O-1 (HIGH) — the canonical "implemented and nothing calls it", and **it gained callers under the gate**: `bro_control_plane.py:80` (in `_bind_workspace`, before any binding loads) and `:271` (the settlement path, a second process the binding path never covers). The gate now defends those call sites. It does **not** verify the rest of O-1 closure (hooks running `python -B`, `compileall` scoped off digest roots, the stray-`.pyc` regression test); O-1's status is owned by `PHASE_10_PRODUCTION_ITEMS.md`. |
+| `head_anchor_payload` | declared_unreachable | O-2 (MEDIUM, OPEN) — **caller-less on purpose, and no longer for the reason this row used to give.** It is not true that "there is no producer for the signed audit-head anchor": `bro_audit_log.append()` is the **in-band producer** — inside the same exclusive append lock it assembles the payload, signs it through the configured custody (`BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID`), installs it, and refuses to append at all if an anchor is present with no custody configured; a keyed `verify()` then *requires* one. This function is the **owner-facing out-of-band half**, whose caller is a signing command outside the engine by design — a signer the ledger's own writer could reach would prove nothing. **Zero in-repo callers, confirmed by this run**, and that is the enforced state. What keeps O-2 open is the *principal*, not the producer: see below. |
+| `attach_head_anchor` | declared_unreachable | O-2 (MEDIUM, OPEN) — the install half of the same owner-facing API: it verifies a signed anchor against the trusted registry and against the ledger's current chain before storing it. Caller-less for the same reason. **Zero callers, confirmed by this run.** |
 | `verify_conductor_session_token` | **must_have_caller** | O-3 — genuinely called from `bro_completion.py`; the one of the five that was never dead. The gate now protects that call site, because losing it would silently return conductor identity to a plain environment-variable claim. |
-| `require_conductor_session_token` | **must_have_caller** (policy flag, `read_via`) | O-3 (MEDIUM) — read through `CONDUCTOR_SESSION_POLICY_KEY` in `bro_policy.py`, which now treats an *undeclared* requirement as a *required* one. Still **absent from `engine/.bro/policy.json`**. Proving the flag is *read* is what this gate does; proving it is *set* needs an operator-signed artifact only the Owner can mint and is outside this gate by construction. |
+| `require_conductor_session_token` | **must_have_caller** (policy flag, `read_via`) | O-3 (MEDIUM) — read through `CONDUCTOR_SESSION_POLICY_KEY` in `bro_policy.py`, which treats an *undeclared* requirement as a *required* one. **It is present in `engine/.bro/policy.json`, and `true`** — an earlier revision of this row said it was "still absent", which was written before the flag landed and never revisited. Proving the flag is *read* is still all this gate does; proving it is *set* is `engine/.bro/policy.json`'s business and outside the gate by construction. The credential the flag demands is no longer an Owner-only artifact either: first-launch provisioning mints the `conductor-session`. |
 
-Closing O-2 is engine security work under the golden rule (deliberate, tested, never rushed) and
-is **not** closeable by editing CI or this gate.
+**What actually keeps O-2 open**, since the producer no longer does: the anchor is worth its
+signature only under a principal the ledger's own writer cannot become. On Windows that principal
+is built — a `brops-audit-signer` service under a virtual service account, reached over the
+peer-authenticated named pipe by the `brops-anchor-relay` shim — but it ships in **no installer**
+and `register::apply` has no entry point outside tests; on POSIX it is specified and has never run.
+That is engine/deployment security work under the golden rule (deliberate, tested, never rushed)
+and is **not** closeable by editing CI or this gate.
+
+Note also that `config/reachability-declarations.json` carries its own `observed:` notes, dated
+2026-08-07. Those are a record of one run, not a claim about now — `require_conductor_session_token`'s
+still says "Still absent from engine/.bro/policy.json", which the run above contradicts. The gate's
+own output is the current answer.
 
 **The gate turns RED when a defect is FIXED, and that is deliberate.** When a caller lands for a
 `declared_unreachable` symbol, the gate fails and asks for the expectation to be flipped to

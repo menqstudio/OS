@@ -220,7 +220,12 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
     # the active branch may be an OPEN durable PR branch OR the current_workflow_pr's branch (the PR that
     # carries this snapshot — e.g. the design-audit carrier PR #31, which is not listed in prs[]).
     cw_branch = (data.get("current_workflow_pr") or {}).get("branch") if isinstance(data.get("current_workflow_pr"), dict) else None
-    if ab and ab not in open_branches and ab != cw_branch:
+    # A SETTLED snapshot is the legitimate third case: nothing is open, everything merged, and the
+    # active branch is main. Without this the rule forces the docs to keep naming a branch that was
+    # deleted, which is the staleness `sync_active_pr.py --settled` exists to remove. The escape is
+    # deliberately narrow -- only `main`, and only when a settled head is recorded.
+    settled = bool(data.get("settled_at_main_head")) and ab == "main"
+    if ab and not settled and ab not in open_branches and ab != cw_branch:
         problems.append(f"{CURRENT_STATE_JSON}: active.branch {ab!r} does not correspond to any OPEN PR branch "
                         f"or the current_workflow_pr branch")
     # relationships: parent PR exists in prs[] OR is the current_workflow_pr (the carrier, not in prs[]);

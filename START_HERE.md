@@ -6,16 +6,35 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 **Նոր session? Ասե՞լ են «գնա ռեպո կարդա ՄԴները»։ Սա ամբողջ onboarding-ն ա։
 Արա ԱՌԱՋԻՆԸ, բացառություն չկա — հետո պատրաստ ես, ավել բացատրություն պետք չի։**
 
-> **Where things stand (2026-08-08).** `main` = `0efa99e` — a **baseline at the time of writing**;
+> **Where things stand (2026-08-09).** `main` = `c1e0aca` — a **baseline at the time of writing**;
 > resolve the live HEAD yourself every session, and never trust this line over `git log`.
-> **Open pull requests: 0.** PRs #64 and #65 merged on 2026-08-07. The last big wave closed
-> thirty-odd findings of one shape: *something was built and nothing could reach it, or something
-> was displayed and nothing established it.*
+> **Open pull requests: 0.** PRs #71–#80 all merged; #80 was the last and its branch is gone.
+> The wave before them closed thirty-odd findings of one shape: *something was built and nothing
+> could reach it, or something was displayed and nothing established it.* The #71–#80 wave has a
+> different shape: a deployment runbook and a trust ceremony that were **written and never run**,
+> and nearly every defect in them was found by running it.
 >
-> **The production gate is CLOSED and must stay closed until you are told otherwise.**
-> `platform_governed_execution_supported()` returns false and `main()` keeps
-> `UpstreamBlockedExecutor`, so production `trusted_verified` is unreachable. Opening it needs an
-> independent audit **and** the Owner's approval — not a green CI run, not a builder's confidence.
+> **What changed, and what you must not get wrong.** The desktop app now **provisions its own trust
+> material at first launch** — it mints a keypair for every authority the engine knows, signs the
+> trusted-key registry, and then **destroys the operator root**; the pin, the anti-rollback floor,
+> the registry and the provisioning manifest live in a machine-wide anchor the app's own account
+> cannot write. There is no owner ceremony and no USB any more. **But:** that is **Windows-only**
+> (sealing the anchor refuses on POSIX, and provisioning aborts startup), **nothing exports the
+> provisioned environment into the engine** (the engine still reads the committed *development*
+> registry), the audit signer ships in **no** installer, and `broctl` still **cannot mint a
+> production registry** at all. Read [`docs/SECURITY_MODEL.md`](./docs/SECURITY_MODEL.md) §1 before
+> reasoning about trust here, and [`docs/OWNER_ACTION_REQUIRED.md`](./docs/OWNER_ACTION_REQUIRED.md)
+> for what is blocked on whom.
+>
+> **The production gate is CLOSED and must stay closed until you are told otherwise.** Production
+> `trusted_verified` is unreachable: `governed_verification_unconfigured()` returns `Some(…)`
+> unconditionally and fires *before the model is called*, `connect_broker()` returns
+> `UnsupportedPlatform` off Linux, and the broker keeps `UpstreamBlockedExecutor`. (Documents here
+> often name this gate `platform_governed_execution_supported()`. **No function of that name exists
+> in the tree** — it is the spec symbol from `docs/design/WINDOWS_BROKER_DESIGN.md` §0.1, and
+> `config/spec-conformance.json` records §0.1 as `partial` saying exactly that. Cite the three real
+> refusals.) Opening the gate needs an independent audit **and** the Owner's approval — not a green
+> CI run, not a builder's confidence.
 >
 > Machine-readable truth: [`config/current_state.json`](./config/current_state.json). It is
 > checked against live GitHub by `tools/check_repo_state.py`, so it cannot quietly drift.

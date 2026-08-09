@@ -290,14 +290,7 @@ pub fn apply(paths: &spec::SignerPaths, app_sid: &str) -> Result<spec::ReadbackP
     // 1. The service first: a virtual account's SID does not resolve until the service exists, so
     //    an ACE naming it before registration would be written for an unresolvable trustee.
     for step in [
-        vec![
-            "create".to_string(),
-            spec::SIGNER_SERVICE_NAME.to_string(),
-            format!("binPath= {}", paths.service_exe.display()),
-            format!("obj= NT SERVICE\\{}", spec::SIGNER_SERVICE_NAME),
-            "start= auto".to_string(),
-            "DisplayName= BroPS audit-head anchor signer".to_string(),
-        ],
+        service_create_argv(&paths.service_exe),
         vec![
             "sidtype".to_string(),
             spec::SIGNER_SERVICE_NAME.to_string(),
@@ -344,6 +337,45 @@ pub fn apply(paths: &spec::SignerPaths, app_sid: &str) -> Result<spec::ReadbackP
     Ok(proof)
 }
 
+/// The exact argument vector for `sc.exe create`, built as a pure function so the one thing
+/// about it that is easy to get wrong can be checked without an elevated machine.
+///
+/// # The bug this function exists because of
+///
+/// `sc.exe` takes each option as **two argv elements**: the name *including* the equals sign,
+/// then the value. Its own usage text says so — "The option name includes the equal sign. A
+/// space is required between the equal sign and the value" — and the familiar
+/// `sc create X binPath= "C:\x.exe" start= auto` typed at a shell produces exactly that,
+/// because the shell splits on the space.
+///
+/// Building the arguments with `format!("start= auto")` produces ONE element containing a
+/// space, which is not the same thing at all. `sc.exe` matches the `start=` prefix, takes the
+/// remainder — `" auto"`, with a leading space — as the value, finds it in none of
+/// `boot|system|auto|demand|disabled|delayed-auto`, and exits 1639 with
+/// `ERROR: Invalid start= field`. That is verbatim what the first CI run of this crate produced,
+/// on the first machine that ever had an elevated token to run the real registration path on.
+///
+/// `binPath=` and `obj=` carried the same defect and did not report it: `sc.exe` accepted the
+/// leading space into the value, so the service would have been created with an ImagePath of
+/// `" D:\…\brops-audit-signer.exe"` and an account of `" NT SERVICE\BroPSAuditSigner"` —
+/// a path that does not exist and an account name that does not resolve. The failure would have
+/// surfaced as a service that could not start, several steps away from its cause.
+pub fn service_create_argv(service_exe: &Path) -> Vec<String> {
+    vec![
+        "create".to_string(),
+        spec::SIGNER_SERVICE_NAME.to_string(),
+        // Each of these four pairs is NAME= then VALUE, never one string with a space in it.
+        "binPath=".to_string(),
+        service_exe.display().to_string(),
+        "obj=".to_string(),
+        format!("NT SERVICE\\{}", spec::SIGNER_SERVICE_NAME),
+        "start=".to_string(),
+        "auto".to_string(),
+        "DisplayName=".to_string(),
+        "BroPS audit-head anchor signer".to_string(),
+    ]
+}
+
 #[cfg(windows)]
 fn run_sc(args: &[String]) -> Result<(), spec::AnchorRefusal> {
     let output = std::process::Command::new("sc.exe").args(args).output().map_err(|e| {
@@ -378,4 +410,75 @@ pub fn apply(
                signer is already a separate uid, provisioned outside this crate"
             .to_string(),
     })
+}
+
+#[cfg(test)]
+mod sc_argv_tests {
+    use super::*;
+
+    /// Every `NAME=` option is its own argv element and its value is the next one.
+    ///
+    /// This is the shape check, not a re-statement of the constant: it asserts the *property*
+    /// `sc.exe` documents — an element that ends in `=` is an option name and must be followed by
+    /// a value, and no element may be a name and a value glued together with a space. The version
+    /// that shipped before failed exactly that property, and no test in this crate looked.
+    #[test]
+    fn every_sc_option_is_a_separate_argument_from_its_value() {
+        let argv = service_create_argv(Path::new("C:\\Program Files\\BroPS\\signer.exe"));
+        assert_eq!(argv[0], "create");
+        assert_eq!(argv[1], spec::SIGNER_SERVICE_NAME);
+
+        let mut names = Vec::new();
+        let mut index = 2;
+        while index < argv.len() {
+            let name = &argv[index];
+            assert!(
+                name.ends_with('='),
+                "argv[{index}] = {name:?} is not an `sc.exe` option name; the options must come \
+                 in NAME=/VALUE pairs after the service name"
+            );
+            assert!(
+                !name.contains(' '),
+                "argv[{index}] = {name:?} glues the option name to its value with a space, which \
+                 is what `sc.exe` reports as `Invalid start= field`"
+            );
+            let value = argv
+                .get(index + 1)
+                .unwrap_or_else(|| panic!("`{name}` has no value argument after it"));
+            assert!(
+                !value.ends_with('='),
+                "`{name}` is followed by {value:?}, which is another option name rather than a \
+                 value"
+            );
+            assert!(
+                !value.starts_with(' ') && !value.ends_with(' '),
+                "`{name}`'s value {value:?} carries a stray space, which `sc.exe` takes as part \
+                 of the value"
+            );
+            names.push(name.as_str());
+            index += 2;
+        }
+        assert_eq!(names, ["binPath=", "obj=", "start=", "DisplayName="]);
+    }
+
+    /// The values themselves: the ones a wrong split would corrupt silently.
+    #[test]
+    fn the_values_are_the_ones_the_install_plan_promises() {
+        let exe = Path::new("C:\\Program Files\\BroPS\\brops-audit-signer.exe");
+        let argv = service_create_argv(exe);
+        let value_of = |name: &str| {
+            let at = argv.iter().position(|a| a == name).expect(name);
+            argv[at + 1].clone()
+        };
+        assert_eq!(value_of("binPath="), exe.display().to_string());
+        assert_eq!(value_of("obj="), format!("NT SERVICE\\{}", spec::SIGNER_SERVICE_NAME));
+        // `start= auto` is the one the SCM rejects outright when it is malformed; the other three
+        // fail later and further away, which is why this one is named here.
+        assert_eq!(value_of("start="), "auto");
+        assert!(
+            ["boot", "system", "auto", "demand", "disabled", "delayed-auto"]
+                .contains(&value_of("start=").as_str()),
+            "the start type is not one `sc.exe` accepts"
+        );
+    }
 }

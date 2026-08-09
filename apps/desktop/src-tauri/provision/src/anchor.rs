@@ -74,12 +74,13 @@
 //!   `FILE_DELETE_CHILD`, so a standard user may create the product's directory there and can
 //!   never afterwards delete or rename it once sealed. Measured, not assumed:
 //!   [`prove_unwritable`] probes every component including `C:\ProgramData` and `C:\`.
-//! * **POSIX** — `/var/lib/brops/trust-anchor`, owned by a uid this process is not (root, or a
-//!   dedicated `brops-anchor` account), mode `0755`, every ancestor likewise. **There is no
-//!   unprivileged POSIX construction**: an owner may always `chmod` a directory it owns, so
-//!   mode bits are not a boundary against the owner, and POSIX has no OWNER RIGHTS equivalent.
-//!   A POSIX deployment must create the location as another uid and run provisioning once as
-//!   that uid; [`seal`] refuses, by name, when it cannot.
+//! * **POSIX** — [`POSIX_MACHINE_ROOT`]`/trust-anchor`, owned by a uid this process is not
+//!   (root, or a dedicated `brops-anchor` account), mode `0755`, every ancestor likewise.
+//!   **There is no unprivileged POSIX construction**: an owner may always `chmod` a directory
+//!   it owns, so mode bits are not a boundary against the owner, and POSIX has no OWNER RIGHTS
+//!   equivalent. So on POSIX the anchor must already exist when the application starts, and
+//!   [`preprovision_refusal`] refuses — by name, before anything is minted — when it does
+//!   not. [`seal`] refuses too, as the second line of the same argument.
 //!
 //! Nothing here has a permissive branch. A platform this module cannot seal, a location whose
 //! custody cannot be measured, and a location that is measured and turns out writable are all
@@ -101,7 +102,36 @@ pub const MANIFEST_FILE: &str = "PROVISIONING.json";
 /// Written beside them, for whoever finds the directory without this source.
 pub const CUSTODY_FILE: &str = "CUSTODY.txt";
 
-/// `%ProgramData%\BroPS` / `/var/lib/brops` — the machine-wide root the anchor sits under.
+/// The POSIX machine-wide root, and **why it is not `/var/lib/brops`**.
+///
+/// It used to be `/var/lib/brops`. On a real Debian box that is already the home directory of
+/// the `brops` system account the deployment runbook creates, so following the instructions
+/// chowned a service account's home to root. The anchor and a service account's home are two
+/// different things that must never be the same directory: one is deliberately owned by a uid
+/// the application is not and deliberately never removed, and the other belongs to a daemon
+/// whose package may recreate, chown or purge it.
+///
+/// # Why THIS one cannot collide
+///
+/// Two reasons, and the second is the one that actually holds:
+///
+/// 1. Lexically it is neither `/var/lib/brops` (the `brops` account's home, per the runbook)
+///    nor `/var/lib/brops-anchor` (what `adduser --system brops-anchor` would give the
+///    dedicated account [`CUSTODY_REMEDY`] names). Both of the collisions this product's own
+///    instructions can produce are avoided by name.
+/// 2. **The name is not the argument.** A runbook can point `--home` anywhere, so no string is
+///    safe by construction. [`precheck_location`] therefore ASKS: on POSIX it reads
+///    `/etc/passwd` and refuses a machine root that is, contains, or sits inside any account's
+///    home directory — naming the account. A future collision is then a refusal that says
+///    which account owns the path, not a silent `chown -R root:root` over somebody's home.
+///
+/// `/var/lib` is right for the parent regardless: the Filesystem Hierarchy Standard, section 5.8 makes it "variable state
+/// information ... persists between invocations", which is exactly what a trust anchor is, and
+/// it is root-owned `0755` on every distribution, so the ancestor chain [`prove_unwritable`]
+/// walks is already out of an unprivileged account's reach without provisioning touching it.
+pub const POSIX_MACHINE_ROOT: &str = "/var/lib/brops-trust-anchor";
+
+/// `%ProgramData%\BroPS` / [`POSIX_MACHINE_ROOT`] — the machine-wide root the anchor sits under.
 ///
 /// Returned rather than read from an environment variable on purpose. An anchor location a
 /// process can re-point by setting a variable is an anchor that process chooses, which is the
@@ -124,13 +154,135 @@ pub fn default_machine_root() -> Result<PathBuf, ProvisionError> {
     }
     #[cfg(not(windows))]
     {
-        Ok(PathBuf::from("/var/lib/brops"))
+        Ok(PathBuf::from(POSIX_MACHINE_ROOT))
     }
 }
 
 /// `<machine_root>/trust-anchor`.
 pub fn anchor_dir(machine_root: &Path) -> PathBuf {
     machine_root.join(ANCHOR_DIR_NAME)
+}
+
+/// Does `machine_root` collide with a POSIX account's home directory? `Some((user, home))`.
+///
+/// # Why this is asked at all
+///
+/// The anchor's machine root used to be `/var/lib/brops`, which on a real Debian box is
+/// already the home directory of the `brops` system account the deployment runbook creates —
+/// so following the instructions chowned a service account's home to root. That is not a
+/// naming accident that a better string fixes for good: a runbook can pass `--home` anywhere,
+/// so the only durable answer is to ASK before provisioning writes anything.
+///
+/// A collision in either direction is refused. The machine root INSIDE a home means the anchor
+/// sits in a tree its account owns and can rename; a home inside the MACHINE ROOT means
+/// sealing or re-permissioning the anchor's path would reach into an account's home.
+///
+/// # Pure on purpose
+///
+/// It takes the CONTENT of `/etc/passwd` rather than reading it, so the decision runs — and is
+/// tested — on every platform, including the Windows box this file is usually edited on. The
+/// POSIX caller in [`precheck_location`] is the only part that touches the filesystem.
+///
+/// Homes that are not a real place (`/`, `/nonexistent`, `/dev/null`, anything relative) are
+/// skipped: `/` would otherwise collide with every possible root, and Debian gives
+/// `--no-create-home` system accounts `/nonexistent` precisely to mean "there is none".
+pub fn home_directory_collision(machine_root: &Path, passwd: &str) -> Option<(String, PathBuf)> {
+    let root = trim_trailing_slash(machine_root);
+    for line in passwd.lines() {
+        let line = line.trim_end_matches(['\r', '\n']);
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.len() < 6 {
+            continue;
+        }
+        let user = fields[0];
+        let home_raw = fields[5];
+        if !home_raw.starts_with('/')
+            || home_raw == "/"
+            || home_raw == "/nonexistent"
+            || home_raw == "/dev/null"
+        {
+            continue;
+        }
+        let home = trim_trailing_slash(Path::new(home_raw));
+        if root == home || root.starts_with(&home) || home.starts_with(&root) {
+            return Some((user.to_string(), home));
+        }
+    }
+    None
+}
+
+fn trim_trailing_slash(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    let trimmed = text.trim_end_matches('/');
+    if trimmed.is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(trimmed)
+    }
+}
+
+/// Whether provisioning can CREATE an anchor on this platform, or must find one already there.
+///
+/// `None` on Windows, where an unelevated first launch really can establish an anchor it
+/// afterwards cannot reach: [`seal`] applies a PROTECTED DACL with an OWNER RIGHTS
+/// (`S-1-3-4`) read+execute ACE, which replaces the owner's implicit `WRITE_DAC`, and
+/// `%ProgramData%` holds the path in place from above.
+///
+/// `Some(refusal)` everywhere else, and this is the whole POSIX story in one place:
+///
+/// * a POSIX owner may always `chmod` a directory it owns, and there is no OWNER RIGHTS
+///   equivalent, so **no sequence of syscalls lets a process build a directory it cannot
+///   subsequently rewrite**;
+/// * therefore any anchor this process creates is one it can rewrite, which is exactly the
+///   pin-rewrite attack the whole module exists to close;
+/// * therefore the POSIX anchor must be created by a DIFFERENT uid before the application
+///   starts, and the application's part is only to find it and measure it.
+///
+/// # Why this is a refusal at the top and not an error from three frames down
+///
+/// It used to be neither. `provision_with_anchor` minted the whole store, wrote the anchor
+/// files, and only then called [`seal`], which returned `Unsupported` off Windows — so on
+/// Linux and macOS the desktop application did not fail to provision, it **failed to launch**,
+/// with an error escaping from a function whose job was to seal something. The refusal below
+/// is deliberate, arrives before anything is written, and names the directory, the owner and
+/// the modes.
+///
+/// # It does not offer a fallback, and that is the point
+///
+/// An application that started by provisioning an anchor into a directory it can write would
+/// look provisioned and not be, which is strictly worse than one that will not start: every
+/// downstream signature would verify against material the application chose. So there is no
+/// degraded mode here, on purpose.
+///
+/// Pure — it takes the platform name rather than asking `cfg!` — so the POSIX decision and its
+/// exact wording are exercised by the test suite on every machine, which is what stopped this
+/// from being noticed for a whole round.
+pub fn preprovision_refusal(platform: &str, anchor_dir: &Path) -> Option<ProvisionError> {
+    if platform == "windows" {
+        return None;
+    }
+    Some(ProvisionError::Custody {
+        path: anchor_dir.to_path_buf(),
+        what: format!(
+            "this application cannot CREATE a trust anchor on {platform}, and there is not one \
+             here already. A POSIX owner may always chmod a directory it owns and POSIX has no \
+             OWNER RIGHTS equivalent, so any anchor this process built would be one this \
+             process could rewrite — which is the pin-rewrite attack this anchor exists to \
+             close, wearing the costume of a provisioned machine. The anchor must therefore be \
+             created by a DIFFERENT uid, before this application starts: {} owned by that uid \
+             (root, or a dedicated brops-anchor account), mode 0755, every ancestor owned by it \
+             too, holding {OPERATOR_PIN_FILE} / {REGISTRY_FLOOR_FILE} / {MANIFEST_FILE} at mode \
+             0644. NOTE, plainly: no shipped tool creates it yet — the installer that mints an \
+             anchor as another uid is not written, so this platform is NOT supported for a \
+             first launch today, and this refusal is the honest form of that. An anchor already \
+             in place IS used: provisioning verifies it and starts",
+            anchor_dir.display(),
+        ),
+        remedy: CUSTODY_REMEDY.to_string(),
+    })
 }
 
 /// The remedy every custody refusal ends with, so a reader is never told only what is wrong.
@@ -220,6 +372,32 @@ pub fn precheck_location(anchor: &Path, machine_root: &Path) -> Result<(), Provi
             ),
         );
     }
+    // Before any probe: is this somebody's home directory? Refuse by NAME rather than let a
+    // deployment chown a service account's home to root, which is what `/var/lib/brops` did on
+    // the first real Debian box. An unreadable `/etc/passwd` is not treated as a refusal —
+    // this guard exists to stop a collision, and the custody probes below are the security
+    // boundary — but it is the reason the default root moved. See [`POSIX_MACHINE_ROOT`].
+    #[cfg(not(windows))]
+    {
+        if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
+            if let Some((user, home)) = home_directory_collision(machine_root, &passwd) {
+                return writable(
+                    machine_root,
+                    format!(
+                        "the machine root {} collides with the home directory of the account \
+                         {user:?} ({}). A trust anchor and an account's home are two different \
+                         things: the anchor is owned by a uid the application is not and is \
+                         never removed, and a home belongs to a daemon whose package may \
+                         recreate, chown or purge it. Provisioning here would either put the \
+                         anchor inside a tree that account can rename, or re-permission \
+                         somebody's home. Point the machine root somewhere no account lives",
+                        machine_root.display(),
+                        home.display(),
+                    ),
+                );
+            }
+        }
+    }
     let mut component: Option<&Path> = machine_root.parent();
     while let Some(path) = component {
         if !path.exists() {
@@ -282,67 +460,8 @@ pub fn prove_unwritable(dir: &Path) -> Result<CustodyProof, ProvisionError> {
     }
     let mut refusals = Vec::new();
 
-    // 1. Can this account add a file to the anchor directory? Adding one is all the attack
-    //    needs: it does not have to modify `operator-root.pub` in place, it only has to end up
-    //    with a file of that name saying what it chose.
-    let probe = dir.join(".brops-custody-probe");
-    match std::fs::File::create(&probe) {
-        Ok(file) => {
-            drop(file);
-            let _ = std::fs::remove_file(&probe);
-            return writable(
-                dir,
-                "this account CAN create files in the trust anchor directory, so it can write \
-                 an operator-root pin of its own choosing",
-            );
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-            refusals.push(format!("create {} -> {e}", probe.display()));
-        }
-        Err(e) => {
-            return writable(
-                dir,
-                format!(
-                    "the trust anchor directory's custody cannot be measured: creating a probe \
-                     file failed with something other than a permission denial ({e}), so this \
-                     check cannot say whether the account can write it"
-                ),
-            )
-        }
-    }
-
-    // 2. Every file already in it: opened for write, and opened for DELETE. The second is not
-    //    redundant — DELETE on a file is granted by FILE_DELETE_CHILD on its DIRECTORY, which
-    //    the file's own descriptor does not mention.
-    for path in entries(dir)? {
-        match std::fs::OpenOptions::new().write(true).open(&path) {
-            Ok(_) => {
-                return writable(
-                    &path,
-                    "this account CAN open a file in the trust anchor directory for writing",
-                )
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                refusals.push(format!("open-for-write {} -> {e}", path.display()));
-            }
-            Err(e) => {
-                return writable(
-                    &path,
-                    format!("a trust anchor file's writability cannot be measured: {e}"),
-                )
-            }
-        }
-        if let Some(why) = can_delete(&path)? {
-            return writable(
-                &path,
-                format!(
-                    "this account CAN delete a trust anchor file ({why}), so it can remove the \
-                     pin and put its own in its place"
-                ),
-            );
-        }
-        refusals.push(format!("open-for-delete {} -> refused", path.display()));
-    }
+    // 1 and 2. The anchor directory and everything BELOW it, recursively: see [`probe_tree`].
+    probe_tree(dir, &mut refusals, 0)?;
 
     // 3. The chain. The anchor directory itself and every ancestor up to the volume root: if
     //    any one of them can be opened for DELETE, it can be renamed aside and the whole path
@@ -375,6 +494,147 @@ pub fn prove_unwritable(dir: &Path) -> Result<CustodyProof, ProvisionError> {
         refusals,
         chain,
     })
+}
+
+/// The name of the file every write probe creates and immediately removes.
+const PROBE_NAME: &str = ".brops-custody-probe";
+
+/// How deep the anchor is allowed to be. The real one is two directories deep
+/// (`registry/config/trusted-keys.json`); anything past this is refused rather than walked,
+/// so a symlink loop or a hostile tree cannot turn a custody check into a filesystem crawl.
+const MAX_ANCHOR_DEPTH: usize = 8;
+
+/// Can this account write anything in `dir`, or anything anywhere below it?
+///
+/// # Why this recurses, and why the previous version could not have passed on POSIX
+///
+/// The anchor is not flat. `write_anchor_files` puts the operator-signed trusted-key registry
+/// at `<anchor>/registry/config/trusted-keys.json`, because `bro_signature.resolve_registry_root`
+/// needs a registry root the reading account cannot write. The previous version listed the
+/// anchor directory ONCE, non-recursively, and asked of every entry the same question:
+/// "can it be opened for writing?"
+///
+/// Asked of a DIRECTORY that question is not merely uninformative, it answers differently on
+/// the two platforms and is wrong on both:
+///
+/// * **POSIX** — `open(dir, O_WRONLY)` fails `EISDIR` before the kernel consults permissions
+///   at all. `EISDIR` is not `PermissionDenied`, so the old code fell into its
+///   "custody cannot be measured" branch and refused. The `registry` subdirectory is always
+///   there, so **`prove_unwritable` could never have returned `Ok` on POSIX** — with a
+///   correctly sealed, root-owned anchor it would still have refused, naming `Is a directory
+///   (os error 21)`. That is the defect the missing POSIX coverage hid.
+/// * **Windows** — `CreateFileW(dir, GENERIC_WRITE)` without `FILE_FLAG_BACKUP_SEMANTICS`
+///   returns `ERROR_ACCESS_DENIED` for EVERY directory, sealed or wide open. The old code read
+///   that as a refusal and moved on, so the registry subdirectory passed the check without
+///   being checked, and the files INSIDE it were never looked at at all.
+///
+/// The question that does mean something about a directory is the one asked of the anchor
+/// itself: can this account create an entry in it? So that is what is asked, of every
+/// directory in the tree, and "open for writing" is asked only of regular files.
+///
+/// A symlink is refused rather than followed. Nothing provisioning writes is one, the anchor
+/// is by construction not writable by this account, and a link inside it would redirect a read
+/// to a file whose custody this walk never measured.
+fn probe_tree(
+    dir: &Path,
+    refusals: &mut Vec<String>,
+    depth: usize,
+) -> Result<(), ProvisionError> {
+    if depth > MAX_ANCHOR_DEPTH {
+        return writable(
+            dir,
+            format!(
+                "the trust anchor is nested more than {MAX_ANCHOR_DEPTH} directories deep, so \
+                 its custody cannot be measured within a bounded walk"
+            ),
+        );
+    }
+
+    // (a) Can this account add a file here? Adding one is all the attack needs: it does not
+    //     have to modify `operator-root.pub` in place, it only has to end up with a file of
+    //     that name saying what it chose. On a subdirectory the same is true of the registry.
+    let probe = dir.join(PROBE_NAME);
+    match std::fs::File::create(&probe) {
+        Ok(file) => {
+            drop(file);
+            let _ = std::fs::remove_file(&probe);
+            return writable(
+                dir,
+                "this account CAN create files in the trust anchor directory, so it can write \
+                 an operator-root pin of its own choosing",
+            );
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            refusals.push(format!("create {} -> {e}", probe.display()));
+        }
+        Err(e) => {
+            return writable(
+                dir,
+                format!(
+                    "the trust anchor directory's custody cannot be measured: creating a probe \
+                     file failed with something other than a permission denial ({e}), so this \
+                     check cannot say whether the account can write it"
+                ),
+            )
+        }
+    }
+
+    // (b) Every entry: a regular file is opened for write, a directory is descended into, and
+    //     BOTH are asked whether they can be deleted. The delete question is not redundant —
+    //     DELETE on an entry is granted by FILE_DELETE_CHILD on its DIRECTORY, which the
+    //     entry's own descriptor does not mention, and on POSIX by write permission on the
+    //     directory, which the entry's own mode does not mention either.
+    for path in entries(dir)? {
+        let kind = match std::fs::symlink_metadata(&path) {
+            Ok(meta) => meta.file_type(),
+            Err(e) => {
+                return writable(
+                    &path,
+                    format!("a trust anchor entry's custody cannot be measured: {e}"),
+                )
+            }
+        };
+        if kind.is_symlink() {
+            return writable(
+                &path,
+                "a trust anchor entry is a SYMLINK. Provisioning writes none, and a link here \
+                 redirects a read to a file whose custody this walk has not measured — the \
+                 target could be one this account owns",
+            );
+        }
+        if kind.is_dir() {
+            probe_tree(&path, refusals, depth + 1)?;
+        } else {
+            match std::fs::OpenOptions::new().write(true).open(&path) {
+                Ok(_) => {
+                    return writable(
+                        &path,
+                        "this account CAN open a file in the trust anchor directory for writing",
+                    )
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    refusals.push(format!("open-for-write {} -> {e}", path.display()));
+                }
+                Err(e) => {
+                    return writable(
+                        &path,
+                        format!("a trust anchor file's writability cannot be measured: {e}"),
+                    )
+                }
+            }
+        }
+        if let Some(why) = can_delete(&path)? {
+            return writable(
+                &path,
+                format!(
+                    "this account CAN delete a trust anchor file ({why}), so it can remove the \
+                     pin and put its own in its place"
+                ),
+            );
+        }
+        refusals.push(format!("open-for-delete {} -> refused", path.display()));
+    }
+    Ok(())
 }
 
 fn entries(dir: &Path) -> Result<Vec<PathBuf>, ProvisionError> {
@@ -636,54 +896,109 @@ fn platform_precondition(dir: &Path) -> Result<String, ProvisionError> {
     {
         use std::os::unix::fs::MetadataExt;
         let euid = posix_euid()?;
-        if euid == 0 {
-            return writable(
-                dir,
-                "this process is running as root, which rewrites any file regardless of owner or \
-                 mode, so no location on this machine is an anchor for it",
-            );
-        }
         // The behavioural probes above only report what the CURRENT mode allows. On POSIX an
         // owner may chmod at will, so ownership has to be asked separately or a 0555 directory
         // this account owns would pass every probe and still be one `chmod` from anything.
-        let info = std::fs::metadata(dir).map_err(|source| ProvisionError::Io {
-            what: "stat-ing the trust anchor directory".into(),
-            path: dir.to_path_buf(),
-            source,
-        })?;
-        if info.uid() == euid {
-            return writable(
+        let anchor_uid = std::fs::metadata(dir)
+            .map_err(|source| ProvisionError::Io {
+                what: "stat-ing the trust anchor directory".into(),
+                path: dir.to_path_buf(),
+                source,
+            })?
+            .uid();
+        let mut ancestors: Vec<(PathBuf, u32)> = Vec::new();
+        let mut component: Option<&Path> = dir.parent();
+        while let Some(path) = component {
+            let uid = std::fs::metadata(path)
+                .map_err(|source| ProvisionError::Io {
+                    what: "stat-ing an ancestor of the trust anchor directory".into(),
+                    path: path.to_path_buf(),
+                    source,
+                })?
+                .uid();
+            ancestors.push((path.to_path_buf(), uid));
+            component = path.parent();
+        }
+        posix_ownership(euid, anchor_uid, &ancestors).resolve(dir)
+    }
+}
+
+/// What the POSIX ownership facts mean. Every variant except [`PosixOwnership::OutOfReach`]
+/// is a refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PosixOwnership {
+    /// Root rewrites any file regardless of owner or mode, so nothing is an anchor for it.
+    RunningAsRoot,
+    /// The reader owns the anchor, and an owner may always `chmod` back.
+    AnchorOwnedByReader { euid: u32 },
+    /// The reader owns something ABOVE the anchor, so it can `chmod` that and rename the
+    /// anchor aside — the ancestor question a mode on the leaf cannot answer.
+    AncestorOwnedByReader { euid: u32, ancestor: PathBuf },
+    /// The anchor and every ancestor belong to a uid this process is not.
+    OutOfReach { euid: u32 },
+}
+
+/// The POSIX custody decision, taken as a **pure function of the uids**.
+///
+/// # Why this is not inline in [`platform_precondition`] any more
+///
+/// Because inline it had never run. Reaching it needs an anchor whose whole ancestor chain is
+/// unwritable by this account, and there is no unprivileged construction of that: under a
+/// temporary directory the chain check refuses first, and as root every probe succeeds and the
+/// chain check refuses first as well. So on POSIX this decision — including the wording of
+/// three refusals — was reachable only on a correctly deployed production box, and the suite
+/// went green on Linux without compiling half of it.
+///
+/// Split out, the DECISION runs on every machine in every run of the test suite, and only the
+/// two `stat` calls that feed it need a real fixture. That is the same shape
+/// `bro_custody.posix_rewrite_verdict` uses on the engine side.
+///
+/// `ancestors` is every component above the anchor, nearest first, paired with its owner uid.
+pub fn posix_ownership(euid: u32, anchor_uid: u32, ancestors: &[(PathBuf, u32)]) -> PosixOwnership {
+    if euid == 0 {
+        return PosixOwnership::RunningAsRoot;
+    }
+    if anchor_uid == euid {
+        return PosixOwnership::AnchorOwnedByReader { euid };
+    }
+    for (path, uid) in ancestors {
+        if *uid == euid {
+            return PosixOwnership::AncestorOwnedByReader { euid, ancestor: path.clone() };
+        }
+    }
+    PosixOwnership::OutOfReach { euid }
+}
+
+impl PosixOwnership {
+    /// The mechanism string when the anchor is out of reach, and the named refusal otherwise.
+    pub fn resolve(self, dir: &Path) -> Result<String, ProvisionError> {
+        match self {
+            PosixOwnership::RunningAsRoot => writable(
+                dir,
+                "this process is running as root, which rewrites any file regardless of owner or \
+                 mode, so no location on this machine is an anchor for it",
+            ),
+            PosixOwnership::AnchorOwnedByReader { euid } => writable(
                 dir,
                 format!(
                     "the trust anchor directory is owned by the very account reading it (uid \
                      {euid}). A POSIX owner may always chmod a directory it owns, so its mode \
                      bits are not a boundary against it"
                 ),
-            );
+            ),
+            PosixOwnership::AncestorOwnedByReader { euid, ancestor } => writable(
+                &ancestor,
+                format!(
+                    "an ancestor of the trust anchor is owned by the very account reading it \
+                     (uid {euid}), which may chmod it and then rename the anchor aside"
+                ),
+            ),
+            PosixOwnership::OutOfReach { euid } => Ok(format!(
+                "posix: the anchor directory and every ancestor are owned by a uid this process \
+                 is not (this process is uid {euid}), and every write and unlink probe above was \
+                 refused by the kernel"
+            )),
         }
-        let mut component: Option<&Path> = dir.parent();
-        while let Some(path) = component {
-            let ancestor = std::fs::metadata(path).map_err(|source| ProvisionError::Io {
-                what: "stat-ing an ancestor of the trust anchor directory".into(),
-                path: path.to_path_buf(),
-                source,
-            })?;
-            if ancestor.uid() == euid {
-                return writable(
-                    path,
-                    format!(
-                        "an ancestor of the trust anchor is owned by the very account reading it \
-                         (uid {euid}), which may chmod it and then rename the anchor aside"
-                    ),
-                );
-            }
-            component = path.parent();
-        }
-        Ok(format!(
-            "posix: the anchor directory and every ancestor are owned by a uid this process is \
-             not (this process is uid {euid}), and every write and unlink probe above was \
-             refused by the kernel"
-        ))
     }
 }
 
@@ -693,23 +1008,65 @@ fn platform_precondition(dir: &Path) -> Result<String, ProvisionError> {
 /// file this process creates is owned by its effective uid, so creating one and reading its
 /// owner back IS the answer, and it comes from the same kernel that decides the custody
 /// question. A failure refuses rather than guesses.
+///
+/// # Three things the first version got wrong, all of them the same mistake
+///
+/// It was `File::create` on `<temp>/.brops-euid-<pid>` — a PREDICTABLE name in a
+/// world-writable directory, opened `O_CREAT|O_TRUNC|O_WRONLY`, following symlinks:
+///
+/// 1. a squatter who guessed the pid could pre-create that path as a symlink and have this
+///    function TRUNCATE any file the application can write;
+/// 2. a squatter who pre-created it as a file THEY own would make `metadata().uid()` report
+///    THEIR uid — and a wrong euid is not a cosmetic bug here: [`posix_ownership`] compares it
+///    against the anchor's owner, so a spoofed value turns the "the reader owns the anchor"
+///    refusal into a pass. The check that decides whether the anchor is genuine would then be
+///    reading a number an attacker chose;
+/// 3. the file was created at `0666 & ~umask`, which is the umask defect this round is about.
+///
+/// So: an unpredictable name, `create_new` (`O_EXCL`, which cannot follow a symlink and cannot
+/// open a file somebody else made), mode `0600` stated at creation, and `fstat` on the open
+/// HANDLE rather than a second look at the path. `AlreadyExists` is retried with a fresh name
+/// and then refused — never worked around by using whatever was there.
 #[cfg(not(windows))]
-fn posix_euid() -> Result<u32, ProvisionError> {
-    use std::os::unix::fs::MetadataExt;
-    let probe = std::env::temp_dir().join(format!(".brops-euid-{}", std::process::id()));
-    let file = std::fs::File::create(&probe).map_err(|source| ProvisionError::Io {
-        what: "creating a probe file to learn this process's effective uid".into(),
-        path: probe.clone(),
-        source,
-    })?;
-    let uid = file.metadata().map(|m| m.uid()).map_err(|source| ProvisionError::Io {
-        what: "reading back the owner of this process's own probe file".into(),
-        path: probe.clone(),
-        source,
-    });
-    drop(file);
-    let _ = std::fs::remove_file(&probe);
-    uid
+pub fn posix_euid() -> Result<u32, ProvisionError> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let dir = std::env::temp_dir();
+    for _ in 0..8 {
+        let probe = dir.join(format!(".brops-euid-{}", crate::random_hex(12)?));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true).mode(0o600);
+        match options.open(&probe) {
+            Ok(file) => {
+                // fstat on the handle this call opened: there is nothing in between for
+                // anyone to swap, so the uid is this process's and no one else's.
+                let uid = file.metadata().map(|m| m.uid()).map_err(|source| ProvisionError::Io {
+                    what: "reading back the owner of this process's own probe file".into(),
+                    path: probe.clone(),
+                    source,
+                });
+                drop(file);
+                let _ = std::fs::remove_file(&probe);
+                return uid;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => {
+                return Err(ProvisionError::Io {
+                    what: "creating a probe file to learn this process's effective uid".into(),
+                    path: probe,
+                    source,
+                })
+            }
+        }
+    }
+    Err(ProvisionError::Custody {
+        path: dir,
+        what: "this process's effective uid could not be measured: eight unpredictable probe \
+               names in the temporary directory were all already taken, which is not something \
+               that happens by chance. Refusing rather than trusting the owner of a file this \
+               process did not create — that number decides whether the anchor is genuine"
+            .to_string(),
+        remedy: CUSTODY_REMEDY.to_string(),
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -24,6 +24,8 @@ use brops_provision::audit_signer::{
 };
 use serde_json::{json, Value};
 
+mod prerequisites;
+
 // ---------------------------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------------------------
@@ -74,9 +76,7 @@ fn ledger_plan() -> anc::DaclPlan {
     anc::ledger_dacl_plan(APP, SIGNER).expect("the healthy ledger plan must build")
 }
 
-fn skip(test: &str, why: &str) {
-    println!("SKIP {test}: {why}");
-}
+
 
 // ---------------------------------------------------------------------------------------------
 // The derived principal
@@ -455,25 +455,47 @@ fn an_administrator_app_account_is_never_upgraded_to_full_separation() {
     );
 }
 
+/// An absolute path **on the platform this test is running on**.
+///
+/// The hardcoded `C:\\Program Files\\...` this used to carry is not absolute on Linux, so
+/// `from_proofs` refused it and the test failed there — on a product check that is
+/// platform-agnostic and right. The check asks `Path::is_absolute`, which is a question about
+/// the running platform, so the fixture has to be one too. Nothing here is about Windows: the
+/// property is "a relative shim path is refused, an absolute one is accepted".
+fn absolute_shim() -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from("C:\\Program Files\\BroPS\\brops-anchor-relay.exe")
+    } else {
+        PathBuf::from("/opt/brops/brops-anchor-relay")
+    }
+}
+
 #[test]
 fn the_anchor_environment_cannot_exist_without_both_proofs() {
     let kp = anc::verify_key_custody(&key_plan(), &healthy_key_facts()).unwrap();
     let lp = anc::verify_ledger_custody(&ledger_plan(), &healthy_ledger_facts()).unwrap();
 
     // A relative signer path would make `bro_audit_log._signer_argv` refuse anyway; refuse here
-    // so the failure names the real cause.
-    assert!(anc::AnchorEnv::from_proofs(
+    // so the failure names the real cause. `relay.exe` is relative on every platform.
+    let relative = anc::AnchorEnv::from_proofs(
         Path::new("relay.exe"),
         "audit-anchor-0011223344556677",
         Separation::Separated,
         kp.clone(),
         lp.clone(),
     )
-    .is_err());
+    .expect_err("a relative shim path must be refused");
+    // And the refusal is ABOUT the path. It used to be `NotASid`, whose text sends the reader
+    // to look at account names that failed to resolve — a different failure entirely.
+    assert!(
+        matches!(relative, AnchorRefusal::ShimPathNotAbsolute { .. }),
+        "a relative shim path was refused under the wrong name: {relative:?}"
+    );
+    assert!(relative.explain().contains("RELATIVE path"), "{}", relative.explain());
 
     // No key id ⇒ the engine could not name the key in the trusted registry.
     assert!(anc::AnchorEnv::from_proofs(
-        Path::new("C:\\Program Files\\BroPS\\brops-anchor-relay.exe"),
+        &absolute_shim(),
         "  ",
         Separation::Separated,
         kp.clone(),
@@ -482,7 +504,7 @@ fn the_anchor_environment_cannot_exist_without_both_proofs() {
     .is_err());
 
     let env = anc::AnchorEnv::from_proofs(
-        Path::new("C:\\Program Files\\BroPS\\brops-anchor-relay.exe"),
+        &absolute_shim(),
         "audit-anchor-0011223344556677",
         Separation::Separated,
         kp,
@@ -888,9 +910,29 @@ fn resolve_service_sid_agrees_with_the_derived_sid() {
 /// its own read access. Opening it must then fail with ERROR_ACCESS_DENIED. That is exactly the
 /// syscall path a thief would take, so it is immune to ACE ordering, generic mappings, deny ACEs,
 /// inheritance and ownership — the things a DACL read-back has to reason carefully about.
+///
+/// # The round that split this into two files
+///
+/// The denial fixture used to be a DACL granting `BUILTIN\Administrators` and nothing else, on
+/// the reasoning that "this account" is not that group. On a **GitHub Windows runner it is**: the
+/// job runs as an elevated administrator, that ACE grants the token in full, and
+/// `app_can_read` answered `Ok(true)`. The assertion said "a file with no ACE for this account
+/// must not open" about a descriptor that had one.
+///
+/// The probe was right and the fixture was wrong, so there are now two:
+///
+/// * `system-only.bin` grants `S-1-5-18` alone. **No user token is LOCAL SYSTEM**, elevated or
+///   otherwise, so the denial there is real on every posture and that is where the "reports real
+///   denial" half is measured now.
+/// * `locked.bin` keeps the Administrators-only shape, because that is the shipped key file's
+///   real shape — and what it demonstrates is posture-dependent by nature: denied to a standard
+///   or UAC-filtered token, **granted** to an elevated one. Both are asserted, and on the
+///   elevated branch the product is additionally required to be saying
+///   `Separation::SeparatedUntilElevation` rather than claiming a separation it does not have.
 #[test]
 #[cfg(windows)]
 fn the_behavioural_probe_reports_real_denial_and_real_access() {
+    const NAME: &str = "the_behavioural_probe_reports_real_denial_and_real_access";
     let dir = tempfile::tempdir().unwrap();
     let readable = dir.path().join("readable.bin");
     std::fs::write(&readable, b"x").unwrap();
@@ -901,40 +943,62 @@ fn the_behavioural_probe_reports_real_denial_and_real_access() {
     );
 
     let me = anc::winimpl::current_user_sid().unwrap();
-    let locked = dir.path().join("locked.bin");
-    std::fs::write(&locked, b"secret").unwrap();
-    // Grant ONLY Administrators. This account keeps the owner's implicit READ_CONTROL|WRITE_DAC
-    // and loses FILE_READ_DATA, which is precisely the shape of the signer's key file.
-    let plan = anc::DaclPlan {
-        aces: vec![Ace {
-            sid: anc::SID_ADMINISTRATORS.to_string(),
-            mask: anc::FILE_ALL_ACCESS,
-            inheritable: false,
-        }],
+    let signer_sid = anc::service_account_sid(anc::SIGNER_SERVICE_NAME);
+    let dacl_of = |sid: &str| anc::DaclPlan {
+        aces: vec![Ace { sid: sid.to_string(), mask: anc::FILE_ALL_ACCESS, inheritable: false }],
         app_sid: me.clone(),
-        signer_sid: anc::service_account_sid(anc::SIGNER_SERVICE_NAME),
-        owner_sid: anc::SID_ADMINISTRATORS.to_string(),
+        signer_sid: signer_sid.clone(),
+        owner_sid: sid.to_string(),
     };
-    // Owner is deliberately NOT stamped here: assigning BUILTIN\Administrators needs elevation.
-    match anc::winimpl::apply_dacl(&locked, &plan, None) {
-        Ok(()) => {}
-        Err(e) => {
-            skip(
-                "the_behavioural_probe_reports_real_denial_and_real_access",
-                &format!("SetNamedSecurityInfoW refused on this box: {e}"),
-            );
-            return;
-        }
-    }
 
-    // 1. The behavioural proof: the kernel denies this account.
+    // 1. The denial that holds on every token there is. LOCAL SYSTEM is not an identity any
+    //    interactive or service-account process can BE, so no amount of elevation puts this
+    //    token inside the only ACE on the file. Owner is deliberately NOT stamped (that needs
+    //    SeRestorePrivilege), so this account keeps READ_CONTROL|WRITE_DAC and loses
+    //    FILE_READ_DATA — precisely the shape of the signer's key file as the app sees it.
+    let system_only = dir.path().join("system-only.bin");
+    std::fs::write(&system_only, b"secret").unwrap();
+    if let Err(e) = anc::winimpl::apply_dacl(&system_only, &dacl_of(anc::SID_LOCAL_SYSTEM), None) {
+        prerequisites::skip(
+            NAME,
+            prerequisites::TAG_DACL_APPLICATION,
+            &format!("SetNamedSecurityInfoW refused on this box: {e}"),
+        );
+        return;
+    }
     assert_eq!(
-        anc::winimpl::app_can_read(&locked),
+        anc::winimpl::app_can_read(&system_only),
         Ok(false),
-        "a file with no ACE for this account must not open"
+        "a file whose only ACE is LOCAL SYSTEM's must not open for this account, on any token"
     );
 
-    // 2. The read-back proof, computed rather than asserted. The owner keeps READ_CONTROL, so the
+    // 2. The shipped key file's real shape, and what it means depends on the token.
+    let locked = dir.path().join("locked.bin");
+    std::fs::write(&locked, b"secret").unwrap();
+    let plan = dacl_of(anc::SID_ADMINISTRATORS);
+    anc::winimpl::apply_dacl(&locked, &plan, None).expect("the same call succeeded above");
+
+    let posture = anc::winimpl::app_token_posture().expect("posture");
+    let separation = Separation::from_posture(posture);
+    println!("INFO posture={posture:?} separation={separation:?}");
+    let elevated = posture == AppTokenPosture::ElevatedAdministrator;
+    assert_eq!(
+        anc::winimpl::app_can_read(&locked),
+        Ok(elevated),
+        "the probe must report what the kernel really did with an Administrators-only DACL on a \
+         {posture:?} token: denied unless the token is elevated, granted when it is"
+    );
+    if elevated {
+        // The property that still holds here, and it is the product's own sentence: an anchor
+        // produced by this account is not evidence against a human who can elevate.
+        assert!(
+            matches!(separation, Separation::SeparatedUntilElevation { .. }),
+            "an elevated token that CAN open the key was reported as separated: {separation:?}"
+        );
+        assert!(separation.claim().contains("does NOT hold"), "{}", separation.claim());
+    }
+
+    // 3. The read-back proof, computed rather than asserted. The owner keeps READ_CONTROL, so the
     //    descriptor is still measurable from here — which is exactly why the *installer* can prove
     //    the key file the app cannot even open.
     let facts = anc::winimpl::dacl_facts(&locked).expect("the owner can still read the descriptor");
@@ -949,19 +1013,31 @@ fn the_behavioural_probe_reports_real_denial_and_real_access() {
     assert_eq!(anc::unmapped_generic_grantees(&facts), Vec::<String>::new());
     assert_eq!(anc::world_grantees(&facts), Vec::<String>::new());
 
-    // 3. The full key-custody verdict still refuses, because the OWNER could not be stamped
-    //    without elevation — and an owner can rewrite the DACL at will.
-    let key_plan_here = anc::key_dacl_plan(&me, &plan.signer_sid).unwrap();
-    match anc::verify_key_custody(&key_plan_here, &facts) {
-        Err(AnchorRefusal::UntrustedOwner { owner_sid, .. }) => {
-            assert_eq!(owner_sid, me);
-            skip(
+    // 4. The full key-custody verdict REFUSES either way, and that is the assertion — a
+    //    descriptor that grants the signer nothing is never key custody, whoever owns it.
+    let key_plan_here = anc::key_dacl_plan(&me, &signer_sid).unwrap();
+    let verdict = anc::verify_key_custody(&key_plan_here, &facts);
+    match verdict {
+        Err(AnchorRefusal::UntrustedOwner { ref owner_sid, .. }) if *owner_sid == me => {
+            // The unelevated case: the owner could not be stamped, so the refusal lands on
+            // ownership first and the DACL half is as far as the key proof gets here.
+            prerequisites::skip(
                 "the_behavioural_probe_reports_real_denial_and_real_access (owner half)",
+                prerequisites::TAG_OWNER_ASSIGNMENT,
                 "assigning BUILTIN\\Administrators as owner needs SeRestorePrivilege, which an \
                  unelevated token does not hold, so only the DACL half of the key proof ran here",
             );
         }
-        other => panic!("a file this account owns was accepted as key custody: {other:?}"),
+        Err(_) => {
+            // An elevated token creates files owned by BUILTIN\Administrators, so the owner
+            // check passes and the refusal lands further in — on the signer's missing grant,
+            // which is the deeper half of the same verdict.
+            println!("INFO key custody refused past the owner check: {verdict:?}");
+        }
+        Ok(proof) => panic!(
+            "a descriptor granting the signer nothing at all was accepted as key custody: \
+             {proof:?}"
+        ),
     }
 }
 
@@ -997,7 +1073,11 @@ fn the_ledger_directory_really_excludes_the_signer_when_locked() {
     let plan = anc::ledger_dacl_plan(&me, &signer).expect("ledger plan");
 
     if let Err(e) = anc::winimpl::apply_dacl(&ledger, &plan, None) {
-        skip("the_ledger_directory_really_excludes_the_signer_when_locked", &format!("{e}"));
+        prerequisites::skip(
+            "the_ledger_directory_really_excludes_the_signer_when_locked",
+            prerequisites::TAG_DACL_APPLICATION,
+            &format!("SetNamedSecurityInfoW refused on this box: {e}"),
+        );
         return;
     }
     let facts = anc::winimpl::dacl_facts(&ledger).expect("read back the ledger dir");
@@ -1051,14 +1131,20 @@ fn without_the_installed_service_the_whole_thing_refuses() {
     match anc::verify_installed(&paths, KEY_ID) {
         Err(AnchorRefusal::SignerAbsent { why }) => {
             assert!(why.contains("BroPSAuditSigner"), "{why}");
-            skip(
+            prerequisites::skip(
                 "without_the_installed_service_the_whole_thing_refuses (install half)",
-                "creating the NT SERVICE\\BroPSAuditSigner virtual account requires \
-                 SC_MANAGER_CREATE_SERVICE, i.e. an ELEVATED token. This session runs at medium \
-                 integrity with BUILTIN\\Administrators present DENY-ONLY, so the SCM refuses, the \
-                 service does not exist, and the syscall path through verify_installed past step \
-                 2 was NOT exercised. Steps 3-5 (the behavioural probe and both read-back proofs) \
-                 are covered instead by the two tests above, against real descriptors on disk",
+                prerequisites::TAG_INSTALLED_SIGNER_SERVICE,
+                "no NT SERVICE\\BroPSAuditSigner exists on this machine, so the syscall path \
+                 through verify_installed past step 2 was NOT exercised. Creating it needs \
+                 SC_MANAGER_CREATE_SERVICE, i.e. an ELEVATED token, which a medium-integrity \
+                 session with BUILTIN\\Administrators DENY-ONLY does not have. Steps 3-5 (the \
+                 behavioural probe and both read-back proofs) are covered instead by the two \
+                 tests above, against real descriptors on disk. The windows-latest job \
+                 deliberately does NOT stand one up, and the reason is not that CI is awkward: \
+                 `brops-audit-signer.exe` is a plain console binary with no \
+                 StartServiceCtrlDispatcher, so `sc.exe start` cannot succeed against it, and a \
+                 hand-built stub service would make this test pass against something the product \
+                 does not ship. What is missing is the SCM implementation, not the runner",
             );
         }
         Err(AnchorRefusal::SignerSidSubstituted { derived, resolved, .. }) => {

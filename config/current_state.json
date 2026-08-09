@@ -1,16 +1,17 @@
 {
   "schema": 2,
   "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS — the Wave 3b implementation + design + live proof were consolidated as PR #48 (feat/cockpit-pages, base chore/main-resync, superseding the split PR #46 impl / PR #31 design / PR #32 impl) and are now MERGED into main together with Phase 2 (the AI-surface governance slices #49/#50/#51/#52), main tip b91f2356. The 3b-1B design is Architect DESIGN GREEN at rev-30 (design-green != code-green); the external Architect CODE-audit was waived by the Owner (three converged builder passes + the independent Windows-broker audit GREEN stand as the verdict). The active workflow is now PR #53 (feat/windows-broker-machineproof) — the additive Windows LIVE machine-proof. tools/check_coordination.py checks the human docs agree with this; tools/check_repo_state.py verifies it against LIVE GitHub in CI (the PR #53 body AUDIT_CANDIDATE_HEAD marker anchors the exact head). Update in the same commit as any state change.",
+  "settled_at_main_head": "c1e0acaaef8b5280d44f94514e13032fd3b0c8b5",
   "sync": {
-    "baseline_main_head_at_sync": "2d39ef155e1ccf6485b9db2b8c304b284bb3927c",
-    "snapshot_branch": "feat/destroy-the-root-and-delegate",
+    "baseline_main_head_at_sync": "c1e0acaaef8b5280d44f94514e13032fd3b0c8b5",
+    "snapshot_branch": "docs/make-the-repo-tell-the-truth",
     "live_main_resolution": "baseline_main_head_at_sync is the live main HEAD 0efa99e (PR #65 merged). The active branch chore/staleness-sweep is a direct child of it.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #80). PR #80's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #81). PR #81's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "feat/destroy-the-root-and-delegate"
+    "branch": "docs/make-the-repo-tell-the-truth"
   },
   "prs": [],
   "status_tokens": {
@@ -212,11 +213,11 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live, PR #53) now machine-proves the Windows governed turn to trusted_verified over named pipes (in-process CI-portable + real-pipe same-account + cross-account with distinct dedicated service accounts), but platform_governed_execution_supported() stays FALSE in the SHIPPED app: the Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE Architect audit of the Windows broker is GREEN. A proof kit is not the shipped gate."
   ],
   "current_workflow_pr": {
-    "number": 80,
-    "branch": "feat/destroy-the-root-and-delegate",
+    "number": 81,
+    "branch": "docs/make-the-repo-tell-the-truth",
     "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #80 body.",
-    "note": "PR #80 closes O-2 on Windows. Four rounds, each ending by naming a gap rather than claiming closure: ANCHOR_AUTHORITIES accepted two authorities the app holds, so it was narrowed to a dedicated audit-anchor; the app held operator-root which signs the registry, so it is destroyed at install; destroying it was not enough because the operator pin was a file the app could rewrite, so the pin, the anti-rollback floor, the provisioning manifest and the trusted-key registry moved out of reach; and sealing the leaf was not enough because the parent could be renamed aside, so the chain is now walked to the volume root. The mechanism is the OWNER RIGHTS SID, which replaces the owner's implicit WRITE_DAC rather than adding to it, so no elevation, service or second login is needed. Proved by running the attack: every step is refused by the operating system and the real bro_audit_log.verify() then refuses the truncated ledger, with the signer's own anchor still accepted in the same run. BRO_OPERATOR_ROOT_PIN_SELF_OWNED is no longer set anywhere. Not done and named: POSIX refuses with Unsupported rather than pretending, bro_custody's Windows rule still reads one descriptor and cannot see an ancestor, the boundary is the app's unelevated token, and one mutation stayed green. The gate is untouched: platform_governed_execution_supported() stays false and main() keeps UpstreamBlockedExecutor."
+    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #81 body.",
+    "note": "PR #81 makes the repository true about itself: the gate everyone was watching is not a function, the POSIX custody path could never have passed on any machine, docs/SECURITY_MODEL.md stated five pre-remediation defects in the present tense, START_HERE.md was sixteen PRs behind, and the two crates that mint this deployment's trust root ran in no CI job on any platform. Sixteen mutations were run on both platforms; nine are green on Windows and red on Linux."
   },
   "next_action_by_carrier": {
     "_note": "PR #48 self-carrier (the consolidated snapshot). No merge-transition modeled; #48 merges only after Architect CODE-audit GREEN + Owner approval.",

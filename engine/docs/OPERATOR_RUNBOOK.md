@@ -11,7 +11,77 @@ harness process environment, which an agent's own tool subprocesses cannot
 mutate) and by `tools/bro_backup.py`. See `docs/OPERATING_MODES.md` for the
 review/work/release model and `docs/ARCHITECTURE.md` for the control plane.
 
-## 0. First: verify deployment posture
+## 0. First: where this deployment's trust material comes from
+
+Answer this before anything else, because the preflight in §0.1 checks a configuration that two very
+different deployments produce in two very different ways.
+
+**A. The desktop product (BroPS).** `apps/desktop/src-tauri/provision/` mints the whole set on the
+user's machine at first launch and there is **no operator ceremony at all** — no USB, no key to
+carry, nothing to renew. It mints one keypair per authority, signs the `trusted-key-registry` and a
+`conductor-session`, and then **destroys the operator-root private half before it returns**. The
+pin (`operator-root.pub`), the anti-rollback floor (`registry-min`), the registry itself
+(`registry/config/trusted-keys.json`) and the provisioning manifest live under a machine-wide
+**trust anchor** the application's own account cannot write:
+
+| | Windows | POSIX (specified, never executed) |
+| --- | --- | --- |
+| Trust anchor | `%ProgramData%\BroPS\trust-anchor\` | `<POSIX_MACHINE_ROOT>/trust-anchor/` (read `anchor::POSIX_MACHINE_ROOT`) |
+| App-side store (private keys, artifacts) | `%APPDATA%\studio.menq.brops\trust\` | `~/.local/share/studio.menq.brops/trust/` |
+| Audit signer, when installed | under `%ProgramData%\BroPS\` | a separate uid, provisioned by the installer |
+
+Provisioning runs **before the database is opened and aborts startup if it fails**, so an install
+that could not establish its anchor does not run at all. On Windows the anchor is sealed with a
+PROTECTED DACL whose OWNER RIGHTS (`S-1-3-4`) ACE grants read+execute only, applied up to the
+machine root and re-measured against the OS on every launch. **On POSIX `anchor::seal` returns
+`Unsupported`** — an owner may always `chmod` a directory it owns — so a POSIX deployment must have
+the anchor directory created by a **different uid** (root, or a dedicated `brops-anchor` account),
+mode `0755`, ancestors likewise, with provisioning run once as that account by the installer. That
+branch has never executed.
+
+> **Install ordering, and it is not recoverable.** The registry seals when provisioning returns —
+> the operator root is destroyed at that moment — so the audit signer's published key must be
+> admitted *while the registry is being signed*. **Register the signer service before the app's
+> first launch**, or that machine can never have an audit-head anchor without being re-provisioned.
+> Nothing automates this today: the signer's binaries ship in no installer.
+
+**B. An engine-only deployment.** You provide the environment yourself, per §0.1 — and note up
+front that **nothing in this repository can mint a PRODUCTION trust root.** `tools/broctl.py
+build-registry` hardcodes `"production": false`, `keygen --production` refuses by name, and
+`bro_signature` refuses a non-production registry whenever the pin comes from the production `_FILE`
+path. The ceremony runs honestly end to end and produces a **development** root: enough to exercise
+every path, **not** enough to close residual items O-2, O-3 or O-5.
+
+### 0.0 `BRO_TRUSTED_REGISTRY_ROOT` — where the registry is read from
+
+`load_trusted_keys` reads `<root>/config/trusted-keys.json`. Every caller used to pass the engine's
+own tree, so the **development** registry committed at `config/trusted-keys.json` answered for
+everything and a deployment that provisioned its trust material elsewhere was invisible (residual
+item O-3). `BRO_TRUSTED_REGISTRY_ROOT` names the deployment's real registry root.
+
+- **Unset** — the default, and what CI does — behaviour is byte-for-byte what it was.
+- **Set** — fail-closed, and checked at least as strictly as the pin: an absolute path, no symlink at
+  **any** component, an existing directory that actually holds `config/trusted-keys.json` as a
+  regular non-symlink file, a directory the reading account cannot rewrite, and containing
+  **neither the operator pin nor the anti-rollback floor**. The anchor deliberately does **not**
+  move with the redirect, so one variable can never hand over both the registry and the thing that
+  authenticates it. While it is set, a caller that names some *third* root is refused by name rather
+  than quietly served a different registry from the rest of the process.
+
+See `runtime/bro_signature.resolve_registry_root` and `tests/test_provisioned_registry_root.py`
+(all 23 call sites AST-enumerated and frozen, so a new caller cannot reintroduce a split brain).
+
+> **Deployment A does not set it for you.** `Provisioned::engine_env()` returns
+> `BRO_OPERATOR_ROOT_PUBKEY_FILE`, `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN`
+> and `BRO_SESSION_ID` — and the desktop startup path deliberately does **not** export them; the
+> list does not even include `BRO_TRUSTED_REGISTRY_ROOT`. So on a stock desktop install the engine
+> still reads the committed development registry. Wiring the two is a deployment decision.
+
+> `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` short-circuits **every** custody rule in the
+> runtime at once, not just the pin's. It is no longer set anywhere, and the anchor now passes those
+> rules on its merits. Do not reintroduce it to make a refusal go away — the refusal is the check.
+
+### 0.1 Then: verify deployment posture
 
 Before the runtime enforces anything, prove the environment it runs in is
 hardened. `tools/bro_deploy_preflight.py` is a fail-closed check that turns the
@@ -58,11 +128,41 @@ the repository.
 | `BRO_EXECUTION_LEASE_LEDGER` | lease reservations | directory of `<hash>.active` / `.used` / `.ambiguous` |
 | `BRO_RECOVERY_STORE` | per-task transaction journals | directory of `<hash>.state.json` |
 | `BRO_SESSION_STATE_DIR` | per-session freeze markers | directory |
-| `BRO_SHADOW_LEDGER` | shadow would-block records | append-only `*.jsonl` (+ `.head`) |
+| `BRO_SHADOW_LEDGER` | shadow would-block records | append-only `*.jsonl` (+ `.head`, and `.head.sig` when anchor custody is configured) |
+
+Trust configuration is not runtime state, but it decides whether any of the above verifies:
+
+| Env var | Holds | Notes |
+| --- | --- | --- |
+| `BRO_OPERATOR_ROOT_PUBKEY_FILE` | the out-of-registry operator-root pin | the production form; `BRO_OPERATOR_ROOT_PUBKEY` is the CI form. If both are set they must match |
+| `BRO_OPERATOR_REGISTRY_MIN_FILE` | the registry anti-rollback floor | what makes revocation stick against a replayed older registry |
+| `BRO_TRUSTED_REGISTRY_ROOT` | where `config/trusted-keys.json` is read from | §0.0; unset means the engine's own tree |
+| `BRO_CONDUCTOR_SESSION_TOKEN` / `BRO_SESSION_ID` | the operator-signed `conductor-session` and the session it binds | required: `require_conductor_session_token` is `true` in `.bro/policy.json`, and an absent key, a wrong type or an unreadable policy all mean REQUIRED |
+| `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID` | the audit-head signing command and its key id | deliberately two variables: a half-configuration is refused loudly rather than degrading to an unanchored ledger |
 
 The `*.jsonl` ledgers are append-only and hash-chained with a `.head` anchor, so
 mid-chain tampering and tail truncation are both detectable
 (`runtime/bro_audit_log.py`).
+
+**The plain `.head` is not a defence against the ledger's own writer** — a writer that truncates the
+chain can recompute it and rewrite the head. That is what the **signed** head anchor is for
+(residual item O-2). When anchor custody is configured, `append()` assembles the anchor payload,
+signs it through `BRO_AUDIT_ANCHOR_SIGNER` **inside the same exclusive append lock**, and installs
+it, so a signed head can never describe a chain another writer has already extended; and it refuses
+to append at all to a ledger that already carries an anchor when no custody is configured, rather
+than stranding it. A keyed `verify(path, keys=...)` then **requires** an anchor and raises
+`AuditAnchorMissing` when there is none — *unanchored* is reported as a different fact from
+*tampered*, because only one of them is the operator's to fix. Without `keys` the check is
+structural only: sufficient against corruption, not against the writer.
+
+The anchor's authority is `audit-anchor`, and **nothing in this repository mints it**. That is the
+point: `evidence-recorder` and `operator-root` used to be accepted there, and on a deployment that
+mints its own trust material both private halves sat in the ledger writer's own store — so the
+writer could truncate the chain, recompute it, sign a fresh anchor with a key it already held, and a
+keyed `verify()` returned green. The signing principal must be one the writer cannot become (a
+Windows service under its own virtual account, or a separate uid on POSIX), publishing only its
+public half for registration. `head_anchor_payload` / `attach_head_anchor` are the out-of-band half
+for an operator who signs heads on a separate machine; they have no in-repo caller **by design**.
 
 ## 2. Enforcement modes
 
@@ -184,6 +284,8 @@ adversary who rewrites both a file and its manifest entry.
 | Task | Command |
 | --- | --- |
 | Verify deployment posture | `python3 tools/bro_deploy_preflight.py` |
+| Point the engine at a provisioned registry | `export BRO_TRUSTED_REGISTRY_ROOT=<absolute root holding config/trusted-keys.json>` (§0.0) |
+| Know which registry answered | unset ⇒ the engine's own tree, i.e. the committed **development** registry; see `runtime/bro_signature.resolve_registry_root` |
 | Enable shadow rollout | `export BRO_ENFORCEMENT=shadow BRO_SHADOW_LEDGER=<external .jsonl>` |
 | Return to enforce | `unset BRO_ENFORCEMENT` (or set it to `enforce`) |
 | Read shadow would-block records | `bro_audit_log.verify` + `read_all` on `BRO_SHADOW_LEDGER` |

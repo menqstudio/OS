@@ -387,6 +387,119 @@ impl std::fmt::Display for Protection {
     }
 }
 
+/// How much of the machine a provisioned file or directory is exposed to — **stated**,
+/// never inherited from whatever `umask` the shell that launched the app happened to carry.
+///
+/// # Why this type exists at all
+///
+/// `File::create` opens with mode `0666 & ~umask` and `create_dir_all` with `0777 & ~umask`,
+/// so on POSIX the permissions of everything this crate writes were decided by an ambient
+/// value no part of this codebase sets. Under Debian's stock `umask 002` the operator-root
+/// pin came out **group-writable**, and the real `bro_signature._pin_from_file` refused it by
+/// name:
+///
+/// ```text
+/// BRO_OPERATOR_ROOT_PUBKEY_FILE must not be group/other-writable: .../anchor/operator-root.pub
+/// ```
+///
+/// That is not a test defect. It means the custody of the three files the whole governance
+/// chain rests on depended on the shell that started the application: `umask 002` produced an
+/// anchor anyone in the group could rewrite, `umask 077` produced one the application's own
+/// account could not READ. A property that swings on an inherited process attribute is not a
+/// property.
+///
+/// # Why the mode is stated TWICE
+///
+/// The mode argument to `open(2)`/`mkdir(2)` is masked by the umask as well — it is a
+/// *ceiling*, not the mode. Passing `0644` under `umask 077` still yields `0600`. So every
+/// write here states the mode at creation **and** applies it again with `chmod`, exactly as
+/// [`write_key_file`] has always done for private key material:
+///
+/// * the creation mode closes the window between `create` and `chmod`, during which a file
+///   created at `0666 & ~umask` would be briefly world-writable;
+/// * the `chmod` makes the mode exact rather than merely no-looser-than.
+///
+/// Neither alone is enough, which is why both are here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exposure {
+    /// Key material and the app-side store: `0600` files inside `0700` directories. Nothing
+    /// but the owning account may read them, let alone write them.
+    OwnerOnly,
+    /// The trust ANCHOR: `0644` files inside `0755` directories. Readable by everyone and
+    /// writable only by the owner — which on POSIX is a DIFFERENT uid from the account
+    /// running the application, so "writable only by the owner" is exactly the property
+    /// [`anchor::prove_unwritable`] measures and `bro_signature._pin_from_file` demands.
+    /// World-READABLE is required, not merely tolerated: the application must be able to read
+    /// the pin, the floor and the registry it is being held to.
+    WorldReadable,
+}
+
+impl Exposure {
+    pub const fn file_mode(self) -> u32 {
+        match self {
+            Exposure::OwnerOnly => 0o600,
+            Exposure::WorldReadable => 0o644,
+        }
+    }
+
+    pub const fn dir_mode(self) -> u32 {
+        match self {
+            Exposure::OwnerOnly => 0o700,
+            Exposure::WorldReadable => 0o755,
+        }
+    }
+}
+
+/// `chmod`, where the platform has one. The non-unix branch is a no-op and says so rather
+/// than pretending a mode was applied — the same honesty [`Protection`] carries.
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+}
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// [`std::fs::create_dir_all`] with the mode stated at creation and again afterwards.
+///
+/// Only the components this call actually CREATES are chmod-ed. Re-permissioning a directory
+/// that was already there would mean provisioning quietly changing something it does not own
+/// — `/var/lib`, a user's application-data directory, whatever an installer passed in — which
+/// is the same class of overreach [`anchor::seal`] refuses to commit above the machine root.
+pub fn create_dir_all_mode(dir: &Path, mode: u32) -> std::io::Result<()> {
+    let mut missing: Vec<&Path> = Vec::new();
+    let mut cursor = Some(dir);
+    while let Some(path) = cursor {
+        if path.as_os_str().is_empty() || path.is_dir() {
+            break;
+        }
+        missing.push(path);
+        cursor = path.parent();
+    }
+    // Deepest last above, so create shallowest first.
+    for path in missing.iter().rev() {
+        // `mut` is used only by the unix branch below; off unix there is no mode to set.
+        #[allow(unused_mut)]
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(mode);
+        }
+        match builder.create(path) {
+            Ok(()) => {}
+            // A concurrent first launch won the race for this component. Its mode is that
+            // call's business, not this one's.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() => continue,
+            Err(e) => return Err(e),
+        }
+        set_mode(path, mode)?;
+    }
+    Ok(())
+}
+
 /// Restrict a directory to the owner (0700).
 ///
 /// This is the routine `apps/desktop/src-tauri/src/lib.rs` has always called before
@@ -870,7 +983,7 @@ pub fn mint_floor_anchor(
         "issued_at_epoch": now_epoch(),
     });
     let document = sign_document(&key.signing, payload)?;
-    write_json(out, &document)?;
+    write_json(out, &document, Exposure::OwnerOnly)?;
     Ok(document)
 }
 
@@ -936,7 +1049,7 @@ pub fn mint_control_room_command(
         "expires_at_epoch": expires_at_epoch,
     });
     let document = sign_document(&key.signing, payload)?;
-    write_json(out, &document)?;
+    write_json(out, &document, Exposure::OwnerOnly)?;
     Ok(document)
 }
 
@@ -974,20 +1087,40 @@ pub fn load_key(trust_dir: &Path, authority: &str) -> Result<AuthorityKey, Provi
 // Writing
 // ---------------------------------------------------------------------------
 
-fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ProvisionError> {
+/// Write a file at a STATED mode, creating its directory at the matching one.
+///
+/// The single implementation both this crate and `brops_audit_signer` write through. A
+/// second copy would be a second place for the umask to creep back in — which is precisely
+/// how the operator-root pin came to be group-writable on a stock Debian box.
+///
+/// See [`Exposure`] for why the mode is never inherited and why it is applied twice.
+pub fn write_at(path: &Path, bytes: &[u8], exposure: Exposure) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        io(std::fs::create_dir_all(parent), "creating a directory", parent)?;
+        create_dir_all_mode(parent, exposure.dir_mode())?;
     }
-    let mut file = io(std::fs::File::create(path), "creating a file", path)?;
-    io(file.write_all(bytes), "writing a file", path)?;
-    io(file.sync_all(), "flushing a file", path)?;
-    Ok(())
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(exposure.file_mode());
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    // The creation mode above is masked by the umask, so it is a ceiling. This makes it exact.
+    set_mode(path, exposure.file_mode())
 }
 
-fn write_json(path: &Path, value: &Value) -> Result<(), ProvisionError> {
+fn write_bytes(path: &Path, bytes: &[u8], exposure: Exposure) -> Result<(), ProvisionError> {
+    io(write_at(path, bytes, exposure), "writing a provisioned file", path)
+}
+
+fn write_json(path: &Path, value: &Value, exposure: Exposure) -> Result<(), ProvisionError> {
     let mut bytes = canonical_bytes(value)?;
     bytes.push(b'\n');
-    write_bytes(path, &bytes)
+    write_bytes(path, &bytes, exposure)
 }
 
 /// Key material only: created with an owner-only mode where the platform has one, then
@@ -999,7 +1132,11 @@ fn write_key_file(path: &Path, value: &Value) -> Result<(), ProvisionError> {
     let mut bytes = canonical_bytes(value)?;
     bytes.push(b'\n');
     if let Some(parent) = path.parent() {
-        io(std::fs::create_dir_all(parent), "creating the key directory", parent)?;
+        io(
+            create_dir_all_mode(parent, Exposure::OwnerOnly.dir_mode()),
+            "creating the key directory",
+            parent,
+        )?;
     }
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -1172,6 +1309,23 @@ pub fn provision_with_anchor(
     // afterwards that the path can be renamed aside would leave a sealed directory nothing
     // running as this account can remove.
     anchor::precheck_location(&anchor_dir, machine_root)?;
+    // And refuse, by name and at the TOP, on a platform where this process cannot build an
+    // anchor it is afterwards unable to rewrite.
+    //
+    // This used to be discovered three frames down and far too late: everything below minted
+    // the store, wrote the pin, the floor and the manifest, and only then called
+    // `anchor::seal`, which returns `Unsupported` off Windows. So on Linux and macOS the
+    // desktop application did not fail to provision — it failed to LAUNCH, with an error
+    // escaping from a function whose job was to seal a directory. Deciding here means the
+    // refusal names the platform, the directory, the uid and the modes, and nothing has been
+    // written when it arrives.
+    //
+    // An anchor that is ALREADY there is unaffected: the manifest check above returns through
+    // `verify_existing`, which measures the real thing with `prove_unwritable` and starts. The
+    // POSIX story is "the installer creates it as another uid; the application finds it".
+    if let Some(refusal) = anchor::preprovision_refusal(platform_name(), &anchor_dir) {
+        return Err(refusal);
+    }
     if anchor_dir.exists() {
         return corrupt(
             "the trust anchor path already holds something that is not a provisioned anchor",
@@ -1271,18 +1425,37 @@ fn write_anchor_files(
     trust: &Path,
     minted: &Minted,
 ) -> Result<(), ProvisionError> {
-    io(std::fs::create_dir_all(anchor_dir), "creating the trust anchor directory", anchor_dir)?;
+    // `Exposure::WorldReadable` (0755/0644), stated rather than inherited. These files ARE
+    // the trust anchor: `bro_signature._pin_from_file` refuses a pin that is
+    // group/other-writable and `_refuse_writable_registry_root` refuses a registry ROOT
+    // DIRECTORY that is, so a `umask 002` shell used to produce an anchor the engine itself
+    // rejects — and a `umask 077` shell one the application cannot read. See [`Exposure`].
+    io(
+        create_dir_all_mode(anchor_dir, Exposure::WorldReadable.dir_mode()),
+        "creating the trust anchor directory",
+        anchor_dir,
+    )?;
 
     write_bytes(
         &anchor_dir.join(OPERATOR_PIN_FILE),
         format!("{}\n", minted.operator_public_key).as_bytes(),
+        Exposure::WorldReadable,
     )?;
-    write_bytes(&anchor_dir.join(REGISTRY_FLOOR_FILE), format!("{REGISTRY_VERSION}\n").as_bytes())?;
+    write_bytes(
+        &anchor_dir.join(REGISTRY_FLOOR_FILE),
+        format!("{REGISTRY_VERSION}\n").as_bytes(),
+        Exposure::WorldReadable,
+    )?;
     write_json(
         &under(&anchor_dir.join(REGISTRY_ROOT_DIR), REGISTRY_REL),
         &minted.registry,
+        Exposure::WorldReadable,
     )?;
-    write_bytes(&anchor_dir.join(anchor::CUSTODY_FILE), anchor::custody_text().as_bytes())?;
+    write_bytes(
+        &anchor_dir.join(anchor::CUSTODY_FILE),
+        anchor::custody_text().as_bytes(),
+        Exposure::WorldReadable,
+    )?;
 
     // The manifest records the digest of every APP-SIDE file. That direction is the point: the
     // half this account can rewrite is vouched for by the half it cannot.
@@ -1318,7 +1491,7 @@ fn write_anchor_files(
         "posture": POSTURE_SUMMARY,
         "files": files.into_iter().collect::<Map<String, Value>>(),
     });
-    write_json(&anchor_dir.join(MANIFEST_FILE), &manifest)?;
+    write_json(&anchor_dir.join(MANIFEST_FILE), &manifest, Exposure::WorldReadable)?;
     Ok(())
 }
 
@@ -1400,7 +1573,11 @@ struct Minted {
 }
 
 fn mint(staging: &Path, anchor: Option<&Value>) -> Result<Minted, ProvisionError> {
-    io(std::fs::create_dir_all(staging), "creating the staging directory", staging)?;
+    io(
+        create_dir_all_mode(staging, Exposure::OwnerOnly.dir_mode()),
+        "creating the staging directory",
+        staging,
+    )?;
     io(secure_data_dir(staging), "restricting the staging directory to its owner", staging)?;
 
     let install_id = random_hex(8)?;
@@ -1417,7 +1594,11 @@ fn mint(staging: &Path, anchor: Option<&Value>) -> Result<Minted, ProvisionError
     }
 
     let keys_dir = staging.join(KEYS_DIR);
-    io(std::fs::create_dir_all(&keys_dir), "creating the key directory", &keys_dir)?;
+    io(
+        create_dir_all_mode(&keys_dir, Exposure::OwnerOnly.dir_mode()),
+        "creating the key directory",
+        &keys_dir,
+    )?;
     io(secure_data_dir(&keys_dir), "restricting the key directory to its owner", &keys_dir)?;
     // Only the RETAINED keys are in `keys`, so there is no operator-root file to forget
     // to skip. A filter here would be a line somebody could later relax; an absence
@@ -1448,7 +1629,11 @@ fn mint(staging: &Path, anchor: Option<&Value>) -> Result<Minted, ProvisionError
             &operator.signing,
             conductor_session_payload(&operator.key_id, &session_id, now),
         )?;
-        write_json(&staging.join(ARTIFACTS_DIR).join(CONDUCTOR_SESSION_FILE), &session)?;
+        write_json(
+            &staging.join(ARTIFACTS_DIR).join(CONDUCTOR_SESSION_FILE),
+            &session,
+            Exposure::OwnerOnly,
+        )?;
 
         // `operator` is dropped HERE. `ed25519_dalek::SigningKey` is `ZeroizeOnDrop`
         // (dalek 2.x enables `zeroize` by default and its `Drop` wipes `secret_key`), and
@@ -1462,7 +1647,11 @@ fn mint(staging: &Path, anchor: Option<&Value>) -> Result<Minted, ProvisionError
     // owner — which is the account being policed, so the restriction protected the anchor from
     // everyone except the one principal it needed to be protected from. They are written by
     // `establish_anchor` into a directory that account cannot write, and so is the manifest.
-    write_bytes(&staging.join(POSTURE_FILE), posture_text(&install_id).as_bytes())?;
+    write_bytes(
+        &staging.join(POSTURE_FILE),
+        posture_text(&install_id).as_bytes(),
+        Exposure::OwnerOnly,
+    )?;
 
     Ok(Minted {
         install_id,
