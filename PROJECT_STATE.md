@@ -8,6 +8,48 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The canonical law is enforced at the repository root (2026-08-09)
+
+The read receipt, the roadmap order and the update law are no longer prose. `.claude/hooks/canonical_law_gate.py`
+runs at `SessionStart` and `PreToolUse`; `tools/check_read_receipt.py`, `tools/check_roadmap_order.py`,
+`tools/check_prior_art.py` and `tools/check_canonical_sync.py` are the gates behind it.
+
+**Why it was needed.** The receipt mechanism already existed and worked — in `engine/`. Its root was
+`engine/`, its manifest was `engine/config/canonical-read-manifest.json`, and it was wired only at
+`engine/.claude/settings.json`. A session opened at the repository root got a single `Stop` guard and
+nothing else, so `CLAUDE.md`'s "the repository hook is the enforcement wall" was true one directory down
+and false where anyone actually stood. Three days of work were done against a stale roadmap because of it.
+
+**What binds now.** A session must record a SHA-256 receipt over every canonical file before it may edit;
+a canonical file changing mid-session voids the receipt and the new text is handed over. It must declare
+which roadmap phase it is working, and that must be the first phase whose Definition of Done is not fully
+checked — declaring a later one is refused by name. Creating a new file requires a recorded prior-art
+search. And a commit touching substantive files without moving `NEXT_CHAT.md`, `PROJECT_STATE.md`,
+`TASKS.md` and `config/current_state.json` is refused, with no environment bypass — the bypasses on the
+older Stop-hook are why the rule was broken.
+
+**What it does not do, stated rather than implied.** Shell writes are not gated: `sed -i` and `>` bypass
+the PreToolUse matcher, because classifying shell safely is unsound and the engine's own wall documents
+that. `CANONICAL_LAW=off` disables it, deliberately, as the recovery path. The receipt is forgeable by the
+agent it binds. And a session may edit the wall — what it cannot do is edit it *silently*, since the
+change lands in a diff the update law and CI both govern.
+
+**Phase completion is a checkbox, and the gate says so.** No machine-readable completion signal existed;
+`current_state.json` carries wave and task tokens, not per-phase state. So a phase counts complete only
+when its DoD checkboxes and its status-board row agree — a lie has to be told twice, in a diff, in a
+commit the update law governs. That is a paper trail, not custody.
+
+Fifteen mutations were run against the gates and all fifteen were caught. Proving the escape path found a
+real bug: a *refused* phase declaration was still persisted, wedging the session on a phase it had never
+been allowed to claim. Fixed and regression-tested.
+
+It also found a live defect while widening `check_reachability.py` rather than duplicating it:
+`tools/check_i18n_parity.py` ran in no workflow at all. The invariant was never unguarded —
+`src/i18n/i18n.parity.test.ts` runs in `cockpit-frontend` — but the standalone gate was unreached, and
+the Phase-4 board row claiming "enforced in CI" pointed at the wrong thing. Now wired into
+`design-gates.yml`.
+
+
 > **Canonical file. Read it at the start of every session, and update it in the SAME commit as any change.**
 > **Canonical ֆայլ։ Կարդա ամեն session-ի սկզբում, ու թարմացրու նույն commit-ում ինչ փոփոխությունը։**
 

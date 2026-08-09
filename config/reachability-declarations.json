@@ -96,5 +96,17 @@
       "reason": "A policy KEY, not a function, so `defined_in` is null and the flag is 'called' by being read. It is read through the named constant CONDUCTOR_SESSION_POLICY_KEY rather than as a bare literal, so the declaration states that one hop and the gate verifies the binding is real before following it - an undeclared indirection would otherwise read as zero readers. IMPORTANT LIMIT, and the reason this entry is worth reading twice: the gate proves the flag is READ by the enforcement path and proves NOTHING about whether it is SET. That second half is residual item O-3 (MEDIUM), needs an operator-signed conductor-session artifact only the Owner can mint, and is outside this gate by construction.",
       "observed": "2026-08-07: engine/runtime/bro_policy.py binds CONDUCTOR_SESSION_POLICY_KEY to the flag and reads it in conductor_session_token_required, which now treats an UNDECLARED requirement as a REQUIRED one (an uncommitted concurrent change - the previous code defaulted to False). Still absent from engine/.bro/policy.json."
     }
+  },
+  "tools_gates": {
+    "$comment": [
+      "Gates under tools/ that NO workflow executes, each with a written reason.",
+      "Enforced by check_reachability.py section 5. Same contract as tauri_commands: the",
+      "gate re-derives the state every run, and if a workflow later starts running an entry",
+      "listed here the gate turns RED and asks you to delete it."
+    ],
+    "tools/check_prior_art.py": {
+      "reason": "Not a CI gate and deliberately not run as one: it answers a per-SESSION question (has this session recorded what it searched for before creating a new file?) against a receipt that lives in the OS temp directory and never exists on a CI runner. Its caller is .claude/hooks/canonical_law_gate.py at PreToolUse. Running it in CI could only ever pass vacuously, and a check that cannot fail is worse than an absent one because it reads as coverage. Its self-tests DO run, in the ci.yml canonical-law job.",
+      "observed": "2026-08-09: invoked from .claude/hooks/canonical_law_gate.py; self-tests run by ci.yml job canonical-law."
+    }
   }
 }

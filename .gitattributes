@@ -1,4 +1,10 @@
-# Shell scripts must stay LF so they run on the Linux CI runners (a CRLF `\r` would
-# break `#!/usr/bin/env bash` and every command). The Wave 3b isolation-proof job
-# (`engine/ci/isolation_proof.sh`) depends on this.
+# Shell scripts must stay LF so they run on the Linux CI runners (a CRLF carriage
+# return would break `#!/usr/bin/env bash` and every command). The Wave 3b
+# isolation-proof job (`engine/ci/isolation_proof.sh`) depends on this.
 *.sh text eol=lf
+
+# The git hook in tools/githooks has no extension, so the *.sh rule above does not
+# reach it. It is run by git's own shell; a carriage return would break its shebang
+# and every line of it, and the canonical update law would silently stop running
+# locally.
+tools/githooks/* text eol=lf

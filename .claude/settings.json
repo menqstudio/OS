@@ -1,5 +1,46 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" session-start || python3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" session-start || py -3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" session-start"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" subagent-start || python3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" subagent-start || py -3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" subagent-start"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" prompt || python3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" prompt || py -3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" prompt"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" pre-tool || python3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" pre-tool || py -3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" pre-tool"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

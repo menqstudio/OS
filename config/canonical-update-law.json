@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "$comment": [
+    "The update law, as data. Enforced by tools/check_canonical_sync.py at two points:",
+    "the local pre-commit hook (tools/githooks/pre-commit) and the CI job",
+    "'Canonical law - read receipt, roadmap order, update law'.",
+    "",
+    "RULE: if a commit touches any substantive_globs path (and no exempt_globs path covers",
+    "it), that same commit must also touch EVERY required_docs entry. Not 'any one of them'",
+    "- every one. tools/check_coordination.py already accepts any single state file at PR",
+    "level; that stays true and is not weakened here. This gate is the stricter, per-commit",
+    "reading of the Owner's standing rule, and it has no environment bypass.",
+    "",
+    "tools/* and .github/* are IN scope here although check_coordination.py excludes them.",
+    "That exclusion is why a gate could be added, or silently stop being run, without any",
+    "document mentioning it - which is how tools/check_i18n_parity.py came to be executed by",
+    "no workflow at all.",
+    "",
+    "Widening substantive_globs makes the law stricter. Narrowing it, or shortening",
+    "required_docs, makes the law weaker and is exactly the edit a reviewer should look for:",
+    "it lands in the diff of the commit that wants the exemption."
+  ],
+  "substantive_globs": [
+    "engine/*",
+    "bridge/*",
+    "apps/*",
+    "contracts/*",
+    "tools/*",
+    ".github/*",
+    "config/*",
+    "docs/design/*",
+    "*.rs",
+    "*.sql",
+    "*.ts",
+    "*.tsx"
+  ],
+  "exempt_globs": [
+    "*/tests/*",
+    "*/test_*",
+    "tools/test_*",
+    "*Cargo.lock",
+    "*package-lock.json",
+    "*.log",
+    "*/__pycache__/*",
+    "*/node_modules/*",
+    "*/target/*"
+  ],
+  "required_docs": [
+    "NEXT_CHAT.md",
+    "PROJECT_STATE.md",
+    "TASKS.md",
+    "config/current_state.json"
+  ]
+}

@@ -79,6 +79,12 @@ FRONTEND_SRC = pathlib.Path("apps/desktop/src")
 FRONTEND_SUFFIXES = (".ts", ".tsx")
 PY_SCAN_DIRS = ("engine", "bridge", "tools")
 SKIP_PARTS = {"node_modules", "target", ".git", "__pycache__", "dist"}
+WORKFLOWS = pathlib.Path(".github/workflows")
+#: A gate that no workflow executes is the uncalled-command defect one level up: it exists,
+#: it is documented, it reads as protection, and it protects nothing. This is how
+#: tools/check_i18n_parity.py came to be run by no job at all while the roadmap's status
+#: board said i18n parity was "enforced in CI".
+GATE_GLOB = "check_*.py"
 
 #: Reason categories a declared-unreachable Tauri command may claim. The category alone is not
 #: the reason — every entry must ALSO carry prose saying why, which is the whole point of the
@@ -335,6 +341,32 @@ def bad_reason(text: object) -> bool:
     return normalized in PLACEHOLDER_REASONS or len(text.strip()) < MIN_REASON_CHARS
 
 
+def gate_modules(root: pathlib.Path) -> list[str]:
+    """Every gate under tools/, as a repo-relative posix path."""
+    return sorted(p.relative_to(root).as_posix() for p in (root / "tools").glob(GATE_GLOB))
+
+
+def workflow_invocations(root: pathlib.Path) -> set[str]:
+    """Gate paths mentioned by any workflow file.
+
+    A text scan, like the rest of this gate: a workflow step that builds the command
+    from a variable is invisible, which is a false RED the declarations file absorbs.
+    """
+    invoked: set[str] = set()
+    directory = root / WORKFLOWS
+    if not directory.is_dir():
+        return invoked
+    for workflow in sorted(directory.glob("*.y*ml")):
+        text = _read(workflow)
+        for gate in gate_modules(root):
+            # The gate PATH, i.e. the job actually runs it against the tree. Running only its
+            # self-tests deliberately does NOT count: a checker proven correct and never
+            # pointed at the repository is the same nothing as a command with no caller.
+            if gate in text:
+                invoked.add(gate)
+    return invoked
+
+
 def tracking_path_missing(root: pathlib.Path, tracked_by: object) -> bool:
     if not isinstance(tracked_by, str) or not tracked_by.strip():
         return True
@@ -520,6 +552,45 @@ def check(root: pathlib.Path) -> tuple[list[str], dict]:
                     f"starts protecting the new caller instead of excusing its absence."
                 )
 
+    # --- 5) every gate under tools/ is actually EXECUTED by a workflow ----------------------
+    # The same defect as an uncalled command, one level up. Added rather than given its own
+    # module on purpose: a second gate would have duplicated the declarations file, the
+    # reason-quality rules and the declaration-rot rule that already live here, which is the
+    # "do not build what exists" rule broken while implementing it.
+    declared_gates = declarations.get("tools_gates", {})
+    if not isinstance(declared_gates, dict):
+        problems.append(f"{DECLARATIONS.as_posix()}: 'tools_gates' must be an object")
+        declared_gates = {}
+    declared_gates = {k: v for k, v in declared_gates.items() if not k.startswith("$")}
+    invoked_gates = workflow_invocations(root)
+    all_gates = gate_modules(root)
+    for gate in all_gates:
+        if gate in invoked_gates:
+            if gate in declared_gates:
+                problems.append(
+                    f"gate `{gate}` is declared un-run in {DECLARATIONS.as_posix()} but IS "
+                    f"executed by a workflow. Delete the entry — an exception must not outlive "
+                    f"the condition it described."
+                )
+            continue
+        entry = declared_gates.get(gate)
+        if entry is None:
+            problems.append(
+                f"gate `{gate}` is executed by NO workflow under {WORKFLOWS.as_posix()}/. A check "
+                f"nobody runs is not a check; it is a file that resembles one. Wire it into a "
+                f"workflow, or declare it in {DECLARATIONS.as_posix()} under 'tools_gates' with a "
+                f"written reason."
+            )
+        elif bad_reason(entry.get("reason")):
+            problems.append(
+                f"gate `{gate}`: an un-run gate needs at least {MIN_REASON_CHARS} characters "
+                f"saying why nothing runs it; got {entry.get('reason')!r}."
+            )
+    for gate in sorted(set(declared_gates) - set(all_gates)):
+        problems.append(
+            f"{DECLARATIONS.as_posix()}: 'tools_gates' declares `{gate}`, which does not exist."
+        )
+
     summary = {
         "registered": len(registered),
         "reached": len(registered) - len(unreached),
@@ -527,6 +598,8 @@ def check(root: pathlib.Path) -> tuple[list[str], dict]:
         "grants": len(grants),
         "ungated": len(ungated),
         "engine": engine_state,
+        "gates": len(all_gates),
+        "gates_run": len(invoked_gates),
     }
     return problems, summary
 

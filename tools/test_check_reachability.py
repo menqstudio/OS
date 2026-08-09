@@ -114,16 +114,28 @@ class GateTestCase(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
-    def declare(self, tauri_commands=None, engine_symbols=None):
+    def declare(self, tauri_commands=None, engine_symbols=None, tools_gates=None):
         (self.tmp / "config/reachability-declarations.json").write_text(
             json.dumps(
                 {
                     "tauri_commands": tauri_commands or {},
                     "engine_symbols": engine_symbols or {},
+                    "tools_gates": tools_gates or {},
                 }
             ),
             encoding="utf-8",
         )
+
+    def write_gate(self, name="check_thing.py"):
+        path = self.tmp / "tools" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("print('gate')\n", encoding="utf-8")
+        return f"tools/{name}"
+
+    def write_workflow(self, text, name="ci.yml"):
+        path = self.tmp / ".github/workflows" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
 
     def problems(self):
         found, _ = gate.check(self.tmp)
@@ -554,3 +566,81 @@ class HonestyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolsGateReachabilityTests(GateTestCase):
+    """Section 5: a gate no workflow runs is the uncalled-command defect one level up.
+
+    This section was ADDED to this gate rather than given its own module. A second
+    implementation would have duplicated the declarations file, the reason-quality rules
+    and the declaration-rot rule that already live here -- which is the "do not build what
+    already exists" rule broken while implementing it.
+    """
+
+    REASON = (
+        "This is a per-session tool whose caller is a Claude Code hook, not a CI job; running "
+        "it on a runner could only pass vacuously, and a check that cannot fail reads as "
+        "coverage while providing none."
+    )
+    # setUp's fixture declares delete_thing; re-state it whenever a test rewrites the
+    # declarations file, or the tools_gates assertions would be reading a Tauri failure.
+    BASELINE = {
+        "delete_thing": {
+            "reason": "capability-denied",
+            "note": ("Denied to the window in capabilities/default.json; having no caller "
+                     "is the enforced state rather than an oversight."),
+        }
+    }
+
+    def declare_gates(self, tools_gates):
+        self.declare(tauri_commands=self.BASELINE, tools_gates=tools_gates)
+
+    def test_a_gate_no_workflow_runs_is_red(self):
+        self.write_gate()
+        self.write_workflow("jobs:\n  x:\n    steps:\n      - run: echo hi\n")
+        self.assertRed("is executed by NO workflow")
+
+    def test_a_gate_a_workflow_runs_is_green(self):
+        self.write_gate()
+        self.write_workflow("jobs:\n  x:\n    steps:\n      - run: python tools/check_thing.py\n")
+        self.assertGreen()
+
+    def test_running_only_the_self_tests_does_not_count_as_reached(self):
+        """A checker proven correct and never pointed at the repository is still nothing."""
+        self.write_gate()
+        self.write_workflow(
+            "jobs:\n  x:\n    steps:\n      - run: python -m unittest test_check_thing\n")
+        self.assertRed("is executed by NO workflow")
+
+    def test_a_written_reason_declares_an_un_run_gate(self):
+        gate_path = self.write_gate()
+        self.write_workflow("jobs:\n  x:\n    steps:\n      - run: echo hi\n")
+        self.declare_gates({gate_path: {"reason": self.REASON}})
+        self.assertGreen()
+
+    def test_a_placeholder_reason_is_refused(self):
+        gate_path = self.write_gate()
+        self.write_workflow("jobs:\n  x:\n    steps:\n      - run: echo hi\n")
+        self.declare_gates({gate_path: {"reason": "not used"}})
+        self.assertRed("saying why nothing runs it")
+
+    def test_a_declaration_that_outlived_its_condition_is_refused(self):
+        gate_path = self.write_gate()
+        self.write_workflow("jobs:\n  x:\n    steps:\n      - run: python tools/check_thing.py\n")
+        self.declare_gates({gate_path: {"reason": self.REASON}})
+        self.assertRed("IS \nexecuted".replace("\n", ""))
+
+    def test_a_declaration_for_a_gate_that_does_not_exist_is_refused(self):
+        self.write_workflow("jobs:\n  x:\n    steps:\n      - run: echo hi\n")
+        self.declare_gates({"tools/check_ghost.py": {"reason": self.REASON}})
+        self.assertRed("which does not exist")
+
+    def test_comment_keys_in_the_declaration_are_not_treated_as_gates(self):
+        self.write_workflow("jobs:\n  x:\n    steps:\n      - run: echo hi\n")
+        self.declare_gates({"$comment": ["notes about this section"]})
+        self.assertGreen()
+
+    def test_the_real_repository_runs_every_gate_it_ships(self):
+        problems, summary = gate.check(ROOT)
+        self.assertEqual([p for p in problems if "workflow" in p], [])
+        self.assertGreater(summary["gates"], 10)

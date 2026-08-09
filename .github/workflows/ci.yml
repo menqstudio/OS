@@ -594,6 +594,40 @@ jobs:
         working-directory: tools
         run: python -m unittest test_check_coordination
 
+  canonical-law:
+    name: Canonical law · read receipt · roadmap order · update law
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history: the update law diffs origin/<base>...HEAD on a PR.
+          fetch-depth: 0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # The three rules CLAUDE.md has always stated and nothing at the repository ROOT ever
+      # enforced. The session-side wall (.claude/hooks/canonical_law_gate.py) fails OPEN on
+      # its own bugs so it can never brick the repository; THIS job is the half that fails
+      # closed, and it is the half that cannot be skipped with --no-verify or an env var.
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync
+      # Roadmap order: a phase counts as complete only when its Definition-of-Done checkboxes
+      # AND its status-board row agree. Flipping one is refused, which is what stops "phase
+      # complete" from being a one-character edit.
+      - name: Roadmap completion is stated the same way in both places
+        run: python tools/check_roadmap_order.py
+      # The update law, per PR. Stricter than check_coordination's any-one-state-file rule:
+      # EVERY required document, and no environment bypass.
+      - name: Code and canon moved together
+        if: github.event_name == 'pull_request'
+        run: python tools/check_canonical_sync.py --base "${{ github.base_ref }}"
+      # A read receipt can be recorded in CI, which proves the canonical set is complete and
+      # hashable — every manifest path exists and is readable. It does NOT prove a human or
+      # a model read anything; that is the session-side hook's job and is stated as such.
+      - name: The canonical set is complete and hashable
+        run: python tools/check_read_receipt.py --record --session ci-$GITHUB_RUN_ID
+
   repo-state:
     name: Repo-state · live GitHub truth verifier
     runs-on: ubuntu-latest

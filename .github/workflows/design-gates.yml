@@ -34,7 +34,7 @@ jobs:
       # their verdict on the real tokens.
       - name: Checker self-tests
         working-directory: tools
-        run: python -m unittest test_check_token_parity test_check_contrast
+        run: python -m unittest test_check_token_parity test_check_contrast test_check_i18n_parity
 
       # Fail-closed: any token that disagrees between tokens.ts and aios.css in either
       # theme fails the job.
@@ -44,3 +44,10 @@ jobs:
       # Fail-closed: any committed text-pair below WCAG AA in either theme fails the job.
       - name: Contrast (WCAG AA, both themes)
         run: python tools/check_contrast.py
+
+      # Fail-closed: a key present in one locale and missing in another fails the job.
+      # This gate EXISTED and no workflow ran it, while the roadmap's Phase-4 status-board
+      # row said i18n parity was "enforced in CI". Found by the reachability gate's new
+      # tools_gates section, which refuses a check that nothing executes.
+      - name: i18n parity (en/hy/ru)
+        run: python tools/check_i18n_parity.py
