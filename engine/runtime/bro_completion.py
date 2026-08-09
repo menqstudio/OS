@@ -537,7 +537,7 @@ def _refuse_self_owned_floor(directory: pathlib.Path) -> None:
         # account cannot escape by pre-creating the directory, because the checks below then
         # apply to what it created.
         return
-    if self_owned_acknowledged():
+    if self_owned_acknowledged(error=CompletionError):
         return
     if platform_name() == "posix":
         info = directory.stat()

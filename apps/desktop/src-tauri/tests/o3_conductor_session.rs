@@ -144,6 +144,7 @@ fn the_exported_environment_closes_o3_against_the_real_engine_and_nothing_else_d
         "BRO_CONDUCTOR_SESSION_TOKEN",
         "BRO_SESSION_ID",
         "BRO_OPERATOR_ROOT_PIN_SELF_OWNED",
+        "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE",
         "BRO_OPERATOR_ROOT_PUBKEY",
         "BRO_OPERATOR_REGISTRY_MIN",
         "BRO_ENV",

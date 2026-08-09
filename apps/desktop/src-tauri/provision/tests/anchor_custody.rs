@@ -433,10 +433,17 @@ fn the_engine_environment_no_longer_acknowledges_a_self_owned_pin() {
         prov::mint_store_without_custody_proof(&app_data, &app_data.join("anchor"), None)
             .expect("mint");
     let names: Vec<&str> = provisioned.engine_env().iter().map(|(k, _)| *k).collect();
-    assert!(
-        !names.contains(&"BRO_OPERATOR_ROOT_PIN_SELF_OWNED"),
-        "provisioning still tells the engine to switch its custody rules off: {names:?}"
-    );
+    // Both names: the acknowledgement gained a production FILE form when the raw variable was
+    // brought under the `BRO_ENV=ci` gate its sibling anchors already had.
+    for forbidden in [
+        "BRO_OPERATOR_ROOT_PIN_SELF_OWNED",
+        "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE",
+    ] {
+        assert!(
+            !names.contains(&forbidden),
+            "provisioning still tells the engine to switch its custody rules off              ({forbidden}): {names:?}"
+        );
+    }
     // And the two variables it DOES export point into the anchor, not the trust store.
     for (name, value) in provisioned.engine_env() {
         if name == "BRO_OPERATOR_ROOT_PUBKEY_FILE" || name == "BRO_OPERATOR_REGISTRY_MIN_FILE" {

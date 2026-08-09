@@ -8,6 +8,70 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The anti-rollback floor, the TCB pin and the self-owned acknowledgement (2026-08-10)
+
+Four live findings on the evidence-floor / custody cluster. Two are closed, one is closed as far as it can
+be closed here, and one is a design contradiction that is now pinned in code and tests instead of being
+quietly worked around.
+
+**The anti-rollback floor was bypassable by choosing a string, and the relay understated it.** The floor was
+partitioned by `task_id`, which is attacker-chosen -- but `head_sequence` is minted by ONE per-install
+counter (`proof/src/bin/governed_recorder.rs::next_head_sequence`), so a per-task partition could never have
+been correct: it only ever created buckets to hide in. `_evidence_floor_cas` now decides the exact
+`(install, task)` row first (so a byte-identical retry is not read as a rollback) and then applies an
+**install-wide ceiling**. The Rust twin's test `floor_scopes_by_install_and_task` had **asserted the defect
+as a feature** -- "a DIFFERENT task_id is an independent floor" -- a falsely-green test, now rewritten with
+its old body quoted in the doc comment. The DDL is untouched; the parity gate is green at sha256
+`44a57f15...`.
+
+**The rev-30 section 2.5 content pin was self-referential, and is now partly anchored.** A
+`run_supervisor.py` replaced with an attacker payload before the pin was taken produced a green build whose
+pin was the tampered bytes. `build_tcb_pin_manifest.py` now requires `--source-dir` (wired as `$REPO_ROOT`
+in `run_live_turn.sh`); artifacts copied verbatim from the repo take their digest from the source, an
+installed copy that differs refuses the build, every entry records `digest_origin`, and a manifest with zero
+independent digests is refused. One relay correction: `HashMismatch` *can* fire -- for a change between the
+pin and the check. What cannot fire is integrity of **origin**. **4 of 21** artifacts gain one; the compiled
+binaries and the provisioned lease/anchor/policy/config/sudoers still have no origin outside the deployment
+host. Closing that needs release-signed binary digests or an operator signature over the manifest -- neither
+was invented here. `win-live/src/bin/win_tcb_pin.rs:132` has the identical construction and is untouched.
+
+**The head-floor is configuration-impossible, and no code pretends otherwise.** Run on this host in all
+three postures: writable and self-owned -> custody refuses; a DENY ACE on WD/AD/DC -> the advance refuses
+`[Errno 13]` *and* custody still refuses, because the process owns the directory and so holds `WRITE_DAC`;
+acknowledged -> advances, with every custody rule in the runtime off. On Windows **no** posture passes both
+rules. Rather than widen a rule, `HeadFloorConfigurationContradictionTests` asks both rules of a real
+directory and states that any change claiming to resolve this must arrive there and name the posture that
+now satisfies both; `_head_floor_dir` and `_advance_head_floor` carry warning blocks saying the docstring's
+own escape route cannot be configured, because the builder is the writer. **The decision is the Owner's:**
+move the write to a second principal, or consolidate onto the supervisor's durable ledger floor -- which
+already holds an equivalent floor written by the supervisor uid, making this filesystem floor a weaker
+duplicate.
+
+**The acknowledgement was ungated while its siblings were not.** `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` is now
+honoured only under `BRO_ENV=ci` -- the identical gate already on `ENV_PIN` and `ENV_REGISTRY_MIN` -- and
+outside CI it *raises a named refusal* rather than being silently ignored. A production form
+`BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE` was added, and `engine_trust::resolve` refuses **both** names, which
+closes the hole the new form would otherwise have opened. `self_owned_acknowledged` now honours a
+caller-passed mapping, closing the audit's exact asymmetry. Stated plainly: this raises the cost from one
+`export` to an `export` plus a file and puts the posture on disk where an audit finds it; it does **not**
+make the acknowledgement unforgeable by an environment-setting adversary. Doing that needs an operator-
+*signed* acknowledgement, which is circular -- verifying the signature needs the very pin whose custody rule
+the acknowledgement suppresses. Breaking that cycle is an Owner/Architect decision, and it is written in the
+code rather than buried.
+
+**22 tests turned red, and that was the finding.** Every one relied on the ungated ambient variable --
+including `test_deploy_preflight.test_hardened_environment_passes`, the test the 2026-08-06 audit named for
+asserting that a self-owned anchor is "hardened". Fixtures now *declare the posture the honoured way* (new
+`engine/tests/_self_owned_ack.py`, file form -- a dev workstation is not CI and a fixture claiming to be
+would pin the gate open), not re-enable the old path.
+
+Suite: **1330 tests OK (43 skipped)**, up from 1307. `brops-core` 310, `brops` 110, `brops-broker` 27 pass.
+19 new tests, 10 mutants killed, every mutated file restored and verified by SHA-256. Two pre-existing
+environment failures are named and not claimed as passes: a symlink test needing
+`SeCreateSymbolicLinkPrivilege`, and audit-signer cascade from a machine anchor sealed on this host before
+this session.
+
+
 ### Phase 1 — two open questions answered in writing (2026-08-09)
 
 Both were places where the code and the roadmap had been disagreeing long enough that a reader could

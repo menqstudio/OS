@@ -47,8 +47,51 @@ from dataclasses import dataclass
 # deployment posture, not a test knob, and it short-circuits every rule in this module.
 # The name is historical (it was introduced for the operator-root pin) and is deliberately
 # NOT split per site: a deployment either has a second principal or it does not.
+#
+# HOW IT MAY BE DECLARED, and why that is no longer "set one variable".
+# ---------------------------------------------------------------------
+# This was a bare, ungated read of the AMBIENT process environment, while the two sibling
+# anchors in `bro_signature` — the raw operator-root pin and the raw registry floor — were
+# both gated on the CI system having marked the environment (`BRO_ENV=ci`) and both took
+# the CALLER's mapping, so a hardened caller could curate them. The acknowledgement had
+# neither. An adversary who can set the verifying process's environment — exactly the
+# capability the original F-06 attack already needed, to point `..._PUBKEY_FILE` at its own
+# key — got the short-circuit for one extra `export`, and no caller could suppress it by
+# passing a curated mapping, because the predicate ignored the mapping and read `os.environ`.
+# A fix that costs its own named adversary nothing is the finding.
+#
+# The module's own precedent is now applied to it: the RAW variable is honoured only in CI,
+# and a production deployment declares the posture in a FILE it controls.
+#
+#   * `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` — honoured ONLY when the CI system
+#     also set `BRO_ENV=ci`. Outside CI it is a hard, named refusal rather than a silent
+#     ignore: a deployment that believes it has acknowledged must not discover otherwise
+#     through an unrelated custody message three frames away.
+#   * `BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE=<path>` — a file whose entire content is
+#     `acknowledged`. This is the production form.
+#
+# What the file form is NOT: a custody-checked artifact. The acknowledgement exists
+# precisely for deployments where no second principal is available to own such a file, so
+# holding it to the custody rule it disables would be circular. It raises the cost from one
+# `export` to an `export` plus a file the operator wrote, and it puts the posture on disk
+# where a deployment audit can find it — nothing more. Making the acknowledgement
+# UNFORGEABLE by an environment-setting adversary means making it an operator-SIGNED
+# artifact, and that is circular in a second way: verifying the signature needs the very pin
+# whose custody rule the acknowledgement is suppressing. Breaking that cycle is an
+# Owner/Architect decision, not something this module may invent.
+#
+# `apps/desktop/src-tauri/src/engine_trust.rs` refuses to export ANY engine trust material
+# while either name is present in the ambient environment. Both names, deliberately: adding
+# the file form while that rule knew only the raw one would have opened a way to disable
+# every custody rule in the runtime with the desktop's blanket refusal none the wiser.
 ENV_PIN_SELF_OWNED_ACK = "BRO_OPERATOR_ROOT_PIN_SELF_OWNED"
+ENV_PIN_SELF_OWNED_ACK_FILE = "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE"
 PIN_SELF_OWNED_ACK_VALUE = "acknowledged"
+
+#: The gate the two sibling anchors in `bro_signature` already use, spelled here so the
+#: acknowledgement is held to the SAME flag rather than to a parallel one that could drift.
+ENV_CI_FLAG = "BRO_ENV"
+CI_FLAG_VALUE = "ci"
 
 
 def platform_name() -> str:
@@ -63,13 +106,64 @@ def platform_name() -> str:
     return os.name
 
 
-def self_owned_acknowledged() -> bool:
+def self_owned_acknowledged(env=None, error: type[Exception] | None = None) -> bool:
     """True when the deployment has explicitly accepted objects it can rewrite itself.
 
-    Read from the live environment rather than a passed-in mapping so the same answer
-    holds for every custody question this process asks.
+    ``env`` defaults to the live environment, so the same answer holds for every custody
+    question a process asks; a caller that curates its own mapping may pass one and have it
+    HONOURED. It used to read ``os.environ`` unconditionally and ignore any mapping it was
+    given, which meant a hardened caller could not suppress the short-circuit at all — the
+    asymmetry with ``_env_is_ci``, which takes the caller's mapping, is the finding.
+
+    ``error`` is the caller's exception class, following this module's convention. A raw
+    acknowledgement present OUTSIDE CI, or a declared acknowledgement file that cannot be
+    read or does not say ``acknowledged``, RAISES through it. Silently returning ``False``
+    for a misconfigured declaration would surface as an unrelated custody refusal several
+    frames away, and a deployment that believes it has acknowledged deserves to be told that
+    it has not. Callers with no error class to lend get ``False``.
+
+    See the block comment above ``ENV_PIN_SELF_OWNED_ACK`` for why the raw form is CI-only
+    and what the file form does and does not buy.
     """
-    return os.environ.get(ENV_PIN_SELF_OWNED_ACK, "").strip() == PIN_SELF_OWNED_ACK_VALUE
+    env = os.environ if env is None else env
+
+    declared_by_file = False
+    raw_file = (env.get(ENV_PIN_SELF_OWNED_ACK_FILE) or "").strip()
+    if raw_file:
+        try:
+            content = pathlib.Path(raw_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            if error is not None:
+                raise error(
+                    f"{ENV_PIN_SELF_OWNED_ACK_FILE} names {raw_file}, which cannot be read "
+                    f"({exc}). An acknowledgement that cannot be read is not an "
+                    "acknowledgement; refusing rather than proceeding as if the deployment "
+                    "had never declared one") from exc
+        else:
+            if content == PIN_SELF_OWNED_ACK_VALUE:
+                declared_by_file = True
+            elif error is not None:
+                raise error(
+                    f"{ENV_PIN_SELF_OWNED_ACK_FILE} names {raw_file}, whose content is not "
+                    f"exactly {PIN_SELF_OWNED_ACK_VALUE!r}. The acknowledgement is a "
+                    "deployment posture stated in full, not any non-empty file")
+
+    raw = (env.get(ENV_PIN_SELF_OWNED_ACK) or "").strip()
+    if raw == PIN_SELF_OWNED_ACK_VALUE and not declared_by_file:
+        if (env.get(ENV_CI_FLAG) or "").strip() != CI_FLAG_VALUE:
+            if error is not None:
+                raise error(
+                    f"{ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} is honoured only in "
+                    f"CI ({ENV_CI_FLAG}={CI_FLAG_VALUE}, set by workflow configuration and "
+                    f"never by an agent). Outside CI, declare the posture in "
+                    f"{ENV_PIN_SELF_OWNED_ACK_FILE}: this acknowledgement short-circuits "
+                    "EVERY custody rule in the runtime — the operator-root pin, the "
+                    "redirected registry root, the evidence head floor and the evidence "
+                    "store — so it may not be switched on by an environment variable alone, "
+                    "for the same reason the raw operator-root pin may not be")
+            return False
+        return True
+    return declared_by_file
 
 
 # Access mask bits that allow modifying a protected FILE, its ACL, or its owner.

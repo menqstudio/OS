@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import _self_owned_ack
 from bro_contracts import canonical_json_sha256
 from bro_evidence import event_hash
 from bro_orchestration_runtime import (ACTOR_ASSIGNEE_LEASE, ACTOR_PROVEN_BY_SESSION,
@@ -56,7 +57,12 @@ def build_evidence(store: pathlib.Path, keys: dict, task_id: str, count: int) ->
     # (The refusal is POSIX-only, so it fired on Linux CI while every local Windows run passed —
     # the same "the test is skipped on the platform you develop on" blind spot the remediation
     # audit found 22 instances of. Recorded here so the next reader knows why it is set.)
-    os.environ.setdefault("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", "acknowledged")
+    # Declared through the FILE form. The raw variable is honoured only under `BRO_ENV=ci`
+    # now: ungated, it handed the short-circuit for every custody rule in the runtime to
+    # anyone who could set this process's environment — the very adversary the pin exists to
+    # stop. `declare_for_process` is a no-op when a declaration is already in the environment,
+    # so a suite that wants to exercise the refusal can still unset it.
+    _self_owned_ack.declare_for_process()
 
     previous, ids, digest = None, [], ""
     for sequence in range(1, count + 1):

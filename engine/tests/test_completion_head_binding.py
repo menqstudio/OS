@@ -38,6 +38,7 @@ from broctl import build_registry, sign_payload
 # EvidenceFixture carries no test methods, so importing it does not re-run another
 # module's suite under this one's name.
 from test_evidence_chain import YEAR, EvidenceFixture
+import _self_owned_ack
 
 TASK = {
     "task_id": "task-1",
@@ -79,8 +80,9 @@ class HeadBindingFixture(EvidenceFixture):
         # weaken the rule. This is load-bearing on EVERY platform now: the rule used to
         # return early unless `os.name == "posix"`, so on Windows it refused nothing and
         # this acknowledgement was decorative. `FloorCustodyTests` below pins that.
-        ack = unittest.mock.patch.dict(
-            os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"})
+        # Through the FILE form: the raw variable is honoured only under `BRO_ENV=ci` now,
+        # and a test host is not CI.
+        ack = _self_owned_ack.patch(self.tmp)
         ack.start()
         self.addCleanup(ack.stop)
 
@@ -413,10 +415,9 @@ class FloorCustodyTests(unittest.TestCase):
         # acknowledgement at IMPORT time, so in a single discovery process it leaks in here
         # and turns every refusal below into a silent pass — which is precisely the failure
         # mode under test, one level up. Remove it explicitly and restore on cleanup.
-        env = unittest.mock.patch.dict(os.environ, {}, clear=False)
+        env = _self_owned_ack.suppress()
         env.start()
         self.addCleanup(env.stop)
-        os.environ.pop("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", None)
 
     def refusal(self, directory=None):
         with self.assertRaises(self.completion.CompletionError) as caught:
@@ -455,8 +456,7 @@ class FloorCustodyTests(unittest.TestCase):
         to a platform where it never ran, must not narrow what a site with genuinely no second
         principal can declare. Same verdict on both platforms: admitted, silently.
         """
-        with unittest.mock.patch.dict(
-                os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"}):
+        with _self_owned_ack.patch(self.base):
             self.completion._refuse_self_owned_floor(self.floor)  # must NOT raise
 
     def test_a_floor_that_does_not_exist_is_left_to_the_index_to_refuse(self):
@@ -602,7 +602,8 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
     * a floor the builder CAN write fails custody;
     * a floor the builder CANNOT write fails the advance (creating `<task>.floor.json.tmp` and
       renaming it over the mark needs exactly the capability custody refuses);
-    * so the only satisfiable posture is `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`,
+    * so the only satisfiable posture is the acknowledgement
+      (`BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE`, or the raw variable under `BRO_ENV=ci`),
       which `bro_custody` describes as short-circuiting **every rule in that module** — the
       operator-root pin, the redirected registry root, the evidence store and this floor. The
       desktop's `engine_trust::resolve` refuses to export any engine trust material at all
@@ -640,7 +641,8 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
         env = unittest.mock.patch.dict(os.environ, {}, clear=False)
         env.start()
         self.addCleanup(env.stop)
-        for name in ("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", "BRO_EVIDENCE_HEAD_FLOOR"):
+        for name in ("BRO_OPERATOR_ROOT_PIN_SELF_OWNED",
+                     "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE", "BRO_EVIDENCE_HEAD_FLOOR"):
             os.environ.pop(name, None)
 
     # -- the two rules, each reported as "did it refuse, and why" -----------------------
@@ -656,8 +658,7 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
         """Drive ONLY the write half: the acknowledgement is set so custody cannot be the
         thing that refuses, which is what makes this an independent measurement of the write.
         """
-        with unittest.mock.patch.dict(
-                os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"}):
+        with _self_owned_ack.patch(self.store):
             try:
                 self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
             except self.completion.CompletionError as exc:
@@ -734,8 +735,7 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
 
     def test_the_only_satisfiable_posture_disables_every_custody_rule(self):
         import bro_custody
-        with unittest.mock.patch.dict(
-                os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"}):
+        with _self_owned_ack.patch(self.store):
             self.completion._refuse_self_owned_floor(self.floor)      # custody: admitted
             self.completion._advance_head_floor(                      # write: succeeds
                 self.store, "task-1", 5, self.DIGEST)

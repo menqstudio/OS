@@ -74,6 +74,14 @@ pub const RAW_CI_PIN: &str = "BRO_OPERATOR_ROOT_PUBKEY";
 pub const RAW_CI_FLOOR: &str = "BRO_OPERATOR_REGISTRY_MIN";
 /// The acknowledgement that disables every custody rule at once. See rule (5).
 pub const SELF_OWNED_ACK: &str = "BRO_OPERATOR_ROOT_PIN_SELF_OWNED";
+/// The production FILE form of the same acknowledgement, and refused on the same terms.
+///
+/// `bro_custody` gained it when the raw variable was brought under the `BRO_ENV=ci` gate its
+/// two sibling anchors already had; outside CI the posture is declared in a file. Knowing only
+/// the raw name would have left this rule with a hole exactly the shape of the thing it
+/// refuses: a deployment could switch off every custody rule in the engine runtime through the
+/// file form while the blanket refusal below saw nothing.
+pub const SELF_OWNED_ACK_FILE: &str = "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE";
 
 /// Refusal text when nothing was recorded. Named as a constant so the test that proves
 /// the fail-closed default cannot drift from the message an operator actually sees.
@@ -131,17 +139,19 @@ pub fn resolve(
     if provisioned.is_empty() {
         return Err(NOT_PROVISIONED.to_string());
     }
-    if let Some(value) = ambient(SELF_OWNED_ACK) {
-        return Err(format!(
-            "{SELF_OWNED_ACK}={value:?} is set in this process's environment. It does not \
-             weaken one check — bro_custody short-circuits EVERY custody rule in the engine \
-             runtime when it is set, including the one that proves the redirected registry \
-             root cannot be rewritten by the account reading it. This deployment's anchor is \
-             sealed precisely so that acknowledgement is not needed, so exporting the \
-             provisioned trust under it would put everything back in place with nothing \
-             measuring it. Unset it, or run the engine from an environment that does not \
-             carry it."
-        ));
+    for name in [SELF_OWNED_ACK, SELF_OWNED_ACK_FILE] {
+        if let Some(value) = ambient(name) {
+            return Err(format!(
+                "{name}={value:?} is set in this process's environment. It does not weaken one \
+                 check — bro_custody short-circuits EVERY custody rule in the engine runtime \
+                 when the acknowledgement is declared, including the one that proves the \
+                 redirected registry root cannot be rewritten by the account reading it. This \
+                 deployment's anchor is sealed precisely so that acknowledgement is not needed, \
+                 so exporting the provisioned trust under it would put everything back in place \
+                 with nothing measuring it. Unset it, or run the engine from an environment that \
+                 does not carry it."
+            ));
+        }
     }
     if let Some(value) = ambient(RAW_CI_PIN) {
         if value != operator_public_key {
@@ -321,6 +331,22 @@ mod tests {
         let err = resolve(&provisioned(), PIN, &ambient(&[(SELF_OWNED_ACK, "acknowledged")]))
             .unwrap_err();
         assert!(err.contains(SELF_OWNED_ACK), "{err}");
+        assert!(err.contains("EVERY custody rule"), "{err}");
+    }
+
+    /// The file form is the SAME acknowledgement, so it must meet the same blanket refusal.
+    /// `bro_custody` honours the raw variable only under `BRO_ENV=ci` and takes the file form
+    /// in production; a rule that knew only the raw name would have let a deployment disable
+    /// every custody rule in the engine runtime with this refusal none the wiser.
+    #[test]
+    fn the_file_form_of_the_acknowledgement_refuses_on_the_same_terms() {
+        let err = resolve(
+            &provisioned(),
+            PIN,
+            &ambient(&[(SELF_OWNED_ACK_FILE, "/etc/brops/self-owned")]),
+        )
+        .unwrap_err();
+        assert!(err.contains(SELF_OWNED_ACK_FILE), "{err}");
         assert!(err.contains("EVERY custody rule"), "{err}");
     }
 

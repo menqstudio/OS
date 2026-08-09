@@ -59,8 +59,12 @@ EXPECTED_EXPORTS = (
     "BRO_SESSION_ID",
 )
 
-# The acknowledgement that switches every custody rule off. It must never be exported.
+# The acknowledgement that switches every custody rule off. It must never be exported —
+# under EITHER name. The raw variable is honoured only under `BRO_ENV=ci` now, and a
+# production deployment declares the posture in the `_FILE` form; a check that knew only the
+# raw name would leave the new one an unwatched way to disable every custody rule at once.
 NEVER_EXPORTED = "BRO_OPERATOR_ROOT_PIN_SELF_OWNED"
+NEVER_EXPORTED_FILE = "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE"
 
 
 def ok(message: str) -> None:
@@ -118,12 +122,16 @@ def main(argv: list[str]) -> int:
         require(bool(value),
                 f"{name} arrived in the child environment from engine_trust::resolve "
                 f"({value!r})")
-    require(NEVER_EXPORTED not in os.environ,
-            f"{NEVER_EXPORTED} is NOT in the exported set — the application refuses to "
-            f"export anything at all while it is present, because it switches every "
-            f"custody rule in the runtime off at once")
-    # Set by the harness, never by the resolver — see the module docstring.
-    os.environ[NEVER_EXPORTED] = "acknowledged"
+    for name in (NEVER_EXPORTED, NEVER_EXPORTED_FILE):
+        require(name not in os.environ,
+                f"{name} is NOT in the exported set — the application refuses to "
+                f"export anything at all while it is present, because it switches every "
+                f"custody rule in the runtime off at once")
+    # Set by the harness, never by the resolver — see the module docstring. Through the FILE
+    # form, because the raw variable is honoured only under BRO_ENV=ci and this is not CI.
+    _ack = elsewhere.parent / "self-owned-acknowledgement"
+    _ack.write_text("acknowledged", encoding="utf-8")
+    os.environ[NEVER_EXPORTED_FILE] = str(_ack)
 
     sys.path.insert(0, str(engine / "runtime"))
     sys.path.insert(0, str(engine / "tools"))
