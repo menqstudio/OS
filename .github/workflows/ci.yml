@@ -232,7 +232,7 @@ jobs:
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
           New-LocalUser -Name 'brops-ci' -Password $secure -PasswordNeverExpires `
               -AccountNeverExpires -UserMayNotChangePassword `
-              -Description 'BroPS CI: unprivileged account the O-2 custody proofs are measured on' | Out-Null
+              -Description 'BroPS CI: unprivileged custody-proof user' | Out-Null
           Add-LocalGroupMember -Group 'Users' -Member 'brops-ci'
           "BROPS_CI_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
