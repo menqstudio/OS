@@ -9,7 +9,10 @@
 > merged 28 minutes later, absorbing the queue. Nothing is queued today.
 >
 > Current state lives in [`NEXT_CHAT.md`](./NEXT_CHAT.md) and
-> [`config/current_state.json`](./config/current_state.json). **Open pull requests: 0.**
+> [`config/current_state.json`](./config/current_state.json). **Open pull requests: 1** — #82 on
+> `settle/after-81`, the self-carrier that records the settle. *(This said “Open pull requests: 0”
+> until 2026-08-09, and it was a count nothing checked. It is a snapshot in a DISSOLVED file: resolve
+> it from GitHub or from `config/current_state.json.current_workflow_pr`, never from this line.)*
 
 ---
 

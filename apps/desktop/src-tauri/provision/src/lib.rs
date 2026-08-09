@@ -129,13 +129,30 @@ pub const MINTED_AUTHORITIES: [&str; 9] = [
 ///
 /// # What this does NOT close
 ///
-/// The operator-root PIN (`pin/operator-root.pub`) and the anti-rollback floor still live
-/// in the app's own data directory under `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`.
-/// An account that can rewrite the pin can install a trust root of its own and re-sign
-/// everything under it, with no need for the destroyed key at all. That route is proved
-/// open, by running it, in `audit-signer/tests/anchor_end_to_end.py`
-/// (`case_pin_rewrite`). Destroying the root removes the KEY; it does not move the
-/// ANCHOR out of the app's reach, and only a second principal can do that.
+/// **Corrected 2026-08-09.** This section said the operator-root PIN and the anti-rollback
+/// floor "still live in the app's own data directory under
+/// `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`", and cited `case_pin_rewrite` as proving
+/// that route OPEN. Both halves stopped being true and the comment did not move: the pin, the
+/// floor and `PROVISIONING.json` now live in [`anchor`], a machine-wide directory this account
+/// cannot write; `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` is set nowhere in the tree (see
+/// [`Provisioned::engine_env`], which documents its deliberate absence); and
+/// `audit-signer/tests/anchor_end_to_end.py::case_pin_rewrite` now runs the same attack step
+/// for step and asserts it FAILS -- the OS refuses every write to the anchor, and the forgery
+/// is refused by the real `load_trusted_keys` and the real `verify()` even when carried as far
+/// as it still can go.
+///
+/// What genuinely remains open:
+///
+/// * **POSIX has never run this.** [`anchor`]'s `seal` returns `Unsupported` off Windows; a
+///   POSIX deployment needs the directory created by another uid and provisioning run once as
+///   that uid. Destroying the root removes the KEY; only a second principal moves the ANCHOR.
+/// * **`bro_custody`'s Windows rule reads one descriptor** and cannot see an ancestor. The
+///   property holds because *provisioning* walks the chain to the volume root; the engine alone
+///   would accept a sealed leaf under a renameable parent.
+/// * **The boundary is this process's unelevated token.** On a machine whose user is a local
+///   administrator, one UAC consent gives full control. Provisioning fails closed if the token
+///   holds `SeTakeOwnership` or `SeRestore`, so an elevated run refuses rather than proceeding
+///   quietly -- but that is the residual, and it is what having no second principal costs.
 pub const RETAINED_AUTHORITIES: [&str; 8] = [
     "builder",
     "control-room",

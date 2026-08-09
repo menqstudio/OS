@@ -16,7 +16,9 @@ Two layers:
     config/current_state.json (schema 2) — closed enums, PR parent/child relationships,
     design-gate state, is_rc requires design-GREEN; require every human state doc to
     reference EVERY active PR + branch + task; and (on a PR diff) require a substantive
-    change to sync the state files. So "did you update the state after this change" is NO
+    change to sync the state files. Its FREE-TEXT fields (purpose, next_action,
+    stop_gates, next_action_by_carrier) are checked against the structured ones in the
+    same file, because until 2026-08-09 nothing read them and all four were wrong at once. So "did you update the state after this change" is NO
     LONGER only the Claude-side Stop-hook's job — CI now enforces it deterministically.
   - LIVE GITHUB (separate, tools/check_repo_state.py, CI): compares the current_state.json
     PR snapshot against live GitHub (open/merged/draft/base) and fails closed on mismatch,
@@ -395,6 +397,96 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
     return problems
 
 
+
+# The FREE-TEXT fields of config/current_state.json were read by nothing. `_check_current_state`
+# above validates structure, closed enums and PR relationships; `purpose`, `next_action`,
+# `stop_gates[]` and `next_action_by_carrier` are prose, and prose written in the present tense at a
+# moment that has passed is exactly what this gate exists to catch. On 2026-08-09 all four were
+# wrong at once: `purpose` asserted "active.branch is main" while it was a branch;
+# `next_action` opened "The independent CODE-audit is GREEN" while `code_audit.gate` in the same
+# file said ARCHITECT_PENDING; `next_action_by_carrier` still modelled PR #48 as the open carrier
+# thirty-odd merged PRs later; and `stop_gates` cited `platform_governed_execution_supported()` as a
+# live flag when no function of that name exists in the tree.
+#
+# The four rules below are narrow on purpose. Each is deterministic, each names the exact drift it
+# saw, and none of them tries to judge prose in general -- a check that guesses is a check that gets
+# disabled.
+def _unquoted(text: str) -> str:
+    """Drop double-quoted spans: a sentence that QUOTES an old claim is not making it.
+
+    Without this the prose rules below punish the correction note as if it were the defect --
+    which is how honest history gets deleted instead of kept. Single quotes are deliberately NOT
+    treated as quotation: apostrophes are far too common for that to be safe. Quote a superseded
+    claim with double quotes if you want to keep it on the record.
+    """
+    text = re.sub(r'"[^"]*"', " ", text)
+    return re.sub("“[^”]*”", " ", text)
+
+PHANTOM_SYMBOL = "platform_governed_execution_supported()"
+#: Saying the phantom symbol is fine when the sentence says it is a spec symbol. Any of these
+#: nearby disclaimers satisfies the rule.
+PHANTOM_DISCLAIMERS = (
+    "no function of that name exists",
+    "NO FUNCTION OF THAT NAME EXISTS",
+    "spec symbol",
+    "\u00a70.1 spec symbol",
+)
+
+
+def _check_current_state_prose(root: pathlib.Path) -> list[str]:
+    """The free-text fields must not contradict the structured ones in the same file."""
+    problems: list[str] = []
+    if _read(root, "NEXT_CHAT.md") is None:
+        return problems
+    data = _load_json(root, CURRENT_STATE_JSON)
+    if not isinstance(data, dict):
+        return problems  # structure errors are already reported by _check_current_state
+
+    purpose = data.get("purpose") if isinstance(data.get("purpose"), str) else ""
+    next_action = data.get("next_action") if isinstance(data.get("next_action"), str) else ""
+    stop_gates = [s for s in (data.get("stop_gates") or []) if isinstance(s, str)]
+    nabc = data.get("next_action_by_carrier")
+    nabc_text = " ".join(str(v) for v in nabc.values()) if isinstance(nabc, dict) else ""
+    active_branch = ((data.get("active") or {}) if isinstance(data.get("active"), dict) else {}).get("branch")
+    cw = data.get("current_workflow_pr") if isinstance(data.get("current_workflow_pr"), dict) else {}
+    gate = ((data.get("code_audit") or {}) if isinstance(data.get("code_audit"), dict) else {}).get("gate")
+
+    # 1. purpose must not assert a branch the structured field contradicts. Only the literal
+    #    "active.branch is main" is judged -- an unambiguous claim with no false positives.
+    if "active.branch is main" in _unquoted(purpose) and active_branch != "main":
+        problems.append(
+            f"{CURRENT_STATE_JSON}: purpose says 'active.branch is main' but active.branch is "
+            f"{active_branch!r} (the prose fields are not exempt from the anchor)")
+
+    # 2. an audit that has not passed must not be described as passed.
+    if gate is not None and gate != "GREEN":
+        for phrase in ("the independent CODE-audit is GREEN", "the independent code-audit is green"):
+            if phrase.lower() in _unquoted(next_action).lower():
+                problems.append(
+                    f"{CURRENT_STATE_JSON}: next_action says {phrase!r} while code_audit.gate is "
+                    f"{gate!r}. A waiver is not a pass; say which it was.")
+                break
+
+    # 3. the carrier block must name the carrier this snapshot actually has.
+    if isinstance(nabc, dict) and cw.get("number") is not None:
+        if f"#{cw['number']}" not in nabc_text:
+            problems.append(
+                f"{CURRENT_STATE_JSON}: next_action_by_carrier never names the carrier "
+                f"#{cw['number']} (current_workflow_pr). It modelled PR #48 for three days after "
+                f"#48 merged.")
+
+    # 4. the spec symbol may be named, but not as though it were a function in the tree.
+    for label, text in (("purpose", purpose), ("next_action", next_action),
+                        ("next_action_by_carrier", nabc_text)) + \
+                       tuple((f"stop_gates[{i}]", s) for i, s in enumerate(stop_gates)):
+        if PHANTOM_SYMBOL in _unquoted(text) and not any(d.lower() in text.lower() for d in PHANTOM_DISCLAIMERS):
+            problems.append(
+                f"{CURRENT_STATE_JSON}: {label} names {PHANTOM_SYMBOL} without saying no function of "
+                f"that name exists in the tree (it is the \u00a70.1 spec symbol; "
+                f"config/spec-conformance.json records it as partial for that reason)")
+    return problems
+
+
 def _active_ref_prs(data: dict) -> list[dict]:
     """The OPEN design+implementation PRs of the active wave that every state doc must name (all of
     them, not merely one). The repository-truth PR is excluded from the must-reference set."""
@@ -634,6 +726,7 @@ def check(root: pathlib.Path, *, changed: list[str] | None = None) -> list[str]:
     # 7. Semantic layer (Phase 0.2): machine-readable anchor + docs agree with it + manifest carries
     #    the active-wave docs. These skip cleanly when this is not a real coordination repo.
     problems += _check_current_state(root)
+    problems += _check_current_state_prose(root)
     problems += _check_docs_reference_state(root)
     problems += _check_manifest_active_docs(root)
     problems += _check_status_tokens(root)

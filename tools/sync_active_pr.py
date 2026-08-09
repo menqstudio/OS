@@ -40,6 +40,21 @@ STATE = ROOT / "config" / "current_state.json"
 #: manifest, or the durable acceptance ledger will not open. The posture is real because nothing in
 #: the shipped app sets that variable -- which is the condition a reader needs, and which the old
 #: wording hid. Say what refuses AND under what condition it would stop refusing.
+#: The audit POSITION, in the banner because the banner is the first thing a cold reader meets.
+#: Two cold reads in a row concluded the audit had come back clean: NEXT_CHAT.md led with the FIRST
+#: audit's "all code facts CONFIRMED, none refuted" and the SECOND audit's RED verdict appeared in
+#: no canonical file at all. A verdict that lives only in a report nobody is routed to is not a
+#: verdict the repository has. Change this string when -- and only when -- an independent audit
+#: actually returns a different one.
+AUDIT_POSITION_SENTENCE = (
+    "**The last independent audit returned RED, and none has been run since.** The Owner's SECOND "
+    "independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` "
+    "AFTER the first round's remediation -- confirmed 4 of 18 blockers closed and left 122 surviving "
+    "findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds. It has never been re-run, on that "
+    "head or on any later one, so **RED is the standing verdict of record.** The index is "
+    "`apps/desktop/AUDIT/AUDIT_LEDGER.md`."
+)
+
 FAIL_CLOSED_SENTENCE = (
     "**The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns "
     "Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, "
@@ -165,7 +180,7 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None) -
            else "nothing is open at all")
         + ". Start from "
         "`docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom."
-        + tail + "\n>\n> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
+        + tail + "\n>\n> " + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
     print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
     print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
@@ -195,7 +210,7 @@ def main() -> int:
     banner = args.banner or (
         f"> **⏭️ CURRENT ACTIVE: PR #{args.pr} · branch `{args.branch}`** (base `main`, tip "
         f"`{head[:7]}`, task T-017).\n>\n> {args.summary}\n>\n> "
-        + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
+        + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
 
     # This call went missing in an edit, and the line below kept announcing it. A message that
     # reports work it did not do is worse than silence: the banner stayed stale while the tool

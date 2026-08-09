@@ -484,3 +484,65 @@ class ProjectStateFreshnessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CurrentStateProseTests(unittest.TestCase):
+    """The FREE-TEXT fields of config/current_state.json, which nothing read until 2026-08-09.
+
+    On that day all four were wrong at once and every structural check was green: `purpose`
+    asserted "active.branch is main" while it was a branch; `next_action` opened "The independent
+    CODE-audit is GREEN" while `code_audit.gate` in the same file said ARCHITECT_PENDING;
+    `next_action_by_carrier` still modelled PR #48 as the open carrier thirty-odd merged PRs later;
+    and `stop_gates` cited `platform_governed_execution_supported()` as a live flag when no function
+    of that name exists in the tree. Each test below fails if its rule is deleted.
+    """
+
+    def _repo(self, tmp: str, **state_overrides) -> pathlib.Path:
+        root = pathlib.Path(tmp)
+        state = _default_state()
+        state["current_workflow_pr"] = {"number": 82, "branch": "settle/after-81", "base": "main"}
+        state["code_audit"] = {"gate": "ARCHITECT_PENDING"}
+        state.update(state_overrides)
+        _state_repo(root, current_state=state)
+        return root
+
+    def test_purpose_may_not_claim_a_branch_the_anchor_contradicts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, purpose="prs[] is empty and active.branch is main, so nothing is queued.")
+            self.assertTrue(any("purpose says" in p and "active.branch" in p for p in cc.check(root)))
+
+    def test_purpose_quoting_the_old_claim_is_not_the_claim(self) -> None:
+        """A correction note must be able to quote what it corrects, or history gets deleted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, purpose='This field asserted "active.branch is main" until 2026-08-09.')
+            self.assertFalse(any("purpose says" in p for p in cc.check(root)))
+
+    def test_a_pending_audit_may_not_be_described_as_green(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, next_action="The independent CODE-audit is GREEN, so proceed.")
+            self.assertTrue(any("code_audit.gate" in p for p in cc.check(root)))
+
+    def test_a_green_gate_makes_the_same_sentence_legitimate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, next_action="The independent CODE-audit is GREEN, so proceed.",
+                              code_audit={"gate": "GREEN"})
+            self.assertFalse(any("code_audit.gate" in p for p in cc.check(root)))
+
+    def test_the_carrier_block_must_name_the_carrier_this_snapshot_has(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, next_action_by_carrier={
+                "_note": "PR #48 self-carrier.", "open": "x", "merged": "y"})
+            self.assertTrue(any("next_action_by_carrier never names the carrier #82" in p
+                                for p in cc.check(root)))
+
+    def test_the_spec_symbol_may_not_be_cited_as_a_function(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, stop_gates=["platform_governed_execution_supported() stays false."])
+            self.assertTrue(any("platform_governed_execution_supported()" in p for p in cc.check(root)))
+
+    def test_the_spec_symbol_with_its_disclaimer_is_fine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, stop_gates=[
+                "Do not cite platform_governed_execution_supported(): no function of that name "
+                "exists in the tree; it is the spec symbol."])
+            self.assertFalse(any("without saying no function" in p for p in cc.check(root)))

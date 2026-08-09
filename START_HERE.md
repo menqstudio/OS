@@ -49,6 +49,17 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 > refusals.) Opening the gate needs an independent audit **and** the Owner's approval — not a green
 > CI run, not a builder's confidence.
 >
+> **⚠ The standing independent-audit verdict is RED.** Two independent audits have run. The second
+> — [`apps/desktop/AUDIT/2026-08-06-remediation-audit.md`](./apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
+> of `main` @ `219c763` AFTER the first round's remediation — confirmed **4 of 18** blockers closed
+> and left **122 surviving findings** (1 P0, 7 P1, 32 P2, 82 P3), and **has never been re-run** on any
+> later head. Nothing merged since is independently confirmed. The index is
+> [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) — read it before
+> believing any ✅ in these documents; ◑ there means *the Builder's unverified claim*. Until
+> 2026-08-09 this verdict was in no canonical file, while `NEXT_CHAT.md` opened with the FIRST
+> audit's “all code facts CONFIRMED, none refuted” — so two cold reads concluded the audit had come
+> back clean. It had not.
+>
 > Machine-readable truth: [`config/current_state.json`](./config/current_state.json). It is
 > checked against live GitHub by `tools/check_repo_state.py`, so it cannot quietly drift.
 
@@ -66,6 +77,10 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 4. [`TASKS.md`](./TASKS.md) — the task board: **claim your task; never collide** · task board
 5. [`OWNERS.md`](./OWNERS.md) — who has which role · դերեր
 6. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — the design · ճարտարապետություն
+7. [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) — **the audit position:
+   what an independent auditor confirmed, what is only claimed, and the standing RED verdict** ·
+   աուդիտի դիրքը. This file was on no read list until 2026-08-09, which is why two cold reads in a
+   row believed the audit had come back clean
 
 *(Machine-readable form of this read order:
 [`config/canonical-read-manifest.json`](./config/canonical-read-manifest.json) — every path in it
@@ -87,8 +102,8 @@ outstanding changes after one landed; a page claiming "no verification chain" af
 gained records. **Check the code, then trust the sentence.** If you change behaviour, grep for the
 comments that described the old one.
 
-**A green test is not a passing check.** Three audit rounds here returned RED on rows a builder had
-marked closed. The discipline that came out of it: when you add a check, **delete it once and
+**A green test is not a passing check.** Audit rounds here returned RED on rows a builder had
+marked closed, and the **last independent audit is still RED** (see the block above). The discipline that came out of it: when you add a check, **delete it once and
 confirm its test goes red**, then restore it. Roughly ninety checks were verified that way in the
 last wave — and four came back *green*, meaning four tests were testing nothing. Report those
 rather than quietly re-rolling.

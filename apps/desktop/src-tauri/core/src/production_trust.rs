@@ -111,8 +111,16 @@ impl TrustState {
 /// `public_key_hex` MUST equal it before any trusted verdict is rendered.
 /// Lowercase hex of the 32-byte Ed25519 public key the chain actually verified under. Callers pass
 /// the bytes they handed to `governed_verification::verify_and_accept` as
-/// `PinnedKeys::isolated_signer_public_key`, so the guard below compares the manifest's key against
-/// the VERIFICATION PATH rather than against a second lookup of itself (audit F-29).
+/// `PinnedKeys::isolated_signer_public_key`.
+///
+/// **This does NOT close F-29, and this comment used to say it did.** It read: "so the guard below
+/// compares the manifest's key against the VERIFICATION PATH rather than against a second lookup of
+/// itself (audit F-29)". The long comment on the comparison inside `resolve_trust_state` records
+/// why that is false -- every call site derives those bytes from the SAME `resolve_production_key`
+/// lookup, so the comparison cannot fail. Two contradictory accounts of one guard sat forty lines
+/// apart in this file until 2026-08-09. The comparison is kept as fail-closed defence in depth for
+/// a future caller that obtains its key some other way; it is not what binds the verdict to the
+/// verifying key today. Read the comment at the comparison, not this one, for the property.
 pub fn verifying_key_hex(public_key: &[u8; 32]) -> String {
     let mut out = String::with_capacity(64);
     for b in public_key {

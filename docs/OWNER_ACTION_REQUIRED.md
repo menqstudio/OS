@@ -6,6 +6,19 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
+> **The standing audit verdict is RED, and it is older than the code.** Two independent audits have
+> run. The second — [`apps/desktop/AUDIT/2026-08-06-remediation-audit.md`](../apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
+> of `main` @ `219c763`, AFTER the first round's remediation — confirmed **4 of 18** blockers closed
+> and left **122 surviving findings** (1 P0, 7 P1, 32 P2, 82 P3). Its P0 was that the supervisor
+> still copied the executing chain's own `output_handle` into the attestation it signed: the F-01
+> signing oracle surviving a fix that addressed F-01's symptom. **It has never been re-run**, on that
+> head or on any of the later ones, so nothing since is independently confirmed. The index is
+> [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](../apps/desktop/AUDIT/AUDIT_LEDGER.md) and it is now on the
+> canonical read manifest; ◑ there means the Builder believes it closed and nobody else has looked.
+> Until 2026-08-09 that verdict appeared in **no** canonical document, while `NEXT_CHAT.md` opened
+> with the FIRST audit's “all code facts CONFIRMED, none refuted” — so a cold reader concluded the
+> audit had come back clean. It had not.
+
 > **A correction worth reading before the rest.** This repository's history — and the standing
 > instruction that produced it — names `platform_governed_execution_supported()` as the flag holding
 > that line. **There is no such function.** The name appears in exactly two doc comments and in
@@ -49,7 +62,36 @@ claim was right for a vendor-signs/customer-verifies fleet and wrong for a produ
 
 ---
 
-## 1. O-2 — closed on Windows, and what is left
+## 1. O-2 — the anchor's CUSTODY is closed on Windows; the ledger is still not tamper-evident on a shipped install
+
+> **Read this before the four rounds below.** What those rounds closed is the *custody of the anchor
+> directory*: the pin, the anti-rollback floor, the registry and the provisioning manifest are out of
+> the app account's reach, and the forgery that used to work is refused by the operating system —
+> proved by running it. That is real and it is not the same property as “the audit ledger cannot be
+> rewritten”.
+>
+> **On a shipped install the ledger carries no signed head, and here is the chain of facts.**
+> `bro_audit_log.append()` anchors only when `anchor_custody_configured()`, which is true only when
+> `BRO_AUDIT_ANCHOR_SIGNER` or `BRO_AUDIT_ANCHOR_KEY_ID` is set. **Nothing in the shipped product
+> sets either** — every occurrence in the tree is a test harness or a document; `Provisioned::engine_env()`
+> *returns* them and the startup path deliberately does not export them (`src-tauri/src/lib.rs`);
+> the `brops-audit-signer` service and the `brops-anchor-relay` shim are built by the workspace but
+> appear in no installer (`tauri.conf.json` declares no `externalBin` and no `resources`); and
+> `register::apply` has no caller outside tests. So `append()` takes its unconfigured path: it writes
+> the record, rewrites the **plaintext** `.head` itself, and installs no `.head.sig`.
+>
+> The consequence, stated exactly: a party who can write the ledger can drop records, recompute the
+> chain, rewrite `.head`, and an **unkeyed** `verify()` reports the result intact. A **keyed**
+> `verify()` does refuse — but with `AuditAnchorMissing`, which it raises for every ledger this
+> deployment has ever written, so it cannot separate “never anchored” from “tampered”. `bro_monitor`
+> asks for the keyed check and reports that as a blind spot rather than downgrading silently, which
+> is the honest behaviour and not a substitute for the anchor.
+>
+> **This is the property O-2 exists for, and it has never run outside a test.** `docs/PHASE_10_PRODUCTION_ITEMS.md`
+> keeps O-2 OPEN, which is correct; what was misleading was the shape of the summary — “O-2 closed on
+> Windows”, in this page's own heading until 2026-08-09. The heading now says which half.
+
+### The custody half — closed on Windows, and what is left
 
 The forgery that worked four rounds ago now fails, and it is proved by running it rather than by
 argument. Every step is refused by the operating system — overwriting the pin, appending to it,
@@ -94,14 +136,47 @@ why the trusted-key registry moved out of the app's reach too.
 
 ---
 
+## 1a. A guard that cannot fail — F-29, and it is not closed
+
+`apps/desktop/src-tauri/core/src/production_trust.rs` carries the comparison that is supposed to
+bind the production verdict to the key the chain actually verified under. **It cannot fail.** Every
+call site derives `envelope_verifying_key_hex` from `verifying_key_hex(...)` over bytes that the
+same `resolve_production_key` lookup produced, over the same manifest, selecting by first match, and
+the hex round trip is exact — so the two sides are one value compared with itself. Two rounds of
+“fix” each added an indirection and neither changed that. The code says so in its own words, and it
+draws the right conclusion: *a guard that cannot fail is worse than no guard: it is a claim of a
+check that is not happening.*
+
+What is being done about it, and what is not:
+
+* The comparison is **kept**, fail-closed, as defence in depth for a future call site that obtains
+  its key some other way. That costs nothing and is worth having.
+* The **claim** is what was wrong. The property that holds today holds by *construction* — one
+  source of the key, not two agreeing ones — which is weaker than a check, and is a property a
+  future refactor can remove silently.
+* `AUDIT_LEDGER.md` was corrected when that comment was written. **`NEXT_CHAT.md` listed F-29 as
+  CLOSED for three more days**, and this page did not mention it at all. Both are corrected
+  2026-08-09.
+
+**Your decision, not the Builder's:** whether the honest form is to make one call site obtain the
+verifying key independently (so the comparison has two sources and can fail), or to accept
+construction as the property and delete the guard rather than keep a check that reads as one. Doing
+neither leaves a keystone blocker open, which is where it stands today.
+
 ## 2. The independent audit, then your approval
 
 The gate does not open when these settle. It needs an audit of the whole chain **by someone who did
 not build it**, and then your approval.
 
-A green CI is not an audit. CI runs the tests we wrote. Three audits on this repository have come
-back RED on rows the builder had marked closed, which is why a tick in these documents means
-*independently confirmed* and a half-tick means *the builder's unverified claim*.
+A green CI is not an audit. CI runs the tests we wrote. Audits on this repository have come back RED
+on rows the builder had marked closed — which is why a tick in these documents means *independently
+confirmed* and a half-tick means *the builder's unverified claim*.
+
+**Concretely, as of 2026-08-09:** the last independent audit returned **RED** with 122 surviving
+findings, it assessed `main` @ `219c763`, and `main` is now `b3010f6` — so a large part of that
+verdict describes code that has since changed, in both directions, and **nobody who did not build
+this has looked at any of it.** Findings closed since are the Builder's claims. This is the item on
+this page with the longest lead time and nothing else on it substitutes for it.
 
 ---
 

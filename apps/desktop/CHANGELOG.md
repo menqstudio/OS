@@ -3,7 +3,17 @@
 - **Purpose:** Record notable repository changes, most recent first.
 - **Scope:** Documentation and, later, released application changes. Future work is in [MASTER_EXECUTION_ROADMAP.md](../../MASTER_EXECUTION_ROADMAP.md).
 - **Owner:** Gev.
-- **Last updated:** 2026-08-04.
+- **Last updated:** 2026-08-04. Entries below are dated records; read none of them as the current state.
+
+> **Two standing corrections that apply to every entry below (added 2026-08-09).**
+> 1. Entries name `platform_governed_execution_supported()` as the gate that “stays false”. **No function
+>    of that name exists in the tree** — it is the §0.1 specification symbol from
+>    `docs/design/WINDOWS_BROKER_DESIGN.md`, recorded as `partial` in `config/spec-conformance.json`. The
+>    three real refusals are `governed_verification_unconfigured()`, `connect_broker()` off Linux, and the
+>    broker's `UpstreamBlockedExecutor` fallback when `$BROPS_BROKER_CONFIG` is unset. The posture those
+>    entries describe is real; the name is not.
+> 2. The audit verdicts quoted in these entries are **Builder-side**. The standing INDEPENDENT verdict is
+>    **RED** — `AUDIT/2026-08-06-remediation-audit.md`, never re-run. See `AUDIT/AUDIT_LEDGER.md`.
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository. Since the monorepo merge into `menqstudio/OS`, cockpit changes also flow through the OS-level security-remediation waves; the exact live state (branch/PR/blockers) is the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).
 

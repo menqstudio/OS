@@ -59,9 +59,13 @@ The distinction matters more than it looks. A proof kit that runs is not a shipp
   contains a path, and a desktop spawn never reaches it. Principle 3 — "no ungoverned execution" —
   therefore holds for the *governed* turn and not for the ordinary chat turn, and every delegation
   card states which one it is showing.
-- **Five engine residual items remain OPEN** (`docs/PHASE_10_PRODUCTION_ITEMS.md`), three needing an
-  Owner-minted artifact. Until they exist, conductor stops and owner-issued control-room commands
-  refuse.
+- **Five engine residual items remain OPEN** (`docs/PHASE_10_PRODUCTION_ITEMS.md`). **None of them
+  needs an Owner-minted artifact** — first-launch provisioning mints every authority key and the
+  `Needs an Owner secret?` column in that file reads `no` for all five, machine-checked by
+  `tools/check_residual_items.py`. *(This said “three needing an Owner-minted artifact” until
+  2026-08-09, three documents after that stopped being true.)* What blocks them is deployment
+  wiring and a second principal, not a secret; conductor stops and owner-issued control-room
+  commands still refuse because nothing exports the provisioned registry to the engine.
 - **`_real_callables()` in the bridge raises unconditionally**, pending the supervisor-reserved
   execution attempt and the authoritative execution→receipt binding. Correct and fail-closed.
 
@@ -104,7 +108,7 @@ OS-ը **monorepo** ա, որ միավորում ա governance **engine**-ը (`eng
 | Language boundary | **Subprocess/sidecar** (CLI + hooks), ոչ PyO3 |
 | Data ownership | Desktop SQLite = product/UI state; Engine ledger + evidence = security truth; ID-երն են անցնում bridge-ով |
 | Git history | **`git subtree`** երկու կեսի համար |
-| CI | **7 workflow, 28 պարտադիր ստուգում** + 15 gate `tools/`-ում |
+| CI | **7 workflow; 31 ստուգում ա աշխատում ամեն pull request-ի վրա** (ևս 2 job `release.yml`-ում՝ միայն տագի վրա) + 15 gate `tools/`-ում։ **Ոչ մեկը *պարտադիր* չի։** `main`-ը branch protection ու ruleset չունի (ստուգված 2026-08-09)՝ ստուգումները աշխատում են, Owner-ը կարդում ա, բայց enforcement-ը պայմանավորություն ա։ Protection-ը միացնելը Owner-ինն ա։ |
 | Wall | **`engine/.claude/settings.json`**, ինը event։ OS-root-ի `.claude`-ը wall-ը **չի** — այնտեղ 262 գեներացված մասնագետի սահմանում ա ու մեկ `Stop` guard։ Root-ում wire անելը բաց որոշում ա (կմերժեր ամեն tool call)։ |
 
 ### Ինչ դեռ արված չէ
@@ -117,5 +121,5 @@ OS-ը **monorepo** ա, որ միավորում ա governance **engine**-ը (`eng
 - **Ուղու scope-ը desktop-ի ճանապարհին չի պարտադրվում։** Տասկի `scope`/`prohibited_scope`-ը գնում ա
   որպես տեքստ Բրոյի գրած prompt-ի ներսում; `bro_security.enforce_scope`-ն ա իրական պարունակողը, ու
   desktop-ի spawn-ը դրան չի հասնում։
-- **Հինգ engine-ի մնացորդային կետ OPEN ա**, երեքին պետք ա Տիրոջ ստորագրած artifact։
+- **Հինգ engine-ի մնացորդային կետ OPEN ա** (`docs/PHASE_10_PRODUCTION_ITEMS.md`)։ **Ոչ մեկին Տիրոջ mint արած artifact պետք չի** — first-launch provisioning-ը mint ա անում ամեն authority-ի բանալին, ու էդ ֆայլի `Needs an Owner secret?` սյունը հինգի համար էլ `no` ա, մեքենայորեն ստուգված `tools/check_residual_items.py`-ով։ *(Այս տողը գրում էր «երեքին պետք ա Տիրոջ ստորագրած artifact» մինչև 2026-08-09 — անգլերեն կեսը ուղղվել էր, հայերենը՝ ոչ։)* Խոչընդոտը deployment-ի wiring-ն ա ու երկրորդ principal-ը, ոչ թե գաղտնիք։
 - **Bridge-ի `_real_callables()`-ը անվերապահ raise ա անում** — ճիշտ ու fail-closed։

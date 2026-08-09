@@ -80,11 +80,17 @@ fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
 /// `Provisioned::engine_env()` and NOT exported into this process. Two reasons, both
 /// concrete:
 ///
-/// 1. `bro_signature.load_trusted_keys` reads `<engine root>/config/trusted-keys.json`
-///    and takes no path override. Pointing the anchor at the minted operator key while
-///    the engine still reads its OWN committed registry would swap one fail-closed
-///    refusal ("no operator-root pin") for a different one ("registry does not
-///    authenticate") without provisioning anything — motion that looks like progress.
+/// 1. ~~`bro_signature.load_trusted_keys` reads `<engine root>/config/trusted-keys.json`
+///    and takes no path override.~~ **False since O-3's engine half landed; corrected
+///    2026-08-09.** `load_trusted_keys` reads `resolve_registry_root(root)`, not `root`:
+///    `BRO_TRUSTED_REGISTRY_ROOT` (`bro_signature.ENV_REGISTRY_ROOT`) names the deployment's
+///    registry root, fail-closed, and every caller in that module consults the same store.
+///    The redirect relaxes none of the checks -- the anchor that authenticates the registry
+///    does not move with it. So this reason no longer holds, and it was the stated reason for
+///    not exporting. What remains is that the export needs FIVE variables, not the four
+///    `Provisioned::engine_env()` returns: `BRO_TRUSTED_REGISTRY_ROOT` is not one of them.
+///    Today nothing exports any of the five, which is why the engine still reads the
+///    committed *development* registry -- see `docs/OWNER_ACTION_REQUIRED.md` §3, O-3.
 /// 2. `_resolve_operator_root_pin` hard-fails when a file pin and the CI
 ///    `BRO_OPERATOR_ROOT_PUBKEY` disagree, so exporting one unconditionally would break
 ///    any environment that already carries the other.
