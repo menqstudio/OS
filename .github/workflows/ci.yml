@@ -386,8 +386,15 @@ jobs:
           # A batch file rather than an argument string: `Start-Process -Credential` builds a
           # fresh environment block for the new logon, so the variables have to be set on the
           # far side of it.
+          # TEMP and TMP too. `Start-Process -Credential` builds a fresh environment block, but
+          # it inherits the runner's TEMP, which lives under runneradmin's profile and is exactly
+          # what a standard account cannot reach -- so `tempfile` failed with ACCESS_DENIED before
+          # a single custody assertion ran. Point them at the work directory brops-ci was just
+          # granted, so the fixtures land where the account under test can actually build them.
           $lines = @(
             '@echo off',
+            "set TEMP=$work",
+            "set TMP=$work",
             "set BROPS_TEST_PYTHON=$python",
             # The three prerequisites this runner genuinely cannot provide, named one at a time
             # because there is no blanket form. Each is a hole with a reason:
