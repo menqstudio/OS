@@ -1,8 +1,8 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #84 · branch `at-main-2`** (base `main`, tip `6bd3027`, task T-017).
+> **⏭️ CURRENT ACTIVE: PR #84 · branch `at-main-2`** (base `main`, tip `5a72258`, task T-017).
 >
-> PR #84 puts the canonical law at the repository ROOT. The receipt mechanism already existed and worked, but its root was engine/ and it was wired only at engine/.claude/settings.json, so a session opened at the repository root got one Stop guard and nothing else -- which is how three days of Phase 10 work happened against a roadmap nobody opened. Four rules bind now: a SHA-256 read receipt voided when any canonical file changes mid-session; roadmap order, with a later phase refused by name while an earlier one is open; a recorded prior-art search before any new file; and an update law demanding all four canonical documents move with any substantive change, with no environment bypass. This commit is the first thing that law refused. What it does not do is stated rather than implied: shell writes are not gated, CANONICAL_LAW=off disables it deliberately, the receipt is forgeable, and a session may edit the wall but not silently. Fifteen mutations, fifteen caught; 63 gate self-tests pass.
+> Wave 3b-1B step 1 landed (the 4.10(a0) pre-accept open), the evidence-floor and prompt-forgery clusters are closed, and Phase 1's false round-trip tick is open again. Two Owner decisions are queued in docs/OWNER_ACTION_REQUIRED.md: the head-floor write principal (1b) and which half of rev-30 defines challenge_handle (1c).
 >
 > **The last independent audit returned RED, and none has been run since.** The Owner's SECOND independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` AFTER the first round's remediation -- confirmed 4 of 18 blockers closed and left 122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds. It has never been re-run, on that head or on any later one, so **RED is the standing verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`.
 >

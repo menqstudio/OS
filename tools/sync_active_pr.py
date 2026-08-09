@@ -64,12 +64,24 @@ FAIL_CLOSED_SENTENCE = (
 
 
 def live_main_head() -> str:
-    """The 40-hex sha the gate compares against. Read from git, never typed."""
-    out = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "origin/main"],
+    """The 40-hex sha the gate compares against. Read from the REMOTE, never typed.
+
+    This used to run ``git rev-parse origin/main``, which reads a local ref and therefore returns
+    whatever the last ``git fetch`` happened to leave behind. On 2026-08-10 that wrote a
+    ``baseline_main_head_at_sync`` of ``6bd3027`` into the snapshot while main had already moved to
+    ``5a72258``, and the Repo-state gate — which compares the field against the PR's live base sha —
+    went RED. The function was named ``live_main_head`` the whole time.
+
+    ``git ls-remote`` asks the remote and needs no fetch, so a stale local ref cannot produce a
+    confident wrong answer. ``tools/stamp_pr_head.py`` already reads the remote this way; this is the
+    same rule applied to the other end of the same comparison.
+    """
+    out = subprocess.run(["git", "-C", str(ROOT), "ls-remote", "origin", "refs/heads/main"],
                          capture_output=True, text=True, check=True)
-    sha = out.stdout.strip()
+    line = out.stdout.strip()
+    sha = line.split("\t")[0] if line else ""
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise SystemExit(f"RED: origin/main did not resolve to a 40-hex sha: {sha!r}")
+        raise SystemExit(f"RED: origin refs/heads/main did not resolve to a 40-hex sha: {line!r}")
     return sha
 
 
