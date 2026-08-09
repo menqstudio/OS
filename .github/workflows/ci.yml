@@ -395,6 +395,15 @@ jobs:
             '@echo off',
             "set TEMP=$work",
             "set TMP=$work",
+            # LOCALAPPDATA too, and for the same reason: a fresh logon block still carries the
+            # RUNNER's profile path, and brops-ci has never logged on interactively so it has no
+            # profile of its own. `anchor_end_to_end`'s fixture builds the app-side store under
+            # %LOCALAPPDATA%, so six tests died on create_dir_all before reaching a single
+            # custody assertion. %ProgramData% is left alone deliberately -- a standard account
+            # may create there, and that is the real machine-wide location the anchor uses.
+            "set LOCALAPPDATA=$work\localappdata",
+            "set APPDATA=$work\appdata",
+            "set USERPROFILE=$work",
             "set BROPS_TEST_PYTHON=$python",
             # The three prerequisites this runner genuinely cannot provide, named one at a time
             # because there is no blanket form. Each is a hole with a reason:
