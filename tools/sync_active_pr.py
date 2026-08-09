@@ -123,8 +123,10 @@ def settle(head: str, next_up: str | None) -> int:
         "> **\u2705 SETTLED \u2014 nothing is open.** `main` is at `" + head[:7] + "`; PR #"
         + str(last) + " was the last to merge and its branch is gone. Start from "
         "`docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom."
-        + tail + "\n>\n> **The gate is untouched.** `platform_governed_execution_supported()` "
-        "stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.")
+        + tail + "\n>\n> **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` "
+        "returns Some(...) unconditionally before the model is invoked, the broker hands out "
+        "`UpstreamBlockedExecutor`, and `connect_broker()` refuses off Linux. Earlier "
+        "prose below is HISTORY.")
     print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
     print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
@@ -154,9 +156,9 @@ def main() -> int:
     banner = args.banner or (
         f"> **⏭️ CURRENT ACTIVE: PR #{args.pr} · branch `{args.branch}`** (base `main`, tip "
         f"`{head[:7]}`, task T-017).\n>\n> {args.summary}\n>\n> **The gate is untouched.** "
-        "`platform_governed_execution_supported()` stays false, `main()` keeps "
-        "`UpstreamBlockedExecutor`. Earlier prose below is HISTORY.")
-    rewrite_banners(banner)
+        "`governed_verification_unconfigured()` returns Some(...) unconditionally before the "
+        "model is invoked, the broker hands out `UpstreamBlockedExecutor`, and `connect_broker()` "
+        "refuses off Linux. Earlier prose below is HISTORY.")
 
     print(f"state anchor → PR #{args.pr} on {args.branch}, main {head[:7]}")
     print(f"  fields changed: {', '.join(changed)}")

@@ -2,6 +2,10 @@
 
 > **✅ SETTLED — nothing is open.** `main` is at `c1e0aca`; PR #80 was the last to merge and its branch is gone. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
+> **Next:** close the POSIX installer half, then the independent audit
+>
+> **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, the broker hands out `UpstreamBlockedExecutor`, and `connect_broker()` refuses off Linux. Earlier prose below is HISTORY.
+>
 > **Next:** close the POSIX half of O-2 on the Debian box, then the independent audit
 >
 > **The gate is untouched.** `platform_governed_execution_supported()` stays false, `main()` keeps `UpstreamBlockedExecutor`. Earlier prose below is HISTORY.

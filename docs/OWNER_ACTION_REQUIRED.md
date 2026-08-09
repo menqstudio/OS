@@ -3,9 +3,27 @@
 Everything that cannot move without Gev. One page, kept current, so the answer to "what is waiting
 on me" is never reconstructed from a chat log.
 
-Nothing here is a suggestion to flip anything. `platform_governed_execution_supported()` is false
-and `main()` keeps `UpstreamBlockedExecutor`; that stands until every item below is settled, a
-**separate** audit passes, and the Owner approves — in that order.
+Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
+item below is settled, a **separate** audit passes, and the Owner approves — in that order.
+
+> **A correction worth reading before the rest.** This repository's history — and the standing
+> instruction that produced it — names `platform_governed_execution_supported()` as the flag holding
+> that line. **There is no such function.** The name appears in exactly two doc comments and in
+> `WINDOWS_BROKER_DESIGN.md`; `grep -r "fn platform_governed_execution_supported" --include=*.rs`
+> returns nothing. It is a specification symbol, and `config/spec-conformance.json` already records
+> §0.1 as *partial — the platform gate as specified; it is a hardcoded false*.
+>
+> What actually refuses, all three verified in the source:
+>
+> | Where | What it does |
+> |---|---|
+> | `governed_verification_unconfigured()` — `apps/desktop/src-tauri/src/commands.rs` | returns `Some(...)` **unconditionally**, before the model is invoked |
+> | `UpstreamBlockedExecutor` — `apps/desktop/src-tauri/broker/src/main.rs` | a real type; every turn returns `Err(TurnReason::UpstreamBlocked)` |
+> | `connect_broker()` | refuses with `UnsupportedPlatform` off Linux |
+>
+> The line is held, and it was held all along — but by those, not by the name everyone was watching.
+> Earlier prose in the HISTORY sections still uses the old name; that is what was believed when it
+> was written, and it is left alone rather than rewritten.
 
 ---
 

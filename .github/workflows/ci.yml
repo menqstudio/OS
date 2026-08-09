@@ -171,6 +171,41 @@ jobs:
       - name: Run the engine test suite on Windows
         run: python -B -m unittest discover -s tests -v
 
+  trust-provisioning:
+    name: Trust provisioning + audit signer (both platforms)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # These two crates mint and police this deployment's entire trust root, and until now they
+      # ran in NO job on either platform - every property they establish was gated on somebody
+      # remembering to run cargo by hand. A single Debian run then found: a umask-dependent pin
+      # mode that made the real Python verifier refuse the store, a POSIX custody probe that could
+      # never return Ok on any machine, and the same probe letting the registry directory through
+      # unchecked on Windows. Nine of the sixteen mutations from that round are GREEN on Windows
+      # and RED on Linux, so ONE platform is not coverage - the matrix is the point, not a luxury.
+      #
+      # `python_verifier.rs` runs the REAL engine verifiers against the REAL Rust output, so the
+      # dependency is not optional: that test FAILS rather than skips when cryptography is absent,
+      # which is deliberate - a skip there would hide a byte-level divergence between the two
+      # sides of the trust chain.
+      - name: Install the engine dependencies the cross-language proof needs
+        run: pip install --require-hashes -r engine/requirements-ci.txt
+      - name: Trust provisioning + audit signer
+        env:
+          CI: "true"
+        run: |
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml             -p brops-provision -p brops-audit-signer --no-fail-fast -- --test-threads=1
+
   windows-broker:
     name: Windows · §0.W broker syscall proof (named-pipe peer-auth)
     runs-on: windows-latest
