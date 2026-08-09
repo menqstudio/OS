@@ -1210,12 +1210,57 @@ pub struct Provisioned {
 impl Provisioned {
     /// The environment a deployment must export for the engine to USE what was minted.
     ///
-    /// Returned rather than applied. Two of these change how the engine resolves its
-    /// trust root process-wide, and `bro_signature` hard-fails when a file pin and a
-    /// raw CI pin disagree — so which process gets them, and when, is a deployment
-    /// decision, not this module's to make silently at startup.
+    /// Returned rather than applied. Three of these decide, process-wide, WHICH registry
+    /// the engine trusts and WHICH anchor authenticates it, and `bro_signature` hard-fails
+    /// when a file pin and a raw CI pin disagree — so which process gets them, and when, is
+    /// a deployment decision. `apps/desktop/src-tauri/src/engine_trust.rs` is where this
+    /// deployment makes it, at the one seam that launches the engine, under a stated
+    /// precedence rule; nothing applies this list to the host process itself.
+    ///
+    /// **This list is indivisible.** A deployment that exports some of it and not the rest
+    /// is the failure the redirect exists to prevent: some checks consulting the
+    /// provisioned trust and others the development registry committed at
+    /// `engine/config/trusted-keys.json`, with nothing saying so. In particular
+    /// `BRO_TRUSTED_REGISTRY_ROOT` without `BRO_OPERATOR_ROOT_PUBKEY_FILE` reads the
+    /// provisioned registry under whatever anchor the ambient environment supplies, and the
+    /// pin file without the registry root pins an anchor the committed registry disagrees
+    /// with — which is exactly the refusal O-3 was diagnosed by.
+    ///
+    /// # What is deliberately NOT here
+    ///
+    /// * `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` — see the comment inside the list.
+    /// * `BRO_ROLE` / `BRO_AGENT_ID`. `bro_policy.current_state` builds the conductor
+    ///   identity from those, and [`conductor_session_payload`] binds the token to
+    ///   [`CONDUCTOR_ROLE`] / [`CONDUCTOR_AGENT_ID`] — so a process that does not claim
+    ///   that identity has its token refused on the binding. That refusal is correct and
+    ///   this module must not remove it: the claim is a per-process privilege assertion
+    ///   (the engine running a governed TURN is emphatically not the conductor), and a
+    ///   deployment that stamped `BRO_ROLE=bro` on every engine subprocess would be making
+    ///   it everywhere. Whoever legitimately conducts sets those two itself; the signed
+    ///   token this list carries is what stops the claim from being self-serving.
+    /// * `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID`. They are a different
+    ///   principal's, and they come from [`audit_signer::AnchorEnv::engine_env`] only after
+    ///   [`audit_signer::verify_installed`] has MEASURED the installed signer. This struct
+    ///   has never seen those measurements and must not guess at them: an unmeasured
+    ///   `BRO_AUDIT_ANCHOR_SIGNER` is an audit anchor claimed rather than proved. Absent,
+    ///   `bro_audit_log` has no anchor and every keyed `verify()` fails closed, which is a
+    ///   refusal and not a false trust.
     pub fn engine_env(&self) -> Vec<(&'static str, String)> {
         vec![
+            // FIRST, because it decides which registry every check below is about.
+            // `bro_signature.resolve_registry_root` reads it, and with it unset the engine
+            // reads `engine/config/trusted-keys.json` — `production: false`, carrying a
+            // DEVELOPMENT REGISTRY warning, signed by an operator key this machine never
+            // minted and granting `conductor-session` to no key at all. That is the whole
+            // of O-3: every artifact this module signs verifies perfectly against a
+            // registry nothing consults.
+            //
+            // The redirect moves WHERE the registry is read and nothing else. The anchor
+            // does not travel with it — `resolve_registry_root` refuses an override that
+            // contains the pin or the anti-rollback floor, which is why the two entries
+            // below name `<anchor>/operator-root.pub` and `<anchor>/registry-min` while
+            // this one names their SIBLING `<anchor>/registry`.
+            ("BRO_TRUSTED_REGISTRY_ROOT", self.registry_root.display().to_string()),
             ("BRO_OPERATOR_ROOT_PUBKEY_FILE", self.operator_pin_path.display().to_string()),
             ("BRO_OPERATOR_REGISTRY_MIN_FILE", self.registry_floor_path.display().to_string()),
             // `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` is deliberately ABSENT, and its absence is

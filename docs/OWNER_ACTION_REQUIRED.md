@@ -73,8 +73,11 @@ claim was right for a vendor-signs/customer-verifies fleet and wrong for a produ
 > **On a shipped install the ledger carries no signed head, and here is the chain of facts.**
 > `bro_audit_log.append()` anchors only when `anchor_custody_configured()`, which is true only when
 > `BRO_AUDIT_ANCHOR_SIGNER` or `BRO_AUDIT_ANCHOR_KEY_ID` is set. **Nothing in the shipped product
-> sets either** — every occurrence in the tree is a test harness or a document; `Provisioned::engine_env()`
-> *returns* them and the startup path deliberately does not export them (`src-tauri/src/lib.rs`);
+> sets either** — every occurrence in the tree is a test harness or a document; they are **not** part of
+> `Provisioned::engine_env()` and cannot be (that list is the registry/pin/floor/session set, which IS
+> exported since 2026-08-09). They come from `AnchorEnv::engine_env()`, which only exists after
+> `audit_signer::verify_installed` has MEASURED an installed signer — an unmeasured
+> `BRO_AUDIT_ANCHOR_SIGNER` would be an audit anchor claimed rather than proved;
 > the `brops-audit-signer` service and the `brops-anchor-relay` shim are built by the workspace but
 > appear in no installer (`tauri.conf.json` declares no `externalBin` and no `resources`); and
 > `register::apply` has no caller outside tests. So `append()` takes its unconfigured path: it writes
@@ -188,13 +191,17 @@ Recorded so nothing reads as closed that is not. These are being worked.
   read, fail-closed, with the operator-root pin deliberately staying where it was: a redirect that
   carried the anchor along would have handed over the whole thing. Proven in both directions against
   the real verifier, including that a token accepted by *a* provisioned registry is still refused by
-  *this* deployment's. What remains is one line in the app's startup — and it must export **five**
-  variables, not one: the four `Provisioned::engine_env()` returns (`BRO_OPERATOR_ROOT_PUBKEY_FILE`,
-  `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN`, `BRO_SESSION_ID`) **plus**
-  `BRO_TRUSTED_REGISTRY_ROOT`, which `engine_env()` does **not** compute. Today nothing exports any
-  of them, which is why the engine still reads the committed *development* registry. *(This bullet
-  said "the variable ... it already writes", which reads as one remaining export of something the app
-  hands over already; corrected 2026-08-09.)*
+  *this* deployment's. **The startup wiring landed on 2026-08-09.** `Provisioned::engine_env()` now
+  returns all **five** variables — `BRO_TRUSTED_REGISTRY_ROOT` plus `BRO_OPERATOR_ROOT_PUBKEY_FILE`,
+  `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN` and `BRO_SESSION_ID` — and
+  `apps/desktop/src-tauri/src/engine_trust.rs` applies the set to the engine child at the one seam
+  that launches it, whole or not at all, refusing by name when an inherited anchor disagrees.
+  `apps/desktop/src-tauri/tests/o3_conductor_session.rs` proves it against the real Python:
+  accepted with the export, refused without it and refused pointed elsewhere. What is left is **not**
+  an export — it is that the desktop's engine entry point (the bridge sidecar's real mode) is itself
+  fail-closed until Wave 3b, so a desktop turn does not yet reach `authorize_conductor_stop`.
+  *(This bullet has been corrected twice: it once said "the variable ... it already writes", then
+  said nothing exported any of the five. Neither is true now.)*
 - **The committed `engine/config/trusted-keys.json` is a fixture, not a deployment default.** It is
   `production: false`, carries no private half anywhere in the tree, and a real deployment with a
   file pin has never been able to anchor on it. Its cost is confusion rather than forgery: it is the

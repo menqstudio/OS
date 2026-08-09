@@ -22,8 +22,8 @@
 |---|---|---|---|---|---|
 | **O-1** | `L-6` / `H-6-protected-set-gaps` | HIGH | OPEN | no | the gate is now called on every digest-trusting path and the hook interpreters run `-B`; what stays open is the *read* half — CPython imports an existing `.pyc` before any Python check can run |
 | **O-2** | `H-4-forgeable-audit-trail` (fix #1) | MEDIUM | OPEN | no | `append()` attaches a signed head anchor **only when anchor custody is configured**, and both operator verifiers require one; the signer mints its own key (`audit_signer::mint_anchor_key`), so no Owner secret — what is missing is an **elevated install step that registers the service**: `register::apply` has no binary entry point and no installer ships it, and nothing in the shipped product sets `BRO_AUDIT_ANCHOR_SIGNER`/`_KEY_ID`, so **every ledger a shipped install writes is UNANCHORED** — a keyed `verify()` refuses it, an unkeyed one reports it intact, and neither can tell it from a tampered one. **Not tamper-evident on any real deployment** |
-| **O-3** | `M-4` | MEDIUM | OPEN | no | code fails closed and the shipped policy requires the token; **first-launch provisioning mints the `conductor-session` artifact itself** (`provision::conductor_session_payload`, signed by the in-memory operator root before it is destroyed), so no Owner secret. OPEN until the app's startup EXPORTS `engine_env()` **plus** `BRO_TRUSTED_REGISTRY_ROOT` |
-| **O-4** | `L-8` | LOW | OPEN | no | both actors are signature-verified (`_prove_command_actor`); `control-room-command` is bound to the **delegated `control-room`** authority, whose key provisioning RETAINS, and `mint_control_room_command` signs one — so no Owner secret. OPEN until the engine reads the provisioned registry (the same export as O-3) |
+| **O-3** | `M-4` | MEDIUM | OPEN | no | code fails closed and the shipped policy requires the token; **first-launch provisioning mints the `conductor-session` artifact itself** (`provision::conductor_session_payload`, signed by the in-memory operator root before it is destroyed), so no Owner secret. **The export landed 2026-08-09** — `engine_env()` now includes `BRO_TRUSTED_REGISTRY_ROOT` and `engine_trust::apply` sets the whole set on the engine child. Still OPEN because the desktop's engine entry point (bridge sidecar real mode) is fail-closed until Wave 3b, so no desktop turn reaches `authorize_conductor_stop` yet |
+| **O-4** | `L-8` | LOW | OPEN | no | both actors are signature-verified (`_prove_command_actor`); `control-room-command` is bound to the **delegated `control-room`** authority, whose key provisioning RETAINS, and `mint_control_room_command` signs one — so no Owner secret. The engine now DOES read the provisioned registry (O-3's export, 2026-08-09), so the registry half is done. OPEN because **nothing outside tests ever calls `mint_control_room_command`**: no shipped path mints or presents the artifact `_prove_command_actor` would verify |
 | **O-5** | `L-4` | LOW | OPEN | no | the manifest binding is **now required and enforced**; `evidence-floor-anchor` is bound to the **delegated `evidence-floor`** authority, whose key provisioning RETAINS, and `mint_floor_anchor` signs one — so no Owner secret. OPEN **deliberately**: it must not be minted at install (§1 O-5), and *when* it is called is an unanswered design question |
 
 **None of the five needs an Owner-minted artifact any more, and the column above says so** — which is a
@@ -39,10 +39,13 @@ order. **The code decides it, and the code says no:** `engine/runtime/bro_signat
 artifact exists without the Owner ever holding a key. Each entry in §1 now names the authority rather
 than repeating "operator-root-signed".
 
-What that leaves is not credentials but **wiring and packaging**: O-3 and O-4 both wait on one startup
-line that exports `Provisioned::engine_env()` **plus** `BRO_TRUSTED_REGISTRY_ROOT` (`engine_env()` does
-not compute that one — see §1 O-3); O-2 waits on an elevated install step that registers the audit-signer
-service; O-5 waits on a design decision about *when* an anchor may honestly be minted. None of them is
+What that leaves is not credentials but **wiring and packaging**. The startup export O-3 and O-4 both
+waited on **is done as of 2026-08-09**: `Provisioned::engine_env()` computes `BRO_TRUSTED_REGISTRY_ROOT`
+alongside the other four, and `apps/desktop/src-tauri/src/engine_trust.rs` applies the set at
+`ai::governed_sidecar_call`. What each still waits on is different and is named per row above — O-3 on the
+sidecar's real mode (Wave 3b), O-4 on a shipped path that actually mints the `control-room-command`;
+O-2 waits on an elevated install step that registers the audit-signer service; O-5 waits on a design
+decision about *when* an anchor may honestly be minted. None of them is
 closeable by editing CI, `tauri.conf.json` or `docs/`; each is an audited change (the golden rule:
 *deliberate, tested, never rushed*), on its own branch/PR with Owner approval.
 
@@ -288,11 +291,16 @@ verified green).
   needed" since first-launch provisioning landed; this file had not caught up.)* `conductor-session`
   is an `operator-root` artifact, but `provision::mint` generates that root in memory, signs the
   registry and the session artifact with it, and **destroys it before returning** — the artifact
-  exists and verifies without the Owner ever holding a key. What remains is a startup line exporting
-  `Provisioned::engine_env()` **plus `BRO_TRUSTED_REGISTRY_ROOT`**, which `engine_env()` does **not**
-  compute (it returns exactly `BRO_OPERATOR_ROOT_PUBKEY_FILE`, `BRO_OPERATOR_REGISTRY_MIN_FILE`,
-  `BRO_CONDUCTOR_SESSION_TOKEN` and `BRO_SESSION_ID`). Nothing exports any of them today, so the
-  engine still reads the committed development registry.
+  exists and verifies without the Owner ever holding a key. The startup line that was missing **has
+  landed (2026-08-09)**: `engine_env()` returns `BRO_TRUSTED_REGISTRY_ROOT` first, then
+  `BRO_OPERATOR_ROOT_PUBKEY_FILE`, `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN` and
+  `BRO_SESSION_ID`; `provision_local_trust` records them and
+  `apps/desktop/src-tauri/src/engine_trust.rs` applies the set — whole or not at all, refusing by name
+  on a disagreeing inherited anchor — to the engine child in `ai::governed_sidecar_call`.
+  `apps/desktop/src-tauri/tests/o3_conductor_session.rs` proves both directions against the real
+  `bro_policy.verify_conductor_session_token` with the engine's own tree as `root`. What remains is not
+  an export: the bridge sidecar's real mode is fail-closed until Wave 3b, so no desktop turn reaches
+  `authorize_conductor_stop` yet, and `BRO_ROLE`/`BRO_AGENT_ID` are deliberately not exported.
 - **Engine ticket:** `engine/AUDIT/tickets/MEDIUM-findings.md` § M-4
 - **Engine code:** `engine/runtime/bro_policy.py` — `CONDUCTOR_SESSION_TOKEN_ENV =
   "BRO_CONDUCTOR_SESSION_TOKEN"` (a *path* to a signed artifact), `verify_conductor_session_token`, and the

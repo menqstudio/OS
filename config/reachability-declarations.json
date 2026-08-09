@@ -14,6 +14,12 @@
     "and asks you to DELETE the entry - deliberately, so an exception cannot silently outlive",
     "the condition it described.",
     "",
+    "`rust_symbols` covers apps/desktop/src-tauri/** the same way `engine_symbols` covers the",
+    "python engine. It needs `module` as well as `defined_in`, because a Rust caller must NAME",
+    "the symbol (`module::name(`): a bare-name scan would count ai.rs's own `resolve()` as a",
+    "caller of governed_output_stream::resolve. rustc never warns about an uncalled `pub fn` in",
+    "a library crate, which is why this whole class was invisible here until 2026-08-09.",
+    "",
     "Reasons: capability-denied | superseded | governed-wall | backend-only | not-yet-wired.",
     "'not-yet-wired' is an honest OPEN gap and must name where it is tracked.",
     "",
@@ -95,6 +101,35 @@
       },
       "reason": "A policy KEY, not a function, so `defined_in` is null and the flag is 'called' by being read. It is read through the named constant CONDUCTOR_SESSION_POLICY_KEY rather than as a bare literal, so the declaration states that one hop and the gate verifies the binding is real before following it - an undeclared indirection would otherwise read as zero readers. IMPORTANT LIMIT, and the reason this entry is worth reading twice: the gate proves the flag is READ by the enforcement path and proves NOTHING about whether it is SET. That second half is residual item O-3 (MEDIUM), needs an operator-signed conductor-session artifact only the Owner can mint, and is outside this gate by construction.",
       "observed": "2026-08-07: engine/runtime/bro_policy.py binds CONDUCTOR_SESSION_POLICY_KEY to the flag and reads it in conductor_session_token_required, which now treats an UNDECLARED requirement as a REQUIRED one (an uncommitted concurrent change - the previous code defaulted to False). Still absent from engine/.bro/policy.json."
+    }
+  },
+  "rust_symbols": {
+    "mint": {
+      "kind": "function",
+      "module": "governed_output_stream",
+      "defined_in": "apps/desktop/src-tauri/core/src/governed_output_stream.rs",
+      "expectation": "declared_unreachable",
+      "tracked_by": "MASTER_EXECUTION_ROADMAP.md",
+      "reason": "The rev-30 SS4.10(f) output-stream ladder, implemented ahead of the transport that would use it. It is NOT the roadmap's Phase-1 'slice 3 / governed streaming': SS4.10(f) is a chunked PULL of the COMPLETED output of a buffered turn, whose authority is the whole-output `output_sha256` in the isolated signer's envelope -- it never carries incremental deltas, and the roadmap descopes deltas by construction. Nothing pulls yet: the shipped broker runs the turn in-process and returns the output inline in its single-request/single-response reply (`broker/src/main.rs`), so only `create_schema` has callers and mint/resolve/sweep have none. Two further facts a reader deserves: the table this module creates DIVERGES from the design it cites -- design SS4.10(f) is INSERT-ONCE with `receipt_id`/`execution_attempt_id`/`output_handle`/`output_bytes`/`output_sha256`/`retained_until_ms` and a per-install quota of 64, while this one carries a mutable `state` column, none of those bindings, and a quota of 8 -- so wiring a caller is a rewrite, not a hookup, and `stream_binding_mismatch` cannot be produced at all. Keeping it declared rather than deleted is deliberate: the lifecycle logic and its nine tests are the reviewed part, and deleting them would lose the review without closing the gap. Tracked in MASTER_EXECUTION_ROADMAP.md Phase 1.",
+      "observed": "2026-08-09, by running this gate: zero production callers for mint/resolve/sweep anywhere under apps/desktop/src-tauri/**; every reference is inside this module's own `#[cfg(test)] mod tests`. `create_schema` IS called from four places (broker/src/main.rs, proof/src/bin/live_turn.rs, win-live/src/bin/win_live_turn.rs, win-live/src/proof.rs) and is deliberately not declared here: three sibling modules in brops-core (broker_turns, governed_message_store, supervisor_ledger) export a function of the same name, so declaring it would test the module path rather than this symbol."
+    },
+    "resolve": {
+      "kind": "function",
+      "module": "governed_output_stream",
+      "defined_in": "apps/desktop/src-tauri/core/src/governed_output_stream.rs",
+      "expectation": "declared_unreachable",
+      "tracked_by": "MASTER_EXECUTION_ROADMAP.md",
+      "reason": "The rev-30 SS4.10(f) output-stream ladder, implemented ahead of the transport that would use it. It is NOT the roadmap's Phase-1 'slice 3 / governed streaming': SS4.10(f) is a chunked PULL of the COMPLETED output of a buffered turn, whose authority is the whole-output `output_sha256` in the isolated signer's envelope -- it never carries incremental deltas, and the roadmap descopes deltas by construction. Nothing pulls yet: the shipped broker runs the turn in-process and returns the output inline in its single-request/single-response reply (`broker/src/main.rs`), so only `create_schema` has callers and mint/resolve/sweep have none. Two further facts a reader deserves: the table this module creates DIVERGES from the design it cites -- design SS4.10(f) is INSERT-ONCE with `receipt_id`/`execution_attempt_id`/`output_handle`/`output_bytes`/`output_sha256`/`retained_until_ms` and a per-install quota of 64, while this one carries a mutable `state` column, none of those bindings, and a quota of 8 -- so wiring a caller is a rewrite, not a hookup, and `stream_binding_mismatch` cannot be produced at all. Keeping it declared rather than deleted is deliberate: the lifecycle logic and its nine tests are the reviewed part, and deleting them would lose the review without closing the gap. Tracked in MASTER_EXECUTION_ROADMAP.md Phase 1.",
+      "observed": "2026-08-09, by running this gate: zero production callers for mint/resolve/sweep anywhere under apps/desktop/src-tauri/**; every reference is inside this module's own `#[cfg(test)] mod tests`. `create_schema` IS called from four places (broker/src/main.rs, proof/src/bin/live_turn.rs, win-live/src/bin/win_live_turn.rs, win-live/src/proof.rs) and is deliberately not declared here: its name is shared by six sibling modules, so a name-based scan cannot tell one module's callers from another's and would report a false green."
+    },
+    "sweep": {
+      "kind": "function",
+      "module": "governed_output_stream",
+      "defined_in": "apps/desktop/src-tauri/core/src/governed_output_stream.rs",
+      "expectation": "declared_unreachable",
+      "tracked_by": "MASTER_EXECUTION_ROADMAP.md",
+      "reason": "The rev-30 SS4.10(f) output-stream ladder, implemented ahead of the transport that would use it. It is NOT the roadmap's Phase-1 'slice 3 / governed streaming': SS4.10(f) is a chunked PULL of the COMPLETED output of a buffered turn, whose authority is the whole-output `output_sha256` in the isolated signer's envelope -- it never carries incremental deltas, and the roadmap descopes deltas by construction. Nothing pulls yet: the shipped broker runs the turn in-process and returns the output inline in its single-request/single-response reply (`broker/src/main.rs`), so only `create_schema` has callers and mint/resolve/sweep have none. Two further facts a reader deserves: the table this module creates DIVERGES from the design it cites -- design SS4.10(f) is INSERT-ONCE with `receipt_id`/`execution_attempt_id`/`output_handle`/`output_bytes`/`output_sha256`/`retained_until_ms` and a per-install quota of 64, while this one carries a mutable `state` column, none of those bindings, and a quota of 8 -- so wiring a caller is a rewrite, not a hookup, and `stream_binding_mismatch` cannot be produced at all. Keeping it declared rather than deleted is deliberate: the lifecycle logic and its nine tests are the reviewed part, and deleting them would lose the review without closing the gap. Tracked in MASTER_EXECUTION_ROADMAP.md Phase 1.",
+      "observed": "2026-08-09, by running this gate: zero production callers for mint/resolve/sweep anywhere under apps/desktop/src-tauri/**; every reference is inside this module's own `#[cfg(test)] mod tests`. `create_schema` IS called from four places (broker/src/main.rs, proof/src/bin/live_turn.rs, win-live/src/bin/win_live_turn.rs, win-live/src/proof.rs) and is deliberately not declared here: its name is shared by six sibling modules, so a name-based scan cannot tell one module's callers from another's and would report a false green."
     }
   },
   "tools_gates": {

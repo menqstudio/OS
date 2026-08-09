@@ -64,8 +64,12 @@ The distinction matters more than it looks. A proof kit that runs is not a shipp
   `Needs an Owner secret?` column in that file reads `no` for all five, machine-checked by
   `tools/check_residual_items.py`. *(This said “three needing an Owner-minted artifact” until
   2026-08-09, three documents after that stopped being true.)* What blocks them is deployment
-  wiring and a second principal, not a secret; conductor stops and owner-issued control-room
-  commands still refuse because nothing exports the provisioned registry to the engine.
+  wiring and a second principal, not a secret. *(This also said conductor stops and owner-issued
+  control-room commands "still refuse because nothing exports the provisioned registry to the
+  engine"; the export landed 2026-08-09 — `engine_trust::apply` at `ai::governed_sidecar_call` —
+  so the engine reads the provisioned registry. What still blocks them is named per item in
+  `docs/PHASE_10_PRODUCTION_ITEMS.md`: the sidecar's fail-closed real mode for O-3, and the
+  absence of any shipped caller of `mint_control_room_command` for O-4.)*
 - **`_real_callables()` in the bridge raises unconditionally**, pending the supervisor-reserved
   execution attempt and the authoritative execution→receipt binding. Correct and fail-closed.
 

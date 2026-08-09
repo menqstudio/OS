@@ -201,29 +201,43 @@ UI for these; the Settings screen shows the resolved provider **read-only**.
 Secrets (`ANTHROPIC_API_KEY`) are read **only** from the environment and are never written to
 SQLite. Set them in the user/session environment before launching BroPS.
 
-### 3.1 Engine trust environment — **what provisioning writes, and what nothing exports**
+### 3.1 Engine trust environment — **what provisioning writes, and where it is applied**
 
 These are read by the **engine** (`engine/runtime/bro_signature.py`, `bro_policy.py`,
-`bro_audit_log.py`), not by the desktop host. `Provisioned::engine_env()` *computes* the first four
-and hands them back to the caller — and `provision_local_trust` **deliberately does not apply
-them**. Nothing else does either.
+`bro_audit_log.py`), not by the desktop host. `Provisioned::engine_env()` *computes* the first
+five — `BRO_TRUSTED_REGISTRY_ROOT` **included since 2026-08-09**, when it was added and the wiring
+landed — and `provision_local_trust` **records** them.
+
+They are still never applied to the desktop process itself. They are set on the **child**, at the
+one seam in this application that launches the engine (`ai::governed_sidecar_call`, which both the
+governed AI turn and the read-only governance mirror go through), by
+`apps/desktop/src-tauri/src/engine_trust.rs`. That module applies the set **whole or not at all**
+and refuses by name — never silently overriding, and never being silently overridden — when the
+ambient environment already carries a different anchor. Read its header for the precedence rule.
 
 | Variable | What it names | Provisioning's value |
 |---|---|---|
-| `BRO_OPERATOR_ROOT_PUBKEY_FILE` | the out-of-registry operator-root pin (absolute, non-symlink, not group/other-writable) | `<anchor>/operator-root.pub` — returned by `engine_env()`, **not exported** |
-| `BRO_OPERATOR_REGISTRY_MIN_FILE` | the anti-rollback floor, so a superseded but still-signed registry cannot be replayed | `<anchor>/registry-min` — returned, **not exported** |
-| `BRO_CONDUCTOR_SESSION_TOKEN` | the operator-signed `conductor-session` artifact the wall requires (O-3) | `<trust>/artifacts/conductor-session.json` — returned, **not exported** |
-| `BRO_SESSION_ID` | the session the artifact above is bound to | minted at install — returned, **not exported** |
-| `BRO_TRUSTED_REGISTRY_ROOT` | **where the engine reads `config/trusted-keys.json` from** | `<anchor>/registry` — **not even returned by `engine_env()`** |
+| `BRO_OPERATOR_ROOT_PUBKEY_FILE` | the out-of-registry operator-root pin (absolute, non-symlink, not group/other-writable) | `<anchor>/operator-root.pub` — returned by `engine_env()` and set on the engine child |
+| `BRO_OPERATOR_REGISTRY_MIN_FILE` | the anti-rollback floor, so a superseded but still-signed registry cannot be replayed | `<anchor>/registry-min` — returned and set on the engine child |
+| `BRO_CONDUCTOR_SESSION_TOKEN` | the operator-signed `conductor-session` artifact the wall requires (O-3) | `<trust>/artifacts/conductor-session.json` — returned and set on the engine child |
+| `BRO_SESSION_ID` | the session the artifact above is bound to | minted at install — returned and set on the engine child |
+| `BRO_TRUSTED_REGISTRY_ROOT` | **where the engine reads `config/trusted-keys.json` from** | `<anchor>/registry` — returned and set on the engine child. **This is the one that was missing**: without it the other four point the engine's anchor at a registry it never reads |
 | `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID` | the audit-head signing command and its key id (O-2). Deliberately two variables: half a configuration is refused loudly rather than degrading to an unanchored ledger | unset on a stock install (there is no signer) |
 | `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` | the acknowledgement that short-circuits **every** custody rule at once | **no longer set anywhere**, and setting it again would re-disable the checks the anchor now passes on their merits |
 
-> **The consequence, stated plainly.** Because nothing exports these, **the engine still reads the
-> committed development registry** at `engine/config/trusted-keys.json` — which is `production:
-> false` and carries a "DEVELOPMENT REGISTRY" warning. The trust material the app minted is
-> invisible to it. Wiring the two together is a deployment decision (the registry has to live
-> somewhere the engine's custody rules accept, and `bro_signature` hard-fails when a file pin and
-> the CI `BRO_OPERATOR_ROOT_PUBKEY` disagree), not something the startup path may do silently.
+> **What changed, stated plainly.** Until 2026-08-09 this section said the opposite, and it was
+> right to: nothing exported any of these, so the engine read the committed development registry at
+> `engine/config/trusted-keys.json` (`production: false`, with its "DEVELOPMENT REGISTRY" warning)
+> and the trust material the app minted was invisible to it. The export now happens, at the seam
+> named above, and `apps/desktop/src-tauri/tests/o3_conductor_session.rs` proves it against the real
+> Python engine in both directions: the installer-minted `conductor-session` is **accepted** by
+> `bro_policy.verify_conductor_session_token` with the engine's own tree as `root`, and the same
+> token is **refused** the moment `BRO_TRUSTED_REGISTRY_ROOT` is dropped or pointed at another
+> install.
+>
+> It is still not unconditional, and that is deliberate: `bro_signature` hard-fails when a file pin
+> and the CI `BRO_OPERATOR_ROOT_PUBKEY` disagree, so an environment that already carries a different
+> anchor makes the governed call **refuse by name** rather than have either side silently win.
 >
 > `BRO_TRUSTED_REGISTRY_ROOT` is fail-closed when you do set it: absolute path only, no symlink at
 > **any** component, must hold `config/trusted-keys.json` as a regular file, must be a directory the
@@ -510,9 +524,11 @@ Added since this list was written — real on Windows, not planned:
 Known gaps (honest):
 
 - **Windows-only.** Provisioning refuses on POSIX and aborts startup there (§2.3).
-- **The engine does not see any of it.** Nothing exports the provisioned environment, so the engine
-  still reads the committed *development* registry (§3.1) — and `broctl` cannot mint a production
-  one at all.
+- **`broctl` cannot mint a production registry at all.** *(This bullet used to read "the engine does
+  not see any of it — nothing exports the provisioned environment". That was fixed on 2026-08-09: the
+  five variables are applied to the engine child at `ai::governed_sidecar_call`, §3.1.)* What remains
+  under this heading is the ceremony: `broctl build-registry` hardcodes `production: false`, so the
+  only *production* registry any deployment has is the one first-launch provisioning mints for itself.
 - **No audit signer ships.** The second principal O-2 needs is built but is in no installer, so a
   stock install has no audit-head anchor and keyed ledger verification fails closed (§2.3).
 - Windows lacks the Unix `0700`/`0600` data hardening and owner-only sandbox — the retained private

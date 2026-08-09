@@ -5,6 +5,30 @@
 //!
 //! rusqlite-backed + fully testable in-memory. The capability token is anti-guessing only (integrity comes
 //! from the signed envelope, §4.7); it is minted ONCE and never re-minted after expiry.
+//!
+//! # NOTHING CALLS `mint`/`resolve`/`sweep` (state as of 2026-08-09)
+//!
+//! Only [`create_schema`] has callers — `broker/src/main.rs`, `proof/src/bin/live_turn.rs`,
+//! `win-live/src/bin/win_live_turn.rs`, `win-live/src/proof.rs` — so this module creates its table
+//! and nothing ever writes a row. The three lifecycle functions are declared under `rust_symbols` in
+//! `config/reachability-declarations.json` and defended by `tools/check_reachability.py`, which turns
+//! RED the day a caller appears so the change gets recorded rather than absorbed.
+//!
+//! Three things a reader deserves to know before wiring one:
+//!
+//! 1. **This is not the roadmap's "governed streaming".** MASTER_EXECUTION_ROADMAP Phase 1 descopes
+//!    delta-streaming; a governed turn is buffered by construction, because the desktop's authority
+//!    is a signature over the WHOLE output. §4.10(f) is the opposite end: a chunked PULL of an
+//!    already-completed output, verified against that same whole-output digest.
+//! 2. **Nothing pulls yet.** The shipped broker runs the turn in-process and returns the output
+//!    inline in its single-request/single-response reply, so no `output_stream_id` is ever minted.
+//! 3. **The table below DIVERGES from the design it cites**, so wiring a caller is a rewrite and not
+//!    a hookup. Design §4.10(f) is INSERT-ONCE (state derived, never stored) and binds
+//!    `receipt_id`/`execution_attempt_id`/`output_handle`/`output_bytes`/`output_sha256` with
+//!    `retained_until_ms` and a per-install quota of 64; this implementation carries a mutable
+//!    `state` column, a `broker_turn_id` in place of those bindings, and a quota of 8. In particular
+//!    the design's server-side `stream_binding_mismatch` — a valid token presented for a different
+//!    receipt/attempt — cannot be produced here at all, because the columns it compares do not exist.
 
 use rusqlite::{params, Connection};
 

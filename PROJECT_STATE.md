@@ -8,6 +8,58 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Phase 1 — two open questions answered in writing (2026-08-09)
+
+Both were places where the code and the roadmap had been disagreeing long enough that a reader could
+not tell which was wrong. Neither is closed by building the thing the roadmap asked for; both are
+closed by ruling, and the ruling is written where the disagreement was.
+
+**1. The governed toggle — the specification was AMENDED, not implemented.** Phase 1 asked for an
+opt-in `Provider::GovernedEngine` toggle with `default / on / blocked`. What shipped was a read-only,
+`disabled` row. The toggle is not honestly buildable today and the roadmap now says why:
+`ai.rs::resolve_provider` resolves the provider from the **backend process environment**, and Phase 1's
+own security gate is *"Desktop never holds lease/key/env"* — a webview-writable control would hand the
+renderer the choice of whether its own turns are governed, **including the downgrade direction**.
+Independently of that, it could not change an outcome: `governed_verification_unconfigured()` returns
+`Some(...)` unconditionally, so turning it "on" swaps a working ungoverned chat for a uniformly
+refusing one. The amended criterion is a read-only control that reports all three named states, and it
+was **not already met** — the row reported two of the three (`blocked` lived only in a panel elsewhere
+on the page) and, being `disabled`, was removed from the tab order, so the state it exists to report
+was unreachable to a keyboard user. Now: `default`/`on`/`blocked` from the real `ai_status`,
+`aria-disabled` instead of `disabled`, activation inert. Five mutations, five caught.
+
+**2. Governed streaming (slice 3) — DESCOPED, not deferred.** A governed turn is buffered *by
+construction*: the desktop's sole authority is the isolated signer's envelope, which binds
+`output_bytes` + `output_sha256` over the **whole** output. There is no per-delta signature and no
+contract that could produce one, so a streamed delta would be unverified content rendered before any
+verdict exists — the inverse of "no verified signature ⇒ no result". `governed_turn.rs`, the roadmap
+and the status board now say this in the same words.
+
+`core/src/governed_output_stream.rs` is **not** that streaming, and mistaking it for that is what kept
+the question open. It is the rev-30 §4.10(f) chunked **pull** of an already-completed output, it has
+**zero production callers** (only `create_schema` is called, from four binaries), and its table
+diverges from the design it cites — INSERT-ONCE with receipt/attempt/handle bindings in the design,
+versus a mutable `state` column and a `broker_turn_id` here — so wiring a caller is a rewrite, not a
+hookup. The Phase-1 DoD box stays **open** on that pull; the phase is not closed by this ruling.
+
+**The reachability gate could not have caught it, and now can.** `tools/check_reachability.py` covered
+Tauri commands, Python engine symbols and capability grants — the entire `src-tauri` Rust tree, which
+is where the security core lives, was invisible to it. `rustc` warns about an uncalled *private* item
+and says nothing about a `pub fn` in a library crate, which is exactly how a public, documented,
+nine-unit-test ladder shipped with no callers and a clean build. A `rust_symbols` section now scans it,
+requiring a caller to **name** the symbol (`module::name(`) because a bare-name scan would have counted
+`ai.rs`'s own unrelated `resolve()` as a caller of `governed_output_stream::resolve` — a false green
+produced by the gate that exists to prevent false greens. Ten mutations, ten caught (one survived
+first: the test meant to defend the defining-file exclusion did not actually exercise it, and was
+rewritten until it did). 67 gate self-tests, 415 tools tests, 632 frontend tests, all green.
+
+**Left for the Owner, not silently absorbed:** the DoD box *"One governed round-trip proven
+end-to-end — done"* reads over-ticked against this repository's own status board (`engine_sidecar.
+_real_callables()` still raises unconditionally) and against the unchecked task-checklist line *"Slice 2
+— prove one governed round-trip (adapter ↔ real supervisor)"*. It was not flipped here: Phase 1 stays
+open either way, so nothing is unlocked by leaving it, and re-judging a merged claim is the Owner's
+call rather than a side effect of this change.
+
 ### The canonical law is enforced at the repository root (2026-08-09)
 
 The read receipt, the roadmap order and the update law are no longer prose. `.claude/hooks/canonical_law_gate.py`

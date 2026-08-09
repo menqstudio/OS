@@ -24,6 +24,21 @@ const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES a
 /// Per-read/write deadline on the broker socket (audit F-32/F-36). A governed turn is buffered by
 /// design and can legitimately take a while upstream, but a silent socket must eventually surface as
 /// a transport failure the renderer renders as `blocked` — never as a wedged command.
+///
+/// "Buffered by design" is a settled decision rather than an accident of this slice, and as of
+/// 2026-08-09 the roadmap agrees with it: MASTER_EXECUTION_ROADMAP Phase 1 **descopes** governed
+/// delta-streaming. The desktop's sole authority over a governed reply is the isolated signer's
+/// envelope, and that envelope binds `output_bytes` + `output_sha256` over the WHOLE output. There
+/// is no per-delta signature and no contract that could produce one, so a streamed delta would be
+/// unverified content displayed before any verdict exists — the exact inverse of "no verified
+/// signature ⇒ no result". The channel underneath says the same thing structurally: one framed
+/// request, one framed reply.
+///
+/// Do not read `brops_core::governed_output_stream` as the streaming that is missing here. That is
+/// the rev-30 §4.10(f) ladder for PULLING the completed output of a buffered turn in chunks when it
+/// is too large to ride the reply frame; it moves finished bytes, checked against the same
+/// whole-output digest. It has no production caller and is declared in
+/// `config/reachability-declarations.json`.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const IO_TIMEOUT_MS: u64 = 120_000;
 

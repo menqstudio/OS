@@ -19,6 +19,7 @@
 //!   BROPS_ALLOW_REMOTE_OLLAMA          – opt-in: non-loopback Ollama host (https only)
 //!   BROPS_ALLOW_OLLAMA_NONDEFAULT_PORT – opt-in: Ollama port other than 11434
 
+use crate::engine_trust;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
@@ -2464,6 +2465,24 @@ async fn governed_sidecar_call(
             }
         }
     }
+    // O-3: hand the child the trust material first-launch provisioning minted — above all
+    // `BRO_TRUSTED_REGISTRY_ROOT`, which decides WHICH trusted-key registry the engine
+    // reads. Without it `bro_signature.load_trusted_keys` reads the development registry
+    // committed at `engine/config/trusted-keys.json`, so every governed check ran against a
+    // registry that is `production: false` and grants `conductor-session` to no key, while
+    // the provisioned one sat unread beside it.
+    //
+    // THIS IS THE ONLY SEAM. Both governed paths reach the engine through this function —
+    // the AI turn (`governed_engine`) and the read-only governance mirror
+    // (`governed_sidecar_read`) — and nothing else in the application spawns the engine or
+    // the bridge. That matters more than it looks: a half-wired export, where one of the two
+    // consults the provisioned trust and the other the stale committed registry, is worse
+    // than no export at all, because nothing would say so.
+    //
+    // An `Err` fails the spawn. There is no degraded mode: a governed call that proceeds
+    // without the provisioned trust environment is precisely the ungoverned call this path
+    // exists to prevent, and it would report itself as governed.
+    engine_trust::apply(&mut cmd)?;
     cmd.arg(&sidecar_path)
         // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
         // reach the production sidecar via inherited env. The sidecar honors self-test
@@ -3608,6 +3627,46 @@ mod tests {
         ];
         assert_ne!(governed_history_sha256(&a), governed_history_sha256(&b));
         assert!(brops_core::receipt::sha256_hex(b"") != governed_history_sha256(&a)); // sanity
+    }
+
+    /// The SEAM, not the rule. `engine_trust`'s own tests prove the precedence decision;
+    /// this proves the decision is actually consulted on the path that launches the engine,
+    /// which is the half a wiring defect lives in. Deleting the `engine_trust::apply` line
+    /// from `governed_sidecar_call` leaves every `engine_trust` unit test green and every
+    /// governed call reading the committed development registry again — so the refusal has
+    /// to be observable from out here.
+    ///
+    /// Driven through `governed_sidecar_read` because it is the shorter of the two callers
+    /// and needs no receipt machinery; both reach the engine through the same function. In
+    /// a test binary nothing ever called `engine_trust::record`, which is precisely the
+    /// "provisioning has not run" case, and it must refuse rather than spawn.
+    #[test]
+    fn the_governed_engine_is_never_spawned_without_the_provisioned_trust_environment() {
+        let probe = std::env::temp_dir().join(format!("brops-trust-seam-{}", brops_core::id()));
+        std::fs::create_dir_all(&probe).expect("probe dir");
+        // The mirror's own gate has to pass first, or the refusal we get back would be that
+        // one and this test would prove nothing about the trust environment.
+        std::env::set_var("BROPS_GOVERNANCE_STATE_DIR", &probe);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime");
+        let result = runtime.block_on(governed_sidecar_read(
+            r#"{"protocol":"brops.governance-read.v1","op":"governance.read","surface":"decisionLedger","read_only":true}"#,
+        ));
+        std::env::remove_var("BROPS_GOVERNANCE_STATE_DIR");
+        let _ = std::fs::remove_dir_all(&probe);
+        let err = result.expect_err(
+            "the governed engine was reached with no provisioned trust environment, so it              read whatever registry it found",
+        );
+        assert!(
+            err.contains("trust environment was never recorded"),
+            "the refusal is not the trust-environment one, so `engine_trust::apply` is not on              this path: {err}"
+        );
+        assert!(
+            err.contains("engine/config/trusted-keys.json"),
+            "the refusal does not name what would have answered instead: {err}"
+        );
     }
 
     #[test]

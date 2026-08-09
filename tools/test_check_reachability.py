@@ -114,12 +114,19 @@ class GateTestCase(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
-    def declare(self, tauri_commands=None, engine_symbols=None, tools_gates=None):
+    def write_rust(self, text, name="core/src/governed_output_stream.rs"):
+        path = self.tmp / "apps/desktop/src-tauri" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def declare(self, tauri_commands=None, engine_symbols=None, tools_gates=None,
+                rust_symbols=None):
         (self.tmp / "config/reachability-declarations.json").write_text(
             json.dumps(
                 {
                     "tauri_commands": tauri_commands or {},
                     "engine_symbols": engine_symbols or {},
+                    "rust_symbols": rust_symbols or {},
                     "tools_gates": tools_gates or {},
                 }
             ),
@@ -451,6 +458,240 @@ class EngineSymbolTests(GateTestCase):
     def test_a_missing_defining_module_fails(self):
         self.declare_symbol(defined_in="engine/runtime/nowhere.py")
         self.assertRed("does not exist")
+
+
+class RustSymbolTests(GateTestCase):
+    """The same defect in the language the security core is written in.
+
+    `rustc` warns about an uncalled PRIVATE item and says nothing about a `pub fn` in a library
+    crate. That is the exact shape `governed_output_stream::{mint,resolve,sweep}` had: public,
+    documented, nine passing unit tests, zero production callers, and a clean build. Every test
+    below breaks one thing and requires RED, and the two that matter most are the near-misses --
+    a "caller" that is only a `#[cfg(test)] mod`, and an unrelated function of the SAME NAME in
+    another module (this repository really does have `ai.rs`'s own `resolve()` alongside
+    `governed_output_stream::resolve`).
+    """
+
+    DEFINED = "apps/desktop/src-tauri/core/src/governed_output_stream.rs"
+    LADDER = (
+        "pub fn create_schema(conn: &Connection) -> Result<()> { Ok(()) }\n"
+        'pub fn resolve(conn: &Connection, id: &str) -> Result<String> { Ok(String::new()) }\n'
+    )
+
+    def declare_rust(self, **overrides):
+        entry = {
+            "kind": "function",
+            "module": "governed_output_stream",
+            "defined_in": self.DEFINED,
+            "expectation": "must_have_caller",
+        }
+        entry.update(overrides)
+        self.declare(
+            tauri_commands={
+                "delete_thing": {
+                    "reason": "capability-denied",
+                    "note": "Denied to the window; no caller is the enforced state, not a gap.",
+                }
+            },
+            rust_symbols={"resolve": entry},
+        )
+
+    def test_zero_callers_fails(self):
+        self.write_rust(self.LADDER)
+        self.declare_rust()
+        self.assertRed("ZERO callers")
+
+    def test_a_caller_only_in_its_own_module_is_not_a_caller(self):
+        """Including a FULLY QUALIFIED self-call, which is the only shape by which a definer can
+        match the caller pattern at all -- and therefore the reason `defined_in` is excluded
+        outright instead of being left to the pattern. A module calling itself is one of the
+        ways dead code reads as live."""
+        self.write_rust(
+            self.LADDER
+            + "pub fn helper(c: &Connection) -> Result<String> {\n"
+            + '    crate::governed_output_stream::resolve(c, "x")\n'
+            + "}\n"
+        )
+        self.declare_rust()
+        self.assertRed("ZERO callers")
+
+    def test_a_caller_only_in_a_cfg_test_module_is_not_a_caller(self):
+        """The governed_output_stream shape exactly: the only callers are its own unit tests."""
+        self.write_rust(self.LADDER, "core/src/other.rs")
+        self.write_rust(
+            "use brops_core::other::resolve;\n"
+            "#[cfg(test)]\n"
+            "mod tests {\n"
+            "    use super::*;\n"
+            "    #[test]\n"
+            '    fn it_resolves() { assert!(resolve(&c, "x").is_ok()); }\n'
+            "}\n",
+            "broker/src/main.rs",
+        )
+        self.declare_rust(defined_in="apps/desktop/src-tauri/core/src/other.rs", module="other")
+        found = self.problems()
+        self.assertTrue(any("ZERO callers" in p for p in found), found)
+        self.assertTrue(any("referenced ONLY from tests" in p for p in found), found)
+
+    def test_a_brace_in_a_string_does_not_end_the_test_module_early(self):
+        """A SQL/format literal containing a brace must not close `mod tests` early and expose
+        the rest of the file as production code -- that turns a test-only caller green."""
+        self.write_rust(self.LADDER, "core/src/other.rs")
+        self.write_rust(
+            "use brops_core::other::resolve;\n"
+            "#[cfg(test)]\n"
+            "mod tests {\n"
+            '    fn sql() -> &\'static str { "SELECT json_object(\'{a}\') }" }\n'
+            "    #[test]\n"
+            '    fn it_resolves() { resolve(&c, "x"); }\n'
+            "}\n",
+            "broker/src/main.rs",
+        )
+        self.declare_rust(defined_in="apps/desktop/src-tauri/core/src/other.rs", module="other")
+        self.assertRed("ZERO callers")
+
+    def test_an_unrelated_function_of_the_same_name_is_not_a_caller(self):
+        """`ai.rs` defines its own `resolve()`. A bare-name scan would call that a caller of
+        `governed_output_stream::resolve` -- a false green produced by the gate that exists to
+        prevent false greens."""
+        self.write_rust(self.LADDER)
+        self.write_rust(
+            "fn resolve() -> Result<Provider, String> { Ok(Provider::None) }\n"
+            "pub fn status() { let _ = resolve(); }\n",
+            "src/ai.rs",
+        )
+        self.declare_rust()
+        self.assertRed("ZERO callers")
+
+    def test_a_mention_in_a_comment_is_not_a_caller(self):
+        self.write_rust(self.LADDER)
+        self.write_rust(
+            "// the pull loop will call governed_output_stream::resolve(conn, id) one day\n"
+            "/* governed_output_stream::resolve(conn, id) */\n",
+            "broker/src/main.rs",
+        )
+        self.declare_rust()
+        self.assertRed("ZERO callers")
+
+    def test_a_qualified_call_in_another_module_passes(self):
+        self.write_rust(self.LADDER)
+        self.write_rust(
+            "pub fn serve(c: &Connection, id: &str) {\n"
+            "    let _ = brops_core::governed_output_stream::resolve(c, id);\n"
+            "}\n",
+            "broker/src/main.rs",
+        )
+        self.declare_rust()
+        self.assertGreen()
+
+    def test_a_bare_call_in_a_file_that_imports_it_passes(self):
+        self.write_rust(self.LADDER)
+        self.write_rust(
+            "use brops_core::governed_output_stream::{resolve, sweep};\n"
+            "pub fn serve(c: &Connection, id: &str) { let _ = resolve(c, id); }\n",
+            "broker/src/main.rs",
+        )
+        self.declare_rust()
+        self.assertGreen()
+
+    def test_a_declaration_with_no_module_is_refused(self):
+        """Without the module there is no way to tell one `resolve` from another, so the gate
+        refuses the declaration rather than fall back to scanning for a bare name."""
+        self.write_rust(self.LADDER)
+        self.declare_rust(module=None)
+        self.assertRed("`module` is required")
+
+    def test_a_module_that_does_not_match_the_file_is_refused(self):
+        self.write_rust(self.LADDER)
+        self.declare_rust(module="governed_turn")
+        self.assertRed("does not match defined_in")
+
+    def test_a_declaration_that_drifted_off_the_code_fails(self):
+        self.write_rust("pub fn create_schema() {}\n")
+        self.declare_rust()
+        self.assertRed("declares no `fn resolve`")
+
+    def test_a_missing_defining_file_fails(self):
+        self.declare_rust(
+            defined_in="apps/desktop/src-tauri/core/src/nowhere.rs", module="nowhere"
+        )
+        self.assertRed("does not exist")
+
+    def test_a_doc_comment_naming_the_fn_is_not_a_definition(self):
+        """`fn resolve` has to be DECLARED, not merely mentioned -- otherwise a module doc that
+        names the symbol keeps a rotted declaration alive."""
+        self.write_rust("//! resolve() lives here.\npub fn create_schema() {}\n")
+        self.declare_rust()
+        self.assertRed("declares no `fn resolve`")
+
+    def test_declared_unreachable_needs_a_written_reason(self):
+        self.write_rust(self.LADDER)
+        self.declare_rust(
+            expectation="declared_unreachable", reason="dead code", residual_item="R-1"
+        )
+        self.assertRed("characters saying why")
+
+    def test_declared_unreachable_needs_a_residual_item_or_tracking_file(self):
+        self.write_rust(self.LADDER)
+        self.declare_rust(
+            expectation="declared_unreachable",
+            reason=("It has no caller and the reason is written out at length here, but "
+                    "nothing says where the open item is tracked."),
+        )
+        self.assertRed("must name the residual item")
+
+    def test_declared_unreachable_with_a_tracking_file_passes(self):
+        self.write_rust(self.LADDER)
+        (self.tmp / "docs/OPEN.md").write_text("open\n", encoding="utf-8")
+        self.declare_rust(
+            expectation="declared_unreachable",
+            tracked_by="docs/OPEN.md",
+            reason=("The rev-30 output-pull ladder, implemented ahead of the transport that "
+                    "would use it; nothing pulls yet, so it is unreached by design."),
+        )
+        self.assertGreen()
+
+    def test_declared_unreachable_that_gained_a_caller_fails(self):
+        """The exception must not outlive the condition it described."""
+        self.write_rust(self.LADDER)
+        self.write_rust(
+            "pub fn serve(c: &Connection, id: &str) {\n"
+            "    let _ = brops_core::governed_output_stream::resolve(c, id);\n"
+            "}\n",
+            "broker/src/main.rs",
+        )
+        (self.tmp / "docs/OPEN.md").write_text("open\n", encoding="utf-8")
+        self.declare_rust(
+            expectation="declared_unreachable",
+            tracked_by="docs/OPEN.md",
+            reason=("The rev-30 output-pull ladder, implemented ahead of the transport that "
+                    "would use it; nothing pulls yet, so it is unreached by design."),
+        )
+        self.assertRed("declared unreachable but now HAS a caller")
+
+    def test_an_integration_test_file_is_never_a_production_caller(self):
+        self.write_rust(self.LADDER)
+        self.write_rust(
+            "use brops_core::governed_output_stream::resolve;\n"
+            "#[test]\n"
+            'fn it_resolves() { let _ = resolve(&c, "x"); }\n',
+            "core/tests/streams.rs",
+        )
+        self.declare_rust()
+        self.assertRed("ZERO callers")
+
+
+class ShippedRustLadderTests(unittest.TestCase):
+    """The REAL repository, not a fixture: the ladder this section was built for."""
+
+    def test_the_output_stream_ladder_is_declared_and_still_uncalled(self):
+        problems, summary = gate.check(ROOT)
+        self.assertEqual(problems, [])
+        for name in ("mint", "resolve", "sweep"):
+            state = summary["rust"].get(name)
+            self.assertIsNotNone(state, f"{name} is not declared under rust_symbols")
+            self.assertEqual(state["expectation"], "declared_unreachable")
+            self.assertEqual(state["callers"], [], f"{name} gained a caller: {state['callers']}")
 
 
 class PolicyFlagTests(GateTestCase):

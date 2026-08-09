@@ -9,23 +9,41 @@ import type { Lang, Theme } from '../domain/enums';
 import { STR } from './Settings.strings';
 import { readAppIdentity, probePreferenceStorage } from './settingsIdentity';
 
-// A read-only, accessible on/off indicator. Rendered as a disabled <button role="switch"> so the
-// state is exposed non-visually through aria-checked (the governed provider is backend-owned and
-// cannot be flipped from the desktop app — hence never operable, only reported).
-function Switch(
-  { checked, label, describedBy }:
-  { checked: boolean; label: string; describedBy?: string },
+// The governed-provider control: read-only, three-state, keyboard-reachable.
+//
+// MASTER_EXECUTION_ROADMAP Phase 1 names `default` / `on` / `blocked` for this row. All three are
+// REPORTED and none is settable, and the roadmap now says so rather than promising a switch: the
+// provider is resolved from the backend process environment by `ai.rs::resolve_provider`, and
+// Phase 1's own security gate is "Desktop never holds lease/key/env". A control the webview could
+// flip would hand the renderer the choice of whether its own turns are governed — including the
+// downgrade direction — which is the one thing this architecture refuses.
+//
+// `aria-disabled` WITHOUT `disabled` is the load-bearing detail. `disabled` removes an element
+// from the tab order, so until 2026-08-09 the one thing this control exists to do — report a
+// state — was unreachable to anyone navigating by keyboard: `aria-checked` sat on something no
+// keyboard user could land on. `aria-disabled` says "present, announced, not operable".
+type ProviderState = 'default' | 'on' | 'blocked';
+
+function ProviderSwitch(
+  { checked, state, label, stateLabel, describedBy }:
+  {
+    checked: boolean; state: ProviderState; label: string;
+    stateLabel: string; describedBy?: string;
+  },
 ) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={label}
+      aria-label={`${label} — ${stateLabel}`}
       aria-describedby={describedBy}
-      aria-disabled
-      disabled
+      aria-disabled="true"
+      data-state={state}
       className="set-sw"
+      // Inert by construction, not merely by omission: there is no writer to call. Activation is
+      // swallowed so a click or a Space press never looks like it did something.
+      onClick={(event) => event.preventDefault()}
     >
       <span className="set-sw-knob" aria-hidden="true" />
     </button>
@@ -75,6 +93,15 @@ export function Settings() {
   const ready = !!data?.ready;
   // governed provider enabled but the sidecar never became ready → fail-closed guidance, no result.
   const sidecarBlocked = !!data && isGoverned && !ready;
+  // The three states Phase 1 names for the governed-provider row, derived from the real ai_status
+  // and nothing else. `blocked` is the one that used to live only in the panel further down the
+  // page, so the control itself reported two states where the spec named three.
+  const providerState: ProviderState = sidecarBlocked ? 'blocked' : isGoverned ? 'on' : 'default';
+  const providerStateLabel = L(
+    providerState === 'blocked' ? 'governedStateBlocked'
+      : providerState === 'on' ? 'governedStateOn'
+        : 'governedStateDefault',
+  );
   // engine-down dims the model dock + runtime name exactly like the mockup's offline state.
   const engineDown = !!data && !isNone && !ready;
 
@@ -144,6 +171,11 @@ export function Settings() {
         }
         .v-settings .set-toggle { display:flex; align-items:center; justify-content:space-between; gap:var(--s4); margin-top:var(--s4); }
         .v-settings .set-toggle > span:first-child { font-size:13px; color:var(--ink); }
+        /* The state word, visible next to the control. A switch's shape alone cannot show
+           three states, and "blocked" is the one a reader most needs to see. */
+        .v-settings .set-sw-state { margin-left:auto; margin-right:var(--s3); letter-spacing:.06em; text-transform:uppercase; color:var(--ink-muted); }
+        .v-settings .set-sw-state[data-state="on"] { color:var(--success); }
+        .v-settings .set-sw-state[data-state="blocked"] { color:var(--danger); }
         .v-settings .set-note { color:var(--ink-muted); font-size:12px; line-height:1.55; max-width:64ch; }
         .v-settings .set-sw {
           position:relative; width:42px; height:24px; flex:0 0 auto; padding:0; cursor:not-allowed;
@@ -151,6 +183,8 @@ export function Settings() {
           transition:background .18s, border-color .18s; opacity:.85;
         }
         .v-settings .set-sw[aria-checked="true"] { background:rgb(var(--success-rgb)/.5); border-color:rgb(var(--success-rgb)/.5); }
+        /* governed provider resolved but the sidecar never came up: on, and refusing. */
+        .v-settings .set-sw[data-state="blocked"] { background:rgb(var(--danger-rgb)/.35); border-color:rgb(var(--danger-rgb)/.55); }
         .v-settings .set-sw-knob {
           position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
           background:var(--ink); box-shadow:0 1px 3px rgb(0 0 0/.45); transition:transform .18s;
@@ -243,12 +277,16 @@ export function Settings() {
                     </div>
                   </div>
 
-                  {/* Governed-provider toggle — honestly read-only (backend-owned, fail-closed). */}
+                  {/* Governed-provider status — read-only by design (backend-owned, fail-closed),
+                      reporting the three states Phase 1 names: default / on / blocked. */}
                   <div className="set-toggle">
                     <span id="settings-governed-label">{L('governedToggleLabel')}</span>
-                    <Switch
+                    <span className="set-sw-state micro" data-state={providerState}>{providerStateLabel}</span>
+                    <ProviderSwitch
                       checked={isGoverned}
+                      state={providerState}
                       label={L('governedToggleLabel')}
+                      stateLabel={providerStateLabel}
                       describedBy="settings-governed-desc"
                     />
                   </div>
