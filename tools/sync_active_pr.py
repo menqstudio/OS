@@ -77,14 +77,27 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
 
 
 def rewrite_banners(banner: str) -> None:
+    """Replace the WHOLE banner block, not just its first line.
+
+    The banner is multi-line, and the first version of this replaced `lines[2]` alone. A second run
+    therefore left the previous banner's continuation lines sitting under the new one, so the file
+    accumulated fragments: a fresh first line above a stale tail, which is precisely the shape of
+    staleness this tool exists to remove. It was caught by reading the output rather than by any
+    check — the coordination gate saw a banner that did not name the active branch, which is a
+    symptom two steps downstream of the cause.
+
+    The block is every consecutive blockquote line from line 3 down. All of it is replaced.
+    """
     for name in BANNER_FILES:
         p = ROOT / name
-        lines = p.read_text(encoding="utf-8").split("\n")
+        lines = p.read_text(encoding="utf-8").split(chr(10))
         if not lines[2].startswith("> **"):
             raise SystemExit(f"RED: {name} line 3 is not the shared banner; refusing to overwrite it")
-        lines[2] = banner
-        p.write_text("\n".join(lines), encoding="utf-8")
-
+        end = 2
+        while end + 1 < len(lines) and lines[end + 1].startswith(">"):
+            end += 1
+        rebuilt = lines[:2] + banner.split(chr(10)) + lines[end + 1:]
+        p.write_text(chr(10).join(rebuilt), encoding="utf-8")
 
 def settle(head: str, next_up: str | None) -> int:
     """Record that nothing is open, and point the reader at main rather than at a dead branch.
@@ -159,6 +172,11 @@ def main() -> int:
         "`governed_verification_unconfigured()` returns Some(...) unconditionally before the "
         "model is invoked, the broker hands out `UpstreamBlockedExecutor`, and `connect_broker()` "
         "refuses off Linux. Earlier prose below is HISTORY.")
+
+    # This call went missing in an edit, and the line below kept announcing it. A message that
+    # reports work it did not do is worse than silence: the banner stayed stale while the tool
+    # said it had been rewritten, and the only thing that caught it was reading the file.
+    rewrite_banners(banner)
 
     print(f"state anchor → PR #{args.pr} on {args.branch}, main {head[:7]}")
     print(f"  fields changed: {', '.join(changed)}")
