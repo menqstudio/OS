@@ -146,6 +146,86 @@ audit passes, and the Owner approves. See [`NEXT_CHAT.md`](../../../NEXT_CHAT.md
 | `H-6-protected-set-gaps` | ⚠️ OPEN (O-1) | **bytecode-shadow (O-1, HIGH):** *(Corrected 2026-08-09 — this cell said `assert_no_bytecode_shadow` “has no caller and the wall is not run with `-B`”. Both halves are false today and `CLAUDE.md` §6 has said so since: it has three real callers (`bro_control_plane.py:80`, `:271`, and `bro_protected.verify_control_plane_digest`) and every hook interpreter runs `-B`.)* What is actually open is the READ half, which cannot be closed from inside Python: `-B` stops bytecode being written; nothing stops CPython reading a `.pyc` planted before the process starts, which shadows the very module that would detect it. The compensating rule is that the engine refuses a control plane the running account can write — free from a packaged install, and needing verification on a packaged build rather than assertion (independent audit **D-09**). Fix is trust-critical + interacts with the CI `compileall` step — deferred to focused keystone-class work. |
 | `LOW-findings` / `MEDIUM-findings` | ◑ mixed | Bundle files; see the independent audit + `BroCore_Audit_Report.md`. |
 
+## Desktop-surface sweep (2026-08-10, `at-main-2`) — **Builder's claim, nobody else has looked**
+
+Every mark in this section is **◑**. Nothing here has been independently audited, and the RED verdict
+above still stands. The sweep covered the 29 LIVE findings from the consolidated index whose fix lands in
+`apps/desktop/src/**`, `apps/desktop/src-tauri/src/**` or `apps/desktop/src-tauri/core/src/**`.
+
+**Note on sources.** `2026-08-06-consolidated-index.md` is the only index of all three rounds. The round-2
+and round-3 detail files **do not exist in the tree** — only round 1 survives, as
+`2026-08-06-remediation-audit.md` — so R2/R3 titles are truncated at roughly 110 characters and were
+verified against the code rather than against their own text.
+
+### One row in this ledger is WRONG, not merely stale
+
+R2 `core/src/governed_turn_ipc.rs:239` is listed **⚠️ OPEN** on the claim that `CommittedMessage::new`
+hardcodes `trust_state`, making `bound` a tautology. It does not: `trust_state` is a **parameter**
+(`governed_turn_ipc.rs:239-254`). The row describes code that no longer exists. Recorded here rather than
+silently edited, because a ledger that quietly repairs itself is the failure this file exists to prevent.
+
+### ◑ Already closed by later work — the ledger did not know (12)
+
+| id / loc | claim | why it is closed |
+|---|---|---|
+| R3 `src/commands.rs:1064` | unescaped `"Name: text"` speaker protocol | `cde5279` — the turn format is `AUTHOR ": " JSON-STRING`, injective |
+| R3 `src/commands.rs:1072` | roster names raw into every system prompt | `cde5279` — `validate_roster` rejects rather than truncates, plus a splice-side defence |
+| R3 ×2 `src/ai.rs:1072` | coding-agent auto-approve / undocumented env var | `cde5279` — `BRO_PROTECTED_PATHS` + `TrustSurfaceGuard`, settling on `Drop` |
+| R2 `core/src/repo.rs:660` | M-1 self-approval guard cannot fire | **F-30**, `dc4735a` |
+| R2 `core/src/governed_turn_ipc.rs:239` | `bound` tautology | **the ledger row is wrong** — see above |
+| R2 `core/src/governed_verification.rs:209` | replay defence only `InMemoryLedger` | `broker_turns::DurableAcceptanceLedger`, `BEGIN IMMEDIATE`, opened at `broker/src/main.rs:401` |
+| R2 `core/src/production_trust.rs:49` | `production_verified` never asks which root anchor | `resolve_trust_state` requires a `VerifiedManifestRoot` and splits on `root_provenance()` |
+| R2 `src/governed_selftest.rs:88` | failed model silently replaced by a constant | `AnswerSource` travels with the answer; 3 tests |
+| R2 `src/features/Settings.tsx:361` | unconditional "fail-closed, verified-receipt-mandatory" | gated on `isGoverned && ready` |
+| R2 `src/features/Onboarding.strings.ts:21` | onboarding promises lease+receipt for all model calls | `howBody` names the condition and says "That is NOT the default" |
+| R2 `src/services/governedTurn.ts:121` | zero UI callers | `Bridge.tsx:181` calls it |
+| R3 `src/features/Decisions.tsx:321` | empty record set reported `ok` + a green node | explicit `n == 0` branch |
+| R3 repo badge join on a non-unique column | | aggregate projection, `COUNT(*)=0 ⇒ NULL`, weaker-wins, migration 0023 |
+| R3 `src/governance.rs:248` | GREEN verdicts from an unauthenticated source | `authenticated: RECORDS_ARE_AUTHENTICATED` (false) + a UI tag |
+| R3 `src/files.rs:200` | two distinguishable error strings → existence oracle | one `PATH_REFUSED` for every branch |
+
+### ◑ Fixed in this sweep (4)
+
+| finding | what it actually was |
+|---|---|
+| `core/src/supervisor_ledger.rs:358` | `accept_prepare`'s idempotency comparison called itself "deliberately exhaustive over the durable request binding" and hand-listed **16 of 24** bound columns. The five it never looked at were `challenge_accepted_at_ms` and all four `challenge_registry_*` — **including the anti-rollback `epoch`**. A retry re-presenting the same nonce under a **rolled-back registry epoch** was answered `Idempotent`, "the same turn". Replaced with a `#[derive(PartialEq)] struct DurableBinding`, so the field list *is* the comparison. **The Python twin `governed_supervisor_ledger._BOUND_FIELDS` omits exactly the same five and is NOT fixed** — it is another agent's file this round, so the Rust side is currently stricter than the Python side. |
+| `src/governed_turn.rs:85` | no total deadline on the renderer→broker read. `SO_RCVTIMEO` restarts per byte, so 8256 bytes × 120 s could hold a synchronous Tauri command for roughly **11.5 days**. Now `EXCHANGE_BUDGET_MS`, with the loop and its arithmetic lifted **out of `mod linux`** — the previous bound lived where no non-Linux suite could reach it. Includes the guard that returns `None` rather than arming `Duration::ZERO`, which POSIX reads as *infinite*, at exactly the moment the bound matters most. |
+| `core/src/repo.rs:1116` | the demonstration badge was a bare flag row. It is the **only green badge the shipped app can display**, and `demonstration_verified_reply` `remove_dir_all`s the chain's working directory before writing it, so every artifact was destroyed and `(message_id, recorded_at)` was the whole evidence. Migration **0024**: the row carries the SHA-256 of the exact bytes the chain bound, written in the same transaction as the message, recomputed on read. Pre-0024 rows are `NULL` and **lose the badge** — back-filling them from the body they sit beside would manufacture the evidence. |
+| `src/features/Conversations.tsx:372` | Demo-verify made the thread render every session message twice: `s.reload()` refetched history while `extra` still held the streamed copies, so `[...history, ...extra]` duplicated each under colliding `key={m.id}`. Now `mergeThread`, preferring the persisted row because it carries the badge. |
+
+### ◑ Deliberately NOT fixed, with reasons
+
+* **`production_trust.rs:73` (F-29 tautology)** — real, and the code and this ledger already say so. There
+  is exactly one key source, so no call site can make it fail; the property holds by construction.
+  Deleting it removes a fail-closed guard for a future caller, and "fixing" it means inventing a second
+  source. Left with the honest comment.
+* **`windows_broker.rs:272` unreachable, and `governed_output_stream.rs` §4.10(f)** — wiring either makes
+  a governed surface reachable, which is forbidden. Already declared with written reasons in
+  `config/reachability-declarations.json`.
+* **`governed_verification.rs:276`** — §7.1's mandatory freshness step really is absent;
+  `verify_and_accept` is documented "no clock" and `FreshnessWindow` exists only on the v1
+  `receipt_store` path. Fixing it changes the signature and the caller in `broker/src/chain_executor.rs`,
+  outside this sweep's surface and adjacent to live work. **Recommended as the next item.**
+* **`supervisor_ledger.rs:779`** — `final_event_hash` validates case-insensitively and compares
+  case-sensitively. True, but it fails **closed** (a re-cased retry reads as `EvidenceFork`, never as a
+  bypass), and the Python twin behaves identically; fixing only the Rust side would create twin
+  divergence on a CAS for an unreachable corner.
+* **`0014_*.sql:57`** — the comment "cannot be turned into a storage-DoS vector" is false (per-row cap, no
+  row cap). Editing an already-applied migration's bytes to correct a comment is not worth the
+  migration-ledger risk. Reported, not changed.
+
+### Mutation results
+
+13 killed. **Two survived, and the reason is the point:** the first badge implementation had two guards —
+`AND d.body_sha256 IS NOT NULL` in SQL and the digest comparison in Rust — and deleting **either one alone
+changed nothing**, because each masked the other. The SQL guard could not change any outcome, so it was
+deleted rather than shipped, leaving one decision point that can fail. Re-run after collapsing: no
+survivors.
+
+Numbers, each from a run performed for this sweep and re-run independently before the commit:
+`brops --lib` **124**, `brops-core --lib` **314**, frontend **69 files / 638 tests**, `tsc --noEmit` clean,
+`check_ai_surfaces` / `check_capabilities` / `check_reachability` GREEN. No gate was touched.
+
 ## Legend
 **One legend, and it is the one under “How to read the status column” above:** ✅ = an independent
 audit confirmed it · ◑ = the Builder's claim, nobody else has looked · 🔴 / ⚠️ = open · by-design =

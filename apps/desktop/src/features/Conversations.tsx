@@ -21,6 +21,30 @@ import {
 } from './delegation';
 import { DelegationSurface } from './delegationView';
 
+/**
+ * The thread the user sees: the persisted page plus the messages this mounted session appended
+ * optimistically, with each message appearing EXACTLY ONCE.
+ *
+ * The two lists overlap the moment anything reloads the page while `extra` is non-empty, and one
+ * shipped button does exactly that: **Demo-verify** calls `demonstration_verified_reply` and then
+ * `s.reload()`, so every message streamed earlier in the session came back a second time inside
+ * `history`. A plain `[...history, ...extra]` then rendered each of them twice under the SAME
+ * `key={m.id}` — colliding React keys, a duplicated transcript, and a doubled `handoffChain` and
+ * message count derived from it. Pressing the app's one verification affordance corrupted the very
+ * thread it was verifying.
+ *
+ * `history` wins on a collision: it is the persisted row, so it carries the server-derived `receipt`
+ * projection (the trust badge). The optimistic copy from the streaming `done` event does not, and
+ * preferring it would silently strip a badge off a message that had earned one.
+ *
+ * Order is history order, then whatever of `extra` is not yet persisted — the same order the plain
+ * concatenation produced for the non-overlapping case, so nothing about a normal reply moves.
+ */
+export function mergeThread(history: Message[], extra: Message[]): Message[] {
+  const seen = new Set(history.map((m) => m.id));
+  return [...history, ...extra.filter((m) => !seen.has(m.id))];
+}
+
 export interface ReceiptBadge {
   tone: Tone;
   key: 'chat.receiptVerified' | 'chat.receiptDev' | 'chat.receiptDemo';
@@ -200,7 +224,7 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
   // trust gate. Scans the persisted history PLUS the session-appended messages (`extra`), so a
   // question asked in the current session updates recall immediately — not only after a remount.
   const recallQuery = useMemo(() => {
-    const msgs = [...(s.data ?? []), ...extra];
+    const msgs = mergeThread(s.data ?? [], extra);
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role !== 'agent') return (msgs[i].body ?? '').trim().slice(0, 120);
     }
@@ -444,7 +468,7 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
   };
 
   const history = s.data ?? [];
-  const allMessages = [...history, ...extra];
+  const allMessages = mergeThread(history, extra);
 
   // Handoff chain (Phase 7 · group rooms): the ordered sequence of DISTINCT consecutive
   // speakers across the room's turns — a real, transcript-derived readout of who handed off

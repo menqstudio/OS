@@ -8,6 +8,55 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### An idempotency check that called itself exhaustive over 16 of 24 columns (2026-08-10)
+
+A desktop-surface sweep over the 29 LIVE audit findings that land in `apps/desktop`. Full detail, with the
+marks it is entitled to (**◑ — the Builder's claim, nobody else has looked**), is in
+`apps/desktop/AUDIT/AUDIT_LEDGER.md`. The RED verdict stands.
+
+**The worst of it.** `accept_prepare`'s idempotency comparison described itself as *"deliberately
+exhaustive over the durable request binding"* and hand-listed **16 of the 24** columns the INSERT binds.
+The five it never looked at were `challenge_accepted_at_ms` — which §7.1 step 4c later binds the signed
+envelope against — and all four `challenge_registry_*` fields, **including the anti-rollback `epoch`**. So
+a retry re-presenting the same nonce under a **rolled-back registry epoch** was answered `Idempotent`,
+"the same turn". It is now a `#[derive(PartialEq)] struct DurableBinding`, so the field list *is* the
+comparison and cannot drift from it again. **The Python twin `_BOUND_FIELDS` omits exactly the same five
+and is not yet fixed** — it belongs to another agent this round, so the Rust side is currently stricter
+than the Python side, and that asymmetry is recorded rather than left to be discovered.
+
+**A synchronous command could be held for about 11.5 days.** The renderer→broker read had no total budget:
+`SO_RCVTIMEO` restarts per byte, so 8256 bytes at 120 s each is the arithmetic. The fix also moved the loop
+and its arithmetic **out of `mod linux`**, where no non-Linux suite could reach the previous bound — the
+same platform-branch blindness that let a mutant survive in yesterday's staging work. It includes the guard
+that returns `None` rather than arming `Duration::ZERO`, which POSIX reads as *infinite*, precisely when
+the bound matters most.
+
+**The only green badge the app can show was a bare flag row.** `demonstration_verified_reply`
+`remove_dir_all`s the chain's working directory before writing the row, so every artifact was destroyed and
+`(message_id, recorded_at)` was the entire evidence. Migration 0024 binds the row to the SHA-256 of the
+exact bytes the chain bound, written in the same transaction as the message and recomputed on read.
+Pre-0024 rows are `NULL` and **lose the badge**: back-filling them from the body they sit beside would
+manufacture the evidence rather than record it.
+
+**Twelve findings were already closed and the ledger did not know — and one ledger row is simply wrong.**
+R2 `governed_turn_ipc.rs:239` is listed ⚠️ OPEN on the claim that `CommittedMessage::new` hardcodes
+`trust_state`; it is a parameter. The row describes code that no longer exists. Recorded rather than
+silently edited, because a ledger that quietly repairs itself is the failure it exists to prevent.
+
+**Two mutants survived, and that was the finding.** The first badge implementation had two guards — one in
+SQL, one in Rust — and deleting either one alone changed nothing, because each masked the other. The SQL
+guard could not change any outcome, so it was deleted rather than shipped. One decision point, and it can
+fail.
+
+**Five findings were deliberately left, with reasons**, including §7.1's genuinely absent freshness step
+(`governed_verification.rs:276`), which is recommended as the next item because fixing it reaches outside
+this surface. `production_trust.rs:73`'s F-29 tautology stays: there is one key source, so the property
+holds by construction, and "fixing" it would mean inventing a second source.
+
+Re-run independently before the commit: `brops --lib` **124**, `brops-core --lib` **314**, frontend
+**69 files / 638 tests**. No gate was touched.
+
+
 ### The self-approval guard compared two values that were never equal (2026-08-10)
 
 Audit **F-30**, closed. The self-approval defence in `repo::approvals::approve_confirmed` was a single

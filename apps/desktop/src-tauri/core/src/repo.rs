@@ -993,12 +993,20 @@ pub mod chat {
         })
     }
 
-    /// SQL projection (Wave 3a slice 3 + demonstration): a message's trust-badge receipt = the outcome of its
-    /// accepted verification attempt (`development_untrusted` | `trusted_verified`); else, as a FALLBACK, the
-    /// honest `demonstration_verified` when the reply was produced + verified in-process under the DEMONSTRATION
-    /// anchor (a separate additive table — never the production trust records). A real production receipt always
-    /// wins (it is the first COALESCE arm). A `blocked` verdict has no message, so it never appears here. Every
-    /// message SELECT that feeds `map_message` must include this `AS receipt` column and alias `messages` as `m`.
+    /// The badge string the demonstration arm of [`MESSAGE_TRUST_COLUMNS`] emits and
+    /// [`substantiated_receipt`] gates. Named once so the SQL and the Rust check cannot drift apart
+    /// into a guard that silently matches nothing.
+    const DEMONSTRATION_VERIFIED: &str = "demonstration_verified";
+
+    /// The two trust columns every message SELECT must project, aliased `receipt` and
+    /// `demonstration_body_sha256`, over `messages` aliased as `m`. [`map_message`] reads both.
+    ///
+    /// `receipt` = the outcome of the message's accepted verification attempt
+    /// (`development_untrusted` | `trusted_verified`); else, as a FALLBACK, the honest
+    /// `demonstration_verified` when the reply was produced + verified in-process under the
+    /// DEMONSTRATION anchor (a separate additive table — never the production trust records). A real
+    /// production receipt always wins (it is the first COALESCE arm). A `blocked` verdict has no
+    /// message, so it never appears here.
     ///
     /// The accepted-attempt arm is an AGGREGATE, not `LIMIT 1`. It used to be
     /// `SELECT a.outcome ... LIMIT 1` with no `ORDER BY`, over a `message_id`
@@ -1015,7 +1023,18 @@ pub mod chat {
     /// zero rows still returns one row, so without it a message with NO accepted
     /// attempt would fall through to the `ELSE` arm and be painted
     /// `trusted_verified`.
-    const MESSAGE_RECEIPT_PROJECTION: &str = "COALESCE(\
+    ///
+    /// The demonstration arm is deliberately UNGATED here and its stored digest is projected beside
+    /// it, because SQLite cannot hash: the binding is decided in exactly one place,
+    /// [`substantiated_receipt`], which [`map_message`] applies to every row this projection
+    /// produces. See migration 0024 for why a flag row was not enough.
+    ///
+    /// This arm briefly also carried `AND d.body_sha256 IS NOT NULL`. It was deleted rather than
+    /// shipped: it could not change any outcome — a NULL digest fails the Rust comparison anyway —
+    /// and the two guards MASKED each other, so deleting either one on its own left every test green.
+    /// Two checks that each hide the other's absence are worth less than one check that can fail, and
+    /// `a_flag_row_with_no_body_digest_paints_no_badge` now fails if the remaining one is weakened.
+    const MESSAGE_TRUST_COLUMNS: &str = "COALESCE(\
          (SELECT CASE \
                    WHEN COUNT(*) = 0 THEN NULL \
                    WHEN SUM(a.outcome = 'development_untrusted') > 0 \
@@ -1027,17 +1046,55 @@ pub mod chat {
               AND a.outcome IN ('development_untrusted', 'trusted_verified')), \
          (SELECT 'demonstration_verified' \
             FROM demonstration_verified_messages d \
-            WHERE d.message_id = m.id))";
+            WHERE d.message_id = m.id)) AS receipt, \
+         (SELECT d.body_sha256 FROM demonstration_verified_messages d \
+           WHERE d.message_id = m.id) AS demonstration_body_sha256";
+
+    /// Keep a `demonstration_verified` badge only if the row that claims it carries the SHA-256 of
+    /// the body it is painted on.
+    ///
+    /// **What this replaces.** `demonstration_verified_messages` was `(message_id, recorded_at)` —
+    /// a flag. `commands::demonstration_verified_reply` runs the in-process governed chain in a temp
+    /// directory and then `remove_dir_all`s it, so the receipt, the envelope and the signature that
+    /// justified the green were destroyed before the row was written. Nothing connected the badge to
+    /// any bytes, so the projection painted it on whatever text the message held: a row pointed at
+    /// the wrong message, or a body edited afterwards, kept the green. It is the ONLY green badge the
+    /// shipped app can currently display, so "there is a row" was the entire evidence a user had.
+    ///
+    /// Now the writer records the digest of the exact bytes the chain bound, in the same transaction
+    /// as the message, and this recomputes it from the stored body. A mismatch — or an absent digest,
+    /// which is every row written before migration 0024 — is not a downgrade to a weaker badge: it is
+    /// NO badge, because the claim was that this text was verified and that claim is unsupported.
+    ///
+    /// Production receipts (`trusted_verified` / `development_untrusted`) are NOT touched here: they
+    /// are backed by `receipt_verification_attempts`, which stores the envelope and signature and is
+    /// re-verifiable on its own terms.
+    fn substantiated_receipt(
+        receipt: Option<String>,
+        attested_body_sha256: Option<&str>,
+        body: &str,
+    ) -> Option<String> {
+        if receipt.as_deref() != Some(DEMONSTRATION_VERIFIED) {
+            return receipt;
+        }
+        match attested_body_sha256 {
+            Some(digest) if digest == crate::governed_message_store::sha256_hex(body.as_bytes()) => receipt,
+            _ => None,
+        }
+    }
 
     fn map_message(r: &Row) -> rusqlite::Result<Message> {
+        let body: String = r.get("body")?;
+        let receipt: Option<String> = r.get("receipt")?;
+        let attested: Option<String> = r.get("demonstration_body_sha256")?;
         Ok(Message {
             id: r.get("id")?,
             conversation_id: r.get("conversation_id")?,
             role: r.get("role")?,
             author: r.get("author")?,
-            body: r.get("body")?,
+            receipt: substantiated_receipt(receipt, attested.as_deref(), &body),
+            body,
             created_at: r.get("created_at")?,
-            receipt: r.get("receipt")?,
         })
     }
 
@@ -1100,7 +1157,7 @@ pub mod chat {
     ) -> CoreResult<Vec<Message>> {
         let (limit, offset) = super::page(limit, offset);
         let sql = format!(
-            "SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m \
+            "SELECT m.*, {MESSAGE_TRUST_COLUMNS} FROM messages m \
              WHERE m.conversation_id = ?1 \
              ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?2 OFFSET ?3"
         );
@@ -1139,22 +1196,33 @@ pub mod chat {
             super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
             Ok(())
         })?;
-        let sql = format!("SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m WHERE m.id = ?1");
+        let sql = format!("SELECT m.*, {MESSAGE_TRUST_COLUMNS} FROM messages m WHERE m.id = ?1");
         conn.query_row(&sql, [id.clone()], map_message)
             .map_err(not_found(&id))
     }
 
     /// Record that a message's reply was produced + verified IN-PROCESS under the DEMONSTRATION anchor, so
-    /// [`MESSAGE_RECEIPT_PROJECTION`] derives its badge to `demonstration_verified`. Idempotent
+    /// [`MESSAGE_TRUST_COLUMNS`] derives its badge to `demonstration_verified`. Idempotent
     /// (`INSERT OR IGNORE`). This is NEVER production trust — the caller writes it ONLY after the in-process
     /// governed chain returns trusted_verified for THIS exact message, and this demonstration table is separate
     /// from the CHECK-constrained production trust records (`receipt_verification_attempts`).
-    pub fn record_demonstration_verified(conn: &Connection, message_id: &str) -> CoreResult<()> {
+    ///
+    /// `verified_body` is the EXACT reply bytes the chain bound; its SHA-256 is stored with the row and
+    /// [`substantiated_receipt`] re-checks it against the persisted body on every read. Passing anything
+    /// other than the bytes that were verified produces a row that paints no badge — which is the point:
+    /// the caller can no longer assert the badge, only evidence it.
+    pub fn record_demonstration_verified(
+        conn: &Connection,
+        message_id: &str,
+        verified_body: &str,
+    ) -> CoreResult<()> {
         let now = now();
+        let digest = crate::governed_message_store::sha256_hex(verified_body.as_bytes());
         super::atomic(conn, |tx| {
             tx.execute(
-                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at) VALUES (?1, ?2)",
-                rusqlite::params![message_id, now],
+                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at, body_sha256) \
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![message_id, now, digest],
             )?;
             Ok(())
         })?;
@@ -1184,14 +1252,21 @@ pub mod chat {
                 "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
                 rusqlite::params![now, input.conversation_id],
             )?;
+            // The digest of the bytes just written, in the SAME transaction as the message — so the
+            // badge and the body it attests can never be recorded apart (migration 0024).
             tx.execute(
-                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at) VALUES (?1, ?2)",
-                rusqlite::params![id, now],
+                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at, body_sha256) \
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    id,
+                    now,
+                    crate::governed_message_store::sha256_hex(input.body.as_bytes())
+                ],
             )?;
             super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
             Ok(())
         })?;
-        let sql = format!("SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m WHERE m.id = ?1");
+        let sql = format!("SELECT m.*, {MESSAGE_TRUST_COLUMNS} FROM messages m WHERE m.id = ?1");
         conn.query_row(&sql, [id.clone()], map_message).map_err(not_found(&id))
     }
 
