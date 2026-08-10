@@ -148,11 +148,15 @@ function Test-TurnResult {
 # (exit 0) by this script before the comparison existed.
 # ---------------------------------------------------------------------------------------------------
 if ($SelfTest) {
-  # gitleaks:allow (test vector: a key IDENTIFIER published in the trusted-key registry, not key
-  # material). The scanner reads `key=<token>` in a string literal as a credential and cannot know
-  # the difference; `.github/supply-chain/gitleaks.toml` is owner-owned (audit F-47) so the
-  # exemption belongs here, in the diff, rather than in a config nobody reviews.
-  $good = "RESULT: trusted_verified(production key=brops-live-signer-1 epoch=2 root=brops-root-1) production_verified=true bound=true root_anchor=external"
+  # The `gitleaks:allow` below sits at the END of the offending line, not above it. A first attempt
+  # put it on its own lines here and CI stayed red: gitleaks only honours the marker on the SAME
+  # line as the finding, which is how the Rust call sites in broker/src/manifest_resolver.rs already
+  # write it. What is exempted is a key IDENTIFIER, published in the trusted-key registry, inside a
+  # synthetic test vector -- not key material. The scanner reads `key=<token>` in a string literal as
+  # a credential and cannot know the difference, and `.github/supply-chain/gitleaks.toml` is
+  # owner-owned (audit F-47), so the exemption belongs here in the diff rather than in a config
+  # nobody reviews.
+  $good = "RESULT: trusted_verified(production key=brops-live-signer-1 epoch=2 root=brops-root-1) production_verified=true bound=true root_anchor=external"  # gitleaks:allow (test vector: key ID, not key material)
   $demo = "RESULT: trusted_verified(demonstration_custody key=k epoch=1 root=r root_provenance=demonstration) production_verified=false bound=true root_anchor=demonstration"
   $blk  = "RESULT: blocked reason=chain:PeerDenied production_verified=false bound=false"
   $vectors = @(
