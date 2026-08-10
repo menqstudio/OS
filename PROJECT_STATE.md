@@ -8,6 +8,86 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The frame is not constructible by its own producer (2026-08-10)
+
+**§4.6's `bridge.governed-turn-result.v1` is built on both hops** — the frame that carries a governed
+turn's result across the sidecar boundary, and the only thing that can deliver an `output_stream_id` to the
+desktop. `bridge/governed_turn_result_bridge.py` re-frames one §4.10(e) reply;
+`brops_core::governed_bridge_result` strict-parses the result.
+
+**"Copies everything, invents nothing" is checkable rather than asserted.** The re-framer takes the
+supervisor's document and *nothing else* — no loose parameters, so no locally-chosen value has a way in —
+and its receipt key tuple is **derived** from §4.10(e)'s `SIGNED_FIELDS` by comprehension, not typed out,
+so it cannot gain a member the sidecar invented or lose one the supervisor sent. The sidecar can do exactly
+two things: downgrade a `signed` reply to a member of the closed union, or corrupt an echo. Both only ever
+end a turn. It cannot forge a success — a `signed` frame is inert without an envelope signature under the
+pinned isolated-signer key and an attestation under the pinned supervisor key, and §2.3 puts both outside
+its group.
+
+**The transport echo is unreachable by construction, again.** `SignedTurnResult` has **no accessor** for
+`output_bytes` or `output_sha256`; they are private and readable only through §7.1's `check_echoes`. A
+caller wanting to aim a length or digest gate at the echo would have to add a getter first — a diff a
+reviewer can see — and a test asserts their absence. `governed_output_pull` still has no parameter for an
+expected digest.
+
+**§4.6 as written is not constructible by its own producer, and this needs an Architect ruling.** Its
+`receipt` lists **28** fields. The only producer is this re-framer, whose only input is §4.10(e)'s `signed`
+arm — 16 fields, of which 11 are §4.6 names. Of the remaining 17, **seven have no source anywhere the
+sidecar can reach**: `status`, `exit_code` and `evidence[]` belong to the frozen `bridge.result.receipt`
+shape, built from a `SupervisorResult` the governed path never produces; and the four
+`challenge_registry_*` fields are resolved by the supervisor from its own state, which §4.10(a0) says is
+*"NEVER supplied by the sidecar"* — and never returned, since that reply is
+`{protocol, status, challenge_handle}`. The other ten *could* be decoded out of `envelope_jcs_b64` here,
+and deliberately are not: a value copied out of the envelope is a value the desktop decodes from the same
+bytes, so §7.1's equality over it would compare a document against itself and **could not fail**. The
+implemented frame is the intersection; the other 17 are a named tuple with a test asserting the union is
+exactly §4.6's 28, so closing the gap means *moving a name between two tuples* rather than quietly
+widening. The normative document was **not** edited — rev-30 is Owner-approved and this is not the
+Builder's call.
+
+**Two smaller disagreements.** `status` is a homonym: §4.10(e)'s is the arm discriminator
+(`"signed"`/`"refused"`), §4.6's `receipt.status` is the frozen run status (`"completed"`), and carrying
+the first into the second would put the literal `"signed"` where a reader expects an outcome. And `lease_id`
+is carried but **cannot be checked** — nothing signed reaching the desktop carries one; the envelope and
+the attested evidence both bind `lease_handle`. It is exposed for forensics and deliberately excluded from
+`check_echoes`, because a comparison invented for symmetry would have been a check that cannot fail.
+
+**The §4.10(f) pull is still unreachable, and the reason MOVED rather than closed.** It used to be "no §4.6
+frame on either hop". It is now **§4.10(g)'s `bridge.governed-turn-submit.v1`, which is NOT IMPLEMENTED** —
+no submit branch in `engine_sidecar._dispatch`, no orchestrator driving §4.10(a0)→(a)(b)(c)→(d) in one
+subprocess — so no sidecar ever holds a §4.10(e) reply to re-frame. Six `rust_symbols` are now declared
+caller-less against that single gap. Behind it, `chain_executor.rs::LinuxGovernedExecution` still reads the
+recorder's output off the local filesystem, so even a delivered token would not put the pull on the live
+path. There is also **no §4.9 envelope parser in `brops-core`** — the only one is private to the broker
+crate — which a §4.10(g) implementer will need.
+
+**Arithmetic, and the answer was no check.** The maximum §4.6 frame is 74206 bytes compact and 74236 as the
+sidecar actually writes it, against `MAX_STDOUT_BYTES` 9437184 — a factor of **127** — so no cap on its
+path can fire and neither module ships one. Both framed-IPC bounds in the tree are 8192, **9.06× too
+small**, which is why this is a subprocess-stdio hop; a test pins the comparison. Re-framing *shrinks* the
+document by 266 bytes, so an input that fitted its socket always fits out. §4.6's own
+`envelope_jcs_b64 ≤ 2848` is separately known wrong by 40 bytes for this tree's §4.9 payload; the design's
+number is enforced with no escape hatch, which is safe **only because** `governed_acceptance` refuses the
+over-cap case as a governed `oversize` verdict before a §4.6 frame is ever built.
+
+**34 mutants, 34 killed.** A Python survivor — the builder's self-validate, unkillable by any *input*
+because every frame it emits is well-formed by construction — was **not deleted**: its failure mode is
+producer/consumer drift, so a test that creates the drift now kills it. Two Rust survivors were killed
+after mutation exposed a guard **masking its neighbour** (an `error` object length check hiding a
+`receipt_id`-presence check) and a canonicality check no fixture reached. One property is enforced by the
+type system rather than a test: returning a success for a refused frame **does not compile**, since
+`SignedTurnResult` has no `Default` and no public constructor. Recorded as such rather than as a survivor.
+
+Also landed here: two stale sentences this session wrote. `governed_turn_result.py` still said §4.10(f)'s
+desktop hop was unbuilt, and the ledger said the declarations file had three `rust_symbols` entries when it
+has six.
+
+bridge **140** (from 95), `brops-core --lib` **376**, `brops --lib` **127**, frontend 69 files / 638.
+`check_reachability`, `check_ai_surfaces`, `check_capabilities`, `check_spec_references` GREEN.
+`governed_verification_unconfigured`, `UpstreamBlockedExecutor` and `connect_broker` byte-identical;
+nothing governed is reachable.
+
+
 ### Both Windows machine-proof harnesses could never PASS (2026-08-10)
 
 The first sweep of the privileged Windows and provisioning crates — `win-live`, `win-broker`, `provision`,

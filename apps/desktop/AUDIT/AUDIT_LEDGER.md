@@ -360,7 +360,7 @@ harnesses now compare, and `-RootKey` is operator-supplied) · `R3 spawn_as.rs:1
 * **`core/src/windows_broker.rs:272` — the entire Windows peer-authorization and image-integrity policy
   layer is unreachable.** Wiring it makes a governed surface reachable, which is forbidden. **But the
   sweep row above that says it is "already declared with written reasons in
-  `config/reachability-declarations.json`" is FALSE** — that file has three `rust_symbols` entries
+  `config/reachability-declarations.json`" is FALSE** — that file has six `rust_symbols` entries (three when this row was written, three more the same day)
   (`pull_output`, `governed_pull_output`, `governed_turn_output_read`) and names no symbol in
   `windows_broker.rs`. By the file's own words the module is in the state it calls the dangerous one:
   "unreachable-AND-undeclared — the state in which nobody can tell which of those it is." Left for the

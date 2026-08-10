@@ -93,11 +93,20 @@
 //!    writing, so treat the citation as of that moment rather than as a permanent fact.)
 //!  * The supervisor serves the reads. That half shipped first.
 //!
-//! **What is missing is the carriage between them.** §4.6's `bridge.governed-turn-result.v1` — the
-//! frame in which the sidecar re-frames a §4.10(e) result for the desktop, and the ONLY thing that
-//! carries `output_stream_id` across the sidecar boundary — has no implementation on either hop: no
-//! producer in `bridge/engine_sidecar.py` and no parser here. So the token exists and cannot arrive,
-//! and a caller written today would have to invent one, which is precisely what §4.10(f) forbids.
+//!  * §4.6's `bridge.governed-turn-result.v1` — the frame in which the sidecar re-frames a §4.10(e)
+//!    result for the desktop, and the ONLY thing that carries `output_stream_id` across the sidecar
+//!    boundary — now exists on BOTH hops (2026-08-10): the re-framer in
+//!    `bridge/governed_turn_result_bridge.py` and the strict parser in
+//!    [`crate::governed_bridge_result`], whose `SignedTurnResult::output_stream_id` is the value
+//!    [`OutputPull::start`] is waiting for.
+//!
+//! **What is missing is one hop further out.** §4.6 is the REPLY to §4.10(g)'s
+//! `bridge.governed-turn-submit.v1`, and §4.10(g) is NOT IMPLEMENTED: there is no submit branch in
+//! `bridge/engine_sidecar.py`'s dispatch and no orchestrator driving §4.10(a0) → §4.10(a)(b)(c) →
+//! §4.10(d) inside one one-shot subprocess, so no sidecar ever holds a §4.10(e) reply to re-frame. The
+//! token exists, the frame that would carry it exists, and nothing invokes the hop that produces one —
+//! so a caller written today would still have to invent a token, which is precisely what §4.10(f)
+//! forbids.
 //!
 //! A second, larger divergence sits behind that one and would survive fixing it: the broker's Linux
 //! execution reads the recorder's output straight off the local filesystem

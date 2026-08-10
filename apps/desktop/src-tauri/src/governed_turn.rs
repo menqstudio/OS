@@ -49,11 +49,14 @@ const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES a
 /// `bridge.governed-turn-output-read.v1` branch (`bridge/engine_sidecar.py`), the loop + reassembly +
 /// §4.6/§7.1 whole-output gate (`brops_core::governed_output_pull`), and the internal
 /// `ai::governed_turn_output_read` / `ai::governed_pull_output` helpers that drive it over a one-shot
-/// sidecar. **Nothing calls them**: the pull needs an `output_stream_id`, and while the §4.10(e)
-/// `signed` frame that mints one now has a supervisor-side producer, §4.6's
+/// sidecar. **Nothing calls them**: the pull needs an `output_stream_id`. The §4.10(e) `signed` frame
+/// that mints one has a supervisor-side producer, and as of 2026-08-10 §4.6's
 /// `bridge.governed-turn-result.v1` — the only frame that carries the token across the sidecar boundary —
-/// has no implementation on either hop. `config/reachability-declarations.json` carries the declaration
-/// and `governed_output_pull`'s module docs carry the reasoning. This command is not where it would start
+/// exists on both hops (`bridge/governed_turn_result_bridge.py`, `brops_core::governed_bridge_result`).
+/// The gap moved one hop further out rather than closing: §4.6 is the REPLY to §4.10(g)'s
+/// `bridge.governed-turn-submit.v1`, which is NOT IMPLEMENTED, so no §4.6 frame is ever produced.
+/// `config/reachability-declarations.json` carries the declarations and `governed_output_pull`'s and
+/// `governed_bridge_result`'s module docs carry the reasoning. This command is not where it would start
 /// either: a thin proxy carrying `{conversation_id, agent?}` never sees a stream token, an envelope or
 /// a receipt id — §7.1 puts the pull in the broker SERVICE, on the far side of this hop.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]

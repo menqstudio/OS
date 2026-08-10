@@ -15,6 +15,7 @@ pub mod broker_turns;
 pub mod broker_orchestrator;
 pub mod governed_verification;
 pub mod governed_output_pull;
+pub mod governed_bridge_result;
 pub mod windows_broker;
 pub mod ipc_framing;
 pub mod real_ids;

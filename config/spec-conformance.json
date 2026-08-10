@@ -277,8 +277,36 @@
       "reason": "Raised from not_implemented when §4.10(e) landed. The §4.5 citations that describe the closed union now describe something real; the citation in `governed_turn_result.py` that names the frame carries the NOT IMPLEMENTED marker."
     },
     "§4.6": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "tests": [
+        "test_the_signed_arm_becomes_the_five_field_outer_object",
+        "test_every_receipt_field_is_copied_byte_for_byte_from_the_supervisors_frame",
+        "test_the_receipt_key_set_is_derived_from_the_engines_not_typed_out",
+        "test_the_capability_token_is_lifted_to_the_top_level_where_the_pull_reads_it",
+        "test_the_refused_arm_relays_the_reason_and_the_receipt_id",
+        "test_every_member_of_the_closed_union_is_reachable_by_name_through_this_hop",
+        "test_a_reason_outside_the_union_never_reaches_the_desktop",
+        "test_the_frozen_schema_rejects_a_governed_frame_on_the_unknown_protocol_key",
+        "test_the_governed_validator_rejects_a_frozen_bridge_result",
+        "test_the_discrimination_is_not_via_envelope_jcs_b64",
+        "test_the_literal_maximum_frame_is_the_number_this_module_publishes",
+        "test_the_carried_and_uncarried_receipt_fields_are_exactly_the_designs_28",
+        "test_status_is_a_homonym_and_the_two_meanings_are_kept_apart",
+        "a_signed_frame_yields_the_decoded_signed_material",
+        "a_refused_frame_is_an_error_so_no_caller_reaches_success_by_forgetting_an_arm",
+        "every_member_of_the_closed_union_is_reachable_by_name",
+        "a_reason_outside_the_closed_union_is_a_malformed_frame_not_a_thirtieth_reason",
+        "a_frozen_bridge_result_is_rejected_and_not_on_envelope_jcs_b64",
+        "each_encoded_byte_cap_is_one_stride_from_refusing",
+        "each_altered_echo_blocks_by_name",
+        "the_echoes_have_no_accessor_so_no_gate_can_be_aimed_at_them",
+        "the_lease_id_is_carried_and_deliberately_unchecked",
+        "the_token_this_frame_carries_is_the_one_the_pull_binds_to_an_envelope",
+        "no_cap_on_this_frames_path_could_fire",
+        "no_framed_ipc_path_in_this_tree_could_carry_this_frame"
+      ],
+      "missing": "TWO gaps, and the first is a DESIGN contradiction rather than an unbuilt piece. (1) §4.6's `receipt` object lists 28 fields; its only producer is the sidecar re-framer and its only input is the §4.10(e) `signed` arm, which supplies 11 of them. Seven of the other 17 - `status`, `exit_code`, `evidence[]` (the frozen `bridge.result.receipt` shape, built from a `SupervisorResult` the governed path never produces) and `challenge_registry_handle`/`_hash`/`_epoch`/`_root_key_id` (resolved by the supervisor 'from its own supervisor state', §4.10(a0), and never returned on any reply the sidecar receives) - have no source anywhere the sidecar can reach, so §4.6 as written is not constructible by its own producer. The implemented frame is the INTERSECTION of §4.6's receipt keys with §4.10(e)'s signed arm; the other 17 are named in `bridge/governed_turn_result_bridge.UNSOURCED_RECEIPT_FIELDS`, and `test_the_carried_and_uncarried_receipt_fields_are_exactly_the_designs_28` asserts the union is exactly §4.6's list, so the gap is machine-checked. It needs an Architect ruling. (2) NOTHING PRODUCES OR CONSUMES THE FRAME IN PRODUCTION. §4.6 is the REPLY to §4.10(g)'s `bridge.governed-turn-submit.v1`, which is NOT IMPLEMENTED - no submit branch in `bridge/engine_sidecar.py`'s `_dispatch`, no orchestrator driving §4.10(a0)/(a)/(b)/(c)/(d) inside one one-shot subprocess - so no sidecar ever holds a §4.10(e) reply to re-frame, and no desktop caller can obtain a §4.6 document to parse. Both Rust entry points and §7.1's echo equality are declared caller-less with written reasons in `config/reachability-declarations.json`. Also NOT created: the schema file §2.2 names, `bridge/contracts/bridge-governed-turn-result.schema.json` - consistent with §4.10(a0)/(e)/(f), none of which has one either; the shape lives in a Python validator and a Rust parser, and the §2.2 disjointness tests run against the REAL frozen `bridge/contracts/bridge-result.schema.json` with `jsonschema`.",
+      "reason": "Raised from unreviewed on 2026-08-10 when the frame was built on BOTH hops: the re-framer in `bridge/governed_turn_result_bridge.py` (which imports §4.10(e)'s field sets, encoded-byte caps and the closed `GOVERNED_REFUSAL_REASONS` union rather than restating any of them, so the §4.10(e) module stays the single definition) and the strict parser in `apps/desktop/src-tauri/core/src/governed_bridge_result.rs`. What holds: the top-level `protocol` const as the ONE discriminator in both directions (never `receipt.envelope_jcs_b64`, which §4.6 warns is a REQUIRED key of the frozen `bridge.result` too, and §2.2's compatibility rule is tested against the real frozen schema); the three biconditionals (`output_stream_id`/`receipt` non-null iff ok==true, `error` non-null iff ok==false), both halves of each; every §4.6 encoded-byte cap with canonical-base64url decoding on all five b64 fields; the closed 29-member refusal union with every member reachable BY NAME on both hops; and §7.1's echo equality against the VERIFIED envelope. What is deliberately absent: any size check (the literal maximum frame is 74206 bytes compact / 74236 as the sidecar writes it, against `ai.rs::MAX_STDOUT_BYTES = 9437184` - a factor of 127, so no cap on the path could fire) and any accessor for the TRANSPORT-ONLY `output_bytes`/`output_sha256` echoes, which are readable ONLY through `check_echoes` so no output gate can be aimed at them."
     },
     "§4.7": {
       "status": "partial",
