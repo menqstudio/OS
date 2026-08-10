@@ -341,7 +341,7 @@ def challenge_handle_for(payload: Mapping[str, Any], sig: str) -> str:
         ``bytes == canonical_bytes({payload, sig})``). The stored document is the signed
         ``{payload, sig}`` envelope (§2.1.1 ``issued_challenge_document``, §6 step-1 publish),
         so under the payload-only form that predicate could never pass for ANY turn.
-      * §4.10(d) (NOT IMPLEMENTED — a later ordered piece) joins the ``INPUTS_READY``
+      * §4.10(d) joins the ``INPUTS_READY``
         staging row to its acceptance row on
         ``(install_id, request_nonce, challenge_handle)``. Two different digests of the same
         turn make that join unsatisfiable.

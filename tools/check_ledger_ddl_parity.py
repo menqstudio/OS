@@ -55,6 +55,14 @@ REQUIRED_CLAUSES = (
     "CREATE TABLE IF NOT EXISTS governed_turn_staging",
     "trg_governed_turn_staging_insert_state",
     "RAISE(ABORT, 'staging row must be created VERIFYING')",
+    # A row born VERIFYING may still have been born with its three `*_handle` columns
+    # already filled: VERIFYING says nothing about them, and pre-set handles that already
+    # equal the committed digests pass the handle-binding trigger on every later UPDATE.
+    # Without this the row could walk to INPUTS_READY having published nothing -- exactly
+    # the "declare the end state, do nothing" hole the SESSION insert trigger closes, and
+    # exactly the state the §4.10(d) evidence-request gate reads as proof of upload.
+    "trg_governed_turn_staging_insert_handles",
+    "RAISE(ABORT, 'staging row must be created with no published input handles')",
     "trg_governed_turn_staging_transition",
     "RAISE(ABORT, 'illegal staging state transition')",
     "trg_governed_turn_staging_immutable_binding",
@@ -70,8 +78,8 @@ REQUIRED_CLAUSES = (
     #   * a published input handle must BE the challenge-committed digest, and
     #     INPUTS_READY cannot be reached until all three are set -- which is what
     #     makes §4.10(d)'s reading of that state true rather than merely asserted
-    #     (§4.10(d) itself is NOT IMPLEMENTED -- a later ordered piece; the DDL simply
-    #     refuses to produce a state it could misread).
+    #     (the gate re-derives none of it; the DDL refuses to produce a state it could
+    #     misread).
     "CREATE TABLE IF NOT EXISTS governed_turn_staging_session",
     "CREATE TABLE IF NOT EXISTS governed_turn_staging_chunk",
     "artifact           TEXT NOT NULL CHECK (artifact IN (",

@@ -179,8 +179,27 @@
       ]
     },
     "§4.10(d)": {
+      "status": "implemented",
+      "reason": "`brops.governed-evidence-request.v1` is served by `engine/runtime/governed_evidence_request.handle_evidence_request`, reached from the supervisor front door for the sidecar principal only (it is the fifth and last name in `SIDECAR_PROTOCOLS`). What is implemented is the PRE-ACCEPTANCE GATE and only that: the peer check, the exhaustive four-field shape, and the join of the request triple to the `INPUTS_READY` `governed_turn_staging` row over its two UNIQUEs. It writes nothing - every statement it issues is a SELECT, asserted through the connection's own trace callback - and mints no `execution_attempt_id`, lease, acceptance row, nonce consume or clock read. All five reasons in the closed refusal set are reachable by name and tested; four of them from a request a hostile sidecar could send, and `session_corrupt` only from already-tampered durable state (the staging root is 0700 supervisor-only), which its test class says in its name. The property the gate READS is enforced by five triggers in the canonical ledger DDL, not in Python; each is proved in isolation with raw SQL. The §5 continuation the gate hands a passing turn to is an INJECTED SEAM: §5 acceptance wiring and the §4.10(e) result frame are later ordered pieces, so no production caller supplies it yet and a supervisor without one refuses every evidence-request `peer_denied`.",
+      "tests": [
+        "test_a_ready_turn_reaches_the_acceptance_continuation",
+        "test_the_gated_turn_is_read_off_the_row_not_off_the_request",
+        "test_the_gate_issues_only_select_statements",
+        "test_a_passing_gate_creates_no_acceptance_row",
+        "test_no_inputs_ready_while_the_row_is_still_uploading",
+        "test_retry_conflict_when_the_nonce_names_a_different_challenge",
+        "test_retry_conflict_when_the_challenge_is_open_under_another_nonce",
+        "test_session_corrupt_when_an_upload_session_is_terminally_corrupt",
+        "test_a_row_cannot_be_inserted_carrying_published_handles",
+        "test_the_gate_never_sees_the_row_that_hole_would_have_produced",
+        "test_inputs_ready_is_unreachable_while_any_handle_is_null",
+        "test_an_over_cap_frame_is_refused_on_the_bytes_that_arrived",
+        "test_a_continuation_answering_in_the_pre_acceptance_namespace_is_a_fault"
+      ]
+    },
+    "§4.10(e)": {
       "status": "not_implemented",
-      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
+      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree produces or consumes `brops.governed-turn-result.v1`: no builder, no schema, no caller. It is cited only where §4.10(d) has to name what the OTHER arm of its reply union is, and every citation is marked NOT IMPLEMENTED."
     },
     "§4.10(f)": {
       "status": "unreviewed",
@@ -206,6 +225,10 @@
     "§4.4": {
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§4.5": {
+      "status": "not_implemented",
+      "reason": "A later ordered piece. `GOVERNED_REFUSAL_REASONS` does not exist as a constant anywhere in this tree; `brops.governed-sign-result.v1` is neither produced nor consumed. It is cited only where §4.10(d)'s closed set has to be compared with it - the two share the literals `malformed` and `retry_conflict`, so the separation is by discriminator, not by value - and every citation is marked NOT IMPLEMENTED."
     },
     "§4.6": {
       "status": "unreviewed",

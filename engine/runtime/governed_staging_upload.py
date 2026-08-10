@@ -21,9 +21,10 @@ Nothing here mints an ``execution_attempt_id``, reads an acceptance clock, consu
 challenge nonce, issues a lease, or creates an acceptance row. Uploading three artifacts
 moves a turn from "admitted to upload" to "its inputs are on disk and match the
 signature". §5 acceptance is a later, separate authority; §4.10(d) — the message that
-consumes an ``INPUTS_READY`` row and asks for execution — is **NOT IMPLEMENTED** in this
-tree and is a separate ordered piece. The reachable end state of everything below is a
-``governed_turn_staging`` row in ``INPUTS_READY`` and three blobs in the store.
+consumes an ``INPUTS_READY`` row and asks for execution — is a separate ordered piece and
+lives in ``governed_evidence_request``, where it only READS this state. The reachable end
+state of everything below is a ``governed_turn_staging`` row in ``INPUTS_READY`` and three
+blobs in the store.
 
 Where the guarantees actually live
 -----------------------------------

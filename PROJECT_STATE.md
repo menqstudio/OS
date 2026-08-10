@@ -8,6 +8,81 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### A row could declare it had uploaded, having published nothing (2026-08-10)
+
+Wave 3b-1B step 3: **§4.10(d), the evidence request**, and nothing past it. §4.10(e), (f) and (h) are
+unbuilt, and §5 acceptance is untouched.
+
+**A real hole, found by building the gate that would have trusted it.** `VERIFYING` said nothing about the
+three `*_handle` columns, and handles that already *equal* the committed digests pass the binding trigger
+on every later UPDATE. So a raw `INSERT` could plant a `VERIFYING` row with all three handles filled, walk
+it `VERIFYING → UPLOADING → INPUTS_READY`, and §4.10(d) would have read it as proof of upload **having
+published nothing**. This is the same "declare the end state, do nothing" hole the *session* insert trigger
+already closed; the turn row never had its counterpart. Closed by
+`trg_governed_turn_staging_insert_handles`; deleting it produces a real admitted-vs-refused divergence and
+two mutants prove it. The parity gate went 40 → 42 clauses.
+
+**The gate re-derives nothing, and the reliance is written down rather than assumed.** It rests on five
+triggers: a row is born `VERIFYING`, is born with no handles, may only move `VERIFYING → UPLOADING →
+INPUTS_READY`, a published handle must EQUAL the challenge-committed digest and is write-once, and
+`INPUTS_READY` is unreachable while any handle is NULL. Every statement the module issues is a `SELECT`,
+proved at runtime with `conn.set_trace_callback` rather than by grepping the source.
+
+**What the schema cannot promise, and is not faked:** that the store still *holds* those bytes. §5 and §6
+re-read them; §4.10(d) has no reason literal for their absence. There is a test named
+`test_the_gate_does_not_and_cannot_prove_the_bytes_are_still_in_the_store` that clears the store and shows
+the gate still admits.
+
+**The design's "disjoint namespace" claim is false about values.** §4.10(h) says the internal producer
+codes are "a **disjoint** namespace from `GOVERNED_REFUSAL_REASONS`, never merged into it". The
+intersection is `{malformed, retry_conflict}` — 2 of §4.10(d)'s 5. The claim holds about the *namespace*
+(§4.10(h) classifies by top-level `protocol`, and the two prefixes are disjoint), not about the values. A
+reader who took it as a claim about values would wrongly conclude that seeing `retry_conflict` on the wire
+identifies which authority produced it. Pinned by a test named for the overlap.
+
+**No handler-level frame cap was added, deliberately.** §4.10(d) says "frame ≤ 4 KiB", but every field is a
+fixed const, a ≤128-char id or 64 hex, so the largest legal request serializes to **426 bytes against 4096
+— 9.6× headroom**. A handler check could never fire; the shape check always refuses first with the same
+verdict. That is the check step 2 deleted rather than shipped, so it was never written here. The front
+door's cap stays, because it sees the raw bytes and *can* fire on whitespace the decoder discards. The
+arithmetic is a test, not a comment.
+
+**Two mutants survived, and both are honest.** Each deletes a clause from
+`check_ledger_ddl_parity.REQUIRED_CLAUSES` *and* from both SQL copies in one edit — a mutant that edits its
+own oracle, which no gate can kill. The fair variants (trigger removed, clause list untouched) are both
+killed. 72 mutants, 70 killed. The first pass found a real gap of the class this repository keeps
+producing: a corrupt-session test used a *ready* turn, which short-circuits before the lookup, so a lookup
+that ignored its argument passed.
+
+**The §5 continuation is a seam with no production supplier, and that is said out loud.** `drive_acceptance`
+is required and nothing supplies it; a supervisor without the service refuses every evidence request
+`peer_denied`. That is the "implemented but nothing calls it" class, named rather than left to read as
+complete.
+
+**Correcting yesterday's entry on `_BOUND_FIELDS`.** The prose said "16 of 24"; it is **15 of 23**. And the
+exploit path was stated too broadly: `reuse_or_prepare` looks the *challenge* up first and returns the
+ORIGINAL row, per §5's rule that a replayed challenge returns the original lease and never mints a second
+attempt — so a replay of the **same** challenge under a rolled-back registry never reaches the field
+comparison at all, and the rolled-back values are never recorded. The comparison is reached by a
+**different** challenge presenting the same nonce, and there the five omitted fields — including the
+anti-rollback `epoch` — did make it answer `Idempotent`. The bug was real; its reach was narrower than
+written. The §5 boundary is now pinned by a test rather than changed.
+
+The Python fix is structural, the analogue of Rust's `derive(PartialEq)`: `_BOUND_FIELDS` is *derived* from
+`NewAcceptance`'s dataclass fields minus the lookup key and the digest-compared payload — 15 → 20 compared
+fields. Two tests hold it to one source, and one of them parses **the INSERT's own column list out of
+`inspect.getsource`**, so the list cannot fall behind the INSERT in either direction. 8 mutants, 8 killed:
+dropping each of the five kills its own named test **and no other**, so none of the five was masked by the
+`lease_payload_sha256` compare — which was the outcome that would have been a finding.
+
+Engine suite **1627 tests OK (43 skipped)**, converged over four runs, from 1551. `check_ledger_ddl_parity`
+(42 clauses), `check_spec_references` (4 implemented / 3 not_implemented / 7 partial / 43 unreviewed),
+`check_reachability` and `check_coordination` GREEN; `tools/` self-tests 418 OK. Every now-stale
+"§4.10(d) is NOT IMPLEMENTED" comment across five pre-existing files was corrected — leaving them would
+have been a lie the gate does not check. Nothing governed is minted; `NothingGovernedIsMintedTests`
+snapshots every row of all seven governed and staging tables across one pass and four refusals.
+
+
 ### An idempotency check that called itself exhaustive over 16 of 24 columns (2026-08-10)
 
 A desktop-surface sweep over the 29 LIVE audit findings that land in `apps/desktop`. Full detail, with the
@@ -20,9 +95,16 @@ The five it never looked at were `challenge_accepted_at_ms` — which §7.1 step
 envelope against — and all four `challenge_registry_*` fields, **including the anti-rollback `epoch`**. So
 a retry re-presenting the same nonce under a **rolled-back registry epoch** was answered `Idempotent`,
 "the same turn". It is now a `#[derive(PartialEq)] struct DurableBinding`, so the field list *is* the
-comparison and cannot drift from it again. **The Python twin `_BOUND_FIELDS` omits exactly the same five
-and is not yet fixed** — it belongs to another agent this round, so the Rust side is currently stricter
-than the Python side, and that asymmetry is recorded rather than left to be discovered.
+comparison and cannot drift from it again. **The Python twin `_BOUND_FIELDS` omitted exactly the same
+five and is now CLOSED** (`engine/runtime/governed_supervisor_ledger.py`): the tuple is derived from
+`NewAcceptance`'s own dataclass fields minus two exclusions named in writing — the identity pair the
+lookup keys on, and the payload blob compared by digest — so the field list IS the comparison there too.
+Two tests hold it to one source: the compared set must equal the declared binding minus those exclusions,
+and the INSERT's own column list, read out of the source, must equal the declared binding plus the four
+columns the supervisor stamps. Each of the five gets its own named test, and dropping any one of them
+from the comparison kills that test and no other (8 mutants, 8 killed) — so none of the five was masked
+by the `lease_payload_sha256` compare. The asymmetry is gone; `reuse_or_prepare`'s challenge-keyed replay
+still returns the ORIGINAL row per §5 and is now pinned by a test that says so.
 
 **A synchronous command could be held for about 11.5 days.** The renderer→broker read had no total budget:
 `SO_RCVTIMEO` restarts per byte, so 8256 bytes at 120 s each is the arithmetic. The fix also moved the loop

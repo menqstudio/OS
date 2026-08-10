@@ -46,7 +46,7 @@ import json
 import os
 import pathlib
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -300,23 +300,35 @@ class NewAcceptance:
     generation_config_handle: str
 
 
+#: The two fields that IDENTIFY the stored row rather than bind it. The collision lookup
+#: below selects ``WHERE install_id = ? AND request_nonce = ?``, so a row that came back
+#: agrees on them by construction; comparing them again would be a check that cannot fail.
+_IDENTITY_FIELDS: Tuple[str, ...] = ("install_id", "request_nonce")
+
+#: Compared by DIGEST, immediately before the loop, because the column holds a BLOB and the
+#: row stores its ``lease_payload_sha256`` beside it. Listing it here keeps it out of the
+#: value-comparison without letting it fall out of the comparison altogether.
+_DIGEST_COMPARED_FIELDS: Tuple[str, ...] = ("lease_payload_bytes",)
+
 #: Every bound field compared when deciding idempotent-retry vs hard conflict.
-_BOUND_FIELDS: Tuple[str, ...] = (
-    "challenge_handle",
-    "run_id",
-    "task_id",
-    "workspace_id",
-    "execution_attempt_id",
-    "lease_id",
-    "lease_issued_at_ms",
-    "lease_expires_at_ms",
-    "receipt_id",
-    "supervisor_id",
-    "requested_at_ms",
-    "request_sha256",
-    "system_handle",
-    "history_handle",
-    "generation_config_handle",
+#:
+#: **DERIVED, not hand-maintained — and that is the fix, not a style choice.** This used to
+#: be a literal 15-name tuple beside an INSERT that bound 23, and the eight-name gap was not
+#: visible from either. Five of the eight were real: ``challenge_accepted_at_ms`` and all
+#: four ``challenge_registry_*``, **including the anti-rollback ``epoch``** — so a retry
+#: re-presenting the same nonce under a ROLLED-BACK registry epoch compared equal on every
+#: field the list happened to name and was answered ``IDEMPOTENT``, "the same turn", instead
+#: of :class:`Conflict`. ``challenge_accepted_at_ms`` matters for the same reason: §7.1 step
+#: 4c binds the signed envelope against it, so two acceptances differing in it are two
+#: different turns however similar the rest looks.
+#:
+#: Deriving the tuple from :class:`NewAcceptance` makes the field list BE the comparison, the
+#: way the Rust twin's ``#[derive(PartialEq)] struct DurableBinding`` does: a field added to
+#: the acceptance binding is compared from the moment it exists, and the only way to exclude
+#: one is to name it above, in writing, next to the reason.
+_BOUND_FIELDS: Tuple[str, ...] = tuple(
+    f.name for f in dataclass_fields(NewAcceptance)
+    if f.name not in _IDENTITY_FIELDS + _DIGEST_COMPARED_FIELDS
 )
 
 CREATED = "created"

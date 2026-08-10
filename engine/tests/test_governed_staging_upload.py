@@ -307,7 +307,8 @@ class NothingGovernedIsMintedTests(_Case):
     def test_the_staging_row_never_leaves_the_pre_accept_lifecycle(self):
         """INPUTS_READY is the furthest an upload can move a turn. There is no edge out of
         it in the §2.4 domain, so no amount of staging traffic can produce an execution
-        right — §4.10(d), which consumes this state, is NOT IMPLEMENTED here."""
+        right — §4.10(d), which consumes this state, is tested in its own file and only
+        ever READS it."""
         for artifact, data in (("system", SYSTEM_BYTES), ("history", HISTORY_BYTES),
                                ("generation_config", GENCFG_BYTES)):
             self.upload(artifact, data)
@@ -1432,8 +1433,8 @@ class SessionDdlTests(_Case):
             "INPUTS_READY")
 
     def test_an_inputs_ready_row_provably_carries_the_challenge_digests(self):
-        """The property §4.10(d) — **NOT IMPLEMENTED** here — will read off this state: it
-        holds because of the two triggers together, not because anything asserted it."""
+        """The property §4.10(d) reads off this state: it holds because of the two triggers
+        together, not because anything asserted it."""
         for artifact, data in (("system", SYSTEM_BYTES), ("history", HISTORY_BYTES),
                                ("generation_config", GENCFG_BYTES)):
             self.upload(artifact, data)
@@ -1455,7 +1456,7 @@ class LedgerContractTests(_Case):
     Each of these was a mutation-test SURVIVOR: the handler checks the same thing first, so
     deleting the ledger's guard changed no wire verdict. They still have to hold, because
     the ledger is also the unit a future caller will use without going through a wire
-    message at all — the §2.4 sweep, a recovery pass, or §4.10(d) (NOT IMPLEMENTED here).
+    message at all — the §2.4 sweep, a recovery pass, or the §4.10(d) gate.
     """
 
     def test_record_chunk_re_checks_the_cursor_inside_its_own_transaction(self):
@@ -1677,11 +1678,15 @@ class FrontDoorTests(_Case):
         # …and the compact form of the same request is served normally.
         self.assertEqual(self.serve(body)["status"], "published")
 
-    def test_the_sidecar_protocol_set_is_exactly_four_names(self):
+    def test_the_sidecar_protocol_set_is_exactly_five_names(self):
+        """The sidecar's whole grant, written out. It was four names while staging was the
+        end of the road; §4.10(d) adds the execute/finalize trigger and nothing else, and
+        this test is the reason widening the door has to be a deliberate edit."""
         self.assertEqual(
             sorted(gss.SIDECAR_PROTOCOLS),
             sorted(["brops.governed-turn-open.v1", "brops.governed-staging-open.v1",
-                    "brops.governed-staging-chunk.v1", "brops.governed-staging-final.v1"]))
+                    "brops.governed-staging-chunk.v1", "brops.governed-staging-final.v1",
+                    "brops.governed-evidence-request.v1"]))
 
 
 # ---------------------------------------------------------------------------

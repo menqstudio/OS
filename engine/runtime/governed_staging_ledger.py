@@ -82,8 +82,8 @@ UPLOADING = "UPLOADING"
 #: Reached only by §4.10(c), and only through the DDL: a trigger refuses the state unless
 #: all three handles are set, and another refuses any handle that is not the digest the
 #: signed challenge committed to. So the reading §4.10(d) will place on this state is a
-#: property of the row rather than a claim about it. §4.10(d) itself — the message that
-#: consumes it — is NOT IMPLEMENTED here; it is a separate ordered piece.
+#: property of the row rather than a claim about it. §4.10(d) — the message that consumes
+#: it — reads exactly that property in ``governed_evidence_request``; it re-derives nothing.
 INPUTS_READY = "INPUTS_READY"
 
 #: The closed domain the ``state`` column may hold — identical to the SQL CHECK. A stored
@@ -681,10 +681,9 @@ def finalize_session(conn: sqlite3.Connection, staging_session_id: str, handle: 
     Two DDL rules do the load-bearing work and are relied on rather than restated: the
     handle written onto the staging row must EQUAL the digest the signed challenge
     committed to for that artifact, and ``INPUTS_READY`` cannot be reached until all three
-    handles are set. So the state §4.10(d) (NOT IMPLEMENTED — a later ordered piece; nothing
-    in this tree consumes an ``INPUTS_READY`` row) will read as "every declared input exists
-    and re-hashes to the challenge's committed digest" is true of the row by construction,
-    not because this function was careful.
+    handles are set. So the state §4.10(d) reads as "every declared input exists and
+    re-hashes to the challenge's committed digest" is true of the row by construction, not
+    because this function was careful.
     """
     if not _is_lower_sha256_hex(handle):
         raise LedgerError("published handle must be lowercase 64-hex")

@@ -247,6 +247,26 @@ BEGIN
     SELECT RAISE(ABORT, 'staging row must be created VERIFYING');
 END;
 
+-- ...and it may only ENTER the world having published NOTHING. The state trigger above
+-- forces the row to start at VERIFYING, but VERIFYING says nothing about the three
+-- `*_handle` columns, and an INSERT that pre-set them to the committed digests could then
+-- walk VERIFYING -> UPLOADING -> INPUTS_READY without a single artifact ever being
+-- assembled, re-hashed or published: the handle-binding trigger below only compares a
+-- handle to its committed digest, and pre-set handles that already agree pass it. That is
+-- the same "declare the end state, do nothing" hole the SESSION insert trigger closes by
+-- forcing a session to be born empty, and it matters here for the same reason: §4.10(d)
+-- reads INPUTS_READY as "every declared input was published and re-hashed", so the ONLY
+-- way a handle may appear on this row is the §4.10(c) UPDATE that records one.
+CREATE TRIGGER IF NOT EXISTS trg_governed_turn_staging_insert_handles
+BEFORE INSERT ON governed_turn_staging
+FOR EACH ROW
+WHEN NEW.system_handle IS NOT NULL
+  OR NEW.history_handle IS NOT NULL
+  OR NEW.generation_config_handle IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'staging row must be created with no published input handles');
+END;
+
 -- CHECK cannot see OLD.state, so the §2.4 ordering VERIFYING -> UPLOADING -> INPUTS_READY
 -- is enforced by a BEFORE-UPDATE trigger, exactly as the acceptance lifecycle above. A
 -- same-state write (recording a published `*_handle`) is allowed; every cross-state edge

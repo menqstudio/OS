@@ -163,6 +163,115 @@ class AcceptanceCasTests(unittest.TestCase):
             gsl.accept_prepare(conn, _acceptance("att-2", receipt_id="receipt-att-1"), 20)
 
 
+class BoundFieldComparisonTests(unittest.TestCase):
+    """The retry comparison must cover EVERY field the acceptance INSERT binds.
+
+    It did not. ``_BOUND_FIELDS`` was a hand-written 15-name tuple beside an INSERT that
+    bound 23, and nothing in either could show the gap. Five of the eight missing names were
+    load-bearing: ``challenge_accepted_at_ms`` and all four ``challenge_registry_*``,
+    **including the anti-rollback ``epoch``**. A retry re-presenting the same nonce under a
+    ROLLED-BACK registry epoch therefore compared equal on everything the list happened to
+    name and came back ``IDEMPOTENT`` — "the same turn" — instead of :class:`Conflict`.
+
+    Each of the five gets its own test below, differing from the accepted row in exactly ONE
+    field, so a comparison that stops covering that field goes red for that field and not
+    for a neighbour's. The two structural tests then make the list itself unable to fall
+    behind the INSERT again, which is the defect underneath the five.
+    """
+
+    def rebind(self, **over):
+        conn = _conn()
+        gsl.accept_prepare(conn, _acceptance(), 10)
+        with self.assertRaises(gsl.Conflict):
+            gsl.accept_prepare(conn, _acceptance(**over), 20)
+        # ...and no second attempt was created by the refusal.
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 1)
+
+    def test_a_retry_under_a_rolled_back_registry_epoch_is_a_conflict(self):
+        """The anti-rollback field. An accepted turn was judged under epoch 7; the same
+        nonce coming back under epoch 6 is a DIFFERENT registry making the same claim."""
+        self.rebind(challenge_registry_epoch=6)
+
+    def test_a_retry_under_a_different_registry_handle_is_a_conflict(self):
+        self.rebind(challenge_registry_handle="reg-h-2")
+
+    def test_a_retry_under_a_different_registry_hash_is_a_conflict(self):
+        self.rebind(challenge_registry_hash="reg-hash-2")
+
+    def test_a_retry_under_a_different_registry_root_key_is_a_conflict(self):
+        self.rebind(challenge_registry_root_key_id="root-2")
+
+    def test_a_retry_with_a_different_acceptance_time_is_a_conflict(self):
+        """§7.1 step 4c binds the signed envelope against ``challenge_accepted_at_ms``, so
+        two acceptances that disagree on it are two turns however alike the rest looks."""
+        self.rebind(challenge_accepted_at_ms=1_000_001)
+
+    # ---- the list cannot fall behind the INSERT again --------------------------
+    def test_the_compared_set_is_derived_from_the_binding_itself(self):
+        """Not "the list currently contains these names" — that is the assertion that let
+        the gap open. The compared set must BE the acceptance binding minus the two names
+        excluded in writing, so a field added to ``NewAcceptance`` is compared from the
+        moment it exists."""
+        import dataclasses
+        declared = [f.name for f in dataclasses.fields(gsl.NewAcceptance)]
+        excluded = set(gsl._IDENTITY_FIELDS) | set(gsl._DIGEST_COMPARED_FIELDS)
+        self.assertEqual(list(gsl._BOUND_FIELDS),
+                         [n for n in declared if n not in excluded])
+        self.assertTrue(excluded.issubset(set(declared)))
+        # Every excluded name is still checked, just not by value: the two identity fields
+        # are the lookup key, and the payload blob is compared through its digest.
+        self.assertEqual(set(gsl._IDENTITY_FIELDS), {"install_id", "request_nonce"})
+        self.assertEqual(set(gsl._DIGEST_COMPARED_FIELDS), {"lease_payload_bytes"})
+
+    def test_every_column_the_insert_binds_comes_from_the_acceptance_binding(self):
+        """The other half. A derived list still drifts if the INSERT grows a column the
+        dataclass does not have, so the INSERT's own column list is read out of the source
+        and held against the binding. The four names the supervisor stamps rather than binds
+        are enumerated here, and nothing else may appear."""
+        import dataclasses
+        import inspect
+        import re
+
+        source = re.sub(r"\s+", " ", inspect.getsource(gsl._prepare_locked).replace('"', ""))
+        match = re.search(
+            r"INSERT INTO governed_turn_acceptance \(([^)]*)\) VALUES", source)
+        self.assertIsNotNone(match, "the acceptance INSERT could not be located")
+        columns = {c.strip() for c in match.group(1).split(",") if c.strip()}
+
+        #: Stamped by the supervisor at insert time or derived from a bound field; not part
+        #: of the caller-visible binding, so not fields of `NewAcceptance`.
+        stamped = {"lease_payload_sha256", "state", "created_at_ms", "updated_at_ms"}
+        declared = {f.name for f in dataclasses.fields(gsl.NewAcceptance)}
+
+        self.assertEqual(columns - stamped, declared)
+        self.assertEqual(columns & stamped, stamped)
+        # And the compared set plus the two written-down exclusions accounts for all of it.
+        self.assertEqual(
+            set(gsl._BOUND_FIELDS) | set(gsl._IDENTITY_FIELDS)
+            | set(gsl._DIGEST_COMPARED_FIELDS),
+            declared)
+
+    def test_a_replayed_challenge_still_returns_the_original_row(self):
+        """The boundary between the two entry points, pinned rather than assumed.
+        ``reuse_or_prepare`` looks the CHALLENGE up first and returns the ORIGINAL row, per
+        §5 ("a replayed challenge returns the ORIGINAL lease; it never mints a second
+        attempt"), so a rolled-back-registry replay of the same challenge does not reach the
+        field comparison at all — it is answered with what was accepted the first time, and
+        the rolled-back values are never recorded. The comparison above governs
+        ``accept_prepare``, the nonce-keyed path."""
+        conn = _conn()
+        outcome, first = gsl.reuse_or_prepare(conn, _acceptance(), 10)
+        self.assertEqual(outcome, gsl.CREATED)
+        outcome, again = gsl.reuse_or_prepare(
+            conn, _acceptance(challenge_registry_epoch=6), 20)
+        self.assertEqual(outcome, gsl.IDEMPOTENT)
+        self.assertEqual(again["challenge_registry_epoch"], 7)
+        self.assertEqual(again["execution_attempt_id"], first["execution_attempt_id"])
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 1)
+
+
 class ReuseOrPrepareTests(unittest.TestCase):
     """The front-door operation: accept a challenge ONCE, tolerate an honest retry."""
 
