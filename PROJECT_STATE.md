@@ -8,6 +8,85 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The seam that had been left unwired five times (2026-08-10)
+
+`drive_acceptance` has a production supplier: `governed_acceptance.AcceptanceDriver`. It is a **client** of
+the §5 ladder, not a second implementation — `accept_open`, `reuse_or_prepare`, `mark_lease_ready`,
+`gate_and_start`, `mark_executing`, `record_completion`, `load_attestation_state` and
+`build_run_attestation` are all called, and `complete-run`'s body was **extracted** into one shared
+`complete_governed_run` rather than copied, so the broker op and the §4.10(d) driver cannot disagree about
+what a completed run is.
+
+The three things only §5 may do, each with the clause that authorises it: `execution_attempt_id` is minted
+exactly once at the step-4 CAS (§4.10(d) *"the supervisor reserves it, §5"*; §5 step 4; §6.1 step 3); the
+acceptance clock is read exactly once at step 2 and is the same frozen instant the step-3 predicate is
+evaluated at, tested with a *moving* clock; and the supervisor-side nonce consume is that same CAS, through
+`UNIQUE (install_id, request_nonce)`.
+
+**§5 step 3 is real, not restated.** A fresh registry re-resolve rather than the open-time snapshot, key
+validity **as of `challenge_accepted_at_ms`** rather than as of issue, and the acceptance-time registry
+epoch/handle/hash bound into the row instead of the deployment constant the shipped config carried. A key
+revoked strictly *between* open and acceptance is admitted by §4.10(a0)'s preliminary check and refused
+here — which is the entire reason §5 step 3 exists as a separate predicate.
+
+**The arithmetic found a bound that binds.** §4.6 freezes `envelope_jcs_b64 ≤ 2848` as a machine-checked
+derivation, and for the 23-key §4.9 payload this tree's signer actually builds, that derivation is
+**wrong**: nine of its string fields are ids capped at 128, and at 125 characters each the encoding is
+**2852** — **2888** at the cap, 40 over. It is refused as a governed `oversize` verdict rather than left to
+fault the frame validator, and the boundary is tested at 124/125. The attestation limb is 4032 against 4664
+and got **no** check — the fourth ordered piece in a row to decline one the numbers proved unreachable.
+
+**Three design-vs-tree disagreements, recorded rather than papered over.**
+1. **§5 step 6's lease is never signed.** §3 and Appendix B require
+   `lease_handle = SHA256(JCS({payload, signature}))` under a lease-issuer key, and **no lease-issuer key
+   exists anywhere in the tree**; the shipped `accept-open` records `SHA256(JCS(payload))`. This is the
+   *same* contradiction the 2026-08-10 CORRECTION closed for `challenge_handle`, still open for
+   `lease_handle`. A second, different handle was deliberately **not** computed: two accounts of one field
+   is worse than one wrong account.
+2. **There is no supervisor→signer transport.** `isolated_signer_server.peer_is_broker` allowlists only the
+   broker uid; the supervisor is a different principal. The allowlist was **not** widened. §6.1 steps 11–12
+   are a typed seam against the signer's own frozen contract, and an unreachable signer raises rather than
+   inventing a verdict — §4.10(e) publishes no reason for *"the supervisor could not obtain its own
+   signature."*
+3. The shipped signer's evidence and envelope shapes differ from §4.4/§4.9 as written (`builder_id` is
+   present where §4.4 says there is none; several §4.4 fields are absent). Pre-existing, untouched.
+
+**82 mutants, 81 killed, and the survivor is equivalent** — two reads of one column, which no test can
+separate. Mutation found **four real defects in the new work**: a dead field carried out of the extraction;
+an unreachable state guard, deleted in favour of an exhaustiveness test that *can* fail; a check masked by
+its neighbour, because every test used a reply that never reached it; and **two tests that passed for the
+wrong reason** — one was actually proving the isolated signer's timestamp check rather than the acceptance
+predicate, and one was producing `containment_missing` from the signer because the test had deleted the
+blob. It also found **three of the agent's own mutants were worthless** (a no-op insertion, a `{} or {...}`
+that evaluates to the dict, and two variants masked by the next check) and replaced them.
+
+**Eighteen members of `GOVERNED_REFUSAL_REASONS` now have a producer that reaches §4.10(e)**, each with a
+test that produces it, and a test pins that set against the source so the comment claiming it cannot drift.
+Four are marked as reachable only from tampered durable state or a faulty store.
+
+**Nothing governed is wired.** `run_supervisor.py` constructs no sidecar service and a test asserts it; the
+shipped execution binding is `RefusingExecutor`, which refuses `platform_unsupported` **pre-record** — no
+row, no lease, no nonce consumed, so the challenge survives; and
+`governed_verification_unconfigured`, `UpstreamBlockedExecutor` and `connect_broker` are byte-identical.
+
+**A test of mine broke and is fixed here.** `test_the_section_survives_empty_so_the_next_symbol_has_somewhere_to_go`
+asserted that `rust_symbols` stays empty — but the section was kept empty *so that the next symbol would
+have somewhere to go*, and later the same day one arrived: §4.10(f)'s desktop hop, correctly declared. The
+assertion turned a correct declaration into a red gate. Narrowed to the two things worth protecting: the
+deleted ladder's names must never return, and no entry may name a file that is not there. Mutation-proved
+by adding a declaration for a non-existent file — killed.
+
+Engine suite **1878 tests OK (43 skipped)**, converged over five runs, from 1789. `tools/` self-tests
+**419 OK**. `check_ledger_ddl_parity` (53 clauses, unchanged — §5 needed no new DDL),
+`check_spec_references`, `check_reachability`, `check_coordination`, `check_roadmap_order` GREEN.
+
+**Two hazards worth keeping.** `pathlib.write_text` on Windows converts LF to CRLF, and five files were
+silently rewritten before it was caught — check `git diff` for whitespace damage after any Python-driven
+edit here. And never run two mutation harnesses concurrently: one backgrounded run overlapped a foreground
+one and left a mutant in the tree; caught by an integrity sweep, restored, and every suite re-run
+sequentially afterwards.
+
+
 ### The pull is built on both hops and the broker still reads the disk (2026-08-10)
 
 **§4.10(f)'s DESKTOP hop — built, tested, and NOT WIRED, which is stated rather than implied.** A

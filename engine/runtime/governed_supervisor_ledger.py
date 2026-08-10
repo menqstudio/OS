@@ -1041,6 +1041,23 @@ def load_attestation_state(conn: sqlite3.Connection, run_id: str,
     )
 
 
+def load_acceptance_by_challenge(conn: sqlite3.Connection,
+                                 challenge_handle: str) -> Optional[sqlite3.Row]:
+    """The acceptance row for a CHALLENGE, or ``None`` — the key §4.10(d) arrives holding.
+
+    A sibling of :func:`load_acceptance` rather than a second query shape: the trigger
+    message carries ``(install_id, request_nonce, challenge_handle)`` and no
+    ``execution_attempt_id`` (§4.10(d) mints none), so the only durable key it can look an
+    attempt up by is the challenge's content address. ``UNIQUE (challenge_handle)`` makes
+    that at most one row, which is what lets a replayed trigger find the ORIGINAL attempt
+    instead of starting a second one.
+    """
+    return conn.execute(
+        "SELECT * FROM governed_turn_acceptance WHERE challenge_handle = ?",
+        (challenge_handle,),
+    ).fetchone()
+
+
 def load_lease(conn: sqlite3.Connection, execution_attempt_id: str) -> Optional[sqlite3.Row]:
     """The durable lease bindings for an attempt (used to re-return the SAME lease on an
     idempotent ``accept-open`` retry rather than minting a second one)."""
@@ -1072,6 +1089,7 @@ __all__ = [
     "Conflict", "Corrupt", "EvidenceFork", "IllegalTransition", "InvalidHead",
     "LedgerError", "NotFound", "StaleEvidence",
     "accept_prepare", "advance", "apply_schema", "canonical_bytes", "gate_and_start",
+    "load_acceptance_by_challenge",
     "lease_launch_gate", "load_attestation_state", "load_lease", "load_lease_by_nonce",
     "mark_executing", "mark_lease_ready", "open_ledger", "record_completion",
     "reuse_or_prepare", "validate_completion_facts",

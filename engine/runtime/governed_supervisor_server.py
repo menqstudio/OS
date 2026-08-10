@@ -51,6 +51,7 @@ import json
 import socket
 import struct
 import sys
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
 import governed_output_stream as output_streams
@@ -658,6 +659,134 @@ def _op_execution_started(request, conn, clock_ms):
     return {"ok": True, "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt}
 
 
+class CompletionRefused(ServerError):
+    """A completion the supervisor will not record, carrying the typed wire reason.
+
+    It exists because :func:`complete_governed_run` is shared by TWO callers with different
+    reply shapes — the broker's ``complete-run`` op, which answers an ``ok:false`` frame, and
+    the §4.10(d) acceptance driver, which answers a §4.10(e) ``refused`` verdict. Neither can
+    build the other's reply, so the shared body raises the REASON and each caller renders it.
+    A ledger fault is NOT wrapped in this: :class:`governed_supervisor_ledger.LedgerError`
+    already carries its own typed classification and both callers map it themselves.
+    """
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__("%s: %s" % (reason, detail))
+        self.reason = reason
+        self.detail = detail
+
+
+@dataclass(frozen=True)
+class CompletedRun:
+    """What recording one completion produced.
+
+    It deliberately does NOT carry the ``governed_output_streams`` row. One was carried out
+    of here and mutation testing found nothing that read it: the §4.10(d) driver needs that
+    row on BOTH its paths — a fresh completion and a ``COMPLETED`` retry, which has no
+    ``CompletedRun`` at all — so it reads it once, from
+    ``governed_output_stream.load_stream_for_attempt``. Two sources for one row is two things
+    that can disagree; this is the one that could be deleted, so it was.
+    """
+
+    produced: Dict[str, Any]
+    derived: Dict[str, Any]
+    recorded: str
+    stream_outcome: str
+
+
+def complete_governed_run(conn: Any, row: Any, produced_request: Any,
+                          clock_ms: Callable[[], int], *,
+                          publish_artifact: Callable[[bytes], str],
+                          read_run_evidence: Callable[[str], Optional[bytes]],
+                          output_read_service: Optional[OutputReadService]) -> CompletedRun:
+    """The §5 ``complete-run`` body: derive, publish, record write-once, mint the stream.
+
+    Extracted from ``_op_complete_run`` when §4.10(d) gained a production supplier, because
+    that supplier walks the SAME durable attempt through the SAME completion and a second
+    implementation of this sequence would be two supervisors disagreeing about what a
+    completed run is. The op keeps the wire marshalling; this owns the decision.
+
+    Raises :class:`CompletionRefused` (a typed refusal each caller renders in its own
+    vocabulary) or a :class:`governed_supervisor_ledger.LedgerError` subclass. It never
+    returns a partial completion.
+    """
+    attempt = row["execution_attempt_id"]
+    produced = ledger.validate_completion_facts(produced_request)
+
+    # (audit F-01) Read the RECORDER's evidence chain for this attempt — from a directory only
+    # the recorder can write, never from the wire and never from the content-addressed store,
+    # because a store handle the caller names addresses bytes the caller can also have written.
+    # This is the first point in the protocol where the supervisor looks at something the
+    # executing chain did not choose. It yields the evidence head, and it refuses outright if the
+    # reply digest the completion reports is not the digest the recorder actually captured.
+    try:
+        chain_bytes = read_run_evidence(attempt)
+    except Exception as exc:
+        raise CompletionRefused(REFUSE_MALFORMED_STATE,
+                                "could not read the run evidence chain: %s" % exc)
+    if not chain_bytes:
+        raise CompletionRefused(REFUSE_MALFORMED_STATE,
+                                "no run evidence chain for attempt %r; a run whose execution the "
+                                "supervisor cannot observe must not be recorded" % (attempt,))
+    try:
+        evidence = ledger.derive_evidence_from_chain(chain_bytes, produced["output_handle"])
+    except ledger.EvidenceMismatch as exc:
+        raise CompletionRefused(REFUSE_EVIDENCE_MISMATCH, str(exc))
+
+    # F-02: the supervisor BUILDS its terminal artifacts from its own rows and publishes them
+    # to the protected store, then names their content addresses in the evidence. These were
+    # deployment-static constants the broker copied out of a world-readable config, which made
+    # the isolated signer's protected-chain check a tautology over bytes anyone had written once.
+    try:
+        derived = dict(evidence)
+        derived.update({
+            "lease_handle": publish_artifact(bytes(row["lease_payload_bytes"])),
+            "record_handle": publish_artifact(build_terminal_record(row, produced)),
+            "execution_receipt_handle": publish_artifact(build_execution_receipt(row, produced)),
+        })
+    except Exception as exc:  # a store failure must refuse the completion, never fake a handle
+        raise CompletionRefused(REFUSE_MALFORMED_STATE,
+                                "could not publish terminal artifacts: %s" % exc)
+
+    outcome = ledger.record_completion(conn, attempt, produced_request, clock_ms(),
+                                       derived=derived)
+
+    # §4.10(f): the output stream is "durably committed BEFORE the §4.10(e) result summary is
+    # returned", and "a completing turn's stream is ALWAYS created". This is that mint, and it
+    # runs AFTER the completion rather than before it on purpose: the completion is the fact
+    # that decides whether an egress is owed, so minting first would be able to leave a stream
+    # bound to an attempt whose completion the ledger then refused. Both halves are idempotent
+    # — `record_completion` on its write-once PK, `mint_stream` on `UNIQUE(execution_attempt_
+    # id)` — so a failure here is resolved by re-sending the byte-identical `complete-run`,
+    # which re-reads the completion and re-attempts only the missing mint.
+    #
+    # `output_bytes` is MEASURED from the stored artifact, never reported: `produced` carries
+    # `{output_handle, containment_evidence_handle, completed_at_ms}` and admits nothing else
+    # (audit F-01), and the store re-verifies `sha256(bytes) == handle` as it reads. So the
+    # length bound into the row is the length of bytes that content-address to the digest the
+    # recorder's own evidence chain committed to.
+    stream_outcome = "unconfigured"
+    if output_read_service is not None:
+        try:
+            output_bytes = output_read_service.measure_output(produced["output_handle"])
+        except SupervisorError as exc:
+            raise CompletionRefused(REFUSE_MALFORMED_STATE,
+                                    "could not mint the output stream: %s" % exc)
+        stream_outcome, _row = output_read_service.mint_for_completion(
+            conn,
+            output_streams.NewStream(
+                install_id=row["install_id"],
+                receipt_id=row["receipt_id"],
+                execution_attempt_id=attempt,
+                output_handle=produced["output_handle"],
+                output_bytes=output_bytes,
+            ),
+            clock_ms(),
+        )
+    return CompletedRun(produced=produced, derived=derived, recorded=outcome,
+                        stream_outcome=stream_outcome)
+
+
 def _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidence,
                      output_read_service=None):
     _require_exact_fields(request, OP_COMPLETE_RUN, ("execution_attempt_id", "produced"))
@@ -678,89 +807,18 @@ def _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidenc
         return _refusal(OP_COMPLETE_RUN, REFUSE_UNKNOWN_ATTEMPT,
                         "no acceptance row for attempt %r" % (attempt,))
     try:
-        produced = ledger.validate_completion_facts(request["produced"])
+        completed = complete_governed_run(
+            conn, row, request["produced"], clock_ms,
+            publish_artifact=publish_artifact,
+            read_run_evidence=read_run_evidence,
+            output_read_service=output_read_service,
+        )
+    except CompletionRefused as exc:
+        return _refusal(OP_COMPLETE_RUN, exc.reason, exc.detail)
     except ledger.LedgerError as exc:
         return _ledger_refusal(OP_COMPLETE_RUN, exc)
-
-    # (audit F-01) Read the RECORDER's evidence chain for this attempt — from a directory only
-    # the recorder can write, never from the wire and never from the content-addressed store,
-    # because a store handle the caller names addresses bytes the caller can also have written.
-    # This is the first point in the protocol where the supervisor looks at something the
-    # executing chain did not choose. It yields the evidence head, and it refuses outright if the
-    # reply digest the completion reports is not the digest the recorder actually captured.
-    try:
-        chain_bytes = read_run_evidence(attempt)
-    except Exception as exc:
-        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
-                        "could not read the run evidence chain: %s" % exc)
-    if not chain_bytes:
-        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
-                        "no run evidence chain for attempt %r; a run whose execution the "
-                        "supervisor cannot observe must not be recorded" % (attempt,))
-    try:
-        evidence = ledger.derive_evidence_from_chain(chain_bytes, produced["output_handle"])
-    except ledger.EvidenceMismatch as exc:
-        return _refusal(OP_COMPLETE_RUN, REFUSE_EVIDENCE_MISMATCH, str(exc))
-    except ledger.LedgerError as exc:
-        return _ledger_refusal(OP_COMPLETE_RUN, exc)
-
-    # F-02: the supervisor BUILDS its terminal artifacts from its own rows and publishes them
-    # to the protected store, then names their content addresses in the evidence. These were
-    # deployment-static constants the broker copied out of a world-readable config, which made
-    # the isolated signer's protected-chain check a tautology over bytes anyone had written once.
-    try:
-        derived = dict(evidence)
-        derived.update({
-            "lease_handle": publish_artifact(bytes(row["lease_payload_bytes"])),
-            "record_handle": publish_artifact(build_terminal_record(row, produced)),
-            "execution_receipt_handle": publish_artifact(build_execution_receipt(row, produced)),
-        })
-    except Exception as exc:  # a store failure must refuse the completion, never fake a handle
-        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
-                        "could not publish terminal artifacts: %s" % exc)
-
-    try:
-        outcome = ledger.record_completion(conn, attempt, request["produced"], clock_ms(),
-                                           derived=derived)
-    except ledger.LedgerError as exc:
-        return _ledger_refusal(OP_COMPLETE_RUN, exc)
-
-    # §4.10(f): the output stream is "durably committed BEFORE the §4.10(e) result summary is
-    # returned", and "a completing turn's stream is ALWAYS created". This is that mint, and it
-    # runs AFTER the completion rather than before it on purpose: the completion is the fact
-    # that decides whether an egress is owed, so minting first would be able to leave a stream
-    # bound to an attempt whose completion the ledger then refused. Both halves are idempotent
-    # — `record_completion` on its write-once PK, `mint_stream` on `UNIQUE(execution_attempt_
-    # id)` — so a failure here is resolved by re-sending the byte-identical `complete-run`,
-    # which re-reads the completion and re-attempts only the missing mint.
-    #
-    # `output_bytes` is MEASURED from the stored artifact, never reported: `produced` carries
-    # `{output_handle, containment_evidence_handle, completed_at_ms}` and admits nothing else
-    # (audit F-01), and the store re-verifies `sha256(bytes) == handle` as it reads. So the
-    # length bound into the row is the length of bytes that content-address to the digest the
-    # recorder's own evidence chain committed to.
-    stream_outcome = "unconfigured"
-    if output_read_service is not None:
-        try:
-            output_bytes = output_read_service.measure_output(produced["output_handle"])
-            stream_outcome, _row = output_read_service.mint_for_completion(
-                conn,
-                output_streams.NewStream(
-                    install_id=row["install_id"],
-                    receipt_id=row["receipt_id"],
-                    execution_attempt_id=attempt,
-                    output_handle=produced["output_handle"],
-                    output_bytes=output_bytes,
-                ),
-                clock_ms(),
-            )
-        except ledger.LedgerError as exc:
-            return _ledger_refusal(OP_COMPLETE_RUN, exc)
-        except SupervisorError as exc:
-            return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
-                            "could not mint the output stream: %s" % exc)
     return {"ok": True, "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
-            "recorded": outcome, "output_stream": stream_outcome}
+            "recorded": completed.recorded, "output_stream": completed.stream_outcome}
 
 
 def _op_attest_run(request, config, conn, sign_attestation, supervisor_attestation_key_id):
@@ -1071,6 +1129,9 @@ def accept_socket_conn(listener: "socket.socket") -> SocketPeerConn:
 # ``default_recompute_request_sha256`` is re-exported as the natural default
 # binding seam for a real deployment (the supervisor's OWN canonical recompute).
 __all__ = [
+    "CompletedRun",
+    "CompletionRefused",
+    "complete_governed_run",
     "LENGTH_PREFIX_BYTES",
     "MAX_FRAME_BYTES",
     "MAX_SIDECAR_FRAME_BYTES",

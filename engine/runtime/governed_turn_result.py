@@ -213,9 +213,16 @@ RATIFIED_REFUSAL_REASONS: Tuple[str, ...] = (
     "malformed",
 )
 
-#: The seventeen governed additions (§4.5, P1-4). Every one of them is produced by a §5/§7
-#: gate that is **NOT IMPLEMENTED** in this tree — §4.10(e) transports the verdict, it does
-#: not decide it — so this tuple is the vocabulary, not the vocabulary's users.
+#: The seventeen governed additions (§4.5, P1-4). §4.10(e) transports these verdicts; it
+#: does not decide any of them, so this tuple is the vocabulary and not its users. The
+#: DECIDING gates live in §5 acceptance (``governed_acceptance.AcceptanceDriver``, landed
+#: 2026-08-10) and in §7 verification (``isolated_signer``). Ten of the seventeen are
+#: produced by name there — ``challenge_replay``, ``acceptance_conflict``,
+#: ``lease_not_ready``, ``evidence_fork``, ``stale_evidence``, ``lease_expired``,
+#: ``challenge_invalidated``, ``stream_unknown``, ``model_profile_unknown`` and
+#: ``platform_unsupported``; the remaining seven (``output_oversize``, ``output_timeout``,
+#: ``retry_conflict``, ``stream_expired``, ``stream_binding_mismatch``, ``seq_out_of_range``,
+#: ``tcb_integrity_violation``) still have no producer that reaches THIS frame.
 GOVERNED_ADDED_REFUSAL_REASONS: Tuple[str, ...] = (
     "challenge_replay",
     "acceptance_conflict",

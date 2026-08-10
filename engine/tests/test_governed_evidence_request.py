@@ -22,8 +22,12 @@ The tests are organized as the design's own obligations:
     assumed;
   * the §4.10(f) output pull landed on 2026-08-10 (the SUPERVISOR hop; the desktop hop is
     still unbuilt) and is not this gate's business either way. The §5
-    continuation is a test double throughout: §5 acceptance has no production supplier, so
-    what is asserted about it is the CONTRACT it is held to — it must answer in §4.10(e)'s
+    continuation is a test double throughout. §5 acceptance DOES have a production supplier
+    (`governed_acceptance.AcceptanceDriver`, and `test_governed_acceptance.py` drives it
+    through this very gate); it is doubled HERE on purpose, because this file's subject is
+    the gate and a test that ran the real ladder could not tell a gate failure from an
+    acceptance failure. What is asserted about the seam is the CONTRACT it is held to — it
+    must answer in §4.10(e)'s
     `brops.governed-turn-result.v1` union, this module cannot impersonate it, and it
     cannot impersonate this module.
 """
@@ -84,8 +88,9 @@ class _Store:
         return handle
 
 
-#: What the §5 continuation answers with. §5 acceptance is **NOT IMPLEMENTED** — a later
-#: ordered piece with no production supplier — but §4.10(e) now exists, and §4.10(d) says
+#: What the §5 continuation answers with. The real supplier lives in
+#: `governed_acceptance` and is exercised in `test_governed_acceptance.py`; here it is a
+#: double, and §4.10(d) says
 #: that once an acceptance row exists "the acceptance/signer verdict is
 #: `brops.governed-turn-result.v1`". So the double answers a REAL §4.10(e) frame, BUILT by
 #: that module rather than written out here: this file is still not the place a §4.10(e)
@@ -102,9 +107,10 @@ CONTINUATION_REPLY = gtr.turn_result_refused("lease_not_ready")
 class _Continuation:
     """The §5 acceptance continuation, as a double.
 
-    §5 acceptance is **NOT IMPLEMENTED** — a later ordered piece — so what the gate hands
-    off to is stubbed here. It records the ``GatedTurn`` it was given (that object is the
-    entire product of §4.10(d)) and returns the §4.10(e) verdict above.
+    The real §5 supplier is `governed_acceptance.AcceptanceDriver`; what the gate hands off
+    to is stubbed here so this file can fail for gate reasons only. It records the
+    ``GatedTurn`` it was given (that object is the entire product of §4.10(d)) and returns
+    the §4.10(e) verdict above.
     """
 
     _DEFAULT = CONTINUATION_REPLY

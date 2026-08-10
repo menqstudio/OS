@@ -406,8 +406,9 @@ class TheClosedUnionIsNotDecidedHereTests(unittest.TestCase):
     a hostile sidecar could send — not because the sidecar is trusted, but because §4.10(e)
     decides nothing. Every producing gate named in §4.5 is a §5 acceptance or §7
     verification gate (`challenge_replay` at the §5 CAS, `lease_not_ready` at the execute
-    trigger, `stale_evidence` at §7 case A, and so on), and §5 acceptance is **NOT
-    IMPLEMENTED** — its continuation is still an injected seam with no production supplier.
+    trigger, `stale_evidence` at §7 case A, and so on). Those gates now EXIST — §5 acceptance
+    landed on 2026-08-10 as `governed_acceptance.AcceptanceDriver` — but they are still not
+    in THIS module, which is the claim these tests make.
 
     What §4.10(e) owns is the VOCABULARY, and that is what the tests above cover: all 29
     constructible by name, none producible by this module. Reading a green suite here as
@@ -688,9 +689,10 @@ class EvidenceRequestContinuationTests(unittest.TestCase):
     Until this piece landed that sentence was unenforced — §4.10(d) relayed whatever its §5
     continuation returned, guarding only against an answer in its OWN pre-acceptance
     namespace. Now the continuation must return a §4.10(e) frame, and this is where the
-    module is REACHED from production code rather than only from its own tests. The §5
-    continuation itself still has **no production supplier** (`drive_acceptance` remains an
-    injected seam); what changed is that whatever supplies it is now held to this shape.
+    module is REACHED from production code rather than only from its own tests. Since
+    2026-08-10 `drive_acceptance` also has a production supplier
+    (`governed_acceptance.AcceptanceDriver`), which builds every frame it returns through
+    this module's own builders — so producer and validator are the same definition.
     """
 
     def test_a_denied_peer_never_reaches_the_continuation_at_all(self):

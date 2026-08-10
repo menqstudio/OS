@@ -25,7 +25,10 @@ So this module produces the first arm and *delegates* the second. It mints no
 no lease, writes no row, and touches no table at all: every statement it runs is a SELECT.
 The §5 continuation is an injected seam (``drive_acceptance``); a supervisor with no
 continuation configured serves no evidence-request, which is the fail-closed direction —
-a gate whose "pass" outcome went nowhere would be an admission with no admitter.
+a gate whose "pass" outcome went nowhere would be an admission with no admitter. Since
+2026-08-10 there IS a production supplier for that seam —
+``governed_acceptance.AcceptanceDriver`` — and it is still injected rather than imported,
+because what §4.10(d) owns is the DECISION, not the machinery on the other side of it.
 
 The gate reads a PROPERTY, not a claim
 ---------------------------------------
@@ -375,10 +378,10 @@ def handle_evidence_request(
     acceptance row is created — nothing at all is written.
 
     On a pass the turn is handed to ``drive_acceptance``, the §5 continuation
-    (acceptance → lease → execution → record → isolated signer, §6.1). That continuation is
-    **NOT IMPLEMENTED** in this tree — it is a later ordered piece — and it is injected
-    rather than called directly for the same reason the store publish is: what §4.10(d)
-    owns is the decision, not the machinery on the other side of it.
+    (acceptance → lease → execution → record → isolated signer, §6.1). Its production
+    supplier is ``governed_acceptance.AcceptanceDriver``; it is injected rather than called
+    directly for the same reason the store publish is: what §4.10(d) owns is the decision,
+    not the machinery on the other side of it.
 
     The continuation's reply is checked against the OTHER arm of §4.10(d)'s union before it
     is relayed. Two guards, in this order:
@@ -396,9 +399,9 @@ def handle_evidence_request(
          that sentence was unenforced and the reply was relayed unexamined.
 
     Both are supervisor-side faults, not something a peer asked for, so both raise rather
-    than refuse. Note what is NOT checked: the §5 continuation is still an INJECTED SEAM
-    with **no production supplier** — §5 acceptance is a later ordered piece — so what this
-    establishes is the contract any future supplier is held to, not that one exists.
+    than refuse. Note what is NOT checked: the continuation's DECISION. This gate holds any
+    supplier to §4.10(e)'s shape and to the namespace split, and to nothing else — whether
+    the verdict inside that shape is the right one is §5's question, not §4.10(d)'s.
     """
     if not callable(drive_acceptance):
         raise SupervisorError("drive_acceptance must be callable")

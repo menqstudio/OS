@@ -435,10 +435,13 @@ def handle_output_read(
 
     ``read_output`` is the content-addressed store read, injected for the same reason
     §4.10(c)'s publish is: what this protocol owns is the decision about *whether* a range may
-    be served, not the machinery that holds the bytes. Unlike §4.10(d)'s ``drive_acceptance``
-    it has a REAL production implementation available — ``brops_evidence_store.EvidenceStore.
-    read``, which refuses unless ``sha256(bytes) == handle`` — so the supervisor never serves
-    a byte it has not just re-hashed against the handle the terminal record named.
+    be served, not the machinery that holds the bytes. It has a REAL production implementation
+    available — ``brops_evidence_store.EvidenceStore.read``, which refuses unless
+    ``sha256(bytes) == handle`` — so the supervisor never serves a byte it has not just
+    re-hashed against the handle the terminal record named. (§4.10(d)'s ``drive_acceptance``
+    seam gained its own production supplier on 2026-08-10,
+    ``governed_acceptance.AcceptanceDriver``; the contrast this paragraph used to draw with it
+    no longer holds.)
 
     Re-reading the whole artifact per chunk is deliberate and is a cost, not an oversight: an
     8 MiB output costs 46 reads of ≤8 MiB, and in exchange every single chunk is served out

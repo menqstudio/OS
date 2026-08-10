@@ -180,7 +180,7 @@
     },
     "§4.10(d)": {
       "status": "implemented",
-      "reason": "`brops.governed-evidence-request.v1` is served by `engine/runtime/governed_evidence_request.handle_evidence_request`, reached from the supervisor front door for the sidecar principal only (it is the fifth and last name in `SIDECAR_PROTOCOLS`). What is implemented is the PRE-ACCEPTANCE GATE and only that: the peer check, the exhaustive four-field shape, and the join of the request triple to the `INPUTS_READY` `governed_turn_staging` row over its two UNIQUEs. It writes nothing - every statement it issues is a SELECT, asserted through the connection's own trace callback - and mints no `execution_attempt_id`, lease, acceptance row, nonce consume or clock read. All five reasons in the closed refusal set are reachable by name and tested; four of them from a request a hostile sidecar could send, and `session_corrupt` only from already-tampered durable state (the staging root is 0700 supervisor-only), which its test class says in its name. The property the gate READS is enforced by five triggers in the canonical ledger DDL, not in Python; each is proved in isolation with raw SQL. The §5 continuation the gate hands a passing turn to is an INJECTED SEAM with NO production supplier: §5 acceptance wiring is a later ordered piece, so nothing supplies it yet and a supervisor without one refuses every evidence-request `peer_denied`. What the seam is now HELD TO is fixed: §4.10(e) landed, and the continuation's reply must be a valid `brops.governed-turn-result.v1` frame (`governed_turn_result.validate_turn_result`) or the supervisor faults - it is no longer relayed unexamined.",
+      "reason": "`brops.governed-evidence-request.v1` is served by `engine/runtime/governed_evidence_request.handle_evidence_request`, reached from the supervisor front door for the sidecar principal only (it is the fifth and last name in `SIDECAR_PROTOCOLS`). What is implemented is the PRE-ACCEPTANCE GATE and only that: the peer check, the exhaustive four-field shape, and the join of the request triple to the `INPUTS_READY` `governed_turn_staging` row over its two UNIQUEs. It writes nothing - every statement it issues is a SELECT, asserted through the connection's own trace callback - and mints no `execution_attempt_id`, lease, acceptance row, nonce consume or clock read. All five reasons in the closed refusal set are reachable by name and tested; four of them from a request a hostile sidecar could send, and `session_corrupt` only from already-tampered durable state (the staging root is 0700 supervisor-only), which its test class says in its name. The property the gate READS is enforced by five triggers in the canonical ledger DDL, not in Python; each is proved in isolation with raw SQL. The §5 continuation the gate hands a passing turn to now HAS a production supplier: `governed_acceptance.AcceptanceDriver` (2026-08-10), which drives §5 acceptance -> lease -> execution -> record -> the isolated signer and returns a §4.10(e) frame. It is still INJECTED, and a supervisor constructed without one refuses every evidence-request `peer_denied` - the fail-closed direction is unchanged. Nothing in `engine/ci/live/run_supervisor.py` constructs an `EvidenceRequestService`, so the sidecar-facing surface remains unconfigured on every deployment in this tree. What the seam is now HELD TO is fixed: §4.10(e) landed, and the continuation's reply must be a valid `brops.governed-turn-result.v1` frame (`governed_turn_result.validate_turn_result`) or the supervisor faults - it is no longer relayed unexamined.",
       "tests": [
         "test_a_ready_turn_reaches_the_acceptance_continuation",
         "test_the_gated_turn_is_read_off_the_row_not_off_the_request",
@@ -195,7 +195,9 @@
         "test_inputs_ready_is_unreachable_while_any_handle_is_null",
         "test_an_over_cap_frame_is_refused_on_the_bytes_that_arrived",
         "test_a_continuation_answering_in_the_pre_acceptance_namespace_is_a_fault",
-        "test_a_continuation_that_answers_outside_the_result_union_is_a_fault"
+        "test_a_continuation_that_answers_outside_the_result_union_is_a_fault",
+        "test_an_admitted_turn_becomes_a_signed_4_10_e_verdict",
+        "test_the_driver_never_answers_in_the_pre_acceptance_namespace"
       ]
     },
     "§4.10(e)": {
@@ -288,16 +290,33 @@
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
     "§5": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "reason": "The durable acceptance state machine is real and now has TWO production drivers over one ledger: the broker's five §5 v2 wire ops (`governed_supervisor_server.dispatch`) and the §4.10(d) in-process supplier `governed_acceptance.AcceptanceDriver`, which walks the same attempt through accept -> lease -> gate -> execute -> record -> attest -> sign and answers a §4.10(e) frame. The CAS, the three UNIQUEs, the closed state CHECK, the BEFORE-UPDATE transition trigger, the write-once completion PK and the evidence-head floor are all in the canonical `supervisor_ledger.sql` and are the enforcement. `execution_attempt_id` is minted exactly once at the step-4 CAS, the acceptance clock is read exactly once at step 2, and the supervisor-side nonce consume is that same CAS.",
+      "missing": "(1) Step 6's SIGNED lease. No lease-issuer key exists anywhere in the tree, so the lease document is published unsigned and `lease_handle` is `SHA256(JCS(payload))` rather than §3/Appendix B's `SHA256(JCS({payload, signature}))` - the same shape of contradiction the 2026-08-10 CORRECTION closed for `challenge_handle`, still open for `lease_handle`. (2) The `governed_turn_outbox` table exists in the DDL and has zero readers and zero writers; the terminal publish is create-if-absent into the content-addressed store instead. (3) Crash recovery is driven by the NEXT trigger rather than by a restart sweep: nothing scans the ledger at startup for a `LEASE_READY` row to re-gate or an `EXECUTION_STARTING` row to move to `RECOVERY_REQUIRED`. (4) Step 9's fsync'd immutable launch-start marker is optional in the design and is not produced. (5) The contained execution itself (§6.1 step 5) is an injected seam whose default binding refuses `platform_unsupported`.",
+      "tests": [
+        "test_an_admitted_turn_becomes_a_signed_4_10_e_verdict",
+        "test_the_execution_attempt_id_exists_for_the_first_time_at_the_acceptance_cas",
+        "test_the_acceptance_clock_is_read_exactly_once_and_is_the_persisted_instant",
+        "test_the_nonce_is_consumed_by_the_acceptance_cas_and_nowhere_earlier",
+        "test_a_second_trigger_for_a_completed_turn_returns_the_identical_frame",
+        "test_an_attempt_left_in_executing_by_a_crash_is_never_relaunched",
+        "test_the_launch_gate_boundary_proceeds_at_exactly_min_launch_remaining"
+      ]
     },
     "§6": {
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
     "§6.1": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "reason": "Steps 3-4 (acceptance ledger + lease publication), 5 (the launch gate and the ONE-TIME CAS to `EXECUTION_STARTING`), 8-9 (supervisor verification of the recorder chain and the terminal record publish), 10 (the attested `brops.run-attestation.v1`) and the supervisor half of 13 (the §4.10(e) metadata-only summary) are driven end to end by `governed_acceptance.AcceptanceDriver`, proved offline against real Ed25519 keys, a real durable ledger and the real isolated signer.",
+      "missing": "Step 0 (the broker-service orchestration and the §4.10(g) ingress), the RECORDER half of steps 6-7 and the contained execution of step 5 (an injected seam that refuses by default here), the TRANSPORT for steps 11-12 (the isolated signer's front door allowlists ONLY the broker uid and there is no supervisor->signer client in the tree, so the signing hop is a typed seam with no production binding), the sidecar re-frame in step 13 (§4.6's `bridge.governed-turn-result.v1` does not exist), and step 14's broker final acceptance including the §4.10(f) desktop pull loop.",
+      "tests": [
+        "test_an_admitted_turn_becomes_a_signed_4_10_e_verdict",
+        "test_the_signer_is_handed_the_exact_attested_bytes",
+        "test_a_signer_refusal_is_relayed_by_name",
+        "test_an_unreachable_signer_is_a_fault_not_a_refusal"
+      ]
     },
     "§6.3": {
       "status": "unreviewed",
@@ -328,6 +347,23 @@
     "§9.2": {
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§5(f)": {
+      "status": "implemented",
+      "reason": "\"The signer sees the attested bytes\": `governed_acceptance.AcceptanceDriver._attest_and_sign` builds the `brops.sign-request.v1` by parsing the evidence object back out of the exact `evidence_jcs` the supervisor just signed (`json.loads(attestation.evidence_jcs)`), never by rebuilding it beside the attestation. The signer's re-hash and the envelope's `attestation_evidence_sha256` are therefore over identical bytes by construction, and the §4.10(e) frame carries those same bytes as `attestation_evidence_jcs_b64`.",
+      "tests": [
+        "test_the_signer_is_handed_the_exact_attested_bytes",
+        "test_an_admitted_turn_becomes_a_signed_4_10_e_verdict"
+      ]
+    },
+    "§5(j)": {
+      "status": "partial",
+      "reason": "The consumer half is implemented: the containment artifact is read from the content-addressed store by the handle the completion recorded, carried into the §4.10(e) frame as `containment_evidence_b64`, and a missing or empty report is a REFUSAL (`containment_missing`) rather than a null or a fallback.",
+      "missing": "The PRODUCER. §5(j) says the recorder writes a `brops.containment-evidence.v1` document stating what IT observed (pinned image digests, lease file and digest, cgroup, the §2.7 descriptor contract, its own uid/gid, the launcher exit, the output length). Nothing in this tree writes that document: it comes out of the §6.1 step-5 execution seam, whose default binding refuses. So the shape of the report is not validated anywhere, only its presence.",
+      "tests": [
+        "test_containment_missing_when_the_report_cannot_be_read",
+        "test_containment_missing_when_the_report_is_empty"
+      ]
     }
   }
 }

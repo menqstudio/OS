@@ -710,12 +710,37 @@ class ShippedRustLadderTests(unittest.TestCase):
                 summary["rust"].get(name),
                 f"{name} is declared under rust_symbols but the file it described is gone")
 
-    def test_the_section_survives_empty_so_the_next_symbol_has_somewhere_to_go(self):
+    def test_the_section_holds_only_symbols_whose_file_exists_and_never_the_deleted_ladder(self):
+        """This asserted an EMPTY section until 2026-08-10, and that assertion had a shelf life.
+
+        The section was kept after the divergent ladder was deleted so that the next symbol
+        would have somewhere to go — and later the same day one did: §4.10(f)'s desktop hop
+        landed built, tested and genuinely uncallable, because §4.6's frame (the only thing that
+        carries `output_stream_id` across the sidecar boundary) does not exist yet. Declaring
+        those symbols is exactly what the section is for; asserting the section stays empty
+        turned the arrival of a correct declaration into a red gate.
+
+        So the assertion is narrowed to the two things that were actually worth protecting:
+        the deleted ladder's names must never come back, and no entry may name a file that is
+        not there. The second is the mechanism that made the deletion safe — the gate refuses a
+        `defined_in` that does not exist, so a declaration cannot outlive its code.
+        """
         declared = json.loads(
             (ROOT / "config/reachability-declarations.json").read_text(encoding="utf-8"))
         self.assertIn("rust_symbols", declared)
-        self.assertEqual(
-            {k for k in declared["rust_symbols"] if not k.startswith("$")}, set())
+        entries = {k: v for k, v in declared["rust_symbols"].items() if not k.startswith("$")}
+        for name in ("mint", "resolve", "sweep"):
+            self.assertNotIn(
+                name, entries,
+                f"{name} is declared again; the ladder it belonged to was deleted, and a "
+                "declaration without its code is what this section must never carry")
+        for name, entry in entries.items():
+            where = entry.get("defined_in")
+            self.assertIsNotNone(where, f"{name} declares no defined_in")
+            self.assertTrue(
+                (ROOT / where).exists(),
+                f"{name} declares {where}, which does not exist — the declaration outlived "
+                "its code, which is the failure this section was emptied over")
 
 
 class PolicyFlagTests(GateTestCase):
