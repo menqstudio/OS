@@ -8,6 +8,77 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The pull is built on both hops and the broker still reads the disk (2026-08-10)
+
+**§4.10(f)'s DESKTOP hop — built, tested, and NOT WIRED, which is stated rather than implied.** A
+`protocol`-keyed `bridge.governed-turn-output-read.v1` branch in `bridge/engine_sidecar.py` forwards the
+caller's four fields **unchanged** and relays the supervisor's verdict verbatim — all five closed reasons,
+`malformed` included, are the supervisor's, because the sidecar originates no verdict. A local failure
+emits **no §4.10(f) frame at all** and degrades to the protocol-less document, per §4.10(f) P1-5. The pure
+loop, reassembly and the §4.6/§7.1 whole-output length-and-digest gate live in
+`brops_core::governed_output_pull`, and the Tauri-side helpers are internal: neither is a
+`#[tauri::command]`, neither is in `generate_handler!`, and a test asserts both against the sources.
+
+**The gate cannot be pointed at the echo.** §4.10(e)'s `output_bytes`/`output_sha256` are transport-only;
+§4.6/§7.1 bind the real values into the signed envelope. So the expected length and digest are **not
+parameters of the API** — `pull_output` takes a `ReceiptEnvelope` and reads both off it, and the capability
+is constructed from the same envelope. There is no call shape in which the transport echo could be used as
+the gate, which is the defect class this repository keeps producing, closed by construction rather than by
+a rule. The `sha == sha` mutant is killed.
+
+**Nothing calls the loop, and the reason is a missing frame, not a missing hookup.** §4.6's
+`bridge.governed-turn-result.v1` — the only frame that carries `output_stream_id` across the sidecar
+boundary — has no implementation on either hop. So the token exists on the supervisor side and cannot
+arrive; a caller written today would have to invent one, which §4.10(f) forbids. The dependency is
+**typed**: `OutputStreamCapability` cannot be constructed without a verified envelope plus a 43-character
+token, so the day a §4.6 frame delivers one the compiler names every place it must reach. Declared in
+`config/reachability-declarations.json`, so the gate **reports** the gap instead of printing green over it.
+
+**Two disagreements between the design and the tree, and the second is the serious one.**
+1. §4.10(f) says the pull is "a private function of the `governed_turn_execute` command". That is
+   unsatisfiable in rev-30's own topology: §4.10(g)/§0 make `governed_turn_execute` a thin proxy carrying
+   `{conversation_id, agent?, client_request_id}` — it never sees a stream token, an envelope or a receipt
+   id — while §7.1 puts the pull in the broker *service*. It was implemented where §4.10(f) names it,
+   because that is where the one hardened sidecar-spawn seam lives; putting the adapter in the broker crate
+   was defensible and was rejected because it would duplicate that spawn.
+2. **The broker never pulls.** `broker/src/chain_executor.rs::LinuxGovernedExecution` reads the recorder's
+   output straight off the local filesystem and content-addresses it into the signer's store itself. Under
+   §2.3 the desktop and broker have no store access and the pull is the *only* egress. **This divergence
+   would survive fixing the §4.6 carriage** — even a delivered token would not put the pull on the live
+   path.
+
+**Arithmetic first, in tests, and it found two more of today's defect.** The maximum reply is 245940 bytes
+on the supervisor leg and 245941 on the bridge leg (`bridge.` is one character longer) against 262144, and
+`MAX_STDOUT_BYTES` 9437184 admits a full chunk with ~9.2 MiB to spare. But
+`governed_supervisor_server.MAX_FRAME_BYTES` (broker-facing) and `ipc_framing::MAX_FRAME_PAYLOAD_BYTES` are
+both **8192 — thirty times too small**. That is the same class as the supervisor's writer found this
+morning, and here it is load-bearing in the other direction: **no framed-IPC path in this tree can carry a
+§4.10(f) chunk reply**, which is precisely *why* this hop is a subprocess stdio hop. Tests in both
+languages construct the literal maximum and pin the comparison, so a future "simplification" onto
+`ipc_framing` fails there rather than at the first full chunk in production. A zero-byte output is tested
+as a **contract** — one legal read, `seq > 0` refused — never as an absence.
+
+**Checks declined, with reasons.** No frame cap in either new file: the numbers prove neither could fire.
+No echo check in the sidecar: it is the party §2.4 declares compromised, so a check it performs over values
+it chose is worth nothing, and the echo compare lives where the authenticated values are. No UTF-8 decode
+of the reassembly: §4.6 orders it "only then", beside the invalid-UTF-8 Block, which belongs to
+`verify_and_accept`.
+
+**29 mutants, 29 killed, and three of the findings are about the tests rather than the code.** A test
+passed for the wrong reason — deleting the sidecar's reply-field-set check left every negative case still
+failing, but on a `KeyError` rather than the shape rule, so the check read as covered while being
+deletable; fixed by adding a case only it can catch. A mutant died for the wrong reason — it referenced
+`base64.` in a module that never imports it, so it died on a `NameError`; redone self-contained and killed
+correctly. And an **untestable wiring line was removed rather than excused**: the out-of-band
+classification began at the `ai.rs` call site where no test in either crate could reach it, a real
+survivor, and was folded into the one entry point every adapter must call.
+
+Suites, re-run here: bridge **95** (from 60), `brops --lib` **127**, `brops-core --lib` **343**,
+`brops-broker --lib` 31, frontend 69 files / 638 unchanged. `check_reachability`, `check_ai_surfaces`,
+`check_capabilities` GREEN. `governed_verification_unconfigured`, `UpstreamBlockedExecutor` and
+`connect_broker` are byte-identical to HEAD; the shipped gate stays shut.
+
+
 ### The supervisor could read a chunk it could never write back (2026-08-10)
 
 Wave 3b-1B step 5: **§4.10(f)'s SUPERVISOR hop** — `governed_output_streams`, the mint, the derived

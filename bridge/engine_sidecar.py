@@ -23,6 +23,30 @@ for a quiet one. Ops are READS: nothing dispatched here may reach `_real_callabl
 the supervisor socket, the signer or the builder. An op this build does not
 implement is refused BY NAME — never ignored, never answered with an empty read.
 
+Protocol dispatch — the ONE request that is neither an op nor a task-request
+---------------------------------------------------------------------------
+`bridge.governed-turn-output-read.v1` (design §4.10(f)) is keyed on a top-level
+`protocol`, not on `op`, and it is checked FIRST. It is disjoint from both older
+shapes by construction: `bridge/contracts/task-request.schema.json` is
+`additionalProperties:false` with no `protocol` key, and every op carries `op`.
+
+This one DOES reach the supervisor socket — it is the only thing here that does —
+and it is still not an execution: it is the egress half of a turn that is already
+over, one immutable byte range per one-shot subprocess. The sidecar is a STATELESS
+PROXY on this path and originates NO verdict of its own. It forwards the caller's
+four fields UNCHANGED under the supervisor's protocol const, and relays whatever the
+supervisor answers. So every `stream_unknown` / `stream_expired` /
+`stream_binding_mismatch` / `seq_out_of_range` / `malformed` a desktop ever sees was
+decided by the supervisor, against its own durable row and its own clock — including
+`malformed`, which this hop deliberately does NOT produce locally.
+
+A LOCAL failure of this hop (no socket provisioned, connect/timeout, an unframable
+request, a reply that is not a §4.10(f) frame) yields **no §4.10(f) frame at all**
+(§4.10(f) NOTE, P1-5): it degrades to the protocol-less `bridge.op.v1` refusal, which
+the desktop cannot parse as a governed verdict and must treat as an out-of-band
+transport failure. Fabricating `stream_unknown` for a socket this process could not
+open would be this sidecar claiming to have heard from a supervisor it never reached.
+
 Modes
 -----
 * ``--self-test`` (CLI flag ONLY — never an env var) — inject canned callables (no
@@ -328,10 +352,19 @@ _GOVERNANCE_REGISTRY_ROOT_ENV = "BROPS_GOVERNANCE_REGISTRY_ROOT"
 
 
 def _op_refusal(request: Any, error: Any) -> dict:
-    """A refusal for an op with no reply protocol of its own.
+    """A refusal for a request with no reply protocol of its own.
 
     Note what is absent: no `records`, no `result`. There is no field a consumer
     could read as "the call succeeded and produced nothing".
+
+    It carries a SECOND load now, and the second one is the stricter of the two.
+    4.10(f) requires a local failure of the output-read hop to produce **no 4.10(f)
+    frame at all** - not a refusal inside that protocol - because a `stream_unknown`
+    this process invented would be a claim about a supervisor it never reached. This
+    document is what "no frame" is emitted as: it names no 4.10(f) protocol, carries
+    no `reason`, and cannot be parsed as a governed verdict, so the desktop can only
+    read it as the out-of-band transport failure it is. `op` is `None` for those
+    callers, which is honest - the output read is not an op.
     """
     op = request.get("op") if isinstance(request, dict) else None
     return {
@@ -457,6 +490,243 @@ def _op_governance_read(request: dict) -> dict:
     return reply
 
 
+# --------------------------------------------------------------------------- #
+# 4.10(f) DESKTOP HOP - `bridge.governed-turn-output-read.v1`, the chunked output PULL.
+#
+# The output of a governed turn is NEVER pushed and never inlined. 4.6 proves the inline
+# form overflows the frame (a full-schema result with a 128 KiB output reaches ~266707
+# against a 262144 cap), and 2.3 forbids the desktop the protected store, so the exact
+# bytes the recorder captured reach the party that renders them through this loop and
+# through nothing else. The transport under it is one-request/one-response in BOTH
+# directions - `brops_socket` is a pure responder, and this process reads ONE stdin
+# request and writes ONE stdout reply - so the desktop drives the loop by re-invoking a
+# FRESH one-shot sidecar once per chunk, and this hop is stateless by construction rather
+# than by discipline.
+#
+# What this hop is NOT
+# --------------------
+# It is not an authority over the bytes and does not pretend to be one. 4.6/7.1 put that
+# authority in the isolated signer's envelope: the desktop asserts
+# `len(reassembled) == envelope.output_bytes` AND `SHA256(reassembled) ==
+# envelope.output_sha256` over the RAW bytes before any normalization. So a tampered,
+# re-ordered, dropped or cross-turn chunk fails the whole-output digest no matter what
+# this proxy does - which is exactly why this file adds no integrity check of its own.
+# 4.10(f) states the matching limit in writing: the 256-bit token buys unguessability, and
+# it provides NO confidentiality against this sidecar, which is the transport proxy for
+# every turn and therefore sees every token and every byte.
+#
+# It also does not check the ECHO. `output_stream_id`/`seq` come back as the supervisor
+# sent them and are compared by the DESKTOP, against values it took from the verified
+# signed envelope. A check performed here would be performed by the party 2.4 declares
+# compromised, over values it chose, and would be worth nothing to the party that matters.
+#
+# The arithmetic, done first (4.10(f), and it is load-bearing on BOTH legs)
+# -------------------------------------------------------------------------
+# A chunk is 184320 decoded bytes = 245760 base64url characters, and the largest legal
+# supervisor reply is exactly **245940** bytes against `brops_protocol.MAX_FRAME_BYTES =
+# 262144` - 16204 of headroom. Reframed for the desktop the same reply is **245941**
+# (`bridge.` is one character longer than `brops.`). Three separate bounds have to admit
+# those numbers, and only one of them did by accident:
+#
+#   * supervisor -> sidecar socket: `brops_protocol.read_frame` at 262144. Fits, 16204 spare.
+#   * sidecar -> desktop stdout: unbounded here, read by `ai.rs` under
+#     `MAX_STDOUT_BYTES = 9437184`. Fits, with ~9.2 MiB spare.
+#   * the bounds that do NOT fit, and are the reason this hop cannot be short-circuited:
+#     the supervisor's BROKER-facing frame bound is 8192 (`governed_supervisor_server.
+#     MAX_FRAME_BYTES`), and the desktop's own framed IPC caps a payload at 8192
+#     (`ipc_framing::MAX_FRAME_PAYLOAD_BYTES`). A 245941-byte chunk is 30x too large for
+#     either. So the pull is a subprocess stdio hop through this sidecar not as a stylistic
+#     choice but because no framed-IPC path in the tree can carry it, and a future attempt
+#     to "simplify" it onto one would fail at the first full chunk.
+#     `bridge/tests/test_governed_output_read_bridge.py` CONSTRUCTS the literal maximum and
+#     asserts all four numbers rather than leaving them as a comment.
+#
+# There is deliberately NO size check in this file. A REQUEST here is at most 422 bytes
+# (four ids at their caps plus the discriminator) against 262144, and a REPLY is bounded by
+# the supervisor's own writer and re-bounded by `brops_protocol.encode_frame`/`read_frame`
+# on the way past. A cap on either would be a line that cannot fire - the class deleted
+# rather than shipped in 4.10(a)/(c).
+# --------------------------------------------------------------------------- #
+
+#: The desktop->sidecar request and its reply (4.10(f)). Held as LITERALS, for the same
+#: reason `GOVERNANCE_PROTOCOL` is: the dispatch has to recognise the request before any
+#: engine module is imported, and on this path an import failure is precisely one of the
+#: local failures that must NOT produce a 4.10(f) frame. The SUPERVISOR-side names, the
+#: closed reason set and the chunk stride are imported from the engine instead of restated
+#: (`_output_read_contract` below), so the two hops cannot drift; the drift test pins that
+#: these two literals differ from the engine's by the `bridge.`/`brops.` prefix and by
+#: nothing else.
+BRIDGE_OUTPUT_READ_PROTOCOL = "bridge.governed-turn-output-read.v1"
+BRIDGE_OUTPUT_READ_RESULT_PROTOCOL = "bridge.governed-turn-output-read-result.v1"
+
+#: How long this hop waits on the supervisor socket. Comfortably inside the 120 s deadline
+#: `ai.rs::governed_sidecar_call` puts on the whole subprocess, so a supervisor that
+#: accepts and then goes silent surfaces as THIS hop's out-of-band refusal - which names
+#: the socket - rather than as a killed child the desktop can only describe as a timeout.
+_SUPERVISOR_READ_TIMEOUT_S = 30.0
+
+
+def _output_read_contract():
+    """The engine's own 4.10(f) constants, imported rather than copied.
+
+    Everything here is a value the SUPERVISOR publishes: the protocol consts of the hop
+    this proxy forwards to, the exhaustive reply field set, the closed refusal set, and the
+    chunk stride. A second copy in this file is exactly the drift that would let the
+    sidecar accept a reply the supervisor can no longer produce, or reject one it can.
+
+    Importing the supervisor's module grants this process nothing. `handle_output_read`
+    needs a ledger connection, a store reader and a peer uid to do anything at all, and
+    this process holds none of the three; the supervisor's authority is its own uid, its
+    own 0700 database and its own socket, none of which is an import away.
+    """
+    import governed_output_read as gor  # engine/runtime is on sys.path (see the header)
+
+    return gor
+
+
+def _supervisor_socket_path() -> str:
+    """The provisioned supervisor socket, or raise.
+
+    Unprovisioned is a LOCAL failure, not a stream verdict: this process never reached a
+    supervisor, so it has no business reporting one. It raises, and the caller degrades to
+    the protocol-less refusal that the desktop reads as out-of-band (4.10(f) NOTE).
+    """
+    path = os.environ.get(_SUPERVISOR_SOCKET_ENV, "").strip()
+    if not path:
+        raise RuntimeError(
+            f"the governed output-read hop is not provisioned: {_SUPERVISOR_SOCKET_ENV} is "
+            "unset, so there is no supervisor to ask. This is a local transport failure and "
+            "deliberately NOT a bridge.governed-turn-output-read-result.v1 refusal - no "
+            "supervisor decided anything about this stream")
+    return path
+
+
+def _supervisor_request(socket_path: str, frame: dict) -> dict:
+    """One request frame out, one reply frame back, over the supervisor's AF_UNIX socket.
+
+    Its own function so a test can substitute a supervisor without a socket - the same seam
+    `_governance_runtime` / `_governance_api` are. `brops_socket.request` is reused rather
+    than reimplemented: it already speaks the exact 4-byte big-endian length prefix the
+    supervisor front door reads and writes, under `brops_protocol`'s 262144 cap, which is
+    the one bound a 245940-byte chunk reply needs.
+    """
+    import brops_socket
+
+    return brops_socket.request(socket_path, frame, timeout=_SUPERVISOR_READ_TIMEOUT_S)
+
+
+def _forwarded_output_read(request: dict, protocol: str) -> dict:
+    """The supervisor frame for this request: the caller's fields, UNCHANGED, re-labelled.
+
+    4.10(f): "the sidecar forwards these fields UNCHANGED to the supervisor". Taken
+    literally, and the literal reading is the honest one. This proxy does NOT validate the
+    caller's four fields, because validating them would mean ANSWERING for them, and
+    `malformed` is a supervisor verdict in a closed supervisor set. So a missing field, an
+    extra field, a `seq` that is a string, a 42-character token - all of them travel, and
+    the supervisor's own exhaustive shape check refuses them with the one literal it
+    published for exactly that. `malformed` is therefore reachable BY NAME through this
+    hop, produced by the party entitled to produce it.
+
+    Two things this cannot smuggle. `protocol` is written FIRST and the caller's own
+    `protocol` is dropped, so the frame is always labelled with the one protocol this hop
+    may speak. And any other key - an `op`, a second discriminator - is forwarded as the
+    extra field it is, which the supervisor's exact-field check refuses: the sidecar's
+    grant on that socket is a closed tuple of protocol names, so this door cannot be
+    widened into the 5 lifecycle by anything a caller writes here.
+    """
+    frame = {"protocol": protocol}
+    for key, value in request.items():
+        if key != "protocol":
+            frame[key] = value
+    return frame
+
+
+def _validated_output_read_reply(reply: object, gor) -> dict:
+    """Return the reply if it IS a 4.10(f) supervisor reply; raise if it is not.
+
+    The shape only - never the meaning. A reply that fails this is not a refusal the
+    desktop can act on; it is evidence that the thing on the other end of the socket is not
+    the supervisor's output-read handler, so it becomes a local failure and no 4.10(f)
+    frame is emitted at all.
+
+    `bytes_b64` is decoded here even though the bytes are then relayed verbatim, and that
+    is the point: `brops_protocol.decode_base64url` refuses anything that is not the
+    CANONICAL base64url of its own bytes, so a value that decodes only under a lenient
+    decoder - which is what `base64.urlsafe_b64decode` is - never reaches a desktop that
+    might decode it differently. The decoded length is checked against the supervisor's own
+    stride for the same reason the supervisor checks it on the way out.
+    """
+    if not isinstance(reply, dict):
+        raise RuntimeError("the supervisor answered with %s, not a JSON object"
+                           % type(reply).__name__)
+    if set(reply) != set(gor.OUTPUT_READ_REPLY_FIELDS):
+        raise RuntimeError(
+            "the supervisor reply is not a %s frame: fields %s, expected exactly %s"
+            % (gor.OUTPUT_READ_RESULT_PROTOCOL, sorted(reply),
+               sorted(gor.OUTPUT_READ_REPLY_FIELDS)))
+    if reply["protocol"] != gor.OUTPUT_READ_RESULT_PROTOCOL:
+        raise RuntimeError("the supervisor reply names protocol %r, not %r"
+                           % (reply["protocol"], gor.OUTPUT_READ_RESULT_PROTOCOL))
+    ok = reply["ok"]
+    if not isinstance(ok, bool):
+        raise RuntimeError("the supervisor reply's `ok` is %r, not a boolean" % (ok,))
+    if ok:
+        if reply["error"] is not None:
+            raise RuntimeError("an ok supervisor reply carries an error object")
+        if not isinstance(reply["eof"], bool):
+            raise RuntimeError("an ok supervisor reply's `eof` is not a boolean")
+        if not isinstance(reply["seq"], int) or isinstance(reply["seq"], bool):
+            raise RuntimeError("an ok supervisor reply's `seq` is not an integer")
+        if not isinstance(reply["output_stream_id"], str):
+            raise RuntimeError("an ok supervisor reply names no output_stream_id")
+        import brops_protocol
+
+        try:
+            chunk = brops_protocol.decode_base64url(reply["bytes_b64"])
+        except brops_protocol.ProtocolError as exc:
+            raise RuntimeError("an ok supervisor reply's bytes_b64 is not canonical "
+                               "base64url: %s" % exc)
+        if len(chunk) > gor.OUTPUT_CHUNK_BYTES:
+            raise RuntimeError("an ok supervisor reply carries %d bytes, over the %d stride"
+                               % (len(chunk), gor.OUTPUT_CHUNK_BYTES))
+        return reply
+    for absent in ("bytes_b64", "eof"):
+        if reply[absent] is not None:
+            raise RuntimeError("a refused supervisor reply carries %s" % absent)
+    error = reply["error"]
+    if not isinstance(error, dict) or set(error) != {"reason"}:
+        raise RuntimeError("a refused supervisor reply's error object is not {reason}")
+    if error["reason"] not in gor.OUTPUT_READ_REFUSAL_REASONS:
+        # An unpublished literal must never be relayed: 4.10(f) says the bridge enum is
+        # "IDENTICAL to the supervisor's (NOT a superset)", and a reason outside the closed
+        # set would travel all the way into a desktop Block reason string.
+        raise RuntimeError("a refused supervisor reply names %r, which is not one of %s"
+                           % (error["reason"], sorted(gor.OUTPUT_READ_REFUSAL_REASONS)))
+    return reply
+
+
+def _bridge_output_read(request: dict) -> dict:
+    """Serve one `bridge.governed-turn-output-read.v1`: forward, validate, reframe.
+
+    Exactly one supervisor round trip, then this process exits. Reframing is a single key:
+    the supervisor's `protocol` const becomes the bridge one and every other field - `ok`,
+    `output_stream_id`, `seq`, `bytes_b64`, `eof`, `error` - is relayed VERBATIM, because
+    the sidecar originates no verdict and a re-shaped verdict is an originated one.
+
+    Every failure of this process's OWN transport raises out of here and becomes the
+    protocol-less `bridge.op.v1` refusal, per the 4.10(f) NOTE: a local failure "is NOT one
+    of these reasons and produces NO reply frame". That is the whole reason this function
+    has no fail-closed refusal of its own to fall back on.
+    """
+    gor = _output_read_contract()
+    socket_path = _supervisor_socket_path()
+    frame = _forwarded_output_read(request, gor.OUTPUT_READ_PROTOCOL)
+    reply = _validated_output_read_reply(_supervisor_request(socket_path, frame), gor)
+    relayed = dict(reply)
+    relayed["protocol"] = BRIDGE_OUTPUT_READ_RESULT_PROTOCOL
+    return relayed
+
+
 #: op -> (handler, refusal factory). Registering an op is adding a row; the dispatch
 #: needs no edit, and an op absent from this table is refused by name. The refusal
 #: factory is per-op so a refusal stays inside the protocol the caller was speaking.
@@ -488,7 +758,22 @@ def _governed_turn(request: dict, argv: list[str]) -> dict:
 
 
 def _dispatch(request: dict, argv: list[str]) -> dict:
-    """Route one parsed request to its op. Never raises; never returns None."""
+    """Route one parsed request to its handler. Never raises; never returns None.
+
+    Three disjoint shapes, in the order they are recognised: a top-level `protocol`
+    naming the 4.10(f) output read, an `op`, and - with neither - the original
+    `bridge.task-request`. The disjointness is structural rather than conventional: the
+    task-request schema is `additionalProperties:false` and has no `protocol` key, so it
+    cannot grow one; and no op is keyed on `protocol`.
+
+    The output read is checked FIRST so it can never be reinterpreted as a governed turn
+    by a future edit that adds a `protocol` key elsewhere.
+    """
+    if request.get("protocol") == BRIDGE_OUTPUT_READ_PROTOCOL:
+        try:
+            return _bridge_output_read(request)
+        except Exception as exc:  # noqa: BLE001 - 4.10(f): a LOCAL failure emits NO 4.10(f) frame
+            return _op_refusal(request, exc)
     if "op" not in request:
         return _governed_turn(request, argv)
     op = request["op"]

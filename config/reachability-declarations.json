@@ -21,19 +21,19 @@
     "half a dozen sibling modules in brops-core. rustc never warns about an uncalled `pub fn`",
     "in a library crate, which is why this whole class was invisible here until 2026-08-09.",
     "",
-    "`rust_symbols` is EMPTY as of 2026-08-10, and the section is kept rather than deleted so it",
-    "is there for the next symbol that needs it. It held governed_output_stream::mint/resolve/",
-    "sweep -- the rev-30 4.10(f) ladder with zero production callers -- and its own declaration",
-    "said 'wiring a caller is a rewrite, not a hookup, and stream_binding_mismatch cannot be",
-    "produced at all'. That turned out to be the whole finding. 4.10(f) was built on 2026-08-10",
-    "as SUPERVISOR state (Appendix B puts governed_output_streams in the 0700 supervisor-only DB,",
-    "not the broker DB the Rust module used), so apps/desktop/src-tauri/core/src/",
-    "governed_output_stream.rs was DELETED in the same change rather than left beside it. It",
-    "could not have been left: its `CREATE TABLE IF NOT EXISTS governed_output_streams` ran on",
-    "the same rusqlite connection one line before supervisor_ledger::create_schema in all four",
-    "call sites, so keeping it would have made the canonical DDL a silent no-op and the divergent",
-    "table the one that actually existed. The gate is what forced that choice to be visible:",
-    "`defined_in` must exist, so a declaration cannot outlive the file it describes.",
+    "`rust_symbols` is NO LONGER EMPTY as of 2026-08-10: it holds the three halves of the rev-30",
+    "4.10(f) DESKTOP output pull (governed_output_pull::pull_output, ai::governed_pull_output,",
+    "ai::governed_turn_output_read). Read their reasons together - they describe ONE gap, a missing",
+    "4.10(e) `signed` frame producer, not three. The section previously held governed_output_stream::",
+    "mint/resolve/sweep, whose own declaration said 'wiring a caller is a rewrite, not a hookup, and",
+    "stream_binding_mismatch cannot be produced at all'. That turned out to be the whole finding, and",
+    "the module was DELETED on 2026-08-10 when 4.10(f) was built as SUPERVISOR state (Appendix B puts",
+    "governed_output_streams in the 0700 supervisor-only DB, not the broker DB the Rust module used).",
+    "It could not have been left: its `CREATE TABLE IF NOT EXISTS governed_output_streams` ran on the",
+    "same rusqlite connection one line before supervisor_ledger::create_schema in all four call sites,",
+    "so keeping it would have made the canonical DDL a silent no-op and the divergent table the one",
+    "that actually existed. The gate is what forced that choice to be visible: `defined_in` must",
+    "exist, so a declaration cannot outlive the file it describes.",
     "",
     "Reasons: capability-denied | superseded | governed-wall | backend-only | not-yet-wired.",
     "'not-yet-wired' is an honest OPEN gap and must name where it is tracked.",
@@ -118,7 +118,35 @@
       "observed": "2026-08-07: engine/runtime/bro_policy.py binds CONDUCTOR_SESSION_POLICY_KEY to the flag and reads it in conductor_session_token_required, which now treats an UNDECLARED requirement as a REQUIRED one (an uncommitted concurrent change - the previous code defaulted to False). Still absent from engine/.bro/policy.json."
     }
   },
-  "rust_symbols": {},
+  "rust_symbols": {
+    "pull_output": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/governed_output_pull.rs",
+      "module": "governed_output_pull",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "The rev-30 4.10(f) DESKTOP pull loop: it drives the chunked read, reassembles into a bounded buffer, and applies the 4.6/7.1 whole-output length+digest gate against the SIGNED envelope (never 4.10(e)'s TRANSPORT-ONLY echo of the same two values). The pull needs an `output_stream_id`, and rev-30 4.10(f) permits exactly one source for it: the 4.10(e) `brops.governed-turn-result.v1` `signed` frame. That frame NOW HAS a supervisor-side producer - `engine/runtime/governed_acceptance.py::AcceptanceDriver`, which requires an OutputReadService and carries the minted token; it landed in this same tree from a concurrent change and was uncommitted when this entry was written, so read the citation as of that moment. What is missing is the CARRIAGE: 4.6's `bridge.governed-turn-result.v1`, the only frame that moves that token across the sidecar boundary to the desktop, has no implementation on either hop - no producer in bridge/engine_sidecar.py and no parser in the Rust tree. So the token exists and cannot arrive, and wiring a caller today would mean inventing one, which is the single thing 4.10(f) says may never happen. The dependency is typed rather than described: `OutputStreamCapability` can only be built from a verified 4.9 envelope plus a 43-char token, so the day a 4.6 frame delivers one the compiler names every place it has to reach. A second, larger disagreement would survive fixing that: the broker's Linux execution (`broker/src/chain_executor.rs::LinuxGovernedExecution`) reads the recorder's output off the local filesystem with `std::fs::read(&report_path)` instead of through this egress at all, so even a delivered token would not by itself put the pull on the live path. This entry is deliberately the same shape as the one that held `governed_output_stream::mint/resolve/sweep` before that ladder was deleted, and it is NOT the same claim: that one said wiring a caller was 'a rewrite, not a hookup' and that one of its refusals could not be produced at all. Every gate here is produced by name from a reply a real supervisor can send, and the supervisor half it talks to is shipped and served.",
+      "observed": "2026-08-10: zero callers outside governed_output_pull.rs and its #[cfg(test)] module. Its async transport adapter is ai::governed_pull_output, declared below."
+    },
+    "governed_pull_output": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/src/ai.rs",
+      "module": "ai",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "The async half of the same hop: it turns `governed_output_pull::OutputPull` into round trips over one-shot sidecar subprocesses, one per chunk, and maps a local sidecar failure to a TRANSPORT error rather than to one of the five stream reasons (4.10(f) P1-5). The pull needs an `output_stream_id`, and rev-30 4.10(f) permits exactly one source for it: the 4.10(e) `brops.governed-turn-result.v1` `signed` frame. That frame NOW HAS a supervisor-side producer - `engine/runtime/governed_acceptance.py::AcceptanceDriver`, which requires an OutputReadService and carries the minted token; it landed in this same tree from a concurrent change and was uncommitted when this entry was written, so read the citation as of that moment. What is missing is the CARRIAGE: 4.6's `bridge.governed-turn-result.v1`, the only frame that moves that token across the sidecar boundary to the desktop, has no implementation on either hop - no producer in bridge/engine_sidecar.py and no parser in the Rust tree. So the token exists and cannot arrive, and wiring a caller today would mean inventing one, which is the single thing 4.10(f) says may never happen. The dependency is typed rather than described: `OutputStreamCapability` can only be built from a verified 4.9 envelope plus a 43-char token, so the day a 4.6 frame delivers one the compiler names every place it has to reach. A second, larger disagreement would survive fixing that: the broker's Linux execution (`broker/src/chain_executor.rs::LinuxGovernedExecution`) reads the recorder's output off the local filesystem with `std::fs::read(&report_path)` instead of through this egress at all, so even a delivered token would not by itself put the pull on the live path. It is deliberately NOT a `#[tauri::command]` and is absent from `generate_handler!`, because 4.10(f) requires the pull to be an internal backend helper that never round-trips the webview; an ai.rs test asserts both of those against the sources so the attribute cannot be added quietly.",
+      "observed": "2026-08-10: zero callers outside ai.rs; referenced from its own #[cfg(test)] module by the_output_pull_is_never_spawned_without_the_provisioned_trust_environment, which proves `engine_trust::apply` is on this path and that a failed spawn arrives as Transport."
+    },
+    "governed_turn_output_read": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/src/ai.rs",
+      "module": "ai",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "One `bridge.governed-turn-output-read.v1` round trip - the single stdin request / single stdout reply of a fresh one-shot sidecar. It has no caller of its own outside ai.rs because its only caller is `governed_pull_output` in the same module, and that function is itself unreached for the reason recorded above. It is listed separately rather than folded into that entry so the gate keeps reporting BOTH halves: if the loop ever gains a caller and this does not, the pull has grown a second spawn implementation, which is exactly the half-wired export `governed_sidecar_call`'s own comment warns about.",
+      "observed": "2026-08-10: zero callers outside ai.rs; reaches the engine only through governed_sidecar_call, the one seam in the application that spawns the bridge."
+    }
+  },
   "tools_gates": {
     "$comment": [
       "Gates under tools/ that NO workflow executes, each with a written reason.",

@@ -39,13 +39,23 @@ const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES a
 /// Do not read the rev-30 §4.10(f) output pull as the streaming that is missing here. §4.10(f) is a
 /// chunked PULL of the COMPLETED output of a buffered turn, for when the bytes are too large to ride
 /// the reply frame; it moves finished bytes, checked against the same whole-output digest, and it
-/// carries no deltas by construction. Its supervisor half now exists in the engine
+/// carries no deltas by construction. Its supervisor half exists in the engine
 /// (`engine/runtime/governed_output_read.py` + `governed_output_stream.py`, served to the sidecar
 /// principal from the supervisor front door). The `brops_core::governed_output_stream` ladder that
 /// used to be named here was DELETED on 2026-08-10: it had zero production callers and its table
-/// diverged from the design it cited. **The DESKTOP half of §4.10(f) — the
-/// `bridge.governed-turn-output-read.v1` hop and the internal `governed_turn_output_read` helper that
-/// would drive the loop — is still NOT IMPLEMENTED**, so nothing on this side pulls anything yet.
+/// diverged from the design it cited.
+///
+/// The DESKTOP half now exists too, and it is still NOT WIRED: the sidecar's
+/// `bridge.governed-turn-output-read.v1` branch (`bridge/engine_sidecar.py`), the loop + reassembly +
+/// §4.6/§7.1 whole-output gate (`brops_core::governed_output_pull`), and the internal
+/// `ai::governed_turn_output_read` / `ai::governed_pull_output` helpers that drive it over a one-shot
+/// sidecar. **Nothing calls them**: the pull needs an `output_stream_id`, and while the §4.10(e)
+/// `signed` frame that mints one now has a supervisor-side producer, §4.6's
+/// `bridge.governed-turn-result.v1` — the only frame that carries the token across the sidecar boundary —
+/// has no implementation on either hop. `config/reachability-declarations.json` carries the declaration
+/// and `governed_output_pull`'s module docs carry the reasoning. This command is not where it would start
+/// either: a thin proxy carrying `{conversation_id, agent?}` never sees a stream token, an envelope or
+/// a receipt id — §7.1 puts the pull in the broker SERVICE, on the far side of this hop.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const IO_TIMEOUT_MS: u64 = 120_000;
 

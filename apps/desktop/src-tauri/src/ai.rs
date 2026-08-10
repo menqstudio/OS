@@ -2884,6 +2884,100 @@ pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_js
     governed_sidecar_call(&python, &sidecar, request_json).await
 }
 
+// =================================================================================================
+// §4.10(f) DESKTOP HOP — the chunked output pull
+// =================================================================================================
+//
+// The governed reply text does not ride the result frame. §4.6 proves a full-schema inline frame
+// overflows the 262144 transport bound, and §2.3 denies the desktop the protected store, so the exact
+// bytes reach this side through the §4.10(f) request/response loop and through nothing else: one
+// immutable 184320-byte range per round trip, each round trip a FRESH one-shot sidecar.
+//
+// The two functions below are the transport half only. Every decision — how many reads, which `seq`,
+// what each reply must satisfy, and the §4.6/§7.1 whole-output length+digest gate against the SIGNED
+// envelope — lives in `brops_core::governed_output_pull`, which is pure and exhaustively unit-tested on
+// every platform. That split is deliberate: an adapter that ran its own loop would have had its own copy
+// of the `eof` check and of the output gates, and the copy that runs in production is the one no test
+// drives.
+//
+// **NOTE THE ATTRIBUTES, AND WHY THEY ARE HONEST.** Neither function is a `#[tauri::command]` and neither
+// appears in `generate_handler!` — §4.10(f) requires the pull to be "an INTERNAL backend helper … NOT a
+// frontend-exposed `#[tauri::command]`", so the output never round-trips the webview. And both carry
+// `#[allow(dead_code)]`, which is the uncomfortable half: **nothing calls them**. The pull needs an
+// `output_stream_id`; the §4.10(e) `signed` frame that mints one now has a supervisor-side producer
+// (`engine/runtime/governed_acceptance.py::AcceptanceDriver`, from a concurrent change in this same
+// tree), but the frame that would CARRY it to this side — §4.6's `bridge.governed-turn-result.v1` — has
+// no implementation on either hop, so the token cannot cross the sidecar boundary. Writing a caller today
+// would mean inventing a token, which is the one thing §4.10(f) forbids. The `allow` is therefore a
+// statement of a known gap rather than a way of not hearing about one; `config/reachability-declarations.
+// json` carries the matching declaration so the gate reports it, and `brops_core::governed_output_pull`'s
+// module docs carry the full reasoning.
+
+/// One `bridge.governed-turn-output-read.v1` round trip: spawn a one-shot sidecar, hand it the request on
+/// stdin, read its single reply.
+///
+/// It reaches the engine through [`governed_sidecar_call`] — the ONE seam in this application that spawns
+/// the bridge — so it inherits, without restating any of it, the absolutised script path, the empty AI
+/// sandbox cwd, the stripped self-test env, the 120 s deadline, the bounded stdout, and above all
+/// `engine_trust::apply`: a pull cannot run against a trust environment first-launch provisioning never
+/// recorded. A second spawn implementation here is exactly the half-wired export that seam's own comment
+/// warns about.
+///
+/// This side adds NO provisioning gate of its own, and that is a decision rather than an omission. The
+/// supervisor socket is the sidecar's provisioning, the sidecar refuses by name when it is unset, and
+/// §4.10(f) requires that refusal to arrive as an out-of-band failure rather than as a stream verdict —
+/// so a gate here could only duplicate a check whose whole point is which process performs it.
+#[allow(dead_code)]
+async fn governed_turn_output_read(request: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let python = env_nonempty("BROPS_GOVERNED_PYTHON")
+        .unwrap_or_else(|| DEFAULT_GOVERNED_PYTHON.to_string());
+    let sidecar = env_nonempty("BROPS_GOVERNED_SIDECAR")
+        .unwrap_or_else(|| DEFAULT_GOVERNED_SIDECAR.to_string());
+    let body = serde_json::to_string(request)
+        .map_err(|e| format!("the output-read request could not be serialized: {e}"))?;
+    governed_sidecar_call(&python, &sidecar, &body).await
+}
+
+/// Drive the whole §4.10(f) pull for one VERIFIED envelope and return the exact signed output bytes.
+///
+/// `envelope` is the isolated signer's §4.9 receipt envelope — the desktop's sole authority over the
+/// output — and `output_stream_id` is the capability from the §4.10(e) summary. Note what is NOT a
+/// parameter: the expected length and the expected digest. `OutputPull` reads both off the envelope, so
+/// there is no call shape in which this gate could be aimed at §4.10(e)'s TRANSPORT-ONLY echo of them,
+/// which would be a check a compromised sidecar supplies both sides of.
+///
+/// Per §7.1 this runs BEFORE and OUTSIDE the acceptance transaction: it is subprocess I/O and must never
+/// hold `BEGIN IMMEDIATE` (`receipt_store::in_immediate_tx` rejects a nested tx). Its `Ok` bytes are what
+/// `governed_verification::verify_and_accept` is then handed.
+///
+/// A local sidecar failure becomes [`PullError::Transport`], never a stream verdict, and the sidecar's
+/// own protocol-less refusal document is mapped there too — §4.10(f) P1-5: a spawn/connect/timeout/
+/// unexpected-exit failure "is NOT one of these reasons and produces NO reply frame". Preserving that
+/// distinction here is what lets a `stream_expired` in a log mean that a supervisor said so.
+#[allow(dead_code)]
+pub(crate) async fn governed_pull_output<'a>(
+    envelope: &brops_core::governed_verification::ReceiptEnvelope<'a>,
+    output_stream_id: &'a str,
+) -> Result<Vec<u8>, brops_core::governed_output_pull::PullError> {
+    use brops_core::governed_output_pull::{OutputPull, PullError};
+
+    // Three lines, and deliberately only three. Every decision — how many reads, which `seq`, what a
+    // reply must satisfy, whether a document is a §4.10(f) frame at all or the sidecar's protocol-less
+    // out-of-band refusal, and the §4.6/§7.1 whole-output gate — lives inside `OutputPull`, where it is
+    // unit-tested without a subprocess. An adapter that re-decided any of it would be the copy that runs
+    // in production while the tested one runs nowhere.
+    let mut pull = OutputPull::start(envelope, output_stream_id)?;
+    while let Some(request) = pull.next_request() {
+        // A spawn/timeout/crash produced no reply document at all, so it cannot be classified from one.
+        // It is mapped to the same LOCAL class (§4.10(f) P1-5), carrying the subprocess's own error.
+        let reply = governed_turn_output_read(&request)
+            .await
+            .map_err(PullError::Transport)?;
+        pull.accept(&reply)?;
+    }
+    pull.finish()
+}
+
 /// Shell out to the bridge sidecar with `request` on stdin and return its parsed JSON
 /// reply. Shared by the governed AI turn ([`governed_engine`]) and the read-only
 /// governance mirror ([`governed_sidecar_read`]) so both use the IDENTICAL subprocess
@@ -4287,6 +4381,121 @@ mod tests {
             err.contains("engine/config/trusted-keys.json"),
             "the refusal does not name what would have answered instead: {err}"
         );
+    }
+
+    // ---- §4.10(f) desktop hop ------------------------------------------------------------------
+
+    /// An envelope carrying only the fields the pull reads. It is deliberately NOT signed and NOT
+    /// verified: this file tests the TRANSPORT half, and `governed_verification` owns proving that an
+    /// unverified envelope never gets this far. What matters here is the type — the pull cannot be
+    /// called without one, which is what stops the §4.10(e) transport echo being used as the gate.
+    fn pull_envelope<'a>(sha: &'a str) -> brops_core::governed_verification::ReceiptEnvelope<'a> {
+        brops_core::governed_verification::ReceiptEnvelope {
+            artifact_type: "brops.governed-receipt-envelope.v1",
+            key_id: "signer-1",
+            receipt_id: "rcpt-1",
+            run_id: "run-1",
+            execution_attempt_id: "attempt-1",
+            task_id: "task-1",
+            workspace_id: "ws-1",
+            install_id: "inst-1",
+            request_nonce: "nonce-1",
+            request_sha256: "11111111111111111111111111111111111111111111111111111111111111ab",
+            record_handle: "22222222222222222222222222222222222222222222222222222222222222ab",
+            lease_handle: "33333333333333333333333333333333333333333333333333333333333333ab",
+            execution_receipt_handle: "44444444444444444444444444444444444444444444444444444444444444ab",
+            output_sha256: sha,
+            output_bytes: 5,
+            challenge_accepted_at_ms: 1_700_000_000_000,
+            completed_at_ms: 1_700_000_000_001,
+            evidence_final_event_hash: "55555555555555555555555555555555555555555555555555555555555555ab",
+            evidence_event_count: 1,
+            evidence_last_sequence: 0,
+            evidence_head_sequence: 1,
+            supervisor_attestation_key_id: "attest-1",
+            attestation_evidence_sha256: "66666666666666666666666666666666666666666666666666666666666666ab",
+        }
+    }
+
+    /// The SEAM again, on the second caller. `engine_trust::apply` lives in `governed_sidecar_call`, and
+    /// the §4.10(f) pull reaches the engine through exactly that function — so a pull must refuse for the
+    /// same reason a governance read does when provisioning never ran. If someone gives the pull its own
+    /// spawn, this is what notices: the refusal stops naming the trust environment.
+    ///
+    /// It also pins the §4.10(f) P1-5 class of the failure. A sidecar that could not be spawned is a
+    /// LOCAL failure and must arrive as `Transport`, never as one of the five stream reasons — the whole
+    /// value of `stream_expired` in a log is that this path cannot produce it.
+    #[test]
+    fn the_output_pull_is_never_spawned_without_the_provisioned_trust_environment() {
+        use brops_core::governed_output_pull::PullError;
+        let sha = brops_core::receipt::sha256_hex(b"hello");
+        let envelope = pull_envelope(&sha);
+        let token = "A".repeat(brops_core::governed_output_pull::OUTPUT_STREAM_ID_LEN);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime");
+        let err = runtime
+            .block_on(governed_pull_output(&envelope, &token))
+            .expect_err("the pull reached the engine with no provisioned trust environment");
+        match err {
+            PullError::Transport(detail) => {
+                assert!(
+                    detail.contains("trust environment was never recorded"),
+                    "the refusal is not the trust-environment one, so `engine_trust::apply` is not on \
+                     the pull's path: {detail}"
+                );
+            }
+            other => panic!(
+                "a sidecar that could not be spawned surfaced as {other:?} — a LOCAL failure must never \
+                 arrive as a stream verdict (§4.10(f) P1-5)"
+            ),
+        }
+    }
+
+    /// §4.10(f): the pull is "an INTERNAL backend helper … NOT a frontend-exposed `#[tauri::command]`;
+    /// it must NOT appear in `generate_handler!`, so the output pull never round-trips the webview".
+    ///
+    /// Asserted against the sources rather than trusted, because the failure mode is a one-line edit that
+    /// nothing else in the build would object to: adding `#[tauri::command]` to either function compiles
+    /// cleanly, and `check_reachability.py` would then report an unreachable command rather than a
+    /// governed egress the renderer can drive.
+    #[test]
+    fn the_output_pull_is_not_reachable_from_the_webview() {
+        let this = include_str!("ai.rs");
+        for name in ["governed_turn_output_read", "governed_pull_output"] {
+            let at = this
+                .find(&format!("async fn {name}"))
+                .unwrap_or_else(|| panic!("{name} is gone — delete this test or restore the function"));
+            let preamble = &this[at.saturating_sub(400)..at];
+            assert!(
+                !preamble.contains("#[tauri::command]"),
+                "{name} became a frontend-exposed command; §4.10(f) forbids the pull round-tripping the webview"
+            );
+        }
+        let lib = include_str!("lib.rs");
+        let handler = &lib[lib.find("generate_handler![").expect("generate_handler!")..];
+        for name in ["governed_turn_output_read", "governed_pull_output"] {
+            assert!(!handler.contains(name), "{name} was registered in generate_handler!");
+        }
+    }
+
+    /// The bound on this leg of the transport, in the language that owns it. A §4.10(f) chunk reply is
+    /// 245941 bytes and arrives on the sidecar's stdout; `MAX_STDOUT_BYTES` is the cap that reads it, and
+    /// it TRUNCATES rather than erroring, so a cap below a full chunk would have produced a silently
+    /// half-read reply rather than a failure. The margin is ~9.2 MiB, and it is asserted rather than
+    /// assumed — the supervisor's own writer was capped below a full chunk until the day this landed.
+    #[test]
+    fn the_child_stdout_bound_admits_a_full_size_chunk_reply() {
+        let max_reply = brops_core::governed_output_pull::MAX_BRIDGE_OUTPUT_READ_REPLY_BYTES as u64;
+        assert_eq!(max_reply, 245_941);
+        assert!(
+            max_reply < MAX_STDOUT_BYTES,
+            "a full §4.10(f) chunk reply ({max_reply}) does not fit the child stdout cap ({MAX_STDOUT_BYTES})"
+        );
+        // And an 8 MiB output arrives as 46 of them, none of which is read into one buffer together —
+        // the reassembly is bounded by the signed length, not by this cap.
+        assert_eq!(brops_core::governed_output_pull::MAX_OUTPUT_CHUNKS, 46);
     }
 
     #[test]
