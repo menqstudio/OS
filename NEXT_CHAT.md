@@ -8,6 +8,76 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The supervisor could read a chunk it could never write back (2026-08-10)
+
+Wave 3b-1B step 5: **§4.10(f)'s SUPERVISOR hop** — `governed_output_streams`, the mint, the derived
+three-phase state, the quota, the sweep, and `brops.governed-turn-output-read.v1` with its locked verdict
+ladder. The **desktop hop is deliberately not built**: no sidecar branch, no Tauri helper, nothing that
+drives the loop or reassembles. Building the relay without its client would have added exactly the second
+unwired seam this wave has been avoiding.
+
+**The defect it surfaced is the one worth reading twice.** `handle_connection` had widened the sidecar's
+**read** bound to 262144 while still writing every reply through the broker's **8192** default. Every
+sidecar reply built so far is a few hundred bytes, so **nothing in 1681 tests could tell**. A §4.10(f)
+chunk reply is **245940 bytes**: it would have been refused by the supervisor's own writer and degraded to
+`{"ok":false,"error":"reply exceeded frame bound"}`, which is not a §4.10(f) frame at all. **The pull could
+never have completed.** Fixed, with a test that drives a maximum-size reply through the front door and a
+second that pins that the broker's bound did *not* widen with it.
+
+**The dead Rust ladder was replaced, not extended, and the reason is sharper than "it diverged".**
+`governed_output_stream::create_schema` ran on the same connection **one line before**
+`supervisor_ledger::create_schema` in all four call sites, and both use `CREATE TABLE IF NOT EXISTS`. So
+adding the canonical table while that module survived would have made **the canonical DDL a silent no-op
+and the divergent shape the one that actually existed**. The file, its `mod` line and all four calls are
+deleted; `brops-core --lib` fell 323 → 314, exactly its nine tests.
+
+It diverged in more than shape. Six design columns were absent and two foreign ones present, including a
+**second** capability token the design does not have — `output_stream_id` *is* the capability. It carried a
+mutable `state` column on a table whose logical state the design says is DERIVED. Its phase 3 UPDATEd to
+`'swept'` and never DELETEd, so the table grew forever. Its expiry boundary was **inverted** —
+`now_ms >= expires` where the design makes `now_ms == expires_at_ms` still LIVE — and its test
+`past_ttl_is_expired_tombstone` **pinned the wrong side**. Its quota was 8 (a constant belonging to a
+different table), not 64. And it had no serving function at all.
+
+**The three `check_reachability` declarations went with it**, because the gate refuses a `defined_in` that
+no longer exists — a stale "declared unreachable" on deleted code turns it RED, which was verified rather
+than assumed. `tools/test_check_reachability.py`'s real-repo assertion was **inverted rather than deleted**:
+it now asserts the file is gone and that no declaration outlived it.
+
+**Arithmetic first, again, and this time one check IS load-bearing.** The maximum reply is 245940 against
+262144 — 16204 bytes of headroom, versus §4.10(e)'s 187672 — so no reply-frame check (it cannot fire on a
+legal instance) and no request-cap entry (§4.10(f) declares the request frame at `MAX_FRAME_BYTES`, which
+*is* the transport read bound, so the entry would never be consulted). The one bound that **can** fire is
+on the chunk, and it exists and is tested at the boundary.
+
+**63 mutants killed, 3 survivors, all three explained rather than papered over.** Two show that
+`MAX_OUTPUT_STREAM_BYTES_PER_INSTALL` is *exactly* 64 × `MAX_OUTPUT_BYTES` while the DDL caps every row at
+8 MiB — so while the count limb holds, the byte limb **can never bind first**. Both constants are in the
+design, so both stay, and a test named for it proves the relationship instead of pretending the limb is
+exercised. The third is an *inverse* mutant the agent invented: re-adding an `isinstance` guard survived,
+which is the proof the guard was dead. Deleted.
+
+Mutation also found three real gaps, now closed: the per-install sweep boundary had no test at the exact
+instant; `UNIQUE(execution_attempt_id)` was masked by the module's own lookup, so a raw-SQL test was added;
+and the `output_bytes` bounds were masked because both walls raise the same error type, so the test now
+distinguishes the pre-transaction wall from the DDL wall.
+
+**Three DDL triggers strengthen beyond the design's letter**: no UPDATE ever, so the two timestamps a read
+verdict is derived from cannot be moved after commit; the lifetime must follow from `created_at_ms`, so a
+row that reads LIVE forever cannot be minted; and the digest must BE the handle. Plus a foreign key to
+`governed_turn_acceptance` where the design declares no parent. The parity gate went 42 → **53** clauses.
+
+**§4.10(h)'s "disjoint namespace" claim fails a third time, and differently.** §4.10(f)'s five reasons are
+a **complete subset** of `GOVERNED_REFUSAL_REASONS` — and here that is *intended*, because §4.10(h) names
+an output-read `refused` a genuine governed verdict rather than an internal refusal. Unlike the accidental
+`{malformed, retry_conflict, oversize}` overlap, this containment is by design.
+
+Engine suite **1789 tests OK (43 skipped)**, converged over three runs, from 1681. `brops-core --lib`
+**314**, `brops --lib` **124**, `tools/` self-tests **419**. `check_ledger_ddl_parity` (53 clauses),
+`check_spec_references`, `check_reachability`, `check_coordination` and `check_roadmap_order` GREEN.
+§4.10(f) is declared **partial**, with the desktop hop named as the gap. No gate moved.
+
+
 ### A receipt signed at any point in the past verified today (2026-08-10)
 
 §7.1's mandatory freshness step was absent from the governed path. `verify_and_accept` was documented "no

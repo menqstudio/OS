@@ -74,9 +74,10 @@ catch a supervisor typo and would catch nothing an adversary does, while implyin
 authority this frame does not have.
 
 **It does not mint, and it does not classify.** ``output_stream_id`` is minted by §4.10(f)
-(**NOT IMPLEMENTED** — a later ordered piece, along with the ``governed_output_streams``
-table it is bound in); this file only checks that the value it is handed has the shape a
-capability must have. Classifying a received frame into a desktop Block is §4.10(h)
+— ``governed_output_stream.mint_stream``, into the ``governed_output_streams`` table, from
+``complete-run`` (landed 2026-08-10; the DESKTOP hop of that pull is still unbuilt) — and this
+file only checks that the value it is handed has the shape a capability must have.
+Classifying a received frame into a desktop Block is §4.10(h)
 (**NOT IMPLEMENTED** — a later ordered piece); this file only says whether a frame IS a
 §4.10(e) frame.
 
@@ -137,10 +138,11 @@ MAX_TURN_RESULT_FRAME_BYTES = MAX_FRAME_BYTES
 STATUS_SIGNED = "signed"
 STATUS_REFUSED = "refused"
 
-#: §4.10(f) (**NOT IMPLEMENTED** — a later ordered piece): "``output_stream_id`` = 32
-#: cryptographically-random bytes, base64url no-pad, EXACTLY 43 chars (256-bit)". §4.10(e)
-#: transports it; the minting, the ``governed_output_streams`` binding and the read loop
-#: are all §4.10(f).
+#: §4.10(f): "``output_stream_id`` = 32 cryptographically-random bytes, base64url no-pad,
+#: EXACTLY 43 chars (256-bit)". §4.10(e) transports it; the minting, the
+#: ``governed_output_streams`` binding and the supervisor half of the read loop are all
+#: §4.10(f) and live in ``governed_output_stream`` / ``governed_output_read``, which import
+#: this constant rather than restating 43.
 OUTPUT_STREAM_ID_LEN = 43
 
 #: §4.10(e)/§4.5: "<b64url 86>" — a detached Ed25519 signature.

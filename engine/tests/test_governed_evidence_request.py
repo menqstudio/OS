@@ -20,7 +20,8 @@ The tests are organized as the design's own obligations:
   * nothing here creates an acceptance row, an `execution_attempt_id`, a lease, or writes a
     single byte to any table: the whole gate is SELECTs, and that is asserted rather than
     assumed;
-  * the §4.10(f) output pull is **NOT IMPLEMENTED** — a later ordered piece. The §5
+  * the §4.10(f) output pull landed on 2026-08-10 (the SUPERVISOR hop; the desktop hop is
+    still unbuilt) and is not this gate's business either way. The §5
     continuation is a test double throughout: §5 acceptance has no production supplier, so
     what is asserted about it is the CONTRACT it is held to — it must answer in §4.10(e)'s
     `brops.governed-turn-result.v1` union, this module cannot impersonate it, and it
@@ -1051,8 +1052,11 @@ class FrontDoorTests(_Case):
                 self.assertEqual(self.serve(over)["reason"], "malformed")
 
     def test_the_evidence_request_is_in_the_sidecar_protocol_set(self):
+        # Six since 2026-08-10: §4.10(f)'s output read joined the grant. The count is pinned
+        # in three test files on purpose — widening the sidecar's door has to be a deliberate
+        # edit in every place that claims to know how wide it is.
         self.assertIn(ger.EVIDENCE_REQUEST_PROTOCOL, gss.SIDECAR_PROTOCOLS)
-        self.assertEqual(len(gss.SIDECAR_PROTOCOLS), 5)
+        self.assertEqual(len(gss.SIDECAR_PROTOCOLS), 6)
 
 
 # ---------------------------------------------------------------------------

@@ -5,10 +5,10 @@
 //! runs governed turns. It is NOT the renderer: the renderer is a mutually-distrusting client that connects
 //! over a single-request/single-response AF_UNIX channel. This binary:
 //!
-//!   1. opens (or creates) the broker DB and initializes the four rev-30 governed-turn schemas
-//!      (`broker_turns`, `governed_message_store`, `governed_output_stream`, `supervisor_ledger`) — the
-//!      idempotency ledger, the committed-message store, the output-stream projection, and the supervisor
-//!      lease ledger, all through `brops-core` so there is exactly one schema authority;
+//!   1. opens (or creates) the broker DB and initializes the three rev-30 governed-turn schemas
+//!      (`broker_turns`, `governed_message_store`, `supervisor_ledger`) — the idempotency ledger, the
+//!      committed-message store and the supervisor lease ledger, all through `brops-core` so there is
+//!      exactly one schema authority;
 //!   2. on Linux binds the renderer→broker AF_UNIX listener and, for each connection, reads EXACTLY ONE
 //!      length-prefixed [`ipc_framing`] request frame, authenticates the peer's OS credentials
 //!      (`SO_PEERCRED`) and allowlists EXACTLY the renderer/login UID (denying every other), then drives one
@@ -52,11 +52,19 @@ const EXIT_SOCKET: i32 = 4;
 const CONN_IO_TIMEOUT_MS: u64 = 120_000;
 
 // ---------------------------------------------------------------------------------------------------
-// Broker DB schema init — pure, host-independent, testable on any platform. Creates the four governed-turn
+// Broker DB schema init — pure, host-independent, testable on any platform. Creates the three governed-turn
 // schemas through brops-core so the broker shares exactly one schema authority with the recorder side.
+//
+// `governed_output_stream` used to be a FOURTH call here and is gone. The rev-30 §4.10(f) output-stream
+// table is SUPERVISOR state — Appendix B's principal/ACL matrix puts `governed_output_streams` in the 0700
+// supervisor-only DB beside the acceptance ledger and staging — so it is created by `supervisor_ledger`'s
+// canonical DDL and served by the supervisor, which is the party that HOLDS the output bytes. The deleted
+// module's own `CREATE TABLE IF NOT EXISTS governed_output_streams` ran on THIS connection one line before
+// `supervisor_ledger::create_schema`, so its divergent shape would have won the race and made the canonical
+// DDL a silent no-op.
 // ---------------------------------------------------------------------------------------------------
 
-/// Initialize the four rev-30 governed-turn schemas on `conn` (idempotent — every `create_schema` uses
+/// Initialize the three rev-30 governed-turn schemas on `conn` (idempotent — every `create_schema` uses
 /// `CREATE TABLE IF NOT EXISTS`). Fails closed with a stage-tagged message on the first error so a partially
 /// migrated DB never advances to serving turns.
 pub fn init_broker_schema(conn: &Connection) -> Result<(), String> {
@@ -64,8 +72,6 @@ pub fn init_broker_schema(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("broker_turns schema init failed: {e:?}"))?;
     brops_core::governed_message_store::create_schema(conn)
         .map_err(|e| format!("governed_message_store schema init failed: {e}"))?;
-    brops_core::governed_output_stream::create_schema(conn)
-        .map_err(|e| format!("governed_output_stream schema init failed: {e}"))?;
     brops_core::supervisor_ledger::create_schema(conn)
         .map_err(|e| format!("supervisor_ledger schema init failed: {e:?}"))?;
     Ok(())

@@ -682,16 +682,40 @@ class RustSymbolTests(GateTestCase):
 
 
 class ShippedRustLadderTests(unittest.TestCase):
-    """The REAL repository, not a fixture: the ladder this section was built for."""
+    """The REAL repository, not a fixture: what became of the ladder this section was built
+    for.
 
-    def test_the_output_stream_ladder_is_declared_and_still_uncalled(self):
+    Until 2026-08-10 this asserted that `governed_output_stream::{mint,resolve,sweep}` were
+    DECLARED and still uncalled. They are neither now: rev-30 §4.10(f) was actually built, as
+    SUPERVISOR state in the engine, and the Rust ladder — whose table diverged from the design
+    it cited — was deleted rather than left as a second answer. Its own declaration had said
+    "wiring a caller is a rewrite, not a hookup", and that turned out to be the finding.
+
+    The assertion is inverted rather than removed, because the deletion is the thing worth
+    protecting: re-adding a `pub fn` under that module without a caller must not read as
+    normal, and re-adding the entry without the file must turn the gate RED on its own
+    (`defined_in` has to exist). The gate's MECHANICS are still exercised in full by the
+    fixture tests above, which build their own synthetic ladder.
+    """
+
+    def test_the_output_stream_ladder_is_gone_and_no_declaration_outlived_it(self):
         problems, summary = gate.check(ROOT)
         self.assertEqual(problems, [])
+        self.assertFalse(
+            (ROOT / "apps/desktop/src-tauri/core/src/governed_output_stream.rs").exists(),
+            "the divergent §4.10(f) ladder is back; it must not be, see the rust_symbols "
+            "note in config/reachability-declarations.json")
         for name in ("mint", "resolve", "sweep"):
-            state = summary["rust"].get(name)
-            self.assertIsNotNone(state, f"{name} is not declared under rust_symbols")
-            self.assertEqual(state["expectation"], "declared_unreachable")
-            self.assertEqual(state["callers"], [], f"{name} gained a caller: {state['callers']}")
+            self.assertIsNone(
+                summary["rust"].get(name),
+                f"{name} is declared under rust_symbols but the file it described is gone")
+
+    def test_the_section_survives_empty_so_the_next_symbol_has_somewhere_to_go(self):
+        declared = json.loads(
+            (ROOT / "config/reachability-declarations.json").read_text(encoding="utf-8"))
+        self.assertIn("rust_symbols", declared)
+        self.assertEqual(
+            {k for k in declared["rust_symbols"] if not k.startswith("$")}, set())
 
 
 class PolicyFlagTests(GateTestCase):

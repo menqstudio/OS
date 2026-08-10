@@ -1678,15 +1678,17 @@ class FrontDoorTests(_Case):
         # …and the compact form of the same request is served normally.
         self.assertEqual(self.serve(body)["status"], "published")
 
-    def test_the_sidecar_protocol_set_is_exactly_five_names(self):
+    def test_the_sidecar_protocol_set_is_exactly_six_names(self):
         """The sidecar's whole grant, written out. It was four names while staging was the
-        end of the road; §4.10(d) adds the execute/finalize trigger and nothing else, and
-        this test is the reason widening the door has to be a deliberate edit."""
+        end of the road, five when §4.10(d) added the execute/finalize trigger, and six since
+        §4.10(f) added the output read — the only one of the six that carries anything OUT.
+        This test is the reason widening the door has to be a deliberate edit."""
         self.assertEqual(
             sorted(gss.SIDECAR_PROTOCOLS),
             sorted(["brops.governed-turn-open.v1", "brops.governed-staging-open.v1",
                     "brops.governed-staging-chunk.v1", "brops.governed-staging-final.v1",
-                    "brops.governed-evidence-request.v1"]))
+                    "brops.governed-evidence-request.v1",
+                    "brops.governed-turn-output-read.v1"]))
 
 
 # ---------------------------------------------------------------------------

@@ -222,8 +222,21 @@
       "reason": "`brops.governed-turn-result.v1` is built and validated by `engine/runtime/governed_turn_result.py`: the COMPLETE tagged union, both arms, the exhaustive field sets, the §4.6 encoded-byte caps, the canonical-base64url requirement on all five b64 fields, and the closed `GOVERNED_REFUSAL_REASONS` union embedded verbatim (its ratified twelve compared against the FROZEN engine/contracts/brops-sign-result.v1.schema.json enum, in order). The builders run the validator over what they build, so producer and consumer cannot disagree. The §4.10(e) frame cap carries NO check because none could fire: the literal maximum instance is 74472 bytes against MAX_FRAME_BYTES 262144, constructed and asserted in `test_the_literal_maximum_signed_frame_fits`, and the transport's own `encode_frame` is the same bound. What is NOT here, deliberately: no PRODUCTION producer exists - §5 acceptance is a later ordered piece and `drive_acceptance` is still an injected seam with no supplier - and no sidecar re-frame into §4.6's `bridge.governed-turn-result.v1` exists (that is §4.10(g)/(h)). No member of GOVERNED_REFUSAL_REASONS is DECIDED anywhere in this tree; every producing gate §4.5 names is a §5/§7 gate, and `TheClosedUnionIsNotDecidedHereTests` says so by name rather than leaving a green suite to imply otherwise. The one place the frame is ENFORCED today is §4.10(d)'s continuation guard: once the pre-acceptance gate passes, the §5 continuation's reply must BE a §4.10(e) frame or the supervisor faults. §2.2 also names a file `engine/contracts/brops-governed-turn-result.v1.schema.json`; it does not exist, and neither do the equivalent files for §4.10(a0)/(a)/(b)/(c)/(d) - the governed family's shapes are Python modules in this tree, and adding a JSON schema would be a second source of truth for the same shape."
     },
     "§4.10(f)": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "missing": "The SUPERVISOR hop is implemented (2026-08-10). `brops.governed-turn-output-read.v1` is served by engine/runtime/governed_output_read.handle_output_read, reached from the supervisor front door for the sidecar principal only (it is the sixth and last name in SIDECAR_PROTOCOLS); the durable `governed_output_streams` table is in the canonical supervisor_ledger.sql with INSERT-ONCE, fixed-lifetime and digest-binding triggers; the capability is 32 secrets-derived bytes as 43 base64url chars; the three-phase verdict is derived synchronously from the row (absent -> expired -> binding -> range, that exact order); the per-install quota FIFO-evicts rather than refusing; and the mint has a real production caller in the §5 `complete-run` op, which MEASURES output_bytes from the digest-verified store rather than accepting it from the wire. What is NOT IMPLEMENTED: the DESKTOP hop. There is no `bridge.governed-turn-output-read.v1` branch in bridge/engine_sidecar.py and no internal `governed_turn_output_read` helper in the Tauri backend, so nothing on the desktop side drives the pull loop, reassembles the bytes, or applies the §4.6/§7.1 whole-output digest check. Also absent: any startup/interval driver for the sweep (sweep_streams has tests and no scheduler), and the live kit (engine/ci/live/run_supervisor.py) supplies no output_read_service, exactly as it supplies no open/staging/evidence-request service.",
+      "tests": [
+        "test_the_expiry_boundary_is_inclusive_at_the_instant",
+        "test_a_valid_token_with_the_wrong_receipt_is_caught_server_side",
+        "test_a_zero_byte_output_has_exactly_one_legal_read",
+        "test_the_chunk_boundary_is_exact_at_184320",
+        "test_all_five_reasons_are_reachable_and_none_is_a_stub",
+        "test_the_literal_maximum_reply_frame_fits",
+        "test_a_maximum_size_chunk_reply_reaches_the_peer_intact",
+        "test_completing_a_run_mints_its_output_stream",
+        "test_no_update_of_any_column_is_permitted",
+        "test_a_row_cannot_be_minted_with_a_lifetime_it_chose"
+      ],
+      "source": "Wave 3b-1B step 5 (§4.10(f)), 2026-08-10"
     },
     "§4.10(g)": {
       "status": "unreviewed",
@@ -287,7 +300,7 @@
     },
     "§7.1": {
       "status": "partial",
-      "missing": "Freshness IS now implemented: governed_verification::check_receipt_freshness bounds the envelope's challenge_accepted_at_ms and completed_at_ms against the broker's injected wall clock under the §1-LOCKED FreshnessWindow{future_skew_ms:60000,max_age_ms:300000}, and chain_executor reads that clock via SystemWallClock at acceptance. What is STILL absent from §7.1: the §4.10(f) chunked output pull/reassemble (the shipped broker runs the turn in-process and the output arrives inline, so there is no pull loop to verify) and the bridge/sign-result ECHO-equality step (no bridge frame exists on this path to echo). The replay half is DURABLE: receipt-id global uniqueness and the one-time nonce consume are a BEGIN IMMEDIATE CAS over SQLite rather than InMemoryLedger, so both survive a restart.",
+      "missing": "Freshness IS now implemented: governed_verification::check_receipt_freshness bounds the envelope's challenge_accepted_at_ms and completed_at_ms against the broker's injected wall clock under the §1-LOCKED FreshnessWindow{future_skew_ms:60000,max_age_ms:300000}, and chain_executor reads that clock via SystemWallClock at acceptance. What is STILL absent from §7.1: the §4.10(f) chunked output pull/reassemble ON THIS PATH (the shipped broker runs the turn in-process and the output arrives inline, so there is no pull loop to verify; §4.10(f)'s SUPERVISOR hop landed 2026-08-10, but its desktop half — the bridge frame and the internal helper that would drive the loop — is still NOT IMPLEMENTED) and the bridge/sign-result ECHO-equality step (no bridge frame exists on this path to echo). The replay half is DURABLE: receipt-id global uniqueness and the one-time nonce consume are a BEGIN IMMEDIATE CAS over SQLite rather than InMemoryLedger, so both survive a restart.",
       "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
     },
     "§7.1(c)": {

@@ -207,7 +207,6 @@ mod linux {
     fn init_schema(conn: &Connection) -> Result<(), String> {
         brops_core::broker_turns::create_schema(conn).map_err(|e| format!("{e:?}"))?;
         brops_core::governed_message_store::create_schema(conn).map_err(|e| format!("{e}"))?;
-        brops_core::governed_output_stream::create_schema(conn).map_err(|e| format!("{e}"))?;
         brops_core::supervisor_ledger::create_schema(conn).map_err(|e| format!("{e:?}"))?;
         Ok(())
     }

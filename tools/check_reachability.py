@@ -26,7 +26,12 @@ landed:
      core is written in, and it was invisible here until 2026-08-09: ``rustc`` never warns
      about a ``pub fn`` in a library crate that nobody calls, so the ``governed_output_stream``
      mint/resolve/sweep ladder shipped, was reviewed, grew nine unit tests, and had zero
-     production callers.
+     production callers. That ladder was **deleted on 2026-08-10** when rev-30 §4.10(f) was
+     actually built (as supervisor state, in the engine) and its table turned out to disagree
+     with the design it cited — so this gate's worked example is now history rather than a file
+     you can open, and the ``rust_symbols`` section it justified is empty. The examples below
+     are kept in the past tense for the same reason the rule is kept: the next one will look
+     exactly like it did.
   4. Every ``allow-*``/``deny-*`` grant in
      ``apps/desktop/src-tauri/capabilities/default.json`` corresponds to a registered command
      and vice versa — and an ``allow``-granted command with no caller is reported as what it

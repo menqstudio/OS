@@ -36,11 +36,16 @@ const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES a
 /// signature ⇒ no result". The channel underneath says the same thing structurally: one framed
 /// request, one framed reply.
 ///
-/// Do not read `brops_core::governed_output_stream` as the streaming that is missing here. That is
-/// the rev-30 §4.10(f) ladder for PULLING the completed output of a buffered turn in chunks when it
-/// is too large to ride the reply frame; it moves finished bytes, checked against the same
-/// whole-output digest. It has no production caller and is declared in
-/// `config/reachability-declarations.json`.
+/// Do not read the rev-30 §4.10(f) output pull as the streaming that is missing here. §4.10(f) is a
+/// chunked PULL of the COMPLETED output of a buffered turn, for when the bytes are too large to ride
+/// the reply frame; it moves finished bytes, checked against the same whole-output digest, and it
+/// carries no deltas by construction. Its supervisor half now exists in the engine
+/// (`engine/runtime/governed_output_read.py` + `governed_output_stream.py`, served to the sidecar
+/// principal from the supervisor front door). The `brops_core::governed_output_stream` ladder that
+/// used to be named here was DELETED on 2026-08-10: it had zero production callers and its table
+/// diverged from the design it cited. **The DESKTOP half of §4.10(f) — the
+/// `bridge.governed-turn-output-read.v1` hop and the internal `governed_turn_output_read` helper that
+/// would drive the loop — is still NOT IMPLEMENTED**, so nothing on this side pulls anything yet.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const IO_TIMEOUT_MS: u64 = 120_000;
 

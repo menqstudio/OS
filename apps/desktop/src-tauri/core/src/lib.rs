@@ -13,7 +13,6 @@ pub mod privilege_drop;
 pub mod tcb_integrity;
 pub mod broker_turns;
 pub mod broker_orchestrator;
-pub mod governed_output_stream;
 pub mod governed_verification;
 pub mod windows_broker;
 pub mod ipc_framing;

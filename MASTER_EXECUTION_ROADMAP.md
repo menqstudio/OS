@@ -19,7 +19,7 @@
 > **⏱️ IMPLEMENTATION STATUS (2026-07-27 — facts only, locked scope UNCHANGED; machine mirror [`config/current_state.json`](./config/current_state.json)).**
 > - **Phase 0:** done. **Phase 1:** in progress. **Phases 2–10:** not done. The whole app is NOT finished; the security spine below is a subset.
 > - **The self-asserted `receipt.verified: bool` contract described in the Phase-1 spine below is SUPERSEDED** by the cryptographic receipt chain delivered in **Wave 3a** (Ed25519-signed receipt the desktop verifies via RFC 8785 JCS + `verify_strict`; one-time challenge nonce bound to `request_sha256`; `receipt_verification_attempts` evidence; `receipt_ids_seen` replay ledger; tri-state `trusted_verified | development_untrusted | blocked`, migrations through **0014**). Read every "adapter sets `verified=true`" clause below as historical: the real contract is "no *verified signature* ⇒ no result," fail-closed. The boolean is not the authority.
-> - **Phase-1 wired vs unwired (real state):** the governed provider path + fail-closed verify-seam + receipt-plumbing are **WIRED** (Wave 3a / T-016, PR #28 `8a580028`): every governed turn `issue_challenge → verify_and_record_receipt(&NoTrustedManifest) → Blocked`. Production **"Verified"** (`trusted_verified`) is **UNWIRED** — it awaits the Wave 3b isolated signer + signed manifest (Wave 3b-0 design merged PR #30; Wave 3b-1 in progress on PR #31/#32, not merged). Governed **delta-streaming** is **DESCOPED** as of 2026-08-09, not merely unimplemented: a governed turn is buffered *by construction*, because the desktop's authority is a signature over the whole output and there is no per-delta signature to show one against (Phase 1 §Scope carries the ruling; `governed_turn.rs` and the §4.10(f) ladder's own module doc now say the same thing). Do not read `core/src/governed_output_stream.rs` as that streaming — it is the chunked **pull** of a *completed* output, it has **zero production callers**, and it is declared under `rust_symbols` in `config/reachability-declarations.json`. The old "+ Settings governed toggle" clause is stale (the toggle was removed in Wave 1 / PR #15; provider status is read-only — and Phase 1's UI/UX section was amended on 2026-08-09 to specify the read-only three-state control instead of promising a switch).
+> - **Phase-1 wired vs unwired (real state):** the governed provider path + fail-closed verify-seam + receipt-plumbing are **WIRED** (Wave 3a / T-016, PR #28 `8a580028`): every governed turn `issue_challenge → verify_and_record_receipt(&NoTrustedManifest) → Blocked`. Production **"Verified"** (`trusted_verified`) is **UNWIRED** — it awaits the Wave 3b isolated signer + signed manifest (Wave 3b-0 design merged PR #30; Wave 3b-1 in progress on PR #31/#32, not merged). Governed **delta-streaming** is **DESCOPED** as of 2026-08-09, not merely unimplemented: a governed turn is buffered *by construction*, because the desktop's authority is a signature over the whole output and there is no per-delta signature to show one against (Phase 1 §Scope carries the ruling; `governed_turn.rs` says the same thing). Do not read the §4.10(f) output pull as that streaming — it is the chunked **pull** of a *completed* output. Its supervisor hop landed 2026-08-10 in the engine; the `core/src/governed_output_stream.rs` ladder that used to be named here was deleted in the same change (zero production callers, divergent table), and `rust_symbols` in `config/reachability-declarations.json` is now empty. The old "+ Settings governed toggle" clause is stale (the toggle was removed in Wave 1 / PR #15; provider status is read-only — and Phase 1's UI/UX section was amended on 2026-08-09 to specify the read-only three-state control instead of promising a switch).
 > - **Not every AI entry point is governed yet** (Phase-2.3 work): only the main chat streaming seam runs the governed pipeline today; run-steps / Ask Bro / conversation-reply and other execution surfaces are not yet wired to the governed receipt chain. This is tracked, not done.
 > ---
 >
@@ -67,7 +67,7 @@ phase. That is the whole onboarding for *building*.
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Foundation | ✅ **Locked (done)** |
-| 1 | Bridge | 🔨 **Wired, real mode still refuses.** Contract, adapter, broker and receipt are real; the three previously unreachable commands (`read_decision_ledger`, `read_verifier_verdicts`, `governed_turn_execute`) now have wrappers and a `bridge` route. `engine_sidecar._real_callables()` still raises unconditionally, pending the supervisor-reserved execution attempt and the authoritative execution→receipt binding — correct and fail-closed. **2026-08-09:** two long-open questions were settled in writing rather than left to disagree with the code. Governed **delta-streaming is descoped** (a governed turn is buffered by construction — the desktop's authority is a signature over the whole output); what stays open under that heading is the §4.10(f) chunked output **pull**, whose ladder sits in `core/src/governed_output_stream.rs` with zero production callers and is now declared unreachable rather than mistaken for built. The **Settings governed-provider row was amended to a read-only three-state control** — the provider is resolved from the backend environment and this phase's own gate is "Desktop never holds lease/key/env", so a switch the webview could flip is not buildable honestly; it now reports `default`/`on`/`blocked` and is keyboard-reachable instead of dropping out of the tab order. The phase stays **open**, and as of **2026-08-10** by one box more than this cell used to admit. The DoD row *One governed round-trip proven end-to-end* had been ticked and marked "done" and was false: the production order at `commands.rs:1338-1428` returns at `:1382`, before `ai::governed_turn` and before `verify_and_record_receipt`, so those two have zero runtime-reachable callers. The refusal is deliberate and stays — the row is open because the roadmap was describing a round-trip the gate forbids. Read the rest of this cell with that in mind: "contract, adapter, broker and receipt are real" is true about the code and says nothing about whether anything reaches it. Two DoD boxes are now unchecked, matching this cell. |
+| 1 | Bridge | 🔨 **Wired, real mode still refuses.** Contract, adapter, broker and receipt are real; the three previously unreachable commands (`read_decision_ledger`, `read_verifier_verdicts`, `governed_turn_execute`) now have wrappers and a `bridge` route. `engine_sidecar._real_callables()` still raises unconditionally, pending the supervisor-reserved execution attempt and the authoritative execution→receipt binding — correct and fail-closed. **2026-08-09:** two long-open questions were settled in writing rather than left to disagree with the code. Governed **delta-streaming is descoped** (a governed turn is buffered by construction — the desktop's authority is a signature over the whole output); what stays open under that heading is the §4.10(f) chunked output **pull** — whose SUPERVISOR hop landed 2026-08-10 in the engine, while its DESKTOP hop does not exist; the `core/src/governed_output_stream.rs` ladder that used to sit here uncalled was deleted in that change rather than wired, because its table diverged from the design it cited. The **Settings governed-provider row was amended to a read-only three-state control** — the provider is resolved from the backend environment and this phase's own gate is "Desktop never holds lease/key/env", so a switch the webview could flip is not buildable honestly; it now reports `default`/`on`/`blocked` and is keyboard-reachable instead of dropping out of the tab order. The phase stays **open**, and as of **2026-08-10** by one box more than this cell used to admit. The DoD row *One governed round-trip proven end-to-end* had been ticked and marked "done" and was false: the production order at `commands.rs:1338-1428` returns at `:1382`, before `ai::governed_turn` and before `verify_and_record_receipt`, so those two have zero runtime-reachable callers. The refusal is deliberate and stays — the row is open because the roadmap was describing a round-trip the gate forbids. Read the rest of this cell with that in mind: "contract, adapter, broker and receipt are real" is true about the code and says nothing about whether anything reaches it. Two DoD boxes are now unchecked, matching this cell. |
 | 2 | Governance Sidecar | 🔨 **Reachable at last.** The engine serves a three-valued `brops.governance-read.v1`, the sidecar dispatches named ops, and the desktop no longer requires the AI provider to be `governed-engine` to read a mirror. The mirror was never empty — it was never asked. |
 | 3 | Desktop Integration | 🔨 **Shell complete.** 23 routes, a total `Record<RouteId, …>` so a missing page is a compile error, an error boundary that renders the real cause, and route-change focus management. |
 | 4 | UI/UX System | 🔨 **Gated.** Design tokens, WCAG-AA contrast on 24 pairs, i18n parity across en/hy/ru on 233 keys, and a bundle budget — all enforced in CI. |
@@ -489,12 +489,18 @@ result". The transport says the same thing structurally: the renderer→broker c
 request and one framed reply (`governed_turn.rs`, `broker/src/main.rs`), and both call a governed turn
 **buffered by design**. What remains genuinely open is a *different* thing that was being mistaken for
 this one: the rev-30 §4.10(f) chunked **output pull**, which moves the COMPLETED output of a buffered
-turn when it is too large to ride the reply frame, checked against that same whole-output digest. Its
-lifecycle ladder exists in `core/src/governed_output_stream.rs` (one-shot capability token, TTL
-tombstone, sweep, per-install cap, nine unit tests) with **zero production callers** — only
-`create_schema` is called — and its table diverges from the design it cites, so wiring it is a rewrite
-rather than a hookup. It is declared under `rust_symbols` in `config/reachability-declarations.json`
-and the reachability gate turns RED the day a caller appears.
+turn when it is too large to ride the reply frame, checked against that same whole-output digest.
+**Its SUPERVISOR hop landed 2026-08-10** in the engine: `brops.governed-turn-output-read.v1` served to
+the sidecar principal (`engine/runtime/governed_output_read.py`), the durable `governed_output_streams`
+table in the canonical `supervisor_ledger.sql`, and a mint with a real production caller in the §5
+`complete-run` op. The `core/src/governed_output_stream.rs` ladder that used to be described here — a
+one-shot token, TTL tombstone, sweep, per-install cap and nine unit tests, with **zero production
+callers** and a table that diverged from the design it cited — was DELETED in that change rather than
+wired, because wiring it was a rewrite and because its `CREATE TABLE IF NOT EXISTS` ran on the same
+connection one line before `supervisor_ledger::create_schema`. What is STILL open is the DESKTOP hop:
+`bridge.governed-turn-output-read.v1` and the internal helper that would drive the loop and apply the
+§4.6/§7.1 whole-output digest. The `rust_symbols` section of `config/reachability-declarations.json` is
+now empty, and the gate turns RED if a declaration outlives the file it describes.
 
 **Architecture.** Subprocess/sidecar boundary (Rust → `python bro_supervisor`), per the resolved
 decision. Trust root = an **operator-provisioned local supervisor sidecar** + localhost authenticated
@@ -619,10 +625,20 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
 - [ ] Governed output delivery through the wall. **Delta-streaming is DESCOPED** (see Scope — a governed
       turn is buffered by construction, because the desktop's authority is a signature over the whole
       output). What this box now tracks is the thing that was being mistaken for it and is genuinely
-      unbuilt: the rev-30 §4.10(f) chunked **output pull**. Its lifecycle ladder exists in
-      `core/src/governed_output_stream.rs` with **zero production callers** and a table that diverges
-      from the design it cites, so it is declared unreachable in
-      `config/reachability-declarations.json`, not counted as built. **Open.**
+      unbuilt: the rev-30 §4.10(f) chunked **output pull**. **HALF of it landed 2026-08-10** — the
+      SUPERVISOR hop. `brops.governed-turn-output-read.v1` is served from the supervisor front door to
+      the sidecar principal (`engine/runtime/governed_output_read.py`), the durable
+      `governed_output_streams` table is in the canonical `supervisor_ledger.sql` with INSERT-ONCE /
+      fixed-lifetime / digest-binding triggers, and the mint has a real production caller in the §5
+      `complete-run` op. The `core/src/governed_output_stream.rs` ladder this box used to point at was
+      **DELETED** in the same change: it had zero production callers, its table diverged from the
+      design, and its `CREATE TABLE IF NOT EXISTS` ran on the same connection one line before
+      `supervisor_ledger::create_schema`, so keeping it would have made the canonical DDL a no-op.
+      **STILL OPEN, and this is the whole of what is left:** the DESKTOP hop —
+      `bridge.governed-turn-output-read.v1` in the sidecar and the internal `governed_turn_output_read`
+      helper — does not exist, so nothing on the desktop side drives the pull, reassembles the bytes, or
+      applies the §4.6/§7.1 whole-output digest check. Nothing delivers output through the wall yet.
+      **Open.**
 - [x] Bridge CI leg added and green (PR #3, merged to `main`) — job `bridge` at `ci.yml:574-586`, no
       `paths` filter, so it runs on every push and PR; its exact command re-run 2026-08-10 gives **60
       tests, 0 failures**. Two honest qualifiers: this phase's CI paragraph specifies `BRO_ENV=ci` and
@@ -656,7 +672,7 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
       above) — **transport** (PR #8); control amended to read-only three-state 2026-08-09. *Same fact as
       the badge row above.* The three states are honestly derived from a real `ai_status`, and every
       install shows `default`, because `on`/`blocked` need a governed provider no turn can use.
-- [ ] Slice 3 — **delta-streaming descoped 2026-08-09** (buffered by construction; see Scope). What is left under this heading is the §4.10(f) chunked output pull, whose ladder exists uncalled in `core/src/governed_output_stream.rs` and needs the design's INSERT-ONCE bindings before anything may call it.
+- [ ] Slice 3 — **delta-streaming descoped 2026-08-09** (buffered by construction; see Scope). What is left under this heading is the §4.10(f) chunked output pull, whose SUPERVISOR hop landed 2026-08-10 (engine: `governed_output_read.py` + `governed_output_stream.py` + the `governed_output_streams` DDL, minted from `complete-run`). The uncalled `core/src/governed_output_stream.rs` ladder was deleted rather than wired — its table diverged from the design. What remains is the DESKTOP hop: the `bridge.governed-turn-output-read.v1` frame and the internal helper that drives the loop and applies the whole-output digest.
 - [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands.
 
 ---

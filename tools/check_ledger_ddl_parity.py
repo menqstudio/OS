@@ -103,6 +103,29 @@ REQUIRED_CLAUSES = (
     "RAISE(ABORT, 'published input handle must be the challenge-committed digest')",
     "trg_governed_turn_staging_inputs_ready",
     "RAISE(ABORT, 'INPUTS_READY requires all three published input handles')",
+    # §4.10(f) governed output streams -- the ONLY egress. Everything above guards
+    # what may ENTER; these guard the one way anything leaves, and each is a rule
+    # the design states that Python alone could not make true:
+    #   * the row is INSERT-ONCE, so the two timestamps a read verdict is DERIVED
+    #     from cannot be moved after commit -- a live capability can never be
+    #     renewed and an expired one never revived;
+    #   * the lifetime FOLLOWS from `created_at_ms` rather than being chosen, so a
+    #     row that would read LIVE forever cannot be minted at all;
+    #   * the digest IS the handle (Appendix B), so the bytes served and the digest
+    #     announced in the §4.10(e) summary cannot be two different things;
+    #   * the two UNIQUEs ARE §4.10(f)'s "minted exactly once" create-if-absent key,
+    #     so a COMPLETED retry re-reads its token instead of minting a second one.
+    "CREATE TABLE IF NOT EXISTS governed_output_streams",
+    "length(output_stream_id) = 43",
+    "receipt_id           TEXT NOT NULL UNIQUE",
+    "execution_attempt_id TEXT NOT NULL UNIQUE",
+    "output_bytes >= 0 AND output_bytes <= 8388608",
+    "trg_governed_output_streams_immutable",
+    "RAISE(ABORT, 'output stream rows are insert-once')",
+    "trg_governed_output_streams_lifetime",
+    "RAISE(ABORT, 'output stream lifetime must be the fixed TTL + retention')",
+    "trg_governed_output_streams_digest",
+    "RAISE(ABORT, 'output stream digest must be the handle it serves from')",
 )
 
 

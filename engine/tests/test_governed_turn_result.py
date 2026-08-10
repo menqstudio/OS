@@ -1,5 +1,6 @@
 """Offline tests for the supervisor→sidecar result frame — rev-30 §4.10(e)
-(+ §2.2, §4.5's closed union, and §4.10(f)/§4.10(h) which are NOT IMPLEMENTED).
+(+ §2.2, §4.5's closed union, §4.10(f)'s capability whose supervisor half landed 2026-08-10,
+and §4.10(h) which is NOT IMPLEMENTED).
 
 No socket, no key material, no database, no clock. §4.10(e) is a SHAPE — the single frame
 in which a finished governed turn travels back to the compromised-in-scope sidecar — so
@@ -430,11 +431,14 @@ class TheClosedUnionIsNotDecidedHereTests(unittest.TestCase):
     def test_the_sidecar_may_not_send_this_protocol_at_all(self):
         """§4.10(h) (**NOT IMPLEMENTED** — a later ordered piece): "The sidecar originates
         **no** governed verdict". That half of it holds here already, for a structural
-        reason: the front door's grant is a closed tuple of five REQUEST protocols, and
+        reason: the front door's grant is a closed tuple of six REQUEST protocols, and
         §4.10(e) is a REPLY, so a sidecar presenting one is refused as an unauthorized
-        frame before any handler sees it."""
+        frame before any handler sees it. (Six since §4.10(f) landed on 2026-08-10; the
+        §4.10(f) REPLY, `brops.governed-turn-output-read-result.v1`, is absent from the grant
+        for exactly the same reason this one is.)"""
         self.assertNotIn(gtr.GOVERNED_TURN_RESULT_PROTOCOL, gss.SIDECAR_PROTOCOLS)
-        self.assertEqual(len(gss.SIDECAR_PROTOCOLS), 5)
+        self.assertNotIn("brops.governed-turn-output-read-result.v1", gss.SIDECAR_PROTOCOLS)
+        self.assertEqual(len(gss.SIDECAR_PROTOCOLS), 6)
 
 
 # ---------------------------------------------------------------------------

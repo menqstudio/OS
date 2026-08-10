@@ -516,3 +516,122 @@ WHEN NEW.state = 'INPUTS_READY'
 BEGIN
     SELECT RAISE(ABORT, 'INPUTS_READY requires all three published input handles');
 END;
+
+-- ---------------------------------------------------------------------------
+-- 7. Governed output streams (rev-30 §4.10(f)) -- the egress capability.
+--
+-- Every other table here guards INGRESS: what may enter, be accepted, execute
+-- and complete. This one guards the single way anything leaves. The desktop
+-- never reads the protected store, so the ONLY path from the recorder's captured
+-- output to the party that must render it is a chunked PULL served from this row.
+--
+-- `output_stream_id` IS the capability: 32 cryptographically-random bytes,
+-- base64url no-pad, EXACTLY 43 characters. There is no second token column,
+-- because the design does not define one -- splitting identity from secret would
+-- invent a field no §4.10(f) frame carries.
+--
+-- INSERT-ONCE, and the DB is what makes that true. §4.10(f): the row is
+-- "immutable after commit; never UPDATEd; only the sweep DELETEs. Logical state
+-- is DERIVED, not stored." So there is no `state` column and no legal UPDATE at
+-- all. A stored state would make the read verdict depend on whether an async
+-- sweep had run yet, and §4.10(f) requires the opposite: the verdict is
+-- SYNCHRONOUS on every read, computed from `expires_at_ms` / row-presence alone.
+--
+-- Three enforcements, each of which would otherwise be a Python-only promise a
+-- writer bypassing the handler could ignore:
+--
+--   * NO UPDATE, ever. Without it the two timestamps below could be pushed
+--     forward after the fact, which is a capability being silently renewed.
+--   * the lifetime is FIXED, not chosen. `expires_at_ms` must be exactly
+--     `created_at_ms + OUTPUT_STREAM_TTL_MS` and `retained_until_ms` exactly
+--     `created_at_ms + OUTPUT_STREAM_TTL_MS + OUTPUT_STREAM_RETENTION_MS`. A
+--     row minted with a distant `expires_at_ms` would read LIVE forever and the
+--     reader could not tell: it derives the verdict from these columns, so a
+--     wrong column IS a wrong verdict. This is the §4.10(f) TTL proof
+--     (`now_sup <= completed_at + max_age_ms(300000) + skew(60000) <=
+--     created_at + 360000`) made unbypassable rather than restated.
+--   * the digest must BE the handle. Appendix B: raw-artifact handles
+--     (`output_handle`) equal their `*_sha256`, and the store re-verifies
+--     `sha256(bytes) == handle` on every read. A row naming handle A with digest
+--     B would serve A's bytes under B's name in the §4.10(e) summary.
+--
+-- The FOREIGN KEY is a deliberate STRENGTHENING of §4.10(f), which declares no
+-- parent: a stream is the egress of ONE accepted attempt, so an orphan stream --
+-- one naming an attempt this supervisor never accepted -- cannot be created.
+-- Combined with `UNIQUE (execution_attempt_id)` and `UNIQUE (receipt_id)` it is
+-- also the create-if-absent key §4.10(f) names: "minted exactly once
+-- (create-if-absent on UNIQUE(receipt_id)/UNIQUE(execution_attempt_id))", so a
+-- COMPLETED retry re-reads the same token instead of minting a second one.
+--
+-- What this table does NOT own: the bytes. `output_handle` is a REFERENCE, not
+-- the retention owner (§2.3). The sweep DELETEs rows and MUST NOT unlink
+-- `store/rec/<output_handle>` -- those bytes are pinned by the terminal record
+-- (§4.8) and the execution receipt (§4.7), so output OUTLIVES its stream row.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS governed_output_streams (
+    output_stream_id     TEXT PRIMARY KEY NOT NULL CHECK (
+        length(output_stream_id) = 43),
+    install_id           TEXT NOT NULL,
+    receipt_id           TEXT NOT NULL UNIQUE,
+    execution_attempt_id TEXT NOT NULL UNIQUE,
+    output_handle        TEXT NOT NULL,
+    output_bytes         INTEGER NOT NULL CHECK (
+        output_bytes >= 0 AND output_bytes <= 8388608),
+    output_sha256        TEXT NOT NULL,
+    created_at_ms        INTEGER NOT NULL,
+    expires_at_ms        INTEGER NOT NULL,
+    retained_until_ms    INTEGER NOT NULL,
+
+    FOREIGN KEY (execution_attempt_id)
+        REFERENCES governed_turn_acceptance (execution_attempt_id)
+);
+
+-- The per-install quota (§4.10(f): 64 rows / 536870912 bytes) is re-counted on
+-- every mint, and the sweep scans by retention deadline. Both get an index rather
+-- than a table scan a hostile caller could lengthen.
+CREATE INDEX IF NOT EXISTS ix_gos_install
+    ON governed_output_streams (install_id);
+CREATE INDEX IF NOT EXISTS ix_gos_retained
+    ON governed_output_streams (retained_until_ms);
+
+-- INSERT-ONCE. §4.10(f) says the row is never UPDATEd, so there is no legal
+-- UPDATE to allow through -- every one aborts. This is what makes the derived
+-- read verdict trustworthy: the two timestamps a read is decided by cannot be
+-- moved after the fact, so a live capability can never be renewed and an expired
+-- one can never be revived. (DELETE stays legal: it is how the sweep and the
+-- FIFO eviction work, and both are bounded by the row's own retention deadline.)
+CREATE TRIGGER IF NOT EXISTS trg_governed_output_streams_immutable
+BEFORE UPDATE ON governed_output_streams
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'output stream rows are insert-once');
+END;
+
+-- The lifetime is FIXED by the two §4.10(f) constants, not chosen by the writer.
+-- `OUTPUT_STREAM_TTL_MS = 360000` (logical expiry) and
+-- `OUTPUT_STREAM_RETENTION_MS = 360000` (tombstone window) are literal in the
+-- design; a row whose `expires_at_ms` did not follow from `created_at_ms` would
+-- be a capability with a lifetime nobody authorized, and the reader -- which
+-- DERIVES its verdict from exactly these columns -- would report it as LIVE and
+-- be right to.
+CREATE TRIGGER IF NOT EXISTS trg_governed_output_streams_lifetime
+BEFORE INSERT ON governed_output_streams
+FOR EACH ROW
+WHEN NOT (NEW.expires_at_ms = NEW.created_at_ms + 360000
+          AND NEW.retained_until_ms = NEW.created_at_ms + 720000)
+BEGIN
+    SELECT RAISE(ABORT, 'output stream lifetime must be the fixed TTL + retention');
+END;
+
+-- A raw-artifact handle IS its digest (Appendix B handle matrix), and the
+-- content-addressed store re-verifies `sha256(bytes) == handle` on every read.
+-- A row naming one and reporting the other would serve the bytes at
+-- `output_handle` while the §4.10(e) summary announced `output_sha256` -- two
+-- names for what must be one thing.
+CREATE TRIGGER IF NOT EXISTS trg_governed_output_streams_digest
+BEFORE INSERT ON governed_output_streams
+FOR EACH ROW
+WHEN NEW.output_sha256 <> NEW.output_handle
+BEGIN
+    SELECT RAISE(ABORT, 'output stream digest must be the handle it serves from');
+END;
