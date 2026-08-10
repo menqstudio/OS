@@ -297,7 +297,14 @@ where
         store_dir: store_dir.to_path_buf(),
             // F-01: where the execution writes its per-run evidence chain.
             evidence_dir: store_dir.to_path_buf().join("run-evidence"),
-    }));
+            // audit R-42: the supervisor's OWN durable anti-rollback floor. It lives under the
+            // proof's own directory, which both shipped callers make fresh per invocation, so this
+            // proof BOOTSTRAPS the floor rather than ordering against a previous app run. The floor
+            // and the execution's head-sequence counter below MUST share a lifetime — a floor that
+            // outlived its counter would refuse every later turn as `evidence_fork`, which is why
+            // both are rooted at `store_dir`.
+            evidence_floor_db: store_dir.join("supervisor-evidence-floor.db"),
+    })?);
     let signer: Arc<dyn DispatchCore> = Arc::new(Signer::new(SignerConfig {
         receipt_key_id: signer_key_id.clone(),
         supervisor_attestation_key_id: sup_attest_key_id.clone(),
@@ -346,7 +353,14 @@ where
         // proof writes its chain beside the store; in the in-process proof that is a shape check,
         // and in the cross-account deployment the directory belongs to the executor principal.
         evidence_dir: store_dir.join("run-evidence"),
-        head_sequence: 3,
+        // audit R-42: this was the literal `3`. `head_sequence` is the ONE field in the evidence
+        // chain that orders two runs against each other, so a constant made the supervisor's floor
+        // compare a constant against itself — the exact defect F-02 was closed for on the four
+        // `evidence_*` values, still live on the fifth. It is now allocated from a durable counter
+        // that cannot re-issue a number it has handed out.
+        head_sequence: crate::head_sequence::next_head_sequence(
+            &store_dir.join("recorder-state"),
+        )?,
     };
     let exec = GovernedExecutionCore::new(params, exec_produce, supervisor_op, now_ms);
 
@@ -561,6 +575,38 @@ mod tests {
         assert!(
             !(outcome.bound && outcome.production_verified),
             "gating a demonstration post on production_verified is unsatisfiable here — that is              the bug this assertion exists to keep fixed"
+        );
+    }
+
+    /// **audit R-42, end to end.** Two governed turns over ONE store must both commit.
+    ///
+    /// That reads like a liveness test and is really the anti-rollback test. `head_sequence` was the
+    /// literal `3` here, so with the supervisor's floor armed the SECOND turn presents a head the
+    /// install has already attested and is refused `evidence_fork`. Reverting the counter to any
+    /// constant fails this test; so does a counter that is not durable, because a second turn would
+    /// re-issue 1.
+    ///
+    /// It is deliberately driven through the SHIPPED entry point rather than the supervisor core, so
+    /// it also covers the wiring — the floor and the counter being rooted at the same directory. The
+    /// two prior rounds both found a decision that was tested and a call site that was not.
+    #[test]
+    fn two_turns_over_one_store_advance_the_evidence_head() {
+        let dir = std::env::temp_dir().join(format!("brops-winlive-twoturn-{}", brops_core::id()));
+        let t = now();
+        let first = in_process_turn_output(&dir, t, b"first governed reply")
+            .expect("the first governed turn must commit");
+        let second = in_process_turn_output(&dir, t + 2_000, b"second governed reply").expect(
+            "a SECOND governed turn over the same store must commit — a constant or non-durable \
+             head_sequence makes the supervisor's anti-rollback floor read it as evidence_fork",
+        );
+        // ...and the head really did move, rather than the floor having been switched off.
+        let seq = std::fs::read_to_string(dir.join("recorder-state/evidence-head-sequence.json"))
+            .expect("the execution must keep a durable head-sequence counter");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(first.bound && second.bound, "{} / {}", first.trust_str, second.trust_str);
+        assert!(
+            seq.contains("\"head_sequence\":2"),
+            "two turns must have consumed two head sequences, got {seq}"
         );
     }
 

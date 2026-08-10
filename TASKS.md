@@ -8,6 +8,86 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Both Windows machine-proof harnesses could never PASS (2026-08-10)
+
+The first sweep of the privileged Windows and provisioning crates — `win-live`, `win-broker`, `provision`,
+`launcher`, `executor`, `audit-signer`, `proof`. **39** of the 122 audit findings land there. Every mark is
+**◑ — the Builder's claim, nobody independent has looked**; the RED verdict stands. Detail is in
+`apps/desktop/AUDIT/AUDIT_LEDGER.md`.
+
+**A defect no audit round had seen: both machine-proof harnesses could never report PASS.** The round that
+gave them a real comparison made success unreachable — each case function did `Write-Output "<transcript>"`
+*and* returned its verdict object, and PowerShell puts both on the success stream, so the collected
+`$results.Count` was 4 against `$expectedCases = 2`. Reproduced: `count=4, failed=2`. The self-tests stayed
+green because they call the case function directly and never touch the collection. It fails safe, but **a
+proof that cannot pass is a check that cannot fail with the sign flipped**. The transcript now rides on the
+result object and the run decision is a pure function with seven new self-test vectors.
+
+**R-42/R-24: there was no ledger floor on Windows at all — and fixing either half alone would have done
+nothing.** `head_sequence`, the only field that orders two runs, was `cfg.facts.evidence_head_sequence` in
+the live driver and the literal `3` in the in-process proof, so a floor would have compared a constant
+against itself. That is the F-02 defect, closed on the other four `evidence_*` values and left alive on the
+fifth, under a doc-comment *stating* the deployment must advance it. New `win-live/src/head_sequence.rs`
+claims each number with `create_new` (atomic), refuses a damaged counter rather than reading it as absent,
+and cannot re-issue a claimed number. `complete_run` now runs the **same durable CAS the Linux supervisor
+uses**, after the state-machine decision so a refused turn cannot burn a sequence, and before the store
+publish. `Supervisor::new` is fallible: no `Option`, no in-memory fallback. This is also the first
+non-`create_schema` caller of `supervisor_ledger.rs`, which R-24 recorded as having none.
+
+**The isolated signer resolved the containment report and threw it away** — `let _ = (policy_bundle_sha256,
+containment_evidence_sha256)`, under a comment claiming both were "bound via request/handles". Neither was.
+It is the one chain document written *by* the party the signer exists to second-guess. Now a fourth
+`CHAIN_AGREEMENT` entry.
+
+**Nine dead `Facts` fields and four placeholder store blobs.** F-02 removed them from the protocol but left
+`win_provision` seeding four blobs shaped like a completed run's terminal artifacts and writing their
+handles plus a fabricated `evidence_final_event_hash` into `config.json`. Nothing read any of them:
+substance removed, appearance kept.
+
+**The Windows broker verdict document carried four false claims**, two already known and two new: that the
+kit is not even linked (`Cargo.toml` links it and two shipped Tauri commands call it), and that `attest-run`
+is bound **one-time** (the token is never consumed). Two anti-rollback rows were marked CONFIRMED-CLOSED for
+a signature that two files describe as a corruption check under a **public** constant. Corrected with the
+false sentences **struck through, not deleted**.
+
+**21 of the 39 were already closed and the ledger did not know; 2 are misdescribed.** One of the
+misdescriptions is instructive: R-18's "no implementation anywhere" comment still survives verbatim in the
+source beside ~830 lines that implement it and four `exit(5)` callers, which is why text searches keep
+"finding" the finding.
+
+**And one row this session wrote is false, not stale.** Yesterday's desktop sweep recorded that
+`windows_broker.rs:272` is "already declared with written reasons in
+`config/reachability-declarations.json`". That file names **no** symbol in `windows_broker.rs`; the module
+is in the state the declarations file itself calls dangerous — unreachable **and** undeclared. Also, the
+path in that row is wrong: the file is `core/src/windows_broker.rs`, not `src/windows_broker.rs`.
+
+**20 mutants, 17 killed, 3 survivors, each named with its reason** — a probe cap whose test derives its
+fixture from the constant (equivalent), a PowerShell leak unreachable from any self-test (three processes,
+scheduled tasks, elevation — what changed is that the regression is now reported *by name*), and per-attempt
+`task_id` scoping that survives because install-scope is enforced inside `brops-core`. Two things worth
+keeping: the stray-object check **survived its first mutation because it and the failed-case check masked
+each other**, so rather than delete it the self-test now asserts the message and it dies; and a new
+concurrency test caught a **shared staging filename** in the counter's first draft — the engine's R-30
+defect, reproduced by accident.
+
+**Deliberately not fixed, with reasons**, including R-40/R-41 as the recommended next item: the driver's
+start-of-process clock makes the live named-pipe path fail *closed* at `complete-run` — an availability bug,
+not a trust hole — and its fix is a clock seam through the same struct the §7.1 freshness work wired
+earlier today.
+
+Verified by re-running: `brops-win-live --lib` **101** (from 83), `brops-launcher` **32**,
+`brops-executor` **5**, `brops-core --lib` **376**, and **both** PowerShell self-tests PASS at exit 0.
+Two pre-existing failures are named rather than silenced, both real prerequisite refusals
+(`windows-symlink-creation`, `windows-elevated-registration`), and `BROPS_TEST_MISSING_PREREQUISITES` was
+never set. New observation worth keeping: `brops-audit-signer`'s anchor suite is **not safe to run
+concurrently with itself** — it contends on the machine-global `C:\ProgramData\BroPS-o2-anchor` and its
+failure count drifts 1 → 2 → 3 under concurrency, returning to 1 in isolation. Named so a future red run is
+not mistaken for a regression.
+
+No gate was touched; nothing under `apps/desktop/src-tauri/src/` was modified at all. The R-42 fix can only
+refuse *more* turns.
+
+
 ### The seam that had been left unwired five times (2026-08-10)
 
 `drive_acceptance` has a production supplier: `governed_acceptance.AcceptanceDriver`. It is a **client** of

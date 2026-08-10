@@ -262,7 +262,22 @@ mod win {
             // measures its own chain and the supervisor derives the head from it, so the evidence
             // head describes THIS run instead of naming the same value for every run of the kit.
             evidence_dir: std::path::PathBuf::from(&cfg.store_dir).join("run-evidence"),
-            head_sequence: cfg.facts.evidence_head_sequence,
+            // audit R-42: this was `cfg.facts.evidence_head_sequence` — a value read out of
+            // `config.json`, identical on every run of the deployment. `head_sequence` is the ONE
+            // field in the evidence chain that orders two runs against each other, so a constant
+            // here left the supervisor's floor comparing a constant against itself. That is the same
+            // defect F-02 was closed for on the other four `evidence_*` values, left alive on the
+            // fifth. It comes from a durable counter now, which cannot re-issue a number it has
+            // already handed out; a rolled-back or damaged counter blocks the turn.
+            head_sequence: match brops_win_live::head_sequence::next_head_sequence(
+                &std::path::PathBuf::from(&cfg.store_dir).join("recorder-state"),
+            ) {
+                Ok(n) => n,
+                Err(why) => {
+                    eprintln!("win_live_turn: {why}");
+                    return blocked("evidence_head_sequence");
+                }
+            },
         };
         // IDX-19: this kit declares `windows-live-kit:` — it SPAWNS an executor — so the
         // execution must measure that image against the lease's `executor_executable_sha256`

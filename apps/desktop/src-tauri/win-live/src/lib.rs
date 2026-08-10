@@ -16,6 +16,9 @@
 
 pub mod config;
 pub mod execution;
+/// The execution side's DURABLE monotonic evidence head-sequence counter (audit **R-42**) — the one
+/// number the supervisor's anti-rollback floor can order two runs by. It used to be a config constant.
+pub mod head_sequence;
 #[cfg(windows)]
 pub mod pipe;
 /// The named-pipe DACL decision — pure, so the Linux runner covers it even though the pipe is not there.
