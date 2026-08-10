@@ -2,11 +2,133 @@
 
 > **⏭️ CURRENT ACTIVE: PR #84 · branch `at-main-2`** (base `main`, tip `5a72258`, task T-017).
 >
-> Wave 3b-1B step 1 landed (the 4.10(a0) pre-accept open), the evidence-floor and prompt-forgery clusters are closed, and Phase 1's false round-trip tick is open again. Two Owner decisions are queued in docs/OWNER_ACTION_REQUIRED.md: the head-floor write principal (1b) and which half of rev-30 defines challenge_handle (1c).
+> Wave 3b-1B steps 1-4 landed (§4.10(a0) pre-accept open, §4.10(a)(b)(c) staging upload, §4.10(d) evidence request, §4.10(e) result frame), the evidence-floor and prompt-forgery clusters are closed, and Phase 1's false round-trip tick is open again. Two Owner decisions are queued in docs/OWNER_ACTION_REQUIRED.md: the head-floor write principal (1b) and which half of rev-30 defines challenge_handle (1c).
 >
 > **The last independent audit returned RED, and none has been run since.** The Owner's SECOND independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` AFTER the first round's remediation -- confirmed 4 of 18 blockers closed and left 122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds. It has never been re-run, on that head or on any later one, so **RED is the standing verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`.
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### A receipt signed at any point in the past verified today (2026-08-10)
+
+§7.1's mandatory freshness step was absent from the governed path. `verify_and_accept` was documented "no
+clock"; a `FreshnessWindow` type existed but was wired only to the v1 `receipt_store` path. The chain had
+replay protection through the acceptance ledger and **no bound at all on how old the thing it accepted may
+be**.
+
+**What the design actually requires, quoted rather than paraphrased** (ADDENDUM:3475): the `_ms` window is
+`FreshnessWindow{future_skew_ms: 60000, max_age_ms: 300000}` against `now_ms`, and *every* governed-turn
+`_ms` field nests inside it. §1 states the identical window and calls it LOCKED; §4.3 does the nesting
+arithmetic; `SECURITY_NEGATIVE_TEST_MATRIX.md` NM-TIME-17 names the same values. **No contradiction between
+sections this time** — which is worth recording, because the last two checks of this kind found one.
+
+**One correction to my brief.** I told the agent §7.1 step 4c binds against `challenge_accepted_at_ms` and
+that a second clock might therefore be in play. §7.1 has no numbered steps; "step 4c" is a step in the
+*code*, and it binds the supervisor's attested `challenge_accepted_at_ms` against the **envelope's** — two
+independently signed values against each other, never against a clock. So there is one clock, not two.
+
+**Which clock, stated with its residual risk rather than around it.** The design names the local host wall
+clock: §1 bounds engine↔desktop skew at 60 s on shared NTP and reserves the monotonic clock for elapsed
+timeouts. There is no trusted external time source in the contract. So an attacker who can roll *this*
+machine's clock back can still widen the window. That residual belongs to the design, and it is written in
+the module rather than papered over.
+
+**Both signed `_ms` fields are bounded independently**, because §7.1 says every one nests — an envelope
+pairing a fresh stamp with an ancient one is not a turn that happened. The check runs at step 4d: after the
+attestation's turn-binding, before the output digest and before the ledger claim, so a stale receipt burns
+neither ≤8 MiB of hashing nor the one-time nonce. Fail-closed throughout: an unreadable clock returns
+`None` and Blocks rather than `unwrap_or(0)`; the window config is refused if wider than the locked policy
+or degenerate; `Freshness` has private fields and one constructor that always installs the locked window,
+so **"unbounded" is not expressible**.
+
+**The arithmetic is a test, not a comment.** `LEASE_DURATION_MS` 210000 + a challenge TTL ≤30000 = 240000
+< 300000, leaving 90000 ms for the broker's post-completion work. The test asserts that *and* drives both
+edges on the real verifier: a turn at the worst legitimate age is accepted, one millisecond past
+`max_age_ms` Blocks.
+
+**A test fixture was pinning a fake future.** `win-live/src/proof.rs`'s in-process tests used
+`1_900_000_000_000` — the year 2030 — as "a fixed, plausible wall clock". Against a real acceptance clock
+that is a skewed receipt and it Blocks. They now use the host clock, which is what both shipped callers
+already pass, and a new test shows a run under a ±10-year fabricated clock cannot commit.
+
+**18 mutants, 17 killed, one honest survivor.** The survivor replaces `.ok_or(Block)?` with
+`.unwrap_or(0)`, and it survives because the two are *behaviourally identical* — `now_ms == 0` is outside
+§1's range, so the core refuses it anyway and both paths return the same Block. Defence-in-depth overlap,
+reported rather than killed with a test written only to kill it. Three tests exist purely to defeat
+masking, each driving the check at a clock position where the window alone would admit the value; and the
+"test drives a value no shipped caller emits" trap is closed by two tests that drive `GovernedChain::new`
+itself in both directions.
+
+Verified by re-running: `brops-core --lib` **323** (from 314), `brops-broker` **31 + 3**, `brops-win-live
+--lib` **83**, `brops --lib` **124** unchanged. `governed_verification_unconfigured`,
+`UpstreamBlockedExecutor` and `connect_broker` have zero diff — the clock was put on the chain rather than
+threaded through the `GovernedExecutor` trait precisely because that would have touched
+`UpstreamBlockedExecutor`.
+
+§7.1 stays `partial`, now for the honest remaining reason: no §4.10(f) pull loop and no bridge echo-equality
+step exist on this path.
+
+
+### The reply half of the trigger, and a test that passed for the wrong reason (2026-08-10)
+
+Wave 3b-1B step 4: **§4.10(e), the result frame**, and nothing past it. §4.10(f) the output pull and
+§4.10(h) the diagnostic carrier are unbuilt, and §5 acceptance is still untouched.
+
+New: `engine/runtime/governed_turn_result.py` — the COMPLETE `brops.governed-turn-result.v1` tagged
+union as a builder and a validator. Both arms exhaustive (16 signed fields, 4 refused), the §4.6
+encoded-byte caps, canonical-base64url on all five b64 fields, and the closed
+`GOVERNED_REFUSAL_REASONS` union (§4.5) defined ONCE — §4.5's relay literal-embed rule forbids a
+second copy, and the test file that used to carry a hand-typed copy now imports it. The ratified
+twelve are compared, in order, against the FROZEN `engine/contracts/brops-sign-result.v1.schema.json`
+enum, so the "verbatim" claim is machine-checked rather than asserted.
+
+**The seam is now enforced, not just declared.** §4.10(d) said its post-acceptance arm was
+`brops.governed-turn-result.v1` and then relayed whatever its §5 continuation returned. It now
+validates the reply, so the injected `drive_acceptance` seam — which still has **no production
+supplier**, and will not until §5 lands — is held to a shape. The pre-acceptance-namespace guard keeps
+its own message, because a pre-acceptance frame also fails the general shape check and a test that
+accepted either would let the specific guard be deleted unnoticed.
+
+**No frame-size check was added, deliberately.** §4.10(e) fixes the frame at `MAX_FRAME_BYTES =
+262144`. The literal maximum instance is **74472 bytes** — every string at its cap, `output_bytes` at
+8388608, containment at 65536 — leaving 187672 bytes of headroom, so a builder- or handler-level check
+could never fire. The number is constructed and asserted in `test_the_literal_maximum_signed_frame_fits`
+rather than written in a comment. For the same reason there is no `len(decoded) == 64` on the two
+signatures: 86 canonical base64url chars decode to exactly 64 bytes and 43 to exactly 32, so the
+length check plus the canonicality round-trip already pin the byte count, and a decoded-length line
+would read as protection while being unable to fail. `test_the_length_checks_already_pin_the_decoded_byte_counts`
+proves the implication.
+
+**Mutation testing found a test passing for the wrong reason.** 67 mutants, and the first pass had one
+survivor: deleting the keyword-only `*` from `turn_result_signed`. The test called the builder with
+four positional arguments and expected a `TypeError` — which it got either way, from the ten MISSING
+arguments, not from the keyword-only marker. Rewritten to pass all fourteen positionally, so the only
+possible cause is the thing it claims to test. Second pass: **67/67 killed, 0 survivors**, both edited
+files restored byte-exact and verified by SHA-256.
+
+**No member of `GOVERNED_REFUSAL_REASONS` is decided anywhere in this tree, and that is marked.** All
+29 are constructible by name; every producing gate §4.5 lists is a §5 or §7 gate and none exists.
+`TheClosedUnionIsNotDecidedHereTests` says so in its class name, in the manner step 2 marked three of
+its reasons and step 3 marked one, so a green suite cannot be read as "the governed refusals work".
+
+**Where the design and the tree disagree.** §2.2 names
+`engine/contracts/brops-governed-turn-result.v1.schema.json`, and it does not exist — nor do the
+equivalents for §4.10(a0)/(a)/(b)/(c)/(d). The governed family's shapes are Python modules in this
+tree; adding a JSON schema for one of them would be a second source of truth for the same shape.
+§2.2 also requires a new emitter branch and a new consumer branch beside the frozen
+`brops.governed-result.v1` pair: neither exists, because the emitter is §5 acceptance and the consumer
+is the sidecar's §4.10(g) branch. The compatibility direction that CAN be proved today is proved (a
+frozen document fed to the new validator is refused, on the discriminator AND on the field set); the
+other direction waits for §4.10(g).
+
+**Prior art could not be recorded.** `tools/check_prior_art.py --declare` refuses while the full-read
+receipt is stale (`NEXT_CHAT.md`, `PROJECT_STATE.md`, `TASKS.md`, `config/current_state.json` changed
+after it was taken). The declaration text is in the step-4 report and was NOT forged.
+
+Suite after: **1680 tests OK, 43 skipped** (baseline 1627/43; +51 in the new file, +2 in §4.10(d)'s).
+`check_ledger_ddl_parity` (42 clauses, unchanged — §4.10(e) adds no DDL), `check_spec_references`
+(§4.10(e) `implemented` with 18 named tests; §4.5 raised to `partial`, its closed union real and its
+frame still NOT IMPLEMENTED), `check_reachability`, `check_coordination` and the 418 tools self-tests
+all green.
 
 ### A row could declare it had uploaded, having published nothing (2026-08-10)
 

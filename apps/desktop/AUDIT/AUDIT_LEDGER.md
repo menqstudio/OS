@@ -206,6 +206,7 @@ silently edited, because a ledger that quietly repairs itself is the failure thi
   `verify_and_accept` is documented "no clock" and `FreshnessWindow` exists only on the v1
   `receipt_store` path. Fixing it changes the signature and the caller in `broker/src/chain_executor.rs`,
   outside this sweep's surface and adjacent to live work. **Recommended as the next item.**
+  **Closed in the freshness round below (2026-08-10, same day, separate session) — ◑, Builder's claim.**
 * **`supervisor_ledger.rs:779`** — `final_event_hash` validates case-insensitively and compares
   case-sensitively. True, but it fails **closed** (a re-cased retry reads as `EvidenceFork`, never as a
   bypass), and the Python twin behaves identically; fixing only the Rust side would create twin
@@ -225,6 +226,70 @@ survivors.
 Numbers, each from a run performed for this sweep and re-run independently before the commit:
 `brops --lib` **124**, `brops-core --lib` **314**, frontend **69 files / 638 tests**, `tsc --noEmit` clean,
 `check_ai_surfaces` / `check_capabilities` / `check_reachability` GREEN. No gate was touched.
+
+## §7.1 freshness round (2026-08-10, `at-main-2`) — **Builder's claim, nobody else has looked**
+
+Every mark here is **◑**. It closes exactly one row of the sweep above — the one that sweep named as its
+next item — and touches nothing else.
+
+### What the finding was
+
+`verify_and_accept` decided acceptance with **no bound on how old the receipt was**. Every check it made
+is time-free: a signature that verified when it was minted verifies forever, and the identity/binding
+equalities hold forever too. The acceptance ledger is a **replay** defence — it stops the same receipt
+being accepted twice — and has no opinion at all about a receipt that has never been accepted and was
+signed a year ago. §7.1's "Freshness" bullet is the missing property, and it was missing.
+
+### ◑ Fixed
+
+| where | what |
+|---|---|
+| `core/src/governed_verification.rs` | New `check_receipt_freshness`, called at step **4d** (after the attestation turn-binding, before the output digest and before the ledger claim, so a stale receipt burns neither 8 MiB of hashing nor the one-time nonce). It bounds **both** signed `_ms` fields — `challenge_accepted_at_ms` and `completed_at_ms` — inside the §1-LOCKED `FreshnessWindow{future_skew_ms: 60000, max_age_ms: 300000}` (the real `receipt_store` constant, reused not re-declared), inclusive on both ends per §1; enforces the §1 integer range `1 ≤ v ≤ 2^53-1` on both fields **and on the clock**; and enforces the §7 ordering `challenge_accepted_at_ms ≤ completed_at_ms`. New `Freshness` type: private fields, one public constructor `Freshness::at(now_ms)` that always installs the locked window, and a checker that refuses any window **wider** than it — there is no way to express "unbounded". |
+| `broker/src/chain_executor.rs` | New `WallClock` seam + `SystemWallClock`; `GovernedChain::new` installs the real clock, `with_clock` is the test-only override. The clock is read **at acceptance**, not at turn start, because the receipt ages while the turn executes. An unreadable clock returns `None` and **Blocks** — it is never `unwrap_or(0)`, which would collapse the window to `[-300000, 60000]` and make every 1970-stamped receipt "fresh". |
+| `win-live/src/proof.rs` (tests only) | The in-process proof tests pinned `1_900_000_000_000` — the year 2030 — as "a fixed, plausible wall clock". With a real acceptance clock that is a skewed receipt, and it Blocks. They now use the host's real clock, which is also what both **shipped** callers of `in_process_turn_produce` (`governed_trust_selftest`, the demonstration-chat command) pass. A new test asserts a run under a fabricated clock (±10 years) cannot commit in either direction. |
+
+### The arithmetic, done rather than asserted
+
+A cap larger than the largest legal input is a check that cannot fail, so:
+`LEASE_DURATION_MS` = **210000** (§4.3 pins `lease_issued_at_ms == challenge_accepted_at_ms` and
+`completed_at_ms ≤ lease_expires_at_ms`), challenge TTL ≤ **30000**, sum **240000 < 300000** — and
+`300000 − 210000 = 90000 ms` of budget left for the broker's own post-completion work.
+`the_locked_window_nests_the_whole_legitimate_lease_budget_with_real_slack` asserts all of it **and**
+shows both edges on the real verifier: a turn at the worst legitimate age is accepted, one millisecond
+past `max_age_ms` Blocks.
+
+### Mutation results
+
+**18 mutants, 17 killed, 1 survivor, named.** Every mutant was applied to the shipping source, the named
+test watched to fail, then the file restored byte-exact and the restore verified by SHA-256.
+
+Killed: removing the freshness call (8 tests); stale limit off by one; future limit off by one; window
+bounds made exclusive at the edge; dropping the `now_ms` range check; dropping the §1 `_ms` range check;
+dropping the ordering check; dropping the window-configuration guard; bounding only one of the two `_ms`
+fields; widening the locked window to a year; narrowing it to 60 s; zeroing the future skew; feeding the
+verifier the receipt's own timestamp as the clock; the shipped `GovernedChain::new` installing a fixed
+far-future clock; computing both bounds over `completed_at_ms` only; moving freshness after the ledger
+claim; and letting the win-live proof caller choose the acceptance clock.
+
+**Survivor — `self.clock.now_ms().unwrap_or(0)` in place of `.ok_or(Block)?`.** It survives because it is
+**behaviourally equivalent**: `now_ms == 0` is outside §1's `1 ≤ v` range, so the core refuses it anyway.
+No black-box test can separate the two, since both produce the same `UpstreamBlocked`. It is
+defence-in-depth overlap, not a hole — and it is left in the report rather than killed with a test written
+only to kill it.
+
+### Numbers, each from a run performed for this round
+
+`brops-core --lib` **323** (314 before, +9), `brops-core` all targets **363** (323 + 4 + 9 + 10 + 17),
+`brops --lib` **124** (unchanged), `brops-broker` **31 lib + 3 main** (27 + 3 before, +4),
+`brops-win-live --lib` **83** (82 before, +1), frontend **69 files / 638 tests**,
+`check_reachability.py` GREEN (exit 0), `check_spec_references.py` GREEN (exit 0).
+
+Pre-existing and untouched: `brops-audit-signer --test anchor_end_to_end` has 2 failures on this box —
+one is the declared-prerequisite panic for `windows-elevated-registration` (this session is not elevated)
+and one is an engine-side anchor case. Neither crate depends on the changed code.
+
+No gate was flipped: `governed_verification_unconfigured`, `UpstreamBlockedExecutor` and `connect_broker`
+are byte-untouched (`apps/desktop/src-tauri/src/**` and `broker/src/main.rs` have no diff).
 
 ## Legend
 **One legend, and it is the one under “How to read the status column” above:** ✅ = an independent

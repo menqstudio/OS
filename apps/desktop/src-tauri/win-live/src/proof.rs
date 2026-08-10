@@ -451,11 +451,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brops_broker::chain_executor::{SystemWallClock, WallClock};
+
+    /// This host's REAL wall clock, in epoch ms.
+    ///
+    /// These tests used to pin `1_900_000_000_000` ("a fixed, plausible wall clock" — the year 2030).
+    /// That worked only while nothing in the chain consulted a clock it did not receive as an argument.
+    /// §7.1 freshness now bounds the receipt's signed `_ms` fields against the broker's own reading, so
+    /// a run declaring 2030 to every core while the machine says otherwise is exactly the skewed receipt
+    /// the check exists to refuse. Using the real clock is also what the two SHIPPED callers of
+    /// `in_process_turn_produce` do (`governed_trust_selftest`, the demonstration-chat command), so the
+    /// tests now exercise the configuration that ships.
+    fn now() -> i64 {
+        SystemWallClock.now_ms().expect("this host must have a readable wall clock")
+    }
 
     #[test]
     fn full_governed_turn_reaches_trusted_verified_in_process() {
         let dir = std::env::temp_dir().join(format!("brops-winlive-proof-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64; // a fixed, plausible wall clock
+        let now = now();
         let outcome = in_process_turn(&dir, now).expect("governed turn must commit");
         let _ = std::fs::remove_dir_all(&dir);
         assert!(outcome.bound, "committed body must be trusted_verified: {}", outcome.trust_str);
@@ -481,7 +495,7 @@ mod tests {
         // The live seam: an arbitrary reply (what a model produced) is what gets signed and bound —
         // trusted_verified is over the REAL answer, not a fixed demo string. (Custody is still demo.)
         let dir = std::env::temp_dir().join(format!("brops-winlive-live-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64;
+        let now = now();
         let reply = b"Bro: here is the verified live answer to your question.";
         let outcome = in_process_turn_output(&dir, now, reply).expect("live governed turn must commit");
         let _ = std::fs::remove_dir_all(&dir);
@@ -490,10 +504,25 @@ mod tests {
         assert!(!outcome.production_verified, "custody is demo, not production: {}", outcome.trust_str);
     }
 
+    /// §7.1 freshness reaches THIS harness too. `in_process_turn_produce` hands its `now_ms` to every
+    /// core, so a caller can stamp the whole turn with any time it likes — but the acceptance clock is
+    /// the broker's own [`SystemWallClock`], not that argument. A run declaring a clock the host does
+    /// not agree with therefore cannot commit, in either direction.
+    #[test]
+    fn a_turn_run_under_a_fabricated_clock_cannot_commit() {
+        const TEN_YEARS_MS: i64 = 10 * 365 * 24 * 60 * 60 * 1000;
+        for (name, now) in [("far future", now() + TEN_YEARS_MS), ("far past", now() - TEN_YEARS_MS)] {
+            let dir = std::env::temp_dir().join(format!("brops-winlive-clock-{}", brops_core::id()));
+            let r = in_process_turn(&dir, now);
+            let _ = std::fs::remove_dir_all(&dir);
+            assert!(r.is_err(), "{name}: a fabricated wall clock must not produce a committed turn");
+        }
+    }
+
     #[test]
     fn empty_live_output_fails_closed() {
         let dir = std::env::temp_dir().join(format!("brops-winlive-empty-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64;
+        let now = now();
         let r = in_process_turn_output(&dir, now, b"");
         let _ = std::fs::remove_dir_all(&dir);
         assert!(r.is_err(), "an empty output must never produce a committed/verified turn");
@@ -506,7 +535,7 @@ mod tests {
         // and that the bytes it produced are what got bound + verified.
         use std::sync::atomic::{AtomicBool, Ordering};
         let dir = std::env::temp_dir().join(format!("brops-winlive-produce-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64;
+        let now = now();
         let called = AtomicBool::new(false);
         let outcome = in_process_turn_produce(&dir, now, || {
             called.store(true, Ordering::SeqCst);
@@ -540,7 +569,7 @@ mod tests {
     fn produce_failure_fails_closed() {
         // If the executor closure fails (e.g. the model invocation errored), the turn must NOT commit.
         let dir = std::env::temp_dir().join(format!("brops-winlive-pfail-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64;
+        let now = now();
         let r = in_process_turn_produce(&dir, now, || Err(()));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(r.is_err(), "a failed produce must never yield a committed/verified turn");

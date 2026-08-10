@@ -266,7 +266,7 @@
     },
     "§7.1": {
       "status": "partial",
-      "missing": "Freshness (the §7.1 time window) is still absent. The replay half is now DURABLE: receipt-id global uniqueness and the one-time nonce consume are a BEGIN IMMEDIATE CAS over SQLite rather than InMemoryLedger, so both survive a restart on Linux and Windows.",
+      "missing": "Freshness IS now implemented: governed_verification::check_receipt_freshness bounds the envelope's challenge_accepted_at_ms and completed_at_ms against the broker's injected wall clock under the §1-LOCKED FreshnessWindow{future_skew_ms:60000,max_age_ms:300000}, and chain_executor reads that clock via SystemWallClock at acceptance. What is STILL absent from §7.1: the §4.10(f) chunked output pull/reassemble (the shipped broker runs the turn in-process and the output arrives inline, so there is no pull loop to verify) and the bridge/sign-result ECHO-equality step (no bridge frame exists on this path to echo). The replay half is DURABLE: receipt-id global uniqueness and the one-time nonce consume are a BEGIN IMMEDIATE CAS over SQLite rather than InMemoryLedger, so both survive a restart.",
       "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
     },
     "§7.1(c)": {

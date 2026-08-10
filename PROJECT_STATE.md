@@ -8,6 +8,66 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### A receipt signed at any point in the past verified today (2026-08-10)
+
+§7.1's mandatory freshness step was absent from the governed path. `verify_and_accept` was documented "no
+clock"; a `FreshnessWindow` type existed but was wired only to the v1 `receipt_store` path. The chain had
+replay protection through the acceptance ledger and **no bound at all on how old the thing it accepted may
+be**.
+
+**What the design actually requires, quoted rather than paraphrased** (ADDENDUM:3475): the `_ms` window is
+`FreshnessWindow{future_skew_ms: 60000, max_age_ms: 300000}` against `now_ms`, and *every* governed-turn
+`_ms` field nests inside it. §1 states the identical window and calls it LOCKED; §4.3 does the nesting
+arithmetic; `SECURITY_NEGATIVE_TEST_MATRIX.md` NM-TIME-17 names the same values. **No contradiction between
+sections this time** — which is worth recording, because the last two checks of this kind found one.
+
+**One correction to my brief.** I told the agent §7.1 step 4c binds against `challenge_accepted_at_ms` and
+that a second clock might therefore be in play. §7.1 has no numbered steps; "step 4c" is a step in the
+*code*, and it binds the supervisor's attested `challenge_accepted_at_ms` against the **envelope's** — two
+independently signed values against each other, never against a clock. So there is one clock, not two.
+
+**Which clock, stated with its residual risk rather than around it.** The design names the local host wall
+clock: §1 bounds engine↔desktop skew at 60 s on shared NTP and reserves the monotonic clock for elapsed
+timeouts. There is no trusted external time source in the contract. So an attacker who can roll *this*
+machine's clock back can still widen the window. That residual belongs to the design, and it is written in
+the module rather than papered over.
+
+**Both signed `_ms` fields are bounded independently**, because §7.1 says every one nests — an envelope
+pairing a fresh stamp with an ancient one is not a turn that happened. The check runs at step 4d: after the
+attestation's turn-binding, before the output digest and before the ledger claim, so a stale receipt burns
+neither ≤8 MiB of hashing nor the one-time nonce. Fail-closed throughout: an unreadable clock returns
+`None` and Blocks rather than `unwrap_or(0)`; the window config is refused if wider than the locked policy
+or degenerate; `Freshness` has private fields and one constructor that always installs the locked window,
+so **"unbounded" is not expressible**.
+
+**The arithmetic is a test, not a comment.** `LEASE_DURATION_MS` 210000 + a challenge TTL ≤30000 = 240000
+< 300000, leaving 90000 ms for the broker's post-completion work. The test asserts that *and* drives both
+edges on the real verifier: a turn at the worst legitimate age is accepted, one millisecond past
+`max_age_ms` Blocks.
+
+**A test fixture was pinning a fake future.** `win-live/src/proof.rs`'s in-process tests used
+`1_900_000_000_000` — the year 2030 — as "a fixed, plausible wall clock". Against a real acceptance clock
+that is a skewed receipt and it Blocks. They now use the host clock, which is what both shipped callers
+already pass, and a new test shows a run under a ±10-year fabricated clock cannot commit.
+
+**18 mutants, 17 killed, one honest survivor.** The survivor replaces `.ok_or(Block)?` with
+`.unwrap_or(0)`, and it survives because the two are *behaviourally identical* — `now_ms == 0` is outside
+§1's range, so the core refuses it anyway and both paths return the same Block. Defence-in-depth overlap,
+reported rather than killed with a test written only to kill it. Three tests exist purely to defeat
+masking, each driving the check at a clock position where the window alone would admit the value; and the
+"test drives a value no shipped caller emits" trap is closed by two tests that drive `GovernedChain::new`
+itself in both directions.
+
+Verified by re-running: `brops-core --lib` **323** (from 314), `brops-broker` **31 + 3**, `brops-win-live
+--lib` **83**, `brops --lib` **124** unchanged. `governed_verification_unconfigured`,
+`UpstreamBlockedExecutor` and `connect_broker` have zero diff — the clock was put on the chain rather than
+threaded through the `GovernedExecutor` trait precisely because that would have touched
+`UpstreamBlockedExecutor`.
+
+§7.1 stays `partial`, now for the honest remaining reason: no §4.10(f) pull loop and no bridge echo-equality
+step exist on this path.
+
+
 ### A row could declare it had uploaded, having published nothing (2026-08-10)
 
 Wave 3b-1B step 3: **§4.10(d), the evidence request**, and nothing past it. §4.10(e), (f) and (h) are
