@@ -18,7 +18,7 @@ across two protocols, split exactly where the ``governed_turn_acceptance`` row b
     ``evidence-request``; §4.10(h) is **NOT IMPLEMENTED** — a later ordered piece) and
     creating **NO** acceptance row;
   * **once** a row exists, the verdict is §4.10(e)'s ``brops.governed-turn-result.v1``
-    (**NOT IMPLEMENTED** — a later ordered piece), produced by §5 acceptance.
+    (``governed_turn_result``), produced by §5 acceptance.
 
 So this module produces the first arm and *delegates* the second. It mints no
 ``execution_attempt_id``, reads no acceptance clock, consumes no challenge nonce, issues
@@ -84,6 +84,7 @@ from governed_staging_upload import (
 )
 from governed_supervisor import SupervisorError
 from governed_turn_open import peer_is_sidecar
+from governed_turn_result import validate_turn_result
 
 # ---------------------------------------------------------------------------
 # Wire constants (§4.10(d), LOCKED literals)
@@ -93,7 +94,7 @@ EVIDENCE_REQUEST_PROTOCOL = "brops.governed-evidence-request.v1"
 
 #: The PRE-ACCEPTANCE reply. §4.10(d)/§4.10(h) (NOT IMPLEMENTED) give it its own protocol
 #: const precisely so it can never be confused with the post-acceptance §4.10(e) verdict
-#: (NOT IMPLEMENTED): the two arms of the
+#: ``brops.governed-turn-result.v1``: the two arms of the
 #: union are told apart by their own discriminator, not by inspecting their fields.
 EVIDENCE_REQUEST_RESULT_PROTOCOL = "brops.governed-evidence-request-result.v1"
 
@@ -130,9 +131,10 @@ REFUSE_MALFORMED = "malformed"
 #:
 #: §4.10(h) (NOT IMPLEMENTED) calls these "a **disjoint** namespace from
 #: ``GOVERNED_REFUSAL_REASONS``", and that is true of the NAMESPACE but NOT of the strings:
-#: §4.5's closed governed enum (NOT IMPLEMENTED — no such constant exists in this tree)
-#: contains ``malformed`` (one of the ratified twelve) and ``retry_conflict`` (a governed
-#: addition), so two of the five literals below are spelled the same in both sets. What
+#: §4.5's closed governed enum — ``governed_turn_result.GOVERNED_REFUSAL_REASONS``, the
+#: single list §4.10(e) embeds verbatim — contains ``malformed`` (one of the ratified
+#: twelve) and ``retry_conflict`` (a governed addition), so two of the five literals below
+#: are spelled the same in both sets. What
 #: actually keeps them apart is the DISCRIMINATOR — a pre-acceptance refusal is carried by
 #: ``brops.governed-evidence-request-result.v1`` and reaches the desktop as
 #: ``governed_internal_refusal:evidence-request:{r}``, while a governed verdict is carried
@@ -378,13 +380,25 @@ def handle_evidence_request(
     rather than called directly for the same reason the store publish is: what §4.10(d)
     owns is the decision, not the machinery on the other side of it.
 
-    The continuation's reply is relayed unexamined, with exactly one guard: it may not
-    answer in the PRE-ACCEPTANCE namespace. Once §5 has been entered the verdict belongs to
-    §4.10(e)'s ``brops.governed-turn-result.v1`` union (**NOT IMPLEMENTED** — a later
-    ordered piece); a continuation returning ``brops.governed-evidence-request-result.v1``
-    would collapse the two halves of §4.10(d)'s union into one, and §4.10(h) then could not
-    tell an internal refusal from a governed verdict. That is a supervisor-side fault, not
-    something a peer asked for, so it raises rather than refuses.
+    The continuation's reply is checked against the OTHER arm of §4.10(d)'s union before it
+    is relayed. Two guards, in this order:
+
+      1. it may not answer in the PRE-ACCEPTANCE namespace. Once §5 has been entered the
+         verdict belongs to §4.10(e)'s ``brops.governed-turn-result.v1`` union; a
+         continuation returning ``brops.governed-evidence-request-result.v1`` would
+         collapse the two halves of §4.10(d)'s union into one, and §4.10(h)
+         (**NOT IMPLEMENTED** — a later ordered piece) could then not tell an internal
+         refusal from a governed verdict. This is worth its own message rather than being folded
+         into the general shape check below, because it is a specific and tempting mistake;
+      2. it must BE a §4.10(e) frame. §4.10(d) says in as many words that once a row exists
+         "the acceptance/signer verdict is ``brops.governed-turn-result.v1``", so a reply
+         that is not one is not a verdict this gate may pass on. Until §4.10(e) existed
+         that sentence was unenforced and the reply was relayed unexamined.
+
+    Both are supervisor-side faults, not something a peer asked for, so both raise rather
+    than refuse. Note what is NOT checked: the §5 continuation is still an INJECTED SEAM
+    with **no production supplier** — §5 acceptance is a later ordered piece — so what this
+    establishes is the contract any future supplier is held to, not that one exists.
     """
     if not callable(drive_acceptance):
         raise SupervisorError("drive_acceptance must be callable")
@@ -396,11 +410,12 @@ def handle_evidence_request(
         return evidence_request_refused(reason or REFUSE_MALFORMED)
 
     result = drive_acceptance(gated)
-    if not isinstance(result, Mapping):
-        raise SupervisorError("the §5 continuation did not return a reply object")
-    if result.get("protocol") == EVIDENCE_REQUEST_RESULT_PROTOCOL:
+    if isinstance(result, Mapping) and result.get("protocol") == EVIDENCE_REQUEST_RESULT_PROTOCOL:
         raise SupervisorError(
             "the §5 continuation answered in the pre-acceptance namespace")
+    # "Is this a reply object at all" is NOT re-asked here: `validate_turn_result` owns it,
+    # and asking twice would leave one of the two askers unable to fail.
+    validate_turn_result(result)
     return dict(result)
 
 

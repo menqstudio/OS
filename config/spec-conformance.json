@@ -180,7 +180,7 @@
     },
     "§4.10(d)": {
       "status": "implemented",
-      "reason": "`brops.governed-evidence-request.v1` is served by `engine/runtime/governed_evidence_request.handle_evidence_request`, reached from the supervisor front door for the sidecar principal only (it is the fifth and last name in `SIDECAR_PROTOCOLS`). What is implemented is the PRE-ACCEPTANCE GATE and only that: the peer check, the exhaustive four-field shape, and the join of the request triple to the `INPUTS_READY` `governed_turn_staging` row over its two UNIQUEs. It writes nothing - every statement it issues is a SELECT, asserted through the connection's own trace callback - and mints no `execution_attempt_id`, lease, acceptance row, nonce consume or clock read. All five reasons in the closed refusal set are reachable by name and tested; four of them from a request a hostile sidecar could send, and `session_corrupt` only from already-tampered durable state (the staging root is 0700 supervisor-only), which its test class says in its name. The property the gate READS is enforced by five triggers in the canonical ledger DDL, not in Python; each is proved in isolation with raw SQL. The §5 continuation the gate hands a passing turn to is an INJECTED SEAM: §5 acceptance wiring and the §4.10(e) result frame are later ordered pieces, so no production caller supplies it yet and a supervisor without one refuses every evidence-request `peer_denied`.",
+      "reason": "`brops.governed-evidence-request.v1` is served by `engine/runtime/governed_evidence_request.handle_evidence_request`, reached from the supervisor front door for the sidecar principal only (it is the fifth and last name in `SIDECAR_PROTOCOLS`). What is implemented is the PRE-ACCEPTANCE GATE and only that: the peer check, the exhaustive four-field shape, and the join of the request triple to the `INPUTS_READY` `governed_turn_staging` row over its two UNIQUEs. It writes nothing - every statement it issues is a SELECT, asserted through the connection's own trace callback - and mints no `execution_attempt_id`, lease, acceptance row, nonce consume or clock read. All five reasons in the closed refusal set are reachable by name and tested; four of them from a request a hostile sidecar could send, and `session_corrupt` only from already-tampered durable state (the staging root is 0700 supervisor-only), which its test class says in its name. The property the gate READS is enforced by five triggers in the canonical ledger DDL, not in Python; each is proved in isolation with raw SQL. The §5 continuation the gate hands a passing turn to is an INJECTED SEAM with NO production supplier: §5 acceptance wiring is a later ordered piece, so nothing supplies it yet and a supervisor without one refuses every evidence-request `peer_denied`. What the seam is now HELD TO is fixed: §4.10(e) landed, and the continuation's reply must be a valid `brops.governed-turn-result.v1` frame (`governed_turn_result.validate_turn_result`) or the supervisor faults - it is no longer relayed unexamined.",
       "tests": [
         "test_a_ready_turn_reaches_the_acceptance_continuation",
         "test_the_gated_turn_is_read_off_the_row_not_off_the_request",
@@ -194,12 +194,32 @@
         "test_the_gate_never_sees_the_row_that_hole_would_have_produced",
         "test_inputs_ready_is_unreachable_while_any_handle_is_null",
         "test_an_over_cap_frame_is_refused_on_the_bytes_that_arrived",
-        "test_a_continuation_answering_in_the_pre_acceptance_namespace_is_a_fault"
+        "test_a_continuation_answering_in_the_pre_acceptance_namespace_is_a_fault",
+        "test_a_continuation_that_answers_outside_the_result_union_is_a_fault"
       ]
     },
     "§4.10(e)": {
-      "status": "not_implemented",
-      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree produces or consumes `brops.governed-turn-result.v1`: no builder, no schema, no caller. It is cited only where §4.10(d) has to name what the OTHER arm of its reply union is, and every citation is marked NOT IMPLEMENTED."
+      "status": "implemented",
+      "tests": [
+        "test_the_signed_arm_carries_exactly_the_sixteen_design_fields",
+        "test_the_refused_arm_carries_exactly_the_four_design_fields",
+        "test_containment_evidence_is_the_one_nullable_member_of_the_signed_arm",
+        "test_a_missing_field_is_refused_by_name",
+        "test_output_stream_id_must_be_exactly_the_43_char_capability",
+        "test_output_stream_id_must_be_canonical_base64url",
+        "test_the_two_jcs_documents_are_bounded_on_their_ENCODED_length",
+        "test_a_reason_outside_the_closed_union_is_a_supervisor_fault",
+        "test_the_ratified_twelve_are_the_FROZEN_schema_enum_verbatim",
+        "test_the_literal_maximum_signed_frame_fits",
+        "test_the_length_checks_already_pin_the_decoded_byte_counts",
+        "test_a_frozen_document_fed_to_the_new_validator_is_refused",
+        "test_the_frozen_document_is_refused_on_TWO_independent_grounds",
+        "test_the_module_imports_no_clock_no_entropy_and_no_database",
+        "test_the_signed_builder_supplies_no_identifier_of_its_own",
+        "test_a_continuation_that_answers_outside_the_result_union_is_a_fault",
+        "test_a_signed_verdict_is_relayed_verbatim"
+      ],
+      "reason": "`brops.governed-turn-result.v1` is built and validated by `engine/runtime/governed_turn_result.py`: the COMPLETE tagged union, both arms, the exhaustive field sets, the §4.6 encoded-byte caps, the canonical-base64url requirement on all five b64 fields, and the closed `GOVERNED_REFUSAL_REASONS` union embedded verbatim (its ratified twelve compared against the FROZEN engine/contracts/brops-sign-result.v1.schema.json enum, in order). The builders run the validator over what they build, so producer and consumer cannot disagree. The §4.10(e) frame cap carries NO check because none could fire: the literal maximum instance is 74472 bytes against MAX_FRAME_BYTES 262144, constructed and asserted in `test_the_literal_maximum_signed_frame_fits`, and the transport's own `encode_frame` is the same bound. What is NOT here, deliberately: no PRODUCTION producer exists - §5 acceptance is a later ordered piece and `drive_acceptance` is still an injected seam with no supplier - and no sidecar re-frame into §4.6's `bridge.governed-turn-result.v1` exists (that is §4.10(g)/(h)). No member of GOVERNED_REFUSAL_REASONS is DECIDED anywhere in this tree; every producing gate §4.5 names is a §5/§7 gate, and `TheClosedUnionIsNotDecidedHereTests` says so by name rather than leaving a green suite to imply otherwise. The one place the frame is ENFORCED today is §4.10(d)'s continuation guard: once the pre-acceptance gate passes, the §5 continuation's reply must BE a §4.10(e) frame or the supervisor faults. §2.2 also names a file `engine/contracts/brops-governed-turn-result.v1.schema.json`; it does not exist, and neither do the equivalent files for §4.10(a0)/(a)/(b)/(c)/(d) - the governed family's shapes are Python modules in this tree, and adding a JSON schema would be a second source of truth for the same shape."
     },
     "§4.10(f)": {
       "status": "unreviewed",
@@ -227,8 +247,9 @@
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
     "§4.5": {
-      "status": "not_implemented",
-      "reason": "A later ordered piece. `GOVERNED_REFUSAL_REASONS` does not exist as a constant anywhere in this tree; `brops.governed-sign-result.v1` is neither produced nor consumed. It is cited only where §4.10(d)'s closed set has to be compared with it - the two share the literals `malformed` and `retry_conflict`, so the separation is by discriminator, not by value - and every citation is marked NOT IMPLEMENTED."
+      "status": "partial",
+      "missing": "The `brops.governed-sign-result.v1` FRAME itself: no builder, no validator, no producer, no consumer, no schema file. What exists of §4.5 is exactly one thing - the closed `GOVERNED_REFUSAL_REASONS` union, defined ONCE in `engine/runtime/governed_turn_result.py` because §4.10(e)'s `refused` arm embeds it verbatim and §4.5's relay literal-embed rule forbids a second copy. §4.5's producing gates (the §5 acceptance-time members `challenge_replay`, `acceptance_conflict`, `lease_not_ready`, the §7 members `evidence_fork`, `stale_evidence`, and the rest) are NOT IMPLEMENTED: not one member is decided by anything in this tree. The isolated signer's own `brops.sign-result.v1` is a DIFFERENT, frozen protocol and is untouched.",
+      "reason": "Raised from not_implemented when §4.10(e) landed. The §4.5 citations that describe the closed union now describe something real; the citation in `governed_turn_result.py` that names the frame carries the NOT IMPLEMENTED marker."
     },
     "§4.6": {
       "status": "unreviewed",

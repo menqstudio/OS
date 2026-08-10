@@ -20,10 +20,11 @@ The tests are organized as the design's own obligations:
   * nothing here creates an acceptance row, an `execution_attempt_id`, a lease, or writes a
     single byte to any table: the whole gate is SELECTs, and that is asserted rather than
     assumed;
-  * the §4.10(e) result frame and the §4.10(f) output pull are **NOT IMPLEMENTED** — later
-    ordered pieces. The §5 continuation is a test double throughout, and the only thing
-    asserted about it is that this module cannot impersonate it and it cannot impersonate
-    this module.
+  * the §4.10(f) output pull is **NOT IMPLEMENTED** — a later ordered piece. The §5
+    continuation is a test double throughout: §5 acceptance has no production supplier, so
+    what is asserted about it is the CONTRACT it is held to — it must answer in §4.10(e)'s
+    `brops.governed-turn-result.v1` union, this module cannot impersonate it, and it
+    cannot impersonate this module.
 """
 
 import hashlib
@@ -41,6 +42,7 @@ import governed_evidence_request as ger  # noqa: E402
 import governed_staging_ledger as gsl  # noqa: E402
 import governed_staging_upload as gsu  # noqa: E402
 import governed_supervisor_server as gss  # noqa: E402
+import governed_turn_result as gtr  # noqa: E402
 from governed_supervisor import SupervisorError  # noqa: E402
 
 SIDECAR_UID = 4101
@@ -81,17 +83,30 @@ class _Store:
         return handle
 
 
+#: What the §5 continuation answers with. §5 acceptance is **NOT IMPLEMENTED** — a later
+#: ordered piece with no production supplier — but §4.10(e) now exists, and §4.10(d) says
+#: that once an acceptance row exists "the acceptance/signer verdict is
+#: `brops.governed-turn-result.v1`". So the double answers a REAL §4.10(e) frame, BUILT by
+#: that module rather than written out here: this file is still not the place a §4.10(e)
+#: shape is defined, it is a place one is used.
+#:
+#: `lease_not_ready` is chosen deliberately. It is a `GOVERNED_REFUSAL_REASONS` member that
+#: §4.5 pins to the execute trigger itself — "the execute trigger (§4.10(d)) arrives before
+#: the row reaches `LEASE_READY`" — so the double answers the one governed verdict this
+#: hop's own timing can produce, and it is a REFUSAL, the arm most easily confused with
+#: §4.10(d)'s own.
+CONTINUATION_REPLY = gtr.turn_result_refused("lease_not_ready")
+
+
 class _Continuation:
     """The §5 acceptance continuation, as a double.
 
-    §5 acceptance and the §4.10(e) result frame it produces are **NOT IMPLEMENTED** — later
-    ordered pieces — so what the gate hands off to is stubbed here. It records the
-    ``GatedTurn`` it was given (that object is the entire product of §4.10(d)) and returns
-    a reply that is deliberately NOT a §4.10(e) frame: this file must not be the place a
-    §4.10(e) shape is first written down.
+    §5 acceptance is **NOT IMPLEMENTED** — a later ordered piece — so what the gate hands
+    off to is stubbed here. It records the ``GatedTurn`` it was given (that object is the
+    entire product of §4.10(d)) and returns the §4.10(e) verdict above.
     """
 
-    _DEFAULT = {"protocol": "test.continuation-reached.v1"}
+    _DEFAULT = CONTINUATION_REPLY
 
     def __init__(self, reply=_DEFAULT):
         self.calls = []
@@ -257,7 +272,7 @@ class GateAdmitsAReadyTurnTests(_Case):
     def test_a_ready_turn_reaches_the_acceptance_continuation(self):
         self.make_ready()
         reply = self.call(self.request())
-        self.assertEqual(reply, {"protocol": "test.continuation-reached.v1"})
+        self.assertEqual(reply, CONTINUATION_REPLY)
         self.assertEqual(len(self.continuation.calls), 1)
 
     def test_the_gated_turn_is_read_off_the_row_not_off_the_request(self):
@@ -508,7 +523,7 @@ class RefusalsAreReachableTests(_Case):
         self.assertEqual(self.refuse(self.request()), "no_inputs_ready")
         self.upload("generation_config", GENCFG_BYTES)
         self.assertEqual(self.call(self.request())["protocol"],
-                         "test.continuation-reached.v1")
+                         gtr.GOVERNED_TURN_RESULT_PROTOCOL)
 
     # ---- retry_conflict --------------------------------------------------------
     def test_retry_conflict_when_the_nonce_names_a_different_challenge(self):
@@ -659,8 +674,7 @@ class SessionCorruptIsNotSidecarReachableTests(_Case):
         self.corrupt_session("system", SYSTEM_BYTES, turn=other)
 
         self.make_ready()
-        self.assertEqual(self.call(self.request()),
-                         {"protocol": "test.continuation-reached.v1"})
+        self.assertEqual(self.call(self.request()), CONTINUATION_REPLY)
         self.assertEqual(self.call(self.request(turn=other))["reason"], "session_corrupt")
 
     def test_a_ready_turn_can_never_have_a_corrupt_session(self):
@@ -804,7 +818,7 @@ class InputsReadyIsAPropertyNotAClaimTests(_Case):
         self.make_ready()
         self.store.blobs.clear()
         self.assertEqual(self.call(self.request())["protocol"],
-                         "test.continuation-reached.v1")
+                         gtr.GOVERNED_TURN_RESULT_PROTOCOL)
 
 
 # ---------------------------------------------------------------------------
@@ -813,20 +827,11 @@ class InputsReadyIsAPropertyNotAClaimTests(_Case):
 
 
 class ReplyNamespaceTests(_Case):
-    #: §4.5's closed governed enum, quoted from the design because the tree has NO such
-    #: constant: §4.5 / §4.10(e) are **NOT IMPLEMENTED** — later ordered pieces. It is
-    #: written here only to pin the overlap the next paragraph is about, and nothing
-    #: imports it.
-    GOVERNED_REFUSAL_REASONS = (
-        "attestation_invalid", "not_completed", "run_binding_invalid", "nonce_mismatch",
-        "handle_missing", "hash_mismatch", "policy_mismatch", "containment_missing",
-        "identity_denied", "timestamp_invalid", "oversize", "malformed",
-        "challenge_replay", "acceptance_conflict", "lease_not_ready", "output_oversize",
-        "output_timeout", "evidence_fork", "stale_evidence", "lease_expired",
-        "challenge_invalidated", "retry_conflict", "stream_unknown", "stream_expired",
-        "stream_binding_mismatch", "seq_out_of_range", "model_profile_unknown",
-        "tcb_integrity_violation", "platform_unsupported",
-    )
+    #: §4.5's closed governed enum. It used to be re-typed here from the design, because
+    #: the tree had no such constant; §4.10(e) now defines it ONCE
+    #: (`governed_turn_result.GOVERNED_REFUSAL_REASONS`) and §4.5's relay literal-embed
+    #: rule forbids a second copy, so this is the import rather than the copy.
+    GOVERNED_REFUSAL_REASONS = gtr.GOVERNED_REFUSAL_REASONS
 
     def test_the_two_reason_sets_are_NOT_disjoint_by_value(self):
         """§4.10(h) (NOT IMPLEMENTED) calls the internal codes "a **disjoint** namespace from
@@ -841,22 +846,30 @@ class ReplyNamespaceTests(_Case):
 
     def test_the_discriminator_is_what_separates_them(self):
         """So the separation has to be structural, and it is: a §4.10(d) pre-acceptance
-        refusal carries its OWN protocol const, which is neither §4.10(e)'s name (NOT
-        IMPLEMENTED) nor the frozen Wave 3b-1 one, and §4.10(h) (NOT IMPLEMENTED)
-        classifies by that top-level key."""
+        refusal carries its OWN protocol const, which is neither §4.10(e)'s name nor the
+        frozen Wave 3b-1 one, and §4.10(h) (NOT IMPLEMENTED) classifies by that top-level
+        key. The `retry_conflict` pair is the worked example: the SAME string under the two
+        consts is two different verdicts from two different authorities."""
         reply = ger.evidence_request_refused("retry_conflict")
+        verdict = gtr.turn_result_refused("retry_conflict")
+        self.assertEqual(reply["reason"], verdict["reason"])
         self.assertEqual(reply["protocol"], "brops.governed-evidence-request-result.v1")
-        for other in ("brops.governed-turn-result.v1", "brops.governed-result.v1",
+        for other in (gtr.GOVERNED_TURN_RESULT_PROTOCOL, "brops.governed-result.v1",
                       "brops.evidence-request.v1", "brops.governed-sign-result.v1"):
             self.assertNotEqual(reply["protocol"], other)
 
     def test_a_refusal_can_never_satisfy_the_signed_predicate(self):
-        """§4.10(e) (NOT IMPLEMENTED): its `signed` arm REQUIRES `envelope_jcs_b64` + `signature_b64` +
-        `output_stream_id`. A pre-acceptance refusal has exactly three keys, so it cannot
-        be mistaken for a verdict even by a reader that ignored the discriminator."""
+        """§4.10(e): its `signed` arm REQUIRES `envelope_jcs_b64` + `signature_b64` +
+        `output_stream_id`. A pre-acceptance refusal has exactly three keys - none of them
+        those - so it cannot be mistaken for a verdict even by a reader that ignored the
+        discriminator. The three names are read from §4.10(e)'s own field set rather than
+        re-typed, so a future widening of that set is seen here."""
         for reason in ger.EVIDENCE_REQUEST_REFUSAL_REASONS:
             reply = ger.evidence_request_refused(reason)
             self.assertEqual(set(reply), {"protocol", "status", "reason"})
+            for required in ("envelope_jcs_b64", "signature_b64", "output_stream_id"):
+                self.assertIn(required, gtr.SIGNED_FIELDS)
+                self.assertNotIn(required, reply)
 
     def test_the_request_protocol_is_not_the_wave_3b1_evidence_request(self):
         """§4.10(d) "replaces the mis-named use of the v1 `brops.evidence-request.v1` const
@@ -917,8 +930,7 @@ class FrontDoorTests(_Case):
 
     def test_the_sidecar_may_send_the_evidence_request(self):
         self.make_ready()
-        self.assertEqual(self.serve(self.request()),
-                         {"protocol": "test.continuation-reached.v1"})
+        self.assertEqual(self.serve(self.request()), CONTINUATION_REPLY)
 
     def test_the_broker_sending_an_evidence_request_is_not_authorized(self):
         self.make_ready()
@@ -984,7 +996,7 @@ class FrontDoorTests(_Case):
         self.assertEqual(reply["reason"], "malformed")
         self.assertEqual(self.continuation.calls, [])
         # ...and the compact form of the same request is served normally.
-        self.assertEqual(self.serve(body), {"protocol": "test.continuation-reached.v1"})
+        self.assertEqual(self.serve(body), CONTINUATION_REPLY)
 
     def test_the_frame_cap_boundary(self):
         """`<=` is admitted, `+1` is refused — checked on the composed front-door table so
@@ -1113,17 +1125,56 @@ class SupervisorFaultTests(_Case):
                     self.call(self.request(), continuation=_Continuation(reply=bad))
 
     def test_a_continuation_answering_in_the_pre_acceptance_namespace_is_a_fault(self):
-        """Once §5 has been entered the verdict belongs to the §4.10(e) union.
-        (§4.10(e) and §4.10(h) are both NOT IMPLEMENTED — later ordered pieces.)
-        A continuation replying `brops.governed-evidence-request-result.v1` would collapse
-        the two halves of §4.10(d)'s reply union into one, and the §4.10(h) classifier —
-        which reads the top-level `protocol` — could no longer tell an internal refusal
-        from a governed verdict."""
+        """Once §5 has been entered the verdict belongs to the §4.10(e) union. (§4.10(h) is
+        NOT IMPLEMENTED — a later ordered piece.) A continuation replying
+        `brops.governed-evidence-request-result.v1` would collapse the two halves of
+        §4.10(d)'s reply union into one, and the §4.10(h) classifier — which reads the
+        top-level `protocol` — could no longer tell an internal refusal from a governed
+        verdict.
+
+        The MESSAGE is asserted, not only the exception type. A pre-acceptance frame is
+        also not a §4.10(e) frame, so the general shape check below would raise too - and a
+        test that accepted either would let this specific guard be deleted unnoticed."""
         self.make_ready()
         impostor = _Continuation(reply=ger.evidence_request_refused("retry_conflict"))
-        with self.assertRaises(SupervisorError):
+        with self.assertRaisesRegex(SupervisorError, "pre-acceptance namespace"):
             self.call(self.request(), continuation=impostor)
         self.assertEqual(len(impostor.calls), 1)      # it WAS reached; the reply is refused
+
+    def test_a_continuation_that_answers_outside_the_result_union_is_a_fault(self):
+        """§4.10(d): once a row exists "the acceptance/signer verdict is
+        `brops.governed-turn-result.v1`". Anything else is a supervisor-side fault - it is
+        not a verdict this gate may pass on, and there is no §4.10(d) reason for it because
+        no peer asked for it. Until §4.10(e) existed the reply was relayed unexamined."""
+        self.make_ready()
+        for bad in ({"protocol": "test.continuation-reached.v1"},
+                    {"protocol": "brops.governed-result.v1", "status": "signed",
+                     "output": "hi", "receipt": {}},
+                    dict(gtr.turn_result_refused("hash_mismatch"), extra=1),
+                    {"protocol": gtr.GOVERNED_TURN_RESULT_PROTOCOL, "status": "signed"}):
+            with self.subTest(bad=bad):
+                double = _Continuation(reply=bad)
+                with self.assertRaisesRegex(
+                        SupervisorError, "not a brops.governed-turn-result.v1 frame"):
+                    self.call(self.request(), continuation=double)
+                self.assertEqual(len(double.calls), 1)
+
+    def test_a_signed_verdict_is_relayed_verbatim(self):
+        """§4.5's relay rule: a genuine governed verdict is "relayed verbatim". §4.10(d)
+        checks its SHAPE and changes nothing - it verifies no signature and rewrites no
+        field, because the desktop's authority is the signed envelope inside, not this
+        hop."""
+        self.make_ready()
+        verdict = gtr.turn_result_signed(
+            receipt_id="rcpt-1", output_stream_id="A" * 43, output_bytes=11,
+            output_sha256="c" * 64, envelope_jcs_b64="AAAA", signature_b64="A" * 86,
+            key_id="signer-1", attestation_evidence_jcs_b64="BBBB",
+            attestation_signature_b64="A" * 86, supervisor_attestation_key_id="sup-1",
+            containment_evidence_b64=None, run_id="run-1",
+            execution_attempt_id="attempt-1", lease_id="lease-1")
+        relayed = self.call(self.request(), continuation=_Continuation(reply=verdict))
+        self.assertEqual(relayed, verdict)
+        self.assertIsNot(relayed, verdict)
 
     def test_a_non_evidence_request_protocol_reaching_the_service_is_a_fault(self):
         for protocol in (gsu.STAGING_OPEN_PROTOCOL, "brops.governed-turn-open.v1", None):

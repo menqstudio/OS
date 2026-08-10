@@ -124,7 +124,7 @@ other direction waits for §4.10(g).
 receipt is stale (`NEXT_CHAT.md`, `PROJECT_STATE.md`, `TASKS.md`, `config/current_state.json` changed
 after it was taken). The declaration text is in the step-4 report and was NOT forged.
 
-Suite after: **1680 tests OK, 43 skipped** (baseline 1627/43; +51 in the new file, +2 in §4.10(d)'s).
+Suite after: **1681 tests OK, 43 skipped**, converged over three consecutive runs (baseline 1627/43; +52 in the new file, +2 in §4.10(d)'s).
 `check_ledger_ddl_parity` (42 clauses, unchanged — §4.10(e) adds no DDL), `check_spec_references`
 (§4.10(e) `implemented` with 18 named tests; §4.5 raised to `partial`, its closed union real and its
 frame still NOT IMPLEMENTED), `check_reachability`, `check_coordination` and the 418 tools self-tests

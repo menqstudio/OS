@@ -8,6 +8,68 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The reply half of the trigger, and a test that passed for the wrong reason (2026-08-10)
+
+Wave 3b-1B step 4: **§4.10(e), the result frame** — the complete `brops.governed-turn-result.v1` tagged
+union as one builder plus one validator, both arms exhaustive (16 `signed` fields, 4 `refused`), §4.6's
+encoded-byte caps, and canonical-base64url enforced on all five b64 fields by re-encoding and comparing.
+§4.10(f), §4.10(h), §4.6's bridge frame, §4.5's sign-result frame and §5 acceptance stay unbuilt.
+
+**A test passed for the wrong reason, and the mutation pass is what found it.**
+`signed-builder-accepts-positional-args` survived the first round: the test called the builder with four
+positional arguments and got its `TypeError` from the *ten missing arguments*, not from the keyword-only
+`*` it claimed to be proving. Deleting the `*` changed nothing. Rewritten to pass all fourteen
+positionally, so the call now succeeds as kwargs and raises only because of the marker it exists to test.
+Second pass: **67 mutants, 67 killed, zero survivors**, both runtime files restored byte-exact.
+
+**The seam is now enforced rather than described.** §4.10(d) said its post-acceptance arm *was* a
+`brops.governed-turn-result.v1` and then relayed whatever the §5 continuation returned. It now validates
+it. That is (e) being reached from production code rather than only from its own tests — the deliberate
+move against the "implemented but nothing calls it" defect this repository keeps producing.
+
+**`drive_acceptance` is still an unwired seam, and that is stated rather than blurred.** It supplies §5
+acceptance → lease → execution → record → signer; §4.10(e) is only the *shape of its answer*. What changed
+is that the seam is now typed: a supplier must return a valid (e) frame or the supervisor faults. There is
+still no production producer of an (e) frame.
+
+**"Verbatim" is machine-checked.** `GOVERNED_REFUSAL_REASONS` (29 = the ratified 12 plus 17 additions) is
+defined **once**, because §4.5's relay literal-embed rule forbids a second copy — and the ratified twelve
+are compared *in order* against the frozen `engine/contracts/brops-sign-result.v1.schema.json` enum. A
+hand-typed copy of the same tuple in §4.10(d)'s test file is now an import.
+
+**Marked honesty, in the standard this wave has kept.** `TheClosedUnionIsNotDecidedHereTests` records that
+**no member of the 29 is reachable as a decision from anything in this tree**: all 29 are constructible by
+name, and every producing gate §4.5 lists is a §5/§7 gate that does not exist yet. Step 2 marked three of
+its 29 refusals this way, step 3 marked one; a green suite is not allowed to imply otherwise.
+
+**Arithmetic first, and therefore no frame check at all.** The literal maximum `signed` frame is **74472
+bytes against `MAX_FRAME_BYTES` 262144 — 187672 bytes of headroom**, so no size check could fire; the
+maximum instance is constructed and the number asserted. Same for the decoded lengths: 86 canonical
+base64url characters decode to exactly 64 bytes and 43 to exactly 32, so a `len(decoded) == 64` line could
+not fire either, and the property is proved as an implication instead. This is the third ordered piece in a
+row to decline to write a check the arithmetic says is unreachable.
+
+**§4.10(h)'s "disjoint namespace" claim is false about values by three, not two.** Across every internal
+refusal set in the tree the intersection with `GOVERNED_REFUSAL_REASONS` is
+`{malformed, retry_conflict, oversize}`. Step 3 saw only §4.10(d)'s two.
+
+**§2.2 names schema files that do not exist** — `brops-governed-turn-result.v1.schema.json` and the
+equivalents for §4.10(a0)/(a)/(b)/(c)/(d). `engine/contracts/` holds only the three frozen v1 schemas.
+Steps 1–3 put the governed shapes in Python modules and step 4 followed; adding a JSON schema now would be
+a second source of truth for the same shape.
+
+**A process failure of mine, recorded because it is the kind this repository punishes.** While step 4 was
+in flight I staged `NEXT_CHAT.md` for the §7.1 freshness commit, and it carried step 4's half-written
+section into `82f30b0` — so `NEXT_CHAT.md` gained a section that `PROJECT_STATE.md` and `TASKS.md` did not,
+and the three canonical documents disagreed for one commit. No work was lost; the attribution went to the
+wrong commit message. This entry restores the agreement. The rule that would have prevented it: do not
+stage a shared canonical file while an agent is writing to it.
+
+Engine suite **1681 tests OK (43 skipped)**, converged over five consecutive runs, from 1627.
+`check_ledger_ddl_parity` (42 clauses, untouched — §4.10(e) introduces no table),
+`check_spec_references`, `check_reachability` and `check_coordination` GREEN; `tools/` self-tests 418 OK.
+
+
 ### A receipt signed at any point in the past verified today (2026-08-10)
 
 §7.1's mandatory freshness step was absent from the governed path. `verify_and_accept` was documented "no
