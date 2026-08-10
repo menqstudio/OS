@@ -8,6 +8,50 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The broker cannot pull, and the read was not the worst of it (2026-08-10)
+
+I sent an agent to replace the broker's `std::fs::read` of the recorder's output with the §4.10(f) pull.
+**It stopped at the evidence stage, changed nothing, and proved the change is not available** — the tree is
+byte-identical to how it found it. That was the instruction and it was the right outcome.
+
+**Five independent blockers**, each sufficient alone: there is no sidecar principal in the live kit (six
+accounts, none of them a sidecar); the supervisor constructs no `OutputReadService`, and without one it
+serves no read **and mints no token** — the code pairs those deliberately; the broker's uid is refused by
+construction, because the read gate requires the *sidecar* uid and §2.6 requires those principals to be
+distinct; the ordering is **circular**, since the token only reaches a client through a §4.10(e) frame
+behind a sidecar-gated door, and the mint happens *inside* `complete-run`, which requires the output's own
+digest — so at the line where the read sits no stream can exist yet, and afterwards there is no token to
+present; and the broker binary has no sidecar spawn and cannot acquire one, its only `Command::new` being
+the recorder, while the one hardened spawn in the tree lives in a **binary** crate nothing can depend on.
+
+**An honest correction to how I described this.** "The broker reads output off disk" reads worse than it
+is. `verify_and_accept` still applies the §7.1 length-and-digest gate against the **signed** envelope, and
+`complete-run` cross-checks the output handle against the recorder's own evidence chain. So it is a
+**confinement** divergence, not an output-integrity hole.
+
+**And the sharper violation, which neither I nor the audit had named:** the broker is a member of
+`brops-store` and **writes the signer's inputs** — performing the recorder's own §2.3 publication duty
+inside the protected store, and `chmod 0644`-ing the result. §2.3 puts the broker in neither `brops-store`
+nor any owner group. That is a bigger divergence than the read it was sent to fix.
+
+**One design ambiguity is worth recording because it has already cost an implementation.** §4.10(f)
+specifies the pull adapter as "a private function of the one `governed_turn_execute` command … must NOT
+appear in `generate_handler!`" — Tauri machinery that exists only in the renderer-hosting app process, not
+in the broker service. §0's LOCKED terminology binding resolves "the desktop" to the broker service and
+pre-declares this class of phrasing "a wording residue, not a second architecture". The shipped adapter
+followed the literal text and therefore **lives in the wrong process**.
+
+**It is a topology decision and is now `docs/OWNER_ACTION_REQUIRED.md` §1d.** The change is *who spawns the
+recorder*: the Python half of the supervisor-side execution seam exists and its only non-refusing
+implementation is a test fake, while the privileged execution exists solely as the broker's Rust
+`LinuxGovernedExecution` — the two halves of §6.1 step 5 sit in different processes on opposite sides of
+this divergence. A narrower fix is available first and independently: take the broker out of `brops-store`
+and move the output and containment publication to the recorder, which already writes both.
+
+No mutants, no survivors, no numbers claimed — no check was added or altered. `brops-broker` 31 + 3,
+`brops-core --lib` 376, `brops --lib` 127, all matching the baselines exactly.
+
+
 ### The frame is not constructible by its own producer (2026-08-10)
 
 **§4.6's `bridge.governed-turn-result.v1` is built on both hops** — the frame that carries a governed

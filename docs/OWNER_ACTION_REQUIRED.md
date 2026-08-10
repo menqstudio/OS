@@ -263,6 +263,53 @@ formula in prose — it is a historical record of the code at `219c763` and is d
 can be produced. §4.10(d) itself is still NOT IMPLEMENTED — this only makes the join it will need
 satisfiable.
 
+## 1d. Who spawns the recorder — the broker egress is a topology decision, not a bug
+
+**What you have to decide: which principal runs the model, and therefore who publishes its output.**
+
+I sent an agent to make the broker *pull* its output through §4.10(f) instead of reading it off the disk.
+It stopped before changing anything and proved the change is not available. Five independent blockers, each
+sufficient alone:
+
+1. **There is no sidecar principal.** The live kit provisions six accounts — broker, challenge, supervisor,
+   recorder, signer, executor. No `brops-sidecar` exists, and nothing proxies anything.
+2. **The supervisor serves no reads and mints no streams.** `run_supervisor.py` constructs no
+   `OutputReadService`, and without one every output-read is refused **and** `complete-run` mints no token.
+   The two are deliberately paired in the code.
+3. **The broker's uid is refused by construction** even if it were configured: the read gate requires the
+   *sidecar* uid, and §2.6 requires broker and sidecar to be distinct principals. A broker-direct read is a
+   permanent refusal.
+4. **The ordering is circular.** The token reaches a client only through the §4.10(e) frame, which is
+   reached only through a sidecar-gated evidence request the live path never knocks on — and the mint
+   happens *inside* `complete-run`, which requires the output's own digest. So at the line where the read
+   sits, no stream can exist yet; and after `complete-run` there is no token to present.
+5. **The broker binary has no sidecar spawn and cannot acquire one locally.** Its only `Command::new` is
+   the recorder; the one hardened spawn in the tree lives in a *binary* crate that cannot be depended on.
+
+**And the honest correction to how I described this.** "The broker reads output off disk" reads worse than
+it is. `verify_and_accept` still applies the §7.1 length-and-digest gate against the signed envelope, and
+`complete-run` cross-checks the output handle against the recorder's own evidence chain — so this is a
+**confinement** divergence, not an output-integrity hole. The sharper violation is the one neither I nor the
+audit named: **the broker is a member of `brops-store` and writes the signer's inputs**, performing the
+recorder's own §2.3 publication duty inside the protected store. §2.3 says the broker is in neither
+`brops-store` nor any owner group.
+
+**The two real options:**
+1. **Build the designed topology** — a 7th `brops-sidecar` principal with its sudoers and ACLs, a running
+   sidecar server, the supervisor's four services wired, §4.10(g) implemented, and a supervisor-side
+   `ExecutionService` so the *supervisor* spawns the recorder rather than the broker. The Python half of
+   that already exists (`governed_acceptance.ExecutionService`) and its only non-refusing implementation is
+   a test fake; the privileged execution exists solely as the broker's Rust `LinuxGovernedExecution`. The
+   two halves of §6.1 step 5 live in different processes on different sides of this divergence.
+2. **Take the narrow confinement fix first** — remove the broker from `brops-store` and stop it writing the
+   signer's store, by moving the output and containment publication to the recorder, which already writes
+   both. That is a live-kit and recorder change, not an egress change, and it closes the §2.3 violation
+   without waiting on the topology.
+
+Option 2 is available now and is strictly smaller. Option 1 is what §4.10(f) actually describes. **Neither
+was taken without your decision**, because the change is "who spawns the recorder", and that is not a
+Builder's call.
+
 ## 2. The independent audit, then your approval
 
 The gate does not open when these settle. It needs an audit of the whole chain **by someone who did
