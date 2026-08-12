@@ -8,6 +8,78 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Two governed turns per install, ever (2026-08-13)
+
+`proof/src/bin/ladder_turn.rs` drives the **same** `LadderChain` the broker builds — same
+`LinuxHopConnector`, `SqliteTurnContent`, `GovernedSidecar::as_distinct_principal`, `UuidTurnIds`,
+`DurableAcceptanceLedger` — through `run_governed_turn`, with a `KeyResolver` running the identical
+sequence `ProductionResolver::resolve_keys` runs, against the kit's root anchor with its declared
+provenance. And it was **actually run**: WSL2 Ubuntu on this box, the whole script, `SCRIPT_EXIT=0`, ~48 s.
+
+```
+RESULT: ladder-turn outcome=committed expected=committed met=true
+CUSTODY: demonstration_custody, kit_generated anchor, production_verified=false, bound=true
+30 sidecar frames, every one served to SO_PEERCRED uid 5003; driver uid 5001
+DERIVED: system=33c31401… history=4e798731… generation_config=732b5863…
+```
+
+The three digests are **derived by the real code from the fixture row**, not written into the config, and
+they equal the staged bytes and the launcher's lease pins.
+
+**What it is not, said in three places** — the driver header, the `[[bin]]` comment and the CI banner: it is
+**not** the `brops-broker` binary. No `build_governed_executor` (unreachable — `provisioned_with_pin` is
+still `pub(crate)`, unchanged), no renderer socket, no `SO_PEERCRED` on that hop, no §2.5 floor. Custody is
+wired by the driver; the shipped broker still commits nothing. It is honest for exactly one reason: a
+`kit_generated` anchor **cannot** produce `TrustState::Production`.
+
+## The finding that matters most, and it is a shipping defect
+
+**`MAX_STAGING_SESSIONS_PER_INSTALL = 6`, `count_install_sessions` has no liveness predicate, and
+`governed_staging_ledger.py` contains no `DELETE` at all.** §2.4 makes staging recovery "operator-sweep
+only" — and **no sweeper exists anywhere in the tree**. One turn stages three artifacts, so **an install
+supports exactly two completing governed turns, ever.** Verified independently: the constant is at
+`governed_staging_ledger.py:369` and a case-insensitive search for `DELETE` in that file returns **zero**.
+
+Measured, not inferred: the second opening run was refused `staging-open … quota_sessions` with six
+`ARTIFACT_READY` sessions under two handles.
+
+The consequence was immediate and is recorded rather than worked around: a `model_profile_unknown` control
+was written, driven, and **could not run honestly** — a second `install_id` would have been a lie, and
+widening the LOCKED literal would have edited the rule to fit the test. It is not in the script, and the
+script says why.
+
+## Two more findings
+
+The kit leaves `trust.floor_path` **root-owned `0644` in a root-owned directory**, so the broker uid cannot
+persist the anti-rollback advance — and a persist failure refuses. The driver's floor moved to the broker's
+own `0700` state dir, which `main.rs` already requires. The control for it **drives the original path** and
+requires the refusal, so the persist can never be quietly "fixed" by weakening it.
+
+And forward-looking: Ubuntu 26.04 ships **`sudo-rs`**, which rejects `*` in command arguments outright — the
+kit's *existing* recorder vector fails `visudo` there. Untouched; a local-only, clearly-marked workaround
+was used in the WSL copy alone. If a hosted runner ever moves to sudo-rs, the ladder job goes RED on
+provisioning.
+
+## Negatives, controls, mutants
+
+Three negatives refused **by name** — `anti_rollback`, `floor_not_persisted`, and the §4.1 hop attributed by
+principal — plus **two** sign-flip controls (a blocked run must not satisfy `--expect committed`; one named
+refusal must not satisfy another's name), plus an assertion on the driver's own evidence that it is
+`kit_generated`, `production_verified=false`, and not the broker binary.
+
+**13 mutants, 10 killed, 3 survivors, all named.** One is unexercised because of the session-quota defect
+above — nothing in this phase can drive a §4.6 `ok:false` frame while an install has two turns. One removes
+a guard that is not currently firing, and its teeth are proven by a *different* mutant the same guard
+killed. One needs a second simultaneous mutation.
+
+**Three files changed.** `run_live_turn.sh`, `commands.rs`, `broker/src/main.rs` and `manifest_resolver.rs`
+are byte-identical; no gate moved; `provisioned_with_pin` is still `pub(crate)`.
+
+Re-run here: `brops-governed-live` **23**, `brops-broker` **46 + 9**, `brops-core --lib` 471, `brops --lib`
+117, engine 1979 OK (43 skipped), bridge 210, tools 419; reachability, spec-references and coordination
+GREEN. `bash -n` OK.
+
+
 ### The broker binary cannot complete a turn in CI, and that is the gate working (2026-08-13)
 
 Driving the real `brops-broker` binary to a completed governed turn in the live kit was investigated and
