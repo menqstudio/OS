@@ -33,8 +33,14 @@
 //! registry, with nothing to say so. So the spawn moved instead. It is now
 //! [`crate::governed_sidecar::GovernedSidecar`] — in THIS crate, synchronous, used by the app through
 //! `spawn_blocking` and available to the broker directly — and it implements [`SubmitTransport`].
-//! There is one spawn, and it cannot be constructed without a resolved
-//! [`crate::engine_trust::TrustEnvironment`].
+//! There is one spawn, and what it must carry follows the PROTOCOL rather than the caller:
+//! [`crate::governed_sidecar::SidecarTrust::Provisioned`] holds a resolved
+//! [`crate::engine_trust::TrustEnvironment`] and is required for `bridge.task-request` and the
+//! `governance.read` op, while a transport that relays only this frame and the §4.10(f) read carries
+//! [`crate::governed_sidecar::SidecarTrust::RelayFramesOnly`] — whose door then refuses, before any
+//! process exists, every request whose own `protocol` is not one of those two. The BROKER passes the
+//! latter, because it cannot hold the former: the provisioned set's conductor-session token binds the
+//! CONDUCTOR's identity and the broker is §0 role #2.
 //!
 //! What is still true, and is the honest remaining gap: **nothing CALLS
 //! [`governed_turn_submit_prepared`]**. Giving the writer a transport did not give it a caller —

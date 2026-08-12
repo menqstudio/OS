@@ -237,7 +237,7 @@ mod linux {
     /// `[sockets].authority`, `[content]` (the conversation source) and `[sidecar]` (the one-shot bridge
     /// spawn -- `python`/`script`/`cwd` AND the 2.6 `principal`/`invoker` that make the child the
     /// SIDECAR account rather than this one), the 4.10(g) `LadderChain` is served. ANY problem -- no env var, unreadable/malformed
-    /// config, a TCB violation, a missing manifest, an unresolved sidecar trust environment, an
+    /// config, a TCB violation, a missing manifest, an
     /// unresolved 2.6 sidecar PRINCIPAL, an
     /// unconfigured conversation source, or an acceptance ledger that will not open -- returns the
     /// fail-closed `UpstreamBlockedExecutor`, so the broker keeps rendering `blocked` (never a
@@ -259,7 +259,7 @@ mod linux {
         use brops_broker::ladder_executor::{LadderChain, SqliteTurnContent, UuidTurnIds};
         use brops_broker::manifest_resolver::{ProductionResolver, ResolvedFacts};
         use brops_core::broker_turns::DurableAcceptanceLedger;
-        use brops_core::governed_sidecar::GovernedSidecar;
+        use brops_core::governed_sidecar::{GovernedSidecar, SidecarTrust};
         use brops_core::key_manifest::{AntiRollbackFloor, KeyManifest};
         use serde_json::Value;
 
@@ -437,29 +437,39 @@ mod linux {
 
         // ---- The 4.10(g) submit transport: the tree's ONE bridge spawn ----
         //
-        // Neither `GovernedSidecar` constructor can be reached without a `TrustEnvironment`, and
-        // `engine_trust::apply` is its only constructor -- so a broker that has not had the provisioned
-        // trust material recorded into this process has nothing to pass and serves fail-closed here.
-        // That is a refusal, not a gap papered over: a sidecar started without the provisioned governance
-        // trust is the ungoverned call the whole ladder exists to prevent.
+        // This used to resolve `engine_trust::apply()` and fail closed when it could not. That refusal
+        // was permanent rather than provisional and it was aimed at the wrong thing.
         //
-        // NOTE, because it is the honest reading of this arm today: on THIS binary that refusal is not
-        // hypothetical, it is the standing state. The broker cannot hold the provisioned set -- the
-        // conductor-session token is an IDENTITY (agent_id bro-000, role bro) and the broker is role #2,
-        // so claiming it would make the trusted broker service the conductor, and the 0700 tree holding
-        // the file also holds eight retained private authority seeds. So `apply()` refuses here and the
-        // ladder is unreachable from this binary for that reason as well as for the principal reason
-        // below. Both are real; closing one does not close the other, and neither is closed by pretending.
-        let trust = match brops_core::engine_trust::apply() {
-            Ok(t) => t,
-            Err(why) => {
-                eprintln!(
-                    "brops-broker: the governed sidecar's trust environment is unresolved ({why}) - \
-                     serving fail-closed"
-                );
-                return fail_closed();
-            }
-        };
+        // Permanent: the broker CANNOT hold the provisioned set, and not for want of provisioning. The
+        // set's `BRO_CONDUCTOR_SESSION_TOKEN` binds `agent_id: bro-000`, `role: bro` -- the CONDUCTOR's
+        // identity -- and the broker is 0 role #2. A broker that never claims that identity holds an
+        // inert file; a broker that claims it has made the trusted broker service the conductor. No
+        // second token can be minted (the operator root signs one offline and the key is zeroized
+        // inside the minting scope), and the 0700 tree holding it also holds eight retained private
+        // authority seeds, so no grant yields one without the others.
+        //
+        // Aimed at the wrong thing: this transport relays exactly two frames --
+        // `bridge.governed-turn-submit.v1` (below, through `governed_turn_submit_prepared`) and
+        // `bridge.governed-turn-output-read.v1` (the 4.10(f) pull, through the same `SubmitTransport`)
+        // -- and NOTHING downstream of either reads one of the five provisioned variables. In the
+        // child, `_bridge_governed_turn_submit` and `_bridge_output_read` resolve
+        // `BROPS_SUPERVISOR_SOCKET` and nothing else, and no module in either import closure reads the
+        // five or calls a function that does. The two shapes that DO read them --
+        // `bridge.task-request` and the `governance.read` op -- are driven by the DESKTOP, which
+        // carries the set and still cannot be built without it.
+        //
+        // So the requirement now follows the protocol. `SidecarTrust::RelayFramesOnly` buys this
+        // binary no licence: `SidecarTrust::admits` refuses, before any process exists, every request
+        // whose own top-level `protocol` is not one of the two above, and the child's `_dispatch`
+        // routes on that same field -- so there is no frame this transport can send that the sidecar
+        // then runs as a governed turn. See `brops_core::governed_sidecar::SidecarTrust`.
+        //
+        // What this does NOT do is open a governed surface. The refusals that hold that line are
+        // untouched: `$BROPS_BROKER_CONFIG` is absent on every shipped install (nothing in the product
+        // writes it), the 2.5 TCB floor, the pinned key manifest, the 2.6 sidecar principal below, the
+        // socket, the conversation source and the durable ledger each return `fail_closed()`, and
+        // `commands.rs::governed_verification_unconfigured` still blocks every user-facing governed
+        // surface before the model is invoked.
         let (python, script, sandbox) = match (
             s(&["sidecar", "python"]),
             s(&["sidecar", "script"]),
@@ -502,8 +512,13 @@ mod linux {
                 return fail_closed();
             }
         };
-        let transport =
-            GovernedSidecar::as_distinct_principal(&python, &script, sandbox, trust, principal);
+        let transport = GovernedSidecar::as_distinct_principal(
+            &python,
+            &script,
+            sandbox,
+            SidecarTrust::RelayFramesOnly,
+            principal,
+        );
 
         // ---- 7.1(c)(d) DURABLE replay ledger (audit IDX-67 / IDX-86 / IDX-94) ----
         //
@@ -751,24 +766,30 @@ mod tests {
     /// a renamed constructor there is invisible until the Linux job runs. This function has the same
     /// three lines and the same types, and it compiles everywhere.
     ///
-    /// It TAKES the `TrustEnvironment` rather than making one, because it cannot make one:
-    /// `engine_trust::apply` is its only constructor and reads a process-global that must stay empty.
-    /// That is enough — what needs proving is that `cfg.get("sidecar")` satisfies `from_config`, and
-    /// that `as_distinct_principal` accepts `(&String, &String, PathBuf, TrustEnvironment,
-    /// SidecarPrincipal)` in that order. It is deliberately NOT a second production path: nothing
-    /// calls it, it is inside `#[cfg(test)]`, and the guard tests above are what keep the real one
-    /// in the shape this one describes.
+    /// It builds its own `SidecarTrust::RelayFramesOnly` — the same value the Linux function
+    /// passes — rather than taking one, because that variant holds nothing and needs nothing
+    /// resolved. (It could not take a `TrustEnvironment`: `engine_trust::apply` is that type's only
+    /// constructor and reads a process-global that must stay empty in a test binary. That is exactly
+    /// the fact that made the old requirement unsatisfiable in this process, here as in the real
+    /// one.) What needs proving is that `cfg.get("sidecar")` satisfies `from_config`, and that
+    /// `as_distinct_principal` accepts `(&String, &String, PathBuf, SidecarTrust, SidecarPrincipal)`
+    /// in that order. It is deliberately NOT a second production path: nothing calls it, it is
+    /// inside `#[cfg(test)]`, and the guard tests above are what keep the real one in the shape this
+    /// one describes.
     fn broker_sidecar_wiring(
         cfg: &serde_json::Value,
         python: String,
         script: String,
         sandbox: std::path::PathBuf,
-        trust: brops_core::engine_trust::TrustEnvironment,
     ) -> Result<brops_core::governed_sidecar::GovernedSidecar, String> {
         let principal =
             brops_core::governed_sidecar::SidecarPrincipal::from_config(cfg.get("sidecar"))?;
         Ok(brops_core::governed_sidecar::GovernedSidecar::as_distinct_principal(
-            &python, &script, sandbox, trust, principal,
+            &python,
+            &script,
+            sandbox,
+            brops_core::governed_sidecar::SidecarTrust::RelayFramesOnly,
+            principal,
         ))
     }
 
@@ -782,7 +803,6 @@ mod tests {
             String,
             String,
             std::path::PathBuf,
-            brops_core::engine_trust::TrustEnvironment,
         ) -> Result<brops_core::governed_sidecar::GovernedSidecar, String> = broker_sidecar_wiring;
 
         use brops_core::governed_sidecar::SidecarPrincipal;
@@ -803,6 +823,83 @@ mod tests {
         let p = SidecarPrincipal::from_config(provisioned.get("sidecar"))
             .expect("the provisioned shape resolves");
         assert_eq!(p.account(), "brops-sidecar");
+    }
+
+    /// The broker names the RELAY arm, and does not reach for a trust environment it cannot have.
+    ///
+    /// Textual for the same reason the two guards above are: `build_governed_executor` lives inside
+    /// `#[cfg(target_os = "linux")] mod linux` and is never type-checked on this host. Both halves
+    /// are asserted, because either one alone is satisfiable by the wrong edit — naming
+    /// `RelayFramesOnly` while still calling `engine_trust::apply` would leave the permanent refusal
+    /// in place, and dropping `apply` without naming the arm would not compile there but would look
+    /// fine here.
+    #[test]
+    fn the_broker_names_the_relay_arm_and_never_reaches_for_a_trust_environment() {
+        let code = broker_code();
+        assert!(
+            code.contains("SidecarTrust::RelayFramesOnly"),
+            "the broker no longer names the relay arm, so it is passing something else to the spawn"
+        );
+        assert!(
+            !code.contains("engine_trust::apply"),
+            "the broker calls engine_trust::apply, which can never succeed in this process: the \
+             conductor-session token in the provisioned set binds agent_id bro-000 / role bro, and \
+             the broker is §0 role #2"
+        );
+    }
+
+    /// The door, exercised through the SAME wiring the Linux function uses. This is the mutant the
+    /// design has to survive: a `bridge.task-request` driven through the broker's trust-free
+    /// transport must be refused, and refused before a child exists — because that request lands on
+    /// `_real_callables` and, through it, on `bro_signature.load_trusted_keys`, which without
+    /// `BRO_TRUSTED_REGISTRY_ROOT` reads the development registry committed in this tree while the
+    /// turn still reports itself as governed.
+    ///
+    /// The interpreter is deliberately unspawnable, so a door that had been removed would announce
+    /// itself as a SPAWN failure rather than as a pass.
+    #[test]
+    fn the_brokers_transport_cannot_carry_a_task_request() {
+        let cfg = serde_json::json!({
+            "sidecar": {
+                "principal": "brops-sidecar",
+                "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"],
+            }
+        });
+        let seam = broker_sidecar_wiring(
+            &cfg,
+            "brops-no-such-interpreter-does-not-exist".to_string(),
+            "/opt/brops-live/bridge/engine_sidecar.py".to_string(),
+            std::env::temp_dir(),
+        )
+        .expect("the reference sidecar block resolves");
+        let task_request = serde_json::json!({
+            "task_id": "t-1",
+            "task_class": "chat",
+            "rationale": "because",
+            "request": { "prompt": "hello" },
+        })
+        .to_string();
+        let err = seam
+            .round_trip(&task_request)
+            .expect_err("the broker's transport carried a task-request");
+        assert!(
+            err.contains("SidecarTrust::RelayFramesOnly"),
+            "the refusal is not the protocol door's: {err}"
+        );
+        assert!(
+            !err.contains("Could not run the governed engine sidecar"),
+            "the task-request reached a spawn before it was refused: {err}"
+        );
+        // And the two frames the broker actually sends DO get through the door, so this cannot pass
+        // by the transport refusing everything.
+        for protocol in brops_core::governed_sidecar::RELAY_PROTOCOLS {
+            let frame = serde_json::json!({ "protocol": protocol }).to_string();
+            let err = seam.round_trip(&frame).expect_err("the interpreter cannot start");
+            assert!(
+                err.contains("Could not run the governed engine sidecar"),
+                "{protocol} did not reach the spawn: {err}"
+            );
+        }
     }
 
     /// `brops-core` is the ONE spawn. A second `Command::new` reaching for an interpreter in the

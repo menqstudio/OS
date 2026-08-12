@@ -16,13 +16,27 @@
 //!
 //! # What "cannot be bypassed" means here, concretely
 //!
-//! BOTH constructors — [`GovernedSidecar::as_calling_principal`] and
-//! [`GovernedSidecar::as_distinct_principal`] — require a [`TrustEnvironment`], and
-//! [`crate::engine_trust::apply`] is its only constructor. There is no `Default`, no public field,
-//! no second way to make one. A caller that wants to start the sidecar without the provisioned
-//! trust material has nothing to pass and does not compile — a different guarantee from the previous
-//! shape, where `engine_trust::apply(&mut cmd)?` was a LINE, and deleting a line compiles.
-//! [`SidecarPrincipal`] is built the same way and for the same reason; see below.
+//! Both constructors take a [`SidecarTrust`], which says which PROTOCOL FAMILY the spawn will
+//! carry — and that is the whole of the rule, because the families are not alike:
+//!
+//! * [`SidecarTrust::Provisioned`] holds a [`TrustEnvironment`], whose only constructor is
+//!   [`crate::engine_trust::apply`]. There is no `Default`, no public field, no second way to make
+//!   one. A caller that wants to drive `bridge.task-request` or the `governance.read` op — the two
+//!   shapes that reach `bro_signature.load_trusted_keys`, and through it O-3 — has nothing else to
+//!   pass and does not compile. That is unchanged, and deliberately: it is a different guarantee
+//!   from the shape before it, where `engine_trust::apply(&mut cmd)?` was a LINE, and deleting a
+//!   line compiles.
+//! * [`SidecarTrust::RelayFramesOnly`] holds nothing, and buys nothing except a NARROWER door.
+//!   [`SidecarTrust::admits`] refuses, before any process exists, every request whose own top-level
+//!   `protocol` is not one of [`RELAY_PROTOCOLS`] — the two frames whose handlers in
+//!   `bridge/engine_sidecar.py` resolve exactly one variable between them
+//!   ([`SUPERVISOR_SOCKET_VAR`]) and read none of the provisioned five. The door and the child's
+//!   `_dispatch` key on the SAME field, so "pick the weak arm and send a task-request anyway" is
+//!   not a thing that can be spelled. [`SidecarTrust`]'s own docs carry the argument in full.
+//!
+//! [`SidecarPrincipal`] is built the same way and for the same reason; see below. The two axes —
+//! which principal, which protocol family — are independent, so neither can be used to obtain the
+//! other by a side door.
 //!
 //! # Which PRINCIPAL the child runs as (§2.6)
 //!
@@ -60,15 +74,21 @@
 //! **Why the prefix must end in `env`.** Every mechanism that changes principal also resets the child
 //! environment — `sudo` does it by default (`env_reset`), and any launcher worth using does too. So
 //! `Command::env()` on the invoker sets variables in the INVOKER's environment, which is exactly the
-//! environment being thrown away. Under a distinct principal the provisioned set is therefore
-//! materialized as explicit `NAME=VALUE` arguments, which the trailing `env` applies to the
-//! interpreter it then execs — the ladder's own shape, for the ladder's own reason. What that costs
-//! is stated rather than buried: those arguments are visible in the child's `/proc/<pid>/cmdline`.
-//! Every member of the set is a filesystem PATH or a session id (see
-//! `brops_provision::Provisioned::engine_env`) and none of them is a secret — the conductor-session
-//! token is a FILE the path points at, guarded by its own 0700 tree — so this discloses layout, not
-//! key material. A set that ever gains a real secret must not travel this way, and this paragraph is
-//! where that would have to be argued.
+//! environment being thrown away. Under a distinct principal everything the child must read is
+//! therefore materialized as explicit `NAME=VALUE` arguments, which the trailing `env` applies to the
+//! interpreter it then execs — the ladder's own shape, for the ladder's own reason. What travels
+//! there is whatever the spawn's [`SidecarTrust`] carries (the whole provisioned set, or nothing),
+//! plus the configured [`GOVERNANCE_PATH_VARS`] and [`SUPERVISOR_SOCKET_VAR`]. The last of those is
+//! why a RELAY spawn still needs the `env` tail even though it carries no trust set at all: the
+//! supervisor socket is the one variable its two handlers resolve, and an inherited value is exactly
+//! what the principal switch discarded.
+//!
+//! What that costs is stated rather than buried: those arguments are visible in the child's
+//! `/proc/<pid>/cmdline`. Every member of the provisioned set is a filesystem PATH or a session id
+//! (see `brops_provision::Provisioned::engine_env`) and none of them is a secret — the
+//! conductor-session token is a FILE the path points at, guarded by its own 0700 tree — and the
+//! socket path is a path. So this discloses layout, not key material. A set that ever gains a real
+//! secret must not travel this way, and this paragraph is where that would have to be argued.
 //!
 //! # Synchronous, and what that costs
 //!
@@ -123,8 +143,164 @@ pub const GOVERNANCE_PATH_VARS: [&str; 3] = [
     "BROPS_GOVERNANCE_REGISTRY_ROOT",
 ];
 
+/// The ONE variable `bridge/engine_sidecar.py` resolves on both relay branches.
+///
+/// `_bridge_output_read` and `_bridge_governed_turn_submit` each call `_supervisor_socket_path`,
+/// which reads `BROPS_SUPERVISOR_SOCKET` and nothing else; the frames themselves reach the
+/// supervisor over that socket and read no other variable (see [`SidecarTrust`]). Under the §2.6
+/// principal switch nothing is inherited, so a relay spawn that did not carry this one could never
+/// reach a supervisor at all — which is why `engine/ci/live/run_ladder_turn.sh` spells it out in
+/// exactly the same position: `sudo -u brops-sidecar env BROPS_SUPERVISOR_SOCKET=… python3 …`.
+///
+/// It is carried on the DISTINCT-principal arm only. The calling-principal child inherits this
+/// process's environment, so it already has whatever value this process has, and adding an override
+/// there would change the desktop's command.
+pub const SUPERVISOR_SOCKET_VAR: &str = "BROPS_SUPERVISOR_SOCKET";
+
+/// The two `protocol` values a spawn may carry WITHOUT the provisioned trust environment.
+///
+/// Taken from the modules that own them rather than re-spelled, so a rename cannot leave this
+/// admission list pointing at a protocol nothing speaks any more.
+pub const RELAY_PROTOCOLS: [&str; 2] = [
+    crate::governed_submit::BRIDGE_SUBMIT_PROTOCOL,
+    crate::governed_output_pull::BRIDGE_OUTPUT_READ_PROTOCOL,
+];
+
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+// =================================================================================================
+// Which PROTOCOL FAMILY the spawn will carry, and the trust that follows from it
+// =================================================================================================
+
+/// What this spawn is allowed to send, and therefore what trust material it must carry.
+///
+/// # Why this is not one requirement for every spawn
+///
+/// It used to be. Both constructors took a [`TrustEnvironment`] outright, which is correct about
+/// the DESKTOP and wrong about which SPAWN needs what. `bridge/engine_sidecar.py` serves four
+/// disjoint request shapes, and only two of them ever reach a reader of the provisioned set:
+///
+/// * `bridge.task-request` (no `protocol`, no `op`) — `_governed_turn` → `_real_callables`, the
+///   frozen governed-turn path that ends at the engine.
+/// * `op: governance.read` — `_op_governance_read` → `_governance_runtime`, which calls
+///   `bro_signature.load_trusted_keys`. That function reads `BRO_TRUSTED_REGISTRY_ROOT` (through
+///   `resolve_registry_root`), `BRO_OPERATOR_ROOT_PUBKEY_FILE` and `BRO_OPERATOR_REGISTRY_MIN_FILE`
+///   (through `_resolve_operator_root_pin` / `resolve_registry_floor`), and the `bro_control_room_api`
+///   import closure reaches `bro_policy`, which reads `BRO_SESSION_ID` and
+///   `BRO_CONDUCTOR_SESSION_TOKEN`. That is O-3 exactly: unset, `load_trusted_keys` falls back to
+///   the registry committed at `engine/config/trusted-keys.json` — `production: false`, granting
+///   `conductor-session` to no key — every check passes against a registry nobody chose, and the
+///   turn still reports itself as governed.
+/// * `bridge.governed-turn-submit.v1` and `bridge.governed-turn-output-read.v1` — the two RELAY
+///   frames. `_bridge_governed_turn_submit` and `_bridge_output_read` resolve exactly one variable
+///   between them, [`SUPERVISOR_SOCKET_VAR`], and hand the frame to the supervisor over that
+///   socket. Neither `bridge/governed_turn_submit.py` nor `governed_output_read.py` — nor any
+///   module in either import closure — reads one of the five, and neither calls a function that
+///   does. (`brops_canonical` does pull in `bro_signature`, for `canonical_bytes` alone; every env
+///   read in that module lives inside `resolve_*`/`load_trusted_keys`, which nothing on these two
+///   paths calls.)
+///
+/// So the requirement now follows the PROTOCOL rather than the caller's word.
+///
+/// # The escape hatch this deliberately is not
+///
+/// A caller does name a variant, so the obvious failure would be "the caller says it does not need
+/// trust". What closes it is that naming [`SidecarTrust::RelayFramesOnly`] buys **nothing but a
+/// narrower door**: [`SidecarTrust::admits`] then refuses every request whose own top-level
+/// `protocol` is not one of [`RELAY_PROTOCOLS`], before a process exists.
+///
+/// The door and the child's dispatch key on the SAME field, which is what makes the pair airtight
+/// rather than merely careful. `engine_sidecar._dispatch` tests `request["protocol"]` FIRST — the
+/// output read, then the submit — and only then falls through to `op` and to the task-request. So:
+///
+/// * A `bridge.task-request` cannot be smuggled through this door. It has no `protocol` key and
+///   cannot grow one: `bridge/contracts/task-request.schema.json` is `additionalProperties:false`.
+/// * A task-request body with a relay `protocol` bolted on is not a smuggled task-request either —
+///   the child routes it by that same field, to the relay handler, which is the handler that reads
+///   nothing.
+/// * A `governance.read` op carries no `protocol` and is refused here for the same reason.
+///
+/// There is therefore no request that this door admits and the child then executes on a path that
+/// reads the provisioned set. The remaining strength is stated honestly rather than overclaimed: the
+/// TRUSTED direction is a compile error (there is no way to build [`SidecarTrust::Provisioned`]
+/// without [`crate::engine_trust::apply`], which is the only constructor of the only type it holds),
+/// and the RELAY direction is a refusal at the door, decided by the frame's own bytes rather than by
+/// anything the caller separately asserts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SidecarTrust {
+    /// The provisioned set, whole. Required for `bridge.task-request` and for the governance read
+    /// op, and harmless on a relay frame — carrying material the path does not read costs nothing.
+    ///
+    /// The inner value can only have come from [`crate::engine_trust::apply`]: [`TrustEnvironment`]
+    /// has no `Default`, no public field and no other constructor, so this variant cannot be spelled
+    /// by a caller that did not resolve the set.
+    Provisioned(TrustEnvironment),
+    /// No trust material, and a door that admits only [`RELAY_PROTOCOLS`].
+    ///
+    /// The named case is the BROKER (§0 role #2), which cannot obtain the provisioned set at all and
+    /// not for want of provisioning: `BRO_CONDUCTOR_SESSION_TOKEN` binds `agent_id: "bro-000"`,
+    /// `role: "bro"` — the CONDUCTOR's identity. A broker that never claims it holds an inert file;
+    /// a broker that claims it has made the trusted broker service the conductor. No second token
+    /// can be minted (the operator root signs one offline and the key is zeroized inside the
+    /// minting scope), and the 0700 tree holding it also holds eight retained private authority
+    /// seeds, so no grant yields one without the others.
+    RelayFramesOnly,
+}
+
+/// The variant's own name, spelled once so the refusals below and the tests that pin them cannot
+/// drift from the identifier a caller actually types.
+pub const RELAY_ONLY_NAME: &str = "SidecarTrust::RelayFramesOnly";
+
+impl SidecarTrust {
+    /// The name/value pairs to set on the child. Empty for [`Self::RelayFramesOnly`], and empty is
+    /// the WHOLE set there rather than a subset of one — the half-wired state `engine_trust` warns
+    /// about does not arise, because there is no member to drop.
+    fn pairs(&self) -> &[(&'static str, String)] {
+        match self {
+            Self::Provisioned(trust) => trust.pairs(),
+            Self::RelayFramesOnly => &[],
+        }
+    }
+
+    /// May this spawn send `request`? Decided from the REQUEST, never from a caller's assertion.
+    ///
+    /// [`Self::Provisioned`] admits everything: it carries what every path reads, so there is no
+    /// frame it could send that would reach a stale registry. [`Self::RelayFramesOnly`] admits only
+    /// a JSON object whose top-level `protocol` is one of [`RELAY_PROTOCOLS`] — and an unparseable
+    /// request is a refusal, not a pass, because a request this process cannot read is a request it
+    /// cannot say anything about.
+    pub fn admits(&self, request: &str) -> Result<(), String> {
+        match self {
+            Self::Provisioned(_) => return Ok(()),
+            Self::RelayFramesOnly => {}
+        }
+        let doc: Value = serde_json::from_str(request).map_err(|e| {
+            format!(
+                "this sidecar was configured {RELAY_ONLY_NAME}, so the request has to be read \
+                 before it can be sent — and this one is not JSON ({e}). Refusing rather than \
+                 relaying bytes whose protocol cannot be established: the whole reason this arm may \
+                 skip the provisioned trust environment is that the two protocols it carries reach \
+                 no reader of it."
+            )
+        })?;
+        let protocol = doc.get("protocol").and_then(Value::as_str).unwrap_or("");
+        if RELAY_PROTOCOLS.contains(&protocol) {
+            return Ok(());
+        }
+        Err(format!(
+            "this sidecar was configured {RELAY_ONLY_NAME} and carries NO provisioned trust \
+             environment, but the request names protocol {protocol:?} rather than one of \
+             {RELAY_PROTOCOLS:?}. `engine_sidecar._dispatch` routes anything else to \
+             `bridge.task-request` or to an `op`, and both of those reach \
+             `bro_signature.load_trusted_keys` — which without BRO_TRUSTED_REGISTRY_ROOT reads the \
+             development registry committed at engine/config/trusted-keys.json (production: false, \
+             granting conductor-session to no key) while the turn still reports itself as governed. \
+             That is O-3, and it is refused here rather than run. Build this seam with \
+             SidecarTrust::Provisioned(engine_trust::apply()?) to send this request."
+        ))
+    }
 }
 
 // =================================================================================================
@@ -315,8 +491,10 @@ pub struct GovernedSidecar {
     /// sandbox is the host's job; REQUIRED, because there is no sensible default and inheriting the
     /// host's cwd is the thing the sandbox exists to prevent.
     cwd: PathBuf,
-    /// The provisioned trust material. Its TYPE is the proof it was resolved.
-    trust: TrustEnvironment,
+    /// What this spawn may send, and the trust material that follows from it. A
+    /// [`SidecarTrust::Provisioned`] value is the proof the whole set was resolved; a
+    /// [`SidecarTrust::RelayFramesOnly`] one is a narrower door rather than a weaker check.
+    trust: SidecarTrust,
     /// Which OS principal the child runs as (§2.6). `None` is the CALLING principal and is not a
     /// default: it is only reachable through [`GovernedSidecar::as_calling_principal`], which names
     /// it, and the type of [`GovernedSidecar::as_distinct_principal`]'s parameter has no value that
@@ -332,12 +510,16 @@ impl GovernedSidecar {
     /// name is what makes that visible at the call site — this used to be `new`, which named nothing
     /// and read as the default.
     ///
-    /// `trust` can only have come from [`crate::engine_trust::apply`].
+    /// `trust` is a [`SidecarTrust`], and the desktop's is
+    /// [`SidecarTrust::Provisioned`] — it drives `bridge.task-request` and the governance read op,
+    /// both of which reach `bro_signature.load_trusted_keys`. The inner value can only have come
+    /// from [`crate::engine_trust::apply`], so that arm is still a compile-time requirement rather
+    /// than a line somebody could delete.
     pub fn as_calling_principal(
         python: &str,
         sidecar: &str,
         cwd: PathBuf,
-        trust: TrustEnvironment,
+        trust: SidecarTrust,
     ) -> Self {
         Self {
             python: python.to_string(),
@@ -355,12 +537,19 @@ impl GovernedSidecar {
     /// that means "as me, for now" — a broker whose deployment did not provision the invoker prefix
     /// has to refuse, which is what §2.6 requires of it.
     ///
-    /// `trust` can only have come from [`crate::engine_trust::apply`].
+    /// `trust` is a [`SidecarTrust`], and the broker's is
+    /// [`SidecarTrust::RelayFramesOnly`] — it relays `bridge.governed-turn-submit.v1` and
+    /// `bridge.governed-turn-output-read.v1`, and nothing downstream of either reads the provisioned
+    /// set. That is not the caller being taken at its word: [`SidecarTrust::admits`] then refuses
+    /// every request whose own `protocol` is not one of [`RELAY_PROTOCOLS`], and the child's
+    /// `_dispatch` routes by that same field. The principal axis and the trust axis stay
+    /// independent — a distinct-principal spawn that must drive a task-request passes
+    /// [`SidecarTrust::Provisioned`] here and the set travels as arguments exactly as before.
     pub fn as_distinct_principal(
         python: &str,
         sidecar: &str,
         cwd: PathBuf,
-        trust: TrustEnvironment,
+        trust: SidecarTrust,
         principal: SidecarPrincipal,
     ) -> Self {
         Self {
@@ -459,7 +648,14 @@ impl GovernedSidecar {
                 // Under inheritance an already-absolute governance path arrives on its own, so the arm
                 // above overrides only relative ones. Nothing is inherited here, so EVERY configured
                 // one has to be carried, absolutized on the way.
-                for var in GOVERNANCE_PATH_VARS {
+                //
+                // `BROPS_SUPERVISOR_SOCKET` rides with them, and on this arm ONLY. It is the single
+                // variable the two relay branches resolve (`_supervisor_socket_path`), so a
+                // relay spawn without it reaches no supervisor at all and refuses by name — which
+                // would make this whole arm theatre. The calling-principal arm inherits the parent
+                // environment and therefore already has whatever value this process has; adding an
+                // override there would change the desktop's command, which nothing here may do.
+                for var in GOVERNANCE_PATH_VARS.iter().copied().chain([SUPERVISOR_SOCKET_VAR]) {
                     if let Some(v) = env_nonempty(var) {
                         let path = std::path::Path::new(&v);
                         let abs = if path.is_absolute() {
@@ -498,6 +694,11 @@ impl GovernedSidecar {
     /// originates no supervisor or signature verdict; a synthesized reply here would be this process
     /// inventing the one thing §2.4 forbids it to invent.
     pub fn round_trip(&self, request: &str) -> Result<Value, String> {
+        // The door, and it is BEFORE the spawn: a request this seam may not carry must not reach a
+        // child at all. It is decided from the request's own `protocol` — the same field
+        // `engine_sidecar._dispatch` routes on — so there is no frame this admits that the child
+        // then executes on a path reading the provisioned set. See [`SidecarTrust`].
+        self.trust.admits(request)?;
         let deadline = Instant::now() + SIDECAR_DEADLINE;
         let mut built = self.command()?;
         // The PROGRAM, not `self.python`: under a §2.6 principal switch the thing that failed to
@@ -608,15 +809,53 @@ mod tests {
     use super::*;
     use std::ffi::OsStr;
 
-    /// A `TrustEnvironment` for tests. It has its own constructor in `engine_trust` rather than a
-    /// public field here, because `engine_trust::apply` reads a process-global `OnceLock` that other
-    /// tests in this binary must be able to find EMPTY — the fail-closed default is itself under
-    /// test there.
-    fn trust() -> TrustEnvironment {
-        crate::engine_trust::test_trust_environment(vec![
+    /// The PROVISIONED arm for tests. The inner `TrustEnvironment` has its own constructor in
+    /// `engine_trust` rather than a public field here, because `engine_trust::apply` reads a
+    /// process-global `OnceLock` that other tests in this binary must be able to find EMPTY — the
+    /// fail-closed default is itself under test there.
+    fn trust() -> SidecarTrust {
+        SidecarTrust::Provisioned(crate::engine_trust::test_trust_environment(vec![
             ("BRO_TRUSTED_REGISTRY_ROOT", "/anchor/registry".to_string()),
             ("BRO_CONDUCTOR_SESSION_TOKEN", "/trust/conductor-session.json".to_string()),
-        ])
+        ]))
+    }
+
+    /// A `bridge.task-request` — the frozen governed-turn envelope. No `protocol` key, and it cannot
+    /// grow one: `bridge/contracts/task-request.schema.json` is `additionalProperties:false`.
+    fn task_request() -> String {
+        serde_json::json!({
+            "task_id": "t-1",
+            "task_class": "chat",
+            "rationale": "because",
+            "request": { "prompt": "hello" },
+        })
+        .to_string()
+    }
+
+    /// A `governance.read` op — the other shape that reaches `bro_signature.load_trusted_keys`.
+    fn governance_read_op() -> String {
+        serde_json::json!({
+            "op": "governance.read",
+            "surface": "decisionLedger",
+            "read_only": true,
+        })
+        .to_string()
+    }
+
+    fn submit_frame() -> String {
+        serde_json::json!({
+            "protocol": crate::governed_submit::BRIDGE_SUBMIT_PROTOCOL,
+            "run_id": "run-1",
+        })
+        .to_string()
+    }
+
+    fn output_read_frame() -> String {
+        serde_json::json!({
+            "protocol": crate::governed_output_pull::BRIDGE_OUTPUT_READ_PROTOCOL,
+            "seq": 0,
+        })
+        .to_string()
     }
 
     fn sidecar() -> GovernedSidecar {
@@ -1062,6 +1301,305 @@ mod tests {
         let err = s.round_trip("{}").expect_err("a missing invoker cannot produce a reply");
         assert!(err.contains("/brops-no-such-invoker-does-not-exist"), "{err}");
         assert!(err.contains("brops-sidecar"), "{err}");
+    }
+
+    // =============================================================================================
+    // The arm is chosen by the PROTOCOL — `SidecarTrust`
+    // =============================================================================================
+
+    /// An interpreter that cannot possibly start. It is the discriminator every test below turns on:
+    /// if the door were removed, the failure would be a SPAWN error naming this path, and if the door
+    /// holds, the failure names the refusal and no process was ever created.
+    const UNSPAWNABLE: &str = "brops-no-such-interpreter-does-not-exist";
+
+    fn relay_seam() -> GovernedSidecar {
+        GovernedSidecar::as_distinct_principal(
+            UNSPAWNABLE,
+            distinct_script().to_str().expect("temp path is UTF-8"),
+            std::env::temp_dir(),
+            SidecarTrust::RelayFramesOnly,
+            principal(),
+        )
+    }
+
+    /// THE test this whole round exists for. A `bridge.task-request` driven through the trust-free
+    /// arm must be REFUSED, and refused before a child exists — because that path ends at
+    /// `_real_callables` and, through the engine, at `bro_signature.load_trusted_keys`, which without
+    /// `BRO_TRUSTED_REGISTRY_ROOT` reads the development registry committed in the tree while the
+    /// turn still reports itself as governed. If this ever passes a task-request, the trust-free arm
+    /// IS the escape hatch the whole design exists to prevent.
+    #[test]
+    fn a_task_request_cannot_be_driven_through_the_trust_free_arm() {
+        let err = relay_seam()
+            .round_trip(&task_request())
+            .expect_err("a task-request went out through a sidecar carrying no trust environment");
+        assert!(err.contains(RELAY_ONLY_NAME), "the refusal is not the door's: {err}");
+        assert!(err.contains("BRO_TRUSTED_REGISTRY_ROOT"), "{err}");
+        assert!(
+            !err.contains("Could not run the governed engine sidecar"),
+            "the request reached a SPAWN before it was refused, so the door is downstream of the \
+             child rather than in front of it: {err}"
+        );
+        assert!(
+            !err.contains(UNSPAWNABLE),
+            "the failure names the interpreter, so a process was attempted: {err}"
+        );
+    }
+
+    /// The other trust-reading shape, and it is a different branch of the child's dispatch: an `op`
+    /// carries no `protocol` at all, so it falls through to `_OPS` and `_op_governance_read` ->
+    /// `_governance_runtime` -> `load_trusted_keys`. A door that only knew about task-requests would
+    /// pass this one.
+    #[test]
+    fn a_governance_read_op_cannot_be_driven_through_the_trust_free_arm() {
+        let err = relay_seam()
+            .round_trip(&governance_read_op())
+            .expect_err("a governance read went out through a sidecar carrying no trust environment");
+        assert!(err.contains(RELAY_ONLY_NAME), "{err}");
+        assert!(
+            !err.contains("Could not run the governed engine sidecar"),
+            "the op reached a spawn before it was refused: {err}"
+        );
+    }
+
+    /// Both relay frames ARE admitted — so the tests above cannot pass by the arm refusing
+    /// everything, which is a refusal that would look identical from a distance.
+    #[test]
+    fn both_relay_frames_are_admitted_by_the_trust_free_arm() {
+        for frame in [submit_frame(), output_read_frame()] {
+            SidecarTrust::RelayFramesOnly
+                .admits(&frame)
+                .unwrap_or_else(|e| panic!("a relay frame was refused by the relay arm: {e}"));
+            // And it reaches the spawn, which is the only thing left to fail.
+            let err = relay_seam().round_trip(&frame).expect_err("the interpreter cannot start");
+            assert!(
+                err.contains("Could not run the governed engine sidecar"),
+                "a relay frame did not reach the spawn: {err}"
+            );
+        }
+    }
+
+    /// The provisioned arm admits every shape, including the relay frames. Carrying material a path
+    /// does not read costs nothing, and the desktop legitimately drives all four through one seam.
+    #[test]
+    fn the_provisioned_arm_admits_every_request_shape() {
+        for request in
+            [task_request(), governance_read_op(), submit_frame(), output_read_frame()]
+        {
+            trust().admits(&request).unwrap_or_else(|e| {
+                panic!("the provisioned arm refused a request it carries the material for: {e}")
+            });
+        }
+    }
+
+    /// A request this process cannot parse is refused rather than relayed. The arm's licence to skip
+    /// the trust environment rests entirely on knowing which protocol is being sent, so bytes whose
+    /// protocol cannot be established are exactly the case that may not be waved through.
+    #[test]
+    fn a_request_that_is_not_json_is_refused_by_the_trust_free_arm() {
+        let err = SidecarTrust::RelayFramesOnly.admits("not json at all").unwrap_err();
+        assert!(err.contains(RELAY_ONLY_NAME), "{err}");
+        assert!(err.contains("not JSON"), "{err}");
+    }
+
+    /// Near-misses, one per way of not being a relay frame. Each of them lands on a child branch that
+    /// reads the provisioned set, and each is well-formed JSON, so only the protocol check catches it.
+    #[test]
+    fn every_near_miss_is_refused_rather_than_relayed() {
+        let cases = [
+            ("no protocol key", serde_json::json!({ "task_id": "t" })),
+            ("a null protocol", serde_json::json!({ "protocol": serde_json::Value::Null })),
+            ("a non-string protocol", serde_json::json!({ "protocol": 7 })),
+            ("an empty protocol", serde_json::json!({ "protocol": "" })),
+            (
+                "a protocol that only starts the same",
+                serde_json::json!({ "protocol": "bridge.governed-turn-submit.v1.evil" }),
+            ),
+            (
+                "the reply protocol rather than the request one",
+                serde_json::json!({ "protocol": "bridge.governed-turn-result.v1" }),
+            ),
+            ("a JSON array", serde_json::json!([{ "protocol": submit_frame() }])),
+            ("a bare string", serde_json::json!("bridge.governed-turn-submit.v1")),
+        ];
+        for (what, frame) in cases {
+            let Err(err) = SidecarTrust::RelayFramesOnly.admits(&frame.to_string()) else {
+                panic!("`{what}` was admitted by the relay arm");
+            };
+            assert!(err.contains(RELAY_ONLY_NAME), "`{what}`: {err}");
+        }
+    }
+
+    /// The admitted list is exactly the two protocols the CHILD dispatches by, read out of the
+    /// child's own source. A drift here is the failure mode that matters: an admitted protocol the
+    /// child does not route to a relay handler would fall through to the task-request branch.
+    #[test]
+    fn the_admitted_protocols_are_the_two_the_child_dispatches_before_anything_else() {
+        let sidecar = repo_file("bridge/engine_sidecar.py");
+        for protocol in RELAY_PROTOCOLS {
+            assert!(
+                sidecar.contains(&format!("= \"{protocol}\"")),
+                "{protocol} is admitted here but is not a dispatch const in bridge/engine_sidecar.py"
+            );
+        }
+        // Both are recognised BEFORE the `op` branch and before the task-request fall-through, which
+        // is what makes "admitted here" mean "relayed there" rather than "run as a governed turn".
+        let dispatch = sidecar
+            .split("def _dispatch(")
+            .nth(1)
+            .expect("bridge/engine_sidecar.py no longer defines _dispatch");
+        let submit_at = dispatch
+            .find("BRIDGE_SUBMIT_PROTOCOL")
+            .expect("_dispatch no longer routes the submit protocol");
+        let read_at = dispatch
+            .find("BRIDGE_OUTPUT_READ_PROTOCOL")
+            .expect("_dispatch no longer routes the output-read protocol");
+        let op_at = dispatch.find("if \"op\" not in request").expect("the op fall-through");
+        assert!(
+            submit_at < op_at && read_at < op_at,
+            "a relay protocol is now recognised AFTER the task-request fall-through, so a frame this \
+             door admits could be run as a governed turn"
+        );
+    }
+
+    /// The frozen task-request cannot acquire a `protocol` key, which is what makes "no protocol ->
+    /// refused" a complete rule rather than a rule with a hole in it.
+    #[test]
+    fn the_frozen_task_request_schema_can_never_grow_a_protocol_key() {
+        let schema: Value = serde_json::from_str(&repo_file("bridge/contracts/task-request.schema.json"))
+            .expect("the task-request schema is JSON");
+        assert_eq!(
+            schema.get("additionalProperties"),
+            Some(&Value::Bool(false)),
+            "the task-request schema admits extra properties, so it could grow a `protocol` key and \
+             a task-request could then be admitted by the relay door"
+        );
+        assert!(
+            schema.get("properties").and_then(|p| p.get("protocol")).is_none(),
+            "the task-request schema now declares a `protocol` property"
+        );
+    }
+
+    /// A file from the repository, or a PANIC. There is no skip: every path read here is committed,
+    /// so an absent one is a moved file rather than an unavailable prerequisite.
+    fn repo_file(rel: &str) -> String {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("..");
+        let path = root.join(rel);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} could not be read ({e})", path.display()))
+    }
+
+    /// The relay arm carries NO trust material onto the child — not a subset, none. Read back off the
+    /// real builder, because that is where a stray `env()` would live.
+    #[test]
+    fn a_relay_spawn_carries_no_trust_material_at_all() {
+        let s = relay_seam();
+        assert!(s.trust.pairs().is_empty(), "the relay arm produced trust pairs");
+        let cmd = s.command().expect("the reference shape builds");
+        let args = args_of(&cmd);
+        for (name, _) in trust().pairs() {
+            assert!(
+                !args.iter().any(|a| a.starts_with(&format!("{name}="))),
+                "{name} crossed the principal switch on a spawn that carries no trust: {args:?}"
+            );
+        }
+        assert!(
+            !envs(&cmd).iter().any(|(k, v)| k.starts_with("BRO_") && v.is_some()),
+            "a BRO_* variable was set on the relay child's environment"
+        );
+    }
+
+    /// `std::env::set_var` is process-wide and these two tests drive the SAME variable in opposite
+    /// directions, so they must not interleave. Held across the whole set/build/remove window rather
+    /// than around the write, which is the only span in which a concurrent reader could see it.
+    static SOCKET_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The one variable the relay branches DO read has to cross the principal switch, or the arm is
+    /// theatre: `sudo`'s `env_reset` discards the broker's environment, and
+    /// `_supervisor_socket_path` refuses by name when the value is absent.
+    #[test]
+    fn the_supervisor_socket_crosses_the_principal_switch() {
+        let _guard = SOCKET_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let probe = std::env::temp_dir().join("brops-supervisor-socket-probe");
+        std::env::set_var(SUPERVISOR_SOCKET_VAR, &probe);
+        let cmd = relay_seam().command().expect("the reference shape builds");
+        std::env::remove_var(SUPERVISOR_SOCKET_VAR);
+        let args = args_of(&cmd);
+        let assignment = format!("{SUPERVISOR_SOCKET_VAR}={}", probe.display());
+        assert!(
+            args.contains(&assignment),
+            "{SUPERVISOR_SOCKET_VAR} did not cross the principal switch, so the relay sidecar could \
+             never reach a supervisor: {args:?}"
+        );
+        // And it sits inside `env`'s assignment run, or `env` would exec it.
+        let env_at = args.iter().position(|a| a == "/usr/bin/env").expect("the env token");
+        let py_at = args.iter().position(|a| a == UNSPAWNABLE).expect("the interpreter");
+        let at = args.iter().position(|a| a == &assignment).expect("the assignment");
+        assert!(at > env_at && at < py_at, "{SUPERVISOR_SOCKET_VAR} is outside env's run: {args:?}");
+    }
+
+    /// The CALLING-principal arm is untouched by that addition: it inherits the parent environment,
+    /// so an override there would be a change to the desktop's command and there is none.
+    ///
+    /// The probe value is RELATIVE, and that is the whole force of this test. The calling-principal
+    /// arm overrides only paths that are not already absolute — so an absolute probe would be
+    /// invisible to the very mutation this exists to catch (extending that loop to carry the socket
+    /// too), and the test would pass for a reason that is not the one it claims. That is exactly how
+    /// it first failed to notice: mutant M5 survived a version of this test that used an absolute
+    /// temp path.
+    #[test]
+    fn the_calling_principal_command_gains_no_supervisor_socket_override() {
+        let _guard = SOCKET_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(SUPERVISOR_SOCKET_VAR, "brops-relative-supervisor.sock");
+        let cmd = sidecar().command().expect("the calling-principal arm cannot fail");
+        std::env::remove_var(SUPERVISOR_SOCKET_VAR);
+        assert!(
+            !envs(&cmd).iter().any(|(k, _)| k == SUPERVISOR_SOCKET_VAR),
+            "the desktop's command now overrides {SUPERVISOR_SOCKET_VAR}, which it did not before"
+        );
+        assert!(
+            !args_of(&cmd).iter().any(|a| a.starts_with(SUPERVISOR_SOCKET_VAR)),
+            "the desktop's argv gained a supervisor-socket assignment"
+        );
+        // The three governance variables ARE overridden when relative, and always were — so this
+        // test cannot pass by the calling arm having stopped overriding anything at all.
+        std::env::set_var(GOVERNANCE_PATH_VARS[0], "brops-relative-state-dir");
+        let cmd = sidecar().command().expect("the calling-principal arm cannot fail");
+        std::env::remove_var(GOVERNANCE_PATH_VARS[0]);
+        assert!(
+            envs(&cmd).iter().any(|(k, _)| k == GOVERNANCE_PATH_VARS[0]),
+            "the calling arm no longer absolutizes a relative governance path either, so the \
+             assertion above proves nothing"
+        );
+    }
+
+    /// The self-test activator is stripped on the relay arm too. It is the one defence that is not
+    /// about trust material and therefore not covered by anything above.
+    #[test]
+    fn the_fake_activator_is_removed_on_the_relay_arm_as_well() {
+        let cmd = relay_seam().command().expect("the reference shape builds");
+        assert!(
+            envs(&cmd).iter().any(|(k, v)| k == FAKE_SIDECAR_ENV && v.is_none()),
+            "{FAKE_SIDECAR_ENV} is not removed from a relay spawn's environment"
+        );
+    }
+
+    /// The transport trait goes through the same door: `SubmitTransport::call` serializes and calls
+    /// `round_trip`, so it cannot become a second way in that skips the protocol check.
+    #[test]
+    fn the_submit_transport_cannot_carry_a_task_request_on_the_relay_arm() {
+        let frame: Value = serde_json::from_str(&task_request()).expect("the fixture is JSON");
+        let err = SubmitTransport::call(&relay_seam(), &frame)
+            .expect_err("a task-request went out through the transport trait");
+        assert!(err.contains(RELAY_ONLY_NAME), "{err}");
+        assert!(
+            !err.contains("Could not run the governed engine sidecar"),
+            "the transport trait reaches a spawn before the door: {err}"
+        );
     }
 
     /// The transport half of §4.10(g): the frame is serialized and goes through the SAME round trip,

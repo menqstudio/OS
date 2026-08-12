@@ -8,6 +8,77 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The door and the child key on the same field (2026-08-13)
+
+`GovernedSidecar` now takes a `SidecarTrust` rather than a `TrustEnvironment`, so the requirement follows
+the **protocol being spawned** instead of every spawn alike. `Provisioned(TrustEnvironment)` is the only
+variant holding one, `engine_trust::apply` is still that type's only constructor, and bypassing it on the
+trusted paths is **still a compile error**. `RelayFramesOnly` carries nothing and buys **nothing but a
+narrower door**.
+
+**Why this is not the escape hatch it could have been.** `admits()` runs inside `round_trip` *before the
+spawn* and refuses any request whose own top-level `protocol` is not one of the two relay protocols —
+taken from the modules that define them, not re-spelled. And the door keys on **the same field the child's
+`_dispatch` keys on**, which is pinned by a test that reads `engine_sidecar.py` and asserts both protocol
+checks precede the `op` fall-through. So: a task-request has no `protocol` and cannot grow one
+(`task-request.schema.json` is `additionalProperties:false`, asserted); a task-request body with a relay
+`protocol` bolted on is routed *by that same field* to the relay handler, which reads nothing; a
+`governance.read` op carries no `protocol` and is refused. **There is no request the door admits that the
+child then runs on a path reading the provisioned set.** A caller may still *name* `RelayFramesOnly` — and
+then simply cannot send the requests that would matter. The two axes stay independent on purpose: coupling
+"distinct principal ⇒ no trust" would have created a second, less obvious way to say "no trust".
+
+**The zero-reads claim was verified by building a tool, not by grepping.** An AST transitive-import-closure
+analyser resolved names against the exact `sys.path` the sidecar builds and reported every
+`os.environ`/`getenv` literal per module: the submit closure is **16** in-tree modules with **zero** reads
+of the five and no call to anything that reads them — including chasing `bro_signature`, which *is* in the
+closure via `brops_canonical`, and confirming nothing on the path calls `load_trusted_keys` or the
+`resolve_*` family. The output-read closure is 15 modules, also zero. No `subprocess`, `importlib` or
+`eval` in either. By contrast the governance-read op pulls in `bro_policy` and calls `load_trusted_keys`
+outright — which is O-3, live.
+
+**A correction to my own brief.** I said the five `BRO_*` in `_real_callables` were the provisioned trust
+variables. They are not: that set is `BRO_KEYDIR`, `BRO_REGISTRY_ROOT`, `BRO_BINDING`,
+`BRO_REPOSITORY_ROOT`, `BRO_BUILDER_COMMAND`, while the provisioned set is `BRO_TRUSTED_REGISTRY_ROOT`,
+`BRO_OPERATOR_ROOT_PUBKEY_FILE`, `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN` and
+`BRO_SESSION_ID`. The conclusion is unaffected — neither set is read on the relay branches — and the
+sidecar's own header already says `BRO_REGISTRY_ROOT` is deliberately *not* the trust root.
+
+**The child-side check was measured rather than argued.** Refusing a task-request when the trust set is
+*absent* is buildable; a crash-safe probe added exactly that and produced **14 bridge failures and 6 engine
+failures**, because those suites legitimately exercise the frozen path without the provisioned set. The
+tree was restored byte-identically. So it would rewrite the frozen `bridge.task-request` contract and 20
+tests, and it is reported as an Owner call rather than silently skipped. The mirror check — refusing a
+relay frame when the trust set is *present* — is provably wrong here, because the desktop drives the
+§4.10(f) pull through the provisioned arm.
+
+**Stated plainly, because it is the cost:** the broker no longer calls `engine_trust::apply`, which removes
+its one **unconditional** refusal. The ladder was previously unreachable in every configuration; it is now
+unreachable for the remaining configuration reasons — `$BROPS_BROKER_CONFIG` absent on every shipped
+install, the §2.5 TCB floor, the pinned manifest, the §2.6 principal, the sockets, the messages DB, the
+durable ledger. The `governed_turn_submit_prepared` declaration listed "carrying an unresolved sidecar
+trust environment" among those refusals; that clause had become false and was corrected.
+
+The distinct-principal arm also carries `BROPS_SUPERVISOR_SOCKET` as a `NAME=VALUE` argument — the one
+variable both relay handlers resolve, which `sudo`'s `env_reset` would otherwise discard.
+
+**8 mutants, 8 killed**, including the two this work existed to face: driving a `bridge.task-request`
+through the trust-free arm, and **deleting the `admits()` line** — the "removing a line still compiles"
+class. Each uses an unspawnable interpreter, so a removed door announces itself as a spawn failure rather
+than as a pass. One mutant survived the first run and it was the test's fault, not the code's: the desktop
+arm only overrides *relative* paths and the test used an absolute one. Fixed, with a positive control, and
+recorded in the test's own doc comment.
+
+The desktop's spawn is unchanged: the only edit in `ai.rs` is `trust,` → `SidecarTrust::Provisioned(trust)`,
+`Provisioned(t).pairs() == t.pairs()`, and the calling-arm body is untouched. `commands.rs` has a **zero-line
+diff**.
+
+`brops-core --lib` **471** (from 458), `brops --lib` 117, `brops-broker` **46 + 9**, engine 1979 OK
+(43 skipped), bridge 210, tools 419; reachability, ai-surfaces, capabilities and coordination GREEN.
+`build_governed_executor` remains uncompilable on this box and is covered by the `#[cfg(test)]` twin with
+the same types plus two textual guards over the cfg-gated source.
+
+
 ### sudo resets the environment, so the trust set had to travel as arguments (2026-08-12)
 
 The broker now spawns the sidecar **as the sidecar principal**. The claim was verified before anything was

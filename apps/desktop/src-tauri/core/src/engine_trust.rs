@@ -211,13 +211,24 @@ pub fn resolve(
 
 /// The resolved trust environment, and the ONLY way to obtain one.
 ///
-/// This type is what makes "the engine was spawned without its trust material" a state the
-/// compiler refuses rather than a state a comment asks you not to reach.
-/// [`crate::governed_sidecar::GovernedSidecar`] — the one place in the tree that starts the
-/// bridge — cannot be constructed without a value of this type, and the only constructor is
-/// [`apply`], which either resolves the whole provisioned set or returns the refusal. There is
-/// no `Default`, no public field, no `new`, and no `From`: a caller that wants to skip the
-/// trust environment has nothing to pass.
+/// This type is what makes "the engine was spawned WITH ITS TRUST MATERIAL MISSING, on a path that
+/// reads it" a state the compiler refuses rather than a state a comment asks you not to reach. The
+/// only constructor is [`apply`], which either resolves the whole provisioned set or returns the
+/// refusal. There is no `Default`, no public field, no `new`, and no `From`: a caller that wants to
+/// skip the trust environment has nothing to pass.
+///
+/// **The scope of that guarantee, stated exactly.** It used to read "the one place in the tree that
+/// starts the bridge cannot be constructed without a value of this type", and that was one word too
+/// strong from the day the broker appeared. `bridge/engine_sidecar.py` serves four disjoint request
+/// shapes and only two of them reach a reader of this set — the frozen `bridge.task-request` and the
+/// `governance.read` op, both of which land on `bro_signature.load_trusted_keys`. So
+/// [`crate::governed_sidecar::GovernedSidecar`] now takes a
+/// [`crate::governed_sidecar::SidecarTrust`], whose [`crate::governed_sidecar::SidecarTrust::Provisioned`]
+/// variant is the ONLY thing that holds one of these and is therefore still unobtainable without
+/// [`apply`]. The other variant carries nothing and, in exchange, may send only the two relay frames
+/// — enforced by [`crate::governed_sidecar::SidecarTrust::admits`] against the request's own
+/// `protocol`, which is the same field the child dispatches on. Nothing about the requirement above
+/// was weakened; what changed is which SPAWNS it binds.
 ///
 /// It is a per-spawn value rather than a cached one for the reason `Recorded` states — the
 /// ambient environment is mutable, so a verdict kept from startup would be a claim about the
@@ -240,8 +251,11 @@ impl TrustEnvironment {
 /// The ONLY consumer is [`crate::governed_sidecar::GovernedSidecar`], which is the one seam in
 /// this tree that launches `python bridge/engine_sidecar.py` — the governed AI turn, the
 /// read-only governance mirror, the §4.10(f) output pull and the §4.10(g) submit transport all
-/// go through it. An `Err` must fail the spawn: a governed call that proceeds without this
-/// reaches the development registry.
+/// go through it. An `Err` must fail the spawn of anything that READS this: a governed turn or a
+/// governance read that proceeded without it would reach the development registry. The §4.10(g)
+/// submit and the §4.10(f) read do not read it at all, and the broker relays only those two — see
+/// [`crate::governed_sidecar::SidecarTrust`] for why that is a narrower door rather than a weaker
+/// check.
 ///
 /// This used to take `&mut tokio::process::Command` and stamp the variables on directly. It
 /// returns a value instead so that the caller cannot spawn WITHOUT it — a `&mut Command` seam

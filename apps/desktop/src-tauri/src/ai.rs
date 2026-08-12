@@ -2932,10 +2932,14 @@ pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_js
 // The BLOCKER on moving them is gone. It used to be that they could not move "without a decision about
 // where the `engine_trust::apply` spawn seam lives", because that seam was `async` `tokio` in this crate
 // and the broker binary is synchronous. The decision was taken and carried out: the spawn is now
-// `brops_core::governed_sidecar::GovernedSidecar`, synchronous, in the crate both binaries share, and it
-// cannot be built without a resolved `TrustEnvironment`. What remains is not a blocker but unfinished
-// work: these two functions still have no caller, and the residual gap is unchanged in substance —
-// NOT "the token never arrives" any more, but "the token arrives in another process".
+// `brops_core::governed_sidecar::GovernedSidecar`, synchronous, in the crate both binaries share, and
+// its governed arm cannot be built without a resolved `TrustEnvironment`. What remains is not a
+// blocker but unfinished work: these two functions still have no caller, and the residual gap is
+// unchanged in substance — NOT "the token never arrives" any more, but "the token arrives in another
+// process". (Updated 2026-08-12: the broker now builds that spawn with
+// `SidecarTrust::RelayFramesOnly`, because the two frames it relays read none of the provisioned
+// five. That changes which material the broker's child carries; it changes nothing here, where the
+// task-request and the governance read still require `SidecarTrust::Provisioned`.)
 //
 // The `allow` is therefore still a statement of a known gap rather than a way of not hearing about one;
 // `config/reachability-declarations.json` carries the matching declarations so the gate reports them,
@@ -3030,11 +3034,21 @@ pub(crate) async fn governed_pull_output<'a>(
 /// is the command that was built before it existed.
 ///
 /// The trust environment is resolved FIRST and by TYPE. `engine_trust::apply()` returns a
-/// `TrustEnvironment`, neither `GovernedSidecar` constructor can be called without one, and there is
-/// no other constructor — so this function cannot reach a spawn without it, and an `Err` fails
-/// the call before any process exists. That replaces the previous shape, in which
-/// `engine_trust::apply(&mut cmd)?` was a line in the middle of the builder and deleting the
-/// line compiled.
+/// `TrustEnvironment`, `SidecarTrust::Provisioned` is the only variant that holds one and
+/// `engine_trust::apply` is that type's only constructor — so this function cannot reach a spawn
+/// without it, and an `Err` fails the call before any process exists. That replaces the previous
+/// shape, in which `engine_trust::apply(&mut cmd)?` was a line in the middle of the builder and
+/// deleting the line compiled.
+///
+/// **Why `Provisioned` and not the relay arm.** This function is shared by THREE callers and two of
+/// them drive protocols that read the provisioned set: `governed_engine` sends the frozen
+/// `bridge.task-request`, and `governed_sidecar_read` sends the `governance.read` op, which reaches
+/// `bro_signature.load_trusted_keys` through the sidecar's `_governance_runtime`. Only the third,
+/// `governed_turn_output_read`, is a relay frame. A seam shared by both families must carry what the
+/// stricter one needs — `SidecarTrust::RelayFramesOnly` here would refuse the first two at the door,
+/// and choosing per call site would put the decision back in the caller's hands, which is the thing
+/// `SidecarTrust`'s docs argue against. Carrying the set on the pull as well costs nothing: it is
+/// material that path does not read.
 async fn governed_sidecar_call(
     python: &str,
     sidecar: &str,
@@ -3049,7 +3063,7 @@ async fn governed_sidecar_call(
         python,
         sidecar,
         ai_sandbox_dir()?,
-        trust,
+        brops_core::governed_sidecar::SidecarTrust::Provisioned(trust),
     );
     let request = request.to_string();
     // The core seam is synchronous (the broker binary has no runtime). `spawn_blocking` keeps the
