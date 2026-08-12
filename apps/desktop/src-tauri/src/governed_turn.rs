@@ -55,11 +55,14 @@ const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES a
 /// exists on both hops (`bridge/governed_turn_result_bridge.py`, `brops_core::governed_bridge_result`).
 /// The gap moved one hop further out again on 2026-08-10 rather than closing: §4.6 is the REPLY to
 /// §4.10(g)'s `bridge.governed-turn-submit.v1`, whose SIDECAR half now exists
-/// (`bridge/governed_turn_submit.py` + the dispatch branch in `bridge/engine_sidecar.py`). What does
-/// not exist is a PRODUCER of the submit frame: `prepare_governed_turn_v1b` and
-/// `governed_turn_submit_prepared` appear nowhere in the tree, and the broker's one production
-/// `GovernedExecutor` spawns the recorder rather than a sidecar. So no §4.6 frame is ever produced
-/// on a live path.
+/// (`bridge/governed_turn_submit.py` + the dispatch branch in `bridge/engine_sidecar.py`).
+///
+/// **Updated 2026-08-12: the PRODUCER now exists too** — `brops_core::governed_prepare` and
+/// `brops_core::governed_submit::governed_turn_submit_prepared`, in the broker-side crate where §0 puts
+/// it. Two things still keep a §4.6 frame off any live path: its subprocess spawn is an injected seam
+/// (`governed_submit::SubmitTransport`) that no production code implements, and nothing calls the
+/// helper — the broker's one production `GovernedExecutor` drives the same hops over direct AF_UNIX and
+/// spawns the recorder rather than a sidecar.
 /// `config/reachability-declarations.json` carries the declarations and `governed_output_pull`'s and
 /// `governed_bridge_result`'s module docs carry the reasoning. This command is not where it would start
 /// either: a thin proxy carrying `{conversation_id, agent?}` never sees a stream token, an envelope or

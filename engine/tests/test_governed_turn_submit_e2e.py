@@ -20,12 +20,13 @@ and a setuid launcher. It is a typed seam whose shipped default (`RefusingExecut
 reaches step 6, and that is stated here rather than implied by a green run.
 
 **§4.10(g) is PARTIAL.** Everything below is driven from a submit frame this test writes.
-Nothing in production writes one: `prepare_governed_turn_v1b` and
-`governed_turn_submit_prepared` do not exist anywhere in the tree, and the broker's one
-production `GovernedExecutor` spawns the recorder rather than a sidecar. Nor is there a
-counterparty: `engine/ci/live/run_supervisor.py` constructs none of the three services this
-file constructs, which its own test asserts. So this is a proof that the ladder WORKS, not
-that anything walks it.
+As of 2026-08-12 the trusted side CAN write one — `prepare_governed_turn_v1b` and
+`governed_turn_submit_prepared` exist in `apps/desktop/src-tauri/core/src/` — but nothing in
+production does: that helper has no caller, its subprocess spawn is an injected seam no
+production code implements, and the broker's one production `GovernedExecutor` spawns the
+recorder rather than a sidecar. Nor is there a counterparty: `engine/ci/live/run_supervisor.py`
+constructs none of the three services this file constructs, which its own test asserts. So
+this is a proof that the ladder WORKS, not that anything walks it.
 
 No prerequisite here is optional: everything is stdlib plus repo modules imported at module
 scope, with no `try`/`except` and no `skipIf`, so a missing prerequisite is a hard error

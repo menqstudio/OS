@@ -2909,13 +2909,24 @@ pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_js
 // `bridge.governed-turn-result.v1` — the frame that CARRIES it to this side — exists on both hops too
 // (`bridge/governed_turn_result_bridge.py` and `brops_core::governed_bridge_result`). The gap has moved
 // one hop further out rather than closed: §4.6 is the REPLY to §4.10(g)'s
-// `bridge.governed-turn-submit.v1`, whose SIDECAR half now exists (`bridge/governed_turn_submit.py`)
-// while nothing on the trusted side WRITES the frame — `governed_turn_submit_prepared` does not exist — so no sidecar ever holds a §4.10(e)
-// reply to re-frame and no §4.6 frame is ever produced. Writing a caller today would still mean inventing
-// a token, which is the one thing §4.10(f) forbids. The `allow` is therefore a statement of a known gap
-// rather than a way of not hearing about one; `config/reachability-declarations.json` carries the
-// matching declarations so the gate reports them, and `brops_core::governed_output_pull`'s and
-// `brops_core::governed_bridge_result`'s module docs carry the full reasoning.
+// `bridge.governed-turn-submit.v1`, whose SIDECAR half now exists (`bridge/governed_turn_submit.py`).
+//
+// **Updated 2026-08-12, and the update makes these two functions' position WORSE rather than better.**
+// The trusted-side writer now exists — `brops_core::governed_prepare::prepare_governed_turn_v1b` and
+// `brops_core::governed_submit::governed_turn_submit_prepared` — so a §4.6 frame carrying a token is
+// now constructible without a fixture. But it is constructible in the BROKER, and these two functions
+// are HERE, in the renderer-hosting app crate. §0's LOCKED terminology binding makes every trusted-actor
+// "the desktop" in the normative body denote the broker SERVICE process, and §4.10(g) says `governed_turn_execute`
+// "and every step below" execute inside it; these were put here by following §4.10(f)'s literal wording
+// ("a private function of the `governed_turn_execute` command") one layer too low. The broker binary is
+// synchronous and does not depend on this crate, so it cannot call them, and they cannot move without a
+// decision about where the `engine_trust::apply` spawn seam lives. That is the residual gap, stated
+// plainly: NOT "the token never arrives" any more, but "the token arrives in another process".
+//
+// The `allow` is therefore still a statement of a known gap rather than a way of not hearing about one;
+// `config/reachability-declarations.json` carries the matching declarations so the gate reports them,
+// and `brops_core::governed_output_pull`'s and `brops_core::governed_bridge_result`'s module docs carry
+// the full reasoning.
 
 /// One `bridge.governed-turn-output-read.v1` round trip: spawn a one-shot sidecar, hand it the request on
 /// stdin, read its single reply.
@@ -4345,6 +4356,81 @@ mod tests {
         ];
         assert_ne!(governed_history_sha256(&a), governed_history_sha256(&b));
         assert!(brops_core::receipt::sha256_hex(b"") != governed_history_sha256(&a)); // sanity
+    }
+
+    /// The §4.10(g) history formula has TWO Rust spellings, and this pins them to one value.
+    ///
+    /// `governed_history_sha256` is here, in the renderer-hosting app crate, on the FROZEN path.
+    /// `brops_core::governed_prepare::history_jcs` is the broker-side spelling, and it has to exist
+    /// separately because the broker binary cannot depend on this crate — the dependency runs the
+    /// other way. Two implementations of one formula is a drift risk, so it is made a RED-able claim
+    /// rather than an assumption: if either side ever changes its canonicalization, this fails.
+    ///
+    /// The alternative — deleting one and calling the other — was rejected because it would edit the
+    /// frozen `prepare_governed_turn` path that §2.2 KEEP+ADD requires to stay byte-for-byte, to save
+    /// a twelve-line function.
+    #[test]
+    fn the_governed_history_digest_equals_the_broker_side_formula() {
+        use brops_core::governed_prepare::{history_jcs, GovernedChatMsg};
+        let here = vec![
+            ChatMsg { role: "user".into(), content: "hi".into() },
+            ChatMsg { role: "assistant".into(), content: "hello \u{e9}\u{2708}".into() },
+        ];
+        let there: Vec<GovernedChatMsg> =
+            here.iter().map(|m| GovernedChatMsg::new(&m.role, &m.content)).collect();
+        assert_eq!(
+            governed_history_sha256(&here),
+            brops_core::receipt::sha256_hex(&history_jcs(&there))
+        );
+        // And an empty history agrees too — `[]`, never zero bytes.
+        assert_eq!(governed_history_sha256(&[]), brops_core::receipt::sha256_hex(&history_jcs(&[])));
+    }
+
+    /// §4.10(g) says its ingress caps "mirror the real code" and names `ai.rs` for four of them.
+    /// The broker-side module restates them because it cannot import from this crate; this asserts
+    /// the two sets of literals are the same numbers, so a change on either side turns the other RED.
+    #[test]
+    fn the_governed_ingress_caps_equal_the_ones_this_module_applies() {
+        use brops_core::governed_prepare as gp;
+        assert_eq!(MAX_SYSTEM_BYTES, gp::MAX_SYSTEM_BYTES);
+        assert_eq!(MAX_MESSAGE_BYTES, gp::MAX_MESSAGE_BYTES);
+        assert_eq!(MAX_CONVERSATION_BYTES, gp::MAX_CONVERSATION_BYTES);
+        assert_eq!(MAX_MESSAGES, gp::MAX_MESSAGES);
+        // The governed `model` default mirrors this module's Anthropic default byte-for-byte
+        // (§4.10(g)'s frozen-literal table says exactly that).
+        assert_eq!(gp::GOVERNED_MODEL, DEFAULT_ANTHROPIC_MODEL);
+    }
+
+    /// The frozen preparation and the governed one must NOT agree, and the assertion belongs on this
+    /// side too: this is the module that owns the frozen formula, so this is where a future edit that
+    /// "unified" the two would be made.
+    #[test]
+    fn the_frozen_string_preparation_and_the_governed_object_one_produce_different_digests() {
+        use brops_core::governed_prepare::resolve_governed_generation_config_from;
+        let msgs = vec![ChatMsg { role: "user".into(), content: "hi".into() }];
+        // The frozen path, hashing the config as an opaque STRING.
+        let frozen = prepare_governed_turn(
+            "sys",
+            &msgs,
+            1000,
+            "ws",
+            "in",
+            r#"{"model":"claude","temperature":0}"#,
+        )
+        .unwrap();
+        // The governed path, hashing the validated OBJECT.
+        let governed = resolve_governed_generation_config_from(|_| None).unwrap();
+        assert_ne!(frozen.context.generation_config_sha256, governed.sha256());
+        // The frozen digest is the fixture's, and it is NOT the governed one — so a chain that
+        // pre-stored one and staged the other would Block at every gate on the path.
+        assert_eq!(
+            frozen.context.generation_config_sha256,
+            "963be7a4e0b02ab18478b28a969f38f6c5c5b7f7bbe6bccf67ec9495cb377234"
+        );
+        assert_eq!(
+            governed.sha256(),
+            "732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22"
+        );
     }
 
     /// The SEAM, not the rule. `engine_trust`'s own tests prove the precedence decision;

@@ -49,10 +49,11 @@ one-shot subprocess, and then exit. It is stateful across 8 to 57 supervisor rou
 trips and it is the one path here that causes an execution. It still originates no
 verdict: the order and the shapes live in `governed_turn_submit`, every decision
 lives with the supervisor, and the re-framing is `governed_turn_result_bridge`'s
-field-for-field copy. Nothing in this tree writes a submit frame yet — the
-`governed_turn_submit_prepared` helper that would is MISSING, and the broker's one
-production executor spawns the recorder rather than a sidecar — so in production
-this branch is unreached.
+field-for-field copy. As of 2026-08-12 the trusted side CAN write a submit frame —
+`brops_core::governed_submit::governed_turn_submit_prepared` builds it and asserts the
+§4.10(g) cross-bindings — but in production this branch is still unreached: that helper
+has no caller, its subprocess spawn is an injected seam no production code implements,
+and the broker's one production executor spawns the recorder rather than a sidecar.
 
 A LOCAL failure of this hop (no socket provisioned, connect/timeout, an unframable
 request, a reply that is not a §4.10(f) frame) yields **no §4.10(f) frame at all**

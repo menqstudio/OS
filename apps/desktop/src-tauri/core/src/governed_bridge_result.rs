@@ -110,12 +110,26 @@
 //! against the real supervisor services in `engine/tests/test_governed_turn_submit_e2e.py`. So a §4.6
 //! frame is now PRODUCED by a real ladder rather than only by a fixture.
 //!
-//! What is missing is the trusted side of §4.10(g), and only part of it: the renderer proxy
-//! (`governed_turn.rs`), the renderer↔broker IPC, the idempotency store and
-//! [`crate::broker_orchestrator`] are shipped, while `prepare_governed_turn_v1b`,
-//! `PreparedGovernedTurnV1B`, `GovernedGenerationConfig`, `resolve_governed_generation_config_v1b` and
-//! `governed_turn_submit_prepared` do not exist anywhere in the tree — so nothing WRITES a submit frame,
-//! and the broker's one production `GovernedExecutor` spawns the recorder rather than a sidecar.
+//! **Updated 2026-08-12 — the submit-frame WRITER now exists, and [`BridgeTurnResult::parse_frame`] has
+//! a production caller.** [`crate::governed_submit::governed_turn_submit_prepared`] builds the
+//! `bridge.governed-turn-submit.v1` frame from a [`crate::governed_prepare::PreparedGovernedTurnV1B`],
+//! asserts the §4.10(g) cross-bindings, and strict-decodes the §4.6 reply through `parse_frame`. That
+//! entry was therefore REMOVED from `config/reachability-declarations.json` in the same change: a
+//! `declared_unreachable` on code with a caller is a lie the gate cannot catch, and this gate could not
+//! have caught it — it matches `governed_bridge_result::parse_frame(`, and an inherent associated call
+//! reads as `BridgeTurnResult::parse_frame(`. [`BridgeTurnResult::parse`] and
+//! [`SignedTurnResult::check_echoes`] still have none: `parse` is the success-only wrapper this hop does
+//! not use (a refusal's `receipt_id` is worth keeping), and `check_echoes` needs a VERIFIED envelope,
+//! which is §6.1 step 14 — a later stage that is not built.
+//!
+//! **What still stands between the writer and a live turn.** (1) The subprocess spawn is an INJECTED
+//! seam (`governed_submit::SubmitTransport`) and **no production code implements it**: the tree's one
+//! bridge-spawn seam, `ai::governed_sidecar_call`, is `async` `tokio` in the renderer-hosting app crate
+//! and carries `engine_trust::apply`, while the broker binary is synchronous. (2) **Nothing CALLS**
+//! `governed_turn_submit_prepared`: the broker's one production `GovernedExecutor`
+//! (`broker/src/chain_executor.rs::ChainExecutor`) drives the same hops over DIRECT AF_UNIX and spawns
+//! the recorder, not a sidecar, and its `ProductionResolver` supplies the three artifact digests from
+//! static deployment config rather than from a prepared turn.
 //!
 //! A second, larger divergence sits behind that one and would survive fixing it: the broker's Linux
 //! execution reads the recorder's output straight off the local filesystem

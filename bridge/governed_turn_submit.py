@@ -8,20 +8,18 @@ whole governed turn against the supervisor over `brops_socket`, and writes ONE �
 `bridge.governed-turn-result.v1` frame to `stdout`.
 
 **§4.10(g) is PARTIAL and this file is one side of it.** The sidecar orchestrator built
-here is complete. What is MISSING is a specific piece of the trusted side, and it is worth
-naming precisely because much of that side already exists: the renderer's thin
+here is complete. As of 2026-08-12 the SUBMIT half of the trusted side exists too:
+`prepare_governed_turn_v1b` / `PreparedGovernedTurnV1B` / `GovernedGenerationConfig` /
+`resolve_governed_generation_config_v1b` in
+`apps/desktop/src-tauri/core/src/governed_prepare.rs`, and `governed_turn_submit_prepared`
+in `core/src/governed_submit.rs`, which builds a `bridge.governed-turn-submit.v1` frame,
+asserts the §4.10(g) cross-bindings before writing it, and strict-decodes the §4.6 reply.
+They sit beside the parts that were already shipped: the renderer's thin
 `governed_turn_execute` proxy, the renderer↔broker IPC, the payload-aware idempotency store
-and the broker orchestration control flow are all shipped
-(`apps/desktop/src-tauri/src/governed_turn.rs`, `core/src/broker_client.rs`,
-`core/src/governed_turn_ipc.rs`, `core/src/broker_turns.rs`,
-`core/src/broker_orchestrator.rs`). What does not exist ANYWHERE in the tree is the
-SUBMIT half: `prepare_governed_turn_v1b` / `PreparedGovernedTurnV1B` /
-`GovernedGenerationConfig` / `resolve_governed_generation_config_v1b`, and the internal
-`governed_turn_submit_prepared` helper that would build a `bridge.governed-turn-submit.v1`
-frame and spawn this subprocess — zero occurrences of any of those five names. The broker's
-one production `GovernedExecutor`, `broker/src/chain_executor.rs::ChainExecutor`, spawns
-only the recorder and never a sidecar. So nothing in this tree writes a submit frame — see
-"NOT WIRED" at the bottom, which says exactly what that costs and what it does not.
+and the broker orchestration control flow (`apps/desktop/src-tauri/src/governed_turn.rs`,
+`core/src/broker_client.rs`, `core/src/governed_turn_ipc.rs`, `core/src/broker_turns.rs`,
+`core/src/broker_orchestrator.rs`). What is STILL missing is the wiring, not the writer —
+see "NOT WIRED" at the bottom, which says exactly what that costs and what it does not.
 
 What it drives, in this exact order (§4.10(g), §6.1 steps 1-2-3)
 ----------------------------------------------------------------
@@ -122,13 +120,21 @@ get their ceilings checked, because both are caller-sized and both can overflow.
 
 NOT WIRED — read this before believing a turn moves
 ----------------------------------------------------
-Nothing in production writes a `bridge.governed-turn-submit.v1` frame. The producer would be
-`governed_turn_submit_prepared`, called from the broker's `GovernedExecutor`; the name does
-not exist and the one production implementation of that trait spawns the recorder, not a
-sidecar. So this branch is reachable only from tests, and the §4.10(f) desktop pull stays
-unreachable behind it — its `output_stream_id` can only arrive on the §4.6 frame this module
-returns, to a caller that is not there. `config/reachability-declarations.json` names the six
-Rust symbols that wait on exactly that.
+Nothing in production writes a `bridge.governed-turn-submit.v1` frame, and as of 2026-08-12
+the reason is the WIRING rather than the writer. `governed_turn_submit_prepared` now exists
+(`apps/desktop/src-tauri/core/src/governed_submit.rs`) and builds the frame; two things keep
+it off a live path. First, its subprocess spawn is an injected seam
+(`governed_submit::SubmitTransport`) that **no production code implements** — the tree's one
+bridge-spawn seam, `ai::governed_sidecar_call`, is `async` `tokio` in the renderer-hosting app
+crate and carries `engine_trust::apply`, while the broker binary is synchronous and does not
+depend on that crate. Second, **nothing calls the helper**: the broker's one production
+`GovernedExecutor`, `broker/src/chain_executor.rs::ChainExecutor`, drives the same §4.10(a0)/
+(a)(b)(c)/(d) hops over DIRECT AF_UNIX and spawns the recorder rather than a sidecar, and its
+`ProductionResolver` reads the three artifact digests from static deployment config instead of
+from a prepared turn. So this branch is still reachable only from tests, and the §4.10(f)
+desktop pull stays unreachable behind it. `config/reachability-declarations.json` names the
+symbols that wait on exactly that (five now, not six: the §4.6 `parse_frame` entry came out
+when `governed_turn_submit_prepared` gave it a caller).
 
 The supervisor side is also not deployed: `engine/ci/live/run_supervisor.py` constructs no
 `OpenService`/`StagingService`/`EvidenceRequestService`/`OutputReadService`, so the live

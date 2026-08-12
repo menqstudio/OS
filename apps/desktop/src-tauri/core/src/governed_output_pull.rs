@@ -105,11 +105,19 @@
 //! branch in `bridge/engine_sidecar.py` and the orchestrator in `bridge/governed_turn_submit.py` drive
 //! §4.10(a0) → §4.10(a)(b)(c) → §4.10(d) inside one one-shot subprocess and re-frame the §4.10(e)
 //! reply, proven end to end against the real supervisor services in
-//! `engine/tests/test_governed_turn_submit_e2e.py`. What is still absent is a PRODUCER of the submit
-//! frame: `prepare_governed_turn_v1b` and `governed_turn_submit_prepared` (§4.10(g)) exist nowhere in
-//! the tree, and the broker's one production `GovernedExecutor` spawns the recorder rather than a
-//! sidecar. So a caller written today would still have to invent a token, which is precisely what
-//! §4.10(f) forbids.
+//! `engine/tests/test_governed_turn_submit_e2e.py`. **Updated 2026-08-12: the PRODUCER of the submit
+//! frame now exists** — `crate::governed_prepare::prepare_governed_turn_v1b` and
+//! `crate::governed_submit::governed_turn_submit_prepared`, which returns exactly the
+//! `SignedTurnResult` whose `output_stream_id` [`OutputPull::start`] is waiting for. This module is
+//! STILL caller-less, and the reason is now two hops rather than one: (1) `governed_turn_submit_prepared`
+//! itself has no caller — the broker's one production `GovernedExecutor`
+//! (`broker/src/chain_executor.rs::ChainExecutor`) drives the same hops over DIRECT AF_UNIX and spawns
+//! the recorder rather than a sidecar; and (2) even given a token, the §4.10(g) step-5 pull loop that
+//! would drive this on the BROKER side does not exist. The only pull adapter in the tree,
+//! `ai::governed_pull_output`, is in the renderer-hosting app crate — the wrong process under §0's
+//! LOCKED terminology binding — and the synchronous broker binary cannot call an `async` `tokio`
+//! function in a crate it does not depend on. So a caller written today would still have to invent a
+//! token, which is precisely what §4.10(f) forbids.
 //!
 //! A second, larger divergence sits behind that one and would survive fixing it: the broker's Linux
 //! execution reads the recorder's output straight off the local filesystem

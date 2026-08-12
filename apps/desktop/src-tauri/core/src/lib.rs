@@ -7,6 +7,10 @@ pub mod domain;
 pub mod receipt;
 pub mod receipt_store;
 pub mod governed_turn_ipc;
+// Wave 3b-1B §4.10(g): the trusted-side (BROKER, §0 role #2) governed-turn preparation and the
+// `bridge.governed-turn-submit.v1` frame writer. Pure — no socket, no subprocess, no clock.
+pub mod governed_prepare;
+pub mod governed_submit;
 pub mod governed_message_store;
 pub mod fd_lifecycle;
 pub mod privilege_drop;

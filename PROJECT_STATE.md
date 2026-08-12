@@ -8,6 +8,81 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The writer exists, and it found a second architecture for the same hops (2026-08-12)
+
+**`prepare_governed_turn_v1b` and `governed_turn_submit_prepared` exist**, and they went into the **right
+process** — `brops-core`, the crate the broker binary wires — not the renderer-hosting app crate. The clause
+is §0's LOCKED terminology binding, which makes "the desktop" denote the trusted verifier/**broker service**,
+repeated by §4.10(g)'s own principal binding for this exact object: that process "alone owns … the
+`PreparedGovernedTurnV1B` object, all hashes/nonces". That is the mistake `ai::governed_pull_output` made by
+following §4.10(f)'s literal "a private function of the `governed_turn_execute` command" one layer too low,
+and it is now recorded in `ai.rs`'s own header rather than repeated.
+
+**One of the six declared-unreachable symbols became genuinely reachable, and its declaration came out in
+the same change** — `governed_bridge_result::parse_frame` now has a production caller. **The gate would not
+have caught that**: it matches `governed_bridge_result::parse_frame(`, while an inherent associated call
+reads `BridgeTurnResult::parse_frame(`. That blind spot is written into the declarations file's `$comment`
+rather than left for the next reader to trip over. `rust_symbols` is 8: five re-reasoned, three added, one
+deleted.
+
+**A second architecture for the same hops was found, and it is the more serious finding.** The broker's
+`GovernedChain` (`broker/src/chain_executor.rs`) drives challenge-authority and supervisor over **direct
+AF_UNIX** and spawns the recorder itself — never a sidecar. And its `ProductionResolver`
+(`broker/src/manifest_resolver.rs`) supplies `system_sha256`, `history_sha256` and
+`generation_config_sha256` from **static deployment config**, its own doc comment calling per-conversation
+facts "a follow-up protocol slice". So the live path's three input digests are **not** the conversation's.
+Wiring the new writer means choosing between the two architectures, which would move the shipped broker off
+`UpstreamBlockedExecutor` — deliberately not done.
+
+**A nonce-authority collision, new.** §4.10(g) step 1 makes `prepare_governed_turn_v1b` the mint of
+`request_nonce`. `broker_orchestrator::run_governed_turn` already mints one and writes it into a durable
+`broker_turns` row *before* the executor runs. Both cannot be the authority. The design was followed and the
+collision recorded in the function's doc.
+
+**Nothing bounds the submit frame, measured rather than assumed.** §4.10(g) caps the three artifacts and
+never the frame. Through the real serializer: **minimum 1233 bytes, ceiling 8651985** — **1056×**
+`ipc_framing::MAX_FRAME_PAYLOAD_BYTES` (8192, which is *why* this is stdin-only) and **116×**
+`MAX_BRIDGE_TURN_RESULT_BYTES` (74236). Neither the spawn's stdin write nor the sidecar's bare read applies
+a cap. Pinned by a test and **no cap invented**: a bound one side enforces and the other does not is a
+refusal on a wire the peer would have accepted.
+
+**And an arithmetic correction to yesterday's entry.** The Python half recorded
+`MAX_GENERATION_CONFIG_BYTES = 65536` against a 349-byte field maximum as "a factor of 188". That is wrong:
+`349 × 188 = 65612 > 65536`. The integer ratio is **187** (`349 × 187 = 65263`). Both sides are pinned now.
+Still no check written — the cap remains unreachable either way, which is why the error survived being
+stated once.
+
+**37 mutants, 36 killed**, under a **crash-safe harness** built for the failure this box produced today:
+pristine bytes and SHA-256 written to disk *before* the first edit, a sentinel written before each mutation
+and cleared *after* the restore, `--record/--run/--restore/--check`, and a refusal to start while a sentinel
+exists. Byte identity confirmed on both files afterwards; no sentinel left behind. The survivor is provably
+equivalent and named: taking the frame's `task_id` from the challenge document instead of the execution
+object, which an earlier cross-binding has already asserted equal. The orchestration object is kept anyway,
+because §4.10(g) says the frame's `task_id` *is* `execution.task_id`, and sourcing it from a wire value
+would make the frame's provenance depend on that assert continuing to exist.
+
+**The first pass had 8 survivors and 7 were killed by tests those survivors demanded** — including a
+`#[cfg(test)]`-only desync constructor (the shipping crate still has exactly one constructor) that makes the
+self-check reachable by name and proves the config binding **recomputes from the object** rather than
+re-reading a stored digest.
+
+**What is still unwired, and what each waits on.** The subprocess spawn: `governed_turn_submit_prepared`
+takes an injected transport and **no production code implements it**, because §4.10(g) says to spawn "exactly
+as `ai.rs::governed_engine` does today" and that seam is `async` `tokio`, in the app crate, carrying
+`engine_trust::apply` — while the broker binary is synchronous and does not depend on it. **Where the
+trust-environment spawn seam lives is an Architect question.** The caller: §4.10(g) steps 1–3 of the
+broker-side `governed_turn_execute` are unwritten, and writing them means choosing between the two
+architectures. Step 5's broker-side pull, §4.10(h) Carrier 1, and the mandated
+`bridge-governed-turn-submit.schema.json` are also absent — the schema deliberately, following §4.6's
+precedent, because an unconsumed schema that could disagree with two implementations is worse than none.
+
+Verified by re-running: `brops-core --lib` **420** (from 376), `brops --lib` **130** (from 127), engine
+**1895**, bridge **210**, broker 31 + 3, frontend 69/638, tools 419; spec-references, reachability,
+ai-surfaces, capabilities and coordination GREEN. `governed_verification_unconfigured`,
+`UpstreamBlockedExecutor` and `connect_broker` are byte-identical — `commands.rs`, `broker/src/main.rs`,
+`chain_executor.rs` and `manifest_resolver.rs` are unmodified files.
+
+
 ### A green suite is not evidence against a surviving mutant (2026-08-10)
 
 After the commit-limit crash left a **live mutant** in the tree — `try/finally` does not survive a killed
