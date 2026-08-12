@@ -493,7 +493,10 @@ where
             // attempt no longer passes on a matching nonce + output alone.
             expected_run_id: &resolved.run_id,
             expected_task_id: &resolved.task_id,
-            expected_execution_attempt_id: &lease.execution_attempt_id,
+            // `Some`: THIS path obtained the lease itself, so it holds an attempt id the receipt
+            // did not supply. The §4.10(g) ladder does not, and passes `None` — see
+            // `BrokerContext::expected_execution_attempt_id`.
+            expected_execution_attempt_id: Some(&lease.execution_attempt_id),
         };
         // §7.1 freshness: read the wall clock HERE, at acceptance, not at turn start — the receipt
         // ages while the turn executes, and the question is how old it is when it is committed. An

@@ -8,6 +8,70 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The broker builds the ladder now, and the type records what was lost (2026-08-12)
+
+The Owner ruled §4.10(g) the production path (`docs/OWNER_ACTION_REQUIRED.md` §1d), and the first half of
+carrying that out has landed: `broker/src/ladder_executor.rs`'s `LadderChain` is what
+`build_governed_executor` now builds. `governed_turn_submit_prepared`, `prepare_governed_turn_v1b` and
+`resolve_governed_generation_config_v1b` had **zero non-test callers** between them; they have one now, on
+the broker side, and their declarations flipped from `declared_unreachable` to `must_have_caller`.
+
+**The decisive reason was verified, not taken on trust.** `ResolvedFacts` is filled from the config's
+`resolved` block by `build_governed_executor`, and `ProductionResolver::resolve` **ignores its request
+entirely** when producing facts. So the shipped path really did sign what the config says. The ladder runs
+one `prepare_governed_turn_v1b` over the real conversation instead, and the authority hops carry those
+prepared facts.
+
+**Two properties do not survive the move, and both are recorded rather than smoothed over.**
+The broker-side IDX-4 lease-pin compare is genuinely gone from the broker — its *stronger* twin survives in
+the launcher, which performs the same comparison against a root-owned config the broker cannot redirect,
+backed by §4.10(a)'s `digest_mismatch` at the supervisor. And F-26's `expected_execution_attempt_id`: on the
+ladder the broker never opens the turn, so it holds no independent attempt id. **That was not papered
+over.** The field became `Option<&str>` and the ladder passes `None` — the type records the loss instead of
+feeding the check the value it is meant to check, which is exactly the F-01 signing-oracle shape. The
+substitute is verified: `governed_turn_acceptance` carries `UNIQUE` on `challenge_handle`, on
+`(install_id, request_nonce)` and on `execution_attempt_id`; `run_id` and `task_id` stay mandatory and
+broker-minted.
+
+**One manifest verification, not two.** `manifest_resolver` gained `KeyResolver`, and `TurnResolver::resolve`
+now *calls* it — root-verify against the TCB pin, the anti-rollback floor written back, both production keys
+resolved, in one place.
+
+**No fallback exists, and a source-scan test enforces that.** If the ladder cannot complete, the turn
+Blocks. A fallback to the direct path would have left the old behaviour live while looking replaced.
+
+**Step 3 — removing the old code — is deliberately NOT done, and the reason is the right one.**
+`proof/src/bin/live_turn.rs` imports `GovernedChain`, `LinuxGovernedExecution` and `ExecutionConfig` from
+`brops-broker`, so removal means relocating ~1900 lines into a crate with **no `[lib]` target**, whose 30+
+orchestration tests would then have nowhere to live. That half is `#[cfg(target_os = "linux")]` and cannot
+be compiled on this box. Landing that blind, against the one job that proves the §2.5 TCB floor, is the
+wrong trade. What is already true is the part that matters: **no production wiring reaches the direct chain
+any more.**
+
+**The gate did not move.** `apps/desktop/src-tauri/src/` has **zero** diff;
+`governed_verification_unconfigured`, `UpstreamBlockedExecutor` (sha `0fb590b5…`) and `connect_broker` are
+byte-identical. No new `trusted_verified` is producible — the gating is what it was, config-gated with no
+custody resolver.
+
+**And one wiring step was deliberately not taken.** The broker process never calls `engine_trust::record`,
+so `engine_trust::apply()` fails there and the ladder Blocks at transport construction. That is correct
+fail-closed behaviour, and provisioning the broker's trust environment is a **posture change**, not a side
+effect of this work — so it is the Owner's, not a Builder's.
+
+**6 mutants killed, 5 survivors, all named.** Two of the six survived the first round and were the agent's
+*own* test bugs — one test counted content reads and never asserted the count, and nothing asserted the
+bytes `create-pending` actually sends. Both are real tests now, and one of them pins
+`requested_at_ms == prepared.context().requested_at` as arithmetic, which is the binding that would
+otherwise Block every turn on a clock skew. The five survivors need a happy-path ladder fixture — a real
+signed envelope plus attestation plus a fake sidecar — that was not built; two of them are pre-existing
+redundancy between mutually-checking guards, not something introduced here.
+
+Verified by re-running: `brops-broker` **46 + 3** (from 36 + 3), `brops-core --lib` **443**, `brops --lib`
+117, `brops-governed-live` 23, engine 1979, bridge 210, tools 419; reachability, spec-references,
+coordination and ledger parity GREEN. `mod linux`'s new `build_governed_executor` body is **unverified by
+type-check on this box** — it parses cleanly and nothing more can honestly be claimed here.
+
+
 ### Slice 3 is ticked; the pull ran on a real runner (2026-08-12)
 
 Verbatim from run 31621209556 at `5090e53`:

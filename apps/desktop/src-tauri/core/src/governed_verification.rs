@@ -555,11 +555,16 @@ pub fn bind_attested_evidence(
     // (d) The run identity the BROKER authorized (its own resolution + the attempt id from the lease
     //     the supervisor granted it) — the same three fields step 4b binds on the envelope, now also
     //     required of the supervisor's independently-signed account.
-    if evidence.s("run_id") != ctx.expected_run_id
-        || evidence.s("task_id") != ctx.expected_task_id
-        || evidence.s("execution_attempt_id") != ctx.expected_execution_attempt_id
-    {
+    if evidence.s("run_id") != ctx.expected_run_id || evidence.s("task_id") != ctx.expected_task_id {
         return Err(TurnReason::UpstreamBlocked);
+    }
+    // The attempt id is compared only by a caller that INDEPENDENTLY holds one (see
+    // [`BrokerContext::expected_execution_attempt_id`]); a ladder caller holds none and passes `None`
+    // rather than feeding this comparison the value it is meant to check.
+    if let Some(expected_attempt) = ctx.expected_execution_attempt_id {
+        if evidence.s("execution_attempt_id") != expected_attempt {
+            return Err(TurnReason::UpstreamBlocked);
+        }
     }
 
     // (e) The request the broker itself issued. The three component handles are compared to the
@@ -612,7 +617,25 @@ pub struct BrokerContext<'a> {
     // up. These three make the receipt's own account of which execution it describes load-bearing.
     pub expected_run_id: &'a str,
     pub expected_task_id: &'a str,
-    pub expected_execution_attempt_id: &'a str,
+    /// The attempt id the broker itself authorized — `Some` ONLY for a principal that obtained the
+    /// §5 lease and therefore holds an independent copy of this value.
+    ///
+    /// **`None` is not "skip a check", it is "this principal is not entitled to make one", and the
+    /// difference is why this is an `Option` rather than an empty string.** On the rev-30 §4.10(g)
+    /// sidecar ladder the broker does not open the turn: §2.6 gives `accept-open` to the SIDECAR
+    /// principal, so `execution_attempt_id` is minted by the supervisor and reaches this side only
+    /// as the §4.10(e) TRANSPORT echo and inside the signed envelope itself. Passing either of those
+    /// here would be this process comparing a value against itself — the F-01 signing-oracle shape,
+    /// which an audit has already found twice in this tree — so the ladder passes `None` and the
+    /// type records the loss instead of hiding it.
+    ///
+    /// What still binds one challenge to one attempt when this is `None`: the supervisor's own
+    /// acceptance ledger, whose `governed_turn_acceptance` table carries
+    /// `UNIQUE (challenge_handle)`, `UNIQUE (install_id, request_nonce)` and
+    /// `UNIQUE (execution_attempt_id)` (`core/schema/supervisor_ledger.sql`), plus `run_id`/`task_id`
+    /// above, which the broker DOES mint and which stay mandatory. That is a durable constraint held
+    /// by a different party, not a check this process performs.
+    pub expected_execution_attempt_id: Option<&'a str>,
 }
 
 /// Why the acceptance ledger refused to claim a turn — or failed trying.
@@ -922,11 +945,13 @@ pub fn verify_and_accept(
     //     them is what stops a genuinely-signed receipt for a different attempt from being committed
     //     as this turn's. Before this, the three were carried through the signature check and never
     //     looked at again.
-    if envelope.run_id != ctx.expected_run_id
-        || envelope.task_id != ctx.expected_task_id
-        || envelope.execution_attempt_id != ctx.expected_execution_attempt_id
-    {
+    if envelope.run_id != ctx.expected_run_id || envelope.task_id != ctx.expected_task_id {
         return Err(TurnReason::UpstreamBlocked);
+    }
+    if let Some(expected_attempt) = ctx.expected_execution_attempt_id {
+        if envelope.execution_attempt_id != expected_attempt {
+            return Err(TurnReason::UpstreamBlocked);
+        }
     }
 
     // 4c. ATTESTATION TURN BINDING (audit round 3). Step 3 proved the supervisor signed these exact
@@ -1223,7 +1248,7 @@ mod tests {
         author: "Bro",
         expected_run_id: "run-1",
         expected_task_id: "task-1",
-        expected_execution_attempt_id: "att-1",
+        expected_execution_attempt_id: Some("att-1"),
     };
 
     // ---- F-26: the signed run identity must match the run the broker authorized ----
@@ -1244,7 +1269,7 @@ mod tests {
             ),
             (
                 "execution_attempt_id",
-                BrokerContext { expected_execution_attempt_id: "att-OTHER", ..CTX },
+                BrokerContext { expected_execution_attempt_id: Some("att-OTHER"), ..CTX },
             ),
         ] {
             let f = fx();
@@ -1264,6 +1289,53 @@ mod tests {
                     "a receipt whose {field} is not the one the broker authorized must Block"
                 ),
             }
+        }
+    }
+
+    /// The §4.10(g) LADDER caller passes `expected_execution_attempt_id: None`, and this pins
+    /// exactly what that costs and exactly what it does not.
+    ///
+    /// It costs the attempt-id comparison: a receipt naming ANY attempt is accepted, which is why
+    /// the field is an `Option` a reader has to think about rather than an empty string that reads
+    /// like a value. It does NOT cost `run_id`/`task_id` — those are minted by the broker on the
+    /// ladder too and stay mandatory, so a receipt from another RUN still Blocks with `None` in
+    /// place. A change that made `None` skip all three would pass the first assertion here and fail
+    /// the second two.
+    #[test]
+    fn a_ladder_caller_that_authorized_no_attempt_still_binds_run_and_task() {
+        let ladder = BrokerContext { expected_execution_attempt_id: None, ..CTX };
+        // (1) The attempt id is no longer compared — stated as a test, not as a comment.
+        let f = fx();
+        let env = envelope(&f);
+        let k = keys(&f);
+        let a = attest(&f);
+        let mut ledger = InMemoryLedger::new();
+        assert!(
+            verify_and_accept(
+                &expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &ladder, &mut ledger, &fresh(),
+            )
+            .is_ok(),
+            "with None the attempt id binds nothing, and this turn is otherwise valid"
+        );
+        // (2)+(3) run_id and task_id are still load-bearing under the SAME None.
+        for (field, ctx) in [
+            ("run_id", BrokerContext { expected_run_id: "run-OTHER", ..ladder }),
+            ("task_id", BrokerContext { expected_task_id: "task-OTHER", ..ladder }),
+        ] {
+            let f = fx();
+            let env = envelope(&f);
+            let k = keys(&f);
+            let a = attest(&f);
+            let mut ledger = InMemoryLedger::new();
+            assert!(
+                matches!(
+                    verify_and_accept(
+                        &expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &ctx, &mut ledger, &fresh(),
+                    ),
+                    Err(TurnReason::UpstreamBlocked)
+                ),
+                "a None attempt id must not switch off the {field} binding"
+            );
         }
     }
 

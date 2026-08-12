@@ -23,8 +23,18 @@ use brops_core::key_manifest::{
 
 use crate::tcb;
 
-/// The broker-owned per-turn Expected facts (deployment-static in this slice; the per-conversation envelope
-/// facts carried on the renderer→broker request are a follow-up protocol slice).
+/// The broker-owned per-turn Expected facts, as the DIRECT `GovernedChain` path consumes them.
+///
+/// **Read `system_sha256` / `history_sha256` / `generation_config_sha256` / `requested_at` /
+/// `requested_at_ms` / `run_id` / `task_id` with the doubt they deserve: on this struct they are
+/// DEPLOYMENT-STATIC.** They are filled from `$BROPS_BROKER_CONFIG`'s `resolved` block by
+/// `main.rs::build_governed_executor` and are the same on every turn, so a receipt produced through
+/// [`TurnResolver::resolve`] attests what the config says a conversation was, not what the user typed.
+/// That is why the rev-30 §4.10(g) ladder exists and why it does not use them: [`KeyResolver`] below
+/// returns ONLY the values that are legitimately deployment-wide (the two pinned keys, the install
+/// identity, the committed-message author), and
+/// [`crate::ladder_executor`] derives all three artifact digests, `requested_at` and the nonce from the
+/// actual conversation via `governed_prepare::prepare_governed_turn_v1b`.
 #[derive(Clone)]
 pub struct ResolvedFacts {
     pub workspace_id: String,
@@ -120,6 +130,36 @@ impl ProductionResolver {
     }
 }
 
+/// The part of a turn's trust that IS a property of the deployment: the two pinned manifest keys, the
+/// install identity, and the author a committed message is written under.
+///
+/// It is deliberately a different type from [`ResolvedTurn`] rather than a subset of it. `ResolvedTurn`
+/// mixes deployment facts with per-conversation ones, and the mixing is what let a config-supplied
+/// `system_sha256` sit in the same struct as a manifest-resolved public key and read as equally
+/// authoritative. Nothing per-conversation can be added here without changing the type, and the type is
+/// named for what it holds.
+#[derive(Clone)]
+pub struct ResolvedKeys {
+    pub isolated_signer_key_id: String,
+    pub isolated_signer_public_key: [u8; 32],
+    pub supervisor_attestation_key_id: String,
+    pub supervisor_attestation_public_key: [u8; 32],
+    pub workspace_id: String,
+    pub install_id: String,
+    pub author: String,
+}
+
+/// Resolve the deployment's pinned keys for ONE turn: root-verify the manifest against the TCB pin, run
+/// anti-rollback and persist the advanced floor, then resolve both production keys (trust-class /
+/// validity-window / revocation enforced). Any gap ⇒ `UpstreamBlocked`.
+///
+/// Per-turn, not cached, for the reason [`crate::chain_executor::CustodyResolver`] states: a manifest key
+/// has a validity window and a revocation flag, so an expired or revoked key must stop resolving without
+/// anything having to notice and invalidate a cache.
+pub trait KeyResolver {
+    fn resolve_keys(&self) -> Result<ResolvedKeys, TurnReason>;
+}
+
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
@@ -138,13 +178,8 @@ fn hex32(s: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-impl TurnResolver for ProductionResolver {
-    fn resolve(
-        &self,
-        _req: &ValidatedRequest,
-        _broker_turn_id: &str,
-        _request_nonce: &str,
-    ) -> Result<ResolvedTurn, TurnReason> {
+impl KeyResolver for ProductionResolver {
+    fn resolve_keys(&self) -> Result<ResolvedKeys, TurnReason> {
         // No manifest provisioned ⇒ fail closed (the shipped default; unchanged behaviour).
         let p = self.inner.as_ref().ok_or(TurnReason::UpstreamBlocked)?;
         let now = now_ms();
@@ -178,13 +213,41 @@ impl TurnResolver for ProductionResolver {
         let sup_pub = hex32(&sup.public_key_hex).ok_or(TurnReason::UpstreamBlocked)?;
 
         let f = &p.facts;
-        Ok(ResolvedTurn {
+        Ok(ResolvedKeys {
             isolated_signer_key_id: p.signer_key_id.clone(),
             isolated_signer_public_key: iso_pub,
             supervisor_attestation_key_id: p.sup_attest_key_id.clone(),
             supervisor_attestation_public_key: sup_pub,
             workspace_id: f.workspace_id.clone(),
             install_id: f.install_id.clone(),
+            author: f.author.clone(),
+        })
+    }
+}
+
+/// The DIRECT-path resolver, expressed as [`KeyResolver`] plus the deployment-static facts.
+///
+/// There is exactly ONE manifest verification / anti-rollback / key-resolution implementation and it is
+/// [`KeyResolver::resolve_keys`] above; this only pairs its output with `ResolvedFacts`. Written this way
+/// on purpose: the two paths must not be able to drift on WHICH manifest they trusted, and a second copy
+/// of `verify_manifest` + `check_and_persist` here is exactly how they would.
+impl TurnResolver for ProductionResolver {
+    fn resolve(
+        &self,
+        _req: &ValidatedRequest,
+        _broker_turn_id: &str,
+        _request_nonce: &str,
+    ) -> Result<ResolvedTurn, TurnReason> {
+        let keys = self.resolve_keys()?;
+        // `inner` is Some: `resolve_keys` already refused a fail-closed resolver.
+        let f = &self.inner.as_ref().ok_or(TurnReason::UpstreamBlocked)?.facts;
+        Ok(ResolvedTurn {
+            isolated_signer_key_id: keys.isolated_signer_key_id,
+            isolated_signer_public_key: keys.isolated_signer_public_key,
+            supervisor_attestation_key_id: keys.supervisor_attestation_key_id,
+            supervisor_attestation_public_key: keys.supervisor_attestation_public_key,
+            workspace_id: keys.workspace_id,
+            install_id: keys.install_id,
             system_sha256: f.system_sha256.clone(),
             history_sha256: f.history_sha256.clone(),
             generation_config_sha256: f.generation_config_sha256.clone(),
@@ -192,7 +255,7 @@ impl TurnResolver for ProductionResolver {
             run_id: f.run_id.clone(),
             task_id: f.task_id.clone(),
             requested_at_ms: f.requested_at_ms,
-            author: f.author.clone(),
+            author: keys.author,
         })
     }
 }

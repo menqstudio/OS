@@ -263,7 +263,34 @@ formula in prose — it is a historical record of the code at `219c763` and is d
 can be produced. §4.10(d) itself is still NOT IMPLEMENTED — this only makes the join it will need
 satisfiable.
 
-## 1d. Who spawns the recorder — the broker egress is a topology decision, not a bug
+## 1d. RESOLVED 2026-08-12 — §4.10(g) is the real path; the direct-AF_UNIX one is retired
+
+**The Owner's decision, taken 2026-08-12: the §4.10(g) sidecar ladder is the production path, and the
+broker's direct-AF_UNIX `GovernedChain` is removed rather than kept beside it.**
+
+The decisive fact, and the reason this was not a matter of taste. `broker/src/manifest_resolver.rs`'s
+`ProductionResolver` supplies `system_sha256`, `history_sha256` and `generation_config_sha256` from
+**static deployment config** — its own doc comment calls per-conversation facts "a follow-up protocol
+slice". So on the shipped path the signed envelope binds *what the config says*, not what the user typed.
+A "Verified" badge over that would claim a binding to the conversation that does not exist. The §4.10(g)
+ladder computes all three from the actual conversation.
+
+Two supporting reasons. The ladder is **proven end to end on a real Linux runner** — seven principals,
+`SO_PEERCRED`, the setuid launcher, the real contained execution, the §4.10(f) pull, and four negatives
+refused by name (runs 31606043144 and 31621209556). And keeping two implementations of one contract is the
+defect this repository found **eight times in three days**; the decision that ends the pair is worth more
+than either implementation.
+
+**What this decision does NOT authorise.** The shipped gate stays shut. `main()` keeps
+`UpstreamBlockedExecutor`, `governed_verification_unconfigured` keeps returning `Some(...)`
+unconditionally, and no production `trusted_verified` becomes producible. Building the broker's new path
+and *serving* it are separate steps: the second still requires every blocker closed, a **separate**
+independent audit, and the Owner's approval. That constraint is unchanged by this decision and is not
+implied by it.
+
+**The superseded question is kept below as the record.**
+
+## 1d (superseded). Who spawns the recorder — the broker egress is a topology decision, not a bug
 
 **What you have to decide: which principal runs the model, and therefore who publishes its output.**
 
