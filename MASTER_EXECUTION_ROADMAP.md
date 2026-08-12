@@ -665,7 +665,27 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
 - [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`). *Same
       fact as the adapter row in the Definition of Done above; kept because it is the task ledger, but it
       is not a second delivery.*
-- [ ] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence.
+- [x] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence — **done
+      2026-08-12, on a real Linux runner, and worded deliberately.** `engine/ci/live/run_ladder_turn.sh`
+      + CI job `ladder-governed-turn` drive ONE `bridge.governed-turn-submit.v1` frame through the real
+      one-shot sidecar from a seventh `brops-sidecar` principal, against the real
+      `OpenService`/`StagingService`/`EvidenceRequestService`/`OutputReadService` and the real §5
+      `AcceptanceDriver`, reaching the **real §6.1 step-5 contained execution** — privileged recorder →
+      setuid launcher → contained executor, six uids, `caps_all_zero`, `no_new_privs`. No stand-in.
+      Verbatim from run 31606043144 at `59dc394`:
+      `RESULT: ladder-round-trip ok=true reason=none attempt=58d4358… output_sha256=8e30d8db…`,
+      `POSITIVE: GREEN — one submit frame became one §4.6 frame whose envelope verifies`, and
+      `NEGATIVE: GREEN — refused with digest_mismatch, and the harness exited non-zero (1)`.
+      **The negative half is not decoration:** every run drives the same verifier over an artifact the
+      challenge never committed and requires a non-zero exit naming `digest_mismatch`, because both of
+      this repository's PowerShell proofs were found unable to report PASS at all, through three audit
+      rounds. `ladder_evidence.py` records the §4.6 frame, the §4.9 envelope, the digests and the
+      `SO_PEERCRED` uid of every hop, and uploads them as a CI artifact.
+      **What this box does NOT say.** It does not say the shipped app takes this path — it does not.
+      `governed_turn_submit_prepared` has a transport and **no caller**, `ChainExecutor` still drives
+      direct AF_UNIX, and `governed_verification_unconfigured` still returns `Some(...)`
+      unconditionally. This is the **adapter ↔ supervisor** round trip, proven; the product's own path
+      is the open row above it.
 - [x] Bridge CI leg added to the unified workflow (PR #3, merged `41cf4ff`) — job `bridge`, one of
       `ci.yml`'s 19 jobs. *Same fact as the Bridge-CI row above.*
 - [x] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider control (per UI/UX

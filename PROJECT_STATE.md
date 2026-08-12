@@ -8,6 +8,37 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Slice 2 is ticked, and the box says what it does not claim (2026-08-12)
+
+The ladder ran **green on a real Linux runner**, both halves, on the current head. Verbatim from run
+31606043144 at `59dc394`:
+
+```
+RESULT: ladder-round-trip ok=true reason=none attempt=58d4358… output_sha256=8e30d8db…
+POSITIVE: GREEN — one submit frame became one §4.6 frame whose envelope verifies
+NEGATIVE: GREEN — refused with digest_mismatch, and the harness exited non-zero (1)
+```
+
+One `bridge.governed-turn-submit.v1` frame, through the real one-shot sidecar from a seventh
+`brops-sidecar` principal, against the real four services and the real §5 `AcceptanceDriver`, reaching the
+**real §6.1 step-5 contained execution** — six uids, setuid launcher, `caps_all_zero`, `no_new_privs`. No
+stand-in anywhere in it.
+
+**The negative half is the part that makes the positive worth anything.** Every run drives the same
+verifier over an artifact the challenge never committed and requires a non-zero exit *naming*
+`digest_mismatch` — because both of this repository's PowerShell proofs were found unable to report PASS at
+all, through three audit rounds. A proof that cannot fail is the same defect with the sign flipped.
+
+**The box is ticked with its own limits written inside it.** It does **not** say the shipped app takes this
+path, because it does not: `governed_turn_submit_prepared` has a transport and **no caller**,
+`ChainExecutor` still drives direct AF_UNIX, and `governed_verification_unconfigured` still returns
+`Some(...)` unconditionally. What is proven is the **adapter ↔ supervisor** round trip. The product's own
+path is the row still open above it, and that row stays open.
+
+Phase 1 now has four open rows, down from five: the shipped app's end-to-end round trip, §4.10(f)'s
+delivery through the wall, Slice 3, and the standing docs row.
+
+
 ### A parser reading a field no server has ever sent (2026-08-12)
 
 The Owner named the pattern before I did: **one contract, two implementations** — found six times in three
