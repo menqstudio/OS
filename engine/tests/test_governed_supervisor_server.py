@@ -30,11 +30,13 @@ import socket
 import sqlite3
 import sys
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
 import governed_supervisor_ledger as gsl  # noqa: E402
+import governed_supervisor_server as gss  # noqa: E402
 from governed_supervisor import (  # noqa: E402
     CHALLENGE_PROTOCOL,
     LEASE_DURATION_MS,
@@ -900,21 +902,58 @@ def _deeply_nested_frame(depth: int) -> bytes:
 class HostileFrameDoesNotKillTheSupervisorTests(unittest.TestCase):
     """One frame from an authorized peer must not end the process that issues every lease.
 
-    ``json.loads`` raises ``RecursionError`` — a ``RuntimeError``, matched by none of the
-    explicitly-listed exception classes — on a deeply nested body. The frame is well inside
-    the 8 KiB bound, so nothing earlier refuses it.
+    The defect was that `handle_connection` listed its exception classes explicitly and
+    `serve_forever` had no `except` at all, so any class nobody remembered — `RecursionError`
+    is a `RuntimeError`, reachable from a deeply nested body inside the legal 8 KiB frame —
+    escaped both and killed the process.
+
+    WHICH exception a hostile body produces is a platform fact, not a property. The first
+    version of this class asserted `RecursionError` by name; it passed on Windows and failed
+    on Linux CI with an **empty** stderr, meaning the same body was refused there by the
+    listed-exception branch, which does not log. The backstop is correct on both. So the
+    backstop is now witnessed deterministically by injection, and the real hostile frame is
+    asserted only on what holds everywhere.
     """
 
-    def test_deeply_nested_json_becomes_a_refusal_not_an_escape(self):
-        conn = FakeConn(BROKER_UID, inbound=_deeply_nested_frame(3900))
-        with contextlib.redirect_stderr(io.StringIO()) as logged:
-            reply = _handle(conn)
-        # The operator DOES get the detail; the peer does not.
-        self.assertIn("RecursionError", logged.getvalue())
+    def test_an_unlisted_exception_is_caught_logged_and_bounded(self):
+        """The backstop itself, with no dependence on how any parser behaves.
+
+        `MemoryError` stands in for "a class nobody listed": it is not in the explicit tuple,
+        and unlike `RecursionError` it is raised identically on every platform.
+        """
+        conn = FakeConn(BROKER_UID, inbound=_deeply_nested_frame(8))
+
+        def explode(*_args, **_kwargs):
+            raise MemoryError("in no explicit except tuple")
+
+        with mock.patch.object(gss, "read_frame", explode):
+            with contextlib.redirect_stderr(io.StringIO()) as logged:
+                reply = _handle(conn)
+
+        # The operator DOES get the detail...
+        self.assertIn("MemoryError", logged.getvalue())
+        # ...and the peer does not: nothing about the fault beyond that there was one.
         self.assertFalse(reply["ok"])
-        # The peer is told nothing about the internal fault beyond that there was one.
         self.assertEqual(reply["error"], "internal supervisor fault")
         self.assertEqual(conn.decoded_reply(), reply)
+
+    def test_deeply_nested_json_becomes_a_refusal_not_an_escape(self):
+        """The real hostile frame, asserted on what is true on every platform.
+
+        Deliberately silent about which branch catches it: on Windows it is the backstop
+        (`RecursionError`), on Linux CI it was the listed branch. Both are refusals, and
+        pinning the mechanism is what made this test platform-dependent.
+        """
+        conn = FakeConn(BROKER_UID, inbound=_deeply_nested_frame(3900))
+        with contextlib.redirect_stderr(io.StringIO()):
+            reply = _handle(conn)
+
+        self.assertFalse(reply["ok"])
+        self.assertEqual(conn.decoded_reply(), reply)
+        # Whatever the branch, the reply stays framable and leaks no internals.
+        self.assertLessEqual(len(reply["error"]), MAX_ERROR_CHARS + 32)
+        self.assertNotIn("Traceback", reply["error"])
+        self.assertNotIn("engine/runtime", reply["error"])
 
     def test_serve_forever_survives_the_frame_and_keeps_serving(self):
         hostile = FakeConn(BROKER_UID, inbound=_deeply_nested_frame(3900))

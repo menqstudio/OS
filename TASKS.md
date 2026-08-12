@@ -8,6 +8,31 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### A test that pinned which exception fires (2026-08-12)
+
+CI went red on Linux for a test that is green on Windows. `HostileFrameDoesNotKillTheSupervisorTests`
+asserted the string `RecursionError` appears in the operator's stderr — and on the Linux runner the same
+deeply nested body produced an **empty** stderr, which means it was refused by the listed-exception branch,
+which does not log.
+
+The backstop is correct on both platforms. The assertion was over-specified: **which** exception a hostile
+body raises is a platform fact, not a property. So the class is split in two rather than loosened:
+
+* a **deterministic** witness that injects `MemoryError` — a class in no explicit tuple, raised identically
+  everywhere — and asserts the backstop logs it to the operator and returns `internal supervisor fault` to
+  the peer. This tests the backstop itself instead of the parser's recursion behaviour.
+* the **real** hostile frame, asserting only what holds on every platform: the peer gets a refusal, the
+  reply is what was written on the wire, the error stays framable, and it leaks no traceback and no path.
+
+Mutation-proved rather than assumed: deleting the `traceback.print_exc` from the backstop kills the new
+test. `test_governed_supervisor_server` 54 OK.
+
+This is the fourth time this week a platform difference has hidden inside a test — a mutant that survived
+only inside a POSIX-only branch, a bound living in `mod linux` that no Windows test could reach, a fixture
+pinning the year 2030 as a plausible clock, and now an exception name. The pattern is worth naming: a test
+that asserts *how* something failed is a test that can only pass where it was written.
+
+
 ### The Slice 2 proof kit exists; the box stays unticked until CI runs it once (2026-08-12)
 
 `engine/ci/live/run_ladder_turn.sh` and the `ladder-governed-turn` job drive **one**
