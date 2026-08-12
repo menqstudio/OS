@@ -118,6 +118,75 @@ jobs:
       - name: Run ONE live governed turn end to end
         run: sudo -E env "PATH=$PATH" bash engine/ci/live/run_live_turn.sh
 
+  ladder-governed-turn:
+    name: Linux · §4.10(g) LADDER round trip (adapter → real supervisor → real contained execution)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      # `live-governed-turn` above proves the §5 chain: the five `op` lifecycle messages over
+      # direct AF_UNIX, from the broker uid. It never sends a §4.10(a0)/(a)(b)(c)/(d) frame and
+      # never touches the bridge adapter, so it cannot be cited for "one governed round trip,
+      # adapter ↔ real supervisor" — that substitution is what made the roadmap box false once.
+      #
+      # `engine/tests/test_governed_turn_submit_e2e.py` proves the other half — the whole §4.10(g)
+      # ladder against the real services — but its §6.1 step-5 contained execution is a stand-in,
+      # because that step needs Linux, six uids and a setuid launcher.
+      #
+      # THIS job is the intersection, and it is the only thing in the tree that is: the real
+      # one-shot sidecar subprocess, from a SEVENTH principal, driving the real supervisor
+      # services, reaching the real privileged recorder → setuid launcher → contained executor,
+      # recording the evidence, and exiting non-zero unless the round trip completed.
+      - name: Install engine crypto + schema dependencies
+        run: pip install --require-hashes -r engine/requirements-ci.txt
+      - name: Build the launcher + the governed-live crate (recorder/executor)
+        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml -p brops-launcher -p brops-governed-live
+      # SEVEN accounts, not six. §2.6 requires the broker and the sidecar to be pairwise-distinct
+      # principals, and `governed_supervisor_server.handle_connection` refuses outright when the
+      # two uids are equal — so on the six-account kit every open/staging/evidence/read gate,
+      # all of which demand the SIDECAR uid, is unreachable by construction. 5003 is the gap in
+      # the §0 principal table, where the design lists `brops-sidecar` between `brops-challenge`
+      # and `brops-supervisor`.
+      - name: Provision the seven service accounts
+        run: |
+          set -eu
+          for spec in \
+            "brops-verifier_broker:5001" \
+            "brops-challenge:5002" \
+            "brops-sidecar:5003" \
+            "brops-supervisor:5004" \
+            "brops-recorder:5005" \
+            "brops-signer:5006" \
+            "brops-executor:5007" ; do
+            user="${spec%%:*}"; uid="${spec##*:}"
+            sudo groupadd -g "$uid" "$user"
+            sudo useradd -u "$uid" -g "$uid" -M --no-create-home -s /usr/sbin/nologin "$user"
+          done
+          id brops-sidecar; id brops-supervisor
+      # Fail-closed by construction. `ladder_evidence.py` exits non-zero unless the §4.6 frame
+      # says `ok`, its §4.9 envelope verifies under the manifest-resolved production key, the
+      # signed `request_sha256` is the recomputation over this turn's three staged digests, the
+      # supervisor's own ledger says COMPLETED, and the recorder's containment report says the
+      # launcher exited 0. The script ALSO drives the same verifier, in the same mode, against a
+      # deliberately broken input and requires it to go RED with `digest_mismatch` — so the
+      # failing branch is exercised on every run rather than reasoned about.
+      - name: Drive ONE §4.10(g) round trip through the real ladder
+        run: sudo -E env "PATH=$PATH" "LADDER_EVIDENCE_OUT=$RUNNER_TEMP/ladder-evidence" bash engine/ci/live/run_ladder_turn.sh
+      # Uploaded on failure too: a RED run's evidence bundle is the thing worth reading, and a
+      # verdict nobody can inspect is a claim rather than a proof.
+      - name: Upload the recorded evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: ladder-governed-turn-evidence
+          path: ${{ runner.temp }}/ladder-evidence
+          if-no-files-found: error
+
   cockpit-host:
     name: Cockpit · Tauri host (cargo check + ai tests)
     runs-on: ubuntu-latest
@@ -568,8 +637,14 @@ jobs:
       # it made the wall refuse for the cache instead of for the scope, and the probe
       # went green on the wrong refusal. Last in the job, the caches it leaves can mask
       # nothing.
+      # `ci/` is in the list because that is where the live kits live — the service
+      # runners, the provisioners and the two orchestrators — and NO test imports any of
+      # them. They were reachable only by running a kit as root on Linux, which means a
+      # syntax error in one surfaced as a job that died mid-provision rather than as a
+      # parse failure with a line number. It is not a digest root, so it does not
+      # interact with the shadow reasoning above.
       - name: Compile Python (syntax gate for the files no test imports)
-        run: python -m compileall -q runtime tools tests
+        run: python -m compileall -q runtime tools tests ci
 
   bridge:
     name: Bridge · engine adapter (python)

@@ -8,6 +8,83 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The Slice 2 proof kit exists; the box stays unticked until CI runs it once (2026-08-12)
+
+`engine/ci/live/run_ladder_turn.sh` and the `ladder-governed-turn` job drive **one**
+`bridge.governed-turn-submit.v1` frame through the real one-shot sidecar, from a seventh `brops-sidecar`
+principal, against the real `OpenService`/`StagingService`/`EvidenceRequestService`/`OutputReadService` and
+the real §5 `AcceptanceDriver`, reaching the **real §6.1 step-5 contained execution** — privileged recorder →
+setuid launcher → contained executor. No stand-in. `ladder_evidence.py` independently verifies the §4.6
+frame, the manifest under the TCB anchor, the §4.9 signature, §7.1's echoes, `request_sha256` recomputed
+over this turn's three staged digests, the output blob against the recorder's capture, the supervisor's
+ledger rows, the containment report, and **the `SO_PEERCRED` uid of every hop** — then writes the bundle.
+
+**It is proven able to fail, which is the part this repository keeps getting wrong.** Every run drives the
+same verifier, in the same mode, over a `system` artifact the challenge never committed, and requires a
+non-zero exit **naming `digest_mismatch`**. Both PowerShell proofs in this tree were found unable to report
+PASS at all, through three audit rounds; a proof that cannot fail is the same defect with the sign flipped,
+and it is checked here rather than assumed.
+
+**A seventh principal is required, and it is structural, not stylistic.** `handle_connection` refuses
+outright with `principal collapse` when the sidecar uid equals the broker uid, and every open, staging,
+evidence and read gate demands the *sidecar* uid. On the six-account kit **the entire §4.10 surface is
+unreachable by construction**. The cost is one `useradd` at uid **5003** — the gap in §0's principal table
+where the design already lists `brops-sidecar` — plus `brops-ipc` membership, and it is in neither
+`brops-store` nor `brops-report`.
+
+**Six things the kit did not provision and now does**, each of which would otherwise have made a service
+unusable rather than merely unwired: a §4.2 challenge-key registry document (the kit's
+`challenge_registry_handle` was literally `sha256(pub_hex)` — provenance recorded, authority never
+exercised); a supervisor-private 0700 staging root; the three artifacts in their **§4.10(g) canonical
+spellings** (the kit seeded `generation_config` in the *frozen* raw-string form, which hashes differently
+**by design** — an engine test requires the two to differ); a signer client for the **supervisor**, since
+the signer's IPC policy names the broker while §6.1 steps 11-12 make the supervisor its client; a real
+`ExecutionService`, since Python had only `RefusingExecutor`; and a second peer uid on the supervisor
+socket, since `load_allowed_peer_uid` returns exactly one and refuses two.
+
+**`run_live_turn.sh` and `run_supervisor.py` are untouched**, so the two proofs stay independently
+meaningful and `TheSupervisorIsNotDeployedTests` stays green — verified, 17/17. `compileall` was extended to
+cover `ci`, because the live kits were parsed by **no** CI job at all.
+
+**This exercises the Owner decision in `OWNER_ACTION_REQUIRED.md` §1d.** That section's Option 1 is exactly
+this shape — a seventh principal, the four services wired, and a supervisor-side execution so the
+*supervisor* spawns the recorder. It is built **as a CI proof kit only**: the product is unchanged,
+`run_live_turn.sh` still proves the shipped topology with the broker spawning the recorder, and no gate
+moved. But the decision is the Owner's to accept or hold, and this is the commit where it starts being
+exercised in CI.
+
+**The Slice 2 box is NOT ticked, on three conditions that are not yet met.** First, the job has to go green
+**once, on a real runner** — nobody has run it; the defensible claim today is only "every part testable off
+Linux was tested and passes". Second, the Owner has to accept the Option-1 topology as a proof kit. Third,
+the box must be worded as the **adapter ↔ supervisor** round trip, because the desktop still does not write
+the frame in production: `governed_turn_submit_prepared` remains callerless and `ChainExecutor` still drives
+direct AF_UNIX. **If the box means "the shipped app takes this path", it stays false and this does not
+change that.**
+
+**Two substitutions were made locally and only these two**, both named: the execution seam (a stand-in with
+the recorder's observable effects) and `load_tcb_json`'s not-group-or-other-writable check, which NTFS
+cannot satisfy because it reports 0666 for every file. **Only CI can witness** AF_UNIX + `SO_PEERCRED`, the
+seven-uid separation, the sudoers vector, and §6.1 step 5 itself.
+
+**Three findings outside its scope, reported rather than fixed.** The §2.5 TCB floor is deliberately not
+evaluated by this job: `build_tcb_pin_manifest.py` hardcodes `supervisor.bin → run_supervisor.py` and both
+`.unit` roles to `run_live_turn.sh`, so a manifest built here would measure files that are not serving —
+widening that role table is an Architect call, and it is stated in the script header rather than implied.
+The contained execution still **selects its inputs by filename** — the recorder opens
+`store/system|history|generation_config` as fds 3/4/5, and §2.7's closed-argv contract gives it no way to
+take a per-turn handle; it is bound two ways instead (the executor refuses to launch unless the acceptance
+row's three handles equal the root-owned lease pins, and the launcher re-hashes its held descriptors against
+the same pins), but passing handles per run is an Architect decision. And `TheSupervisorIsNotDeployedTests`'
+docstring — *"the ladder works and nothing runs it"* — goes stale the day this lands.
+
+A permanent regression test for the service graph and the evidence verifier is owed; it ran as a scratchpad
+harness and belongs in `engine/tests/`.
+
+Verified here: `bash -n`, `py_compile` on all four modules, `check_spec_references` (which caught a real
+§4.10(h) violation in the new code, since fixed), `check_reachability`, `check_coordination`,
+`check_capabilities` GREEN, and the e2e suite 17/17.
+
+
 ### One frame could kill the process that issues every lease (2026-08-12)
 
 The first sweep of the **engine** surface — `engine/runtime`, `engine/tools`, `engine/ci`, `bridge`,
