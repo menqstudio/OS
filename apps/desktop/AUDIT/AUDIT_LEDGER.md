@@ -464,6 +464,193 @@ No gate was touched. `commands.rs:1152 governed_verification_unconfigured`, `Ups
 `connect_broker` are byte-untouched — nothing under `apps/desktop/src-tauri/src/` was modified at all.
 The R-42 fix can only REFUSE more turns than before; it cannot make any surface reachable.
 
+## Engine / bridge / tools sweep (2026-08-12, `at-main-2`) — **Builder's claim, nobody else has looked**
+
+Every mark in this section is **◑**. The RED verdict above still stands. This sweep covered the
+LIVE findings from the consolidated index whose fix lands in `engine/runtime/**`,
+`engine/tools/**`, `engine/ci/**`, `engine/AUDIT/**`, `bridge/**` or `tools/**` — the ENGINE, which
+neither the 2026-08-10 desktop sweep nor the Windows/provisioning sweep touched.
+`engine/ci/live/run_live_turn.sh` and `apps/desktop/src-tauri/broker/**` were another session's
+files this round and were not read for edits.
+
+**33 in-surface findings inventoried. 17 were already closed and the ledger did not know. 5 were
+live and are fixed. 8 are live and deliberately not fixed, with reasons. 3 were not re-verified
+deeply enough to claim either way, and say so.**
+
+### One row of the Desktop-surface sweep is now stale
+
+That sweep's `supervisor_ledger.rs:358` row ends: *"The Python twin
+`governed_supervisor_ledger._BOUND_FIELDS` omits exactly the same five and is NOT fixed."* It is
+fixed, at `e4f73e2`. `_BOUND_FIELDS` is now derived —
+`tuple(f.name for f in dataclass_fields(NewAcceptance) if f.name not in _IDENTITY_FIELDS +
+_DIGEST_COMPARED_FIELDS)` — so the field list IS the comparison, the same property the Rust
+`#[derive(PartialEq)] struct DurableBinding` gives, and the only two exclusions are named in
+writing next to their reason. `challenge_accepted_at_ms` and all four `challenge_registry_*`,
+including the anti-rollback `epoch`, are compared. Recorded here rather than silently edited.
+
+### ◑ Already closed by later work — the ledger did not know (17)
+
+| id / loc | claim | why it is closed today |
+|---|---|---|
+| **P0** R1 `governed_supervisor.py:848` | `complete-run` takes the reply digest raw off the wire; the supervisor never observes the execution | `build_run_attestation` has no `facts` parameter and takes an `AttestationState`; `evidence_from_state` sources all 25 fields from the durable row + pinned config; `governed_supervisor_ledger.derive_evidence_from_chain` REFUSES a completion whose `output_handle` is not the `output-captured` digest in the recorder's own chain (`2debb71`) |
+| P1 R1 `bro_completion.py:255` | head-floor cleared by deleting its directory; `BRO_EVIDENCE_HEAD_FLOOR` ungated | `_load_floor_index` refuses a missing `_index.json`, with bootstrap instructions; the env path goes through `_external_dir` + `_refuse_self_owned_floor` |
+| P3 R1 `bro_completion.py:226` | the floor is advanced from a SECOND independent read of the head file | advanced from `head.head_sequence` + the digest of the head `validate_chain` actually verified |
+| **P1** R3 `isolated_signer.py:647` | §7 deep verification is three existence checks | `_verify_chain_handles` + `_CHAIN_AGREEMENT`: each document is parsed, its protocol tag checked, and every shared field REQUIRED and compared; a missing field is a refusal, not a vacuous pass |
+| P3 R3 `isolated_signer.py:199` | §1.5 step 4 dropped; `REASON_POLICY_MISMATCH` raised nowhere | `_check_policy_authorization` binds `(policy_id, policy_version)` to the registered bundle handle; an unprovisioned allowlist REFUSES |
+| P2 R3 + P3 R3 `isolated_signer_server.py:273` | no catch-all; a planted store blob kills the signer for all future turns | `except Exception` fail-closed backstop in `handle_connection`, a second one in `serve_forever`, detail to stderr and not to the peer |
+| P2 R2 + P3 R2 `engine/tools/brops_isolation_prover.py:84` | attack 4 is decided by a protocol-name mismatch, so it proves the shape guard is not there | the attack now sends `brops.evidence-request.v1` — the supervisor's OWN protocol — with a positive control that must come back `run_binding_invalid`; delete the shape gate and the attack matches the control, so the row goes INCONCLUSIVE rather than quietly passing |
+| P2 R1 `governed_supervisor_ledger.py:640` / `:645` | the anti-rollback floor is keyed on a `task_id` the broker chooses | `_evidence_floor_cas` compares against `_install_floor_ceiling` — the highest head recorded anywhere on the INSTALL, in any task bucket; `task_id` is only the idempotency key |
+| P2 R1 `governed_supervisor_ledger.py:553` | the four evidence values reach the signer as the broker's self-report | `DERIVED_EVIDENCE_FIELDS` are derived by `derive_evidence_from_chain` and are not in `COMPLETION_FIELDS`, i.e. not on the wire at all |
+| P2 R3 `governed_supervisor_ledger.py:575` | no upper time bound survives the pre-launch lease gate | `lease_launch_gate` refuses `lease_not_yet_valid`, `lease_expired` AND `insufficient_remaining_budget` (`MIN_LAUNCH_REMAINING_MS`), boundary-pinned against the Rust twin |
+| P3 R3 `governed_supervisor.py:688` | §4.7 execution receipt is not implemented | `build_execution_receipt` builds `brops.execution-receipt.v1` from the acceptance + completion rows; its handle is in `DERIVED_HANDLE_FIELDS`, which a caller cannot supply |
+| P3 R3 `challenge_authority_server.py:239` | `brops_protocol` has no deployed caller | imported by `brops_socket`, `governed_turn_open`, `governed_staging_upload`, `governed_output_read`, `governed_turn_result` |
+| P3 R3 `brops_evidence_store.py:76` | §2.3 runtime store-ACL enforcement is unimplemented | `posix_forbidden_mode` is a pure rule with a real `nt` branch, and `harden_private_dir` is the single entry point |
+| P2 R1 `bro_signature.py:263` | `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` is an ungated ambient env var | the raw variable is honoured only under `BRO_ENV=ci`; otherwise a `_FILE` form under a principal this process cannot rewrite, checked through `bro_custody` on both platforms |
+| R2 desktop-sweep handoff, `_BOUND_FIELDS` | the Python idempotency comparison omits five bound columns | derived from `NewAcceptance`; see above |
+
+### ◑ Fixed in this sweep (5)
+
+| finding | what it actually was |
+|---|---|
+| **R1 `governed_supervisor_server.py:626` — one 8 KiB frame kills the supervisor** | `handle_connection` caught `(FrameError, ServerError, SupervisorError, ValueError, UnicodeDecodeError)`. `json.loads` raises `RecursionError` — a `RuntimeError`, in none of them — on a body that nests ~3900 deep in 7800 bytes, comfortably inside the 8 KiB frame bound, so nothing earlier refused it. It escaped the handler, and `serve_forever` had **no `except` at all**, only `finally: conn.close()`. One frame from either authorized peer ended the process that issues every lease and produces every attestation. The isolated signer's front door already had exactly this backstop; the supervisor — the twin it is meant to match — did not. Both are present now, the peer is told only `internal supervisor fault`, and the detail goes to the operator's stderr rather than becoming an information channel. |
+| **R1 `governed_supervisor_server.py:183` — no timeout of any kind on the front door** | `SocketPeerConn` never called `settimeout`, and the accept loop is serial, so a peer that connected and then sent nothing held every governed turn on the install for as long as it liked. Fixed with a **total** `CONNECTION_BUDGET_S` armed at accept and shared by both directions — a per-recv timeout is not a bound, because it restarts on every byte that arrives, which is the same defect the desktop sweep found in `governed_turn.rs`. The arithmetic is lifted OUT of `SocketPeerConn` into `recv_budget_s` / `recv_exactly_bounded`, because that class cannot be constructed off Linux (`read_peercred_uid` refuses) and a bound expressed only inside it would sit in a branch no runner here can reach. Exhaustion is `None`, never `0.0`: `settimeout(0)` is non-blocking, and the POSIX `SO_RCVTIMEO` it maps to reads 0 as *infinite*. |
+| **R1 `bro_completion.py:271` — the head-floor advance is an unlocked load-compare-write** | Still true, and worse than "two concurrent turns race". The compare sat outside any lock and the write inside none, so which head was recorded was decided by whichever `os.replace` landed last rather than by which head was higher: turn A (head 5) and turn B (head 3) both read 0, both passed `head_sequence <= current`, and if B landed second the mark went **down** — "never lowers the mark" was true of the comparison and false of the operation. The `_index.json` roster is worse: one file that every task read-modify-writes through one shared staging name, so a concurrent enrolment silently loses the loser — and a task missing from the roster is, by `_load_head_floor`'s own rule, a task never seen, so deleting its mark afterwards reads as a first sighting and returns `(0, None)`. That is the R-06 rollback restored by timing alone, needing no attacker capability. The whole load-compare-write now runs under `_floor_write_lock`: an ADVISORY lock (`fcntl.flock` / `msvcrt.locking`), not an `O_EXCL` lock file, so a crash cannot leave the floor permanently unwritable; a platform with neither primitive REFUSES; and the unprovisioned-floor refusal is taken BEFORE the lock, so the lock cannot become the way an absent floor starts looking provisioned. |
+| **R2 `bro_orchestration_runtime.py:380` — the claim-lock reentrancy check is PID equality** | `_guard_held_by_this_process` compared the pid in the lock file with `os.getpid()`. A lock file orphaned by a process that died inside the guard keeps that pid forever, and pids are recycled (default `pid_max` 32768). The unrelated later process handed that pid was told it already held the guard, so `_mutation_guard` yielded holding **nothing**, while any other process was free to break the stale lock and take it for real: two writers inside a guard whose only purpose is that there is one. It now compares the token this process minted at acquisition against the token on disk. *Both* `_claim_guard` implementations register — the V1 runtime **overrides** `_claim_guard` with its own near-copy, and registering in only the base one left every base method V1 delegates into trying to re-acquire a lock it already held. That regression was invisible to the unit tests and was caught by the full suite (1 failure + 5 errors across `test_control_room_api` and `test_reconciler`); a test for the override's wiring is now in the tree. |
+| **R2 `isolated_signer.py:599` — `_check_run_binding` binds nothing** | Half-true, and now half-fixed honestly. The function contained `if not evidence["request_nonce"]: raise _Refuse(REASON_NONCE_MISMATCH)` under a comment that states the defect in its own words — *"already validated"*. `request_nonce` is in `EVIDENCE_STRING_FIELDS`, `_validate_evidence` has already required `_capped_str` (`0 < len`), and the single call site runs `validate_sign_request` first, unconditionally: **the branch could not be taken by any input**, inside the function the design calls the independent authorization gate (§1.5). Deleted rather than annotated — unlike the F-29 guard it has no future call site to defend, because it is a private method with one caller that validates first. A test now locks where the property actually lives: the shape gate, reason `malformed`. What was deliberately NOT built on top of it is below. |
+
+### ◑ Deliberately NOT fixed, with reasons
+
+* **`isolated_signer.py` still raises neither `run_binding_invalid` nor `nonce_mismatch`**, though
+  both are in the ratified §4.2 vocabulary (`engine/contracts/brops-sign-result.v1.schema.json`) and
+  `SECURITY_NEGATIVE_TEST_MATRIX` NM-XBIND-10 expects the first for an internally inconsistent
+  `run_id`/`execution_attempt_id`/`lease_id`. The obvious repair — cross-compare the chain documents
+  the signer already reads — **would be the same defect wearing a longer name**: the record, the
+  execution receipt and the lease are all built by the same supervisor from the same acceptance and
+  completion rows (`build_terminal_record` / `build_execution_receipt` / `_lease_payload`), so every
+  field they share agrees BY CONSTRUCTION and a comparison of them could not fail either. Binding
+  the run against a source the supervisor does not control needs the signer to hold one, which §5
+  does not give it. A protocol change and an Owner/Architect decision, stated in the code.
+* **`engine/ci/live/run_signer.py:83` — the isolated signer pins its supervisor-attestation
+  verifying key from the shared deployment config** (`cfg["keys"]["supervisor_attest_pub_hex_value"]`),
+  not from the root-signed manifest. Real and unchanged. Fixing it means resolving the key from the
+  manifest under the §2.5 floor and refusing an inline one — a change whose only end-to-end witness
+  is the Linux 7-service `run_live_turn.sh`, another session's file this round, which no runner on
+  this box can execute. Shipping an unwitnessable change to the trust chain is how the last three
+  rounds got their ✅s.
+* **`run_signer.py:103` — the signer's identity allowlist and the supervisor's identity block are
+  two reads of the same `config.json`.** Same reason: separating them is a provisioning-topology
+  change verifiable only on the live kit.
+* **`engine/ci/live/provision_keys.py:383` — the challenge-authority key is outside the root-signed
+  manifest.** `build_manifest_bytes(signer_pub_hex, sup_pub_hex)` carries two keys and the challenge
+  key is not one of them, so the key that authorizes an acceptance is not covered by the root
+  signature. Real. Adding it changes the manifest bytes that the Rust `KeyManifest` /
+  `manifest_resolver.rs` / `production_trust.rs` parse — cross-language, and **no `cargo` command
+  could be run this session** (the box's memory was reserved for another agent's build), so the twin
+  could not be compiled, let alone tested. Left rather than guessed at.
+* **`provision_keys.py:245` — `anchor_provenance = "external"` is still a string the kit writes about
+  itself.** Narrowed since the audit: the external branch requires the operator to supply
+  `--manifest-in` / `--manifest-sig-in` / `--root-anchor-*` and serves those bytes verbatim, and the
+  kit-generated default prints `production_verified=false root_anchor=kit_generated`. What remains is
+  that nothing cryptographically distinguishes the two labels at the point of writing. Same live-kit
+  witness problem.
+* **`governed_supervisor.py:710` — §4.3's signed 25-field lease is a 5-field unsigned blob.**
+  `_lease_payload` carries `lease_id`, `execution_attempt_id`, `lease_expires_at_ms` and the two
+  executable digests, persisted and content-addressed rather than signed. A real
+  design-conformance gap, and a protocol change touching the setuid launcher's pin checks on Linux.
+  Not a sweep item.
+* **`bro_completion.py:269` — the head-floor mark is advanced by the very process it polices.**
+  Unchanged, deliberately: it is an open design contradiction (a floor this process can write fails
+  custody; one it cannot write fails the advance), pinned as executable fact by
+  `HeadFloorConfigurationContradictionTests`. The serialization lock added above needs the same write
+  capability as the mark it protects, so it neither widens nor narrows the contradiction — noted in
+  that class so its statement stays true.
+* **The base `DurableOrchestrationRuntime._claim_guard` and the V1 override are near-duplicates that
+  have already diverged**: the V1 copy retries `PermissionError` (a Windows delete-pending race on an
+  `O_EXCL` open) and the base copy does not, so the base guard hard-fails where the override
+  recovers. Found while fixing the reentrancy hole above; reported rather than merged, because
+  collapsing two lock implementations changes the mutation path of every runtime method and wants
+  its own round.
+
+### Not re-verified deeply enough to claim either way (3)
+
+`engine/ci/live/run_supervisor.py:130` (§0.1 platform capability gate has no implementation),
+`engine/ci/live/build_tcb_pin_manifest.py:84` (the coverage floor is satisfied by logical NAME, not
+causal role), and `engine/tests/test_governed_chain_e2e.py:487` (the two F-01 regression tests
+assert only that an unknown attempt id is refused). All three are live-kit or long-file reads that
+this sweep sampled rather than drove. Recorded as unknown rather than assigned a status — inventing
+one is the defect this file exists to catch.
+
+### Mutation results
+
+**18 mutants applied to the shipping source, 16 killed, 2 survivors named.** Every mutant was
+applied to the real file, the named test watched to fail, the file restored byte-exact and the
+restore verified by SHA-256. The harness is crash-safe rather than `try/finally`-safe: pristine bytes
+and their digests are written to disk before the first mutation, a sentinel is armed before it and
+cleared only after the final restore verifies, the harness refuses to start while a sentinel exists,
+and it has a `--restore` mode. Five files were touched and all five ended byte-identical.
+
+Killed: deleting the `handle_connection` catch-all; deleting the `serve_forever` catch-all; arming
+`settimeout(0)` at the exact moment the budget expires; a budget that never expires; a read loop
+that ignores an exhausted budget; a timed-out `recv` escaping the loop; advancing the floor with no
+lock; load-compare outside the lock with the write inside (**the original defect, reproduced
+exactly**); a lock context manager that locks nothing; dropping the pre-lock provisioning check; a
+roster rewrite that stops reading the roster; a shape gate that stops requiring a non-empty nonce;
+deleting the one decision `_check_run_binding` still makes; restoring pid-equality reentrancy;
+trusting the in-process ownership record without re-reading the lock; and the V1 `_claim_guard`
+override not registering its token.
+
+**Survivor 1 — re-adding the deleted `if not evidence["request_nonce"]` check.** It survives because
+that is precisely the finding: the branch cannot be taken, so putting it back changes no outcome and
+no test. Reported rather than killed, because a test that detected the presence of dead code would
+be a test of the source text, not of behaviour.
+
+**Survivor 2 — not clearing `_HELD_CLAIM_TOKENS` on release.** Behaviourally equivalent: the release
+path unlinks the lock file, so `_lock_owner()` returns `None` and the `== held` comparison already
+answers correctly whether or not the entry was popped. Unlike the pair the desktop sweep had to
+collapse, the pop is not a second guard at all — it is cleanup that stops a long-lived process
+accumulating misleading entries — so it is kept and named here rather than deleted, and no test was
+written only to kill it.
+
+### Numbers, each from a run performed for this sweep
+
+engine `PYTHONDONTWRITEBYTECODE=1 BRO_ENV=ci python -B -m unittest discover -s tests -q`:
+**1915 tests, OK (skipped=43)** — 1895/43 at this session's start, +20 new tests. **Converged:** two
+consecutive full runs gave an identical 1915/43 (113.5 s and 106.5 s). The run between them is
+recorded honestly too — **1914 tests, FAILED (failures=1, errors=5)** — the V1 `_claim_guard` wiring
+regression described above, found by the full suite after the unit tests stayed green.
+bridge `-s bridge/tests` **210, OK**. `tools/` self-tests **419, OK** (see the caveat below: a
+later re-run is 419 with 1 failure, from the same in-flight file).
+Gates, each exit 0 against this sweep's final tree: `check_spec_references`,
+`check_reachability`, `check_coordination`, `check_ledger_ddl_parity`, `check_residual_items`.
+
+**One caveat, stated rather than rounded off.** A later re-run of `check_spec_references` returns
+exit 1, and it is not this sweep: its single complaint is
+`engine/ci/live/ladder_evidence.py:105 cites §4.10(h)` — an **untracked** file another session
+created in this shared tree while this sweep was running (`git status` shows five such `??` files
+under `engine/ci/live/`, none of them touched or read here). This sweep's diff does not touch
+`engine/ci/**` at all, and the thirteen lines it adds that cite a section name only §0.1, §1.5,
+§2.3, §2.5, §4.2, §4.3, §4.7, §5 and §7, all of them declared. Naming it here so a future red run
+is not mistaken for this sweep's regression — and so it is not mistaken for someone else's problem
+either, if it is still red when that file lands. The same file takes the `tools/` suite from
+**419 OK** to **419 with 1 failure**, `test_check_spec_references.SpecReferenceGateTests.`
+`test_the_real_repository_passes_its_own_gate`, whose whole assertion is that the real tree passes
+its own gate — i.e. one cause, two red lines, and neither of them in this sweep's files.
+
+`BROPS_TEST_MISSING_PREREQUISITES` was never set. No suite was silenced and no prerequisite was
+declared to quiet a failure.
+
+**No gate was flipped.** `git status` shows ten modified files: nine under `engine/runtime/` and
+`engine/tests/`, plus this ledger. (Five `??` untracked files under `engine/ci/live/` belong to
+another session in this shared tree and were neither created nor edited here.)
+`apps/desktop/src/**`, `apps/desktop/src-tauri/**`, `.github/`, `tools/`, `config/`, `bridge/`,
+`NEXT_CHAT.md`, `PROJECT_STATE.md`, `TASKS.md`, `engine/ci/**` including
+`engine/ci/live/run_live_turn.sh`, and
+`apps/desktop/src-tauri/broker/**` have no diff at all, so `governed_verification_unconfigured`,
+`UpstreamBlockedExecutor` and `connect_broker` are byte-untouched. Every change here can only REFUSE
+more than before — a hostile frame becomes a refusal instead of a crash, a starved connection
+becomes a framing refusal, a concurrent floor advance is serialized, and a claim guard is harder to
+enter. None of them makes a governed surface reachable.
+
 ## Legend
 **One legend, and it is the one under “How to read the status column” above:** ✅ = an independent
 audit confirmed it · ◑ = the Builder's claim, nobody else has looked · 🔴 / ⚠️ = open · by-design =

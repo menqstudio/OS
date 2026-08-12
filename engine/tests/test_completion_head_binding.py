@@ -600,8 +600,10 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
     or can write. Those two requirements have no intersection:
 
     * a floor the builder CAN write fails custody;
-    * a floor the builder CANNOT write fails the advance (creating `<task>.floor.json.tmp` and
-      renaming it over the mark needs exactly the capability custody refuses);
+    * a floor the builder CANNOT write fails the advance (opening `_index.json.lock`, creating
+      `<task>.floor.json.tmp` and renaming it over the mark all need exactly the capability
+      custody refuses — the serialization lock added for audit R1 `:271` needs the same write
+      capability as the mark it protects, so it neither widens nor narrows this contradiction);
     * so the only satisfiable posture is the acknowledgement
       (`BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE`, or the raw variable under `BRO_ENV=ci`),
       which `bro_custody` describes as short-circuiting **every rule in that module** — the
@@ -769,6 +771,115 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
             self.assertTrue(bro_custody.self_owned_acknowledged())
         self.assertTrue((self.floor / "task-1.floor.json").exists())
         self.assertFalse(bro_custody.self_owned_acknowledged())
+
+
+class HeadFloorAdvanceIsSerialisedTests(unittest.TestCase):
+    """The load-compare-write must be ONE step (audit R1 ``bro_completion.py:271``).
+
+    The compare used to sit outside any lock, so two concurrent completions could both read
+    the same mark, both pass ``head_sequence <= current``, and the recorded floor was decided
+    by whichever ``os.replace`` landed last rather than by which head was higher. The same
+    window loses ``_index.json`` roster entries — and a task missing from the roster is, by
+    ``_load_head_floor``'s own rule, a task never seen, so deleting its mark afterwards reads
+    as a first sighting and the anti-rollback floor restarts at zero. That is R-06 again,
+    needing no attacker capability, only timing.
+    """
+
+    DIGEST = "f" * 64
+
+    def setUp(self):
+        import bro_completion
+        self.completion = bro_completion
+        self.store = pathlib.Path(
+            tempfile.mkdtemp(prefix="bro-floor-lock-")).resolve()
+        self.addCleanup(shutil.rmtree, self.store, ignore_errors=True)
+        self.floor = self.store / "head-floor"
+        self.floor.mkdir()
+        if os.name == "posix":
+            os.chmod(self.floor, 0o700)
+        (self.floor / "_index.json").write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        env = unittest.mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        for name in ("BRO_OPERATOR_ROOT_PIN_SELF_OWNED",
+                     "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE", "BRO_EVIDENCE_HEAD_FLOOR"):
+            os.environ.pop(name, None)
+
+    def test_the_lock_excludes_a_second_holder_and_releases(self):
+        self.assertFalse(self.completion._floor_lock_is_held(self.floor))
+        with self.completion._floor_write_lock(self.floor):
+            # A SECOND file description, which is what another process would hold.
+            self.assertTrue(self.completion._floor_lock_is_held(self.floor))
+        self.assertFalse(self.completion._floor_lock_is_held(self.floor))
+
+    def test_the_compare_is_read_while_the_lock_is_held(self):
+        """The whole property, in one assertion: if the mark that is compared is read
+        outside the lock, another writer is free to have replaced it before the rename
+        lands, and the comparison decides nothing."""
+        observed = []
+        original = self.completion._load_head_floor
+
+        def spy(store, task_id):
+            observed.append(self.completion._floor_lock_is_held(self.floor))
+            return original(store, task_id)
+
+        with _self_owned_ack.patch(self.store):
+            with unittest.mock.patch.object(self.completion, "_load_head_floor", spy):
+                self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+
+        self.assertEqual(observed, [True], "the mark was compared outside the lock")
+        self.assertEqual(
+            json.loads((self.floor / "task-1.floor.json").read_text(encoding="utf-8")
+                       )["head_sequence"], 5)
+
+    def test_enrolling_a_second_task_does_not_drop_the_first(self):
+        """``_index.json`` is ONE file every task read-modify-writes through ONE shared
+        staging name, so it is the half that silently loses entries — and a task missing
+        from the roster is a task never seen, which is the R-06 rollback.
+
+        This is the black-box form of the property: the rewrite must be computed from the
+        roster as it stands at that moment, under the lock, not from anything read earlier
+        or assumed. An enrolment that does not re-read cannot preserve what it never saw.
+        """
+        with _self_owned_ack.patch(self.store):
+            self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+            self.completion._advance_head_floor(self.store, "task-2", 7, self.DIGEST)
+
+            self.assertEqual(
+                json.loads((self.floor / "_index.json").read_text(encoding="utf-8"))["tasks"],
+                ["task-1", "task-2"])
+            # ...and both marks survive, so neither can later read as a first sighting.
+            for task, sequence in (("task-1", 5), ("task-2", 7)):
+                self.assertEqual(
+                    self.completion._load_head_floor(self.store, task)[0], sequence)
+
+    def test_every_roster_read_after_the_provisioning_check_is_under_the_lock(self):
+        observed = []
+        original = self.completion._load_floor_index
+
+        def spy(directory):
+            observed.append(self.completion._floor_lock_is_held(self.floor))
+            return original(directory)
+
+        with _self_owned_ack.patch(self.store):
+            with unittest.mock.patch.object(self.completion, "_load_floor_index", spy):
+                self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+
+        # The first read is the deliberate pre-lock provisioning check; every read that
+        # feeds a decision or a rewrite must be inside.
+        self.assertEqual(observed[0], False, "the provisioning check should precede the lock")
+        self.assertTrue(observed[1:], "the roster was never re-read under the lock")
+        self.assertTrue(all(observed[1:]), observed)
+
+    def test_an_unprovisioned_floor_still_refuses_and_the_lock_creates_nothing(self):
+        """The lock must not become the way an absent floor acquires a file and starts
+        looking provisioned — an absent floor must not read as 'no floor required' (R-06)."""
+        shutil.rmtree(self.floor)
+        with _self_owned_ack.patch(self.store):
+            with self.assertRaises(self.completion.CompletionError) as caught:
+                self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+        self.assertIn("not provisioned", str(caught.exception))
+        self.assertFalse(self.floor.exists())
 
 
 if __name__ == "__main__":

@@ -628,12 +628,52 @@ class IsolatedSigner:
         return evidence_jcs
 
     def _check_run_binding(self, evidence: Mapping[str, Any]) -> None:
-        # run/attempt/task already shape-validated as capped non-empty strings.
+        """The one decision here that can go either way: refuse a decision that is not
+        ``completed``. The signer mints a *success* receipt, so an attestation the
+        supervisor genuinely produced for a refused or abandoned run must not become one.
+
+        **audit round 2, `isolated_signer.py:599` — what this used to also contain, and why
+        it is gone.** The second half read::
+
+            # request_nonce must be present (already validated) — bind it.
+            if not evidence["request_nonce"]:
+                raise _Refuse(REASON_NONCE_MISMATCH)
+
+        The comment states the defect in its own words. ``request_nonce`` is in
+        :data:`EVIDENCE_STRING_FIELDS`, and :func:`_validate_evidence` has already required
+        every one of those to satisfy ``_capped_str`` — ``0 < len(value) <= STRING_CAP``.
+        There is exactly one call site, :meth:`sign_result`, and it runs
+        :func:`validate_sign_request` first, unconditionally. So the branch could not be
+        taken by any input, and deleting it changed no outcome and no test: a check that
+        cannot fail, sitting inside the function the design calls the "independent
+        authorization gate (§1.5)" and lending it the appearance of binding something.
+
+        It is DELETED rather than kept-and-annotated, which is the opposite of the call made
+        for the F-29 guard in ``production_trust.rs``. The difference is the one that
+        matters: F-29's guard is reachable from call sites that could one day obtain their
+        key from a second source, so it is fail-closed defence in depth. This one is a
+        private method with a single caller that validates first — there is no future caller
+        for it to defend, so it was only decoration.
+
+        **What is NOT claimed, so nobody reads more into the remaining line than is there.**
+        ``run_binding_invalid`` and ``nonce_mismatch`` are both in the ratified §4.2 reason
+        vocabulary (``engine/contracts/brops-sign-result.v1.schema.json``), and
+        ``SECURITY_NEGATIVE_TEST_MATRIX`` NM-XBIND-10 expects the first for a run whose
+        ``run_id``/``execution_attempt_id``/``lease_id`` are internally inconsistent. This
+        signer raises NEITHER. The obvious repair — cross-compare the chain documents this
+        signer already reads — would not be one: the record, the execution receipt and the
+        lease are all built by the SAME supervisor from the SAME acceptance and completion
+        rows (``governed_supervisor.build_terminal_record`` /
+        ``build_execution_receipt`` / ``_lease_payload``), so every field they share agrees
+        BY CONSTRUCTION and a comparison of them could not fail either. That is the same
+        defect wearing a longer name. :meth:`_verify_chain_handles` already says the honest
+        version of this: a second opinion catches disagreement, not a coherent forgery.
+        Binding the run against a source the supervisor does not control needs the signer to
+        hold one, which the §5 protocol does not give it — a protocol change, and an
+        Owner/Architect decision rather than a sweep item.
+        """
         if evidence["decision"] != "completed":
             raise _Refuse(REASON_NOT_COMPLETED)
-        # request_nonce must be present (already validated) — bind it.
-        if not evidence["request_nonce"]:
-            raise _Refuse(REASON_NONCE_MISMATCH)
 
     def _check_identity(self, evidence: Mapping[str, Any]) -> None:
         cfg = self._config

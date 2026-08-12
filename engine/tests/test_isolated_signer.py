@@ -423,6 +423,23 @@ class RefusalTest(unittest.TestCase):
             signer.sign_result(_request(ev))["reason"], REASON_NOT_COMPLETED
         )
 
+    def test_an_empty_request_nonce_is_refused_by_the_shape_gate(self):
+        """audit round 2, `isolated_signer.py:599`.
+
+        `_check_run_binding` used to carry `if not evidence["request_nonce"]` under a comment
+        saying the value was "already validated" — which it is, by `_capped_str`, so the
+        branch could not be taken and the gate it decorated bound nothing. The check is
+        deleted; this test locks WHERE the property actually lives, so nobody restores the
+        decoration believing it is what refuses this input. The reason is `malformed` (the
+        shape gate), NOT `nonce_mismatch`.
+        """
+        signer, store, handles, recorder = _make_signer()
+        ev = _evidence(handles)
+        ev["request_nonce"] = ""
+        result = signer.sign_result(_request(ev))
+        self.assertEqual(result["reason"], REASON_MALFORMED)
+        self.assertEqual(recorder.signed_messages, [])
+
     def test_unknown_identity_is_refused(self):
         signer, store, handles, _ = _make_signer()
         ev = _evidence(handles)

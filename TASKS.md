@@ -8,6 +8,72 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### One frame could kill the process that issues every lease (2026-08-12)
+
+The first sweep of the **engine** surface — `engine/runtime`, `engine/tools`, `engine/ci`, `bridge`,
+`tools`. No sweep had touched it; the desktop and Windows surfaces were done earlier. 33 findings land here.
+Every mark is **◑ — the Builder's claim, nobody independent has looked**, and the RED verdict stands.
+
+**Seventeen were already closed and the ledger did not know — including the P0.**
+`build_run_attestation` has no `facts` parameter at all, `evidence_from_state` sources all 25 fields from
+durable state, and `derive_evidence_from_chain` refuses a completion whose `output_handle` is not the
+recorder's own captured digest. The §7 deep-verification P1 is closed too: the chain-agreement check is a
+real per-field comparison now.
+
+**And one row this session wrote is stale.** The desktop sweep recorded that the Python twin
+`_BOUND_FIELDS` "is NOT fixed". It was fixed at `e4f73e2` — derived from `dataclass_fields(NewAcceptance)`,
+so the field list *is* the comparison and the anti-rollback epoch is compared.
+
+**The worst finding: a single frame could kill the supervisor.** `json.loads` raises `RecursionError` on a
+body nesting ~3900 deep inside a **legal 8 KiB frame**, and `RecursionError` is in none of the caught
+classes — so it escaped `handle_connection`, and `serve_forever` had **no `except` at all**. One frame from
+either authorized peer takes down the process that issues every lease. The isolated signer's twin front
+door already had this backstop; the supervisor did not.
+
+**Next to it, no timeout of any kind on a serial accept loop.** Fixed with a **total** connection budget,
+because a per-recv timeout restarts per byte and bounds nothing — the same defect found in the
+renderer→broker read earlier this week, where 8256 bytes at 120 s each came to roughly 11.5 days. The
+budget was lifted out of the socket class because that class cannot be constructed off Linux, and
+exhaustion is `None` rather than `0.0`: `settimeout(0)` is non-blocking and `SO_RCVTIMEO` reads 0 as
+*infinite*, at exactly the moment the bound matters.
+
+**The head floor could go DOWN, and the reason is worse than a race between two turns.** The comparison sat
+**outside any lock**, so head 5 and head 3 both passed and the last rename won. And `_index.json` is one
+roster that every task read-modify-writes through **one shared staging name**, so a lost entry makes a task
+read as never-seen — and deleting its mark afterwards restarts the floor at zero. That is the R-06 defect
+reached by timing alone. Now under an advisory lock, chosen so a crash cannot wedge the floor, with the
+provisioning refusal taken *before* the lock.
+
+**A reentrancy guard keyed on pid.** An orphaned lock keeps its pid, pids recycle, and the process that
+inherits one enters the mutation guard holding nothing. Now token-based. Worth recording: the V1 runtime
+**overrides** the claim guard, so registering only in the base class broke six tests — the unit tests stayed
+green and the **full suite** caught it. That red run is in the record rather than hidden.
+
+**And a check that could not fail, deleted.** `if not evidence["request_nonce"]` sat under a comment reading
+*"already validated"* — inside the "independent authorization gate" — while `_capped_str` already required
+non-empty and the one call site validates first. Unlike F-29 it has no future call site to defend, so it is
+gone rather than annotated.
+
+**Eight were deliberately not fixed, with evidence.** The two largest — the signer pinning its
+supervisor-attestation key from the shared config rather than the root-signed manifest, and the
+challenge-authority key sitting outside that manifest — are real and only witnessable by the Linux live kit
+or the Rust manifest code, and no `cargo` was available to this agent. It also **declined to extend the
+signer's cross-document checks**, because record, receipt and lease are all built by the same supervisor
+from the same rows: those comparisons **could not fail either**. That is the same defect with a longer name,
+and refusing to add it is the right call.
+
+**18 mutants, 16 killed, 2 named survivors**, under a crash-safe harness; all five touched files ended
+byte-identical. One survivor is re-adding the deleted nonce check — *it survives because that is the
+finding*. The other is behaviourally equivalent and was kept as cleanup rather than killed with a test
+written only to kill it.
+
+Engine suite **1915 OK (43 skipped)**, converged over two identical runs, from 1895 — re-run here. Bridge
+210, `tools/` 419. `check_reachability`, `check_coordination`, `check_ledger_ddl_parity` and
+`check_residual_items` all exit 0. `check_spec_references` is red on
+`engine/ci/live/ladder_evidence.py:105`, a file another agent is writing in this shared tree right now —
+one cause, two red lines, neither in this change.
+
+
 ### The broker is out of the store, and the path out was deleted (2026-08-12)
 
 `chain_executor.rs` no longer writes the output and containment blobs into the isolated signer's protected

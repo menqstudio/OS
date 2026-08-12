@@ -51,6 +51,8 @@ import json
 import socket
 import struct
 import sys
+import time
+import traceback
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
@@ -222,6 +224,75 @@ def read_peercred_uid(sock: "socket.socket") -> int:
 # ---------------------------------------------------------------------------
 
 
+#: TOTAL wall-clock budget for ONE connection, both directions (audit R1 `:183`, the
+#: supervisor twin of F-31).
+#:
+#: The front door had **no timeout of any kind** and a SERIAL accept loop, so one peer that
+#: connected and then sent nothing held the supervisor — and therefore every governed turn on
+#: the install — for as long as it liked. The two halves matter together: a per-recv timeout
+#: alone is not a bound, because it restarts on every byte that arrives, so a peer dripping one
+#: byte per timeout holds the loop indefinitely while never once timing out. This is a budget
+#: for the WHOLE exchange, armed at the first read and never re-armed.
+#:
+#: 120 s is deliberately generous: both peers are local (AF_UNIX), the broker's frames are
+#: 8 KiB and the sidecar's largest is 240 KiB, so no legitimate exchange comes within two
+#: orders of magnitude of it. The number that matters is that it is finite.
+CONNECTION_BUDGET_S = 120.0
+
+
+def recv_budget_s(deadline: float, now: float) -> Optional[float]:
+    """The timeout to arm for the next read, or ``None`` when the budget is spent.
+
+    Lifted OUT of :class:`SocketPeerConn` on purpose. That class cannot be constructed on
+    this box — ``read_peercred_uid`` refuses off Linux — so a bound expressed only inside its
+    read loop would sit in a branch no test here can reach, which is how the previous rounds
+    shipped unwitnessed changes. The arithmetic that decides the refusal lives here, where a
+    test drives it directly.
+
+    **Never returns 0.0.** ``socket.settimeout(0)`` puts the socket in NON-BLOCKING mode
+    (and the POSIX ``SO_RCVTIMEO`` it maps to reads 0 as *infinite*), so arming zero at the
+    exact moment the budget expires is the opposite of a deadline. Exhaustion is ``None``,
+    and the caller stops reading.
+    """
+    remaining = deadline - now
+    if remaining <= 0.0:
+        return None
+    return remaining
+
+
+def recv_exactly_bounded(
+    recv: Callable[[int], bytes],
+    n: int,
+    *,
+    deadline: float,
+    arm_timeout: Callable[[float], None],
+    now: Callable[[], float] = time.monotonic,
+) -> bytes:
+    """Read up to ``n`` bytes, giving up when the connection budget is exhausted.
+
+    Returns whatever arrived. A short return is the caller's signal: :func:`read_frame`
+    already turns one into a ``FrameError``, so a starved read is a framing refusal rather
+    than a hang. Pure with respect to the socket: ``recv``/``arm_timeout``/``now`` are seams,
+    which is what makes the deadline testable without a socket at all.
+    """
+    chunks = []
+    remaining = n
+    while remaining > 0:
+        budget = recv_budget_s(deadline, now())
+        if budget is None:
+            break  # budget spent; caller sees the short read
+        arm_timeout(budget)
+        try:
+            chunk = recv(remaining)
+        except (socket.timeout, TimeoutError):
+            break
+        if not chunk:
+            break  # peer closed early; caller detects the short read
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
 class SocketPeerConn:
     """Adapter around a live accepted socket exposing the duck-typed shape the
     server loop consumes: ``peer_uid``, ``recv_exactly``, ``send_all``,
@@ -229,24 +300,29 @@ class SocketPeerConn:
 
     The peer uid is captured ONCE, at accept time, from the kernel — it is not
     caller-supplied and cannot be spoofed over the wire.
+
+    The connection also carries a TOTAL deadline (:data:`CONNECTION_BUDGET_S`), armed at
+    construction and shared by both directions, so no peer can hold the serial accept loop.
     """
 
-    def __init__(self, sock: "socket.socket") -> None:
+    def __init__(self, sock: "socket.socket", *,
+                 budget_s: float = CONNECTION_BUDGET_S) -> None:
         self._sock = sock
         self.peer_uid = read_peercred_uid(sock)
+        self._deadline = time.monotonic() + budget_s
 
     def recv_exactly(self, n: int) -> bytes:
-        chunks = []
-        remaining = n
-        while remaining > 0:
-            chunk = self._sock.recv(remaining)
-            if not chunk:
-                break  # peer closed early; caller detects the short read
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
+        return recv_exactly_bounded(
+            self._sock.recv, n,
+            deadline=self._deadline, arm_timeout=self._sock.settimeout)
 
     def send_all(self, data: bytes) -> None:
+        budget = recv_budget_s(self._deadline, time.monotonic())
+        if budget is None:
+            # The budget is spent. Writing under no timeout here would hand back, on the
+            # write side, exactly the unbounded hold the read side just refused.
+            raise FrameError("connection budget exhausted before the reply could be written")
+        self._sock.settimeout(budget)
         self._sock.sendall(data)
 
     def close(self) -> None:
@@ -995,6 +1071,21 @@ def handle_connection(
         reason = getattr(exc, "reason", None)
         if isinstance(reason, str) and reason:
             reply["reason"] = reason
+    except Exception:  # noqa: BLE001 - the fail-closed backstop (audit R1 `:626`)
+        # An explicit tuple can only promise "never raises" for the classes somebody
+        # remembered to list, and the class that was missing was reachable from the wire:
+        # ``json.loads`` raises ``RecursionError`` — a ``RuntimeError``, in none of the
+        # branches above — on a deeply nested body that fits inside the 8 KiB frame bound
+        # (``[[[[…]]]]`` nests ~4000 deep in 8000 bytes, against a default recursion limit
+        # of 1000). It escaped this function AND ``serve_forever``, so ONE well-formed-size
+        # frame from either authorized peer killed the process that issues every lease and
+        # produces every attestation. Same defect, same fix, as the isolated signer's front
+        # door — which already had this backstop, and is the twin this one is meant to match.
+        #
+        # The detail goes to the operator's stderr and NOT to the peer: an unexpected
+        # internal fault must not become an information channel.
+        traceback.print_exc(file=sys.stderr)
+        reply = {"ok": False, "error": "internal supervisor fault"}
 
     _try_write(conn, reply, frame_bound)
     return reply
@@ -1097,10 +1188,17 @@ def serve_forever(
                 evidence_request_service=evidence_request_service,
                 output_read_service=output_read_service,
             )
+        except Exception:  # noqa: BLE001 - one connection must never kill the loop
+            # Belt to ``handle_connection``'s braces (audit R1 `:626`). This loop IS the
+            # availability of every governed turn on the install: no lease is issued and no
+            # attestation is produced without it, so nothing a single peer can do may end it.
+            # Before this it had no ``except`` at all — only ``finally: conn.close()`` — so
+            # ANY escape from the handler propagated straight out of ``serve_forever``.
+            traceback.print_exc(file=sys.stderr)
         finally:
             try:
                 conn.close()
-            except OSError:
+            except Exception:  # noqa: BLE001 - a failing close must not end the loop
                 pass
 
 
@@ -1132,6 +1230,7 @@ __all__ = [
     "CompletedRun",
     "CompletionRefused",
     "complete_governed_run",
+    "CONNECTION_BUDGET_S",
     "LENGTH_PREFIX_BYTES",
     "MAX_FRAME_BYTES",
     "MAX_SIDECAR_FRAME_BYTES",
@@ -1160,6 +1259,8 @@ __all__ = [
     "dispatch",
     "handle_connection",
     "read_frame",
+    "recv_budget_s",
+    "recv_exactly_bounded",
     "serve_forever",
     "write_frame",
 ]
