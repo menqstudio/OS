@@ -81,10 +81,24 @@
 //! independently reachable and independently tested, and deleting either one is caught by that half's own
 //! named tests.
 //!
-//! ## NOT WIRED — read this before believing the loop runs
+//! ## DRIVEN IN CI, NOT WIRED IN THE PRODUCT — read this before believing either half
 //!
-//! Nothing in this tree calls [`pull_output`] in production, and the missing piece is a HOP, not a
-//! hookup. Two of the three links now exist:
+//! Since 2026-08-12 this loop HAS a caller, and it is worth being exact about which kind.
+//! `core/src/bin/ladder_output_pull.rs` is a **CI proof driver**: `engine/ci/live/run_ladder_turn.sh`
+//! builds it and runs it on a real Linux runner, where it takes the §4.6 frame the real one-shot
+//! sidecar returned for a real governed turn, strict-parses it with [`crate::governed_bridge_result`],
+//! and drives this loop over real `bridge.governed-turn-output-read.v1` round trips against the real
+//! supervisor — one fresh sidecar subprocess per chunk, from the sidecar principal, whose `SO_PEERCRED`
+//! uid the supervisor records in a hop log the driver cannot write. It drives four negative controls in
+//! the same run: a rotated token (`stream_unknown`), a foreign `receipt_id`
+//! (`stream_binding_mismatch`), one flipped bit in a served chunk ([`PullError::DigestMismatch`]) and
+//! one byte dropped from a served chunk ([`PullError::LengthMismatch`]). Before that, the supervisor
+//! half, the sidecar branch and this loop were three parts of one hop that had never been run against
+//! each other anywhere — §4.10(g)'s submit subprocess deliberately pulls nothing, and an engine test
+//! asserts no output-read protocol appears among its frames.
+//!
+//! That is a proof, not a product path. **Nothing in this tree calls [`pull_output`] in the shipped
+//! app**, and the missing piece is still a HOP rather than a hookup. Two of the three links exist:
 //!
 //!  * The pull needs an `output_stream_id`. §4.10(f) permits exactly one source — the §4.10(e)
 //!    `brops.governed-turn-result.v1` `signed` frame — and that frame now HAS a supervisor-side
@@ -117,8 +131,10 @@
 //! would drive this on the BROKER side does not exist. The only pull adapter in the tree,
 //! `ai::governed_pull_output`, is in the renderer-hosting app crate — the wrong process under §0's
 //! LOCKED terminology binding — and the synchronous broker binary cannot call an `async` `tokio`
-//! function in a crate it does not depend on. So a caller written today would still have to invent a
-//! token, which is precisely what §4.10(f) forbids.
+//! function in a crate it does not depend on. So a PRODUCTION caller written today would still have to
+//! invent a token, which is precisely what §4.10(f) forbids. (The CI driver above invents nothing: it
+//! is handed a real frame carrying a real minted token, which is why a proof was reachable when a
+//! product path was not.)
 //!
 //! A second, larger divergence sits behind that one and would survive fixing it: the broker's Linux
 //! execution reads the recorder's output straight off the local filesystem
@@ -129,8 +145,11 @@
 //! The dependency is therefore made **typed** rather than described: [`OutputStreamCapability`] cannot be
 //! built without a verified envelope and a well-formed token, so the day a §4.6 frame delivers one the
 //! compiler names every place it has to reach. `config/reachability-declarations.json` carries the
-//! matching `rust_symbols` declaration, so the reachability gate reports this as a declared gap with a
-//! written reason rather than as green.
+//! matching `rust_symbols` entry, which FLIPPED from `declared_unreachable` to `must_have_caller` on
+//! 2026-08-12 — on the gate's own instruction, since it now has a named caller. The flip is not a claim
+//! that the product uses it: what it buys is that the gate turns RED if the CI driver is ever deleted,
+//! i.e. if the one thing that has ever exercised this loop end to end goes away. The two production
+//! blockers above are recorded in that entry's prose rather than deleted with the old expectation.
 
 use crate::governed_turn_ipc::TurnReason;
 use crate::governed_verification::ReceiptEnvelope;

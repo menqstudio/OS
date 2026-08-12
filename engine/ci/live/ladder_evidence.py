@@ -366,6 +366,111 @@ def check_containment(live_root: str, attempt: str) -> dict:
     return document
 
 
+#: The §4.10(f) supervisor hop, as it appears in the hop log. Restated here for the same reason
+#: ``SIDECAR_PROTOCOLS`` is: this verifier must not depend on the module whose behaviour it checks.
+OUTPUT_READ_PROTOCOL = "brops.governed-turn-output-read.v1"
+
+
+def check_pull(paths: list, envelope: dict, hops: list, uids: dict) -> dict:
+    """Judge the §4.10(f) output PULL, from the driver's evidence and the SUPERVISOR's hop log.
+
+    The pull driver (``apps/desktop/src-tauri/core/src/bin/ladder_output_pull.rs``) records what
+    it asked and what came back. On its own that document proves nothing: it is written by the
+    process under test, and on this kit the store is readable by anyone who can traverse it, so
+    "I have the bytes and they hash correctly" is a claim a driver could make with no supervisor
+    in the picture at all.
+
+    What makes it evidence is the PAIRING. The hop log is written by the SUPERVISOR, into a file
+    no other principal can write, and every uid in it is ``conn.peer_uid`` — read from the kernel
+    with SO_PEERCRED, not a value any peer sent. So this function checks five things the driver
+    could not have fabricated:
+
+      * the supervisor actually served §4.10(f) reads, and served every one of them to the
+        SIDECAR uid — the seventh principal, not the broker and not root;
+      * it served exactly as many reads as the driver says it drove;
+      * the positive pull's ranges are ``seq`` 0..n-1, in order, as the supervisor recorded them;
+      * the digest the pull gated against is the ``output_sha256`` inside the envelope whose
+        SIGNATURE this tool verified above — never §4.10(e)'s TRANSPORT-ONLY echo of the same
+        value, which a compromised sidecar supplies both sides of;
+      * every negative control refused, and refused for the reason it names.
+
+    A set of pulls with no completed one is a RED, and so is a set with no failing one. The first
+    would prove the egress refuses everything; the second would be a check that cannot fail.
+    """
+    documents = []
+    for path in paths:
+        document = read_json(path, "no_pull_evidence")
+        require(document.get("protocol") == "brops.ladder-output-pull-evidence.v1",
+                "not_pull_evidence", "%s is not a pull-evidence document" % path)
+        require(document.get("ok") is True, "pull_expectation",
+                "the %r pull expected %r and observed %r"
+                % (document.get("mode"), document.get("expected"), document.get("observed")))
+        documents.append(document)
+
+    positives = [d for d in documents if d.get("observed") == "ok"]
+    negatives = [d for d in documents if d.get("observed") != "ok"]
+    require(len(positives) == 1, "no_pull_positive",
+            "exactly one pull must have completed; %d did" % len(positives))
+    require(bool(negatives), "no_pull_negative",
+            "a pull proof with no failing control is a check that cannot fail - the defect both "
+            "of this repository's PowerShell harnesses shipped through three audit rounds")
+    positive = positives[0]
+
+    # The gate was aimed at the SIGNED value. `envelope` is the one whose signature verified under
+    # the manifest-resolved production key a few checks above.
+    signed = positive.get("signed") or {}
+    require(signed.get("output_sha256") == envelope.get("output_sha256"), "pull_digest_provenance",
+            "the pull gated against %r; the VERIFIED envelope says %r"
+            % (signed.get("output_sha256"), envelope.get("output_sha256")))
+    require(int(signed.get("output_bytes", -1)) == int(envelope.get("output_bytes", -2)),
+            "pull_length_provenance", "the pull's expected length is not the signed one")
+    require(signed.get("receipt_id") == envelope.get("receipt_id")
+            and signed.get("execution_attempt_id") == envelope.get("execution_attempt_id"),
+            "pull_identity_provenance",
+            "the pull presented an identity that is not the signed envelope's")
+    require(positive.get("reassembled_sha256") == envelope.get("output_sha256"),
+            "pull_reassembly", "the reassembled bytes do not hash to the signed output_sha256")
+    require(int(positive.get("reassembled_bytes", -1)) == int(envelope.get("output_bytes", -2)),
+            "pull_reassembly_length", "the reassembled length is not the signed output_bytes")
+
+    # ---- the half the driver cannot write ------------------------------------------------
+    sidecar = uids.get("sidecar")
+    served = [h for h in hops
+              if isinstance(h, dict) and h.get("protocol") == OUTPUT_READ_PROTOCOL]
+    require(bool(served), "no_output_read_hops",
+            "the supervisor's hop log records no %s frame: whatever the driver reports, no range "
+            "was served through the §4.10(f) egress" % OUTPUT_READ_PROTOCOL)
+    for hop in served:
+        require(hop.get("peer_uid") == sidecar, "output_read_principal",
+                "a %s frame was served to uid %r, not the sidecar uid %r"
+                % (OUTPUT_READ_PROTOCOL, hop.get("peer_uid"), sidecar))
+    driven = sum(int(d.get("reads_driven", 0)) for d in documents)
+    require(len(served) == driven, "output_read_count",
+            "the driver drove %d reads; the supervisor served %d" % (driven, len(served)))
+
+    expected_chunks = int(positive.get("expected_chunks", 0))
+    ok_hops = [h for h in served if (h.get("detail") or {}).get("ok") is True]
+    require(len(ok_hops) >= expected_chunks, "output_read_ranges",
+            "the signed length needs %d served ranges; the supervisor served %d ok reads"
+            % (expected_chunks, len(ok_hops)))
+    seqs = [(h.get("detail") or {}).get("seq") for h in ok_hops[:expected_chunks]]
+    require(seqs == list(range(expected_chunks)), "output_read_sequence",
+            "the served seqs are %r, not 0..%d" % (seqs, expected_chunks - 1))
+
+    return {
+        "runs": [{"mode": d.get("mode"), "expected": d.get("expected"),
+                  "observed": d.get("observed"), "reads_driven": d.get("reads_driven")}
+                 for d in documents],
+        "expected_chunks": expected_chunks,
+        "reassembled_bytes": positive.get("reassembled_bytes"),
+        "reassembled_sha256": positive.get("reassembled_sha256"),
+        "output_read_frames_served": len(served),
+        "served_seqs": seqs,
+        "served_to_uid": sidecar,
+        "negatives_refused_by_name": sorted(d.get("observed") for d in negatives),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Entry
 # ---------------------------------------------------------------------------
@@ -381,6 +486,12 @@ def main() -> int:
     ap.add_argument("--uids", required=True,
                     help="JSON map of hop -> uid, as the orchestrator invoked each one")
     ap.add_argument("--bundle", required=True, help="directory to write the evidence into")
+    ap.add_argument("--pull-evidence", action="append", default=[],
+                    help="a §4.10(f) pull-evidence document written by the Rust pull driver "
+                         "(repeatable: the positive plus every negative control). Optional, "
+                         "because the NEGATIVE ladder run never gets an ok frame and so has no "
+                         "token to pull with - but when any is given, a set without exactly one "
+                         "completed pull and at least one refused control is a RED.")
     args = ap.parse_args()
 
     os.makedirs(args.bundle, exist_ok=True)
@@ -416,12 +527,18 @@ def main() -> int:
                 "the envelope names attempt %r, the ledger row %r"
                 % (envelope.get("execution_attempt_id"), ledger["execution_attempt_id"]))
         principals = check_hops(bundle["hops"], bundle["uids"])
+        # The §4.10(f) egress, judged only after the envelope it is gated against has been
+        # verified: `check_pull` compares the pull's expected digest with `envelope`, and that
+        # comparison is worth nothing until the signature over `envelope` has been checked.
+        pull = check_pull(args.pull_evidence, envelope, bundle["hops"], bundle["uids"]) \
+            if args.pull_evidence else None
         bundle.update({
             "envelope": envelope,
             "principals": principals,
             "ledger": ledger,
             "containment_evidence": containment,
             "output": output,
+            "output_pull": pull,
             "digests": {
                 "challenge_document_sha256": challenge_handle,
                 "envelope_jcs_sha256": sha(unb64u(receipt["envelope_jcs_b64"])),
@@ -448,8 +565,15 @@ def main() -> int:
         _dump(args.bundle, "receipt-envelope.json", bundle["envelope"])
 
     if verdict["ok"]:
-        print("RESULT: ladder-round-trip ok=true reason=none attempt=%s output_sha256=%s"
-              % (bundle["ledger"]["execution_attempt_id"], bundle["digests"]["output_sha256"]),
+        pull_note = "pull=not-driven"
+        if bundle.get("output_pull"):
+            pull_note = ("pull=ok chunks=%s served_to_uid=%s negatives=%s"
+                         % (bundle["output_pull"]["expected_chunks"],
+                            bundle["output_pull"]["served_to_uid"],
+                            ",".join(bundle["output_pull"]["negatives_refused_by_name"])))
+        print("RESULT: ladder-round-trip ok=true reason=none attempt=%s output_sha256=%s %s"
+              % (bundle["ledger"]["execution_attempt_id"], bundle["digests"]["output_sha256"],
+                 pull_note),
               flush=True)
         return 0
     print("RESULT: ladder-round-trip ok=false reason=%s detail=%s"

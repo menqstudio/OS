@@ -22,6 +22,16 @@
 # services, reaching the REAL privileged recorder → setuid launcher → contained executor — and it
 # RECORDS the evidence and exits non-zero unless the round trip actually completed.
 #
+# AND, since 2026-08-12, it PULLS THE OUTPUT BACK through §4.10(f). That is a second round trip and
+# a different one: §4.10(g)'s submit subprocess deliberately pulls nothing (an engine test asserts
+# no output-read protocol appears among its frames), so until now `governed_output_read.py`, the
+# sidecar's `bridge.governed-turn-output-read.v1` branch and `brops_core::governed_output_pull`
+# were three halves of one hop that had never been driven against each other anywhere. The pull is
+# driven by `target/debug/ladder_output_pull`, a driver binary in the crate that OWNS the loop —
+# `pull_output`'s API takes a `ReceiptEnvelope` and has no parameter for the expected length or
+# digest, precisely so no caller can aim the §4.6/§7.1 gate at §4.10(e)'s transport echo, and a
+# Python driver would therefore have had to re-implement both the loop and the gate.
+#
 # It provisions the SAME `/opt/brops-live` root, and it has to: the setuid launcher pins
 # `/opt/brops-live/config.json` as its attested-request path and the recorder pins
 # `/opt/brops-live/tcb/recorder-policy.json` as its steering policy, both COMPILED IN so no argv or
@@ -96,20 +106,24 @@ TARGET_DIR="${CARGO_TARGET_DIR:-$TAURI_DIR/target}/debug"
 LAUNCHER_BIN="$TARGET_DIR/brops-launcher"
 EXECUTOR_BIN="$TARGET_DIR/proof_executor"
 RECORDER_BIN="$TARGET_DIR/governed_recorder"
+# The §4.10(f) DESKTOP half. A binary in `brops-core` because that crate owns `pull_output`, the
+# chunk arithmetic and both output gates; see the header.
+PULL_BIN="$TARGET_DIR/ladder_output_pull"
 
-if [ -x "$LAUNCHER_BIN" ] && [ -x "$EXECUTOR_BIN" ] && [ -x "$RECORDER_BIN" ]; then
-  echo "== using pre-built launcher/executor/recorder =="
+if [ -x "$LAUNCHER_BIN" ] && [ -x "$EXECUTOR_BIN" ] && [ -x "$RECORDER_BIN" ] && [ -x "$PULL_BIN" ]; then
+  echo "== using pre-built launcher/executor/recorder/output-pull driver =="
 else
-  echo "== building the launcher + the governed-live crate (recorder/executor) =="
+  echo "== building the launcher + the governed-live crate (recorder/executor) + the pull driver =="
   CARGO_BIN="$(command -v cargo || true)"
   [ -n "$CARGO_BIN" ] || for u in "${SUDO_USER:-}" gevorg; do
     [ -n "$u" ] && [ -x "/home/$u/.cargo/bin/cargo" ] && { CARGO_BIN="/home/$u/.cargo/bin/cargo"; break; }
   done
   [ -n "$CARGO_BIN" ] || { echo "FAIL: cargo not found (build as the normal user first, then re-run)"; exit 1; }
   ( cd "$REPO_ROOT" && "$CARGO_BIN" build --manifest-path "$TAURI_DIR/Cargo.toml" \
-      -p brops-launcher -p brops-governed-live ) || { echo "FAIL: build"; exit 1; }
+      -p brops-launcher -p brops-governed-live \
+      -p brops-core --bin ladder_output_pull ) || { echo "FAIL: build"; exit 1; }
 fi
-for b in "$LAUNCHER_BIN" "$EXECUTOR_BIN" "$RECORDER_BIN"; do
+for b in "$LAUNCHER_BIN" "$EXECUTOR_BIN" "$RECORDER_BIN" "$PULL_BIN"; do
   [ -x "$b" ] || { echo "FAIL: missing built binary $b"; exit 1; }
 done
 
@@ -313,6 +327,12 @@ for f in submit.json submit-tampered.json document.json document-tampered.json; 
   : > "$LADDER/$f"; chown "$BROKER_USER": "$LADDER/$f"; chmod 0644 "$LADDER/$f"; done
 for f in reply.json reply-tampered.json; do
   : > "$LADDER/$f"; chown "$SIDECAR_USER": "$LADDER/$f"; chmod 0644 "$LADDER/$f"; done
+# The §4.10(f) pull driver runs as this script's own root orchestrator — it must, because it spawns
+# the sidecar with `sudo -u` and only root may. Its outputs stay root-owned in the root-owned
+# $LADDER, so no service account can write a pull-evidence document. That is the property that
+# matters here: `ladder_evidence.py` reads these files, and it must not be reading something the
+# principals under test could have authored.
+mkdir -p "$LADDER/pull"; chown 0:0 "$LADDER/pull"; chmod 0755 "$LADDER/pull"
 
 # ----- sudoers: the SUPERVISOR may spawn the recorder with ONE argument vector -------------------
 # In the §5 kit this grant belongs to the broker, because the broker drives the lifecycle and
@@ -459,10 +479,63 @@ echo
 echo "== POSITIVE: one §4.10(g) round trip, adapter -> real supervisor -> real contained execution =="
 run_turn "$LADDER/submit.json" "$LADDER/document.json" "$LADDER/reply.json" \
   || { echo "LADDER ROUND TRIP: RED — the turn could not be driven"; exit 1; }
+# ----- the §4.10(f) PULL: the egress half of the turn that just completed ----------------------
+# Five runs of ONE driver, each naming the outcome it requires. The driver compares the outcome BY
+# NAME and exits non-zero on any other, so a negative cannot be satisfied by a deployment that is
+# merely broken and the positive cannot be satisfied by a refusal.
+#
+#   positive          the real token, the real envelope, replies verbatim          -> ok
+#   unknown-stream    one character of the 43-char capability rotated              -> stream_unknown
+#   binding-mismatch  the real token with a receipt_id that is not this turn's     -> stream_binding_mismatch
+#   tampered-chunk    a compromised sidecar flips one bit of one served chunk      -> digest_mismatch
+#   truncated-chunk   a compromised sidecar drops one byte off one served chunk    -> length_mismatch
+#
+# The first two refusals are the SUPERVISOR's, by their published §4.10(f) literals. The last two
+# are the DESKTOP's §4.6/§7.1 whole-output gate against the SIGNED envelope — which is the pair
+# that matters, because §2.4 declares the sidecar compromised and the tamper is applied exactly
+# where a compromised sidecar sits.
+PULL_SIDECAR=(sudo -u "$SIDECAR_USER" env "BROPS_SUPERVISOR_SOCKET=$SOCK/supervisor.sock" \
+              python3 "$LIVE/bridge/engine_sidecar.py")
+PULL_ARGS=()
+PULL_RC=0
+run_pull() {  # <mode> <expected-outcome> [extra args...]
+  local mode="$1" expect="$2"; shift 2
+  echo "-- §4.10(f) pull: mode=$mode expect=$expect"
+  if "$PULL_BIN" --frame "$LADDER/reply.json" --evidence-out "$LADDER/pull/$mode.json" \
+       --mode "$mode" --expect "$expect" "$@" -- "${PULL_SIDECAR[@]}"; then
+    PULL_ARGS+=(--pull-evidence "$LADDER/pull/$mode.json")
+  else
+    echo "  PULL $mode: RED — it did not produce $expect"
+    PULL_RC=1
+  fi
+}
+
+echo
+echo "== §4.10(f) OUTPUT PULL: the signed bytes, chunk by chunk, back through the sidecar =="
+if [ "$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1])).get("ok") is True else "0")' \
+        "$LADDER/reply.json" 2>/dev/null || echo 0)" = "1" ]; then
+  run_pull positive         ok                              --output-out "$LADDER/pulled-output.bin"
+  run_pull unknown-stream   refused:stream_unknown
+  run_pull binding-mismatch refused:stream_binding_mismatch
+  run_pull tampered-chunk   digest_mismatch
+  run_pull truncated-chunk  length_mismatch
+else
+  # No `ok` frame means no minted capability, and §4.10(f) permits exactly one source for one.
+  # Inventing a token here is the single thing §4.10(f) says may never happen, so the pull is not
+  # driven and this run is RED for the round trip rather than green for a pull that never ran.
+  echo "  the round trip produced no ok §4.6 frame: there is no capability to pull with"
+  PULL_RC=1
+fi
+
+# ONE verifier judges both halves. `ladder_evidence.py` verifies the §4.9 signature FIRST and only
+# then compares the pull's expected digest against the envelope it just verified — so "the pull
+# gated against the signed value" is a checked fact rather than the driver's own account of itself.
+# It also pairs the driver's transcript with the SUPERVISOR's hop log, which records the
+# SO_PEERCRED uid of every served range and which the driver cannot write.
 POS_OUT=$(python3 "$PYLIVE/ladder_evidence.py" --live-root "$LIVE" \
   --submit "$LADDER/submit.json" --document "$LADDER/document.json" \
   --reply "$LADDER/reply.json" --hop-log "$LADDER/hops.jsonl" --uids "$LADDER/uids.json" \
-  --bundle "$LADDER/evidence" 2>&1) && POS_RC=0 || POS_RC=$?
+  --bundle "$LADDER/evidence" ${PULL_ARGS[@]+"${PULL_ARGS[@]}"} 2>&1) && POS_RC=0 || POS_RC=$?
 echo "$POS_OUT"
 
 # ----- NEGATIVE: the same harness, a deliberately broken input, and it MUST go RED --------------
@@ -492,6 +565,8 @@ rm -rf "$EVIDENCE_OUT"; mkdir -p "$EVIDENCE_OUT"
 cp -r "$LADDER/evidence" "$EVIDENCE_OUT/positive" 2>/dev/null || true
 cp -r "$LADDER/evidence-negative" "$EVIDENCE_OUT/negative" 2>/dev/null || true
 cp "$LADDER/hops.jsonl" "$LADDER/uids.json" "$EVIDENCE_OUT/" 2>/dev/null || true
+cp -r "$LADDER/pull" "$EVIDENCE_OUT/pull" 2>/dev/null || true
+cp "$LADDER/pulled-output.bin" "$EVIDENCE_OUT/" 2>/dev/null || true
 cp "$LADDER"/authority.log "$LADDER"/supervisor.log "$LADDER"/signer.log "$EVIDENCE_OUT/" 2>/dev/null || true
 cp "$TCB/challenge-key-registry.json" "$LADDER_CONFIG" "$EVIDENCE_OUT/" 2>/dev/null || true
 chmod -R a+rX "$EVIDENCE_OUT"
@@ -508,6 +583,17 @@ if [ "$POS_RC" = "0" ]; then
   echo "  through the real services, with the real contained execution."
 else
   echo "POSITIVE: RED — the governed round trip did not complete (fail-closed, nothing fabricated)"
+  RC=1
+fi
+
+# The §4.10(f) egress, reported separately from the round trip: a turn can complete and its output
+# still be unreachable, and one verdict covering both would hide which of the two happened.
+if [ "$PULL_RC" = "0" ]; then
+  echo "PULL: GREEN — the signed output was pulled through §4.10(f), chunk by chunk, from the"
+  echo "  supervisor through the sidecar; and four controls were refused BY NAME"
+  echo "  (stream_unknown, stream_binding_mismatch, digest_mismatch, length_mismatch)."
+else
+  echo "PULL: RED — the §4.10(f) pull did not produce the outcomes it required (see above)."
   RC=1
 fi
 

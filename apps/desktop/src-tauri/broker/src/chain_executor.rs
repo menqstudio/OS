@@ -43,8 +43,8 @@ use brops_core::governed_message_store::AcceptedOutput;
 use brops_core::production_trust::TrustState;
 use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};
 use brops_core::governed_verification::{
-    verify_and_accept, AcceptanceLedger, BrokerContext, Freshness, PinnedKeys, ReceiptEnvelope,
-    SupervisorAttestation,
+    verify_and_accept, AcceptanceLedger, BrokerContext, Freshness, OwnedReceiptEnvelope,
+    PinnedKeys, SupervisorAttestation,
 };
 use brops_core::receipt::IssuedRequest;
 
@@ -448,7 +448,14 @@ where
             .and_then(Value::as_str)
             .ok_or(TurnReason::UpstreamBlocked)?
             .to_string();
-        let env = OwnedEnvelope::from_payload(payload)?;
+        // The 23-key payload -> owned fields -> a borrowed `ReceiptEnvelope`. The mapping lives in
+        // `brops_core::governed_verification::OwnedReceiptEnvelope`, beside the type it produces: it
+        // moved there on 2026-08-12 when the §4.10(f) live pull driver needed the same 23 keys to turn
+        // a real §4.6 frame's `envelope_jcs` into the envelope `pull_output` reads its SIGNED length and
+        // digest off. Two deserializers for one signed payload are two things that can drift, and drift
+        // in a deserializer stays invisible until the day the two disagree about which key holds the
+        // output digest.
+        let env = OwnedReceiptEnvelope::from_payload(payload)?;
 
         // (7) FINAL ACCEPTANCE — the broker-owned predicate over its OWN pinned keys + trusted Expected. The
         //     envelope + its signature came from the wire; EVERY trust anchor (keys, request binding) is the
@@ -597,109 +604,6 @@ pub fn verify_resolved_matches_lease(
         return Err(TurnReason::UpstreamBlocked);
     }
     Ok(())
-}
-
-/// The isolated-signer's flat 23-key `brops.governed-receipt-envelope.v1` payload parsed into OWNED fields
-/// so the borrowed [`ReceiptEnvelope`] can point at it for the verify call. A missing/mistyped key fails
-/// closed BEFORE any signature check (verify_and_accept re-checks the identity fields regardless).
-struct OwnedEnvelope {
-    artifact_type: String,
-    key_id: String,
-    receipt_id: String,
-    run_id: String,
-    execution_attempt_id: String,
-    task_id: String,
-    workspace_id: String,
-    install_id: String,
-    request_nonce: String,
-    request_sha256: String,
-    record_handle: String,
-    lease_handle: String,
-    execution_receipt_handle: String,
-    output_sha256: String,
-    evidence_final_event_hash: String,
-    supervisor_attestation_key_id: String,
-    attestation_evidence_sha256: String,
-    output_bytes: u64,
-    challenge_accepted_at_ms: i64,
-    completed_at_ms: i64,
-    evidence_event_count: i64,
-    evidence_last_sequence: i64,
-    evidence_head_sequence: i64,
-}
-
-impl OwnedEnvelope {
-    fn from_payload(p: &Value) -> Result<Self, TurnReason> {
-        let s = |k: &str| {
-            p.get(k)
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .ok_or(TurnReason::UpstreamBlocked)
-        };
-        let i = |k: &str| {
-            p.get(k)
-                .and_then(Value::as_i64)
-                .ok_or(TurnReason::UpstreamBlocked)
-        };
-        let u = |k: &str| {
-            p.get(k)
-                .and_then(Value::as_u64)
-                .ok_or(TurnReason::UpstreamBlocked)
-        };
-        Ok(OwnedEnvelope {
-            artifact_type: s("artifact_type")?,
-            key_id: s("key_id")?,
-            receipt_id: s("receipt_id")?,
-            run_id: s("run_id")?,
-            execution_attempt_id: s("execution_attempt_id")?,
-            task_id: s("task_id")?,
-            workspace_id: s("workspace_id")?,
-            install_id: s("install_id")?,
-            request_nonce: s("request_nonce")?,
-            request_sha256: s("request_sha256")?,
-            record_handle: s("record_handle")?,
-            lease_handle: s("lease_handle")?,
-            execution_receipt_handle: s("execution_receipt_handle")?,
-            output_sha256: s("output_sha256")?,
-            evidence_final_event_hash: s("evidence_final_event_hash")?,
-            supervisor_attestation_key_id: s("supervisor_attestation_key_id")?,
-            attestation_evidence_sha256: s("attestation_evidence_sha256")?,
-            output_bytes: u("output_bytes")?,
-            challenge_accepted_at_ms: i("challenge_accepted_at_ms")?,
-            completed_at_ms: i("completed_at_ms")?,
-            evidence_event_count: i("evidence_event_count")?,
-            evidence_last_sequence: i("evidence_last_sequence")?,
-            evidence_head_sequence: i("evidence_head_sequence")?,
-        })
-    }
-
-    fn as_receipt_envelope(&self) -> ReceiptEnvelope<'_> {
-        ReceiptEnvelope {
-            artifact_type: &self.artifact_type,
-            key_id: &self.key_id,
-            receipt_id: &self.receipt_id,
-            run_id: &self.run_id,
-            execution_attempt_id: &self.execution_attempt_id,
-            task_id: &self.task_id,
-            workspace_id: &self.workspace_id,
-            install_id: &self.install_id,
-            request_nonce: &self.request_nonce,
-            request_sha256: &self.request_sha256,
-            record_handle: &self.record_handle,
-            lease_handle: &self.lease_handle,
-            execution_receipt_handle: &self.execution_receipt_handle,
-            output_sha256: &self.output_sha256,
-            output_bytes: self.output_bytes,
-            challenge_accepted_at_ms: self.challenge_accepted_at_ms,
-            completed_at_ms: self.completed_at_ms,
-            evidence_final_event_hash: &self.evidence_final_event_hash,
-            evidence_event_count: self.evidence_event_count,
-            evidence_last_sequence: self.evidence_last_sequence,
-            evidence_head_sequence: self.evidence_head_sequence,
-            supervisor_attestation_key_id: &self.supervisor_attestation_key_id,
-            attestation_evidence_sha256: &self.attestation_evidence_sha256,
-        }
-    }
 }
 
 /// The real Linux sub-chain: drives the AF_UNIX challenge-authority / supervisor / isolated-signer hops via

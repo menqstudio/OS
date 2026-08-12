@@ -143,9 +143,19 @@
 //! The dependency is made **typed** rather than described: a `signed` frame's capability token is only
 //! useful through `governed_output_pull::OutputPull::start`, which cannot be constructed without a
 //! verified [`ReceiptEnvelope`], so the day a §4.10(g) submit delivers one the compiler names every place
-//! it has to reach. `config/reachability-declarations.json` carries the matching `rust_symbols`
-//! declaration, so the reachability gate reports this as a declared gap with a written reason rather than
-//! as green.
+//! it has to reach.
+//!
+//! **Updated 2026-08-12 — this parser now runs over frames a real re-framer produced.** The §4.10(f) CI
+//! pull driver (`core/src/bin/ladder_output_pull.rs`) reads the ladder's §4.6 frame with
+//! [`BridgeTurnResult::parse`] and checks its echoes with [`SignedTurnResult::check_echoes`] before
+//! driving the pull, on a real Linux runner, against the real supervisor. Until then both had been
+//! exercised only by fixtures this crate wrote itself. Their `rust_symbols` declarations were DELETED in
+//! that change rather than flipped to `must_have_caller`, because neither call is one the reachability
+//! gate can see — `parse` is reached as the inherent `BridgeTurnResult::parse(` and `check_echoes` as
+//! the method `.check_echoes(`, while the gate matches `module::name(`. A declaration that had become
+//! false while the gate stayed green is the one failure that file says outright it cannot catch, so the
+//! honest move was to remove it. The CI driver is still a PROOF and not a product path: §4.6 is the
+//! reply to a §4.10(g) submit, and nothing in the shipped app sends one.
 
 use crate::governed_prepare::MAX_ID_LEN;
 use crate::governed_turn_ipc::TurnReason;

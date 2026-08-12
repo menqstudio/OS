@@ -144,8 +144,13 @@ jobs:
       # recording the evidence, and exiting non-zero unless the round trip completed.
       - name: Install engine crypto + schema dependencies
         run: pip install --require-hashes -r engine/requirements-ci.txt
-      - name: Build the launcher + the governed-live crate (recorder/executor)
-        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml -p brops-launcher -p brops-governed-live
+      # `ladder_output_pull` is the §4.10(f) DESKTOP half: it lives in `brops-core`, the crate that
+      # owns `pull_output`, the chunk arithmetic and the §4.6/§7.1 output gate. It is built here
+      # rather than only inside the script for the same reason the other three are — a compile
+      # error should fail as a build step, not as a mid-run "FAIL: build" after root has already
+      # provisioned /opt/brops-live.
+      - name: Build the launcher + the governed-live crate (recorder/executor) + the §4.10(f) pull driver
+        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml -p brops-launcher -p brops-governed-live -p brops-core --bin ladder_output_pull
       # SEVEN accounts, not six. §2.6 requires the broker and the sidecar to be pairwise-distinct
       # principals, and `governed_supervisor_server.handle_connection` refuses outright when the
       # two uids are equal — so on the six-account kit every open/staging/evidence/read gate,
@@ -175,7 +180,15 @@ jobs:
       # launcher exited 0. The script ALSO drives the same verifier, in the same mode, against a
       # deliberately broken input and requires it to go RED with `digest_mismatch` — so the
       # failing branch is exercised on every run rather than reasoned about.
-      - name: Drive ONE §4.10(g) round trip through the real ladder
+      #
+      # Since 2026-08-12 the same run also PULLS THE OUTPUT BACK through §4.10(f) — the egress
+      # half, which §4.10(g)'s submit subprocess deliberately never touches — and requires four
+      # negative controls to be refused BY NAME: `stream_unknown` and `stream_binding_mismatch`
+      # from the supervisor, and `digest_mismatch` / `length_mismatch` from the desktop's
+      # §4.6/§7.1 whole-output gate against the SIGNED envelope. `ladder_evidence.py` then pairs
+      # the driver's transcript with the supervisor's own hop log, so "the bytes came through the
+      # egress" rests on SO_PEERCRED uids the driver cannot write rather than on its own account.
+      - name: Drive ONE §4.10(g) round trip + the §4.10(f) output pull through the real ladder
         run: sudo -E env "PATH=$PATH" "LADDER_EVIDENCE_OUT=$RUNNER_TEMP/ladder-evidence" bash engine/ci/live/run_ladder_turn.sh
       # Uploaded on failure too: a RED run's evidence bundle is the thing worth reading, and a
       # verdict nobody can inspect is a claim rather than a proof.

@@ -8,6 +8,74 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The pull has a driver, and the token was already in the frame (2026-08-12)
+
+§4.10(f)'s three pieces — the supervisor's read service, the sidecar's branch and `brops-core`'s pull loop —
+were all built and unit-tested, and **had never been driven against each other**. Now they are, by a driver
+in the crate that owns the loop.
+
+**The first finding was that nothing about the protocol needed changing.** The ladder already mints the
+token: `run_ladder_supervisor.py` hands **one** `OutputReadService` instance to both the acceptance driver
+and the front door, so `complete-run` measures the output and mints before the §4.10(e) summary returns.
+And `ladder_evidence.check_frame` already refused a frame without a truthy `output_stream_id` — so run
+31606043144's `ok=true` is itself proof the 43-character capability was in the frame it recorded. This was a
+**driver** problem, not a protocol problem, and establishing that first is why nothing was invented.
+
+**The driver is Rust, deliberately.** `pull_output` takes a `ReceiptEnvelope` and has **no** length or
+digest parameter — that is the design that stops any caller aiming the §4.6/§7.1 gate at §4.10(e)'s
+transport echo. A Python driver would have had to re-implement the loop *and* the gate: an eighth instance
+of one contract with two implementations, in the same week the pattern was named.
+
+**And it removed a seventh instance on the way.** `broker/src/chain_executor.rs` held a private
+`OwnedEnvelope` — a second 23-key deserializer for the §4.9 envelope. It is now
+`governed_verification::OwnedReceiptEnvelope`, and the broker uses it. One deserializer, not two.
+
+**Five modes, four of them negatives**, each refused **by name**: `unknown-stream`, `binding-mismatch`,
+`tampered-chunk`, `truncated-chunk`. Plus a **sign-flip control** — the positive run required to report
+`digest_mismatch`, which correctly exits 1. A proof that cannot fail is the defect both of this
+repository's PowerShell harnesses had, through three audit rounds.
+
+**The evidence is cross-checked against something the driver cannot write.** `check_pull` pairs the
+driver's own transcript with the **supervisor's** hop log — the `SO_PEERCRED` uids — and requires the
+pull's expected digest to equal the envelope whose signature it *just verified*. It refuses outright
+without the hop log, because that log is the only part of the record the driver does not author. Related
+fix: the hop logger had been recording `{status: null, reason: null}` for every §4.10(f) frame, since it
+only knew the §4.10(a0)/(d) shape; it now records `seq`, `ok`, `eof` and the refusal reason — and never
+`bytes_b64`.
+
+**Two caveats stated rather than discovered later.** The live pull will be **single-chunk**: the executor's
+output is a fixed 322 bytes, so `seq` never exceeds 0 on the runner. Locally, forcing a 400000-byte output
+gave **3 reads**, reassembled and digest-matched, so the striding loop is proven — just not by CI. And the
+driver runs as the script's **root orchestrator**, because it must `sudo -u` the sidecar; it therefore
+proves nothing about who may read the store, which on that kit is world-readable. That the bytes came
+through the egress rests **entirely** on the supervisor's hop log, which is exactly why `check_pull`
+refuses without it.
+
+**The declarations moved with the code.** `pull_output` flipped to `must_have_caller` — verified to go RED
+if the driver is deleted — and `governed_bridge_result::parse` and `::check_echoes` were **hand-deleted**,
+because the driver calls both and neither call is a form the gate can see (`BridgeTurnResult::parse(`,
+`.check_echoes(`). Left alone they would have been stale-but-green, which is the failure mode that gate
+exists to prevent. The `$comment` records that the flip does **not** mean the product is wired.
+
+**21 mutants killed, zero survivors** — after a first pass of 18/3 whose three survivors were each closed:
+two were real test gaps (three token-rotation arms never reached, one of them a mutant emitting `=` that
+escapes the base64url alphabet; and a hop-log fixture reusing one `seq` for request and reply, hiding a
+served-versus-asked mutant), and the third was an equivalent mutant, so the redundant guard it exercised
+was **deleted** rather than shipped as a check protecting nothing.
+
+**What can and cannot be ticked.** Once the ladder job is green, *Slice 3 — the §4.10(f) chunked output
+pull* is honestly done: driven end to end on a real runner, gated against the signed envelope, with four
+controls refused by name. *Governed output delivery through the wall* **stays open**, without
+qualification: this is a CI proof, not a product path. The shipped broker still reads the recorder's output
+with `std::fs::read(&report_path)` and never touches this egress, and `governed_turn_submit_prepared`
+still has no caller. Reconciling those two architectures is the Architect's call, and both blockers are
+recorded in the declaration rather than dissolved by this change.
+
+Engine **1979 OK (43 skipped)** from 1953, `brops-core --lib` 442, `brops-broker` 36 + 3, bridge 210,
+tools 419; reachability GREEN, `bash -n` OK. No gate moved. **No passing Linux run is claimed** — CI has
+not yet run this.
+
+
 ### Slice 2 is ticked, and the box says what it does not claim (2026-08-12)
 
 The ladder ran **green on a real Linux runner**, both halves, on the current head. Verbatim from run

@@ -322,10 +322,44 @@ class HopLogged:
     def handle(self, request: Any, **kwargs: Any) -> Any:
         protocol = request.get("protocol") if isinstance(request, Mapping) else None
         reply = self._inner.handle(request, **kwargs)
-        status = reply.get("status") if isinstance(reply, Mapping) else None
-        reason = reply.get("reason") if isinstance(reply, Mapping) else None
-        self._log(protocol, kwargs.get("peer_uid"), {"status": status, "reason": reason})
+        detail = {
+            "status": reply.get("status") if isinstance(reply, Mapping) else None,
+            "reason": reply.get("reason") if isinstance(reply, Mapping) else None,
+        }
+        detail.update(self._read_detail(request, reply))
+        self._log(protocol, kwargs.get("peer_uid"), detail)
         return reply
+
+    @staticmethod
+    def _read_detail(request: Any, reply: Any) -> dict:
+        """The §4.10(f) fields worth recording, and only those.
+
+        §4.10(a0)/(a)(b)(c)/(d) answer with `{status, reason}`; §4.10(f) answers with
+        `{ok, seq, error}` and carries no `status` at all, so before this the hop log recorded
+        two nulls for every served range — the uid was there and WHICH range it served was not.
+        "record every chunk's seq and the uid that served it" needs both halves, and only this
+        side can supply the second: `peer_uid` is what the kernel reported over SO_PEERCRED, and
+        the desktop cannot write this file.
+
+        `bytes_b64` is deliberately absent. The hop log is evidence about WHO was served WHICH
+        range, not a second copy of the output — and a 245760-character field per line would
+        make the one thing it is for unreadable.
+        """
+        if not isinstance(request, Mapping) or not isinstance(reply, Mapping):
+            return {}
+        if request.get("protocol") != gor.OUTPUT_READ_PROTOCOL:
+            return {}
+        error = reply.get("error")
+        return {
+            "requested_seq": request.get("seq"),
+            "requested_output_stream_id": request.get("output_stream_id"),
+            "ok": reply.get("ok"),
+            "seq": reply.get("seq"),
+            "eof": reply.get("eof"),
+            "chunk_bytes_b64_len": len(reply["bytes_b64"])
+            if isinstance(reply.get("bytes_b64"), str) else None,
+            "refusal_reason": error.get("reason") if isinstance(error, Mapping) else None,
+        }
 
     def __getattr__(self, name: str) -> Any:
         # `measure_output` / `mint_for_completion` on the OutputReadService reach the real

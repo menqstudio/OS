@@ -180,6 +180,127 @@ impl ReceiptEnvelope<'_> {
     }
 }
 
+/// The same 23-key §4.9 payload, OWNED — parsed once out of a wire document so a borrowed
+/// [`ReceiptEnvelope`] can point at it.
+///
+/// It lives here rather than beside its caller because there is now more than one caller, and the
+/// mapping from the isolated signer's 23 JSON keys onto the 23 struct fields is a CONTRACT: a second
+/// copy is a second thing that can drift from the payload the signer actually emits, and drift in a
+/// deserializer is invisible until the day the two disagree about which field the digest lives in.
+/// `broker/src/chain_executor.rs` held the only copy until 2026-08-12, when the §4.10(f) live pull
+/// driver (`core/src/bin/ladder_output_pull.rs`) needed the same mapping to turn a real §4.6 frame's
+/// `envelope_jcs` into the envelope `governed_output_pull::pull_output` reads its signed length and
+/// digest off.
+///
+/// It parses and it does NOT verify. A `ReceiptEnvelope` built from this is exactly as trustworthy as
+/// the bytes it came from — which is why every gate that matters takes the envelope only after
+/// [`verify_and_accept`] has checked the signature over those same bytes.
+#[derive(Debug, Clone)]
+pub struct OwnedReceiptEnvelope {
+    artifact_type: String,
+    key_id: String,
+    receipt_id: String,
+    run_id: String,
+    execution_attempt_id: String,
+    task_id: String,
+    workspace_id: String,
+    install_id: String,
+    request_nonce: String,
+    request_sha256: String,
+    record_handle: String,
+    lease_handle: String,
+    execution_receipt_handle: String,
+    output_sha256: String,
+    evidence_final_event_hash: String,
+    supervisor_attestation_key_id: String,
+    attestation_evidence_sha256: String,
+    output_bytes: u64,
+    challenge_accepted_at_ms: i64,
+    completed_at_ms: i64,
+    evidence_event_count: i64,
+    evidence_last_sequence: i64,
+    evidence_head_sequence: i64,
+}
+
+impl OwnedReceiptEnvelope {
+    /// Strict-parse the flat 23-key payload. A missing or mistyped key fails closed BEFORE any
+    /// signature check — `verify_and_accept` re-checks the identity fields regardless.
+    pub fn from_payload(p: &Value) -> Result<Self, TurnReason> {
+        let s = |k: &str| {
+            p.get(k)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or(TurnReason::UpstreamBlocked)
+        };
+        let i = |k: &str| p.get(k).and_then(Value::as_i64).ok_or(TurnReason::UpstreamBlocked);
+        let u = |k: &str| p.get(k).and_then(Value::as_u64).ok_or(TurnReason::UpstreamBlocked);
+        Ok(OwnedReceiptEnvelope {
+            artifact_type: s("artifact_type")?,
+            key_id: s("key_id")?,
+            receipt_id: s("receipt_id")?,
+            run_id: s("run_id")?,
+            execution_attempt_id: s("execution_attempt_id")?,
+            task_id: s("task_id")?,
+            workspace_id: s("workspace_id")?,
+            install_id: s("install_id")?,
+            request_nonce: s("request_nonce")?,
+            request_sha256: s("request_sha256")?,
+            record_handle: s("record_handle")?,
+            lease_handle: s("lease_handle")?,
+            execution_receipt_handle: s("execution_receipt_handle")?,
+            output_sha256: s("output_sha256")?,
+            evidence_final_event_hash: s("evidence_final_event_hash")?,
+            supervisor_attestation_key_id: s("supervisor_attestation_key_id")?,
+            attestation_evidence_sha256: s("attestation_evidence_sha256")?,
+            output_bytes: u("output_bytes")?,
+            challenge_accepted_at_ms: i("challenge_accepted_at_ms")?,
+            completed_at_ms: i("completed_at_ms")?,
+            evidence_event_count: i("evidence_event_count")?,
+            evidence_last_sequence: i("evidence_last_sequence")?,
+            evidence_head_sequence: i("evidence_head_sequence")?,
+        })
+    }
+
+    /// Borrow it as the verification input.
+    pub fn as_receipt_envelope(&self) -> ReceiptEnvelope<'_> {
+        ReceiptEnvelope {
+            artifact_type: &self.artifact_type,
+            key_id: &self.key_id,
+            receipt_id: &self.receipt_id,
+            run_id: &self.run_id,
+            execution_attempt_id: &self.execution_attempt_id,
+            task_id: &self.task_id,
+            workspace_id: &self.workspace_id,
+            install_id: &self.install_id,
+            request_nonce: &self.request_nonce,
+            request_sha256: &self.request_sha256,
+            record_handle: &self.record_handle,
+            lease_handle: &self.lease_handle,
+            execution_receipt_handle: &self.execution_receipt_handle,
+            output_sha256: &self.output_sha256,
+            output_bytes: self.output_bytes,
+            challenge_accepted_at_ms: self.challenge_accepted_at_ms,
+            completed_at_ms: self.completed_at_ms,
+            evidence_final_event_hash: &self.evidence_final_event_hash,
+            evidence_event_count: self.evidence_event_count,
+            evidence_last_sequence: self.evidence_last_sequence,
+            evidence_head_sequence: self.evidence_head_sequence,
+            supervisor_attestation_key_id: &self.supervisor_attestation_key_id,
+            attestation_evidence_sha256: &self.attestation_evidence_sha256,
+        }
+    }
+
+    /// The `receipt_id` the isolated signer bound into the payload.
+    ///
+    /// Exposed for ONE purpose: the §4.10(f) live pull driver's `binding-mismatch` negative control has
+    /// to present a receipt id that is NOT this turn's, and it must build that value from the real one
+    /// so the frame it sends is well-formed in every other respect. Nothing gates on it — the gate is
+    /// server-side, in `governed_output_read.gate_output_read`, which compares the row's three-tuple.
+    pub fn receipt_id(&self) -> &str {
+        &self.receipt_id
+    }
+}
+
 /// The supervisor attestation (§4.6): the exact `JCS(governed-sign-request evidence)` bytes the supervisor
 /// signed, plus its detached Ed25519 signature (base64url). The broker re-verifies the signature under the
 /// pinned attestation key AND checks `SHA256(evidence_jcs) == envelope.attestation_evidence_sha256`.
