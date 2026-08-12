@@ -224,19 +224,35 @@ chown 0:0 "$TCB/root-anchor.json"; chmod 0644 "$TCB/root-anchor.json"
 # these modes — that is exactly why they cost nothing to get right.
 #
 # Each directory is now group-owned by the set of principals that legitimately writes it:
-#   store  — supervisor (publishes the record/lease/execution-receipt of each run) + broker (the
+#   store  — supervisor (publishes the record/lease/execution-receipt of each run) + RECORDER (the
 #            content-addressed output and containment blobs). World-READABLE so the signer, on its
 #            own uid, can still read blobs by handle.
 #   report — recorder (writes the captured reply + containment report) + broker (reads and clears
 #            them). No world access at all: these bytes are the governed reply itself.
 #   sock   — every service that binds a socket, plus the broker that connects.
 # setgid (2) so files created inside inherit the group instead of the creator's primary group.
+#
+# The BROKER is deliberately not in `brops-store` (rev-30 §2.3: "`sidecar`, `executor`, and
+# `desktop` are in NEITHER `brops-store` nor any owner", and §0 binds "desktop" to this broker
+# service). It used to be, because chain_executor.rs wrote the output and containment blobs into
+# the store itself — the recorder's §2.3 publication duty ("`store/rec/` … recorder writes: output,
+# containment") performed by the party the store exists to constrain, inside the directory the
+# isolated signer treats as authoritative. The recorder now publishes both, so the broker needs no
+# write here and nothing else it does needs this membership: it reads its own report directory, its
+# own state directory and the world-readable config, and it never reads a store blob (the request
+# digests it resolves come from `resolved.*` in the config, not from hashing store inputs).
+#
+# What this membership swap buys is exactly the WRITE. The store stays `2775` with `other` `r-x`, so
+# the broker uid can still read and list it; §2.3's "no read/write/list" for `desktop` needs the
+# `sup/`+`rec/` namespaces at `2750`, which in turn needs the signer moved into `brops-store` and the
+# signer's `<store>/<handle>` resolution taught about two directories. That is a topology change, not
+# this one.
 add_group() {  # <group> <members...>
   local g="$1"; shift
   getent group "$g" >/dev/null || groupadd --system "$g" || return 1
   for m in "$@"; do usermod -aG "$g" "$m" || return 1; done
 }
-add_group brops-store  "$SUPERVISOR_USER" "$BROKER_USER"   || { echo "FAIL: brops-store group";  exit 1; }
+add_group brops-store  "$SUPERVISOR_USER" "$RECORDER_USER" || { echo "FAIL: brops-store group";  exit 1; }
 add_group brops-report "$RECORDER_USER"   "$BROKER_USER"   || { echo "FAIL: brops-report group"; exit 1; }
 add_group brops-ipc    "$CHALLENGE_USER" "$SUPERVISOR_USER" "$SIGNER_USER" "$BROKER_USER" \
   || { echo "FAIL: brops-ipc group"; exit 1; }

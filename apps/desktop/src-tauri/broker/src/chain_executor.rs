@@ -800,8 +800,12 @@ pub mod linux {
         pub lease_file: String,
         /// The launcher's third argv token (cgroup path).
         pub cgroup_arg: String,
-        /// The content-addressed protected store the isolated signer reads (`<store_dir>/<sha256hex>`).
-        pub store_dir: String,
+        // The protected store's path is deliberately ABSENT here (rev-30 §2.3). The broker neither
+        // publishes into the isolated signer's store nor reads it: `store/rec/` is the RECORDER's
+        // namespace ("recorder writes: output, containment") and `desktop` — this service — is "in
+        // NEITHER `brops-store` nor any owner". The recorder publishes both blobs itself, addressed
+        // under the path in its OWN root-owned policy, so there is nothing here for a caller to steer
+        // and no field a later change can quietly start writing through.
         /// A world-writable staging dir for the recorder's `--out` report (owned by the recorder uid, read by
         /// the broker uid). Trust for the bytes is the isolated-signer envelope, not this path.
         pub report_dir: String,
@@ -825,8 +829,9 @@ pub mod linux {
     }
 
     /// The REAL privileged execution (§6/§2.7): it delegates the recorder → setuid launcher → executor spawn
-    /// to the recorder identity, content-addresses the executor's exact output into the signer's protected
-    /// store, then drives the supervisor `attest-run` to obtain the `brops.run-attestation.v1` over the run
+    /// to the recorder identity — which publishes the output + containment blobs into the protected store
+    /// ITSELF (§2.3) — content-addresses the bytes it captured, then drives the supervisor `attest-run`
+    /// to obtain the `brops.run-attestation.v1` over the run
     /// evidence. It returns the output bytes + the `sign-request` the isolated signer strict-validates + the
     /// EXACT attested evidence JCS + the supervisor's detached signature. Fail-closed on ANY launcher/executor
     /// refusal, missing output, or supervisor refusal — it never fabricates output or an attestation.
@@ -965,39 +970,45 @@ pub mod linux {
                 return Err(TurnReason::UpstreamBlocked);
             }
 
-            // (2) Content-address the exact output into the signer's protected store (`<store>/<sha256hex>`),
-            //     so the isolated signer RE-DERIVES output_sha256/output_bytes from the bytes THIS run
-            //     produced — never a caller-supplied hash.
+            // (2) NAME what this run produced — do not publish it.
+            //
+            //     This step used to `std::fs::write` the output blob into the isolated signer's
+            //     protected store and `chmod 0644` it, and the same again for the containment report.
+            //     That is the RECORDER's §2.3 publication duty ("`store/rec/` … recorder writes:
+            //     output, containment") performed by the party the store exists to constrain, inside
+            //     the directory the signer treats as authoritative. rev-30 §2.3 also puts `desktop`
+            //     — this broker service — in "NEITHER `brops-store` nor any owner". The recorder now
+            //     publishes both blobs from its own uid, addressed under the store path in its
+            //     ROOT-OWNED policy, so the broker cannot choose where a blob lands and no longer
+            //     holds a path into the store at all.
+            //
+            //     What remains here is content-ADDRESSING the bytes the broker legitimately holds:
+            //     `complete-run` must name what was produced, and the final acceptance length- and
+            //     digest-gates these exact bytes against the signed envelope. Naming is not
+            //     authority. The supervisor refuses a completion whose `output_handle` disagrees with
+            //     the recorder's own evidence chain, and the isolated signer re-derives
+            //     `output_sha256`/`output_bytes` — and resolves the containment artifact — by READING
+            //     the store, so a handle that addresses nothing yields no envelope and the turn Blocks.
+            //
+            //     There is deliberately NO fallback write. A recorder that cannot publish exits
+            //     non-zero and is caught by the `status.success()` gate above; a recorder that
+            //     published nothing leaves the signer with an unresolvable handle. A "write it just in
+            //     case" arm would put the violation straight back while making the turn look governed,
+            //     which is worse than not having moved the duty at all.
             let output_handle = sha256_hex(&output);
-            let output_blob = format!("{}/{}", cfg.store_dir, output_handle);
-            std::fs::write(&output_blob, &output).map_err(|_| TurnReason::UpstreamBlocked)?;
-            // The isolated signer (a DIFFERENT uid) reads this blob by handle; make it group/other-readable
-            // regardless of the broker's umask. Integrity is the content address, not the mode.
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&output_blob, std::fs::Permissions::from_mode(0o644));
-            }
 
-            // (2b) F-02: content-address the recorder's CONTAINMENT REPORT for this run. Its absence
-            //      is a refusal, not a fallback — a turn whose containment cannot be evidenced must
-            //      not be attested, and the isolated signer's §1.5 containment gate would otherwise
-            //      be satisfied by a constant the provisioner wrote once.
+            // (2b) F-02: the recorder's CONTAINMENT REPORT for this run. Its absence is a refusal, not
+            //      a fallback — a turn whose containment cannot be evidenced must not be attested, and
+            //      the isolated signer's §1.5 containment gate would otherwise be satisfied by a
+            //      constant the provisioner wrote once. Read from the shared REPORT directory
+            //      (group `brops-report`, which the recorder writes and the broker reads), never from
+            //      the store.
             let containment =
                 std::fs::read(&containment_path).map_err(|_| TurnReason::UpstreamBlocked)?;
             if containment.is_empty() {
                 return Err(TurnReason::UpstreamBlocked);
             }
             let containment_handle = sha256_hex(&containment);
-            let containment_blob = format!("{}/{}", cfg.store_dir, containment_handle);
-            std::fs::write(&containment_blob, &containment)
-                .map_err(|_| TurnReason::UpstreamBlocked)?;
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    &containment_blob,
-                    std::fs::Permissions::from_mode(0o644),
-                );
-            }
 
             // (3) `complete-run` — report ONLY what this run actually produced, once. Every id,
             //     nonce, identity and acceptance timestamp is deliberately absent: the supervisor
@@ -1889,5 +1900,84 @@ mod tests {
 
     fn c_count(c: &Connection) -> i64 {
         c.query_row("SELECT COUNT(*) FROM governed_messages", [], |x| x.get(0)).unwrap()
+    }
+
+    // =============================================================================================
+    // rev-30 §2.3 — the broker is not a writer of the isolated signer's protected store
+    // =============================================================================================
+    //
+    // The live privileged execution lives in `mod linux`, which does not compile on a non-Linux
+    // host, so NO behavioural test on a Windows or macOS box can witness what that module does.
+    // These two can, because they read the source rather than run it. That is a real limitation and
+    // it is why they assert the ABSENCE of a capability rather than the presence of a check: a check
+    // that the broker "does not write the wrong thing" would be unfalsifiable here, while "the
+    // broker holds no path into the store" is decidable from the text.
+
+    /// The production half of this file, with `//` line comments removed.
+    ///
+    /// Both assertions below are about what the CODE does. Without this, either of them could be
+    /// satisfied — or broken — by prose: the comment that explains why the store write was removed
+    /// necessarily names the thing it removed. The test module itself is excluded for the same
+    /// reason (it names both tokens in its own failure messages).
+    fn broker_production_code() -> String {
+        let source = include_str!("chain_executor.rs");
+        let production = source
+            .split_once("#[cfg(test)]")
+            .expect("chain_executor.rs must still delimit its test module with #[cfg(test)]")
+            .0;
+        let code: String =
+            production.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        // A stripper that ate the code would make every assertion below vacuously true — the exact
+        // shape of "a check that cannot fail". Anchor it on two things the production half must
+        // always contain.
+        assert!(code.contains("fn execute("), "comment stripping removed the execution path itself");
+        assert!(
+            code.contains("recorder_store_dir"),
+            "comment stripping removed the recorder's store-INPUT directory"
+        );
+        code
+    }
+
+    /// rev-30 §2.3 gives `store/rec/` to the RECORDER ("recorder writes: output, containment") and
+    /// puts `desktop` — the broker service, per §0's locked terminology — in "NEITHER `brops-store`
+    /// nor any owner". `LinuxGovernedExecution` used to `std::fs::write` the output blob and the
+    /// containment report into `ExecutionConfig`'s protected-store path and `chmod 0644` them: the
+    /// recorder's publication duty, performed by the party the store exists to constrain, inside the
+    /// directory the isolated signer treats as authoritative.
+    ///
+    /// The fix is structural rather than behavioural — the broker no longer holds a path into the
+    /// store at all — so this asserts the absence of that path. The recorder's read-only INPUT
+    /// directory (fd 3/4/5) is a different thing and must stay.
+    #[test]
+    fn the_broker_holds_no_path_into_the_protected_store() {
+        let code = broker_production_code();
+        assert_eq!(
+            code.matches("store_dir").count(),
+            code.matches("recorder_store_dir").count(),
+            "the broker's execution config names a protected-store directory that is not the \
+             recorder's read-only input directory. rev-30 §2.3 puts this service in neither \
+             `brops-store` nor any owner; publishing the output and containment blobs is the \
+             RECORDER's duty (governed_recorder.rs::publish_store_blob) and the broker must not \
+             hold a path it could write through."
+        );
+    }
+
+    /// The second half of the same property, and the one a "fallback" would break first: the
+    /// governed execution writes NO file. It reads the recorder's report and containment out of the
+    /// shared `brops-report` directory and content-addresses them; a `write` reintroduced anywhere
+    /// on this path — even to a different directory, even guarded by "only if the recorder did not"
+    /// — is the violation coming back while the deployment looks fixed.
+    #[test]
+    fn the_governed_execution_writes_no_file_of_its_own() {
+        let code = broker_production_code();
+        for forbidden in ["fs::write", "set_permissions", "File::create", "OpenOptions"] {
+            assert_eq!(
+                code.matches(forbidden).count(),
+                0,
+                "the broker's governed execution calls `{forbidden}`. It publishes nothing: the \
+                 recorder writes the report, the containment evidence and both store blobs, and a \
+                 turn whose artifacts did not appear must Block, never be written into existence."
+            );
+        }
     }
 }

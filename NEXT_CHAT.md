@@ -8,6 +8,77 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The broker is out of the store, and the path out was deleted (2026-08-12)
+
+`chain_executor.rs` no longer writes the output and containment blobs into the isolated signer's protected
+store, and **`ExecutionConfig` no longer carries the store path at all**. Removing the field rather than
+only the call is the point: there is no path left to write through. The recorder publishes both itself
+(`governed_recorder.rs::publish_store_blob`), addressed under the store path in its **root-owned policy**,
+so the broker cannot steer where a blob lands. The live kit's `brops-store` group is now supervisor +
+recorder; the broker is out, per §2.3's *"`sidecar`, `executor`, and `desktop` are in NEITHER `brops-store`
+nor any owner"*.
+
+**The recorder was not already publishing, so there was no smaller fix.** It wrote exactly three files —
+the `--out` report, the containment JSON and the evidence chain — all through `write_measured` with
+`O_NOFOLLOW`, and touched the store only to `open(O_RDONLY|O_NOFOLLOW)` its three named inputs. Nothing was
+content-addressed into it. The duty genuinely had to move.
+
+**No consumer sees a change**, established by tracing each: `complete-run` compares `output_handle` against
+the recorder's own evidence-chain digest and refuses on disagreement; both handles land in the write-once
+completion row and then in the §4.9 evidence the supervisor signs; the isolated signer reads
+`<store>/<handle>`, re-hashes, and refuses `containment_missing` on an unresolvable handle; the broker's
+acceptance checks `evidence.output_handle == envelope.output_sha256`. Same digest, same bytes — only the uid
+that created the file changed.
+
+**And the broker still gets the bytes without any store access at all.** It reads them from `<report_dir>`,
+the `brops-report` group channel the recorder writes and the broker reads — a legitimate shared path that
+never required the store. So it needs neither a store write nor a store read.
+
+**Fail-closed, and the fallback was refused on principle.** The broker cannot verify the publication,
+because §2.3 gives it no store read — and a recorder→broker "I published" manifest **would be a check that
+cannot fail**, since the recorder exits non-zero on publish failure before it could write one. The Block
+therefore comes from three gates that already exist: the recorder's non-zero exit, the supervisor's
+handle-versus-chain refusal, and the signer's store re-derivation.
+
+**9 mutants killed. The survivor is named and its reason is a platform fact**: deleting the recorder's
+publication call site survives, because that call is in `mod linux`, which is not compiled on this Windows
+box — run against the whole recorder binary, 23 passed. Only the live kit witnesses it, and it would: the
+positive control requires a non-empty report and exit 0, and the turn would then Block at the signer with
+an unresolvable handle. The mutation harness was crash-safe by construction, and a build error is reported
+as `BUILD_ERROR` rather than counted as a kill — which matters, because a mutant that fails to compile
+looks exactly like a mutant that was caught.
+
+**What this does NOT buy, stated because the membership swap is easy to over-read.** The store stays `2775`
+with `other` `r-x`, so the broker loses **write** and keeps **read/list**. §2.3's full *"no read/write/list
+of the published store"* needs the `sup/` + `rec/` namespaces at `2750`, which needs the signer moved into
+`brops-store` and its flat `<store>/<handle>` resolution taught about two directories — a topology change.
+Flagged, not done.
+
+**The same shape exists on Windows.** `win-live/src/execution.rs:276,304` has the executor's caller writing
+both blobs into `cfg.store_dir` on the in-process topology. Different principals, so a different finding —
+but the same defect, and it needs a decision.
+
+**Two residuals worth stating rather than discovering later.** A run that publishes and then refuses (the
+head-sequence negative, for instance) leaves an **orphan content-addressed blob** — inert, since a handle
+must appear in signed evidence to matter, but new. And under the flat store the recorder's new directory
+write means it could unlink a pinned store input; that is lateral (the broker could before) and §2.3 does
+give the recorder a store namespace, but under a flat layout that namespace is the whole store.
+
+**Every `mod linux` edit is uncompiled on this box** — `cargo check --target x86_64-unknown-linux-gnu` fails
+in `libsqlite3-sys` for want of a Linux gcc, and there is no zig or clang here. So the broker's execute
+path, the removal of the field, both construction sites and `publish_store_blob` are verified by `rustfmt`
+parsing (syntax, not types) plus hand-checking the struct, the two construction sites and every remaining
+reference. Said plainly rather than left for CI to discover.
+
+**A correction to my own briefs.** I have repeatedly cited `governed_verification_unconfigured` at
+`commands.rs:1152`. It is at **1161**. The function is untouched either way — `apps/desktop/src-tauri/src/`
+and `core/` have zero diff on this change — but the wrong line number was in several instructions and is
+now corrected.
+
+Verified by re-running: `brops-broker` **33 lib + 3 main** (from 31 + 3), `brops-governed-live` **23**
+(from 19), `brops-core --lib` 420, `brops --lib` 130, `bash -n engine/ci/live/run_live_turn.sh` OK.
+
+
 ### The writer exists, and it found a second architecture for the same hops (2026-08-12)
 
 **`prepare_governed_turn_v1b` and `governed_turn_submit_prepared` exist**, and they went into the **right

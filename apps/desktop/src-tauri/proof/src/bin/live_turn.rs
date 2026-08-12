@@ -443,7 +443,10 @@ mod linux {
             executor_path: s(&cfg, &["execution", "executor_path"]).unwrap_or_default(),
             lease_file: s(&cfg, &["execution", "lease_file"]).unwrap_or_default(),
             cgroup_arg: s(&cfg, &["execution", "cgroup_arg"]).unwrap_or_else(|| "cgroup-live".to_string()),
-            store_dir: s(&cfg, &["execution", "store_dir"]).unwrap_or_default(),
+            // `store_dir` is deliberately NOT read (rev-30 §2.3): the recorder publishes the
+            // output + containment blobs into the protected store from its own root-owned policy,
+            // and the broker identity this driver runs as is in neither `brops-store` nor any
+            // owner, so it has no use for the path and must not be handed one.
             report_dir: s(&cfg, &["execution", "report_dir"]).unwrap_or_default(),
             supervisor_sock: sockets.supervisor.clone(),
             // F-01: `receipt_id` and the supervisor/executor/builder/policy identities are no

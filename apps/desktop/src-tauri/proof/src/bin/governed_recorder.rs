@@ -161,16 +161,55 @@ pub mod guard {
             .ok_or_else(|| format!("recorder policy: `{k}` must be a string"))
     }
 
-    /// An absolute, already-normalised path with no traversal and no trailing slash — so the string
-    /// comparisons the rest of this module makes are exact rather than approximate.
+    /// An absolute, already-normalised path: no traversal, no doubled or trailing separator, no NUL —
+    /// so the string comparisons the rest of this module makes are exact rather than approximate.
+    ///
+    /// Factored out of [`abs_path`] because [`store_blob_path`] needs the SAME predicate over a path
+    /// that never went through the policy parser. Two copies of this test would be two chances to
+    /// weaken one of them.
+    pub fn is_abs_normalised(p: &str) -> bool {
+        p.starts_with('/')
+            && !p.contains('\0')
+            && !p.contains("//")
+            && !p.split('/').any(|c| c == ".." || c == ".")
+            && !(p.len() > 1 && p.ends_with('/'))
+    }
+
+    /// A 64-character lowercase sha256 hex — the ONLY shape a content address has.
+    pub fn is_store_handle(h: &str) -> bool {
+        h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+
+    /// Where a content-addressed blob is published inside the protected store.
+    ///
+    /// (rev-30 §2.3) Publishing the output and the containment report is the RECORDER's duty —
+    /// `store/rec/` is recorder-owned, and `desktop` (the broker service) is "in NEITHER
+    /// `brops-store` nor any owner". The broker used to perform this write itself, which made the
+    /// party the store constrains a writer of the directory the isolated signer treats as
+    /// authoritative.
+    ///
+    /// The directory comes from the ROOT-OWNED policy and `handle` is a digest the recorder just
+    /// computed, so neither is caller-chosen today. Both are checked anyway: this binary's whole
+    /// argument is "the caller picks a NAME, never a place", and a store whose file names are not
+    /// content addresses is a store whose handles mean nothing. A `handle` that is 64 hex characters
+    /// cannot contain a separator, so the returned path cannot leave the directory it is joined to.
+    pub fn store_blob_path(store_dir: &str, handle: &str) -> Result<String, String> {
+        if !is_store_handle(handle) {
+            return Err(format!(
+                "store publication: {handle:?} is not a 64-char lowercase sha256 content address"
+            ));
+        }
+        if !is_abs_normalised(store_dir) {
+            return Err(format!(
+                "store publication: {store_dir:?} is not an absolute normalised directory"
+            ));
+        }
+        Ok(format!("{store_dir}/{handle}"))
+    }
+
     fn abs_path(v: &serde_json::Value, k: &str) -> Result<String, String> {
         let p = text(v, k)?;
-        let bad = !p.starts_with('/')
-            || p.contains('\0')
-            || p.contains("//")
-            || p.split('/').any(|c| c == ".." || c == ".")
-            || (p.len() > 1 && p.ends_with('/'));
-        if bad {
+        if !is_abs_normalised(&p) {
             return Err(format!("recorder policy: `{k}` must be an absolute normalised path, got {p:?}"));
         }
         Ok(p)
@@ -509,6 +548,39 @@ mod linux {
         Ok(())
     }
 
+    /// Publish `bytes` into the content-addressed protected store and return their handle.
+    ///
+    /// (rev-30 §2.3) This is the RECORDER's own publication duty. It used to be done by the BROKER,
+    /// which wrote both blobs into the isolated signer's store and `chmod 0644`ed them from a uid
+    /// §2.3 places in neither `brops-store` nor any owner. Moving it here does not merely relocate a
+    /// write: the destination comes from the ROOT-OWNED policy this process re-checks the custody of,
+    /// so the caller can no longer choose where a blob lands, and the NAME is the digest of the bytes
+    /// rather than anything anyone supplied.
+    ///
+    /// Written under a temporary name and `rename`d into place, for two reasons: a crash cannot leave
+    /// a truncated blob under a handle the signer would then read as authentic, and republishing
+    /// identical bytes stays possible no matter which principal owns an existing copy (the store is
+    /// shared, artifacts are `0644`, and an `O_TRUNC` open of another uid's file would fail).
+    /// `write_measured`'s `O_NOFOLLOW` refuses a symlink planted at the temporary name by another
+    /// member of the store group; `rename` replaces a symlink at the final name rather than following
+    /// it.
+    ///
+    /// Fail-closed: an error here is returned to the caller, which exits non-zero. There is no
+    /// "publish best-effort" arm — an unpublished blob must make the turn Block, and it does, twice
+    /// over: this process exits non-zero, and a handle that addresses nothing yields no envelope from
+    /// the isolated signer.
+    fn publish_store_blob(store: &str, bytes: &[u8]) -> Result<String, String> {
+        let handle = brops_core::governed_message_store::sha256_hex(bytes);
+        let final_path = guard::store_blob_path(store, &handle)?;
+        let temporary = format!("{final_path}.tmp-{}", std::process::id());
+        write_measured(&temporary, bytes, 0o644)?;
+        if let Err(e) = std::fs::rename(&temporary, &final_path) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(format!("cannot publish {final_path}: {e}"));
+        }
+        Ok(handle)
+    }
+
     /// Load the ROOT-OWNED policy from the compile-time path, refusing anything whose custody is not
     /// root's — including a writable directory anywhere on the way to it.
     fn load_policy() -> Result<Policy, String> {
@@ -637,10 +709,11 @@ mod linux {
         let c_exec = CString::new(plan.executor).unwrap();
         let c_cgroup = CString::new(plan.cgroup).unwrap();
 
-        // `O_NOFOLLOW`: the store directory is shared with the broker (it publishes content-addressed
-        // blobs there), so the three named inputs must not be reachable through a symlink the broker
-        // planted. Their CONTENT is separately pinned by the §4.3 lease and re-hashed by the launcher
-        // (F-08); this closes the other half.
+        // `O_NOFOLLOW`: the store directory is shared — the supervisor publishes its terminal
+        // artifacts there and this process publishes the output + containment blobs below (§2.3) —
+        // so the three named inputs must not be reachable through a symlink some other principal
+        // planted. Their CONTENT is separately pinned by the §4.3 lease and re-hashed by the
+        // launcher (F-08); this closes the other half.
         let open_ro = |p: &str| -> i32 {
             let c = CString::new(format!("{store}/{p}")).unwrap();
             unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW) }
@@ -755,6 +828,21 @@ mod linux {
                 let _ = std::fs::remove_file(&p);
             }
         }
+        // ---- §2.3 publication: the OUTPUT blob enters the protected store from THIS uid ----
+        //
+        // The isolated signer re-derives `output_sha256`/`output_bytes` by reading the blob addressed
+        // by the output handle, so this is the write that makes the turn's reply addressable at all.
+        // It is deliberately NOT conditioned on `--out`: the store copy is what the signer reads, the
+        // report copy is only how the broker learns the bytes, and tying the first to the second would
+        // let a caller that omitted a flag decide whether the run was published. A refused/empty run
+        // publishes nothing — a blob for a run with no governed output would address a turn that did
+        // not happen — and nothing stale is removed either: an address names its own bytes, so a
+        // previous run's blob is not this run's to unlink.
+        if produced {
+            if let Err(e) = publish_store_blob(&store, &report) {
+                return err(&e);
+            }
+        }
         // ---- containment evidence for THIS run (audit F-02) ----
         //
         // `containment_evidence_handle` used to address a provisioner stub — literal placeholder JSON
@@ -802,6 +890,13 @@ mod linux {
                     Err(_) => return err("recorder: cannot encode containment report"),
                 };
                 if let Err(e) = write_measured(cp, &bytes, 0o644) {
+                    return err(&e);
+                }
+                // §2.3: and into the protected store, from this uid. The isolated signer's §1.5
+                // containment gate resolves `containment_evidence_handle` out of the store and
+                // refuses to mint an envelope when it does not resolve, so failing to publish here
+                // Blocks the turn rather than degrading it.
+                if let Err(e) = publish_store_blob(&store, &bytes) {
                     return err(&e);
                 }
             } else {
@@ -1348,5 +1443,124 @@ mod tests {
         assert!(check_counter_file(&FileFacts::file(RECORDER_UID, 0o606), RECORDER_UID).is_err());
         assert!(check_counter_file(&FileFacts::file(0, 0o600), RECORDER_UID).is_err());
         assert!(check_counter_file(&FileFacts::dir(RECORDER_UID, 0o700), RECORDER_UID).is_err());
+    }
+
+    // =============================================================================================
+    // rev-30 §2.3 — the RECORDER publishes into the protected store, and the broker does not
+    // =============================================================================================
+    //
+    // `publish_store_blob` itself lives in `mod linux` (it forks nothing but it does `rename` into a
+    // POSIX store, and it is only reachable from the Linux `recorder()` entry point), so it is NOT
+    // compiled on a Windows or macOS host and nothing here executes it. What IS compiled everywhere
+    // is `store_blob_path`, which decides WHERE a blob lands and under WHAT name — the half a
+    // caller could otherwise steer. These tests cover exactly that half; the `rename`, the mode and
+    // the group inheritance are witnessed only by the live kit on a Linux host.
+
+    /// A published blob is addressed by the digest of its own bytes, directly under the store
+    /// directory. This is what makes the isolated signer's re-derivation meaningful: it reads
+    /// `<store>/<handle>`, re-hashes, and refuses a blob whose bytes do not hash to the name.
+    #[test]
+    fn a_published_blob_is_addressed_by_the_digest_of_its_own_bytes() {
+        let bytes = b"BROPS governed output v1";
+        let handle = brops_core::governed_message_store::sha256_hex(bytes);
+        assert!(is_store_handle(&handle), "sha256_hex must produce a content address");
+        assert_eq!(
+            store_blob_path("/opt/brops-live/store", &handle).unwrap(),
+            format!("/opt/brops-live/store/{handle}"),
+        );
+    }
+
+    /// The store's file names are content addresses and nothing else. A name that is not one is
+    /// refused rather than joined: it is the only way a publication could be made to land on a
+    /// pinned store INPUT (`system`/`history`/`generation_config`), or outside the store entirely.
+    #[test]
+    fn a_store_publication_refuses_a_name_that_is_not_a_content_address() {
+        let hostile = [
+            "",
+            "system",
+            "history",
+            "generation_config",
+            "../../etc/passwd",
+            "../evidence-head-sequence.json",
+            "sub/6c1f",
+            // 63 and 65 characters: a length check that only tested "too long" would miss the first
+            &"a".repeat(63),
+            &"a".repeat(65),
+            // hex digits only — `g` is not one, and uppercase is not lowercase
+            &format!("{}g", "a".repeat(63)),
+            &"A".repeat(64),
+        ];
+        for name in hostile {
+            assert!(
+                store_blob_path("/opt/brops-live/store", name).is_err(),
+                "a blob named {name:?} must be refused, not published"
+            );
+        }
+    }
+
+    /// And the DIRECTORY is held to the same predicate the root-owned policy is parsed under, so a
+    /// deployment cannot end up publishing through a traversal or a doubled separator that the
+    /// policy parser would have rejected.
+    #[test]
+    fn a_store_publication_refuses_a_directory_the_policy_parser_would_reject() {
+        let handle = "a".repeat(64);
+        for dir in [
+            "",
+            "store",
+            "opt/brops-live/store",
+            "/opt/brops-live/store/",
+            "/opt//brops-live/store",
+            "/opt/../opt/brops-live/store",
+            "/opt/./brops-live/store",
+        ] {
+            assert!(!is_abs_normalised(dir), "{dir:?} must not pass the path predicate");
+            assert!(
+                store_blob_path(dir, &handle).is_err(),
+                "a store directory of {dir:?} must be refused"
+            );
+        }
+        assert!(store_blob_path("/opt/brops-live/store", &handle).is_ok());
+    }
+
+    /// The live kit's group model, asserted against the kit itself rather than against a copy of it.
+    ///
+    /// rev-30 §2.3: `brops-store` is the supervisor + the recorder (+ the signer, read-only), and
+    /// "`sidecar`, `executor`, and `desktop` are in NEITHER `brops-store` nor any owner" — §0's
+    /// locked terminology binding "desktop" to the broker service. The kit used to put the BROKER in
+    /// that group, because the broker performed the store write this file now performs; leaving the
+    /// membership behind would leave the capability behind with it.
+    #[test]
+    fn the_live_kit_puts_the_recorder_and_not_the_broker_in_the_store_group() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("engine")
+            .join("ci")
+            .join("live")
+            .join("run_live_turn.sh");
+        let kit = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read the live kit at {}: {e}", path.display()));
+        let line = kit
+            .lines()
+            .find(|l| l.trim_start().starts_with("add_group brops-store"))
+            .unwrap_or_else(|| panic!("the live kit no longer provisions a `brops-store` group"));
+        assert!(
+            line.contains("\"$SUPERVISOR_USER\""),
+            "the supervisor publishes the record/lease/execution-receipt and must stay in \
+             `brops-store`: {line}"
+        );
+        assert!(
+            line.contains("\"$RECORDER_USER\""),
+            "the recorder publishes the output + containment blobs (§2.3 `store/rec/`) and must be \
+             in `brops-store`: {line}"
+        );
+        assert!(
+            !line.contains("\"$BROKER_USER\""),
+            "rev-30 §2.3 puts `desktop` — the broker service — in neither `brops-store` nor any \
+             owner. A broker in the store group can create, rename and unlink in the directory the \
+             isolated signer treats as authoritative: {line}"
+        );
     }
 }
