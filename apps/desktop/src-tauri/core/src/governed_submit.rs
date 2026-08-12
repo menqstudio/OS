@@ -19,17 +19,27 @@
 //! ## What is here and what is deliberately NOT
 //!
 //! Everything that decides BYTES is here: the cross-bindings, the frame, the strict decode of the
-//! §4.6 reply. The subprocess spawn is NOT. §4.10(g) says the helper "spawns the one-shot governed
-//! sidecar exactly as `ai.rs::governed_engine` does today", and that spawn seam —
-//! `ai::governed_sidecar_call` — is `async` `tokio`, lives in the renderer-hosting app crate, and
-//! carries `engine_trust::apply` (the provisioned trust environment without which a governed call is
-//! the ungoverned call it exists to prevent). The broker binary is synchronous and cannot call it.
-//! Writing a second spawn implementation here is exactly the "half-wired export" that function's own
-//! comment warns about — one path consulting the provisioned trust and the other the stale committed
-//! registry, with nothing to say so. The spawn is therefore an INJECTED seam
-//! ([`SubmitTransport`]), the same shape `chain_executor` uses for `HopConnector`/`GovernedExecution`
-//! and the same shape the Python half uses for `request_supervisor`. **No production code implements
-//! it**, which is stated here rather than left to be discovered.
+//! §4.6 reply. The subprocess spawn is NOT — it is an INJECTED seam ([`SubmitTransport`]), the same
+//! shape `chain_executor` uses for `HopConnector`/`GovernedExecution` and the same shape the Python
+//! half uses for `request_supervisor`.
+//!
+//! §4.10(g) says the helper "spawns the one-shot governed sidecar exactly as `ai.rs::governed_engine`
+//! does today". **Updated 2026-08-12: "exactly as" is now literal.** That spawn seam used to be
+//! `ai::governed_sidecar_call` — `async` `tokio`, in the renderer-hosting app crate, carrying
+//! `engine_trust::apply` (the provisioned trust environment without which a governed call is the
+//! ungoverned call it exists to prevent) — and the synchronous broker binary could not call it.
+//! Writing a second spawn here would have been exactly the "half-wired export" that function's own
+//! comment warned about: one path consulting the provisioned trust and the other the stale committed
+//! registry, with nothing to say so. So the spawn moved instead. It is now
+//! [`crate::governed_sidecar::GovernedSidecar`] — in THIS crate, synchronous, used by the app through
+//! `spawn_blocking` and available to the broker directly — and it implements [`SubmitTransport`].
+//! There is one spawn, and it cannot be constructed without a resolved
+//! [`crate::engine_trust::TrustEnvironment`].
+//!
+//! What is still true, and is the honest remaining gap: **nothing CALLS
+//! [`governed_turn_submit_prepared`]**. Giving the writer a transport did not give it a caller —
+//! wiring one would move the shipped broker off its fail-closed executor, which is the owner's
+//! decision. Its `declared_unreachable` entry in `config/reachability-declarations.json` stands.
 //!
 //! ## The three checks this module does NOT make, mirroring the consumer
 //!
@@ -460,13 +470,13 @@ pub fn submit_frame(
 /// One `bridge.governed-turn-submit.v1` round trip: write the frame to a fresh one-shot sidecar's
 /// `stdin`, read its single `stdout` reply.
 ///
-/// **Nothing in production implements this**, and the reason is in this module's docs: the tree's one
-/// bridge-spawn seam (`ai::governed_sidecar_call`) is `async` `tokio` in the renderer-hosting app
-/// crate and carries `engine_trust::apply`, while the broker binary is synchronous and cannot reach
-/// it. A second spawn implementation is the half-wired export that seam's own comment warns about,
-/// so the decision is left to whoever reconciles the two processes rather than pre-empted here.
+/// **The production implementation is [`crate::governed_sidecar::GovernedSidecar`]** — the ONE place
+/// in the tree that starts the bridge, shared with the desktop app's governed turn, its governance
+/// mirror and its §4.10(f) output pull. It is a trait rather than a direct call because the tests in
+/// this module drive the writer against fakes, and because the broker's other hops are injected the
+/// same way; it is NOT a trait because the implementation is missing.
 ///
-/// An implementation MUST map every local failure — spawn, socket, deadline, unexpected exit,
+/// Any OTHER implementation MUST map every local failure — spawn, socket, deadline, unexpected exit,
 /// oversized or non-JSON output — to `Err`, never to a document. §6.1 makes a local
 /// ingress/transport failure out-of-band, and the sidecar originates no supervisor or signature
 /// verdict; a synthesized reply here would be this process inventing the one thing §2.4 forbids it to

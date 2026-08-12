@@ -1203,7 +1203,16 @@ pub const BRO_PROTECTED_PATHS: &[&str] = &[
     "apps/desktop/src-tauri/core/src/supervisor_ledger.rs",
     "apps/desktop/src-tauri/core/src/tcb_integrity.rs",
     "apps/desktop/src-tauri/core/src/privilege_drop.rs",
+    // The provisioned trust environment and the ONE thing that starts the engine sidecar. They
+    // moved here from `src/` on 2026-08-12 so the synchronous broker binary could share them
+    // instead of growing a second spawn; if the boundary had not moved with them, the decision
+    // about WHICH trusted-key registry the engine reads would have left the protected surface.
+    "apps/desktop/src-tauri/core/src/engine_trust.rs",
+    "apps/desktop/src-tauri/core/src/governed_sidecar.rs",
     "apps/desktop/src-tauri/core/schema",
+    // Now a re-export of `core/src/engine_trust.rs` plus the `brops_provision` adapter. Still
+    // protected: it is what `record` runs through, and a rewrite here could feed the rule a set
+    // provisioning never produced.
     "apps/desktop/src-tauri/src/engine_trust.rs",
     "apps/desktop/src-tauri/src/governance.rs",
     "apps/desktop/src-tauri/src/governed_turn.rs",
@@ -2911,17 +2920,22 @@ pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_js
 // one hop further out rather than closed: §4.6 is the REPLY to §4.10(g)'s
 // `bridge.governed-turn-submit.v1`, whose SIDECAR half now exists (`bridge/governed_turn_submit.py`).
 //
-// **Updated 2026-08-12, and the update makes these two functions' position WORSE rather than better.**
+// **Updated 2026-08-12, twice, and the second update is the one that matters.**
 // The trusted-side writer now exists — `brops_core::governed_prepare::prepare_governed_turn_v1b` and
 // `brops_core::governed_submit::governed_turn_submit_prepared` — so a §4.6 frame carrying a token is
 // now constructible without a fixture. But it is constructible in the BROKER, and these two functions
 // are HERE, in the renderer-hosting app crate. §0's LOCKED terminology binding makes every trusted-actor
 // "the desktop" in the normative body denote the broker SERVICE process, and §4.10(g) says `governed_turn_execute`
 // "and every step below" execute inside it; these were put here by following §4.10(f)'s literal wording
-// ("a private function of the `governed_turn_execute` command") one layer too low. The broker binary is
-// synchronous and does not depend on this crate, so it cannot call them, and they cannot move without a
-// decision about where the `engine_trust::apply` spawn seam lives. That is the residual gap, stated
-// plainly: NOT "the token never arrives" any more, but "the token arrives in another process".
+// ("a private function of the `governed_turn_execute` command") one layer too low.
+//
+// The BLOCKER on moving them is gone. It used to be that they could not move "without a decision about
+// where the `engine_trust::apply` spawn seam lives", because that seam was `async` `tokio` in this crate
+// and the broker binary is synchronous. The decision was taken and carried out: the spawn is now
+// `brops_core::governed_sidecar::GovernedSidecar`, synchronous, in the crate both binaries share, and it
+// cannot be built without a resolved `TrustEnvironment`. What remains is not a blocker but unfinished
+// work: these two functions still have no caller, and the residual gap is unchanged in substance —
+// NOT "the token never arrives" any more, but "the token arrives in another process".
 //
 // The `allow` is therefore still a statement of a known gap rather than a way of not hearing about one;
 // `config/reachability-declarations.json` carries the matching declarations so the gate reports them,
@@ -2931,12 +2945,14 @@ pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_js
 /// One `bridge.governed-turn-output-read.v1` round trip: spawn a one-shot sidecar, hand it the request on
 /// stdin, read its single reply.
 ///
-/// It reaches the engine through [`governed_sidecar_call`] — the ONE seam in this application that spawns
-/// the bridge — so it inherits, without restating any of it, the absolutised script path, the empty AI
-/// sandbox cwd, the stripped self-test env, the 120 s deadline, the bounded stdout, and above all
-/// `engine_trust::apply`: a pull cannot run against a trust environment first-launch provisioning never
-/// recorded. A second spawn implementation here is exactly the half-wired export that seam's own comment
-/// warns about.
+/// It reaches the engine through [`governed_sidecar_call`], and through that to
+/// `brops_core::governed_sidecar::GovernedSidecar` — the ONE thing in the tree that spawns the bridge —
+/// so it inherits, without restating any of it, the absolutised script path, the empty AI sandbox cwd,
+/// the stripped self-test env, the 120 s deadline, the bounded stdout, and above all the provisioned
+/// trust environment: a pull cannot run against a trust environment first-launch provisioning never
+/// recorded, and cannot be spawned without one at all, because the spawner's constructor requires the
+/// resolved value. A second spawn implementation here is exactly the half-wired export that seam's own
+/// comment warns about.
 ///
 /// This side adds NO provisioning gate of its own, and that is a decision rather than an omission. The
 /// supervisor socket is the sidecar's provisioning, the sidecar refuses by name when it is unset, and
@@ -2994,121 +3010,49 @@ pub(crate) async fn governed_pull_output<'a>(
 }
 
 /// Shell out to the bridge sidecar with `request` on stdin and return its parsed JSON
-/// reply. Shared by the governed AI turn ([`governed_engine`]) and the read-only
-/// governance mirror ([`governed_sidecar_read`]) so both use the IDENTICAL subprocess
-/// discipline. Makes no trust decision — it returns the raw `bridge.result` document.
+/// reply. Shared by the governed AI turn ([`governed_engine`]), the read-only governance
+/// mirror ([`governed_sidecar_read`]) and the §4.10(f) output pull
+/// ([`governed_turn_output_read`]) so all of them use the IDENTICAL subprocess discipline.
+/// Makes no trust decision — it returns the raw `bridge.result` document.
+///
+/// **The spawn itself is no longer here.** It is
+/// [`brops_core::governed_sidecar::GovernedSidecar`], in the crate the app and the synchronous
+/// BROKER binary share, so §4.10(g)'s submit hop reaches the engine through the SAME
+/// implementation instead of a second one that could drift from this one on the trust
+/// environment. What is left in this function is the app's two contributions: the empty AI
+/// sandbox that becomes the child's cwd, and the `tokio` boundary.
+///
+/// The trust environment is resolved FIRST and by TYPE. `engine_trust::apply()` returns a
+/// `TrustEnvironment`, `GovernedSidecar::new` cannot be called without one, and there is no
+/// other constructor — so this function cannot reach a spawn without it, and an `Err` fails
+/// the call before any process exists. That replaces the previous shape, in which
+/// `engine_trust::apply(&mut cmd)?` was a line in the middle of the builder and deleting the
+/// line compiled.
 async fn governed_sidecar_call(
     python: &str,
     sidecar: &str,
     request: &str,
 ) -> Result<serde_json::Value, String> {
-    let mut cmd = tokio::process::Command::new(python);
-    // The child runs with cwd = the empty AI sandbox (below), so a RELATIVE sidecar path (the default
-    // `bridge/engine_sidecar.py`) would not resolve from there and every governed turn would die on a
-    // spawn/path error instead of a governance decision (audit F-39). Absolutize a relative path against
-    // the process's real working directory FIRST — exactly where it resolved before the sandbox-cwd
-    // override existed — so the script is found while the child is still contained in the sandbox. An
-    // absolute `BROPS_GOVERNED_SIDECAR` is used verbatim.
-    let sidecar_path = {
-        let p = std::path::Path::new(sidecar);
-        if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            std::env::current_dir().map(|c| c.join(p)).unwrap_or_else(|_| p.to_path_buf())
-        }
-    };
-    // Same trap as the sidecar path, one level along: the child's cwd is the empty AI sandbox, so a
-    // RELATIVE `BROPS_GOVERNANCE_*` path would resolve against that sandbox and the sidecar would
-    // refuse a directory the owner can see perfectly well from the repo. Absolutized against the
-    // process's real working directory before the cwd override, exactly as the script path is.
-    for var in ["BROPS_GOVERNANCE_STATE_DIR", "BROPS_GOVERNANCE_EVIDENCE_STORE", "BROPS_GOVERNANCE_REGISTRY_ROOT"] {
-        if let Some(v) = env_nonempty(var) {
-            let path = std::path::Path::new(&v);
-            if !path.is_absolute() {
-                if let Ok(abs) = std::env::current_dir().map(|c| c.join(path)) {
-                    cmd.env(var, abs);
-                }
-            }
-        }
-    }
-    // O-3: hand the child the trust material first-launch provisioning minted — above all
-    // `BRO_TRUSTED_REGISTRY_ROOT`, which decides WHICH trusted-key registry the engine
-    // reads. Without it `bro_signature.load_trusted_keys` reads the development registry
-    // committed at `engine/config/trusted-keys.json`, so every governed check ran against a
-    // registry that is `production: false` and grants `conductor-session` to no key, while
-    // the provisioned one sat unread beside it.
-    //
-    // THIS IS THE ONLY SEAM. Both governed paths reach the engine through this function —
-    // the AI turn (`governed_engine`) and the read-only governance mirror
-    // (`governed_sidecar_read`) — and nothing else in the application spawns the engine or
-    // the bridge. That matters more than it looks: a half-wired export, where one of the two
-    // consults the provisioned trust and the other the stale committed registry, is worse
-    // than no export at all, because nothing would say so.
-    //
-    // An `Err` fails the spawn. There is no degraded mode: a governed call that proceeds
-    // without the provisioned trust environment is precisely the ungoverned call this path
-    // exists to prevent, and it would report itself as governed.
-    engine_trust::apply(&mut cmd)?;
-    cmd.arg(&sidecar_path)
-        // Defense in depth (Architect merge-blocker): never let a fake/self-test flag
-        // reach the production sidecar via inherited env. The sidecar honors self-test
-        // via the --self-test CLI flag ONLY (which we never pass), and we also strip the
-        // legacy fake env var here so an env-activated fabricated verifier is impossible.
-        .env_remove("BRIDGE_SIDECAR_FAKE")
-        .current_dir(ai_sandbox_dir()?)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    hide_console(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| {
-        format!("Could not run the governed engine sidecar (`{python} {sidecar}`): {e}. Set BROPS_GOVERNED_PYTHON / BROPS_GOVERNED_SIDECAR, or unset BROPS_ALLOW_GOVERNED_ENGINE.")
-    })?;
-    // Feed the task-request via stdin (never argv → not in /proc/<pid>/cmdline) on a
-    // concurrent task, so a stalled write can't hang the deadline-bounded wait.
-    if let Some(mut stdin) = child.stdin.take() {
-        let bytes = request.as_bytes().to_vec();
-        tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            let _ = stdin.write_all(&bytes).await;
-            let _ = stdin.shutdown().await;
-        });
-    }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    let stderr = child.stderr.take();
-    let stderr_task = tokio::spawn(async move {
-        let mut buf = String::new();
-        if let Some(e) = stderr {
-            use tokio::io::AsyncReadExt;
-            let _ = e.take(MAX_STDERR_BYTES).read_to_string(&mut buf).await;
-        }
-        buf
-    });
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "no stdout from governed engine sidecar".to_string())?;
-    let (status, obuf) = tokio::time::timeout_at(deadline, async move {
-        use tokio::io::AsyncReadExt;
-        let mut obuf: Vec<u8> = Vec::new();
-        stdout.take(MAX_STDOUT_BYTES).read_to_end(&mut obuf).await.map_err(|e| e.to_string())?;
-        let status = child.wait().await.map_err(|e| e.to_string())?;
-        Ok::<_, String>((status, obuf))
-    })
-    .await
-    .map_err(|_| "governed engine sidecar timed out".to_string())??;
-    let errbuf = tokio::time::timeout_at(deadline, stderr_task)
+    // O-3, and it happens before anything is started. An `Err` is the refusal an operator sees:
+    // there is no degraded mode, because a governed call that proceeds without the provisioned
+    // trust environment is precisely the ungoverned call this path exists to prevent, and it
+    // would report itself as governed.
+    let trust = engine_trust::apply()?;
+    let seam = brops_core::governed_sidecar::GovernedSidecar::new(
+        python,
+        sidecar,
+        ai_sandbox_dir()?,
+        trust,
+    );
+    let request = request.to_string();
+    // The core seam is synchronous (the broker binary has no runtime). `spawn_blocking` keeps the
+    // bounded reads and the 120 s deadline off the async worker. Note what this costs, stated in
+    // `governed_sidecar`'s module docs as well: a blocking task cannot be cancelled, so a caller
+    // that abandoned this future would no longer kill the child immediately. Nothing in this tree
+    // cancels it — every caller `await`s it directly.
+    tokio::task::spawn_blocking(move || seam.round_trip(&request))
         .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
-    if !status.success() {
-        return Err(format!("governed engine sidecar crashed: {}", errbuf.trim()));
-    }
-    let stdout = String::from_utf8_lossy(&obuf);
-    let doc: serde_json::Value = serde_json::from_str(stdout.trim())
-        .map_err(|e| format!("could not parse bridge-result ({e})"))?;
-    Ok(doc)
+        .map_err(|e| format!("the governed engine sidecar task did not complete: {e}"))?
 }
 
 async fn ollama(url: &str, model: &str, system: &str, messages: &[ChatMsg]) -> Result<String, String> {
@@ -3774,6 +3718,11 @@ mod tests {
             "apps/desktop/src-tauri/core/src/governed_verification.rs",
             "apps/desktop/src-tauri/core/src/production_trust.rs",
             "apps/desktop/src-tauri/core/src/key_manifest.rs",
+            // Both halves of the trust environment: the RULE (core) and the adapter (app). A list
+            // that named only the app file would have gone on passing after the rule moved out of
+            // it, which is the shape of a check that cannot fail.
+            "apps/desktop/src-tauri/core/src/engine_trust.rs",
+            "apps/desktop/src-tauri/core/src/governed_sidecar.rs",
             "apps/desktop/src-tauri/src/engine_trust.rs",
             "apps/desktop/src-tauri/broker",
             "apps/desktop/src-tauri/launcher",
@@ -4577,11 +4526,16 @@ mod tests {
     /// assumed — the supervisor's own writer was capped below a full chunk until the day this landed.
     #[test]
     fn the_child_stdout_bound_admits_a_full_size_chunk_reply() {
+        // The cap that actually reads the sidecar's stdout moved into `brops_core::governed_sidecar`
+        // with the spawn. `ai.rs`'s own `MAX_STDOUT_BYTES` still bounds the `claude` CLI provider,
+        // and asserting against THAT one here would be a test passing for the wrong reason — it
+        // would stay green while the bound that governs this transport drifted anywhere at all.
+        let cap = brops_core::governed_sidecar::MAX_STDOUT_BYTES;
         let max_reply = brops_core::governed_output_pull::MAX_BRIDGE_OUTPUT_READ_REPLY_BYTES as u64;
         assert_eq!(max_reply, 245_941);
         assert!(
-            max_reply < MAX_STDOUT_BYTES,
-            "a full §4.10(f) chunk reply ({max_reply}) does not fit the child stdout cap ({MAX_STDOUT_BYTES})"
+            max_reply < cap,
+            "a full §4.10(f) chunk reply ({max_reply}) does not fit the child stdout cap ({cap})"
         );
         // And an 8 MiB output arrives as 46 of them, none of which is read into one buffer together —
         // the reassembly is bounded by the signed length, not by this cap.

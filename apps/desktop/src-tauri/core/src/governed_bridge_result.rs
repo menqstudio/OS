@@ -73,7 +73,8 @@
 //! `bridge/tests/test_governed_turn_result_bridge.py`, on both sides of the hop.
 //!
 //! **No cap on its path can fire.** The frame arrives on a one-shot sidecar's stdout, read under
-//! `ai.rs::MAX_STDOUT_BYTES = 9437184`: 74236 against 9437184 is a factor of 127. §4.6 also names
+//! [`crate::governed_sidecar::MAX_STDOUT_BYTES`]` = 9437184`: 74236 against 9437184 is a factor of
+//! 127. §4.6 also names
 //! `MAX_FRAME_BYTES = 262144`, which it fits 3.5× inside, but that bound belongs to `brops_protocol`'s
 //! socket framing and this frame never crosses a socket. So this module ships **no size check** — the
 //! same judgement `governed_output_pull` records for its own leg, and the same one that deleted a
@@ -122,10 +123,13 @@
 //! not use (a refusal's `receipt_id` is worth keeping), and `check_echoes` needs a VERIFIED envelope,
 //! which is §6.1 step 14 — a later stage that is not built.
 //!
-//! **What still stands between the writer and a live turn.** (1) The subprocess spawn is an INJECTED
-//! seam (`governed_submit::SubmitTransport`) and **no production code implements it**: the tree's one
-//! bridge-spawn seam, `ai::governed_sidecar_call`, is `async` `tokio` in the renderer-hosting app crate
-//! and carries `engine_trust::apply`, while the broker binary is synchronous. (2) **Nothing CALLS**
+//! **What still stands between the writer and a live turn.** (1) is CLOSED as of 2026-08-12: the
+//! subprocess spawn is still the INJECTED seam `governed_submit::SubmitTransport`, but
+//! `crate::governed_sidecar::GovernedSidecar` now implements it in production. The tree's one
+//! bridge-spawn seam is no longer `ai::governed_sidecar_call` in the renderer-hosting app crate — the
+//! spawn and `engine_trust` both moved into THIS crate, which the synchronous broker binary can reach,
+//! so the app and the broker share one implementation rather than two that could drift on the trust
+//! environment. (2) **Nothing CALLS**
 //! `governed_turn_submit_prepared`: the broker's one production `GovernedExecutor`
 //! (`broker/src/chain_executor.rs::ChainExecutor`) drives the same hops over DIRECT AF_UNIX and spawns
 //! the recorder, not a sidecar, and its `ProductionResolver` supplies the three artifact digests from
@@ -1196,8 +1200,11 @@ mod tests {
 
     #[test]
     fn no_cap_on_this_frames_path_could_fire() {
-        // `ai.rs:44` — `const MAX_STDOUT_BYTES: u64 = 9 * 1024 * 1024;`
-        const MAX_STDOUT_BYTES: usize = 9 * 1024 * 1024;
+        // THE cap that reads this frame, not a copy of it. This used to re-declare the number as a
+        // local `const` next to a comment citing `ai.rs:44` — so every assertion below compared the
+        // literal against itself and the test could not fail, whatever the real bound did. The cap
+        // now lives in this crate, so the check can be aimed at the thing it is about.
+        const MAX_STDOUT_BYTES: usize = crate::governed_sidecar::MAX_STDOUT_BYTES as usize;
         assert_eq!(MAX_STDOUT_BYTES, 9_437_184);
         assert!(MAX_BRIDGE_TURN_RESULT_BYTES < MAX_STDOUT_BYTES);
         assert_eq!(MAX_STDOUT_BYTES - MAX_BRIDGE_TURN_RESULT_BYTES, 9_362_948);

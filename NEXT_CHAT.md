@@ -8,6 +8,64 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Bypassing the trust environment is now a compile error (2026-08-12)
+
+`ai::governed_sidecar_call` was the tree's only bridge spawn: `async` `tokio`, in the renderer-hosting
+**binary** crate, carrying `engine_trust::apply`. The synchronous broker binary could not reach it, and a
+second spawn there would have been a **second trust application** — one path reading the provisioned
+registry, the other the committed development one, with nothing to say which. Both the spawn and the trust
+rule moved down into `brops-core`. `governed_sidecar::GovernedSidecar` is now the single thing in the tree
+that starts `python bridge/engine_sidecar.py`; the desktop's governed turn, its governance mirror and the
+§4.10(f) pull all reach it through `spawn_blocking`, and it implements `SubmitTransport`, so
+`governed_turn_submit_prepared` finally has a real production transport.
+
+**The bypass is closed by type, not by convention.** `engine_trust::apply()` no longer takes a `&mut
+Command` — it **returns** a `TrustEnvironment` with a private field, no `Default`, no `new`, no `From` and
+no public constructor, and `GovernedSidecar::new` requires one. A caller who wants to skip the trust
+environment has nothing to pass. The mutant that deletes the `apply()` line is a **`BUILD_ERROR`**, and the
+harness reports it as neither kill nor survivor, which is the honest classification.
+
+Why that matters: skipping it means `load_trusted_keys` falls back to the committed
+`engine/config/trusted-keys.json`, where `production: false` grants `conductor-session` to no key — so
+every check passes against a registry nobody chose **and the turn still reports itself as governed**. That
+is O-3.
+
+**Two more checks that could not fail, found on the way.** `no_cap_on_this_frames_path_could_fire`
+re-declared `MAX_STDOUT_BYTES` **locally**, with a comment citing the line it was supposed to be checking —
+it compared a literal against itself and could not fail whatever the real cap did. And
+`the_child_stdout_bound_admits_a_full_size_chunk_reply` would have gone on passing against the *claude-CLI*
+cap after the sidecar's cap moved: a test that keeps passing while pointing at the wrong thing. Both
+repointed, and a mutant that lowers the real cap now bites.
+
+**And a platform-branch bug in its own new test**: `/abs/x.py` is not absolute on Windows, so the
+"absolute path is used verbatim" case silently exercised the *relative* branch. That is the same class as
+the exception-name test fixed an hour earlier, caught this time before it shipped.
+
+`BRO_PROTECTED_PATHS` gained both new core files. Without that, the decision about **which registry the
+engine reads** would have walked out of the protected surface when the code moved.
+
+**One property is weaker, and it is named rather than buried.** `kill_on_drop(true)` killed the child the
+instant the caller's future was dropped; a `spawn_blocking` task cannot be cancelled, so an abandoned
+caller now leaves the child until its own deadline or EOF. Every caller was checked — all are `await`ed
+directly with no `timeout`, `select!` or `abort` over them, and the streaming cancel is a cooperative flag
+— so it is **not observable today**. A `Drop` guard restores kill-and-reap on every exit path including an
+unwind, which `std::process::Child` does not do by itself.
+
+**12 mutants killed, 4 survivors, each named.** The survivors are the 120 s deadline, the non-zero-exit
+classification, and the two capped-reader call sites: all four need a **real** slow, crashing or
+verbose child, which would put a python prerequisite into `brops-core`'s lib suite — a deliberate change
+not made unasked. Three of them are pre-existing gaps the tokio version had too.
+
+**No gate moved.** `commands.rs`, `broker/**` and `governed_turn.rs` are untouched, so
+`governed_verification_unconfigured`, `UpstreamBlockedExecutor` and `connect_broker` are byte-identical.
+`governed_turn_submit_prepared` gained a **transport and no caller**, and stays `declared_unreachable` —
+its declaration now names the one blocker that closed and the one that did not.
+
+Re-run here: `brops-core --lib` **442** (from 420: +13 trust tests moved down, +9 new), `brops --lib`
+**117** (from 130: the same 13 moved out), `brops-broker` 33 + 3, frontend 69/638, and reachability,
+ai-surfaces and capabilities GREEN.
+
+
 ### A test that pinned which exception fires (2026-08-12)
 
 CI went red on Linux for a test that is green on Windows. `HostileFrameDoesNotKillTheSupervisorTests`

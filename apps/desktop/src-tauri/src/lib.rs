@@ -90,8 +90,9 @@ fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
 ///
 /// So: `Provisioned::engine_env()` — which now includes `BRO_TRUSTED_REGISTRY_ROOT`, and
 /// still deliberately excludes `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` — is RECORDED here and
-/// applied by `engine_trust::apply` to the child process that runs the engine, at the one
-/// seam that launches it (`ai::governed_sidecar_call`). It is still not exported into
+/// applied by `brops_core::engine_trust::apply` to the child process that runs the engine, at
+/// the one seam that launches it (`brops_core::governed_sidecar::GovernedSidecar`, which the
+/// app reaches through `ai::governed_sidecar_call`). It is still not exported into
 /// THIS process: `std::env::set_var` is process-wide and racy, and the host has no
 /// business verifying against a trust root it also holds the keys for.
 ///

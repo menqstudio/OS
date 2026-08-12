@@ -61,7 +61,8 @@
 //!    length gate: a one-byte substitution keeps the length and fails here.
 //!
 //! What is NOT here: no frame-size cap. §4.10(f)'s largest reply is 245941 bytes on this leg against
-//! `ai.rs::MAX_STDOUT_BYTES = 9437184`, so a cap in this module could never fire on a legal instance —
+//! [`crate::governed_sidecar::MAX_STDOUT_BYTES`]` = 9437184`, so a cap in this module could never fire
+//! on a legal instance —
 //! the same reasoning that deleted a §4.10(a)/(c) handler cap rather than shipping it. The bound that IS
 //! load-bearing is the per-chunk stride, and it is checked. And no decode of the assembled output: §4.6
 //! orders "only then strict-UTF8 decode for UI display", and that decode belongs to the acceptance

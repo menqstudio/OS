@@ -11,6 +11,12 @@ pub mod governed_turn_ipc;
 // `bridge.governed-turn-submit.v1` frame writer. Pure — no socket, no subprocess, no clock.
 pub mod governed_prepare;
 pub mod governed_submit;
+// The one place in this tree that STARTS the governed bridge sidecar, and the provisioned
+// trust environment it cannot be built without. Both used to live in the renderer-hosting
+// binary crate, where the synchronous broker binary could not reach them; a second spawn
+// there would have been a second trust application.
+pub mod engine_trust;
+pub mod governed_sidecar;
 pub mod governed_message_store;
 pub mod fd_lifecycle;
 pub mod privilege_drop;
