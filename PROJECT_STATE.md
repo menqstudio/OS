@@ -8,6 +8,54 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The broker cannot hold the conductor's token, and it spawns the sidecar as itself (2026-08-12)
+
+Provisioning the broker's trust environment was authorised and **was not done**, because the investigation
+found it is the wrong question. Nothing changed; the tree is byte-identical.
+
+**The token is an identity, not a credential.** `BRO_CONDUCTOR_SESSION_TOKEN`'s payload binds
+`agent_id: "bro-000"` and `role: "bro"`, and `bro_policy.is_conductor` is exactly that pair. The broker is
+§0 role #2. So it either never claims that identity — in which case the token is **inert**, and
+`authorize_conductor_stop` returns False on `is_conductor` *before* the token is ever read — or it claims
+it, in which case the trusted broker service **has become the conductor**. There is no third state, and
+nothing in the repository can mint a second: the operator root signs it once, offline, and the key is
+dropped and zeroized inside the minting scope.
+
+Nor can the broker simply be handed the file. The 0700 tree holding the token also holds **eight retained
+private authority seeds**, and `verify_existing` lists that directory. There is no grant that yields the
+token and not the seeds — it is one manifest-covered tree, and §2.6 puts the broker in a different
+principal from the desktop by construction.
+
+**And the decisive fact makes the remaining four variables pointless.** The transport the broker builds
+never sends a frame that reads any of them: `governed_turn_submit.py` imports no signature module, calls no
+`load_trusted_keys`, and contains **zero** `BRO_*` or `os.environ` reads; the output-read branch forwards
+and reframes. Those variables are read only on paths the **desktop** drives. So a broker-side derivation
+would add a **second `record()` source** — and `resolve` cannot tell a four-member set from a five-member
+one, so the guarantee that a variable added to the provisioned set is automatically covered would silently
+stop covering the broker. That is the exact drift the move into `brops-core` was made to remove.
+
+The current Block is therefore the honest state: there is no whole, true set for this principal, so
+`apply()` refusing in the broker is the type doing its job, and `main.rs` already refuses **by name**.
+
+**The second finding is the real blocker, and it is bigger.** `GovernedSidecar::command()` builds a plain
+`Command::new(python)` — so the sidecar it spawns runs **as the broker's own uid**. §2.6 requires broker ≠
+sidecar; the ladder kit provisions `brops-sidecar` as a seventh account for exactly that reason; and every
+supervisor gate the ladder knocks on compares the peer uid against **one** configured sidecar uid. A
+broker-spawned sidecar is refused at the first hop unless the deployment collapses two principals the
+design keeps apart. Whose trust environment the sidecar carries **cannot be answered while it is not the
+sidecar principal**.
+
+One trap named so nobody walks into it: `BROPS_BROKER_CONFIG` already has a `[trust]` block, but that is
+the §4.2/§7 **key-manifest** root — a different trust root entirely. Putting the five engine variables
+there would look like the fix and would be "handed one by whoever starts it" wearing a config file.
+
+No mutation testing was run, because nothing changed — and the property it would have tested is already a
+compile error rather than a comment. All suites re-run on the untouched tree: `brops-core --lib` 443,
+`brops --lib` 117, `brops-broker` 46 + 3, engine 1979 OK (43 skipped), and reachability, ai-surfaces,
+capabilities and coordination GREEN. One pre-existing environmental failure is named rather than silenced:
+a `brops-provision` symlink fixture needing a privilege this account does not hold.
+
+
 ### The broker builds the ladder now, and the type records what was lost (2026-08-12)
 
 The Owner ruled §4.10(g) the production path (`docs/OWNER_ACTION_REQUIRED.md` §1d), and the first half of
