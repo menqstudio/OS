@@ -692,7 +692,30 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
       above) — **transport** (PR #8); control amended to read-only three-state 2026-08-09. *Same fact as
       the badge row above.* The three states are honestly derived from a real `ai_status`, and every
       install shows `default`, because `on`/`blocked` need a governed provider no turn can use.
-- [ ] Slice 3 — **delta-streaming descoped 2026-08-09** (buffered by construction; see Scope). What is left under this heading is the §4.10(f) chunked output pull, whose SUPERVISOR hop landed 2026-08-10 (engine: `governed_output_read.py` + `governed_output_stream.py` + the `governed_output_streams` DDL, minted from `complete-run`). The uncalled `core/src/governed_output_stream.rs` ladder was deleted rather than wired — its table diverged from the design. What remains is the DESKTOP hop: the `bridge.governed-turn-output-read.v1` frame and the internal helper that drives the loop and applies the whole-output digest.
+- [x] Slice 3 — the §4.10(f) chunked output pull — **done 2026-08-12, on a real Linux runner.**
+      Delta-streaming stays DESCOPED (a governed turn is buffered by construction: the desktop's
+      authority is a signature over the whole output). What this row tracked was the pull, and it is
+      now driven end to end by `ladder-governed-turn`. Verbatim from run 31621209556 at `5090e53`:
+      `pull=ok chunks=1 served_to_uid=5003 negatives=digest_mismatch,length_mismatch,`
+      `refused:stream_binding_mismatch,refused:stream_unknown` and `PULL: GREEN`.
+      The supervisor hop is `governed_output_read.py` + `governed_output_stream.py` + the
+      `governed_output_streams` DDL, minted from `complete-run`; the desktop hop is the
+      `bridge.governed-turn-output-read.v1` branch and `brops_core::governed_output_pull`, driven by
+      `core/src/bin/ladder_output_pull.rs`. The uncalled `core/src/governed_output_stream.rs` ladder
+      was **deleted** rather than wired — its table diverged from the design it cited, and its
+      `create_schema` ran one line before the canonical one with `CREATE TABLE IF NOT EXISTS`, which
+      would have made the canonical DDL a silent no-op.
+      **Four negatives are driven every run and refused by name**, plus a sign-flip control that
+      requires the positive to report `digest_mismatch` — because both of this repository's
+      PowerShell proofs were found unable to report PASS at all, through three audit rounds.
+      **Three limits, stated in the box rather than found later.** The live pull is **single-chunk**:
+      the executor's output is a fixed 322 bytes, so `seq` never exceeds 0 on the runner; a forced
+      400000-byte output gives 3 reads locally, so the striding loop is proven but not by CI. The
+      driver runs as the script's **root** orchestrator (it must `sudo -u` the sidecar), so it proves
+      nothing about who may read the store — that the bytes came through the egress rests entirely on
+      the supervisor's `SO_PEERCRED` hop log, which `check_pull` refuses to proceed without. And this
+      is a **CI proof, not a product path**: the shipped broker still reads the recorder's output with
+      `std::fs::read(&report_path)` and never touches this egress. That is the open row above.
 - [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands.
 
 ---

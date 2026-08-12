@@ -8,6 +8,36 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Slice 3 is ticked; the pull ran on a real runner (2026-08-12)
+
+Verbatim from run 31621209556 at `5090e53`:
+
+```
+pull=ok chunks=1 served_to_uid=5003
+negatives=digest_mismatch,length_mismatch,refused:stream_binding_mismatch,refused:stream_unknown
+PULL: GREEN
+```
+
+The §4.10(f) pull is driven end to end: the signed output comes back through the sidecar, chunk by chunk,
+and is gated against the **signed** envelope — never §4.10(e)'s transport echo, which the API makes
+impossible by having no digest parameter at all. Four negatives are refused **by name** every run, plus a
+sign-flip control that requires the positive to report `digest_mismatch`.
+
+**Three limits are written inside the box, not left to be discovered.** The live pull is **single-chunk** —
+the executor's output is a fixed 322 bytes, so `seq` never exceeds 0 on the runner, though a forced
+400000-byte output gives 3 reads locally, so the striding loop is proven but **not by CI**. The driver runs
+as the script's **root** orchestrator, because it must `sudo -u` the sidecar, so it proves nothing about
+who may read the store — that the bytes came through the egress rests entirely on the supervisor's
+`SO_PEERCRED` hop log, which the verifier refuses to proceed without. And this is a **CI proof, not a
+product path**.
+
+**Phase 1 is down to three open rows**, and two of them are the same fact: the shipped app does not take
+this path. The broker still reads the recorder's output with `std::fs::read(&report_path)` and never
+touches this egress, `governed_turn_submit_prepared` has a transport and no caller, and
+`governed_verification_unconfigured` still returns `Some(...)` unconditionally. Closing those is the
+architecture choice reserved to the Owner, not more building.
+
+
 ### cargo --bin filters the whole command (2026-08-12)
 
 The ladder job went RED, and the cause was one flag in the wrong scope.
