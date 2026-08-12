@@ -147,6 +147,7 @@
 //! declaration, so the reachability gate reports this as a declared gap with a written reason rather than
 //! as green.
 
+use crate::governed_prepare::MAX_ID_LEN;
 use crate::governed_turn_ipc::TurnReason;
 use crate::governed_verification::ReceiptEnvelope;
 
@@ -194,8 +195,10 @@ const MAX_ATTESTATION_EVIDENCE_JCS_B64_LEN: usize = 4664;
 /// §4.6's frozen ENCODED-byte cap on `containment_evidence_b64`.
 const MAX_CONTAINMENT_EVIDENCE_B64_LEN: usize = 65536;
 
-/// §4.6/§4.10(e): every id field is `<string ≤128>`.
-const MAX_ID_LEN: usize = 128;
+// §4.6/§4.10(e): every id field is `<string ≤128>`. The number is NOT restated here — it is
+// `governed_prepare::MAX_ID_LEN`, imported above. `governed_submit` already imports that same
+// constant; this module carried a private `128` literal beside it, which is the shape where one
+// copy moves and the other does not. There is now exactly one `128` in the crate for this rule.
 
 /// §4.6/§4.10(e)/§4.10(f): `output_bytes` is `<int 0..8388608>`.
 const MAX_OUTPUT_BYTES: u64 = 8_388_608;

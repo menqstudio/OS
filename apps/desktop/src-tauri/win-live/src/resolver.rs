@@ -167,30 +167,6 @@ fn persist_floor(path: &PathBuf, floor: &AntiRollbackFloor) -> Result<(), ()> {
     std::fs::rename(&tmp, path).map_err(|_| ())
 }
 
-/// Verify an ed25519 signature (hex pubkey, base64url-nopad sig) over `msg`, `verify_strict` (rejects
-/// non-canonical S + small-order keys), matching the rest of the chain.
-fn verify_ed25519_hex(public_key_hex: &str, msg: &[u8], sig_b64url: &str) -> bool {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use base64::Engine as _;
-    use ed25519_dalek::{Signature, VerifyingKey};
-    let pk = match crypto::hex32(public_key_hex) {
-        Some(b) => b,
-        None => return false,
-    };
-    let vk = match VerifyingKey::from_bytes(&pk) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let sig_bytes = match URL_SAFE_NO_PAD.decode(sig_b64url.as_bytes()) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-    match Signature::from_slice(&sig_bytes) {
-        Ok(s) => vk.verify_strict(msg, &s).is_ok(),
-        Err(_) => false,
-    }
-}
-
 /// Load the anti-rollback floor from the self-contained signed `floor.json` and verify its integrity tag.
 /// Refuses (Err) if `sig` is missing or does not verify over the exact `{highest_epoch, highest_hash}` body.
 ///
@@ -211,7 +187,7 @@ pub fn load_verified_floor(floor_path: &Path) -> Result<AntiRollbackFloor, Strin
             .to_string(),
     };
     let sig = v.get("sig").and_then(|x| x.as_str()).ok_or("floor.sig missing")?;
-    if !verify_ed25519_hex(&tcb::floor_public_key_hex(), &floor_body(&floor), sig) {
+    if !crypto::verify_ed25519_hex(&tcb::floor_public_key_hex(), &floor_body(&floor), sig) {
         return Err("floor_integrity: signature invalid (reset or tampered)".to_string());
     }
     Ok(floor)

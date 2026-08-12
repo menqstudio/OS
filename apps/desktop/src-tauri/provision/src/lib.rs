@@ -716,6 +716,20 @@ fn verify_document(document: &Value, public_key_hex: &str) -> Result<Value, Prov
     };
     let sig = Signature::from_bytes(&raw_sig);
     let bytes = canonical_bytes(&payload)?;
+    // `verify`, NOT `verify_strict` — and that is the ONE place in this workspace where it is
+    // deliberate, so a reviewer applying the governed chain's policy ("`verify_strict` is the right
+    // default for a security boundary", `governed_verification.rs`) does not silently break a pair.
+    //
+    // Everything on the governed-receipt side verifies signatures produced by the isolated signer and
+    // is verified ONLY by Rust, so both ends can be strict together. This function is different: it is
+    // the Rust half of `bro_signature.verify_detached`, and the Python half is the authority. Making
+    // this half reject signatures the Python half accepts would mean an operator-root document that
+    // installs on one path and is called corrupt on the other — a divergence, not a hardening.
+    //
+    // WHAT IS NOT ESTABLISHED HERE: whether `cryptography`'s Ed25519 verify actually accepts anything
+    // `verify_strict` rejects (non-canonical `s`, small-order `A`) on the versions this project pins.
+    // If it does not, the two can both be strict and should be. That is an open question, recorded as
+    // one rather than resolved by assumption in either direction.
     match vk.verify(&bytes, &sig) {
         Ok(()) => Ok(payload),
         Err(e) => {

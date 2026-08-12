@@ -48,7 +48,7 @@ use brops_core::governed_verification::{
 };
 use brops_core::receipt::IssuedRequest;
 
-use crate::chain_hops::{hop_roundtrip, HopConn, HopError, Principal};
+use crate::chain_hops::{hop_roundtrip, parse_reply, HopConn, HopError, Principal};
 
 /// The full authority→supervisor→launcher→executor→signer→verification sub-chain for ONE governed turn,
 /// abstracted to its one contract: given the validated request + the broker-minted ids, either produce the
@@ -337,21 +337,28 @@ where
     /// One framed request→reply roundtrip to `principal` over a fresh connection. Fails CLOSED on connect
     /// failure, frame/transport error, malformed reply, or any principal refusal (`ok:false` / a `reason`).
     /// Returns the parsed success reply object.
+    ///
+    /// The reply predicate itself lives in [`chain_hops::parse_reply`](crate::chain_hops::parse_reply) and
+    /// is NOT restated here. It used to be: this function open-coded the `ok` check while `chain_hops`
+    /// carried a second, DIFFERENT parser that read a `status` field no server has ever sent. Two parsers
+    /// for one hop is exactly the defect this chain has been bitten by; there is now one, and it is the
+    /// one the production path calls, so its tests cannot be green against a shape the deployment never
+    /// produces.
     fn hop(&self, principal: Principal, request: &Value) -> Result<Value, TurnReason> {
+        // The op is taken from the request we are about to send, so the echo check can never be
+        // satisfied by a constant that drifted away from the request builder.
+        let op = request
+            .get("op")
+            .and_then(Value::as_str)
+            .ok_or(TurnReason::UpstreamBlocked)?
+            .to_string();
         let bytes = serde_json::to_vec(request).map_err(|_| TurnReason::UpstreamBlocked)?;
         let mut conn = self
             .connector
             .connect(principal)
             .map_err(|e| e.to_turn_reason())?;
         let reply = hop_roundtrip(conn.as_mut(), &bytes).map_err(|e| e.to_turn_reason())?;
-        let value: Value = serde_json::from_slice(&reply).map_err(|_| TurnReason::UpstreamBlocked)?;
-        // A principal reply is a success ONLY if it says so; `ok:false` (with its typed `reason`) or a
-        // missing/false `ok` is a fail-closed refusal — never a fabricated success.
-        let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(false);
-        if !ok {
-            return Err(TurnReason::UpstreamBlocked);
-        }
-        Ok(value)
+        parse_reply(&op, &reply).map_err(|e| e.to_turn_reason())
     }
 }
 

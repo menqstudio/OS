@@ -9,7 +9,6 @@ use crate::crypto;
 use brops_core::supervisor_ledger::{
     create_schema, evidence_floor_cas, EvidenceHead, LedgerError,
 };
-use ed25519_dalek::{Signature, VerifyingKey};
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -27,11 +26,21 @@ pub const ATTESTATION_PROTOCOL: &str = "brops.run-attestation.v1";
 pub const SIGN_REQUEST_PROTOCOL: &str = "brops.sign-request.v1";
 pub const ENVELOPE_ARTIFACT_TYPE: &str = "brops.governed-receipt-envelope.v1";
 
-pub const MAX_ID_LEN: usize = 128;
+/// The id cap and the lease budget are the SAME constants the Linux broker and the durable ledger use —
+/// re-exported from `brops-core`, not re-declared. They used to be three literals here, beside a doc
+/// header calling this module "the Rust twin" of the Python principals; a twin that keeps its own copy of
+/// the other twin's numbers is two implementations of one rule, and only one of them moves when the rule
+/// does. `rustc` now refuses to let this file hold a different value: there is nowhere to put one.
+pub use brops_core::governed_prepare::MAX_ID_LEN;
+pub use brops_core::supervisor_ledger::{LEASE_DURATION_MS, MIN_LAUNCH_REMAINING_MS};
+
+/// These three have no `brops-core` counterpart to be derived from — the challenge/pending TTLs and the
+/// completion clock-skew allowance live only in the Python principals (`challenge_authority.py`), which
+/// this crate cannot import. They are pinned against those Python constants by
+/// `engine/tests/test_one_standard_pins.py`, which reads this file's source text; that is a weaker
+/// mechanism than the `pub use` above and is used only where the stronger one does not exist.
 pub const PENDING_TTL_MS: i64 = 30_000;
 pub const CHALLENGE_TTL_MS: i64 = 30_000;
-pub const LEASE_DURATION_MS: i64 = 210_000;
-pub const MIN_LAUNCH_REMAINING_MS: i64 = 180_000;
 pub const COMPLETED_SKEW_MS: i64 = 60_000;
 
 // ---- small validation helpers -----------------------------------------------------------------
@@ -712,7 +721,7 @@ impl Supervisor {
             return refuse("accept-open", "malformed");
         }
         // Phase A — signature over the supervisor-reassembled canonical payload bytes.
-        if !verify_ed25519_hex(&self.cfg.challenge_public_key_hex, &crypto::jcs(payload), sig_b64) {
+        if !crypto::verify_ed25519_hex(&self.cfg.challenge_public_key_hex, &crypto::jcs(payload), sig_b64) {
             return refuse("accept-open", "signature_invalid");
         }
         // Phase B — freshness + request_sha256 recompute must equal the signed value.
@@ -1368,7 +1377,7 @@ impl Signer {
             None => return self.refuse_sign("attestation_invalid"),
         };
         let evidence_jcs = crypto::jcs(evidence);
-        if !verify_ed25519_hex(&self.cfg.supervisor_attestation_public_key_hex, &evidence_jcs, att_sig) {
+        if !crypto::verify_ed25519_hex(&self.cfg.supervisor_attestation_public_key_hex, &evidence_jcs, att_sig) {
             return self.refuse_sign("attestation_invalid");
         }
 
@@ -1537,32 +1546,8 @@ impl DispatchCore for Signer {
     }
 }
 
-// ---- shared ed25519 verify (hex pubkey, base64url-nopad sig) -----------------------------------
-
-fn verify_ed25519_hex(public_key_hex: &str, msg: &[u8], sig_b64url: &str) -> bool {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use base64::Engine as _;
-    let pk = match crypto::hex32(public_key_hex) {
-        Some(b) => b,
-        None => return false,
-    };
-    let vk = match VerifyingKey::from_bytes(&pk) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let sig_bytes = match URL_SAFE_NO_PAD.decode(sig_b64url.as_bytes()) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-    if sig_bytes.len() != 64 {
-        return false;
-    }
-    let sig = Signature::from_slice(&sig_bytes).ok();
-    match sig {
-        Some(s) => vk.verify_strict(msg, &s).is_ok(),
-        None => false,
-    }
-}
+// The ed25519 verify used by both principals below is `crypto::verify_ed25519_hex` — ONE function
+// for the whole crate, beside the signing helpers it inverts. This module used to carry a second copy.
 
 
 /// (audit **IDX-121**, **IDX-28/IDX-91**) Everything here runs on the LINUX CI runner: the

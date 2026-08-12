@@ -61,7 +61,12 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Tuple, Union
 
-from governed_supervisor_ledger import AttestationState, NewAcceptance
+from governed_supervisor_ledger import (
+    LEASE_DURATION_MS,
+    MIN_LAUNCH_REMAINING_MS,
+    AttestationState,
+    NewAcceptance,
+)
 
 # ---------------------------------------------------------------------------
 # Constants (rev-30 §5 — mirror supervisor_ledger.rs exactly).
@@ -70,12 +75,21 @@ from governed_supervisor_ledger import AttestationState, NewAcceptance
 # The signed document the challenge authority issues (challenge_authority.py).
 CHALLENGE_PROTOCOL = "brops.governed-turn-challenge.v1"
 
-# Full lease duration (§5 step 4 / §4.7): ~30000 pre-launch + 180000 in-window.
-LEASE_DURATION_MS = 210_000
-
-# Minimum remaining lease budget required to launch (§5 step 8a). Exact-180000
-# remaining PROCEEDS; 179999 refuses. Matches supervisor_ledger.rs.
-MIN_LAUNCH_REMAINING_MS = 180_000
+# The lease budget constants are IMPORTED from ``governed_supervisor_ledger`` (above), not
+# restated. They used to be a second pair of literals here, beside a comment claiming they
+# "mirror supervisor_ledger.rs exactly" — a claim nothing checked, in a module that already
+# imports from the ledger that owns the durable window. The ledger enforces the gate; this
+# module stamps the expiry; both must be the same number or a lease is issued for a window the
+# gate will not honour. They are re-exported so existing importers of
+# ``governed_supervisor.LEASE_DURATION_MS`` keep working — but there is now ONE literal.
+#
+#   * ``LEASE_DURATION_MS``       — full lease duration (§5 step 4 / §4.7): ~30000 pre-launch
+#                                   + 180000 in-window.
+#   * ``MIN_LAUNCH_REMAINING_MS`` — minimum remaining budget to launch (§5 step 8a). Exact
+#                                   180000 remaining PROCEEDS; 179999 refuses.
+#
+# The Rust half (``core/src/supervisor_ledger.rs``) is a THIRD site in another language; it is
+# pinned against these by ``tests/test_one_standard_pins.py``.
 
 # Governed challenge TTL is capped at 30000 ms by the issuer; the supervisor
 # re-checks the cap so a challenge claiming a longer life than policy is malformed.

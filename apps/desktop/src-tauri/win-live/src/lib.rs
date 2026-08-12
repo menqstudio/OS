@@ -40,7 +40,7 @@ pub mod tcb_floor;
 pub mod crypto {
     use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
     use base64::Engine as _;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
     use serde_json::Value;
     use std::collections::BTreeMap;
 
@@ -69,6 +69,37 @@ pub mod crypto {
             out[i] = (hi * 16 + lo) as u8;
         }
         Some(out)
+    }
+
+    /// Verify a detached ed25519 signature: hex public key, base64url-nopad signature, over `msg`.
+    /// `verify_strict` (rejects a non-canonical `s` and small-order keys) — the policy the whole
+    /// governed chain uses.
+    ///
+    /// There used to be TWO of these in this crate, one in `resolver.rs` and one in `servers.rs`,
+    /// with the same name and near-identical bodies (they differed only in whether the 64-byte
+    /// length was checked before `Signature::from_slice`, which checks it anyway). Two spellings of
+    /// a signature-verification policy is the shape where one of them quietly stops being strict.
+    /// There is one now, and it lives beside the signing functions it is the inverse of.
+    pub fn verify_ed25519_hex(public_key_hex: &str, msg: &[u8], sig_b64url: &str) -> bool {
+        let pk = match hex32(public_key_hex) {
+            Some(b) => b,
+            None => return false,
+        };
+        let vk = match VerifyingKey::from_bytes(&pk) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let sig_bytes = match URL_SAFE_NO_PAD.decode(sig_b64url.as_bytes()) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        if sig_bytes.len() != 64 {
+            return false;
+        }
+        match Signature::from_slice(&sig_bytes) {
+            Ok(s) => vk.verify_strict(msg, &s).is_ok(),
+            Err(_) => false,
+        }
     }
 
     /// A fresh 32-byte ed25519 seed from the OS CSPRNG.

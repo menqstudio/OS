@@ -8,6 +8,70 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### A parser reading a field no server has ever sent (2026-08-12)
+
+The Owner named the pattern before I did: **one contract, two implementations** — found six times in three
+days, each time by accident, each time after it had already cost a failed run or a false green. So this was
+swept for deliberately, map first, fixes second.
+
+**The worst find is exactly the shape the Owner pointed at.** `broker/src/chain_hops.rs::reply_status`
+parsed a `status` field that **no server in this tree has ever emitted** — all three Python principals and
+all three `win-live` Rust twins reply `{"ok": bool, "op": …}`. Its only callers were its own tests, which
+hand-built `{"status":"lease_ready"}`: **a double whose shape was invented rather than derived, green by
+construction**. Meanwhile `chain_executor::hop` open-coded the *correct* check beside it. Two parsers for
+one hop, one of them fictional. Now one `parse_reply(expected_op, bytes)` on the production path — and it
+additionally **checks the op echo**, which nothing did before: on a single-request/single-response channel,
+a reply answering a different op is now a closed refusal.
+
+**A sentence in the code that is false on the deployed path.** Three framing codecs disagree —
+challenge-authority and supervisor cap at 8192, the isolated signer at 512 KiB — while the Rust broker, the
+only production client of all three, caps at **8192 in both directions**. The signer's own comment says its
+cap "sits comfortably above [its limit] so a well-formed request always reaches the signer's oversize
+gate". On the deployed path nothing between 8193 and 524288 can cross in either direction, so that gate is
+unreachable and the signer's suite exercises sizes the deployment cannot deliver. Fail-closed both ways, so
+not a hole — pinned as an asymmetry rather than silently widened or narrowed, because changing either
+number changes what the deployment accepts.
+
+**Two canonicalizer families that differ only on non-ASCII.** Six copies use `ensure_ascii=True`, four use
+`False`, and for every ASCII fixture in the tree they are byte-identical — so **a one-word edit swapping
+either for the other is invisible to every existing test**. That is the same latent shape as the
+`challenge_handle` contradiction. Not collapsed: these are separate trusted principals in separate
+processes, and making four import the fifth would put the fifth's code inside the others' TCB. Pinned as a
+**required difference** instead, with a corpus that fails if anyone ever trims it to ASCII-only — which
+would make every agreement assertion vacuous.
+
+**What was actually unified, and at what strength.** Seven changes, all at strength 1 or 2 — the second
+implementation removed or derived, not commented against: one JCS copy in `local_write_record.rs` deleted
+in favour of its neighbour; `MAX_ID_LEN`'s private literal replaced by the const its sibling already
+imported; the hop parser above; the lease constants imported from the ledger the module already imports;
+`LEASE_FIELDS` derived from `dataclasses.fields(Lease)` (it was a hand-typed mirror with **zero readers**);
+one `verify_ed25519_hex` for `win-live` instead of two; and `win-live` now `pub use`s three constants from
+`brops-core`, so **rustc refuses to let a second value exist**. 21 new pinning tests read the Rust
+constants out of the source, so a cross-language drift fails a test rather than a deployment.
+
+**Three things were deliberately left, and the reasons matter more than the fixes.**
+`chain_executor::supervisor_op` open-codes the same check a third time and does not check the op echo — it
+is inside `#[cfg(target_os = "linux")]` and **this box cannot compile it**, so the agent refused to ship an
+edit it could not build. `provision/src/lib.rs` uses `verify()` where the whole workspace uses
+`verify_strict()`, and that is **correct**: it is the Rust half of a Python authority, and making this half
+stricter would mean a document that installs on one path and is called corrupt on the other. It is recorded
+at the site with what is *not* established stated as an open question — because a reviewer applying the
+codebase's own stated policy would "fix" it and silently break the pair. And the two claude-CLI paths give
+the same work 900s and 120s; a timeout on a dev-ungoverned path is an Owner call, not a unification.
+
+**The mutation pass found a gap in its own tests.** Rewriting the new parser's success check from
+`!= Some(true)` to `== Some(false)` let a reply that never says it succeeded through, and every negative
+fixture also lacked a valid `op`, so nothing caught it. Four assertions added; re-run **15/15 killed, zero
+survivors**. The kills confirm the pins are load-bearing: swapping either canonicalizer family for the
+other, moving a lease or id constant on one side of the language boundary, retyping `LEASE_FIELDS` one
+field short, renaming a `win-live` dispatch arm, and deleting the new op-echo check are all caught.
+
+Re-run here: engine **1953 OK (43 skipped)** from 1932, `brops-broker` **36 + 3** from 33 + 3,
+`brops-core --lib` 442, `brops-win-live --lib` 101, bridge 210, tools 419; spec-references, reachability,
+ledger-DDL parity and coordination all exit 0. No gate moved — the three refusals appear **zero times** in
+the diff.
+
+
 ### The contained execution ran on a real runner; the signature is where it died (2026-08-12)
 
 CI ran the ladder kit on a real Linux runner for the first time. **Both halves reported honestly**: the

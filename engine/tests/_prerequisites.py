@@ -115,6 +115,28 @@ DESKTOP_TCB_SOURCE = Prerequisite(
     "engine tree (deployment Step 6 copies engine/ only)",
 )
 
+#: The Rust half of the governed chain, as SOURCE TEXT. `test_one_standard_pins` reads the
+#: `pub const` lines out of these files to hold the Python constants against them: the two
+#: halves are compiled separately and no type-checker ever sees both, so the only thing that can
+#: notice a number moving on one side is a test that reads the other side's source.
+DESKTOP_GOVERNED_SOURCE = Prerequisite(
+    "apps/desktop governed-chain source",
+    lambda: all(
+        (REPO_ROOT / "apps" / "desktop" / "src-tauri" / rel).is_file()
+        for rel in (
+            "core/src/supervisor_ledger.rs",
+            "core/src/governed_prepare.rs",
+            "core/src/ipc_framing.rs",
+            "core/src/receipt.rs",
+            "core/src/governed_verification.rs",
+            "win-live/src/servers.rs",
+            "broker/src/chain_executor.rs",
+        )
+    ),
+    "the apps/desktop/src-tauri governed-chain sources are not present beside the "
+    "engine tree (deployment Step 6 copies engine/ only)",
+)
+
 BRIDGE_SIDECAR = Prerequisite(
     "bridge sidecar",
     lambda: (REPO_ROOT / "bridge" / "engine_sidecar.py").is_file(),

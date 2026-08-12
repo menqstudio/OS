@@ -53,7 +53,7 @@ import struct
 import sys
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields
 from typing import Any, Callable, Dict, Mapping, Optional
 
 import governed_output_stream as output_streams
@@ -143,16 +143,15 @@ OP_EXECUTION_STARTED = "execution-started"
 OP_COMPLETE_RUN = "complete-run"
 OP_ATTEST_RUN = "attest-run"
 
-# The exhaustive field set of a wire lease (mirrors governed_supervisor.Lease). The
-# supervisor only ever WRITES this shape now — it is never parsed back off the wire
-# (see the §5 v2 note in the module docstring).
-LEASE_FIELDS = (
-    "lease_id",
-    "execution_attempt_id",
-    "lease_expires_at_ms",
-    "launcher_executable_sha256",
-    "executor_executable_sha256",
-)
+# The exhaustive field set of a wire lease, DERIVED from ``governed_supervisor.Lease`` rather
+# than retyped. It used to be a hand-written tuple whose comment said it "mirrors
+# governed_supervisor.Lease" — and which nothing in the tree read, so a field added to the
+# dataclass would have left this list silently short with no test to notice. Deriving it means
+# the mirror cannot be stale, and ``_lease_to_dict`` marshals THROUGH it, so the wire shape and
+# the dataclass are the same fact instead of two statements of it.
+# (The supervisor only ever WRITES this shape; it is never parsed back off the wire — see the
+# §5 v2 note in the module docstring.)
+LEASE_FIELDS: tuple = tuple(f.name for f in dataclass_fields(Lease))
 
 # ---------------------------------------------------------------------------
 # Typed refusal reasons this layer adds on top of the pure core's REFUSE_* set.
@@ -386,13 +385,10 @@ def _encode_reply(reply: Mapping[str, Any]) -> bytes:
 
 
 def _lease_to_dict(lease: Lease) -> Dict[str, Any]:
-    return {
-        "lease_id": lease.lease_id,
-        "execution_attempt_id": lease.execution_attempt_id,
-        "lease_expires_at_ms": lease.lease_expires_at_ms,
-        "launcher_executable_sha256": lease.launcher_executable_sha256,
-        "executor_executable_sha256": lease.executor_executable_sha256,
-    }
+    """The wire lease, marshalled through [LEASE_FIELDS] — which is itself derived from the
+    ``Lease`` dataclass. A field added to the dataclass appears on the wire; a field removed
+    disappears from it. Neither is a place a human has to remember to edit."""
+    return {name: getattr(lease, name) for name in LEASE_FIELDS}
 
 
 def _b64url_nopad(data: bytes) -> str:
