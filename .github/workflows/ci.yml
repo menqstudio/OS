@@ -150,7 +150,11 @@ jobs:
       # error should fail as a build step, not as a mid-run "FAIL: build" after root has already
       # provisioned /opt/brops-live.
       - name: Build the launcher + the governed-live crate (recorder/executor) + the §4.10(f) pull driver
-        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml -p brops-launcher -p brops-governed-live -p brops-core --bin ladder_output_pull
+        # Two invocations: `--bin` filters the WHOLE command, so naming three packages and one bin
+        # builds only that bin. Run 31617346101 finished in 0.11s and produced no launcher.
+        run: |
+          cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml -p brops-launcher -p brops-governed-live
+          cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml -p brops-core --bin ladder_output_pull
       # SEVEN accounts, not six. §2.6 requires the broker and the sidecar to be pairwise-distinct
       # principals, and `governed_supervisor_server.handle_connection` refuses outright when the
       # two uids are equal — so on the six-account kit every open/staging/evidence/read gate,

@@ -8,6 +8,23 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### cargo --bin filters the whole command (2026-08-12)
+
+The ladder job went RED, and the cause was one flag in the wrong scope.
+`cargo build -p brops-launcher -p brops-governed-live -p brops-core --bin ladder_output_pull` builds
+**only** `ladder_output_pull`: `--bin` is a filter over the whole invocation, not over the package it
+follows. So the launcher, the recorder and the executor were silently skipped, cargo reported
+`Finished in 0.11s`, and nothing was built that the run needed.
+
+**The check caught it, which is the part worth keeping.** The script verifies each binary exists before it
+uses it, and it refused with `FAIL: missing built binary …/brops-launcher` rather than proceeding into a
+run that would have failed later and more confusingly. That guard exists precisely because a build command
+can succeed while building the wrong thing.
+
+Split into two invocations, in **both** places it appeared — the script and the workflow step — with the
+reason written beside each, since the flag reads as if it scopes to the package before it.
+
+
 ### The pull has a driver, and the token was already in the frame (2026-08-12)
 
 §4.10(f)'s three pieces — the supervisor's read service, the sidecar's branch and `brops-core`'s pull loop —

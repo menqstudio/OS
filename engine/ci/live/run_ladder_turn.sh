@@ -119,9 +119,14 @@ else
     [ -n "$u" ] && [ -x "/home/$u/.cargo/bin/cargo" ] && { CARGO_BIN="/home/$u/.cargo/bin/cargo"; break; }
   done
   [ -n "$CARGO_BIN" ] || { echo "FAIL: cargo not found (build as the normal user first, then re-run)"; exit 1; }
+  # TWO invocations, deliberately. `--bin` is a filter over the WHOLE command, not over the package
+  # it follows: naming three packages and `--bin ladder_output_pull` builds ONLY that bin and
+  # silently skips the launcher, the recorder and the executor. That is CI run 31617346101 --
+  # cargo said "Finished in 0.11s" and the binary check below caught the absence.
   ( cd "$REPO_ROOT" && "$CARGO_BIN" build --manifest-path "$TAURI_DIR/Cargo.toml" \
-      -p brops-launcher -p brops-governed-live \
-      -p brops-core --bin ladder_output_pull ) || { echo "FAIL: build"; exit 1; }
+      -p brops-launcher -p brops-governed-live ) || { echo "FAIL: build (live kit)"; exit 1; }
+  ( cd "$REPO_ROOT" && "$CARGO_BIN" build --manifest-path "$TAURI_DIR/Cargo.toml" \
+      -p brops-core --bin ladder_output_pull ) || { echo "FAIL: build (pull driver)"; exit 1; }
 fi
 for b in "$LAUNCHER_BIN" "$EXECUTOR_BIN" "$RECORDER_BIN" "$PULL_BIN"; do
   [ -x "$b" ] || { echo "FAIL: missing built binary $b"; exit 1; }
