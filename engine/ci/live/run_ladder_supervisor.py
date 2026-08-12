@@ -58,7 +58,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..", "..", "runtime")))
 
 import ipc_policy  # noqa: E402
 import live_crypto as lc  # noqa: E402
-import brops_socket  # noqa: E402
+import isolated_signer_server as iss  # noqa: E402
 import governed_acceptance as gac  # noqa: E402
 import governed_evidence_request as ger  # noqa: E402
 import governed_output_read as gor  # noqa: E402
@@ -455,12 +455,20 @@ def build_ladder_services(cfg: Mapping[str, Any], ladder: Mapping[str, Any], *,
 
             The supervisor is the signer's peer here, which is what this kit's
             ``isolated-signer.ipc-policy.json`` names. It hands the signer the exact
-            ``JCS(evidence)`` it attested; the signer verifies that attestation under the pinned
-            supervisor key and RECOMPUTES the envelope from the store before signing, so this
-            hop transports a request and confers no authority.
+            ``JCS(evidence)`` it attested; the signer verifies that attestation under the
+            pinned supervisor key and RECOMPUTES the envelope from the protected store before
+            signing, so this hop transports a request and confers no authority.
+
+            The op envelope and the reply translation are `isolated_signer_server`'s own —
+            NOT written here. The first live run of this kit died precisely because they were
+            written here, by assumption: the driver's seam takes the signer's own reply and
+            the wire carries the broker-shaped op reply (`signature`, not `signature_b64`; no
+            `status`), and the sign-request must travel NESTED under `op`. A deployment script
+            that re-derives a wire contract is a second author of it, and the two drift the
+            first time either moves.
             """
-            return brops_socket.request(signer_socket, dict(sign_request),
-                                        timeout=SIGNER_TIMEOUT_S)
+            return iss.request_sign_result(signer_socket, dict(sign_request),
+                                           timeout=SIGNER_TIMEOUT_S)
 
     config = SupervisorConfig(
         launcher_executable_sha256=sup["launcher_executable_sha256"],

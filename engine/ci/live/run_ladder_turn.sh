@@ -390,14 +390,27 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Each service's stdout+stderr is TEE'd into the evidence directory as well as the job log.
+# A supervisor-side fault answers the peer with an op-shaped `{"ok": false, "error": ...}` that
+# names no protocol, and the §4.10(g) client keeps only the protocol name from it — so the
+# supervisor's own stderr is the account of what actually happened. The first live run of this
+# kit had that account nowhere at all: `handle_connection` printed nothing for a caught
+# `SupervisorError` (now fixed in engine/runtime/governed_supervisor_server.py), and diagnosing
+# it cost a CI round trip. Keeping it in the BUNDLE, not only in the job log, is this script's
+# half of that fix.
 echo "== starting challenge-authority / LADDER supervisor / isolated-signer =="
-sudo -u "$CHALLENGE_USER" env PYTHONUNBUFFERED=1 python3 "$PYLIVE/run_authority.py" --config "$CONFIG" &
-PIDS+=($!)
-sudo -u "$SUPERVISOR_USER" env PYTHONUNBUFFERED=1 python3 "$PYLIVE/run_ladder_supervisor.py" \
-  --config "$CONFIG" --ladder "$LADDER_CONFIG" &
-PIDS+=($!)
-sudo -u "$SIGNER_USER" env PYTHONUNBUFFERED=1 python3 "$PYLIVE/run_signer.py" --config "$CONFIG" &
-PIDS+=($!)
+# `> >(tee ...)` rather than `| tee ...`: in a pipeline `$!` is the PID of `tee`, so `cleanup`
+# would kill the tee and leave the SERVICE running -- holding a socket the next run has already
+# unlinked. Process substitution keeps `$!` the service' own PID while still writing both the
+# job log and the bundle copy.
+start_service() {  # <user> <logfile> <script> <args...>
+  local user="$1" log="$2"; shift 2
+  sudo -u "$user" env PYTHONUNBUFFERED=1 python3 "$@" > >(tee "$log") 2>&1 &
+  PIDS+=($!)
+}
+start_service "$CHALLENGE_USER"  "$LADDER/authority.log"  "$PYLIVE/run_authority.py" --config "$CONFIG"
+start_service "$SUPERVISOR_USER" "$LADDER/supervisor.log" "$PYLIVE/run_ladder_supervisor.py" --config "$CONFIG" --ladder "$LADDER_CONFIG"
+start_service "$SIGNER_USER"     "$LADDER/signer.log"     "$PYLIVE/run_signer.py" --config "$CONFIG"
 
 for s in authority supervisor signer; do
   for _ in $(seq 1 200); do [ -S "$SOCK/$s.sock" ] && break; sleep 0.05; done
@@ -479,6 +492,7 @@ rm -rf "$EVIDENCE_OUT"; mkdir -p "$EVIDENCE_OUT"
 cp -r "$LADDER/evidence" "$EVIDENCE_OUT/positive" 2>/dev/null || true
 cp -r "$LADDER/evidence-negative" "$EVIDENCE_OUT/negative" 2>/dev/null || true
 cp "$LADDER/hops.jsonl" "$LADDER/uids.json" "$EVIDENCE_OUT/" 2>/dev/null || true
+cp "$LADDER"/authority.log "$LADDER"/supervisor.log "$LADDER"/signer.log "$EVIDENCE_OUT/" 2>/dev/null || true
 cp "$TCB/challenge-key-registry.json" "$LADDER_CONFIG" "$EVIDENCE_OUT/" 2>/dev/null || true
 chmod -R a+rX "$EVIDENCE_OUT"
 echo

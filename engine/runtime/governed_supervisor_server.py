@@ -1071,6 +1071,31 @@ def handle_connection(
         reason = getattr(exc, "reason", None)
         if isinstance(reason, str) and reason:
             reply["reason"] = reason
+        # ...and, for ONE of these classes, say so on the operator's stderr as well.
+        #
+        # The reply above is not a refusal in any protocol this door speaks: it is the
+        # broker's op shape, carrying no `protocol`, and a SIDECAR peer receives it for a
+        # §4.10 frame it can only read as a transport failure. §4.10(h) (**NOT IMPLEMENTED**)
+        # is the diagnostic carrier that would let those be told apart; until it exists this
+        # string is the ONLY account of the fault, and the one client in the tree keeps just
+        # the protocol name from it.
+        #
+        # WHICH class, and why only that one. `FrameError`, `ServerError`, `ValueError` and
+        # `UnicodeDecodeError` are PEER-ATTRIBUTABLE: an authorized-but-hostile peer produces
+        # them at will with a malformed frame or an unknown op, so printing them is a
+        # log-flooding vector and the reply already says everything there is to say.
+        # `SupervisorError` is not peer-attributable — it means this supervisor's own
+        # machinery or one of its INJECTED SEAMS disagreed with itself. That is a broken
+        # deployment, an operator's problem, and invisible until now.
+        #
+        # Not hypothetical: the first live §4.10(g) run drove the whole ladder, ran a REAL
+        # contained execution to completion, then raised exactly this class out of the
+        # isolated-signer seam — and left nothing behind anywhere. No traceback, and a
+        # sidecar error text that said only `protocol None`. Diagnosing it cost a CI round
+        # trip. The text is already going to the peer, so stderr is strictly less exposure
+        # than the wire, and this changes no verdict.
+        if isinstance(exc, SupervisorError):
+            traceback.print_exc(file=sys.stderr)
     except Exception:  # noqa: BLE001 - the fail-closed backstop (audit R1 `:626`)
         # An explicit tuple can only promise "never raises" for the classes somebody
         # remembered to list, and the class that was missing was reachable from the wire:

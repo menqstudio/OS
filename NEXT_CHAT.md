@@ -8,6 +8,71 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The contained execution ran on a real runner; the signature is where it died (2026-08-12)
+
+CI ran the ladder kit on a real Linux runner for the first time. **Both halves reported honestly**: the
+negative case refused with `digest_mismatch` and exited non-zero — so the proof can fail — and the positive
+case went RED without fabricating anything.
+
+**The evidence carries a bigger fact than the failure.** The hop log shows all ten §4.10 frames served to
+`peer_uid: 5003` under `supervisor_euid: 5004`, and then `execution.exit exit=0` with
+`EXECUTOR_REPORT: {"euid":5007,"egid":5007,"caps_all_zero":true,"no_new_privs":true,…}`.
+
+**The real §6.1 step-5 contained execution ran and completed, driven by the supervisor through the
+§4.10(d) hop** — six uids, the setuid launcher, capabilities dropped, `no_new_privs`, 4.5 seconds. That is
+the intersection Slice 2 asks for, and it is no longer hypothetical. The turn died two steps later.
+
+**What raised was the isolated-signer transport, and it is the same defect class as the last three.**
+`AcceptanceDriver.sign_result` is documented as *"handed a `brops.sign-request.v1`; must return the
+isolated signer's own reply"*. Its only transport in the tree implements **neither half**: `dispatch` routes
+on `op`, so a bare sign-request is answered `unknown op None`, and the wire reply is the *broker's* op shape
+— `signature` not `signature_b64`, `ok` not `status` — because the Rust verifier decodes exactly those
+names. Printed side by side, the signer's own reply carries
+`['artifact_type', 'payload', 'signature_b64', 'status']` while the wire carries
+`['artifact_type', 'ok', 'op', 'payload', 'signature']`.
+
+**None of the six provisioning gaps was at fault** — the hop log proves every one of them worked.
+
+**Why no test caught it: the harness wired `sign_result` in-process, and the deployment uses the socket.**
+The two had different contracts, and every existing test of the §5 driver shares that blind spot. This is
+*the writer exists, and there is a second architecture for the same hop* — the fourth time this week. The
+new transport test is the missing middle: it drives the real `dispatch` over a real signer and requires the
+decoded reply to be **byte-identical** to `IsolatedSigner.sign_result` on both arms. No AF_UNIX and no root,
+because the mismatch was pure shape — a Linux-only test would have been the wrong test.
+
+**The op-shaped error was also a defect, and the fix is diagnosability, not a new protocol.** Manufacturing
+a diagnostic frame here would be a producer with no consumer and a protocol nobody is entitled to design
+(§4.10(h) Carrier 1 is NOT IMPLEMENTED). What was actually broken is that the fault existed **nowhere**:
+the typed-except branch printed nothing, so the only account of it went into a reply the client discards.
+Now `SupervisorError` alone reaches the operator's stderr — `FrameError`, `ServerError`, `ValueError` and
+`UnicodeDecodeError` stay **silent**, because an authorized-but-hostile peer produces those at will and
+logging them is a flooding vector while the reply already says everything. A test pins **both** directions;
+without the silent half the fix is noise one `grep -v` away from the original silence.
+
+The decoder **refuses rather than repairs**: a peer denial or an internal signer fault raises, and is never
+translated into a typed refusal, because that would put a verdict about the turn in the caller's mouth.
+
+Two defects were caught in the agent's own edits before they shipped: a literal escape that would have
+passed a stray argv to two services, and a pipe that made the shell's last-pid the tee's, so cleanup would
+have killed the tee and left the services running.
+
+**The box still cannot be ticked, and exactly one thing is outstanding.** The remaining doubt has changed
+character: *"does the ladder reach a real contained execution"* is now answered, on a real runner, with the
+uids in the log. What is unproven is the last two steps — attest and sign — through the corrected
+transport, driven locally against the real signer and the real `dispatch` but **never seen to pass on
+Linux**. The other two conditions stand: the Owner accepts the Option-1 topology (§1d), and the box is
+worded as the **adapter ↔ supervisor** round trip, because `governed_turn_submit_prepared` is still
+callerless and `ChainExecutor` still drives direct AF_UNIX.
+
+Service stdout and stderr are now tee'd into the evidence bundle, so the next fault survives in the
+artifact rather than only in job-log retention. One recommendation left open: the submit client discards
+the peer's `error` text and keeps only the protocol name, which is why CI said `protocol None` and nothing
+else.
+
+Engine suite **1932 OK (43 skipped)**, from 1915 — re-run here. Bridge 210, `check_spec_references` GREEN,
+`bash -n` OK.
+
+
 ### Bypassing the trust environment is now a compile error (2026-08-12)
 
 `ai::governed_sidecar_call` was the tree's only bridge spawn: `async` `tokio`, in the renderer-hosting
