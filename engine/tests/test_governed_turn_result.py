@@ -575,10 +575,11 @@ class FrozenProtocolCoexistenceTests(unittest.TestCase):
 
     def test_a_new_document_is_not_a_frozen_document(self):
         """The other direction, as far as this piece can prove it. The frozen CONSUMER is
-        `bridge/engine_sidecar.py`'s `_GovernedOutcome` and its new branch is §4.10(g)
-        (**NOT IMPLEMENTED** — a later ordered piece), so what is proved here is the
-        structural half: a §4.10(e) frame has neither of the two keys that consumer reads,
-        so it can carry no output and no receipt into it."""
+        `bridge/engine_sidecar.py`'s `_GovernedOutcome`; the NEW consumer is §4.10(g)'s
+        `bridge/governed_turn_submit.py`, which routes on the `protocol` const and hands a
+        §4.10(e) frame to the §4.6 re-framer. What is proved here is the structural half of
+        the frozen direction: a §4.10(e) frame has neither of the two keys `_GovernedOutcome`
+        reads, so it can carry no output and no receipt into it."""
         frame = signed_frame()
         self.assertNotIn("output", frame)
         self.assertNotIn("receipt", frame)

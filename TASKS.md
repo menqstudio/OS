@@ -8,6 +8,98 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### A killed process does not run its finally block (2026-08-10)
+
+**§4.10(g)'s sidecar half is built, and the seam left unwired six times now has a caller.** One submit
+frame drives §4.10(a0) open → §4.10(a)(b)(c) staging (per artifact, in the §2.4 order) → §4.10(d) trigger →
+the §4.6 re-frame, **inside one one-shot subprocess** — proven end to end against the real
+`OpenService`/`StagingService`/`EvidenceRequestService`, a real durable ledger, four real Ed25519 keypairs,
+the real §5 `AcceptanceDriver` and the real isolated signer, returning a §4.6 frame whose envelope verifies
+and whose echoes equal it. It is `reframe_turn_result`'s **first caller ever**. The order is a data
+dependency, not a convention: `challenge_handle` does not exist until the open returns. A test records every
+frame written and asserts no output-read among them, because §4.10(g) says this subprocess pulls nothing.
+
+**Three checks were deliberately not written**, each because writing it would make a *supervisor* verdict
+unreachable through the only client that exists: the challenge document is forwarded verbatim, so
+`noncanonical` stays the supervisor's; staged digests are never compared against the challenge's committed
+values, so `digest_mismatch`/`handle_not_challenge` stay the supervisor's; and `inputs_ready` is not
+asserted, so `no_inputs_ready` stays §4.10(d)'s. A client that pre-checks its own server's rules is a client
+that hides them.
+
+**The harness defect, which is the finding that reaches beyond this piece.** An earlier run of this agent's
+mutation harness was killed mid-mutant by the commit-limit crash — and **`try/finally` does not survive a
+killed process**, so the tree carried a **live mutant** until the agent found it. It restored it, audited
+every mutant in its set (original present once, mutated absent — clean), and rebuilt the harness so this is
+impossible by construction: pristine bytes written to disk *before* the first mutation, a sentinel, a
+`--restore` mode, and a post-run byte-identity check on every touched file. **Every other piece this week
+ran a mutation harness on this box**, and each reported byte-exact restores verified by SHA-256 *before*
+returning — but only the pieces that returned could report. A sweep for leftovers is warranted, and is
+recorded as work rather than assumed away.
+
+**`brops_canonical.py` is not a local change, and it gained four names without touching one existing one.**
+The governed family commits `SHA256(JCS(flat string→string object))`, **not** the frozen raw-UTF-8 string
+hash, and §4.10(g) is explicit that reusing the frozen preparation makes every legitimate turn Block at
+every gate on the path. So the two coexist and must differ — a test asserts the inequality, and a mutant
+that turns the frozen encoder into a JCS form is killed. Validation runs **before** canonicalization, the
+design's locked ordering, so exponent form, signed zero, precision mismatch, leading zeros and out-of-range
+values never reach JCS. Confirmation it is right rather than merely consistent: canonicalizing the five
+frozen literal defaults produces `732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22` —
+byte-for-byte the digest §4.10(g) prints. The Rust half of this formula does not exist yet.
+
+**Arithmetic, measured through the real encoder rather than reasoned about.** The staging-chunk frame at
+full stride is **245982 against 262144 — 1.06×, 16162 bytes spare**, and it is the one cap on this path that
+is load-bearing. Turn-open at a 4096-byte document is 5818 against 8192; staging open/final/trigger are
+561/207/426 against 4096 and cannot fire. §4.10(g)'s `MAX_GENERATION_CONFIG_BYTES = 65536` sits against a
+field-rule maximum of **349 bytes** — a factor of 188 — so no check was written and the number is pinned by a
+test, so widening a field regex turns it red.
+
+**A first draft called the chunk cardinality "exact" and the test caught it.** 46 chunks carry 8478720
+bytes against an 8388608 ceiling, so there are **90112 bytes of slack**; the first `declared_len` needing a
+47th is 8478721. And the round-trip floor is **10**, not the 8 the shape suggests, because only `system` can
+be zero-byte.
+
+**43 mutants, 42 killed. The survivor is provably equivalent and named:** replacing
+`expected_chunk_len(declared_len, offset)` with the bare stride, because Python's slice already clamps, so
+both produce byte-identical chunks for every input. The call is kept so the length rule is the supervisor's
+named function rather than an accident of slicing, and that reasoning is in the module rather than left as a
+green tick. The pass found four real defects: a guard that protected nothing (**deleted**, not decorated);
+a guard masking its neighbour, invisible because the fixture failed an earlier check first; a test that
+passed for the wrong reason, driving the hop by hand and never reaching the client; and a local counter
+masquerading as the supervisor's cursor, which only a supervisor that legally jumps ahead separates.
+
+**Nothing calls the loop, and the reason moved and narrowed.** All six `rust_symbols` are still caller-less,
+and their declarations were updated in the same change because the old text — "no submit branch and no
+orchestrator" — is now false. What they wait on: **nothing writes a submit frame.**
+`prepare_governed_turn_v1b`, `PreparedGovernedTurnV1B`, `GovernedGenerationConfig`,
+`resolve_governed_generation_config_v1b` and `governed_turn_submit_prepared` have **zero hits in a
+whole-tree grep**. Much of the trusted side exists; the submit half does not, and the broker's one
+production executor spawns the recorder.
+
+**Two things need an Architect ruling.** §4.10(h)'s "disjoint namespace" claim is **false**: three literals —
+`malformed`, `oversize`, `retry_conflict` — are in **both** sets (31 internal, 29 governed). The mechanism
+survives, because routing keys on the carrier rather than the string, but the sentence is wrong and a test
+now pins the exact overlap. And **the part cannot fit inside the whole**: `ai.rs::governed_sidecar_call`
+kills this subprocess at 120 s, while the single §4.10(d) round trip inside it waits for §5 acceptance plus
+a contained execution budgeted `EXECUTION_TIMEOUT_MS = 120000` plus the recorder chain plus a signer round
+trip — before the other 56 round trips are counted. Asserted as a test; no deadline was invented.
+
+**§4.10(h) Carrier 1 was deliberately not built** — it is the one thing §4.10(g) needs that was skipped. An
+upstream internal refusal reaches the desktop as the protocol-less document carrying stage and reason in its
+*error text*, so provenance is lost. Its only consumer is the classifier inside the missing broker half, so
+building it now would have added a **seventh** unwired symbol. `UpstreamRefusal` types it and a test asserts
+the loss.
+
+Re-run here, sequentially: engine **1895 OK (43 skipped)**, bridge **210**, `brops --lib` 127,
+`brops-core --lib` 376, frontend 69/638, tools 419; spec-references, reachability, ai-surfaces, capabilities
+and coordination GREEN. The three refusals were verified byte-identical by extracting each body and
+comparing SHA-256 — every Rust diff on this change is comment-only.
+
+**And the bridge suite is exonerated.** It ran 210 tests in 545 s with 2 errors right after the crash and
+**0.44 s clean** now, on the same commit. That was memory pressure, not a defect — and it is recorded as
+measured rather than assumed, because "it was probably the environment" is exactly the sentence this
+repository has been punished for.
+
+
 ### The broker cannot pull, and the read was not the worst of it (2026-08-10)
 
 I sent an agent to replace the broker's `std::fs::read` of the recorder's output with the §4.10(f) pull.

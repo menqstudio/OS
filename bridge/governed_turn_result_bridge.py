@@ -119,16 +119,20 @@ crosses: the §4.10(e) reply is at most **74472** bytes over ``brops_socket`` un
 (``receipt_id`` and ``key_id`` dropped, ``status`` collapsed into ``ok``, against the cost
 of the nested ``receipt``/``error`` keys), so if the input fitted, the output does.
 
-NOT WIRED — read this before believing the frame moves
-------------------------------------------------------
-Nothing calls :func:`reframe_turn_result`. The §4.6 frame is the REPLY to §4.10(g)'s
-``bridge.governed-turn-submit.v1``, and §4.10(g) is **NOT IMPLEMENTED**: there is no submit
-branch in ``engine_sidecar._dispatch``, no orchestrator that drives §4.10(a0) → §4.10(a)(b)(c)
-→ §4.10(d) inside one one-shot subprocess, and therefore nothing that ever holds a §4.10(e)
-reply to re-frame. What exists on either side of this file is real and shipped: the
-supervisor produces the §4.10(e) frame (``engine/runtime/governed_acceptance.py``), and the
-desktop parses the §4.6 frame (``brops_core::governed_bridge_result``). This module is the
-join between them and the hop that would carry it does not exist yet.
+WIRED ON THIS SIDE — and the gap moved one hop out (2026-08-10)
+--------------------------------------------------------------
+:func:`reframe_turn_result` now has a caller: ``bridge/governed_turn_submit.py`` drives
+§4.10(a0) → §4.10(a)(b)(c) → §4.10(d) inside one one-shot subprocess and re-frames the
+§4.10(e) reply through this module, reached from the ``bridge.governed-turn-submit.v1``
+branch in ``engine_sidecar._dispatch``. ``engine/tests/test_governed_turn_submit_e2e.py``
+walks that ladder against the real supervisor services and comes back with a §4.6 frame
+whose envelope verifies, so this hop is exercised end to end rather than in isolation.
+
+What is still MISSING is one hop further out, on the trusted side: nothing writes a submit
+frame. ``prepare_governed_turn_v1b`` and ``governed_turn_submit_prepared`` (§4.10(g)) do not
+exist anywhere in the tree, and the broker's one production ``GovernedExecutor``
+(``broker/src/chain_executor.rs``) spawns the recorder rather than a sidecar. So the frame is
+produced and consumed only from tests, and the §4.10(f) pull behind it stays unreachable.
 
 Only the Python standard library is used, and no clock, socket, subprocess or file is
 touched anywhere in this file.

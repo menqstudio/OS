@@ -23,22 +23,36 @@ for a quiet one. Ops are READS: nothing dispatched here may reach `_real_callabl
 the supervisor socket, the signer or the builder. An op this build does not
 implement is refused BY NAME — never ignored, never answered with an empty read.
 
-Protocol dispatch — the ONE request that is neither an op nor a task-request
----------------------------------------------------------------------------
-`bridge.governed-turn-output-read.v1` (design §4.10(f)) is keyed on a top-level
-`protocol`, not on `op`, and it is checked FIRST. It is disjoint from both older
-shapes by construction: `bridge/contracts/task-request.schema.json` is
-`additionalProperties:false` with no `protocol` key, and every op carries `op`.
+Protocol dispatch — the two requests that are neither an op nor a task-request
+------------------------------------------------------------------------------
+`bridge.governed-turn-output-read.v1` (design §4.10(f)) and
+`bridge.governed-turn-submit.v1` (design §4.10(g)) are keyed on a top-level
+`protocol`, not on `op`, and both are checked before either older shape. They are
+disjoint from those by construction — `bridge/contracts/task-request.schema.json` is
+`additionalProperties:false` with no `protocol` key, and every op carries `op` — and
+disjoint from each other by their const, which is the one canonical discriminator
+§2.2 allows.
 
-This one DOES reach the supervisor socket — it is the only thing here that does —
-and it is still not an execution: it is the egress half of a turn that is already
-over, one immutable byte range per one-shot subprocess. The sidecar is a STATELESS
-PROXY on this path and originates NO verdict of its own. It forwards the caller's
-four fields UNCHANGED under the supervisor's protocol const, and relays whatever the
-supervisor answers. So every `stream_unknown` / `stream_expired` /
+Both DO reach the supervisor socket — they are the only things here that do — and
+they are not the same kind of thing. The §4.10(f) read is the egress half of a turn
+that is already over, one immutable byte range per one-shot subprocess. The sidecar
+is a STATELESS PROXY on that path and originates NO verdict of its own. It forwards
+the caller's four fields UNCHANGED under the supervisor's protocol const, and relays
+whatever the supervisor answers. So every `stream_unknown` / `stream_expired` /
 `stream_binding_mismatch` / `seq_out_of_range` / `malformed` a desktop ever sees was
 decided by the supervisor, against its own durable row and its own clock — including
 `malformed`, which this hop deliberately does NOT produce locally.
+
+The §4.10(g) submit is the WHOLE turn: §4.10(a0) open → §4.10(a)(b)(c) staging upload
+→ §4.10(d) execute trigger → the §4.10(e) reply re-framed into §4.6, all inside one
+one-shot subprocess, and then exit. It is stateful across 8 to 57 supervisor round
+trips and it is the one path here that causes an execution. It still originates no
+verdict: the order and the shapes live in `governed_turn_submit`, every decision
+lives with the supervisor, and the re-framing is `governed_turn_result_bridge`'s
+field-for-field copy. Nothing in this tree writes a submit frame yet — the
+`governed_turn_submit_prepared` helper that would is MISSING, and the broker's one
+production executor spawns the recorder rather than a sidecar — so in production
+this branch is unreached.
 
 A LOCAL failure of this hop (no socket provisioned, connect/timeout, an unframable
 request, a reply that is not a §4.10(f) frame) yields **no §4.10(f) frame at all**
@@ -601,7 +615,8 @@ def _supervisor_socket_path() -> str:
     return path
 
 
-def _supervisor_request(socket_path: str, frame: dict) -> dict:
+def _supervisor_request(socket_path: str, frame: dict,
+                       timeout_s: float = _SUPERVISOR_READ_TIMEOUT_S) -> dict:
     """One request frame out, one reply frame back, over the supervisor's AF_UNIX socket.
 
     Its own function so a test can substitute a supervisor without a socket - the same seam
@@ -609,10 +624,16 @@ def _supervisor_request(socket_path: str, frame: dict) -> dict:
     than reimplemented: it already speaks the exact 4-byte big-endian length prefix the
     supervisor front door reads and writes, under `brops_protocol`'s 262144 cap, which is
     the one bound a 245940-byte chunk reply needs.
+
+    `timeout_s` is a PARAMETER because the two governed hops that use this function wait on
+    different things. The 4.10(f) read is one immutable byte range off a durable row and
+    keeps the default. The 4.10(g) submit ladder has two budgets - a control-plane one, and
+    a much longer one for the single 4.10(d) trigger, which does not answer until an
+    execution has run - so it passes its own rather than growing a second socket helper.
     """
     import brops_socket
 
-    return brops_socket.request(socket_path, frame, timeout=_SUPERVISOR_READ_TIMEOUT_S)
+    return brops_socket.request(socket_path, frame, timeout=timeout_s)
 
 
 def _forwarded_output_read(request: dict, protocol: str) -> dict:
@@ -727,6 +748,58 @@ def _bridge_output_read(request: dict) -> dict:
     return relayed
 
 
+# --------------------------------------------------------------------------- #
+# 4.10(g) DESKTOP HOP - `bridge.governed-turn-submit.v1`, the governed INGRESS.
+#
+# This is the only thing here that both reaches the supervisor socket AND causes a turn to
+# execute. The 4.10(f) hop above is the egress half of a turn that is already over; this is
+# the whole turn - one signed challenge opened, three artifacts uploaded, one execute
+# trigger, one metadata-only 4.6 frame back - and then this process exits.
+# `governed_turn_submit` owns the order and the shapes; this function owns nothing but the
+# socket, which is why the ladder is testable without one.
+#
+# It is deliberately NOT `_real_callables`. That path is the frozen `bridge.task-request`
+# governed turn and stays exactly as fail-closed as it was: a submit frame carries no
+# `task_class`/`rationale`/`request` and could never satisfy it, and the read ops above still
+# cannot knock on either door. The two governed paths share the supervisor socket
+# environment variable and nothing else.
+#
+# Every failure raises out of here and becomes the protocol-less `bridge.op.v1` refusal.
+# That is right for two of the three kinds and INCOMPLETE for the third: an ingress error
+# and a local transport failure are genuinely out-of-band (6.1), but a well-formed upstream
+# internal refusal is a real supervisor verdict, which 4.10(h) (**NOT IMPLEMENTED**) says
+# must travel as its own `bridge.governed-turn-diagnostic.v1` frame. That frame is built
+# nowhere in this tree, and its consumer - the classifier inside the broker half of 4.10(g)
+# - does not exist either, so the reason is carried in the refusal's error text and its
+# provenance is lost. `governed_turn_submit.UpstreamRefusal` records exactly that.
+# --------------------------------------------------------------------------- #
+
+#: The 4.10(g) ingress discriminator. Held as a LITERAL for the same reason
+#: `BRIDGE_OUTPUT_READ_PROTOCOL` is: the dispatch has to recognise the frame before
+#: `governed_turn_submit` - and through it the whole engine runtime - is imported, and on
+#: this path an import failure is precisely one of the local failures that must produce no
+#: governed frame at all. A drift test pins this literal to the module's own constant.
+BRIDGE_SUBMIT_PROTOCOL = "bridge.governed-turn-submit.v1"
+
+
+def _bridge_governed_turn_submit(request: dict) -> dict:
+    """Serve one `bridge.governed-turn-submit.v1`: open, stage, trigger, re-frame.
+
+    The socket is resolved BEFORE the orchestrator runs, so an unprovisioned sidecar fails
+    without a single frame having been written - the same ordering `_bridge_output_read`
+    uses, and for the same reason: this process has no business reporting on a supervisor it
+    never reached.
+    """
+    from governed_turn_submit import drive_governed_turn  # bridge/ is on sys.path (header)
+
+    socket_path = _supervisor_socket_path()
+
+    def request_supervisor(frame: dict, timeout_s: float) -> dict:
+        return _supervisor_request(socket_path, frame, timeout_s)
+
+    return drive_governed_turn(request, request_supervisor=request_supervisor)
+
+
 #: op -> (handler, refusal factory). Registering an op is adding a row; the dispatch
 #: needs no edit, and an op absent from this table is refused by name. The refusal
 #: factory is per-op so a refusal stays inside the protocol the caller was speaking.
@@ -773,6 +846,11 @@ def _dispatch(request: dict, argv: list[str]) -> dict:
         try:
             return _bridge_output_read(request)
         except Exception as exc:  # noqa: BLE001 - 4.10(f): a LOCAL failure emits NO 4.10(f) frame
+            return _op_refusal(request, exc)
+    if request.get("protocol") == BRIDGE_SUBMIT_PROTOCOL:
+        try:
+            return _bridge_governed_turn_submit(request)
+        except Exception as exc:  # noqa: BLE001 - 4.10(g)/6.1: out-of-band, NO governed frame
             return _op_refusal(request, exc)
     if "op" not in request:
         return _governed_turn(request, argv)

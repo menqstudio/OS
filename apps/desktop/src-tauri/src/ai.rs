@@ -2909,7 +2909,8 @@ pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_js
 // `bridge.governed-turn-result.v1` — the frame that CARRIES it to this side — exists on both hops too
 // (`bridge/governed_turn_result_bridge.py` and `brops_core::governed_bridge_result`). The gap has moved
 // one hop further out rather than closed: §4.6 is the REPLY to §4.10(g)'s
-// `bridge.governed-turn-submit.v1`, and §4.10(g) is NOT IMPLEMENTED, so no sidecar ever holds a §4.10(e)
+// `bridge.governed-turn-submit.v1`, whose SIDECAR half now exists (`bridge/governed_turn_submit.py`)
+// while nothing on the trusted side WRITES the frame — `governed_turn_submit_prepared` does not exist — so no sidecar ever holds a §4.10(e)
 // reply to re-frame and no §4.6 frame is ever produced. Writing a caller today would still mean inventing
 // a token, which is the one thing §4.10(f) forbids. The `allow` is therefore a statement of a known gap
 // rather than a way of not hearing about one; `config/reachability-declarations.json` carries the

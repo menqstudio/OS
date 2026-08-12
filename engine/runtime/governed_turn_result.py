@@ -76,7 +76,7 @@ authority this frame does not have.
 **It does not mint, and it does not classify.** ``output_stream_id`` is minted by §4.10(f)
 — ``governed_output_stream.mint_stream``, into the ``governed_output_streams`` table, from
 ``complete-run`` (landed 2026-08-10, both hops; the §4.6 frame that carries this token landed
-    the same day, and §4.10(g) — the hop that would produce one — is NOT IMPLEMENTED) — and this
+    the same day; §4.10(g)'s sidecar orchestrator now produces one, from `bridge/governed_turn_submit.py`) — and this
 file only checks that the value it is handed has the shape a capability must have.
 Classifying a received frame into a desktop Block is §4.10(h)
 (**NOT IMPLEMENTED** — a later ordered piece); this file only says whether a frame IS a

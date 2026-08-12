@@ -103,13 +103,19 @@
 //! ## NOT WIRED — read this before believing the frame arrives
 //!
 //! Nothing in this tree calls [`BridgeTurnResult::parse`] in production, and the missing piece is again a
-//! HOP rather than a hookup. §4.6 is the REPLY to §4.10(g)'s `bridge.governed-turn-submit.v1`, and
-//! §4.10(g) is **NOT IMPLEMENTED**: there is no submit branch in `bridge/engine_sidecar.py`, no
-//! orchestrator driving §4.10(a0) → §4.10(a)(b)(c) → §4.10(d) inside one one-shot subprocess, and so
-//! nothing that ever holds a §4.10(e) reply to re-frame. Both ends of the join exist and are tested — the
-//! supervisor produces the §4.10(e) frame (`engine/runtime/governed_acceptance.py`), the sidecar
-//! re-frames it (`bridge/governed_turn_result_bridge.py`), and this module reads the result — and the
-//! carriage between the desktop and the sidecar does not.
+//! HOP rather than a hookup — but it MOVED on 2026-08-10 and the new position is narrower. §4.10(g)'s
+//! sidecar orchestrator now exists (`bridge/governed_turn_submit.py`, reached from the
+//! `bridge.governed-turn-submit.v1` branch in `bridge/engine_sidecar.py`): it drives §4.10(a0) →
+//! §4.10(a)(b)(c) → §4.10(d) inside one one-shot subprocess and re-frames the §4.10(e) reply, proven
+//! against the real supervisor services in `engine/tests/test_governed_turn_submit_e2e.py`. So a §4.6
+//! frame is now PRODUCED by a real ladder rather than only by a fixture.
+//!
+//! What is missing is the trusted side of §4.10(g), and only part of it: the renderer proxy
+//! (`governed_turn.rs`), the renderer↔broker IPC, the idempotency store and
+//! [`crate::broker_orchestrator`] are shipped, while `prepare_governed_turn_v1b`,
+//! `PreparedGovernedTurnV1B`, `GovernedGenerationConfig`, `resolve_governed_generation_config_v1b` and
+//! `governed_turn_submit_prepared` do not exist anywhere in the tree — so nothing WRITES a submit frame,
+//! and the broker's one production `GovernedExecutor` spawns the recorder rather than a sidecar.
 //!
 //! A second, larger divergence sits behind that one and would survive fixing it: the broker's Linux
 //! execution reads the recorder's output straight off the local filesystem

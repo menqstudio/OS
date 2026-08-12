@@ -100,13 +100,16 @@
 //!    [`crate::governed_bridge_result`], whose `SignedTurnResult::output_stream_id` is the value
 //!    [`OutputPull::start`] is waiting for.
 //!
-//! **What is missing is one hop further out.** §4.6 is the REPLY to §4.10(g)'s
-//! `bridge.governed-turn-submit.v1`, and §4.10(g) is NOT IMPLEMENTED: there is no submit branch in
-//! `bridge/engine_sidecar.py`'s dispatch and no orchestrator driving §4.10(a0) → §4.10(a)(b)(c) →
-//! §4.10(d) inside one one-shot subprocess, so no sidecar ever holds a §4.10(e) reply to re-frame. The
-//! token exists, the frame that would carry it exists, and nothing invokes the hop that produces one —
-//! so a caller written today would still have to invent a token, which is precisely what §4.10(f)
-//! forbids.
+//! **What is missing is one hop further out, and it MOVED on 2026-08-10.** §4.6 is the REPLY to
+//! §4.10(g)'s `bridge.governed-turn-submit.v1`, and §4.10(g)'s SIDECAR half now exists: the submit
+//! branch in `bridge/engine_sidecar.py` and the orchestrator in `bridge/governed_turn_submit.py` drive
+//! §4.10(a0) → §4.10(a)(b)(c) → §4.10(d) inside one one-shot subprocess and re-frame the §4.10(e)
+//! reply, proven end to end against the real supervisor services in
+//! `engine/tests/test_governed_turn_submit_e2e.py`. What is still absent is a PRODUCER of the submit
+//! frame: `prepare_governed_turn_v1b` and `governed_turn_submit_prepared` (§4.10(g)) exist nowhere in
+//! the tree, and the broker's one production `GovernedExecutor` spawns the recorder rather than a
+//! sidecar. So a caller written today would still have to invent a token, which is precisely what
+//! §4.10(f) forbids.
 //!
 //! A second, larger divergence sits behind that one and would survive fixing it: the broker's Linux
 //! execution reads the recorder's output straight off the local filesystem
