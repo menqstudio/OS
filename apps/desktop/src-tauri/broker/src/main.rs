@@ -235,8 +235,10 @@ mod linux {
     /// Reads the optional deployment config at `$BROPS_BROKER_CONFIG`: if it parses, passes the 2.5 TCB
     /// integrity floor, and carries `[trust]` (manifest + signature + floor + both key ids),
     /// `[sockets].authority`, `[content]` (the conversation source) and `[sidecar]` (the one-shot bridge
-    /// spawn), the 4.10(g) `LadderChain` is served. ANY problem -- no env var, unreadable/malformed
+    /// spawn -- `python`/`script`/`cwd` AND the 2.6 `principal`/`invoker` that make the child the
+    /// SIDECAR account rather than this one), the 4.10(g) `LadderChain` is served. ANY problem -- no env var, unreadable/malformed
     /// config, a TCB violation, a missing manifest, an unresolved sidecar trust environment, an
+    /// unresolved 2.6 sidecar PRINCIPAL, an
     /// unconfigured conversation source, or an acceptance ledger that will not open -- returns the
     /// fail-closed `UpstreamBlockedExecutor`, so the broker keeps rendering `blocked` (never a
     /// fabricated acceptance).
@@ -435,11 +437,19 @@ mod linux {
 
         // ---- The 4.10(g) submit transport: the tree's ONE bridge spawn ----
         //
-        // `GovernedSidecar::new` cannot be constructed without a `TrustEnvironment`, and
+        // Neither `GovernedSidecar` constructor can be reached without a `TrustEnvironment`, and
         // `engine_trust::apply` is its only constructor -- so a broker that has not had the provisioned
         // trust material recorded into this process has nothing to pass and serves fail-closed here.
         // That is a refusal, not a gap papered over: a sidecar started without the provisioned governance
         // trust is the ungoverned call the whole ladder exists to prevent.
+        //
+        // NOTE, because it is the honest reading of this arm today: on THIS binary that refusal is not
+        // hypothetical, it is the standing state. The broker cannot hold the provisioned set -- the
+        // conductor-session token is an IDENTITY (agent_id bro-000, role bro) and the broker is role #2,
+        // so claiming it would make the trusted broker service the conductor, and the 0700 tree holding
+        // the file also holds eight retained private authority seeds. So `apply()` refuses here and the
+        // ladder is unreachable from this binary for that reason as well as for the principal reason
+        // below. Both are real; closing one does not close the other, and neither is closed by pretending.
         let trust = match brops_core::engine_trust::apply() {
             Ok(t) => t,
             Err(why) => {
@@ -460,7 +470,40 @@ mod linux {
             }
             _ => return fail_closed(),
         };
-        let transport = GovernedSidecar::new(&python, &script, sandbox, trust);
+
+        // ---- 2.6: the sidecar this broker starts must BE the sidecar principal ----
+        //
+        // `GovernedSidecar` used to build a plain `Command::new(python)`, so the child it started
+        // carried the BROKER's uid. 2.6 requires the seven runtime principals to be pairwise distinct,
+        // `engine/ci/live/run_ladder_turn.sh` provisions `brops-sidecar` as a seventh account for
+        // exactly that reason, and all four supervisor surfaces this transport knocks on
+        // (`governed_turn_open`, staging upload, evidence-request, 4.10(f) output read) gate on
+        // `peer_is_sidecar(peer_uid, allowed_sidecar_uid)` -- a strict equality against ONE configured
+        // uid. So a broker-spawned-as-broker sidecar is refused at the first hop; and a deployment that
+        // "fixes" it by configuring the sidecar uid to the broker's is refused at the door instead, by
+        // `handle_connection`'s `principal collapse: sidecar uid equals broker uid`. There is no third
+        // arrangement, which is why there is no fallback here.
+        //
+        // `SidecarPrincipal::from_config` is the only constructor of the type, it validates the
+        // deployment's invoker prefix, and no value of it means "as me". A broker that cannot resolve
+        // one therefore has nothing to pass to `as_distinct_principal` and must refuse -- BY NAME, so
+        // an operator is told which key is missing rather than left reading a `blocked` reply.
+        let principal = match brops_core::governed_sidecar::SidecarPrincipal::from_config(
+            cfg.get("sidecar"),
+        ) {
+            Ok(p) => p,
+            Err(why) => {
+                eprintln!(
+                    "brops-broker: this deployment cannot start the sidecar AS the sidecar \
+                     principal ({why}). 2.6 requires the broker and the sidecar to be distinct \
+                     principals and the supervisor refuses the collapse outright, so there is no \
+                     arrangement in which spawning it as the broker would work. Serving fail-closed."
+                );
+                return fail_closed();
+            }
+        };
+        let transport =
+            GovernedSidecar::as_distinct_principal(&python, &script, sandbox, trust, principal);
 
         // ---- 7.1(c)(d) DURABLE replay ledger (audit IDX-67 / IDX-86 / IDX-94) ----
         //
@@ -607,6 +650,175 @@ mod tests {
     use super::*;
     use brops_core::broker_orchestrator::run_governed_turn;
     use brops_core::governed_message_store::sha256_hex;
+
+    // =============================================================================================
+    // §2.6 — the one thing about `mod linux` that CAN be checked from a non-Linux host
+    // =============================================================================================
+    //
+    // `build_governed_executor` lives inside `#[cfg(target_os = "linux")] mod linux`, so on any other
+    // host it is not type-checked at all and no test can call it. That is exactly the region where a
+    // regression would be invisible until CI, and "spawns the sidecar as itself" is precisely the
+    // class of regression that reads as fine in review.
+    //
+    // `include_str!` is a COMPILE-TIME read of this same file and is not `cfg`-gated, so the source of
+    // the Linux-only region is available to a test on every host. That is a weaker check than a type
+    // check and it is honest about which one it is: it pins WHICH constructor the broker names, not
+    // that the surrounding code compiles.
+
+    /// This file's own source, read at compile time so the `cfg`-gated region is still inspectable.
+    const BROKER_MAIN_SOURCE: &str = include_str!("main.rs");
+
+    /// The marker that separates the broker's CODE from this test module. `include_str!` reads the
+    /// whole file, tests included, so a scan that did not cut here would find every string these
+    /// tests search for — written by the tests themselves — and pass or fail on its own text. That is
+    /// not a hypothetical: all three assertions below tripped on their own source the first time.
+    const TEST_MODULE_MARKER: &str = "#[cfg(test)]\nmod tests {";
+
+    /// The broker's executable source: this file up to the test module, with comment lines removed.
+    ///
+    /// Comments are cut for the same reason the tests are: the prose above `build_governed_executor`
+    /// names both constructors and both refusals in order to explain them, so a scan over it would
+    /// see a fail-closed return where there is only a description of one.
+    fn broker_code() -> String {
+        // Normalised first. This repository is checked out with `core.autocrlf=true` on Windows, so
+        // the bytes `include_str!` reads carry CRLF there and LF on the Linux CI runner — and a
+        // marker containing a newline would match on one host and not the other. That is not a
+        // hypothetical either: it is how this guard first failed.
+        let source = BROKER_MAIN_SOURCE.replace("\r\n", "\n");
+        let code = source
+            .split(TEST_MODULE_MARKER)
+            .next()
+            .expect("split always yields a first part");
+        assert!(
+            code.len() < source.len(),
+            "the test-module marker no longer matches this file, so this scan covers its own source"
+        );
+        code.lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                !t.starts_with("//")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The broker must never name the calling-principal constructor.
+    ///
+    /// `GovernedSidecar::as_calling_principal` builds `Command::new(python)` — a child carrying the
+    /// BROKER's uid, which §2.6 forbids and which every sidecar-facing supervisor service refuses by
+    /// uid. It is the right constructor for the desktop and the wrong one here, and the two are one
+    /// token apart, so the mistake is a plausible one rather than a theatrical one.
+    #[test]
+    fn the_broker_never_names_the_calling_principal_constructor() {
+        let code = broker_code();
+        assert!(
+            !code.contains("as_calling_principal"),
+            "the broker names GovernedSidecar::as_calling_principal, which spawns the sidecar as \
+             the BROKER — §2.6 requires them to be distinct principals and the supervisor refuses \
+             the collapse outright (`principal collapse: sidecar uid equals broker uid`)"
+        );
+        // And it DOES name the distinct-principal one, so this test cannot pass by the transport
+        // having been deleted.
+        assert!(
+            code.contains("as_distinct_principal"),
+            "the broker no longer builds a sidecar transport at all"
+        );
+    }
+
+    /// The refusal is a refusal. `SidecarPrincipal::from_config` is resolved in the same function
+    /// that serves the ladder, and its error arm returns `fail_closed()` — never a transport built
+    /// anyway. Checked textually for the same reason as above, and deliberately narrow: it pins the
+    /// pairing of the resolver with `fail_closed`, not the prose around it.
+    #[test]
+    fn an_unresolved_sidecar_principal_returns_the_fail_closed_executor() {
+        let code = broker_code();
+        let at = code
+            .find("SidecarPrincipal::from_config")
+            .expect("the broker resolves the §2.6 sidecar principal");
+        let after = &code[at..];
+        let build = after.find("as_distinct_principal").expect("the transport is built after it");
+        assert!(
+            after[..build].contains("return fail_closed();"),
+            "there is no fail-closed return between resolving the sidecar principal and building \
+             the transport, so an unresolved principal would reach the spawn"
+        );
+    }
+
+    /// The Linux-only wiring, written ONCE more here so a non-Linux host type-checks it.
+    ///
+    /// `build_governed_executor` lives in `#[cfg(target_os = "linux")] mod linux`, so on this
+    /// developer box and on the Windows CI job its body is never compiled — a wrong argument type or
+    /// a renamed constructor there is invisible until the Linux job runs. This function has the same
+    /// three lines and the same types, and it compiles everywhere.
+    ///
+    /// It TAKES the `TrustEnvironment` rather than making one, because it cannot make one:
+    /// `engine_trust::apply` is its only constructor and reads a process-global that must stay empty.
+    /// That is enough — what needs proving is that `cfg.get("sidecar")` satisfies `from_config`, and
+    /// that `as_distinct_principal` accepts `(&String, &String, PathBuf, TrustEnvironment,
+    /// SidecarPrincipal)` in that order. It is deliberately NOT a second production path: nothing
+    /// calls it, it is inside `#[cfg(test)]`, and the guard tests above are what keep the real one
+    /// in the shape this one describes.
+    fn broker_sidecar_wiring(
+        cfg: &serde_json::Value,
+        python: String,
+        script: String,
+        sandbox: std::path::PathBuf,
+        trust: brops_core::engine_trust::TrustEnvironment,
+    ) -> Result<brops_core::governed_sidecar::GovernedSidecar, String> {
+        let principal =
+            brops_core::governed_sidecar::SidecarPrincipal::from_config(cfg.get("sidecar"))?;
+        Ok(brops_core::governed_sidecar::GovernedSidecar::as_distinct_principal(
+            &python, &script, sandbox, trust, principal,
+        ))
+    }
+
+    /// Names [`broker_sidecar_wiring`] so it is compiled rather than dead — the compile IS the test.
+    /// The resolver half is then exercised for real, on the same `cfg.get("sidecar")` expression the
+    /// Linux function uses: a config with no `sidecar` block refuses, and the reference shape does not.
+    #[test]
+    fn the_linux_sidecar_wiring_typechecks_and_its_resolver_refuses_a_config_without_a_sidecar_block() {
+        let _typechecked: fn(
+            &serde_json::Value,
+            String,
+            String,
+            std::path::PathBuf,
+            brops_core::engine_trust::TrustEnvironment,
+        ) -> Result<brops_core::governed_sidecar::GovernedSidecar, String> = broker_sidecar_wiring;
+
+        use brops_core::governed_sidecar::SidecarPrincipal;
+        let empty = serde_json::json!({ "trust": { "manifest_path": "/x" } });
+        assert!(
+            SidecarPrincipal::from_config(empty.get("sidecar")).is_err(),
+            "a config with no `sidecar` block resolved a principal"
+        );
+        let provisioned = serde_json::json!({
+            "sidecar": {
+                "python": "/usr/bin/python3",
+                "script": "/opt/brops-live/bridge/engine_sidecar.py",
+                "cwd": "/opt/brops-live/sandbox",
+                "principal": "brops-sidecar",
+                "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"],
+            }
+        });
+        let p = SidecarPrincipal::from_config(provisioned.get("sidecar"))
+            .expect("the provisioned shape resolves");
+        assert_eq!(p.account(), "brops-sidecar");
+    }
+
+    /// `brops-core` is the ONE spawn. A second `Command::new` reaching for an interpreter in the
+    /// broker would be the second spawn path the unification exists to prevent, and it would not
+    /// have to be wrong to be a problem — two spawns drift, and what they drift on is the trust
+    /// environment and now the principal.
+    #[test]
+    fn the_broker_builds_no_interpreter_command_of_its_own() {
+        for line in broker_code().lines() {
+            assert!(
+                !(line.contains("Command::new")
+                    && (line.contains("python") || line.contains("sidecar"))),
+                "the broker builds its own sidecar command: {line}"
+            );
+        }
+    }
 
     // A fake executor that returns a verified accepted output, mirroring the broker_orchestrator test
     // pattern — lets us drive the committed path over our own schema init without the OS trust chain.

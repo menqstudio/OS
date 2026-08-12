@@ -3022,9 +3022,16 @@ pub(crate) async fn governed_pull_output<'a>(
 /// environment. What is left in this function is the app's two contributions: the empty AI
 /// sandbox that becomes the child's cwd, and the `tokio` boundary.
 ///
+/// **Which principal it starts.** `as_calling_principal` is named, not defaulted: this child runs
+/// as the APP's own principal, which is correct here and is the only thing available to a single
+/// desktop process. It is the wrong constructor for the BROKER — §2.6 requires the broker and the
+/// sidecar to be distinct principals, and `GovernedSidecar::as_distinct_principal` is the one that
+/// satisfies it. Nothing on this path changed when that distinction arrived; the command built here
+/// is the command that was built before it existed.
+///
 /// The trust environment is resolved FIRST and by TYPE. `engine_trust::apply()` returns a
-/// `TrustEnvironment`, `GovernedSidecar::new` cannot be called without one, and there is no
-/// other constructor — so this function cannot reach a spawn without it, and an `Err` fails
+/// `TrustEnvironment`, neither `GovernedSidecar` constructor can be called without one, and there is
+/// no other constructor — so this function cannot reach a spawn without it, and an `Err` fails
 /// the call before any process exists. That replaces the previous shape, in which
 /// `engine_trust::apply(&mut cmd)?` was a line in the middle of the builder and deleting the
 /// line compiled.
@@ -3038,7 +3045,7 @@ async fn governed_sidecar_call(
     // trust environment is precisely the ungoverned call this path exists to prevent, and it
     // would report itself as governed.
     let trust = engine_trust::apply()?;
-    let seam = brops_core::governed_sidecar::GovernedSidecar::new(
+    let seam = brops_core::governed_sidecar::GovernedSidecar::as_calling_principal(
         python,
         sidecar,
         ai_sandbox_dir()?,

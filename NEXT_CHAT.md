@@ -8,6 +8,81 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### sudo resets the environment, so the trust set had to travel as arguments (2026-08-12)
+
+The broker now spawns the sidecar **as the sidecar principal**. The claim was verified before anything was
+built: all four sidecar-facing services gate on `peer_is_sidecar` with strict integer equality that rejects
+bools and fails closed on `None`, and configuring around it is refused too — the front door answers
+`principal collapse: sidecar uid equals broker uid` **before reading a frame**, and `principal split` if
+two services name different sidecar uids. So a broker-spawned-as-broker sidecar was refused at the first
+hop, and the "fix it in config" escape was refused at the door.
+
+**The map turned up something the brief did not anticipate, and it changed the design.** `sudo` resets the
+environment. `Command::env()` sets variables on the process that is about to be **discarded** — which is
+exactly why the working reference writes `env NAME=VALUE` explicitly. So under a principal switch the
+provisioned trust set has to travel as **arguments**, or it silently vanishes: the half-wired state
+`engine_trust`'s own docs call worse than no export at all. That is mutant **M3**, and it is killed.
+
+**The shape chosen is the working reference's own.** `sudo -n -u` as a config-supplied argv prefix — the
+same mechanism `run_ladder_turn.sh` uses to become `brops-sidecar`, and the same shape the tree already
+uses for broker→recorder. The setuid launcher was rejected: a second 4750 binary is a large new TCB surface
+for a hop the reference solves without one.
+
+**One spawn, one trust application, a principal parameter — no second path.** `SidecarPrincipal` has
+private fields and one constructor, and **there is no value of that type meaning "the caller"** — that is
+the structural half of "no fallback". `GovernedSidecar::new` was **deleted** rather than kept alongside, so
+every call site became a compile error until it stated its principal: `as_calling_principal` for the
+desktop, `as_distinct_principal` for the broker.
+
+**What refuses, and where.** No `sidecar` block at all — which is precisely the case that used to produce a
+plain `Command::new(python)`; an invoker under four tokens; a **relative** `invoker[0]`, because `$PATH` is
+not a TCB input; a prefix not ending in `env`, because it could not then carry the trust set; a prefix that
+never names the account, or names it at either end, because it changes no principal — and that refusal
+quotes the supervisor's own `principal collapse` text. Plus an interpreter or script path containing `=`,
+which `env` would swallow as an assignment and exec something else.
+
+**The desktop's spawn is provably unchanged**, three ways: the calling-principal arm is the old code
+verbatim and the distinct arm is additive; `brops --lib` is **117**, the exact baseline; and mutant **M14**
+adds one stray argument to the desktop arm alone and is killed.
+
+**14 mutants, 14 killed, zero survivors**, under a harness whose refusal-to-start and `--restore` were
+demonstrated for real, and whose three prerequisite branches were each proven (undeclared → PANIC, blanket
+`all` → refused by name, exact tag → declared).
+
+**Honestly unverified**: `build_governed_executor` lives in `#[cfg(target_os = "linux")]` and was **never
+type-checked** on this box — ~30 edited lines. Mitigated rather than glossed: `rustfmt` parses the whole
+file (syntax only); three source-scanning guards assert the broker never names the calling-principal
+constructor, that a `return fail_closed();` sits between resolving the principal and building the
+transport, and that the broker builds no interpreter `Command` of its own; and a `#[cfg(test)]` twin with
+the *same types* compiles here, so the config lookup and the five-argument call **are** type-checked. No
+real `sudo -u`, no `LogonUserW`, no live supervisor.
+
+**The Windows half was deliberately not built.** `spawn_as` would require the broker to hold the sidecar
+account's **password** — new secret custody, a decision rather than an implementation detail — and it is
+not needed: the broker's socket path and `build_governed_executor` are entirely inside
+`#[cfg(target_os = "linux")]`, and on every other host `main` prints the platform banner and exits. There
+is no Windows broker binary that spawns a sidecar.
+
+**This unblocks one of two blockers, not both, and that is said in the code rather than implied.** The
+broker still cannot resolve `engine_trust::apply()`, for the reason established an hour ago: the
+conductor-session token is an identity the broker may not claim, and the 0700 tree holding it also holds
+eight private authority seeds. So the ladder remains unreachable from `brops-broker` — now for a *second*
+named reason rather than the principal one. **No gate moved.**
+
+Two smaller notes kept because they will matter later: deployment configs now need `sidecar.principal` and
+`sidecar.invoker`, and the refusal message names both keys; and putting the trust set in argv makes it
+visible in `/proc/<pid>/cmdline` — all five members are filesystem paths plus a session id, no secret, and
+that argument is written into the module docs as the place a future secret in that set would have to be
+re-argued.
+
+Also corrected here: four canonical files still named `GovernedSidecar::new`, a constructor that no longer
+exists.
+
+`brops-core --lib` **458** (from 443), `brops --lib` 117, `brops-broker` **46 + 7** (from 46 + 3),
+`brops-win-broker` 3 + 5, engine 1979 OK (43 skipped), bridge 210, tools 419; reachability, ai-surfaces,
+capabilities and coordination GREEN.
+
+
 ### The broker cannot hold the conductor's token, and it spawns the sidecar as itself (2026-08-12)
 
 Provisioning the broker's trust environment was authorised and **was not done**, because the investigation
@@ -408,7 +483,7 @@ that starts `python bridge/engine_sidecar.py`; the desktop's governed turn, its 
 
 **The bypass is closed by type, not by convention.** `engine_trust::apply()` no longer takes a `&mut
 Command` — it **returns** a `TrustEnvironment` with a private field, no `Default`, no `new`, no `From` and
-no public constructor, and `GovernedSidecar::new` requires one. A caller who wants to skip the trust
+no public constructor, and `GovernedSidecar`'s constructors require one (`as_calling_principal` / `as_distinct_principal`; `new` was deleted 2026-08-12 so every call site must state its principal). A caller who wants to skip the trust
 environment has nothing to pass. The mutant that deletes the `apply()` line is a **`BUILD_ERROR`**, and the
 harness reports it as neither kill nor survivor, which is the honest classification.
 

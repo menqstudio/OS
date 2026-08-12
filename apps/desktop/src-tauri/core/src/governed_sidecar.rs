@@ -16,11 +16,59 @@
 //!
 //! # What "cannot be bypassed" means here, concretely
 //!
-//! [`GovernedSidecar::new`] requires a [`TrustEnvironment`], and [`crate::engine_trust::apply`] is
-//! its only constructor. There is no `Default`, no public field, no second way to make one. A
-//! caller that wants to start the sidecar without the provisioned trust material has nothing to
-//! pass and does not compile — a different guarantee from the previous shape, where
-//! `engine_trust::apply(&mut cmd)?` was a LINE, and deleting a line compiles.
+//! BOTH constructors — [`GovernedSidecar::as_calling_principal`] and
+//! [`GovernedSidecar::as_distinct_principal`] — require a [`TrustEnvironment`], and
+//! [`crate::engine_trust::apply`] is its only constructor. There is no `Default`, no public field,
+//! no second way to make one. A caller that wants to start the sidecar without the provisioned
+//! trust material has nothing to pass and does not compile — a different guarantee from the previous
+//! shape, where `engine_trust::apply(&mut cmd)?` was a LINE, and deleting a line compiles.
+//! [`SidecarPrincipal`] is built the same way and for the same reason; see below.
+//!
+//! # Which PRINCIPAL the child runs as (§2.6)
+//!
+//! For a long time this builder was `Command::new(python)` and nothing else, so the sidecar ran as
+//! **whatever principal called it**. For the desktop that is correct and is the only thing available:
+//! the app is one process and the governed read/pull it drives is its own. For the BROKER it is a
+//! defect with a name. §2.6 requires the seven runtime principals to be pairwise distinct, the live
+//! kit provisions `brops-sidecar` as a seventh account for exactly that reason, and every supervisor
+//! surface the §4.10(g) ladder knocks on — `governed_turn_open`, staging upload, evidence-request and
+//! the §4.10(f) output read — gates on `peer_is_sidecar(peer_uid, allowed_sidecar_uid)`, a strict
+//! equality against ONE configured uid. A sidecar spawned by the broker carries the broker's uid, so
+//! it is refused at the first hop; and a deployment that "fixes" that by configuring the sidecar uid
+//! to equal the broker uid is refused at the door instead, by
+//! `governed_supervisor_server.handle_connection`'s `principal collapse` reply. There is no third
+//! arrangement in which a broker-spawned-as-broker sidecar works.
+//!
+//! So the principal is now a FIELD, and [`SidecarPrincipal`] has no public constructor other than
+//! [`SidecarPrincipal::from_config`], which validates a deployment-provisioned invoker prefix and
+//! refuses by name. The two constructors say which principal they start, at every call site:
+//!
+//! * [`GovernedSidecar::as_calling_principal`] — this process's own principal. The DESKTOP's, and it
+//!   builds exactly the command this module built before the principal existed.
+//! * [`GovernedSidecar::as_distinct_principal`] — a different OS account, reached through the
+//!   validated prefix. There is no value of [`SidecarPrincipal`] that means "the caller", so this
+//!   constructor cannot be used to spawn as the broker "for now"; a broker that cannot resolve one
+//!   has nothing to pass and serves fail-closed.
+//!
+//! The mechanism is the one the working reference already uses. `engine/ci/live/run_ladder_turn.sh`
+//! — the seven-principal ladder that goes green in CI — becomes the sidecar with
+//! `sudo -u brops-sidecar env BROPS_SUPERVISOR_SOCKET=… python3 bridge/engine_sidecar.py`, and this
+//! tree's only other Rust cross-principal spawn (`chain_executor::ExecutionConfig::recorder_command`,
+//! `["sudo","-n","-u","brops-recorder",…]`) is the same shape: an argv prefix out of the TCB-owned
+//! deployment config, fronted by a sudoers vector. That is what [`SidecarPrincipal`] holds.
+//!
+//! **Why the prefix must end in `env`.** Every mechanism that changes principal also resets the child
+//! environment — `sudo` does it by default (`env_reset`), and any launcher worth using does too. So
+//! `Command::env()` on the invoker sets variables in the INVOKER's environment, which is exactly the
+//! environment being thrown away. Under a distinct principal the provisioned set is therefore
+//! materialized as explicit `NAME=VALUE` arguments, which the trailing `env` applies to the
+//! interpreter it then execs — the ladder's own shape, for the ladder's own reason. What that costs
+//! is stated rather than buried: those arguments are visible in the child's `/proc/<pid>/cmdline`.
+//! Every member of the set is a filesystem PATH or a session id (see
+//! `brops_provision::Provisioned::engine_env`) and none of them is a secret — the conductor-session
+//! token is a FILE the path points at, guarded by its own 0700 tree — so this discloses layout, not
+//! key material. A set that ever gains a real secret must not travel this way, and this paragraph is
+//! where that would have to be argued.
 //!
 //! # Synchronous, and what that costs
 //!
@@ -79,6 +127,152 @@ fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
+// =================================================================================================
+// §2.6 — the principal the child runs as
+// =================================================================================================
+
+/// The `sidecar` block's key naming the OS account the child must run as.
+pub const PRINCIPAL_KEY: &str = "principal";
+/// The `sidecar` block's key holding the argv prefix that lands the interpreter on that account.
+pub const INVOKER_KEY: &str = "invoker";
+/// The program the invoker prefix must END in, because the provisioned set travels as arguments.
+pub const ENV_PROGRAM: &str = "env";
+/// The shortest prefix that can both change principal and materialize an environment, e.g.
+/// `["/usr/bin/sudo", "-u", "brops-sidecar", "/usr/bin/env"]`.
+pub const MIN_INVOKER_TOKENS: usize = 4;
+
+/// A deployment-provisioned way to BECOME a different OS principal before `exec`ing the interpreter.
+///
+/// There is deliberately no variant, value or `Default` of this type that means "the calling
+/// principal". [`GovernedSidecar::as_distinct_principal`] takes one by value, so a caller that could
+/// not resolve one has nothing to pass and must refuse — which is the whole point. The collapse this
+/// prevents is not theoretical: the supervisor answers it with `principal collapse: sidecar uid
+/// equals broker uid` before it reads a frame, and every sidecar-facing service refuses a peer whose
+/// uid is not the one configured sidecar uid.
+///
+/// It holds the account NAME as well as the prefix, and checks that the prefix names it, because an
+/// argv vector alone cannot be told apart from one that changes nothing: `["/usr/bin/env"]` is a
+/// perfectly well-formed prefix that spawns the sidecar as the broker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidecarPrincipal {
+    account: String,
+    invoker: Vec<String>,
+}
+
+/// POSIX-absolute or host-absolute. Spelled out rather than left to [`std::path::Path::is_absolute`]
+/// alone because this describes a POSIX deployment and must validate identically when the check runs
+/// on a Windows developer box, where `/usr/bin/sudo` is not `is_absolute()`.
+fn is_absolute_program(token: &str) -> bool {
+    token.starts_with('/') || std::path::Path::new(token).is_absolute()
+}
+
+impl SidecarPrincipal {
+    /// Resolve the principal from the deployment config's `sidecar` block, or say what is wrong.
+    ///
+    /// Every arm below is a REFUSAL an operator can act on, and none of them has a permissive
+    /// fallback. `None` — no `sidecar` block at all — is the same refusal as a malformed one: a
+    /// deployment that has not said how to become the sidecar has not said it, and guessing
+    /// `Command::new(python)` there is the exact defect this type exists to remove.
+    pub fn from_config(sidecar_block: Option<&Value>) -> Result<Self, String> {
+        let block = sidecar_block.ok_or_else(|| {
+            "the deployment config has no `sidecar` block, so it never said how to become the \
+             sidecar principal"
+                .to_string()
+        })?;
+        let account = block
+            .get(PRINCIPAL_KEY)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "`sidecar.{PRINCIPAL_KEY}` is not a non-empty string: §2.6 requires the sidecar \
+                     to be its own OS account, and an account with no name cannot be checked for"
+                )
+            })?
+            .to_string();
+        let raw = block.get(INVOKER_KEY).and_then(Value::as_array).ok_or_else(|| {
+            format!(
+                "`sidecar.{INVOKER_KEY}` is not an array: it must be the argv prefix that lands the \
+                 interpreter on `{account}`, e.g. \
+                 [\"/usr/bin/sudo\", \"-n\", \"-u\", \"{account}\", \"/usr/bin/{ENV_PROGRAM}\"]"
+            )
+        })?;
+        if raw.len() < MIN_INVOKER_TOKENS {
+            return Err(format!(
+                "`sidecar.{INVOKER_KEY}` has {} tokens; the shortest prefix that can both change \
+                 principal and materialize an environment has {MIN_INVOKER_TOKENS}",
+                raw.len()
+            ));
+        }
+        let mut invoker: Vec<String> = Vec::with_capacity(raw.len());
+        for (i, token) in raw.iter().enumerate() {
+            let t = token.as_str().ok_or_else(|| {
+                format!(
+                    "`sidecar.{INVOKER_KEY}[{i}]` is not a string: every token of the invoker \
+                     prefix is one argv argument, and there is no rendering of a number or an \
+                     object that this could safely be assumed to have meant"
+                )
+            })?;
+            if t.is_empty() {
+                return Err(format!(
+                    "`sidecar.{INVOKER_KEY}[{i}]` is empty; an empty argv token is an argument the \
+                     invoker will still receive, not an absent one"
+                ));
+            }
+            if t.contains('\0') {
+                return Err(format!(
+                    "`sidecar.{INVOKER_KEY}[{i}]` contains a NUL byte, which no argv token may                      carry: the spawn would then fail with an error about the interpreter rather                      than about this config"
+                ));
+            }
+            invoker.push(t.to_string());
+        }
+        if !is_absolute_program(&invoker[0]) {
+            return Err(format!(
+                "`sidecar.{INVOKER_KEY}[0]` is `{}`, which is not an absolute path: a bare program \
+                 name is resolved through the BROKER's own $PATH, and the broker's environment is \
+                 not a TCB-owned input",
+                invoker[0]
+            ));
+        }
+        let last = invoker.len() - 1;
+        let ends_in_env = std::path::Path::new(invoker[last].as_str())
+            .file_name()
+            .map(|f| f == std::ffi::OsStr::new(ENV_PROGRAM))
+            .unwrap_or(false)
+            || invoker[last].rsplit('/').next() == Some(ENV_PROGRAM);
+        if !ends_in_env {
+            return Err(format!(
+                "`sidecar.{INVOKER_KEY}` ends in `{}` rather than `{ENV_PROGRAM}`: changing principal \
+                 resets the child environment, so the provisioned trust set has to travel as explicit \
+                 NAME=VALUE arguments, and a trailing `{ENV_PROGRAM}` is what applies them",
+                invoker[last]
+            ));
+        }
+        // The prefix must actually CHANGE principal. Position matters: at index 0 the account name
+        // would be the program, and at the last index it would be standing where `env` must stand.
+        if !invoker[1..last].iter().any(|t| t == &account) {
+            return Err(format!(
+                "`sidecar.{INVOKER_KEY}` never names the account `{account}`, so it does not change \
+                 principal. A sidecar spawned as the broker collapses two §2.6 principals, which the \
+                 supervisor refuses outright (`principal collapse: sidecar uid equals broker uid`) \
+                 and every sidecar-facing service refuses by uid"
+            ));
+        }
+        Ok(SidecarPrincipal { account, invoker })
+    }
+
+    /// The OS account this prefix becomes.
+    pub fn account(&self) -> &str {
+        &self.account
+    }
+
+    /// The validated argv prefix, `env` included.
+    pub fn invoker(&self) -> &[String] {
+        &self.invoker
+    }
+}
+
 /// Drain `reader` to EOF or to `cap` bytes, whichever comes first.
 ///
 /// It TRUNCATES at the cap rather than erroring, which is the behaviour the §4.10(f) reply sizing
@@ -123,12 +317,59 @@ pub struct GovernedSidecar {
     cwd: PathBuf,
     /// The provisioned trust material. Its TYPE is the proof it was resolved.
     trust: TrustEnvironment,
+    /// Which OS principal the child runs as (§2.6). `None` is the CALLING principal and is not a
+    /// default: it is only reachable through [`GovernedSidecar::as_calling_principal`], which names
+    /// it, and the type of [`GovernedSidecar::as_distinct_principal`]'s parameter has no value that
+    /// means it.
+    principal: Option<SidecarPrincipal>,
 }
 
 impl GovernedSidecar {
-    /// Configure the seam. `trust` can only have come from [`crate::engine_trust::apply`].
-    pub fn new(python: &str, sidecar: &str, cwd: PathBuf, trust: TrustEnvironment) -> Self {
-        Self { python: python.to_string(), sidecar: sidecar.to_string(), cwd, trust }
+    /// Configure the seam to run the sidecar as THIS process's own principal.
+    ///
+    /// The DESKTOP's constructor, and correct there: the app is one principal and the governed read
+    /// and §4.10(f) pull it drives are its own. It is the wrong constructor for the broker, and the
+    /// name is what makes that visible at the call site — this used to be `new`, which named nothing
+    /// and read as the default.
+    ///
+    /// `trust` can only have come from [`crate::engine_trust::apply`].
+    pub fn as_calling_principal(
+        python: &str,
+        sidecar: &str,
+        cwd: PathBuf,
+        trust: TrustEnvironment,
+    ) -> Self {
+        Self {
+            python: python.to_string(),
+            sidecar: sidecar.to_string(),
+            cwd,
+            trust,
+            principal: None,
+        }
+    }
+
+    /// Configure the seam to run the sidecar as a DIFFERENT OS principal (§2.6).
+    ///
+    /// The BROKER's constructor. `principal` is taken by value and [`SidecarPrincipal`] has no
+    /// constructor but [`SidecarPrincipal::from_config`], so there is nothing a caller can pass here
+    /// that means "as me, for now" — a broker whose deployment did not provision the invoker prefix
+    /// has to refuse, which is what §2.6 requires of it.
+    ///
+    /// `trust` can only have come from [`crate::engine_trust::apply`].
+    pub fn as_distinct_principal(
+        python: &str,
+        sidecar: &str,
+        cwd: PathBuf,
+        trust: TrustEnvironment,
+        principal: SidecarPrincipal,
+    ) -> Self {
+        Self {
+            python: python.to_string(),
+            sidecar: sidecar.to_string(),
+            cwd,
+            trust,
+            principal: Some(principal),
+        }
     }
 
     /// The fully configured child command, one step short of `spawn()`.
@@ -137,8 +378,14 @@ impl GovernedSidecar {
     /// be launched (`Command::get_envs` / `get_current_dir` / `get_args`) without starting a python
     /// interpreter. The trust environment reaching the child is the property that matters most here,
     /// and asserting it on the real builder is the only way to notice it stop happening.
-    fn command(&self) -> std::process::Command {
-        let mut cmd = std::process::Command::new(&self.python);
+    ///
+    /// It returns a `Result` because under a DISTINCT principal the provisioned set travels as
+    /// `NAME=VALUE` arguments to `env`, and `env` reads the first argument WITHOUT an `=` as the
+    /// program to exec — so an interpreter or script path that itself contains an `=` would be
+    /// swallowed as an assignment and `env` would exec the wrong thing (or nothing). That is a
+    /// refusal, not something to escape: there is no correct child to launch. On the calling-principal
+    /// path nothing can fail and the arm is infallible.
+    fn command(&self) -> Result<std::process::Command, String> {
         // The child runs with cwd = the empty AI sandbox, so a RELATIVE sidecar path (the default
         // `bridge/engine_sidecar.py`) would not resolve from there and every governed turn would die
         // on a spawn/path error instead of a governance decision (audit F-39). Absolutize against the
@@ -152,38 +399,95 @@ impl GovernedSidecar {
                 std::env::current_dir().map(|c| c.join(p)).unwrap_or_else(|_| p.to_path_buf())
             }
         };
-        // Same trap as the sidecar path, one level along.
-        for var in GOVERNANCE_PATH_VARS {
-            if let Some(v) = env_nonempty(var) {
-                let path = std::path::Path::new(&v);
-                if !path.is_absolute() {
-                    if let Ok(abs) = std::env::current_dir().map(|c| c.join(path)) {
-                        cmd.env(var, abs);
+        let mut cmd = match &self.principal {
+            // ---- the CALLING principal: byte-for-byte the command this module built before the
+            // principal existed. The child inherits this process's environment, so a governance path
+            // that is already absolute needs no override and deliberately gets none.
+            None => {
+                let mut cmd = std::process::Command::new(&self.python);
+                // Same trap as the sidecar path, one level along.
+                for var in GOVERNANCE_PATH_VARS {
+                    if let Some(v) = env_nonempty(var) {
+                        let path = std::path::Path::new(&v);
+                        if !path.is_absolute() {
+                            if let Ok(abs) = std::env::current_dir().map(|c| c.join(path)) {
+                                cmd.env(var, abs);
+                            }
+                        }
                     }
                 }
+                // O-3: hand the child the trust material first-launch provisioning minted — above all
+                // `BRO_TRUSTED_REGISTRY_ROOT`, which decides WHICH trusted-key registry the engine reads.
+                // Without it `bro_signature.load_trusted_keys` reads the development registry committed at
+                // `engine/config/trusted-keys.json`, so every governed check runs against a registry that is
+                // `production: false` and grants `conductor-session` to no key.
+                //
+                // There is no arm of this function that skips it: the set is a FIELD, and that field's type
+                // cannot be constructed without resolving it. That is the whole reason the type exists.
+                for (name, value) in self.trust.pairs() {
+                    cmd.env(name, value);
+                }
+                cmd.arg(&sidecar_path);
+                cmd
             }
-        }
-        // O-3: hand the child the trust material first-launch provisioning minted — above all
-        // `BRO_TRUSTED_REGISTRY_ROOT`, which decides WHICH trusted-key registry the engine reads.
-        // Without it `bro_signature.load_trusted_keys` reads the development registry committed at
-        // `engine/config/trusted-keys.json`, so every governed check runs against a registry that is
-        // `production: false` and grants `conductor-session` to no key.
-        //
-        // There is no arm of this function that skips it: the set is a FIELD, and that field's type
-        // cannot be constructed without resolving it. That is the whole reason the type exists.
-        for (name, value) in self.trust.pairs() {
-            cmd.env(name, value);
-        }
-        cmd.arg(&sidecar_path)
+            // ---- a DISTINCT principal (§2.6): the invoker prefix becomes the account and `env`
+            // materializes the same set as arguments, because the principal switch discarded the
+            // environment this process could otherwise have handed down. See the module docs for why
+            // the prefix is required to end in `env` and what putting the set in argv costs.
+            Some(principal) => {
+                let interpreter = self.python.as_str();
+                let script = sidecar_path.to_string_lossy().into_owned();
+                for (what, token) in
+                    [("sidecar.python", interpreter), ("sidecar.script", script.as_str())]
+                {
+                    if token.contains('=') {
+                        return Err(format!(
+                            "`{what}` is `{token}`, which contains `=`. Under the §2.6 principal switch \
+                             the provisioned set travels as NAME=VALUE arguments to `{ENV_PROGRAM}`, and \
+                             `{ENV_PROGRAM}` would read this as one more assignment rather than as the \
+                             program to run"
+                        ));
+                    }
+                }
+                let mut cmd = std::process::Command::new(&principal.invoker()[0]);
+                cmd.args(&principal.invoker()[1..]);
+                // The SAME set as the arm above, by the same iteration over the same field — the
+                // difference is only how it is delivered, which is what the principal switch changed.
+                for (name, value) in self.trust.pairs() {
+                    cmd.arg(format!("{name}={value}"));
+                }
+                // Under inheritance an already-absolute governance path arrives on its own, so the arm
+                // above overrides only relative ones. Nothing is inherited here, so EVERY configured
+                // one has to be carried, absolutized on the way.
+                for var in GOVERNANCE_PATH_VARS {
+                    if let Some(v) = env_nonempty(var) {
+                        let path = std::path::Path::new(&v);
+                        let abs = if path.is_absolute() {
+                            path.to_path_buf()
+                        } else {
+                            std::env::current_dir()
+                                .map(|c| c.join(path))
+                                .unwrap_or_else(|_| path.to_path_buf())
+                        };
+                        cmd.arg(format!("{var}={}", abs.display()));
+                    }
+                }
+                cmd.arg(interpreter).arg(&sidecar_path);
+                cmd
+            }
+        };
+        cmd
             // Defense in depth (Architect merge-blocker): never let a fake/self-test flag reach the
-            // production sidecar via inherited env.
+            // production sidecar via inherited env. Applied on BOTH arms, and it is the stronger half
+            // of the pair under a principal switch: removing it from the INVOKER's environment means
+            // there is nothing left for a permissive `env_keep`/`!env_reset` sudoers policy to keep.
             .env_remove(FAKE_SIDECAR_ENV)
             .current_dir(&self.cwd)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         hide_console(&mut cmd);
-        cmd
+        Ok(cmd)
     }
 
     /// One round trip: spawn a fresh one-shot sidecar, hand it `request` on stdin, read its single
@@ -195,10 +499,20 @@ impl GovernedSidecar {
     /// inventing the one thing §2.4 forbids it to invent.
     pub fn round_trip(&self, request: &str) -> Result<Value, String> {
         let deadline = Instant::now() + SIDECAR_DEADLINE;
-        let mut child = Reaped(self.command().spawn().map_err(|e| {
+        let mut built = self.command()?;
+        // The PROGRAM, not `self.python`: under a §2.6 principal switch the thing that failed to
+        // start is the invoker (`/usr/bin/sudo`), and an operator told "could not run python3" would
+        // go and look at python3. The account is named for the same reason — a permission failure on
+        // this spawn is nearly always the sudoers vector for that account, not a missing interpreter.
+        let program = built.get_program().to_string_lossy().into_owned();
+        let becoming = match &self.principal {
+            Some(p) => format!(" as `{}`", p.account()),
+            None => String::new(),
+        };
+        let mut child = Reaped(built.spawn().map_err(|e| {
             format!(
-                "Could not run the governed engine sidecar (`{} {}`): {e}. Set \
-                 BROPS_GOVERNED_PYTHON / BROPS_GOVERNED_SIDECAR, or unset \
+                "Could not run the governed engine sidecar (`{program}` -> `{} {}`{becoming}): {e}. \
+                 Set BROPS_GOVERNED_PYTHON / BROPS_GOVERNED_SIDECAR, or unset \
                  BROPS_ALLOW_GOVERNED_ENGINE.",
                 self.python, self.sidecar
             )
@@ -306,7 +620,7 @@ mod tests {
     }
 
     fn sidecar() -> GovernedSidecar {
-        GovernedSidecar::new("python", "bridge/engine_sidecar.py", PathBuf::from("."), trust())
+        GovernedSidecar::as_calling_principal("python", "bridge/engine_sidecar.py", PathBuf::from("."), trust())
     }
 
     fn envs(cmd: &std::process::Command) -> Vec<(String, Option<String>)> {
@@ -323,7 +637,7 @@ mod tests {
     #[test]
     fn every_provisioned_variable_reaches_the_child_command() {
         let s = sidecar();
-        let got = envs(&s.command());
+        let got = envs(&s.command().expect("the calling-principal arm cannot fail"));
         for (name, value) in s.trust.pairs() {
             assert!(
                 got.iter().any(|(k, v)| k == name && v.as_deref() == Some(value.as_str())),
@@ -339,7 +653,7 @@ mod tests {
     #[test]
     fn the_exported_set_is_whole_rather_than_its_most_interesting_member() {
         let s = sidecar();
-        let got = envs(&s.command());
+        let got = envs(&s.command().expect("the calling-principal arm cannot fail"));
         let exported = s
             .trust
             .pairs()
@@ -356,7 +670,7 @@ mod tests {
     /// inherits the parent environment is the only thing that stops an inherited value.
     #[test]
     fn the_fake_sidecar_activator_is_removed_from_the_child_environment() {
-        let got = envs(&sidecar().command());
+        let got = envs(&sidecar().command().expect("the calling-principal arm cannot fail"));
         assert!(
             got.iter().any(|(k, v)| k == FAKE_SIDECAR_ENV && v.is_none()),
             "{FAKE_SIDECAR_ENV} is not removed from the child environment: {got:?}"
@@ -378,13 +692,13 @@ mod tests {
     fn the_child_runs_in_the_supplied_sandbox_with_the_script_as_its_only_argument() {
         let dir = std::env::temp_dir().join("brops-sidecar-cwd-probe");
         let script = absolute_script();
-        let s = GovernedSidecar::new(
+        let s = GovernedSidecar::as_calling_principal(
             "python",
             script.to_str().expect("temp path is UTF-8"),
             dir.clone(),
             trust(),
         );
-        let cmd = s.command();
+        let cmd = s.command().expect("the calling-principal arm cannot fail");
         assert_eq!(cmd.get_current_dir(), Some(dir.as_path()));
         let args: Vec<&OsStr> = cmd.get_args().collect();
         // Used VERBATIM: an absolute path is never re-joined against the process cwd.
@@ -396,7 +710,7 @@ mod tests {
     /// is the sandbox and a relative path would not resolve from there (audit F-39).
     #[test]
     fn a_relative_script_path_is_absolutized_before_the_sandbox_cwd_applies() {
-        let cmd = sidecar().command();
+        let cmd = sidecar().command().expect("the calling-principal arm cannot fail");
         let args: Vec<&OsStr> = cmd.get_args().collect();
         let script = std::path::Path::new(args[0]);
         assert!(script.is_absolute(), "the script stayed relative: {script:?}");
@@ -438,7 +752,7 @@ mod tests {
     /// interpreter and the variables an operator would fix.
     #[test]
     fn an_unspawnable_interpreter_is_a_transport_error_naming_what_to_set() {
-        let s = GovernedSidecar::new(
+        let s = GovernedSidecar::as_calling_principal(
             "brops-no-such-interpreter-does-not-exist",
             "bridge/engine_sidecar.py",
             std::env::temp_dir(),
@@ -449,11 +763,312 @@ mod tests {
         assert!(err.contains("BROPS_GOVERNED_PYTHON"), "{err}");
     }
 
+    // =============================================================================================
+    // §2.6 — the principal the child runs as
+    // =============================================================================================
+
+    /// A well-formed `sidecar` block, spelled the way the working reference spells the same thing:
+    /// `sudo -u brops-sidecar env … python3 bridge/engine_sidecar.py`
+    /// (`engine/ci/live/run_ladder_turn.sh`, the seven-principal ladder that goes green in CI).
+    fn sidecar_block() -> Value {
+        serde_json::json!({
+            "principal": "brops-sidecar",
+            "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"],
+        })
+    }
+
+    fn principal() -> SidecarPrincipal {
+        SidecarPrincipal::from_config(Some(&sidecar_block())).expect("the reference shape resolves")
+    }
+
+    /// The sidecar script, spelled the way THIS platform spells an absolute path. `/opt/...` is not
+    /// absolute on Windows (no drive prefix), so hard-coding the POSIX form would silently exercise
+    /// the RELATIVE branch of the builder and every assertion below would be about a path nobody
+    /// asked for. The same trap `absolute_script` exists for, one test module along.
+    fn distinct_script() -> PathBuf {
+        let p = std::env::temp_dir().join("brops-ladder").join("engine_sidecar.py");
+        assert!(p.is_absolute(), "this platform's temp dir is not absolute: {p:?}");
+        p
+    }
+
+    fn as_sidecar() -> GovernedSidecar {
+        GovernedSidecar::as_distinct_principal(
+            "/usr/bin/python3",
+            distinct_script().to_str().expect("temp path is UTF-8"),
+            PathBuf::from("."),
+            trust(),
+            principal(),
+        )
+    }
+
+    fn args_of(cmd: &std::process::Command) -> Vec<String> {
+        cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect()
+    }
+
+    /// The shape that was wrong: the calling-principal command runs the INTERPRETER, so the child
+    /// carries the caller's uid. Stated as a test rather than as a comment, because it is the exact
+    /// property the broker must not have — and the desktop legitimately does.
+    #[test]
+    fn the_calling_principal_command_runs_the_interpreter_itself() {
+        let cmd = sidecar().command().expect("the calling-principal arm cannot fail");
+        assert_eq!(cmd.get_program(), OsStr::new("python"));
+    }
+
+    /// THE property this round exists for. Under a distinct principal the program is the INVOKER,
+    /// the account is named in the argv, and the interpreter has moved behind it — so the child's uid
+    /// is the sidecar account's rather than the broker's, and `peer_is_sidecar` can succeed at all.
+    #[test]
+    fn the_distinct_principal_command_runs_the_invoker_and_names_the_account() {
+        let cmd = as_sidecar().command().expect("the reference shape builds");
+        assert_eq!(cmd.get_program(), OsStr::new("/usr/bin/sudo"));
+        let args = args_of(&cmd);
+        assert_eq!(&args[..4], ["-n", "-u", "brops-sidecar", "/usr/bin/env"]);
+        assert_ne!(
+            cmd.get_program(),
+            OsStr::new("/usr/bin/python3"),
+            "the interpreter is still the program, so the child would run as the broker"
+        );
+        assert!(
+            args.contains(&"/usr/bin/python3".to_string()),
+            "the interpreter never reaches the argv: {args:?}"
+        );
+    }
+
+    /// The provisioned set survives the principal switch. `Command::env` would have set it on
+    /// `sudo`, whose `env_reset` throws it away, so under a distinct principal every pair has to
+    /// appear as a `NAME=VALUE` ARGUMENT — and it has to be the same whole set as the other arm.
+    #[test]
+    fn the_whole_trust_set_crosses_the_principal_switch_as_arguments() {
+        let s = as_sidecar();
+        let args = args_of(&s.command().expect("the reference shape builds"));
+        assert!(s.trust.pairs().len() > 1, "a one-element set cannot detect a partial export");
+        for (name, value) in s.trust.pairs() {
+            assert!(
+                args.contains(&format!("{name}={value}")),
+                "{name} did not cross the principal switch: {args:?}"
+            );
+        }
+    }
+
+    /// Order is load-bearing in a way a set-membership assertion cannot see: `env` reads leading
+    /// `NAME=VALUE` arguments and then execs the FIRST argument without an `=`. So every assignment
+    /// must sit after the `env` token and before the interpreter — an assignment emitted after the
+    /// interpreter would be an argument to the sidecar script instead.
+    #[test]
+    fn every_assignment_sits_between_the_env_token_and_the_interpreter() {
+        let s = as_sidecar();
+        let args = args_of(&s.command().expect("the reference shape builds"));
+        let env_at = args.iter().position(|a| a == "/usr/bin/env").expect("the env token");
+        let py_at = args.iter().position(|a| a == "/usr/bin/python3").expect("the interpreter");
+        assert!(env_at < py_at, "the interpreter precedes `env`: {args:?}");
+        for (name, value) in s.trust.pairs() {
+            let at = args
+                .iter()
+                .position(|a| a == &format!("{name}={value}"))
+                .unwrap_or_else(|| panic!("{name} is absent: {args:?}"));
+            assert!(at > env_at && at < py_at, "{name} is outside env's assignment run: {args:?}");
+        }
+        // And nothing between them is anything BUT an assignment: one stray non-assignment token
+        // there and `env` would exec it instead of the interpreter.
+        for a in &args[env_at + 1..py_at] {
+            assert!(a.contains('='), "a non-assignment token reached env's argument run: {a}");
+        }
+    }
+
+    /// The interpreter is the last thing before the script, so `env` execs python and python runs
+    /// the sidecar — not the other way round, and with no argument between them.
+    #[test]
+    fn the_interpreter_is_followed_only_by_the_script() {
+        let s = as_sidecar();
+        let args = args_of(&s.command().expect("the reference shape builds"));
+        let py_at = args.iter().position(|a| a == "/usr/bin/python3").expect("the interpreter");
+        assert_eq!(
+            &args[py_at..],
+            [
+                "/usr/bin/python3".to_string(),
+                distinct_script().to_string_lossy().into_owned()
+            ],
+            "{args:?}"
+        );
+    }
+
+    /// The self-test activator is removed from the INVOKER's environment too, which is the stronger
+    /// half: a permissive `env_keep`/`!env_reset` sudoers policy can only keep what `sudo` was
+    /// handed, and this hands it nothing.
+    #[test]
+    fn the_fake_activator_is_removed_under_a_principal_switch_as_well() {
+        let cmd = as_sidecar().command().expect("the reference shape builds");
+        assert!(
+            envs(&cmd).iter().any(|(k, v)| k == FAKE_SIDECAR_ENV && v.is_none()),
+            "{FAKE_SIDECAR_ENV} is not removed from the invoker's environment"
+        );
+    }
+
+    /// The sandbox cwd still applies: `sudo` inherits it and the interpreter it execs keeps it.
+    #[test]
+    fn the_sandbox_cwd_still_applies_under_a_principal_switch() {
+        let dir = std::env::temp_dir().join("brops-sidecar-principal-cwd");
+        let s = GovernedSidecar::as_distinct_principal(
+            "/usr/bin/python3",
+            distinct_script().to_str().expect("temp path is UTF-8"),
+            dir.clone(),
+            trust(),
+            principal(),
+        );
+        let cmd = s.command().expect("the reference shape builds");
+        assert_eq!(cmd.get_current_dir(), Some(dir.as_path()));
+    }
+
+    /// An interpreter path containing `=` would be eaten by `env` as one more assignment, so it is a
+    /// refusal rather than a command that execs something else. There is no such hazard on the
+    /// calling-principal arm, where the interpreter is the program.
+    #[test]
+    fn an_interpreter_path_that_env_would_read_as_an_assignment_is_refused() {
+        let s = GovernedSidecar::as_distinct_principal(
+            "PYTHON=/usr/bin/python3",
+            distinct_script().to_str().expect("temp path is UTF-8"),
+            PathBuf::from("."),
+            trust(),
+            principal(),
+        );
+        let err = s.command().expect_err("`=` in the interpreter cannot build a command");
+        assert!(err.contains("sidecar.python"), "{err}");
+        assert!(err.contains("env"), "{err}");
+        // The same path is fine when the interpreter IS the program.
+        assert!(GovernedSidecar::as_calling_principal(
+            "PYTHON=/usr/bin/python3",
+            distinct_script().to_str().expect("temp path is UTF-8"),
+            PathBuf::from("."),
+            trust(),
+        )
+        .command()
+        .is_ok());
+    }
+
+    /// A prefix that changes no principal is the collapse in disguise, and it is well-formed argv, so
+    /// only the ACCOUNT check can catch it. The refusal names the supervisor's own words.
+    #[test]
+    fn an_invoker_that_never_names_the_account_is_refused_by_name() {
+        let block = serde_json::json!({
+            "principal": "brops-sidecar",
+            "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-broker", "/usr/bin/env"],
+        });
+        let err = SidecarPrincipal::from_config(Some(&block)).expect_err("no account, no principal");
+        assert!(err.contains("brops-sidecar"), "{err}");
+        assert!(err.contains("principal collapse"), "{err}");
+    }
+
+    /// The account may not sit at index 0 (it would be the program) nor at the last index (it would
+    /// be standing where `env` must stand) — both are prefixes that do not change principal.
+    #[test]
+    fn the_account_token_must_sit_inside_the_prefix_rather_than_at_either_end() {
+        for invoker in [
+            serde_json::json!(["brops-sidecar", "-n", "-u", "/usr/bin/env"]),
+            serde_json::json!(["/usr/bin/sudo", "-n", "-u", "brops-sidecar"]),
+        ] {
+            let block = serde_json::json!({ "principal": "brops-sidecar", "invoker": invoker });
+            assert!(
+                SidecarPrincipal::from_config(Some(&block)).is_err(),
+                "an end-positioned account was accepted: {invoker}"
+            );
+        }
+    }
+
+    /// A prefix that does not end in `env` cannot carry the provisioned set across the switch, and a
+    /// silently environment-less sidecar is the half-wired state `engine_trust` calls worse than no
+    /// export at all.
+    #[test]
+    fn an_invoker_that_does_not_end_in_env_is_refused_by_name() {
+        let block = serde_json::json!({
+            "principal": "brops-sidecar",
+            "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/python3"],
+        });
+        let err = SidecarPrincipal::from_config(Some(&block)).expect_err("no env, no environment");
+        assert!(err.contains(ENV_PROGRAM), "{err}");
+        assert!(err.contains("/usr/bin/python3"), "{err}");
+        // A bare `env` (no directory) is the same program and is accepted.
+        let bare = serde_json::json!({
+            "principal": "brops-sidecar",
+            "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "env"],
+        });
+        assert!(SidecarPrincipal::from_config(Some(&bare)).is_ok());
+    }
+
+    /// A relative `invoker[0]` is resolved through the BROKER's own `$PATH`, which is not a
+    /// TCB-owned input — so the program that becomes the sidecar would be chosen by the environment
+    /// of the process being constrained.
+    #[test]
+    fn a_relative_invoker_program_is_refused() {
+        let block = serde_json::json!({
+            "principal": "brops-sidecar",
+            "invoker": ["sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"],
+        });
+        let err = SidecarPrincipal::from_config(Some(&block)).expect_err("$PATH is not TCB");
+        assert!(err.contains("absolute"), "{err}");
+    }
+
+    /// Absent, malformed and empty are ONE refusal, not a spectrum: a deployment that did not say
+    /// how to become the sidecar did not say it, and there is no shape here that yields a usable
+    /// default. `None` is the case that matters most — it is what a config with no `sidecar` block
+    /// at all produces, and the old code's answer to it was `Command::new(python)`.
+    #[test]
+    fn every_missing_or_malformed_shape_refuses_rather_than_defaulting() {
+        let cases: Vec<(&str, Option<Value>)> = vec![
+            ("no block at all", None),
+            ("no principal", Some(serde_json::json!({ "invoker": ["/usr/bin/sudo", "-n", "-u", "x", "/usr/bin/env"] }))),
+            ("empty principal", Some(serde_json::json!({ "principal": "   ", "invoker": ["/usr/bin/sudo", "-n", "-u", "x", "/usr/bin/env"] }))),
+            ("no invoker", Some(serde_json::json!({ "principal": "brops-sidecar" }))),
+            ("invoker is a string", Some(serde_json::json!({ "principal": "brops-sidecar", "invoker": "sudo -u brops-sidecar env" }))),
+            ("invoker is empty", Some(serde_json::json!({ "principal": "brops-sidecar", "invoker": [] }))),
+            ("invoker is too short", Some(serde_json::json!({ "principal": "brops-sidecar", "invoker": ["/usr/bin/sudo", "brops-sidecar", "/usr/bin/env"] }))),
+            ("a non-string token", Some(serde_json::json!({ "principal": "brops-sidecar", "invoker": ["/usr/bin/sudo", "-u", 7, "brops-sidecar", "/usr/bin/env"] }))),
+            ("an empty token", Some(serde_json::json!({ "principal": "brops-sidecar", "invoker": ["/usr/bin/sudo", "", "-u", "brops-sidecar", "/usr/bin/env"] }))),
+            ("a NUL in a token", Some(serde_json::json!({ "principal": "brops-sidecar", "invoker": ["/usr/bin/sudo", "-u\u{0}", "-u", "brops-sidecar", "/usr/bin/env"] }))),
+        ];
+        for (what, block) in cases {
+            let got = SidecarPrincipal::from_config(block.as_ref());
+            let err = got.err().unwrap_or_else(|| panic!("`{what}` was accepted"));
+            assert!(err.len() > 40, "`{what}` refused without saying anything useful: {err}");
+        }
+    }
+
+    /// The reference shape resolves, and it keeps BOTH halves — the account is not thrown away after
+    /// it is checked, because the spawn-failure message names it.
+    #[test]
+    fn the_reference_invocation_resolves_and_keeps_the_account() {
+        let p = principal();
+        assert_eq!(p.account(), "brops-sidecar");
+        assert_eq!(p.invoker().len(), 5);
+        assert_eq!(p.invoker()[0], "/usr/bin/sudo");
+    }
+
+    /// A spawn that cannot happen under a principal switch names the INVOKER and the ACCOUNT, not
+    /// the interpreter: the interpreter is fine and looking at it is a wasted afternoon.
+    #[test]
+    fn a_failed_principal_switch_names_the_invoker_and_the_account() {
+        let block = serde_json::json!({
+            "principal": "brops-sidecar",
+            "invoker": [
+                "/brops-no-such-invoker-does-not-exist", "-n", "-u", "brops-sidecar", "/usr/bin/env"
+            ],
+        });
+        let s = GovernedSidecar::as_distinct_principal(
+            "python",
+            "bridge/engine_sidecar.py",
+            std::env::temp_dir(),
+            trust(),
+            SidecarPrincipal::from_config(Some(&block)).expect("well-formed"),
+        );
+        let err = s.round_trip("{}").expect_err("a missing invoker cannot produce a reply");
+        assert!(err.contains("/brops-no-such-invoker-does-not-exist"), "{err}");
+        assert!(err.contains("brops-sidecar"), "{err}");
+    }
+
     /// The transport half of §4.10(g): the frame is serialized and goes through the SAME round trip,
     /// so a submit cannot acquire its own spawn discipline.
     #[test]
     fn the_submit_transport_is_the_same_spawn() {
-        let s = GovernedSidecar::new(
+        let s = GovernedSidecar::as_calling_principal(
             "brops-no-such-interpreter-does-not-exist",
             "bridge/engine_sidecar.py",
             std::env::temp_dir(),
