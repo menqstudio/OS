@@ -8,6 +8,63 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The broker binary cannot complete a turn in CI, and that is the gate working (2026-08-13)
+
+Driving the real `brops-broker` binary to a completed governed turn in the live kit was investigated and
+found **impossible — and not for want of provisioning**. Nothing was built; the tree is untouched. Two
+blockers, both inside the binary, neither a configuration input, and both **measured on this box rather
+than read**.
+
+**Blocker 1 — the compiled-in production root anchor, fatal before any hop.** `build_governed_executor` can
+only reach `ProductionResolver::provisioned`, which hard-sets the pinned root `brops-tcb-root-1` /
+`3c83c2bc…`. `LadderChain`'s step (0) requires the manifest to name that root *and* carry a detached
+signature under it. That private half is the Owner's offline root — `grep` over the whole tree finds the
+constant in two places in `tcb.rs` and three prose documents, nowhere else. The one constructor accepting a
+different anchor is `pub(crate)` **in the library**, so the `brops-broker` *bin* and the proof crate both
+cannot reach it. Measured: an out-of-crate call is `error[E0624]: … is private`; a real
+`provisioned(...).resolve_keys()` over a kit-shaped, kit-signed manifest returns `Err(UpstreamBlocked)`; and
+isolating the gate gives `UnknownRoot` for the kit's id and `RootSignatureInvalid` once relabelled — while
+the pinned key **does** decode as a valid Ed25519 point, so the refusal is custody, not a malformed
+constant.
+
+Making CI satisfy that would mean an Owner-in-the-loop ceremony with the offline production key **on every
+run**, or committing the production signer's private half — which would make forging a `production`-class
+§4.9 envelope trivial against every shipped install. So the refusal is the design holding, not an obstacle
+to route around.
+
+**Blocker 2 — no configuration key wires custody, fatal at commit even if the first vanished.**
+`build_governed_executor` ends at `ChainExecutor::new(chain)`, deliberately not `with_custody`. So
+`UnresolvedCustody::resolve()` gives `NoTrustedManifest`, `committed_label()` gives `None`, and
+`persist_committed` refuses. **The real broker binary cannot render a `committed` reply under any value of
+`$BROPS_BROKER_CONFIG`.** Every configuration ends `blocked`.
+
+**The configuration map itself is complete and satisfiable**, which is worth having on its own: sixteen
+inputs, of which seven are new to the kit — the config variable itself, the messages DB, the system prompt,
+the window, the sidecar block, its sudoers vector, and the durable acceptance ledger. Three findings fell
+out of building it: `trust.floor_path` is left root-owned `0644`, so the broker uid **cannot persist the
+anti-rollback advance** and a persist failure refuses; the `uids` block is hardcoded `DEFAULT_UIDS`
+(5001–5007, **no sidecar**), so the §2.5 floor's runtime-uid set is not the real accounts on a runner — a
+pre-existing narrowing; and `build_tcb_pin_manifest.py` pins `bin/live_turn` as
+`trusted-verifier-broker.bin`.
+
+**And the conversation fixture would be honest.** One `conversations` row and one `messages` row —
+`role='user'`, `body='hi'` — matching what the kit already stages. Rust's `history_jcs` and Python's
+`brops_canonical.history_bytes` produce identical bytes, so `history_sha256` is **derived from the fixture
+row and never written down**; same for the system prompt and for `generation_config`, whose five frozen
+Rust literals are byte-identical to the kit's and are asserted against the published `732b5863…`. A fixture
+row, not a fabricated digest.
+
+**What is being done instead.** `LadderChain::new` is `pub`, `KeyResolver` is a public trait, and the tree
+already has the precedent: `live_turn` drives the *direct* chain with a kit-generated anchor via
+`RootAnchor`/`RootProvenance`, and that is accepted as honest **because a `kit_generated` anchor may never
+render `production_verified=true`**. A `ladder_turn` driver in `brops-governed-live` can build the *same*
+`LadderChain` the same way. It must never be described as the `brops-broker` binary — no
+`build_governed_executor`, no socket, no `SO_PEERCRED` on that hop, no `persist_committed`.
+
+No mutants: no code was written, and saying so is better than leaving the section blank. `brops-broker`
+**46 + 9** re-measured, matching baseline. `git status` empty at `a0db2b7`.
+
+
 ### The door and the child key on the same field (2026-08-13)
 
 `GovernedSidecar` now takes a `SidecarTrust` rather than a `TrustEnvironment`, so the requirement follows
