@@ -8,6 +8,57 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### A green suite is not evidence against a surviving mutant (2026-08-10)
+
+After the commit-limit crash left a **live mutant** in the tree — `try/finally` does not survive a killed
+process — the open question was whether one had already been *committed*. Every piece this week ran a
+mutation harness on this box, and each reported SHA-256-verified restores; but only the agents that
+returned could report. **A surviving mutant is by definition one no test catches, so a green suite is not
+evidence.** All suites were green while the question stood.
+
+**A sweep of the 30 commits since `5a72258` found nothing, and changed nothing.** It did not re-run tests —
+it read for the *shape* of a mutation: a single-token edit that weakens a check while leaving its
+justification intact. The primary signal was therefore **comment-versus-code disagreement**, and none was
+found anywhere it looked.
+
+**The commit messages turned out to be a usable oracle**, which is an unexpected dividend of writing them
+with specific numbers. Every figure claimed across those 30 messages still matches the code or a pinning
+test: `245982` against `262144` with `16162` spare; `74472`/`187672`; `2848` with the boundary tested at
+124/125 ids; `4664` against `4032`; `65536` against a 349-byte field maximum; `MAX_STAGING_CHUNKS = 46` with
+`46 × 184320 = 8478720` and `90112` bytes of slack; a round-trip floor of 10, not 8; the lease/TTL chain
+`60000/300000/210000/30000 → 240000 < 300000` leaving `90000`; `retained = created + 720000`; a stream quota
+of `64` rows and `536870912` bytes, confirmed by executing the module to be **exactly** 64 × 8388608; 29
+refusal reasons, confirmed by import; 53 parity clauses.
+
+**Both DDL copies are byte-identical** at `sha256=3f2a50d7…` and the parity gate is GREEN at 53 clauses —
+but a mutant applied to *both* copies would pass that gate, so every trigger body was read by hand against
+its own comment and against the Python constants. The gate's `REQUIRED_CLAUSES` already pins
+`next_seq <= 46`, `seq <= 45`, `chunk_len <= 184320`, `output_bytes <= 8388608` and
+`length(output_stream_id) = 43`; the unpinned bodies (`created_at_ms + 360000` / `+ 720000`) were checked
+against `OUTPUT_STREAM_TTL_MS`/`OUTPUT_STREAM_RETENTION_MS`.
+
+**The boundaries that a mutant would most plausibly flip are all correct, including the ones that
+deliberately point opposite ways** — `valid_from <= t <= valid_to` inclusive while `revoked_at_ms <= t`
+refuses strictly; `now > expires` for a stream while `now_ms > challenge_expires_at_ms` refuses; and
+`buf.len() + n >= max_bytes` refusing *at* the cap, which its comment says is intended. In each case the
+prose states the asymmetry, which is what made them checkable at all.
+
+**The incident site is restored**: `governed_turn_submit.py:674` reads `if advanced <= cursor:`, matching
+its comment.
+
+**What the sweep did NOT cover, stated because a confident all-clear over a partial sweep is worse than a
+scoped one.** Test files were not audited except where one served as a number's oracle — **a mutant planted
+in an assertion rather than in production code is a failure mode this sweep would largely miss**. The two
+PowerShell proofs (`win_live_proof.ps1` +267, `isolation_proof.ps1` +231) were neither read line by line nor
+executed, and they are the largest unexamined surface — pointed at directly by the fact that `b46a6ab` found
+**both could never report PASS**. Prose was read only where a number was being cross-checked, so a comment
+weakened to *match* a weakened rule would not stand out. Linux-only `cfg` branches were read as text and
+could not be exercised here.
+
+The honest residual: a mutant consistent with both its own comment and its pinning tests would survive this
+method. That is narrower than the question it started from, and it is not zero.
+
+
 ### A killed process does not run its finally block (2026-08-10)
 
 **§4.10(g)'s sidecar half is built, and the seam left unwired six times now has a caller.** One submit
