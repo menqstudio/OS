@@ -1,8 +1,8 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #84 · branch `at-main-2`** (base `main`, tip `5a72258`, task T-017).
+> **⏭️ CURRENT ACTIVE: PR #85 · branch `tip-pointer-fix`** (base `main`, tip `ffd6109`, task T-017).
 >
-> Wave 3b-1B steps 1-4 landed (§4.10(a0) pre-accept open, §4.10(a)(b)(c) staging upload, §4.10(d) evidence request, §4.10(e) result frame), the evidence-floor and prompt-forgery clusters are closed, and Phase 1's false round-trip tick is open again. Two Owner decisions are queued in docs/OWNER_ACTION_REQUIRED.md: the head-floor write principal (1b) and which half of rev-30 defines challenge_handle (1c).
+> Revert the tip pointer cd42cdb rewrote: 5a72258 is main's head and the merge-base, so the header names the BASE tip, not the at-main-2 tip.
 >
 > **The last independent audit returned RED, and none has been run since.** The Owner's SECOND independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` AFTER the first round's remediation -- confirmed 4 of 18 blockers closed and left 122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds. It has never been re-run, on that head or on any later one, so **RED is the standing verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`.
 >
