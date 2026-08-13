@@ -1,6 +1,6 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #84 · branch `at-main-2`** (base `main`, tip `ba3b01f`, task T-017).
+> **⏭️ CURRENT ACTIVE: PR #84 · branch `at-main-2`** (base `main`, tip `5a72258`, task T-017).
 >
 > Wave 3b-1B steps 1-4 landed (§4.10(a0) pre-accept open, §4.10(a)(b)(c) staging upload, §4.10(d) evidence request, §4.10(e) result frame), the evidence-floor and prompt-forgery clusters are closed, and Phase 1's false round-trip tick is open again. Two Owner decisions are queued in docs/OWNER_ACTION_REQUIRED.md: the head-floor write principal (1b) and which half of rev-30 defines challenge_handle (1c).
 >
