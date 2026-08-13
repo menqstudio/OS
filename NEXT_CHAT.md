@@ -1,6 +1,6 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **✅ SETTLED — `main` is at `a9ad4fd`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `a9ad4fd`.** The only thing open is PR #86 on `settle-after-85`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
 > **Next:** Re-run the independent audit on main a9ad4fd. The standing verdict is still the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0), and it is now older than the code. Only then the two Owner decisions in docs/OWNER_ACTION_REQUIRED.md: 1b the head-floor write principal, 1c which half of rev-30 defines challenge_handle.
 >
