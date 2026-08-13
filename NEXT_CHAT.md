@@ -8,6 +8,31 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### A sudo that exists fails differently from one that does not (2026-08-13)
+
+CI went RED on two tests that are green on Windows, and it is the **fifth** time this week a platform fact
+has been hiding inside a test.
+
+Both asserted that a relay frame "reached the spawn" by matching the string
+`Could not run the governed engine sidecar`. On Windows there is no `sudo`, so the distinct-principal
+invoker cannot start and that is exactly the error. On Linux CI `sudo` **exists**, starts, and dies at
+`sudo: unknown user brops-sidecar` — a **crash**, not a spawn failure. Same admission, different transport
+error.
+
+The property those two tests own is that the **door admitted the frame**, so the negatives beside them
+cannot be passing by an arm that refuses everything. `admits()` already proves that directly; the second
+half only ever needed to say the refusal was **not the door's** — which is precisely the shape the sibling
+assertion above it already used in the other direction. Both now assert that, and neither pins a transport
+error.
+
+The pattern is worth naming again because it keeps arriving in different clothes: an exception's **name**,
+a bound living in a platform branch no test here can reach, a fixture pinning the year 2030, `/abs/x.py`
+not being absolute on Windows, and now the presence of `sudo`. **A test that asserts *how* something failed
+can only pass where it was written.**
+
+`brops-core --lib` 471, `brops-broker` 46 + 9, unchanged.
+
+
 ### The design named the reclaimer and nobody built it (2026-08-13)
 
 An install supported exactly **two** completing governed turns, ever. It now supports as many as the

@@ -892,12 +892,18 @@ mod tests {
         );
         // And the two frames the broker actually sends DO get through the door, so this cannot pass
         // by the transport refusing everything.
+        //
+        // Deliberately silent about WHICH transport error follows. This asserted "Could not run the
+        // governed engine sidecar" and passed on Windows while failing on Linux CI: Windows has no
+        // `sudo`, so the distinct-principal invoker cannot start, while Linux has one, starts it, and
+        // dies at `unknown user brops-sidecar` -- a crash rather than a spawn failure. The property
+        // owned here is that the DOOR let the frame through, so that is all that is asserted.
         for protocol in brops_core::governed_sidecar::RELAY_PROTOCOLS {
             let frame = serde_json::json!({ "protocol": protocol }).to_string();
             let err = seam.round_trip(&frame).expect_err("the interpreter cannot start");
             assert!(
-                err.contains("Could not run the governed engine sidecar"),
-                "{protocol} did not reach the spawn: {err}"
+                !err.contains("SidecarTrust::RelayFramesOnly"),
+                "{protocol} was refused by the door rather than reaching the transport: {err}"
             );
         }
     }

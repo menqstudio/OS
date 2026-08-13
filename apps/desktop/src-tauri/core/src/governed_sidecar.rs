@@ -1364,17 +1364,25 @@ mod tests {
 
     /// Both relay frames ARE admitted — so the tests above cannot pass by the arm refusing
     /// everything, which is a refusal that would look identical from a distance.
+    ///
+    /// The second half deliberately does NOT assert which transport error fires. It used to assert
+    /// "Could not run the governed engine sidecar", and that passed on Windows and failed on Linux
+    /// CI: Windows has no `sudo`, so the distinct-principal invoker cannot start; Linux has one, so
+    /// it starts and dies at `unknown user brops-sidecar` — a CRASH rather than a spawn failure.
+    /// Same admission, different transport error. What this test owns is that the DOOR let the frame
+    /// through, so all that is asserted is that the refusal is not the door's — the same shape the
+    /// sibling test above already uses in the other direction.
     #[test]
     fn both_relay_frames_are_admitted_by_the_trust_free_arm() {
         for frame in [submit_frame(), output_read_frame()] {
             SidecarTrust::RelayFramesOnly
                 .admits(&frame)
                 .unwrap_or_else(|e| panic!("a relay frame was refused by the relay arm: {e}"));
-            // And it reaches the spawn, which is the only thing left to fail.
+            // And it got past the door: whatever failed next, it was the transport, not `admits`.
             let err = relay_seam().round_trip(&frame).expect_err("the interpreter cannot start");
             assert!(
-                err.contains("Could not run the governed engine sidecar"),
-                "a relay frame did not reach the spawn: {err}"
+                !err.contains(RELAY_ONLY_NAME),
+                "a relay frame was refused by the door rather than reaching the transport: {err}"
             );
         }
     }
